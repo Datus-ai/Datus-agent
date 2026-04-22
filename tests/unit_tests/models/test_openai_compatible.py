@@ -600,7 +600,8 @@ class TestDistributeTokenUsageToActions:
         model = _make_model()
         manager = ActionHistoryManager()
         usage = {"total_tokens": 100}
-        model._distribute_token_usage_to_actions(manager, usage)  # should not raise
+        model._distribute_token_usage_to_actions(manager, usage)
+        assert manager.actions == []
 
     def test_distributes_to_last_assistant_action(self):
         model = _make_model()
@@ -663,8 +664,8 @@ class TestExtractAndDistributeTokenUsage:
         model = _make_model()
         result = MagicMock(spec=[])  # no context_wrapper attribute
         manager = ActionHistoryManager()
-        # Should not raise
         await model._extract_and_distribute_token_usage(result, manager)
+        assert not hasattr(result, "context_wrapper")
 
     @pytest.mark.asyncio
     async def test_extracts_usage_from_context_wrapper(self):
@@ -712,8 +713,9 @@ class TestExtractAndDistributeTokenUsage:
         type(result.context_wrapper).usage = property(lambda self: (_ for _ in ()).throw(RuntimeError("bad")))
 
         manager = ActionHistoryManager()
-        # Should not raise
         await model._extract_and_distribute_token_usage(result, manager)
+        for action in manager.actions:
+            assert "usage" not in (action.output or {})
 
 
 # ---------------------------------------------------------------------------
@@ -848,6 +850,88 @@ class TestModelSpecsAndTokenLimits:
         cfg = _make_model_config(model="gemini-2.5-flash")
         model = _make_model(cfg)
         assert model.context_length() == 1048576
+
+
+class TestModelSpecsOpenRouterCacheMerge:
+    """Verify _load_model_specs merges context_length from the OpenRouter cache."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_specs_cache(self):
+        """Wipe the module-level spec cache so each test re-executes the loader."""
+        import datus.models.openai_compatible as oc
+
+        original = oc._MODEL_SPECS_CACHE
+        oc._MODEL_SPECS_CACHE = None
+        try:
+            yield
+        finally:
+            oc._MODEL_SPECS_CACHE = original
+
+    def test_cache_context_length_used_when_yaml_has_no_entry(self):
+        """Unknown slug in YAML but present in cache — context_length comes from cache."""
+        import datus.models.openai_compatible as oc
+
+        with patch(
+            "datus.cli.provider_model_catalog.load_cached_model_details",
+            return_value={"openai": [{"id": "brand-new-model", "context_length": 777000}]},
+        ):
+            cfg = _make_model_config(model="brand-new-model")
+            model = _make_model(cfg)
+            assert model.context_length() == 777000
+            # Cache entries have no max_tokens — must not crash, must return None.
+            assert model.max_tokens() is None
+        assert "brand-new-model" in oc._MODEL_SPECS_CACHE
+        assert oc._MODEL_SPECS_CACHE["brand-new-model"]["context_length"] == 777000
+
+    def test_yaml_wins_over_cache_on_shared_slug(self):
+        """YAML value is authoritative when the slug is defined in both."""
+        with patch(
+            "datus.cli.provider_model_catalog.load_cached_model_details",
+            return_value={"openai": [{"id": "gpt-4o", "context_length": 9999}]},
+        ):
+            cfg = _make_model_config(model="gpt-4o")
+            model = _make_model(cfg)
+            # conf/providers.yml ships gpt-4o at 128000; cache's 9999 is ignored.
+            assert model.context_length() == 128000
+            assert model.max_tokens() == 16384
+
+    def test_cache_read_error_does_not_break_loader(self):
+        """A broken cache layer must not prevent YAML specs from loading."""
+        with patch(
+            "datus.cli.provider_model_catalog.load_cached_model_details",
+            side_effect=RuntimeError("boom"),
+        ):
+            cfg = _make_model_config(model="gpt-4o")
+            model = _make_model(cfg)
+            assert model.context_length() == 128000
+
+    def test_cache_entry_without_context_length_is_skipped(self):
+        with patch(
+            "datus.cli.provider_model_catalog.load_cached_model_details",
+            return_value={"openai": [{"id": "only-id-no-ctx"}]},
+        ):
+            cfg = _make_model_config(model="only-id-no-ctx")
+            model = _make_model(cfg)
+            assert model.context_length() is None
+
+    def test_lookup_uses_longest_prefix_match(self):
+        """A short generic prefix must not preempt a more specific one on the same slug."""
+        # Cache injects a deliberately mismatched narrow entry (shorter key wins
+        # via insertion order in the old impl; longest-prefix must prefer the
+        # longer match).
+        with patch(
+            "datus.cli.provider_model_catalog.load_cached_model_details",
+            return_value={
+                "openai": [
+                    {"id": "gpt-4o-short", "context_length": 1},
+                    {"id": "gpt-4o-short-very-specific", "context_length": 99},
+                ]
+            },
+        ):
+            cfg = _make_model_config(model="gpt-4o-short-very-specific-tail")
+            model = _make_model(cfg)
+            # Must prefer the longer prefix key (99), not the shorter one (1).
+            assert model.context_length() == 99
 
 
 # ---------------------------------------------------------------------------

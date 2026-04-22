@@ -2,11 +2,15 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import asyncio
+import hashlib
 import multiprocessing
 import os
 import platform
+import threading
 from abc import ABC, abstractmethod
-from typing import Any, AsyncGenerator, ClassVar, Dict, List, Optional, Union
+from collections import OrderedDict
+from typing import Any, AsyncGenerator, ClassVar, Dict, List, Optional, Tuple, Union
 
 from agents import SQLiteSession, Tool
 from agents.mcp import MCPServerStdio
@@ -56,6 +60,16 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         LLMProvider.GLM: "GLMModel",
     }
 
+    # Module-level LRU cache for instantiated models. Keyed on the
+    # configuration fingerprint so ``/model`` can flip ``active_model()``
+    # between ``(openai, gpt-4.1)`` and ``(kimi, kimi-k2.5)`` without
+    # repeatedly paying the client-construction cost (LiteLLM + tokenizer
+    # download). Size is intentionally tiny — users seldom juggle more
+    # than a handful of models — so stale entries are evicted quickly.
+    _MODEL_CACHE_MAXSIZE: ClassVar[int] = 4
+    _MODEL_CACHE: ClassVar["OrderedDict[Tuple, LLMBaseModel]"] = OrderedDict()
+    _MODEL_CACHE_LOCK: ClassVar[threading.Lock] = threading.Lock()
+
     def __init__(self, model_config: ModelConfig, **kwargs):
         """Initialize model with configuration and parameters"""
         self.model_config = model_config  # Model configuration
@@ -66,6 +80,16 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
 
     @classmethod
     def create_model(cls, agent_config: AgentConfig, model_name: str = None, **kwargs) -> "LLMBaseModel":
+        """Resolve the active LLM and return an instance (cached per config).
+
+        Caching is keyed on the fingerprint of the resolved
+        :class:`ModelConfig` (type, model, base_url, api_key digest,
+        auth_type, session scope). That way a ``/model`` switch produces
+        a different key and a fresh instance; subsequent calls under the
+        same selection reuse the cached client. The cache is process-wide
+        and bounded to ``_MODEL_CACHE_MAXSIZE`` entries so it is safe to
+        hold across long-running sessions.
+        """
         if not model_name or model_name == "default":
             target_config = agent_config.active_model()
         elif model_name in agent_config.models:
@@ -78,12 +102,41 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         if (model_class_name := cls.MODEL_TYPE_MAP.get(model_type)) is None:
             raise KeyError(f"Unsupported model type: {model_type}")
 
+        scope = kwargs.get("scope")
+        api_key_digest = (
+            hashlib.sha1((target_config.api_key or "").encode("utf-8")).hexdigest()[:12]
+            if target_config.api_key
+            else ""
+        )
+        cache_key: Tuple = (
+            model_type,
+            target_config.model,
+            target_config.base_url or "",
+            api_key_digest,
+            target_config.auth_type,
+            scope or "",
+        )
+
+        with cls._MODEL_CACHE_LOCK:
+            cached = cls._MODEL_CACHE.get(cache_key)
+            if cached is not None:
+                cls._MODEL_CACHE.move_to_end(cache_key)
+                return cached
+
         module = __import__(f"datus.models.{model_type}_model", fromlist=[model_class_name])
         model_class = getattr(module, model_class_name)
-
-        return model_class(
-            model_config=target_config, session_dir=agent_config.session_dir, session_scope=kwargs.get("scope")
+        instance = model_class(
+            model_config=target_config,
+            session_dir=agent_config.session_dir,
+            session_scope=scope,
         )
+
+        with cls._MODEL_CACHE_LOCK:
+            cls._MODEL_CACHE[cache_key] = instance
+            cls._MODEL_CACHE.move_to_end(cache_key)
+            while len(cls._MODEL_CACHE) > cls._MODEL_CACHE_MAXSIZE:
+                cls._MODEL_CACHE.popitem(last=False)
+        return instance
 
     @abstractmethod
     def generate(self, prompt: Any, enable_thinking: bool = False, **kwargs) -> str:
@@ -197,6 +250,28 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
 
     def to_dict(self) -> Dict[str, str]:
         return {"model_name": self.model_config.model}
+
+    async def test_connection(self, timeout: float = 10.0) -> Tuple[bool, str]:
+        """Probe the model with a 1-token request; return (ok, error_message).
+
+        Used by ``/model`` and the ``datus init`` wizard to verify provider
+        credentials before persisting them. The default implementation runs
+        the synchronous :meth:`generate` inside a worker thread wrapped in
+        ``asyncio.wait_for`` so both blocking HTTP clients and genuinely
+        async providers converge on the same coroutine signature. Subclasses
+        (e.g. Claude subscription) override when their endpoint rejects
+        ``max_tokens=1``.
+        """
+        try:
+            probe = asyncio.to_thread(self.generate, "hi", max_tokens=1)
+            response = await asyncio.wait_for(probe, timeout=timeout)
+            if response is None or not str(response).strip():
+                return False, "Empty response from model"
+            return True, ""
+        except asyncio.TimeoutError:
+            return False, f"Timed out after {timeout}s"
+        except Exception as e:
+            return False, str(e)
 
     @property
     def session_manager(self):

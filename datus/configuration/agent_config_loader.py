@@ -9,7 +9,7 @@ import yaml
 
 from datus.configuration.agent_config import AgentConfig, NodeConfig
 from datus.configuration.node_type import NodeType
-from datus.configuration.project_config import load_project_override
+from datus.configuration.project_config import ProjectTarget, load_project_override
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -180,22 +180,39 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
     from those flags — this keeps the overlay effective for every
     entry point that calls ``load_agent_config`` (REPL, print mode,
     web, ``datus-api``, SDK), not just the CLI layer.
+
+    ``target`` accepts three shapes (see :class:`ProjectTarget`):
+      - legacy string (``agent.models`` key) → validated against ``agent.models``.
+      - ``{custom: name}`` → same validation path as the legacy form.
+      - ``{provider, model}`` → forwarded to ``AgentConfig`` via the
+        ``target_provider``/``target_model`` kwargs so provider-level
+        synthesis kicks in at ``active_model()`` time.
     """
     override = load_project_override()
     if override is None or override.is_empty():
         return
     if override.target is not None:
-        models = agent_raw.get("models", {}) or {}
-        if override.target not in models:
-            raise DatusException(
-                code=ErrorCode.COMMON_FIELD_INVALID,
-                message_args={
-                    "field_name": "target (from .datus/config.yml)",
-                    "except_values": sorted(models.keys()),
-                    "your_value": override.target,
-                },
-            )
-        agent_raw["target"] = override.target
+        if isinstance(override.target, ProjectTarget):
+            if override.target.custom:
+                models = agent_raw.get("models", {}) or {}
+                if override.target.custom not in models:
+                    logger.warning(
+                        "target.custom '%s' from .datus/config.yml not found in agent.models; "
+                        "will be resolved lazily at runtime.",
+                        override.target.custom,
+                    )
+                agent_raw["target"] = override.target.custom
+            elif override.target.provider and override.target.model:
+                agent_raw["target_provider"] = override.target.provider
+                agent_raw["target_model"] = override.target.model
+        else:
+            models = agent_raw.get("models", {}) or {}
+            if override.target not in models:
+                logger.warning(
+                    "target '%s' from .datus/config.yml not found in agent.models; will be resolved lazily at runtime.",
+                    override.target,
+                )
+            agent_raw["target"] = override.target
     if override.default_datasource is not None:
         datasources = (agent_raw.get("services", {}) or {}).get("datasources", {}) or {}
         if override.default_datasource not in datasources:

@@ -48,6 +48,26 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+_MODEL_CONFIG_ERROR_PATTERNS = re.compile(
+    r"no active model configured|not found in agent_config|unsupported model type"
+    r"|api.?key|invalid.{0,10}key",
+    re.IGNORECASE,
+)
+_AUTH_ERROR_PATTERNS = re.compile(r"unauthorized|authentication", re.IGNORECASE)
+_MODEL_CONTEXT_PATTERNS = re.compile(r"model|llm|provider|openai|anthropic|gemini|codex", re.IGNORECASE)
+
+
+def _is_model_config_error(exc: BaseException) -> bool:
+    """Return True if *exc* looks like a model configuration or auth error."""
+    msg = str(exc)
+    if isinstance(exc, KeyError):
+        msg = exc.args[0] if exc.args else ""
+    msg = str(msg)
+    return bool(
+        _MODEL_CONFIG_ERROR_PATTERNS.search(msg)
+        or (_AUTH_ERROR_PATTERNS.search(msg) and _MODEL_CONTEXT_PATTERNS.search(msg))
+    )
+
 
 def _drop_if_matches_final(
     pending: Optional[ActionHistory],
@@ -523,6 +543,8 @@ class ChatCommands:
         except Exception as e:
             logger.error(f"Chat error: {str(e)}")
             self.console.print(f"[bold red]Error:[/] {str(e)}")
+            if _is_model_config_error(e):
+                self.console.print("[yellow]Hint: Use /model to configure or switch your model.[/]")
 
     def _render_final_response(self, final_action: "ActionHistory") -> None:
         """Render the final response output (SQL, markdown, etc.) from a node action.

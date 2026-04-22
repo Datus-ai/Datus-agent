@@ -92,6 +92,7 @@ providers:
     type: claude
     base_url: https://coding-intl.dashscope.aliyuncs.com/apps/anthropic
     default_model: qwen3-coder-plus
+    models_from: qwen
     models:
       - qwen3-coder-plus
       - qwen3.5-plus
@@ -103,6 +104,7 @@ providers:
     type: claude
     base_url: https://open.bigmodel.cn/api/anthropic
     default_model: glm-5
+    models_from: glm
     models:
       - glm-5
 
@@ -110,6 +112,7 @@ providers:
     type: claude
     base_url: https://api.minimaxi.com/anthropic
     default_model: MiniMax-M2.7
+    models_from: minimax
     models:
       - MiniMax-M2.7
 
@@ -117,6 +120,7 @@ providers:
     type: claude
     base_url: https://api.kimi.com/coding/
     default_model: kimi-for-coding
+    models_from: kimi
     models:
       - kimi-for-coding
 
@@ -126,6 +130,7 @@ providers:
     auth_type: subscription
     base_url: https://api.anthropic.com
     default_model: claude-sonnet-4-6
+    models_from: claude
     models:
       - claude-sonnet-4-6
       - claude-opus-4-6
@@ -137,6 +142,7 @@ providers:
     auth_type: oauth
     base_url: https://chatgpt.com/backend-api/codex
     default_model: codex-mini-latest
+    models_from: openai
     models:
       - codex-mini-latest
 
@@ -288,5 +294,8 @@ model_specs:
     context_length: 200000
     max_tokens: 100000
   codex-mini:
+    context_length: 192000
+    max_tokens: 16384
+  codex-mini-latest:
     context_length: 192000
     max_tokens: 16384

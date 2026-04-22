@@ -37,7 +37,21 @@ The main configuration file follows a hierarchical structure:
 
 ```yaml
 agent:
-  target: openai                     # Default model provider key
+  # Provider-level credentials (preferred)
+  providers:
+    openai:
+      api_key: "${OPENAI_API_KEY}"
+    deepseek:
+      api_key: "${DEEPSEEK_API_KEY}"
+
+  # Custom / self-hosted models (optional)
+  models:
+    my-internal:
+      type: openai
+      base_url: "https://internal.example.com/v1"
+      api_key: "${MY_KEY}"
+      model: "internal-gpt-4"
+
   services:
     databases:
       production:
@@ -73,13 +87,6 @@ agent:
     scheduler:
       scheduler_service: airflow_prod
 
-  models:
-    openai:
-      type: "openai"
-      base_url: "https://api.openai.com/v1"
-      api_key: "${OPENAI_API_KEY}"
-      model: "gpt-4-turbo"
-
 storage:
   database:
     registry_name: sentence-transformers
@@ -96,6 +103,15 @@ storage:
 benchmark:
   my_custom_benchmark:
     benchmark_path: benchmark/my_custom
+```
+
+Additionally, each project directory can have a `.datus/config.yml` override for project-specific model and database selection:
+
+```yaml title=".datus/config.yml"
+target:
+  provider: openai
+  model: gpt-4.1
+default_database: production
 ```
 
 ## Environment Variable Support

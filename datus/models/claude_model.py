@@ -260,17 +260,31 @@ class ClaudeModel(OpenAICompatibleModel):
         if not self._is_oauth_token:
             return
 
-        # Try to determine expiry from the credentials file
+        expires_at = None
+
+        # Check credentials file first
         credentials_path = Path.home() / ".claude" / ".credentials.json"
         if credentials_path.exists():
             try:
                 data = json.loads(credentials_path.read_text(encoding="utf-8"))
                 expires_at = data.get("claudeAiOauth", {}).get("expiresAt")
-                if expires_at and int(expires_at) / 1000 < time.time():
-                    logger.warning("Claude subscription token has expired (expiresAt check)")
-                    raise DatusException(ErrorCode.CLAUDE_SUBSCRIPTION_TOKEN_EXPIRED) from original_error
             except (json.JSONDecodeError, OSError, ValueError):
                 pass
+
+        # Fall back to Keychain if no expiry found from file
+        if expires_at is None:
+            try:
+                from datus.auth.claude_credential import _read_keychain_credentials
+
+                keychain_data = _read_keychain_credentials()
+                if keychain_data:
+                    expires_at = keychain_data.get("claudeAiOauth", {}).get("expiresAt")
+            except Exception:
+                pass
+
+        if expires_at and int(expires_at) / 1000 < time.time():
+            logger.warning("Claude subscription token has expired (expiresAt check)")
+            raise DatusException(ErrorCode.CLAUDE_SUBSCRIPTION_TOKEN_EXPIRED) from original_error
 
         # Token is not expired (or no expiry info) — something else is wrong
         logger.warning("Claude subscription token rejected (401) but token is not expired")
@@ -326,7 +340,7 @@ class ClaudeModel(OpenAICompatibleModel):
                 messages=filtered_messages,
                 system=self._build_system_param(system_message),
                 max_tokens=kwargs.get("max_tokens", 4096),
-                temperature=kwargs.get("temperature", 0.7),
+                temperature=kwargs.get("temperature", anthropic.NOT_GIVEN),
             )
 
             if response.content:
@@ -440,7 +454,7 @@ class ClaudeModel(OpenAICompatibleModel):
                         messages=wrap_prompt_cache(messages),
                         tools=tools,
                         max_tokens=kwargs.get("max_tokens", 20480),
-                        temperature=kwargs.get("temperature", 0.7),
+                        temperature=kwargs.get("temperature", anthropic.NOT_GIVEN),
                     )
 
                     # Track token usage from this turn

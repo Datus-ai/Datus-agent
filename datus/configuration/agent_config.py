@@ -265,6 +265,25 @@ class ModelConfig:
 
 
 @dataclass
+class ProviderConfig:
+    """Provider-level credentials and overrides (``agent.providers.<name>``).
+
+    Collapses the per-model ``api_key`` / ``base_url`` repetition into a
+    single entry per provider. Provider metadata (default_model, model
+    list, ``api_key_env`` fallback, ``type``) still lives in the shipped
+    ``conf/providers.yml`` catalog; this record only captures what the
+    user needs to override.
+    """
+
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    auth_type: str = "api_key"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class NodeConfig:
     model: str
     input: BaseInput | None
@@ -430,6 +449,7 @@ def _parse_single_file_db(db_config: Dict[str, Any], dialect: str) -> DbConfig:
 class AgentConfig:
     target: str
     models: Dict[str, ModelConfig]
+    providers: Dict[str, ProviderConfig]
     nodes: Dict[str, NodeConfig]
     rag_base_path: str
     schema_linking_rate: str
@@ -466,9 +486,25 @@ class AgentConfig:
             self._project_name = _normalize_project_name(str(resolved_project_root))
         self._project_root = resolved_project_root
         self._set_path_manager(self.home)
-        models_raw = kwargs["models"]
-        self.target = kwargs["target"]
+        models_raw = kwargs.get("models", {}) or {}
+        self.target = kwargs.get("target", "") or ""
         self.models = {name: load_model_config(cfg) for name, cfg in models_raw.items()}
+        # Provider-level credentials (new schema). Empty when the user has not
+        # migrated to the ``agent.providers`` section; legacy ``agent.models``
+        # still works via :meth:`active_model` fallback.
+        providers_raw = kwargs.get("providers", {}) or {}
+        self.providers = _load_provider_configs(providers_raw)
+        # Project-level active target forwarded by ``_apply_project_override``:
+        # when both are set, ``active_model()`` synthesizes a ``ModelConfig``
+        # from ``providers`` + the shipped ``conf/providers.yml`` catalog
+        # instead of indexing ``agent.models``.
+        self._target_provider: Optional[str] = kwargs.get("target_provider") or None
+        self._target_model: Optional[str] = kwargs.get("target_model") or None
+        # Shared lazily-loaded ``conf/providers.yml`` catalog (metadata only:
+        # default_model, base_url, api_key_env, type, model_overrides). Kept
+        # as ``None`` until first access so tests that stub load paths can
+        # inject their own via :meth:`set_provider_catalog`.
+        self._provider_catalog: Optional[Dict[str, Any]] = None
         self._benchmark_config_dict = kwargs.get("benchmark", {})
         # ``filesystem_strict`` is a process-wide safety switch that makes
         # ``FilesystemFuncTool`` fail-closed for EXTERNAL paths (outside the
@@ -558,9 +594,13 @@ class AgentConfig:
                 # SaaS mode: skip init_embedding_models() to avoid mutating global EMBEDDING_MODELS
                 self.storage_configs = {}
             else:
-                self.storage_configs = init_embedding_models(
-                    storage_config, openai_configs=self.models, default_openai_config=self.active_model()
-                )
+                try:
+                    self.storage_configs = init_embedding_models(
+                        storage_config, openai_configs=self.models, default_openai_config=self.active_model()
+                    )
+                except (DatusException, KeyError, ValueError) as e:
+                    logger.warning("Skipped embedding model init (no valid active model): %s", e)
+                    self.storage_configs = {}
         else:
             self.storage_configs = {}
 
@@ -1136,7 +1176,35 @@ class AgentConfig:
         )
 
     def active_model(self) -> ModelConfig:
-        return self.models[self.target]
+        """Return the currently active :class:`ModelConfig`.
+
+        Three dispatch paths, tried in order:
+
+        1. **Provider-level** (``self._target_provider`` + ``self._target_model``
+           set via ``./.datus/config.yml``) — synthesize a ``ModelConfig`` by
+           merging provider credentials from ``agent.providers`` with metadata
+           (base_url, type, model_overrides) from ``conf/providers.yml``.
+        2. **Custom / legacy** (``self.target`` points to an entry in
+           ``agent.models``) — return the pre-loaded ``ModelConfig`` verbatim.
+        3. Neither configured → raise :class:`DatusException`.
+
+        Raising instead of returning ``None`` keeps the contract aligned with
+        existing call sites that index the return value directly.
+        """
+        if self._target_provider and self._target_model:
+            return self._synthesize_model(self._target_provider, self._target_model)
+        if self.target and self.target in self.models:
+            return self.models[self.target]
+        raise DatusException(
+            code=ErrorCode.COMMON_FIELD_REQUIRED,
+            message=(
+                "No active LLM model configured. "
+                "Run the Datus CLI and use the /model command to set up a provider and model:\n"
+                "  1. Start CLI: datus\n"
+                "  2. Use /model to pick a provider and model\n"
+                "Or run 'datus init' for first-time setup."
+            ),
+        )
 
     def model_config(self, name: str = "") -> ModelConfig:
         if not name:
@@ -1144,6 +1212,200 @@ class AgentConfig:
         if name not in self.models:
             raise ValueError(f"Model {name} not found")
         return self.models[name]
+
+    # ── Provider-level helpers ─────────────────────────────────────────────
+
+    @property
+    def provider_catalog(self) -> Dict[str, Any]:
+        """Lazily load the shipped ``conf/providers.yml`` catalog.
+
+        Uses :func:`resolve_provider_models` from
+        ``datus.cli.provider_model_catalog`` which implements remote→cache→local
+        fallback. Returns an empty mapping on any failure so callers can treat
+        ``self.provider_catalog.get(name)`` uniformly regardless of network.
+        """
+        if self._provider_catalog is None:
+            self._provider_catalog = _load_provider_catalog()
+        return self._provider_catalog
+
+    def set_provider_catalog(self, catalog: Dict[str, Any]) -> None:
+        """Inject a catalog (used by tests / MCP / custom entry points)."""
+        self._provider_catalog = catalog
+
+    def _synthesize_model(self, provider: str, model_name: str) -> ModelConfig:
+        """Build a :class:`ModelConfig` from provider overrides + catalog defaults.
+
+        Resolution order for each field (first non-empty wins):
+          - ``api_key``: ``agent.providers[provider].api_key`` (with ``${ENV}``
+            interpolation) → ``os.getenv(providers.yml[provider].api_key_env)``.
+          - ``base_url``: ``agent.providers[provider].base_url`` →
+            ``providers.yml[provider].base_url``.
+          - ``type``, ``auth_type``: ``providers.yml`` is authoritative; the
+            user override cannot change them (would require different SDK).
+          - ``temperature`` / ``top_p`` / etc.: read from
+            ``providers.yml.model_overrides[model_name]`` (e.g. ``kimi-k2.5``
+            forces temperature=1).
+        """
+        catalog = self.provider_catalog
+        providers_meta = catalog.get("providers", {}) if isinstance(catalog, dict) else {}
+        provider_meta = providers_meta.get(provider, {}) if isinstance(providers_meta, dict) else {}
+        overrides_catalog = catalog.get("model_overrides", {}) if isinstance(catalog, dict) else {}
+
+        user_cfg = self.providers.get(provider, ProviderConfig())
+        api_key = resolve_env(user_cfg.api_key or "") if user_cfg.api_key else ""
+        if api_key.startswith("<MISSING:"):
+            api_key = ""
+        if not api_key:
+            env_name = provider_meta.get("api_key_env") if isinstance(provider_meta, dict) else None
+            if env_name:
+                api_key = os.getenv(str(env_name), "") or ""
+        base_url_raw = user_cfg.base_url or (provider_meta.get("base_url") if isinstance(provider_meta, dict) else None)
+        base_url = resolve_env(str(base_url_raw)) if base_url_raw else None
+        if isinstance(base_url, str) and base_url.startswith("<MISSING:"):
+            base_url = None
+        model_type = (provider_meta.get("type") if isinstance(provider_meta, dict) else None) or provider
+        auth_type = user_cfg.auth_type
+        catalog_auth = provider_meta.get("auth_type") if isinstance(provider_meta, dict) else None
+        if catalog_auth:
+            auth_type = str(catalog_auth)
+
+        model_kwargs: Dict[str, Any] = {}
+        overrides = overrides_catalog.get(model_name, {}) if isinstance(overrides_catalog, dict) else {}
+        if isinstance(overrides, dict):
+            for key in ("temperature", "top_p", "enable_thinking"):
+                if key in overrides:
+                    model_kwargs[key] = overrides[key]
+
+        return ModelConfig(
+            type=str(model_type),
+            api_key=api_key,
+            model=model_name,
+            base_url=str(base_url) if base_url else None,
+            auth_type=auth_type,
+            **model_kwargs,
+        )
+
+    def set_active_provider_model(self, provider: str, model: str, persist: bool = True) -> None:
+        """Switch the active LLM to ``<provider>/<model>`` at runtime.
+
+        Refreshes internal target state so any subsequent ``active_model()``
+        call resolves via the provider-synthesis path. When ``persist`` is
+        ``True`` (default), writes the selection to ``./.datus/config.yml``
+        so the choice survives process restarts.
+        """
+        if not provider or not model:
+            raise DatusException(
+                code=ErrorCode.COMMON_FIELD_REQUIRED,
+                message="set_active_provider_model requires both provider and model",
+            )
+        self._target_provider = provider
+        self._target_model = model
+        if persist:
+            from datus.configuration.project_config import (
+                ProjectOverride,
+                ProjectTarget,
+                load_project_override,
+                save_project_override,
+            )
+
+            current = load_project_override(cwd=str(self._project_root)) or ProjectOverride()
+            current.target = ProjectTarget(provider=provider, model=model)
+            save_project_override(current, cwd=str(self._project_root))
+
+    def set_active_custom(self, name: str, persist: bool = True) -> None:
+        """Switch the active LLM to a legacy ``agent.models[name]`` entry.
+
+        Mirrors :meth:`set_active_provider_model` but drops into the
+        legacy custom-model dispatch path. Persists as
+        ``target: {custom: name}`` so the intent is explicit on reload.
+        """
+        if not name or name not in self.models:
+            raise DatusException(
+                code=ErrorCode.COMMON_FIELD_INVALID,
+                message=f"Unknown custom model `{name}`. Available: {sorted(self.models.keys())}",
+            )
+        self._target_provider = None
+        self._target_model = None
+        self.target = name
+        if persist:
+            from datus.configuration.project_config import (
+                ProjectOverride,
+                ProjectTarget,
+                load_project_override,
+                save_project_override,
+            )
+
+            current = load_project_override(cwd=str(self._project_root)) or ProjectOverride()
+            current.target = ProjectTarget(custom=name)
+            save_project_override(current, cwd=str(self._project_root))
+
+    def set_provider_config(
+        self,
+        provider: str,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        auth_type: str = "api_key",
+        persist: bool = True,
+    ) -> None:
+        """Record provider-level credentials in memory and (optionally) on disk.
+
+        The disk write targets the global ``~/.datus/conf/agent.yml`` under
+        ``agent.providers.<provider>`` so all projects share the credential.
+        The in-memory ``self.providers`` map is updated unconditionally so
+        the current session can use the new value without reloading.
+        """
+        entry = self.providers.get(provider, ProviderConfig())
+        if api_key is not None:
+            entry.api_key = api_key or None
+        if base_url is not None:
+            entry.base_url = base_url or None
+        if auth_type:
+            entry.auth_type = auth_type
+        self.providers[provider] = entry
+        if persist:
+            _persist_provider_section(provider, entry)
+
+    def provider_available(self, provider: str) -> bool:
+        """Return True when the provider has usable credentials available.
+
+        ``api_key`` providers: either the user set an explicit key in
+        ``agent.providers`` *or* the shipped env var fallback resolves to a
+        non-empty value. ``subscription`` / ``oauth`` providers defer to
+        ``datus.auth`` helpers that inspect on-disk tokens.
+        """
+        catalog = self.provider_catalog
+        providers_meta = catalog.get("providers", {}) if isinstance(catalog, dict) else {}
+        meta = providers_meta.get(provider, {}) if isinstance(providers_meta, dict) else {}
+        auth_type = (meta.get("auth_type") if isinstance(meta, dict) else None) or self.providers.get(
+            provider, ProviderConfig()
+        ).auth_type
+
+        if auth_type == "subscription":
+            try:
+                from datus.auth.claude_credential import get_claude_subscription_token
+
+                user_cfg = self.providers.get(provider, ProviderConfig())
+                token, _ = get_claude_subscription_token(api_key_from_config=user_cfg.api_key or "")
+                return bool(token)
+            except Exception:
+                return False
+        if auth_type == "oauth":
+            try:
+                from datus.auth.oauth_manager import OAuthManager
+
+                return OAuthManager().is_authenticated()
+            except Exception:
+                return False
+
+        user_cfg = self.providers.get(provider, ProviderConfig())
+        if user_cfg.api_key:
+            resolved_api_key = resolve_env(user_cfg.api_key).strip()
+            if resolved_api_key and not resolved_api_key.startswith("<MISSING:"):
+                return True
+        env_name = meta.get("api_key_env") if isinstance(meta, dict) else None
+        if env_name and os.getenv(str(env_name), "").strip():
+            return True
+        return False
 
     def rag_storage_path(self) -> str:
         # rag_base_path is already sharded by project_name (``{home}/data/{project_name}``),
@@ -1338,6 +1600,76 @@ def _resolve_nested_value(value: Any) -> Any:
     if isinstance(value, list):
         return [_resolve_nested_value(item) for item in value]
     return value
+
+
+def _load_provider_configs(raw: Dict[str, Any]) -> Dict[str, ProviderConfig]:
+    """Parse ``agent.providers`` YAML section into :class:`ProviderConfig` map."""
+    out: Dict[str, ProviderConfig] = {}
+    if not isinstance(raw, dict):
+        return out
+    for name, cfg in raw.items():
+        if not isinstance(cfg, dict):
+            continue
+        if not _SAFE_NAME_RE.match(str(name)):
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_INVALID,
+                message=f"Invalid provider name '{name}'. Only alphanumeric, underscore, hyphen allowed.",
+            )
+        api_key_raw = cfg.get("api_key")
+        base_url_raw = cfg.get("base_url")
+        out[name] = ProviderConfig(
+            api_key=str(api_key_raw) if api_key_raw is not None else None,
+            base_url=str(base_url_raw) if base_url_raw is not None else None,
+            auth_type=str(cfg.get("auth_type", "api_key")),
+        )
+    return out
+
+
+def _load_provider_catalog() -> Dict[str, Any]:
+    """Load ``conf/providers.yml`` with three-tier fallback.
+
+    Returns an empty dict on any failure. Keeping this helper module-local
+    avoids a circular import between ``agent_config`` and the CLI layer.
+    """
+    try:
+        import yaml
+
+        from datus.cli.provider_model_catalog import resolve_provider_models
+        from datus.utils.resource_utils import read_data_file_text
+
+        raw = yaml.safe_load(read_data_file_text(resource_path="conf/providers.yml", encoding="utf-8")) or {}
+        return resolve_provider_models(raw)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.warning(f"Failed to load conf/providers.yml: {e}")
+        return {}
+
+
+def _persist_provider_section(provider: str, entry: "ProviderConfig") -> None:
+    """Write ``agent.providers.<provider>`` back into the loaded agent.yml.
+
+    Routes through :class:`ConfigurationManager` so the existing
+    save path (atomic YAML dump, preserves other keys) is reused. The
+    entry is persisted with only the fields the user actually set,
+    matching ``save_project_override`` ergonomics.
+    """
+    try:
+        from datus.configuration.agent_config_loader import configuration_manager
+
+        cfg_mgr = configuration_manager()
+        current = cfg_mgr.get("providers", {}) or {}
+        if not isinstance(current, dict):
+            current = {}
+        payload = {}
+        if entry.api_key is not None:
+            payload["api_key"] = entry.api_key
+        if entry.base_url is not None:
+            payload["base_url"] = entry.base_url
+        if entry.auth_type and entry.auth_type != "api_key":
+            payload["auth_type"] = entry.auth_type
+        current[provider] = payload
+        cfg_mgr.update_item("providers", current, delete_old_key=False, save=True)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.warning(f"Failed to persist provider config `{provider}`: {e}")
 
 
 def load_model_config(data: dict) -> ModelConfig:

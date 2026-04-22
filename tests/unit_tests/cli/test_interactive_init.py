@@ -20,16 +20,16 @@ class TestInit:
     """N4: Init configuration and connectivity tests."""
 
     def test_llm_config_probe_success(self):
-        """N4-01a: LLM connectivity probe succeeds when model returns a response."""
+        """N4-01a: LLM connectivity probe succeeds when the staged probe returns a response."""
         with tempfile.TemporaryDirectory() as tmpdir:
             init = InteractiveInit(user_home=tmpdir)
 
-            init.config["agent"]["target"] = "openai"
-            init.config["agent"]["models"]["openai"] = {
+            init._pending_probe = {
                 "type": "openai",
                 "base_url": "https://api.openai.com/v1",
                 "api_key": "test-api-key-123",
                 "model": "gpt-4.1",
+                "auth_type": "api_key",
             }
 
             # Mock the underlying LLM model class so _test_llm_connectivity
@@ -50,12 +50,12 @@ class TestInit:
         with tempfile.TemporaryDirectory() as tmpdir:
             init = InteractiveInit(user_home=tmpdir)
 
-            init.config["agent"]["target"] = "openai"
-            init.config["agent"]["models"]["openai"] = {
+            init._pending_probe = {
                 "type": "openai",
                 "base_url": "https://api.openai.com/v1",
                 "api_key": "bad-key",
                 "model": "gpt-4.1",
+                "auth_type": "api_key",
             }
 
             mock_model_instance = MagicMock()
@@ -74,12 +74,12 @@ class TestInit:
         with tempfile.TemporaryDirectory() as tmpdir:
             init = InteractiveInit(user_home=tmpdir)
 
-            init.config["agent"]["target"] = "unsupported_provider"
-            init.config["agent"]["models"]["unsupported_provider"] = {
+            init._pending_probe = {
                 "type": "unsupported_provider",
                 "base_url": "https://example.com",
                 "api_key": "key",
                 "model": "model",
+                "auth_type": "api_key",
             }
 
             success, error_msg = init._test_llm_connectivity()
@@ -87,23 +87,30 @@ class TestInit:
             assert success is False, "Should fail for unsupported model type"
             assert "Unsupported" in error_msg, f"Error should mention unsupported type, got: {error_msg}"
 
-    def test_config_file_generation(self):
-        """N4-03: Configuration file generation and validation."""
+    def test_llm_config_probe_without_pending_probe_fails(self):
+        """Calling ``_test_llm_connectivity`` without a staged probe returns a clear error."""
         with tempfile.TemporaryDirectory() as tmpdir:
             init = InteractiveInit(user_home=tmpdir)
+            success, error_msg = init._test_llm_connectivity()
+            assert success is False
+            assert "pending" in error_msg.lower()
 
-            # Set up config directory
+    def test_config_file_generation(self, monkeypatch):
+        """N4-03: agent.yml + project-level .datus/config.yml round-trip."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # ``save_project_override`` writes relative to CWD, so pin it to
+            # the tmpdir for the duration of the test.
+            monkeypatch.chdir(tmpdir)
+            init = InteractiveInit(user_home=tmpdir)
+
             conf_dir = Path(tmpdir) / ".datus" / "conf"
             conf_dir.mkdir(parents=True, exist_ok=True)
             init.conf_dir = conf_dir
 
-            # Configure all sections
-            init.config["agent"]["target"] = "deepseek"
-            init.config["agent"]["models"]["deepseek"] = {
-                "type": "deepseek",
-                "base_url": "https://api.deepseek.com",
+            init.config["agent"]["providers"]["deepseek"] = {
                 "api_key": "test-key-456",
-                "model": "deepseek-chat",
+                "base_url": "https://api.deepseek.com",
+                "auth_type": "api_key",
             }
             init.config["agent"]["namespace"]["test_ns"] = {
                 "type": "duckdb",
@@ -112,33 +119,30 @@ class TestInit:
             }
             init.config["agent"]["storage"]["workspace_root"] = str(Path(tmpdir) / "workspace")
             init.namespace_name = "test_ns"
+            from datus.configuration.project_config import ProjectTarget
 
-            # Save configuration
+            init._pending_target = ProjectTarget(provider="deepseek", model="deepseek-chat")
+
             result = init._save_configuration()
             assert result is True, "Configuration save should succeed"
 
-            # Verify file exists
             config_path = conf_dir / "agent.yml"
             assert config_path.exists(), "agent.yml should be created"
 
-            # Load and validate the saved config
             with open(config_path, "r") as f:
                 saved_config = yaml.safe_load(f)
 
-            assert saved_config["agent"]["target"] == "deepseek", "Saved config should have correct target"
-            assert "deepseek" in saved_config["agent"]["models"], (
-                "Saved config should have deepseek model configuration"
-            )
-            assert saved_config["agent"]["models"]["deepseek"]["model"] == "deepseek-chat", (
-                "Saved config should have correct model name"
-            )
-            assert "test_ns" in saved_config["agent"]["namespace"], "Saved config should have namespace configuration"
-            assert saved_config["agent"]["namespace"]["test_ns"]["type"] == "duckdb", (
-                "Saved namespace should have correct db type"
-            )
-            assert "workspace_root" in saved_config["agent"]["storage"], (
-                "Saved config should have workspace_root in storage"
-            )
+            assert "deepseek" in saved_config["agent"]["providers"]
+            assert saved_config["agent"]["providers"]["deepseek"]["api_key"] == "test-key-456"
+            assert "target" not in saved_config["agent"], "Global target should no longer be written"
+            assert "models" not in saved_config["agent"], "Init wizard must not write agent.models"
+            assert "test_ns" in saved_config["agent"]["namespace"]
+
+            project_cfg_path = Path(tmpdir) / ".datus" / "config.yml"
+            assert project_cfg_path.exists(), "Project-level .datus/config.yml should be created"
+            with open(project_cfg_path, "r") as f:
+                project_cfg = yaml.safe_load(f)
+            assert project_cfg["target"] == {"provider": "deepseek", "model": "deepseek-chat"}
 
     def test_optional_component_init(self):
         """N4-04: Optional component initialization (metadata and reference SQL)."""
@@ -399,26 +403,31 @@ class TestConfigureWorkspace:
 
 class TestDisplayMethods:
     def test_display_summary_smoke(self):
+        from datus.configuration.project_config import ProjectTarget
+
         with tempfile.TemporaryDirectory() as tmpdir:
             init = InteractiveInit(user_home=tmpdir)
-            init.config["agent"]["target"] = "openai"
-            init.config["agent"]["models"]["openai"] = {
-                "type": "openai",
-                "model": "gpt-4.1",
+            init.console = Console(file=io.StringIO(), no_color=True)
+            init._pending_target = ProjectTarget(provider="openai", model="gpt-4.1")
+            init.config["agent"]["providers"]["openai"] = {
                 "api_key": "key",
                 "base_url": "https://api.openai.com/v1",
+                "auth_type": "api_key",
             }
             init.namespace_name = "test_ns"
             init.workspace_path = "/tmp/workspace"
-            # Should not raise
             init._display_summary()
+            output = init.console.file.getvalue()
+            assert "openai" in output
+            assert "gpt-4.1" in output
 
     def test_display_completion_smoke(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             init = InteractiveInit(user_home=tmpdir)
+            init.console = Console(file=io.StringIO(), no_color=True)
             init.namespace_name = "test_ns"
-            # Should not raise
             init._display_completion()
+            assert "datus" in init.console.file.getvalue().lower()
 
 
 # ---------------------------------------------------------------------------
@@ -439,8 +448,8 @@ class TestConfigureLLM:
 
             assert result is False
 
-    def test_kimi_k25_sets_temperature_and_top_p_in_config(self):
-        """kimi-k2.5 requires temperature=1.0 and top_p=0.95; verify they are stored in config."""
+    def test_api_key_provider_writes_provider_level_credentials(self):
+        """``_configure_llm`` persists the credential under ``agent.providers`` and stages the target."""
         with tempfile.TemporaryDirectory() as tmpdir:
             init = InteractiveInit(user_home=tmpdir)
 
@@ -458,46 +467,22 @@ class TestConfigureLLM:
                 result = init._configure_llm()
 
             assert result is True
-            kimi_config = init.config["agent"]["models"]["kimi"]
-            assert kimi_config["temperature"] == 1.0, "kimi-k2.5 should have temperature=1.0"
-            assert kimi_config["top_p"] == 0.95, "kimi-k2.5 should have top_p=0.95"
+            providers = init.config["agent"]["providers"]
+            assert providers["kimi"]["api_key"] == "test-key"
+            assert providers["kimi"]["base_url"] == "https://api.moonshot.cn/v1"
+            assert providers["kimi"]["auth_type"] == "api_key"
+            assert init._pending_target.provider == "kimi"
+            assert init._pending_target.model == "kimi-k2.5"
+            # The init wizard never writes legacy agent.models entries.
+            assert "models" not in init.config["agent"]
 
-    def test_kimi_k25_passes_params_to_model_config(self):
-        """Verify _test_llm_connectivity passes temperature/top_p to ModelConfig for kimi-k2.5."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            init = InteractiveInit(user_home=tmpdir)
-
-            init.config["agent"]["target"] = "kimi"
-            init.config["agent"]["models"]["kimi"] = {
-                "type": "kimi",
-                "base_url": "https://api.moonshot.cn/v1",
-                "api_key": "test-key",
-                "model": "kimi-k2.5",
-                "temperature": 1.0,
-                "top_p": 0.95,
-            }
-
-            mock_model_instance = MagicMock()
-            mock_model_instance.generate.return_value = "Hello!"
-            mock_module = MagicMock()
-            mock_module.KimiModel.return_value = mock_model_instance
-
-            with patch.dict("sys.modules", {"datus.models.kimi_model": mock_module}):
-                success, error_msg = init._test_llm_connectivity()
-
-            assert success is True
-            # Verify ModelConfig was created with correct temperature and top_p
-            model_config = mock_module.KimiModel.call_args.kwargs["model_config"]
-            assert model_config.temperature == 1.0, "ModelConfig should have temperature=1.0"
-            assert model_config.top_p == 0.95, "ModelConfig should have top_p=0.95"
-
-    def test_non_kimi_model_has_no_param_overrides(self):
-        """Non-kimi models should not get temperature/top_p overrides in config."""
+    def test_api_key_provider_probe_failure_drops_pending_target(self):
+        """Probe failure must leave no staged target so the caller can retry cleanly."""
         with tempfile.TemporaryDirectory() as tmpdir:
             init = InteractiveInit(user_home=tmpdir)
 
             mock_model_instance = MagicMock()
-            mock_model_instance.generate.return_value = "Hello!"
+            mock_model_instance.generate.side_effect = ConnectionError("blocked")
             mock_module = MagicMock()
             mock_module.OpenAIModel.return_value = mock_model_instance
 
@@ -509,36 +494,9 @@ class TestConfigureLLM:
             ):
                 result = init._configure_llm()
 
-            assert result is True
-            openai_config = init.config["agent"]["models"]["openai"]
-            assert "temperature" not in openai_config, "OpenAI models should not have temperature override"
-            assert "top_p" not in openai_config, "OpenAI models should not have top_p override"
-
-    def test_qwen3_coder_plus_sets_temperature_and_top_p(self):
-        """qwen3-coder-plus requires temperature=1.0 and top_p=0.95; verify they are stored in config."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            init = InteractiveInit(user_home=tmpdir)
-
-            mock_model_instance = MagicMock()
-            mock_model_instance.generate.return_value = "Hello!"
-            mock_module = MagicMock()
-            mock_module.OpenAIModel.return_value = mock_model_instance
-
-            with (
-                patch("datus.cli.interactive_init.select_choice", side_effect=["qwen", "qwen3-coder-plus"]),
-                patch(
-                    "datus.cli.interactive_init.Prompt.ask",
-                    return_value="https://dashscope.aliyuncs.com/compatible-mode/v1",
-                ),
-                patch("datus.cli.interactive_init.getpass", return_value="test-key"),
-                patch.dict("sys.modules", {"datus.models.openai_model": mock_module}),
-            ):
-                result = init._configure_llm()
-
-            assert result is True
-            qwen_config = init.config["agent"]["models"]["qwen"]
-            assert qwen_config["temperature"] == 1.0, "qwen3-coder-plus should have temperature=1.0"
-            assert qwen_config["top_p"] == 0.95, "qwen3-coder-plus should have top_p=0.95"
+            assert result is False
+            assert init._pending_target is None
+            assert "openai" not in init.config["agent"]["providers"]
 
 
 # ---------------------------------------------------------------------------
@@ -609,79 +567,15 @@ class TestOverwriteSqlAndLogResult:
         mock_print_exc.assert_called_once()
 
 
-class TestConfigureCodexOAuth:
-    """Tests for the Codex OAuth configuration flow."""
+class TestConfigureLLMSubscriptionOAuth:
+    """Subscription / OAuth providers delegate to ``provider_auth_flows``."""
 
-    def test_codex_oauth_success(self):
-        """Test successful Codex OAuth configuration."""
+    def test_subscription_success_writes_provider_section(self):
+        """A successful helper result populates ``agent.providers`` + pending target."""
         with tempfile.TemporaryDirectory() as tmpdir:
             init = InteractiveInit(user_home=tmpdir)
 
-            provider_config = {
-                "type": "codex",
-                "base_url": "https://chatgpt.com/backend-api/codex",
-                "default_model": "gpt-5.3-codex",
-                "models": ["gpt-5.3-codex", "gpt-5.1-codex-mini", "o3-codex"],
-                "auth_type": "oauth",
-            }
-
-            with (
-                patch("datus.cli.interactive_init.select_choice", return_value="gpt-5.3-codex"),
-                patch("datus.auth.oauth_manager.OAuthManager") as mock_oauth_cls,
-                patch.object(init, "console"),
-            ):
-                mock_oauth = MagicMock()
-                mock_oauth_cls.return_value = mock_oauth
-
-                # Mock the connectivity test
-                with patch("datus.models.codex_model.CodexModel") as mock_model_cls:
-                    mock_model = MagicMock()
-                    mock_model.generate.return_value = "Hi there!"
-                    mock_model_cls.return_value = mock_model
-
-                    result = init._configure_codex_oauth("codex", provider_config)
-
-            assert result is True
-            assert init.config["agent"]["target"] == "codex"
-            assert init.config["agent"]["models"]["codex"]["type"] == "codex"
-            assert init.config["agent"]["models"]["codex"]["auth_type"] == "oauth"
-            assert init.config["agent"]["models"]["codex"]["api_key"] == ""
-            mock_oauth.login_browser.assert_called_once()
-
-    def test_codex_oauth_login_failure(self):
-        """Test Codex OAuth when login fails."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            init = InteractiveInit(user_home=tmpdir)
-
-            provider_config = {
-                "type": "codex",
-                "base_url": "https://chatgpt.com/backend-api/codex",
-                "default_model": "gpt-5.3-codex",
-                "auth_type": "oauth",
-            }
-
-            with (
-                patch("datus.cli.interactive_init.Prompt.ask", side_effect=["gpt-5.3-codex"]),
-                patch("datus.auth.oauth_manager.OAuthManager") as mock_oauth_cls,
-                patch.object(init, "console"),
-            ):
-                mock_oauth = MagicMock()
-                mock_oauth.login_browser.side_effect = Exception("Login failed")
-                mock_oauth_cls.return_value = mock_oauth
-
-                result = init._configure_codex_oauth("codex", provider_config)
-
-            assert result is False
-
-
-class TestConfigureClaudeSubscription:
-    """Tests for the Claude subscription configuration flow."""
-
-    def test_claude_subscription_success_keeps_token_in_config(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            init = InteractiveInit(user_home=tmpdir)
-
-            provider_config = {
+            provider_info = {
                 "type": "claude",
                 "base_url": "https://api.anthropic.com",
                 "default_model": "claude-sonnet-4-6",
@@ -689,41 +583,54 @@ class TestConfigureClaudeSubscription:
                 "auth_type": "subscription",
             }
 
-            with (
-                patch("datus.cli.interactive_init.select_choice", return_value="claude-sonnet-4-6"),
-                patch.object(init, "_get_subscription_token", return_value=("sk-ant-oat01-test-token", "subscription")),
-                patch.object(init, "_test_llm_connectivity", return_value=(True, "")),
-                patch.object(init, "console"),
-            ):
-                result = init._configure_claude_subscription("claude_subscription", provider_config)
-
-            assert result is True
-            assert init.config["agent"]["target"] == "claude_subscription"
-            model_cfg = init.config["agent"]["models"]["claude_subscription"]
-            assert model_cfg["type"] == "claude"
-            assert model_cfg["auth_type"] == "subscription"
-            assert model_cfg["api_key"] == "sk-ant-oat01-test-token"
-
-    def test_claude_subscription_failure_preserves_token_for_retry(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            init = InteractiveInit(user_home=tmpdir)
-
-            provider_config = {
-                "type": "claude",
-                "base_url": "https://api.anthropic.com",
-                "default_model": "claude-sonnet-4-6",
-                "models": ["claude-sonnet-4-6"],
+            helper_return = {
+                "model": "claude-sonnet-4-6",
+                "api_key": "sk-ant-oat01-test",
                 "auth_type": "subscription",
+                "base_url": "https://api.anthropic.com",
+                "type": "claude",
             }
 
             with (
-                patch("datus.cli.interactive_init.select_choice", return_value="claude-sonnet-4-6"),
-                patch.object(init, "_get_subscription_token", return_value=("sk-ant-oat01-test-token", "subscription")),
-                patch.object(init, "_test_llm_connectivity", return_value=(False, "401 unauthorized")),
-                patch.object(init, "console"),
+                patch("datus.cli.interactive_init.select_choice", return_value="claude_subscription"),
+                patch("datus.cli.interactive_init.configure_claude_subscription", return_value=helper_return),
             ):
-                result = init._configure_claude_subscription("claude_subscription", provider_config)
+                # The catalog is loaded inline; pre-seed it so the provider
+                # under test exists in the choice dict the test feeds.
+                with patch.object(
+                    init, "_load_provider_catalog", return_value={"providers": {"claude_subscription": provider_info}}
+                ):
+                    result = init._configure_llm()
+
+            assert result is True
+            assert init.config["agent"]["providers"]["claude_subscription"] == {
+                "api_key": "sk-ant-oat01-test",
+                "base_url": "https://api.anthropic.com",
+                "auth_type": "subscription",
+            }
+            assert init._pending_target.provider == "claude_subscription"
+            assert init._pending_target.model == "claude-sonnet-4-6"
+
+    def test_oauth_helper_failure_returns_false(self):
+        """If the OAuth helper returns None (login failed), the flow aborts."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            init = InteractiveInit(user_home=tmpdir)
+
+            provider_info = {
+                "type": "codex",
+                "base_url": "https://chatgpt.com/backend-api/codex",
+                "default_model": "gpt-5.3-codex",
+                "models": ["gpt-5.3-codex"],
+                "auth_type": "oauth",
+            }
+
+            with (
+                patch("datus.cli.interactive_init.select_choice", return_value="codex"),
+                patch("datus.cli.interactive_init.configure_codex_oauth", return_value=None),
+                patch.object(init, "_load_provider_catalog", return_value={"providers": {"codex": provider_info}}),
+            ):
+                result = init._configure_llm()
 
             assert result is False
-            model_cfg = init.config["agent"]["models"]["claude_subscription"]
-            assert model_cfg["api_key"] == "sk-ant-oat01-test-token"
+            assert init._pending_target is None
+            assert "codex" not in init.config["agent"]["providers"]

@@ -153,7 +153,7 @@ datus-cli --database duckdb-demo
 ```{ .yaml .no-copy }
 Initializing AI capabilities in background...
 
-Datus - AI-powered SQL command-line interface
+Datus - Data engineering agent builds evolvable context for your data system
 Type '/help' for a list of commands or '/exit' to quit.
 
 Database duckdb-demo selected

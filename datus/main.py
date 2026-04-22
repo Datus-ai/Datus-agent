@@ -53,10 +53,11 @@ def create_parser() -> argparse.ArgumentParser:
     # Create subparsers for different commands, inheriting global options
     subparsers = parser.add_subparsers(dest="action", help="Action to perform")
 
-    # configure command — LLM + database + workspace setup
+    # configure command — database connections only (use `/model` inside the
+    # CLI for LLM selection).
     subparsers.add_parser(
         "configure",
-        help="Configure LLM, database connections, and workspace settings",
+        help="Configure database connections (use `/model` inside the CLI to switch LLMs)",
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

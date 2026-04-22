@@ -16,85 +16,73 @@ agent:
   # symlinks, monorepo subdirs, or CI sandboxes that should share the same
   # sessions/data shards.  Must match ``^[a-zA-Z0-9_-]+$`` and be ≤ 200 chars.
   # project_name: my_project
-  target: anthropic
-  models:
+  #
+  # LLM configuration layout (v2)
+  #
+  # - ``agent.providers.<name>`` (preferred)
+  #   Provider-level credentials. Configure the API key (or rely on the env
+  #   var declared in ``conf/providers.yml``) once per provider; the ``/model``
+  #   slash command in the CLI can then switch between any model exposed by
+  #   that provider without rewriting YAML. Supported providers (keys) are
+  #   shipped in ``conf/providers.yml``: openai, claude, claude_subscription,
+  #   codex, deepseek, kimi, qwen, gemini, glm, minimax, alibaba_coding,
+  #   glm_coding, minimax_coding, kimi_coding.
+  #
+  # - ``agent.models.<name>`` (legacy / custom)
+  #   Retained for self-hosted or private-deployment models — hand-edit this
+  #   section when you need a bespoke base_url / model SKU. The ``/model``
+  #   command surfaces entries here under the ``Custom`` group.
+  #
+  # The active selection lives in ``{project_root}/.datus/config.yml`` as:
+  #   target:
+  #     provider: openai        # key of agent.providers
+  #     model:    gpt-4.1       # concrete SKU
+  # or, for a custom entry:
+  #   target:
+  #     custom: my-internal-model
+  # The ``agent.target`` field below is still honored for backwards compat
+  # when no project-level override exists.
+
+  providers:
     openai:
-      type: openai
-      base_url: https://api.openai.com/v1
       api_key: ${OPENAI_API_KEY}
-      model: gpt-4-turbo
-
-    google:
-      type: gemini
-      base_url: https://generativelanguage.googleapis.com/v1beta
-      api_key: ${GEMINI_API_KEY}
-      model: gemini-2.0-flash-exp
-
-    anthropic:
-      type: claude
-      base_url: https://api.anthropic.com
+    claude:
       api_key: ${ANTHROPIC_API_KEY}
-      model: claude-haiku-4-5
-
-    deepseek_v3:
-      type: deepseek
-      base_url: https://api.deepseek.com
+    deepseek:
       api_key: ${DEEPSEEK_API_KEY}
-      model: deepseek-chat
-
-    # OpenRouter (unified AI gateway - 300+ models via single API key)
-    # Get your API key at https://openrouter.ai/keys
-    openrouter:
-      type: openrouter
-      base_url: https://openrouter.ai/api/v1
-      api_key: ${OPENROUTER_API_KEY}
-      model: anthropic/claude-sonnet-4  # any OpenRouter model: openai/gpt-4o, google/gemini-2.5-pro, etc.
-
-    # Claude Subscription (Pro/Max plan via setup-token)
-    # Run 'claude setup-token' to get an OAuth token, then set CLAUDE_CODE_OAUTH_TOKEN env var,
-    # or let it auto-detect from ~/.claude/.credentials.json
+    gemini:
+      api_key: ${GEMINI_API_KEY}
+    # Claude Pro/Max (subscription token via `claude setup-token`, auto-detected).
     claude_subscription:
-      type: claude
-      base_url: https://api.anthropic.com
-      api_key: ${CLAUDE_CODE_OAUTH_TOKEN}
-      model: claude-sonnet-4-20250514
       auth_type: subscription
-
-    # OpenAI Codex (ChatGPT subscription, OAuth authentication)
-    # Run `datus init` and select "codex" to complete OAuth login
+    # ChatGPT Plus/Pro (browser OAuth through `datus init`).
     codex:
-      type: codex
-      base_url: https://chatgpt.com/backend-api/codex
-      api_key: ""
-      model: gpt-5.3-codex
       auth_type: oauth
 
-    # Coding Plan - Alibaba (multi-model aggregation via Anthropic-compatible endpoint)
-    alibaba_coding:
-      type: claude
-      base_url: https://coding-intl.dashscope.aliyuncs.com/apps/anthropic
-      api_key: ${DASHSCOPE_API_KEY}
-      model: qwen3-coder-plus
+  # target: deepseek      # legacy — only read when .datus/config.yml is absent
 
-    # Coding Plan - GLM
-    glm_coding:
-      type: claude
-      base_url: https://open.bigmodel.cn/api/anthropic
-      api_key: ${GLM_API_KEY}
-      model: glm-5
+  # ``models`` is optional; use it for self-hosted or private-deployment
+  # endpoints that aren't covered by ``conf/providers.yml``. Each entry has
+  # the same shape as before:
+  #   <name>:
+  #     type: openai            # one of: openai|claude|deepseek|kimi|gemini|...
+  #     base_url: https://internal.example.com/v1
+  #     api_key: ${MY_KEY}
+  #     model: internal-gpt-4
+  # models: {}
 
+  # ``nodes.<name>.model`` refers to an entry in ``agent.models`` (custom models
+  # only). Leave it empty or omit to inherit whichever provider/model is
+  # active according to ``./.datus/config.yml`` + ``agent.providers``.
   nodes:
     schema_linking:
-      model: openai
       matching_rate: fast
     generate_sql:
-      model: deepseek_v3
       max_table_schemas_length: 4000
       max_data_details_length: 2000
       max_context_length: 8000
       max_value_length: 500
     reasoning:
-      model: anthropic
       prompt_version: "1.0" # It can be unconfigured, and the latest version is used by default
       max_table_schemas_length: 4000
       max_data_details_length: 2000
@@ -107,7 +95,6 @@ agent:
       check_result: true # Whether to check the results of the previous step, the default value is false
     chat:
       workspace_root: sql2
-      model: anthropic
       max_turns: 25
       prompt_version: "1.0" # It can be unconfigured, and the latest version is used by default
 

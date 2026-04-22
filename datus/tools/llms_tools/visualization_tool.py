@@ -56,18 +56,26 @@ class VisualizationTool(BaseTool):
         self.max_y_cols = max_y_cols
         self.max_pie_categories = max_pie_categories
 
-        if model is not None:
-            self.model = model
-        elif agent_config is not None:
-            try:
-                self.model = LLMBaseModel.create_model(agent_config=agent_config)
-            except Exception as exc:
-                logger.warning(f"Failed to initialize visualization model, using heuristics only: {exc}")
-                self.model = None
-        else:
-            self.model = None
+        # Lazy model resolution — ``/model`` can swap the active target at
+        # runtime, and ``LLMBaseModel.create_model`` caches the resulting
+        # instance, so reading :attr:`model` per-call is both correct and
+        # cheap. An explicit ``model=`` kwarg still wins (used by tests and
+        # callers that pre-bind a custom client).
+        self._injected_model = model
         self.preview_rows = preview_rows
         self.max_preview_char = max_preview_char
+
+    @property
+    def model(self) -> Optional[LLMBaseModel]:
+        if self._injected_model is not None:
+            return self._injected_model
+        if self.agent_config is None:
+            return None
+        try:
+            return LLMBaseModel.create_model(agent_config=self.agent_config)
+        except Exception as exc:
+            logger.debug(f"Lazy visualization model resolution failed: {exc}")
+            return None
 
     def execute(self, input_data: VisualizationInput) -> VisualizationOutput:
         """Generate visualization recommendation using LLM if available, otherwise heuristics."""

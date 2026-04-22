@@ -859,7 +859,7 @@ class TestBuildBannerPanel:
         cli.args = MagicMock(database="benchmark", namespace="")
         real_agent_config._current_datasource = ""
         output = self._render(cli)
-        assert "AI-powered SQL command-line interface" in output
+        assert "Data engineering agent builds evolvable context for your data system" in output
 
     def test_contains_ascii_art_on_wide_terminal(self, real_agent_config):
         cli = _make_cli(real_agent_config)

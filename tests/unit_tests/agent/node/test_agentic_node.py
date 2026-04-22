@@ -21,6 +21,8 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.base import BaseInput, BaseResult
 
+_UNSET = object()
+
 # ---------------------------------------------------------------------------
 # Concrete subclass for testing (can't instantiate abstract AgenticNode directly)
 # ---------------------------------------------------------------------------
@@ -56,19 +58,21 @@ def _make_async_session_mock() -> MagicMock:
     return sess
 
 
-def _make_node(agent_config=None, **overrides):
+def _make_node(agent_config=None, context_length=_UNSET, **overrides):
     """Create a node with __init__ bypassed for targeted testing."""
     with patch.object(AgenticNode, "__init__", lambda self, *a, **kw: None):
         node = _ConcreteAgenticNode.__new__(_ConcreteAgenticNode)
-    # Set minimum required attributes
+    # Set minimum required attributes (backing fields for properties first)
+    node._agent_config_ref = None
+    node._pinned_model = None
+    node._node_model_name = None
     node._session = None
     node.ephemeral = False
     node.session_id = None
-    node.model = None
     node.tools = []
     node.mcp_servers = {}
     node.actions = []
-    node.context_length = None
+
     node.node_config = {}
     node.agent_config = agent_config
     node.skill_manager = None
@@ -84,6 +88,10 @@ def _make_node(agent_config=None, **overrides):
     node.action_bus = ActionBus()
     node.interaction_broker = InteractionBroker()
     node.interrupt_controller = InterruptController()
+    if context_length is not _UNSET and context_length is not None:
+        mock_model = MagicMock()
+        mock_model.context_length.return_value = context_length
+        node._pinned_model = mock_model
     for k, v in overrides.items():
         setattr(node, k, v)
     return node
@@ -440,23 +448,26 @@ class TestAutoCompact:
     async def test_auto_compact_skips_when_no_model(self):
         node = _make_node()
         node.model = None
-        node.context_length = None
+
         result = await node._auto_compact()
         assert result is False
 
     @pytest.mark.asyncio
     async def test_auto_compact_skips_when_no_context_length(self):
+        mock_model = MagicMock()
+        mock_model.context_length.return_value = None
         node = _make_node()
-        node.model = MagicMock()
-        node.context_length = None
+        node._pinned_model = mock_model
+
         result = await node._auto_compact()
         assert result is False
 
     @pytest.mark.asyncio
     async def test_auto_compact_triggers_when_over_limit(self):
+        mock_model = MagicMock()
+        mock_model.context_length.return_value = 1000
         node = _make_node()
-        node.model = MagicMock()
-        node.context_length = 1000
+        node._pinned_model = mock_model
         node._session = MagicMock()
 
         with patch.object(node, "_count_session_tokens", return_value=950):
@@ -468,9 +479,10 @@ class TestAutoCompact:
 
     @pytest.mark.asyncio
     async def test_auto_compact_skips_when_under_limit(self):
+        mock_model = MagicMock()
+        mock_model.context_length.return_value = 1000
         node = _make_node()
-        node.model = MagicMock()
-        node.context_length = 1000
+        node._pinned_model = mock_model
 
         with patch.object(node, "_count_session_tokens", return_value=500):
             result = await node._auto_compact()
@@ -494,10 +506,9 @@ class TestGetSessionInfo:
 
     @pytest.mark.asyncio
     async def test_get_session_info_with_session(self):
-        node = _make_node()
+        node = _make_node(context_length=100000)
         node.session_id = "my_session"
         node._session = MagicMock()
-        node.context_length = 100000
         node.actions = []
 
         with patch.object(node, "_count_session_tokens", return_value=5000):
@@ -809,19 +820,21 @@ class _SimpleAgenticNode(AgenticNode):
         yield action
 
 
-def _make_simple_node(**overrides):
+def _make_simple_node(context_length=_UNSET, **overrides):
     """Build a minimal _SimpleAgenticNode bypassing __init__."""
     with patch.object(AgenticNode, "__init__", lambda self, *a, **kw: None):
         node = _SimpleAgenticNode.__new__(_SimpleAgenticNode)
 
+    node._agent_config_ref = None
+    node._pinned_model = None
+    node._node_model_name = None
     node._session = None
     node.ephemeral = False
     node.session_id = None
-    node.model = None
     node.tools = []
     node.mcp_servers = {}
     node.actions = []
-    node.context_length = None
+
     node.node_config = {}
     node.agent_config = None
     node.permission_manager = None
@@ -842,6 +855,11 @@ def _make_simple_node(**overrides):
     node.action_bus = ActionBus()
     node.interaction_broker = InteractionBroker()
     node.interrupt_controller = InterruptController()
+
+    if context_length is not _UNSET and context_length is not None:
+        mock_model = MagicMock()
+        mock_model.context_length.return_value = context_length
+        node._pinned_model = mock_model
 
     for k, v in overrides.items():
         setattr(node, k, v)
@@ -1055,10 +1073,9 @@ class TestGetSessionInfoExtended:
         assert result["active"] is False
 
     def test_with_session_returns_info(self):
-        node = _make_simple_node()
+        node = _make_simple_node(context_length=4000)
         node.session_id = "sess_x"
         node._session = MagicMock()
-        node.context_length = 4000
         # Provide usage via actions (primary path for _count_session_tokens)
         action = ActionHistory.create_action(
             role=ActionRole.ASSISTANT,
@@ -1310,15 +1327,15 @@ class TestAutoCompactExtended:
         assert result is False
 
     def test_no_context_length_returns_false(self):
+        mock_model = MagicMock()
+        mock_model.context_length.return_value = None
         node = _make_simple_node()
-        node.model = MagicMock()
+        node._pinned_model = mock_model
         result = asyncio.run(node._auto_compact())
         assert result is False
 
     def test_below_threshold_returns_false(self):
-        node = _make_simple_node()
-        node.model = MagicMock()
-        node.context_length = 10000
+        node = _make_simple_node(context_length=10000)
         # Provide usage via actions (primary path for _count_session_tokens)
         action = ActionHistory.create_action(
             role=ActionRole.ASSISTANT,
@@ -1334,11 +1351,8 @@ class TestAutoCompactExtended:
         assert result is False
 
     def test_above_threshold_triggers_compact(self):
-        node = _make_simple_node()
-        node.model = MagicMock()
-        node.context_length = 1000
+        node = _make_simple_node(context_length=1000)
         node._session = _make_async_session_mock()
-        # Provide usage via actions
         action = ActionHistory.create_action(
             role=ActionRole.ASSISTANT,
             action_type="chat",
@@ -1348,7 +1362,9 @@ class TestAutoCompactExtended:
             status=ActionStatus.SUCCESS,
         )
         node.actions.append(action)
-        node.model.generate_with_tools = AsyncMock(return_value={"content": "summary", "usage": {"output_tokens": 50}})
+        node._pinned_model.generate_with_tools = AsyncMock(
+            return_value={"content": "summary", "usage": {"output_tokens": 50}}
+        )
         node.session_id = "sess_auto"
 
         result = asyncio.run(node._auto_compact())

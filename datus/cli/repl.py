@@ -49,6 +49,7 @@ from datus.cli.bi_dashboard import BiDashboardCommands
 from datus.cli.chat_commands import ChatCommands
 from datus.cli.context_commands import ContextCommands
 from datus.cli.metadata_commands import MetadataCommands
+from datus.cli.model_commands import ModelCommands
 from datus.cli.service_commands import ServiceCommands
 from datus.cli.slash_registry import GROUP_ORDER, GROUP_TITLES, iter_visible, lookup
 from datus.cli.status_bar import StatusBarProvider
@@ -226,6 +227,7 @@ class DatusCLI:
         self.metadata_commands = MetadataCommands(self)
         self.sub_agent_commands = SubAgentCommands(self)
         self.bi_dashboard_commands = BiDashboardCommands(self)
+        self.model_commands = ModelCommands(self)
         self.service_commands = ServiceCommands(self)
         self._status_bar_provider = StatusBarProvider(self)
 
@@ -297,6 +299,7 @@ class DatusCLI:
             "mcp": self._cmd_mcp,
             "skill": self._cmd_skill,
             "bootstrap-bi": self.bi_dashboard_commands.cmd,
+            "model": self.model_commands.cmd_model,
             "services": self.service_commands.cmd_services,
         }
 
@@ -350,23 +353,21 @@ class DatusCLI:
         def _(event):
             """
             Enter key:
-                if completion menu is open, apply the highlighted item (if any) or close the menu; otherwise execute.
+                apply highlighted completion (if any), close the menu, then
+                submit — in a single keystroke. The earlier two-step behaviour
+                (first Enter only dismissed the auto-opened menu, second Enter
+                submitted) was confusing for slash commands like ``/model``.
             """
             buffer = event.app.current_buffer
 
             if buffer.complete_state:
-                # If there is an actively highlighted completion, apply it.
                 cs = buffer.complete_state
                 comp = cs.current_completion
                 if comp is not None:
                     buffer.apply_completion(comp)
                 else:
-                    # No item highlighted (e.g., select_first=False). Close the menu and proceed as normal Enter.
                     buffer.cancel_completion()
-                    buffer.validate_and_handle()
-                return
 
-            # Performs normal Enter behavior when there is no completion menu.
             buffer.validate_and_handle()
 
         @kb.add("c-o")
@@ -724,6 +725,7 @@ class DatusCLI:
     def _run_prompt_session(self):
         """Classic ``PromptSession`` main loop (used for non-TTY fallback)."""
         self._print_welcome()
+        self._warn_no_model()
 
         while True:
             try:
@@ -793,6 +795,7 @@ class DatusCLI:
         """
         self._pin_tui_to_bottom()
         self._print_welcome()
+        self._warn_no_model()
 
         # Prefill support mirrors the PromptSession path: ``.rewind`` stores
         # the replayed user message in ``_prefill_input`` and expects the
@@ -872,6 +875,12 @@ class DatusCLI:
         """Preload rag to avoid unnecessary printing"""
         if self.at_completer:
             self.at_completer.reload_data()
+
+    # Historical ``_rebuild_llm_after_switch`` removed. ``/model`` now persists
+    # the new target via :meth:`AgentConfig.set_active_*` and the Agent reads
+    # :meth:`AgentConfig.active_model` lazily each time it needs an LLM, so
+    # there is nothing to rebuild on a switch — see ``datus/agent/agent.py``
+    # ``llm`` property for the dispatch point.
 
     def check_agent_available(self):
         """Check if agent is available, and inform the user if it's still initializing."""
@@ -1527,7 +1536,7 @@ class DatusCLI:
         else:
             body.add_row(Text(f"DATUS v{__version__}", style="bold"))
         body.add_row(Text(""))
-        body.add_row(Text("AI-powered SQL command-line interface", style="bold"))
+        body.add_row(Text("Data engineering agent builds evolvable context for your data system", style="bold"))
         body.add_row(Text(""))
 
         info = Table.grid(padding=(0, 2))
@@ -1554,6 +1563,13 @@ class DatusCLI:
         reappears at the top after verbose-mode toggles redraw the terminal.
         """
         self.console.print(self._build_banner_panel())
+
+    def _warn_no_model(self):
+        """Print a one-time hint when no active model is configured."""
+        try:
+            self.agent_config.active_model()
+        except Exception:
+            self.console.print("[yellow]No model configured. Use /model to set up a model.[/]")
 
     def prompt_input(self, message: str, default: str = "", choices: list = None, multiline: bool = False):
         """

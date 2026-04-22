@@ -61,6 +61,15 @@ class DatusAPIService:
         self.agent_config = load_agent_config(**vars(self.args))
         logger.info("Agent configuration loaded successfully")
 
+        try:
+            am = self.agent_config.active_model()
+            logger.info("Active model: %s/%s", am.type, am.model)
+        except Exception:
+            logger.warning(
+                "No active LLM model configured. Chat features will be unavailable "
+                "until a model is set up via 'datus' CLI + /model command."
+            )
+
         # Initialize task store
         self.task_store = TaskStore()
         logger.info("Task store initialized successfully")
@@ -476,6 +485,7 @@ def create_app(agent_args: argparse.Namespace) -> FastAPI:
         ("datus.api.routes.table_routes", "table"),
         ("datus.api.routes.explorer_routes", "explorer"),
         ("datus.api.routes.config_routes", "config"),
+        ("datus.api.routes.models_routes", "models"),
         ("datus.api.routes.mcp_routes", "mcp"),
         ("datus.api.routes.kb_routes", "kb"),
         ("datus.api.routes.agent_routes", "agent"),

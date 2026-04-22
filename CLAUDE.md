@@ -43,9 +43,14 @@ bash build_scripts/build_test_data.sh       # Build test knowledge base
     content is anchored to the project root so every CWD ships its own copy.
   - `./.datus/skills/` — project-level skills; takes precedence over
     `~/.datus/skills`.
+  - `./.datus/config.yml` — project-level overrides for `target`
+    (provider/model), `default_database`, and `project_name`. Written by the
+    `/model` slash command; only whitelisted keys are accepted.
 - **Global (`~/.datus/`), sharded per project where relevant**:
   - `~/.datus/sessions/{project_name}/{session_id}.db`
   - `~/.datus/data/{project_name}/datus_db/` (LanceDB, document stores, etc.)
+  - `~/.datus/cache/openrouter_models.json` — cached model catalog from
+    OpenRouter (auto-refreshed, 8 s timeout).
   - `~/.datus/{conf, logs, template, run, benchmark, workspace, skills, ...}` —
     shared across projects.
 - **`project_name` derivation**: `os.getcwd().replace("/", "-").lstrip("-")`
@@ -54,6 +59,27 @@ bash build_scripts/build_test_data.sh       # Build test knowledge base
 - **`agent.knowledge_base_home`**: removed. KB content is anchored to
   `{project_root}/subject/`; the YAML field is silently ignored if left in.
 
+### LLM Configuration (Two-Tier Provider Model)
+
+LLM selection uses a two-tier system:
+
+1. **Provider-level** (`agent.providers.<name>` in `agent.yml`) — preferred.
+   Only credentials are stored here; available models and metadata come from
+   `conf/providers.yml`. The `/model` CLI command switches between any model
+   exposed by a configured provider without editing YAML.
+2. **Custom/legacy** (`agent.models.<name>` in `agent.yml`) — for self-hosted
+   or private-deployment endpoints not covered by `providers.yml`.
+
+The active selection is persisted in `./.datus/config.yml` as:
+
+```yaml
+target:
+  provider: openai
+  model: gpt-4.1
+```
+
+Resolution order: `.datus/config.yml` override → `agent.target` in `agent.yml`.
+
 ### Adding a New Node
 
 1. Create `datus/agent/node/{name}_node.py`
@@ -61,7 +87,19 @@ bash build_scripts/build_test_data.sh       # Build test knowledge base
 3. Register the type constant in `datus/configuration/node_type.py`
 4. Add the mapping in `Node.new_instance()` factory in `datus/agent/node/node.py`
 
-### Adding a New LLM Model
+### Adding a New LLM Provider (catalog-only)
+
+If the new provider uses an existing interface type (openai, claude, deepseek,
+kimi, gemini, etc.), no Python code is needed:
+
+1. Add the provider entry to `conf/providers.yml` (and the bundled copy at
+   `datus/conf/providers.yml`) with `type`, `base_url`, `api_key_env`,
+   `default_model`, and `models` list
+2. Optionally add `model_specs` entries for context_length / max_tokens
+
+### Adding a New LLM Model Implementation
+
+If a new interface type is required (new SDK, new auth mechanism):
 
 1. Create `datus/models/{provider}_model.py`
 2. Inherit from `LLMBaseModel(ABC)` in `datus/models/base.py`

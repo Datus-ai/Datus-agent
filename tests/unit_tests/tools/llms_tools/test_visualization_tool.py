@@ -40,8 +40,7 @@ class TestVisualizationToolInit:
         with patch("datus.tools.llms_tools.visualization_tool.LLMBaseModel") as mock_base:
             mock_base.create_model.return_value = mock_model
             tool = VisualizationTool(agent_config=mock_config)
-
-        assert tool.model is mock_model
+            assert tool.model is mock_model
 
     def test_init_with_agent_config_failing_model_sets_none(self):
         mock_config = MagicMock()
@@ -49,8 +48,7 @@ class TestVisualizationToolInit:
         with patch("datus.tools.llms_tools.visualization_tool.LLMBaseModel") as mock_base:
             mock_base.create_model.side_effect = Exception("no key")
             tool = VisualizationTool(agent_config=mock_config)
-
-        assert tool.model is None
+            assert tool.model is None
 
     def test_custom_parameters(self):
         tool = VisualizationTool(preview_rows=3, max_preview_char=500, max_y_cols=2, max_pie_categories=5)

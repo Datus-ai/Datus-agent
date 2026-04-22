@@ -17,6 +17,7 @@ In addition to the three magic commands, you can also:
 - [Run SQL directly](sql_execution.md) like a traditional SQL client
 - Use [session commands](chat_command.md#session-commands) such as `/compact` and `/clear` to manage or reset sessions
 - [Explore metadata](sql_execution.md#explore-metadata) with `/tables` and `/databases`
+- Use [`/model`](model_command.md) to switch LLM providers and models at runtime
 - Use [`/mcp`](mcp_extensions.md) to add, remove, or test MCP servers to extend functionality
 - Use [plan mode](plan_mode.md) to break down complex tasks into reviewable steps before execution
 

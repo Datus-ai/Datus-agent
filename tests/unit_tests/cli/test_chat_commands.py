@@ -36,7 +36,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from rich.console import Console
 
-from datus.cli.chat_commands import ChatCommands
+from datus.cli.chat_commands import ChatCommands, _is_model_config_error
 from datus.cli.cli_context import CliContext
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 
@@ -3817,6 +3817,37 @@ class TestDropIfMatchesFinal:
 # ===========================================================================
 # TestSessionFilterByAgent — cmd_resume filters by active agent
 # ===========================================================================
+
+
+class TestIsModelConfigError:
+    """Tests for _is_model_config_error() helper."""
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            KeyError("No active model configured. Set `target` in agent.yml"),
+            KeyError("Model foo not found in agent_config"),
+            KeyError("Unsupported model type: xyz"),
+            Exception("invalid api_key provided"),
+            RuntimeError("OpenAI model authentication failed"),
+            Exception("401 Unauthorized from provider openai"),
+        ],
+    )
+    def test_model_errors_detected(self, exc):
+        assert _is_model_config_error(exc) is True
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            ValueError("database connection failed"),
+            RuntimeError("some unrelated error"),
+            Exception("timeout waiting for response"),
+            Exception("401 Unauthorized"),
+            RuntimeError("authentication failed"),
+        ],
+    )
+    def test_non_model_errors_not_detected(self, exc):
+        assert _is_model_config_error(exc) is False
 
 
 class TestSessionFilterByAgent:

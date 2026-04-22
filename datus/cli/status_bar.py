@@ -166,16 +166,25 @@ class StatusBarProvider:
                 model_cfg = getattr(node.model, "model_config", None)
                 name = getattr(model_cfg, "model", None)
                 if name:
-                    return str(name)
+                    return self._format_model_label(str(name))
         except Exception as e:
             logger.debug(f"status_bar: failed to read model from node: {e}")
         try:
             agent_config = getattr(self._cli, "agent_config", None)
             if agent_config is not None:
-                return str(agent_config.active_model().model)
+                return self._format_model_label(str(agent_config.active_model().model))
         except Exception as e:
             logger.debug(f"status_bar: failed to read active model from config: {e}")
         return "-"
+
+    def _format_model_label(self, model_name: str) -> str:
+        agent_config = getattr(self._cli, "agent_config", None)
+        if agent_config is None:
+            return model_name
+        provider = getattr(agent_config, "_target_provider", None)
+        if provider:
+            return f"{provider}/{model_name}"
+        return model_name
 
     def _resolve_connector(self) -> str:
         """Return the current connector as ``"<db_type>: <db_name>"``.

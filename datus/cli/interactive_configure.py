@@ -4,16 +4,20 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 """
-Interactive configuration manager for Datus Agent.
+Interactive configuration manager for Datus Agent database connections.
 
-Incrementally manages LLM models and database connections in
-~/.datus/conf/agent.yml. Shows current state, supports add/delete
-of individual entries. Does not touch other config sections.
+Incrementally manages database connections in ``~/.datus/conf/agent.yml``
+under the ``agent.services.datasources`` section. Shows current state,
+supports add/delete of individual database entries, and installs
+missing database adapter plugins on demand.
+
+LLM models are now managed exclusively by the ``/model`` slash command
+(see ``datus.cli.model_commands``). The init wizard also no longer
+writes into ``agent.models``; custom / self-hosted models are left to
+hand-edit in ``agent.yml``.
 """
 
 import logging
-import os
-from getpass import getpass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -26,7 +30,7 @@ from datus.cli._cli_utils import select_choice
 from datus.cli.init_util import detect_db_connectivity
 from datus.utils.loggings import get_logger, print_rich_exception
 from datus.utils.path_manager import get_path_manager
-from datus.utils.resource_utils import copy_data_file, read_data_file_text
+from datus.utils.resource_utils import copy_data_file
 
 logger = get_logger(__name__)
 
@@ -60,7 +64,7 @@ def _prompt_with_back(label: str, default: str = "", password: bool = False) -> 
 
 
 class InteractiveConfigure:
-    """Incremental configuration manager for LLM models and datasources."""
+    """Incremental configuration manager for database connections."""
 
     def __init__(self, user_home: Optional[str] = None):
         self.user_home = user_home if user_home else Path.home()
@@ -72,9 +76,9 @@ class InteractiveConfigure:
         self.sample_dir = path_manager.sample_dir
         self.config_path = self.conf_dir / "agent.yml"
 
-        # Working state — loaded from existing config or empty
-        self.target: str = ""
-        self.models: Dict[str, dict] = {}
+        # Working state — datasources only. LLM model management lives in the
+        # ``/model`` slash command now; this wizard intentionally leaves
+        # ``agent.providers`` / ``agent.models`` alone.
         self.datasources: Dict[str, dict] = {}
 
     # ── Setup helpers ──────────────────────────────────────────────
@@ -101,7 +105,13 @@ class InteractiveConfigure:
             logger.debug(f"Error deploying built-in skills: {e}")
 
     def _load_existing_config(self):
-        """Load models and datasources from existing agent.yml."""
+        """Load datasources from existing agent.yml.
+
+        Supports the new ``agent.services.datasources`` layout, the legacy
+        singular ``agent.service.datasources`` key, and the further-legacy
+        ``agent.namespace`` block. ``agent.models`` / ``agent.providers``
+        are ignored here — they are not this wizard's responsibility.
+        """
         if not self.config_path.exists():
             return
 
@@ -112,10 +122,7 @@ class InteractiveConfigure:
             return
 
         agent = raw.get("agent", {})
-        self.target = agent.get("target", "")
-        self.models = agent.get("models", {})
 
-        # Support new services format and legacy singular service / namespace formats
         services = agent.get("services") or {}
         legacy_service = agent.get("service") or {}
         if isinstance(services, dict) and services.get("datasources") is not None:
@@ -129,43 +136,14 @@ class InteractiveConfigure:
             migrated = ServicesConfig.migrate_from_namespace(agent["namespace"])
             self.datasources = migrated.get("datasources", {})
 
-    def _load_provider_catalog(self) -> dict:
-        try:
-            text = read_data_file_text(resource_path="conf/providers.yml", encoding="utf-8")
-            local_catalog = yaml.safe_load(text) or {}
-        except Exception as e:
-            logger.error(f"Failed to load providers.yml: {e}")
-            return {"providers": {}, "model_overrides": {}}
-
-        from datus.cli.provider_model_catalog import resolve_provider_models
-
-        try:
-            return resolve_provider_models(local_catalog)
-        except Exception as e:
-            logger.debug(f"resolve_provider_models failed, using local catalog: {e}")
-            return local_catalog
-
     # ── Display ────────────────────────────────────────────────────
 
     def _show_current_state(self):
-        """Display current models and datasources."""
-        # Models table
-        if self.models:
-            table = Table(title="Current Models", show_header=True, header_style="bold green")
-            table.add_column("Name", style="cyan")
-            table.add_column("Model")
-            table.add_column("Base URL")
-            table.add_column("Default")
-            for name, cfg in self.models.items():
-                is_default = "*" if name == self.target else ""
-                table.add_row(name, cfg.get("model", ""), cfg.get("base_url", ""), is_default)
-            self.console.print(table)
-        else:
-            self.console.print("[yellow]No models configured.[/yellow]")
+        """Display current datasources.
 
-        self.console.print()
-
-        # Datasources table
+        LLM configuration is deliberately omitted — users run ``/model``
+        inside the CLI to see and change it.
+        """
         if self.datasources:
             table = Table(title="Current Datasources", show_header=True, header_style="bold green")
             table.add_column("Name", style="cyan")
@@ -185,26 +163,28 @@ class InteractiveConfigure:
     # ── Main flow ──────────────────────────────────────────────────
 
     def run(self) -> int:
-        self._init_dirs()
-        self._copy_files()
-        self._load_existing_config()
-
-        # Suppress console logging
+        # Suppress console logging. pytest's live-log plugin attaches a
+        # handler whose ``stream`` lacks a ``.name`` attribute; guard the
+        # introspection so the wizard keeps working under the test harness.
         root_logger = logging.getLogger()
         original_handler_levels = {}
         for handler in root_logger.handlers:
-            if hasattr(handler, "stream") and handler.stream.name in ["<stdout>", "<stderr>"]:
+            stream_name = getattr(getattr(handler, "stream", None), "name", "")
+            if stream_name in ("<stdout>", "<stderr>"):
                 original_handler_levels[handler] = handler.level
                 handler.setLevel(logging.CRITICAL + 1)
 
         try:
-            self.console.print("\n[bold cyan]Datus Configure[/bold cyan]")
-            self.console.print("Manage your LLM models and database connections.\n")
+            self._init_dirs()
+            self._copy_files()
+            self._load_existing_config()
 
-            if not self.models and not self.datasources:
+            self.console.print("\n[bold cyan]Datus Configure[/bold cyan]")
+            self.console.print("Manage your database connections. Use `/model` inside the CLI to pick an LLM.\n")
+
+            if not self.datasources:
                 return self._first_time_setup()
-            else:
-                return self._interactive_menu()
+            return self._interactive_menu()
 
         except KeyboardInterrupt:
             self.console.print("\nConfiguration cancelled by user")
@@ -217,15 +197,9 @@ class InteractiveConfigure:
                 handler.setLevel(level)
 
     def _first_time_setup(self) -> int:
-        """Guided first-time setup: add one model + one database."""
-        self.console.print("[dim]First time setup — let's add a model and database.[/dim]\n")
+        """Guided first-time setup: add at least one database."""
+        self.console.print("[dim]First time setup — let's add a database.[/dim]\n")
 
-        # Add model
-        while not self._add_model():
-            if not Confirm.ask("Re-enter model configuration?", default=True):
-                return 1
-
-        # Add database
         while not self._add_database():
             if not Confirm.ask("Re-enter database configuration?", default=True):
                 return 1
@@ -237,19 +211,13 @@ class InteractiveConfigure:
         return 0
 
     def _interactive_menu(self) -> int:
-        """Show current state + action menu loop."""
+        """Show current state + action menu loop (database-only)."""
         while True:
             self._show_current_state()
 
-            actions = {}
-            actions["add_model"] = "Add a model"
-            actions["add_database"] = "Add a database"
-            if self.models:
-                actions["delete_model"] = "Delete a model"
+            actions: Dict[str, str] = {"add_database": "Add a database"}
             if self.datasources:
                 actions["delete_database"] = "Delete a database"
-            if len(self.models) > 1:
-                actions["set_default_model"] = "Set default model"
             actions["done"] = "Done"
 
             self.console.print("What would you like to do?")
@@ -258,136 +226,14 @@ class InteractiveConfigure:
             if action == "done":
                 self._display_completion()
                 return 0
-            elif action == "add_model":
-                self._add_model()
-                self._save()
-            elif action == "add_database":
+            if action == "add_database":
                 self._add_database()
-                self._save()
-            elif action == "delete_model":
-                self._delete_model()
                 self._save()
             elif action == "delete_database":
                 self._delete_database()
                 self._save()
-            elif action == "set_default_model":
-                self._set_default_model()
-                self._save()
 
             self.console.print()
-
-    # ── Add model ──────────────────────────────────────────────────
-
-    def _add_model(self) -> bool:
-        """Add a new LLM model configuration. Supports 'back' at each step."""
-        self.console.print("[bold yellow]Add Model[/bold yellow]")
-
-        catalog = self._load_provider_catalog()
-        providers = catalog.get("providers", {})
-        model_param_overrides = catalog.get("model_overrides", {})
-
-        if not providers:
-            self.console.print("No providers found in conf/providers.yml")
-            return False
-
-        # Collected values
-        provider = ""
-        api_key = ""
-        base_url = ""
-        model_name = ""
-
-        step = 0
-        while step < 4:
-            if step == 0:
-                # Step 0: Provider
-                self.console.print("- Which LLM provider?")
-                provider = select_choice(self.console, {k: k for k in providers}, default="openai")
-                provider_info = providers[provider]
-
-                # OAuth / subscription — no back support for these special flows
-                if provider_info.get("auth_type") == "oauth":
-                    return self._configure_codex_oauth(provider, provider_info)
-                if provider_info.get("auth_type") == "subscription":
-                    return self._configure_claude_subscription(provider, provider_info)
-                step = 1
-
-            elif step == 1:
-                # Step 1: API key
-                provider_info = providers[provider]
-                api_key_env = provider_info.get("api_key_env", "")
-                env_value = os.environ.get(api_key_env, "") if api_key_env else ""
-
-                if env_value:
-                    self.console.print(f"  [dim]Detected ${{{api_key_env}}} in environment[/dim]")
-                    use_env = Confirm.ask(f"- Use ${{{api_key_env}}} as API key?", default=True)
-                    api_key = f"${{{api_key_env}}}" if use_env else _prompt_with_back("- API key", password=True)
-                elif api_key_env:
-                    self.console.print(
-                        f"  [dim]Hint: set ${{{api_key_env}}} env var to avoid entering key manually[/dim]"
-                    )
-                    api_key = _prompt_with_back(
-                        f"- API key (or env var like ${{{api_key_env}}})", default=f"${{{api_key_env}}}"
-                    )
-                else:
-                    api_key = _prompt_with_back("- API key")
-
-                if api_key == _BACK:
-                    step = 0
-                    continue
-                if not api_key.strip():
-                    self.console.print("API key cannot be empty")
-                    continue
-                step = 2
-
-            elif step == 2:
-                # Step 2: Base URL
-                provider_info = providers[provider]
-                base_url = _prompt_with_back("- Base URL", default=provider_info["base_url"])
-                if base_url == _BACK:
-                    step = 1
-                    continue
-                step = 3
-
-            elif step == 3:
-                # Step 3: Model
-                provider_info = providers[provider]
-                models = provider_info.get("models", [])
-                if models:
-                    self.console.print("- Select model:")
-                    model_name = select_choice(
-                        self.console,
-                        {str(m): str(m) for m in models},
-                        default=provider_info.get("default_model", str(models[0])),
-                        allow_free_text=True,
-                    )
-                else:
-                    model_name = _prompt_with_back("- Model name", default=provider_info.get("default_model", ""))
-                    if model_name == _BACK:
-                        step = 2
-                        continue
-                    model_name = model_name.strip()
-                step = 4
-
-        entry = {"type": providers[provider]["type"], "base_url": base_url, "api_key": api_key, "model": model_name}
-        if model_name in model_param_overrides:
-            entry.update(model_param_overrides[model_name])
-
-        # Test connectivity
-        self.console.print("Testing LLM connectivity...")
-        success, error_msg = self._test_llm_connectivity(entry)
-        if not success:
-            self.console.print(f"LLM connectivity test failed: {error_msg}\n")
-            return False
-
-        self.console.print("LLM model test successful\n")
-        self.models[provider] = entry
-
-        if not self.target:
-            self.target = provider
-        elif Confirm.ask(f"- Set '{provider}' as default model?", default=False):
-            self.target = provider
-
-        return True
 
     # ── Add database ───────────────────────────────────────────────
 
@@ -555,15 +401,6 @@ class InteractiveConfigure:
 
     # ── Delete ─────────────────────────────────────────────────────
 
-    def _delete_model(self):
-        """Delete a model configuration."""
-        name = Prompt.ask("- Model name to delete", choices=list(self.models.keys()))
-        if Confirm.ask(f"Delete model '{name}'?", default=False):
-            del self.models[name]
-            if self.target == name:
-                self.target = next(iter(self.models), "")
-            self.console.print(f"Model '{name}' deleted.")
-
     def _delete_database(self):
         """Delete a database configuration."""
         name = Prompt.ask("- Database name to delete", choices=list(self.datasources.keys()))
@@ -571,16 +408,15 @@ class InteractiveConfigure:
             del self.datasources[name]
             self.console.print(f"Database '{name}' deleted.")
 
-    def _set_default_model(self):
-        """Set default model (target)."""
-        name = Prompt.ask("- Default model", choices=list(self.models.keys()), default=self.target)
-        self.target = name
-        self.console.print(f"Default model set to '{name}'.")
-
     # ── Save ───────────────────────────────────────────────────────
 
     def _save(self):
-        """Save models and datasources to agent.yml, preserving other sections."""
+        """Save datasources to agent.yml, preserving all other sections.
+
+        ``agent.providers`` / ``agent.models`` / ``agent.target`` are
+        intentionally untouched here; see :class:`ModelCommands` for the
+        LLM write path.
+        """
         existing = {}
         if self.config_path.exists():
             try:
@@ -590,10 +426,6 @@ class InteractiveConfigure:
                 pass
 
         agent = existing.get("agent", {})
-
-        # Only update what we manage
-        agent["target"] = self.target
-        agent["models"] = self.models
 
         # Ensure services structure, migrating any leftover legacy singular `service`
         raw_services = agent.get("services")
@@ -670,116 +502,3 @@ class InteractiveConfigure:
         except Exception as e:
             self.console.print(f"[red]Install failed: {e}[/red]")
             return False
-
-    # ── LLM connectivity test ──────────────────────────────────────
-
-    def _test_llm_connectivity(self, model_entry: dict) -> tuple[bool, str]:
-        try:
-            from datus.configuration.agent_config import load_model_config, resolve_env
-            from datus.models.base import LLMBaseModel
-
-            resolved = {k: resolve_env(str(v)) if isinstance(v, str) else v for k, v in model_entry.items()}
-            model_config = load_model_config(resolved)
-
-            model_type = model_config.type
-            model_class_name = LLMBaseModel.MODEL_TYPE_MAP.get(model_type)
-            if not model_class_name:
-                return False, f"Unsupported model type: {model_type}"
-            module = __import__(f"datus.models.{model_type}_model", fromlist=[model_class_name])
-            model_class = getattr(module, model_class_name)
-            llm = model_class(model_config)
-
-            response = llm.generate("Say hello in 5 words")
-            return (True, "") if response else (False, "Empty response from model")
-        except Exception as e:
-            return False, str(e)
-
-    # ── Special auth flows ─────────────────────────────────────────
-
-    def _configure_codex_oauth(self, provider: str, provider_config: dict) -> bool:
-        try:
-            from datus.auth.codex_credential import get_codex_oauth_token
-
-            token = get_codex_oauth_token()
-        except Exception as e:
-            self.console.print(f"Failed to get Codex OAuth token: {e}")
-            return False
-
-        models = provider_config.get("models", [])
-        if models:
-            self.console.print("- Select model:")
-            model_name = select_choice(
-                self.console,
-                {m: m for m in models},
-                default=provider_config.get("default_model", models[0]),
-                allow_free_text=True,
-            )
-        else:
-            model_name = Prompt.ask("- Model name", default=provider_config.get("default_model", "")).strip()
-
-        entry = {
-            "type": provider_config["type"],
-            "vendor": provider,
-            "api_key": token,
-            "model": model_name,
-            "auth_type": "oauth",
-        }
-
-        self.console.print("Testing LLM connectivity...")
-        success, error_msg = self._test_llm_connectivity(entry)
-        if not success:
-            self.console.print(f"LLM connectivity test failed: {error_msg}\n")
-            return False
-
-        self.console.print("Codex OAuth model test successful\n")
-        self.models[provider] = entry
-        if not self.target:
-            self.target = provider
-        return True
-
-    def _configure_claude_subscription(self, provider: str, provider_config: dict) -> bool:
-        models = provider_config.get("models", [])
-        if models:
-            self.console.print("- Select model:")
-            model_name = select_choice(
-                self.console,
-                {m: m for m in models},
-                default=provider_config.get("default_model", models[0]),
-                allow_free_text=True,
-            )
-        else:
-            model_name = Prompt.ask("- Model name", default=provider_config.get("default_model", "")).strip()
-
-        self.console.print("  [dim]Detecting Claude subscription token...[/dim]")
-        try:
-            from datus.auth.claude_credential import get_claude_subscription_token
-
-            token, source = get_claude_subscription_token()
-            self.console.print(f"  Subscription token detected (from {source})")
-        except Exception:
-            self.console.print("  [yellow]Could not auto-detect subscription token[/yellow]")
-            token = getpass("- Paste your subscription token (sk-ant-oat01-...): ")
-            if not token.strip():
-                self.console.print("Token cannot be empty")
-                return False
-
-        entry = {
-            "type": provider_config["type"],
-            "vendor": provider,
-            "base_url": provider_config["base_url"],
-            "api_key": token,
-            "model": model_name,
-            "auth_type": "subscription",
-        }
-
-        self.console.print("Testing LLM connectivity...")
-        success, error_msg = self._test_llm_connectivity(entry)
-        if not success:
-            self.console.print(f"LLM connectivity test failed: {error_msg}")
-            return False
-
-        self.console.print("Claude subscription model test successful\n")
-        self.models[provider] = entry
-        if not self.target:
-            self.target = provider
-        return True

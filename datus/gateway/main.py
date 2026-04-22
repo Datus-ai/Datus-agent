@@ -105,6 +105,15 @@ def _run_gateway(args: argparse.Namespace) -> None:
     # paths instead of hanging on a prompt.
     agent_config.filesystem_strict = True
 
+    try:
+        am = agent_config.active_model()
+        logger.info("Active model: %s/%s", am.type, am.model)
+    except Exception:
+        logger.warning(
+            "No active LLM model configured. Incoming messages will receive error responses "
+            "until a model is set up via 'datus' CLI + /model command."
+        )
+
     channels_config = getattr(agent_config, "channels_config", {})
     if not channels_config:
         logger.error("No 'channels' section found in agent configuration. Nothing to start.")

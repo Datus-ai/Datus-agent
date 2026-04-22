@@ -233,9 +233,13 @@ class TestKeyBindingsContract:
         buffer.reset.assert_called_once()
         assert tui_app._test_dispatch_log == ["SELECT 1"]
 
-    def test_enter_applies_active_completion(self, tui_app: DatusApp) -> None:
-        """When the completion menu has a highlighted item, Enter applies it
-        instead of submitting — matching the legacy PromptSession UX."""
+    def test_enter_applies_active_completion_and_submits(self, tui_app: DatusApp) -> None:
+        """Enter with a highlighted completion applies AND submits in one press.
+
+        Previously this was a two-step (press 1 = apply, press 2 = submit)
+        which made slash commands like ``/model`` feel laggy because the
+        completion popup opens as soon as the user types ``/``.
+        """
         handler = self._enter_handler(tui_app)
 
         completion = mock.MagicMock()
@@ -244,6 +248,7 @@ class TestKeyBindingsContract:
 
         buffer = mock.MagicMock()
         buffer.complete_state = complete_state
+        buffer.text = "/model"
 
         event = mock.MagicMock()
         event.app.current_buffer = buffer
@@ -252,11 +257,11 @@ class TestKeyBindingsContract:
 
         buffer.apply_completion.assert_called_once_with(completion)
         buffer.cancel_completion.assert_not_called()
-        # Submitting must NOT happen while a completion is being applied.
-        assert tui_app._test_dispatch_log == []
+        # Single Enter now both applies the highlight and dispatches.
+        assert tui_app._test_dispatch_log == ["/model"]
 
-    def test_enter_closes_menu_without_highlight(self, tui_app: DatusApp) -> None:
-        """Open completion menu with no highlighted item: Enter closes it."""
+    def test_enter_closes_menu_without_highlight_and_submits(self, tui_app: DatusApp) -> None:
+        """Menu open but no highlighted item: Enter closes the menu and submits."""
         handler = self._enter_handler(tui_app)
 
         complete_state = mock.MagicMock()
@@ -264,6 +269,7 @@ class TestKeyBindingsContract:
 
         buffer = mock.MagicMock()
         buffer.complete_state = complete_state
+        buffer.text = "/model openai"
 
         event = mock.MagicMock()
         event.app.current_buffer = buffer
@@ -272,7 +278,7 @@ class TestKeyBindingsContract:
 
         buffer.cancel_completion.assert_called_once()
         buffer.apply_completion.assert_not_called()
-        assert tui_app._test_dispatch_log == []
+        assert tui_app._test_dispatch_log == ["/model openai"]
 
 
 def test_exit_when_loop_absent_is_noop(tui_app: DatusApp) -> None:

@@ -847,3 +847,173 @@ class TestServicesConfigFromDict:
         cfg = ServicesConfig.from_dict({"datasources": {"my_db": {"type": "sqlite"}}})
         # from_dict intentionally leaves datasources empty — AgentConfig._init_services_config fills it.
         assert cfg.datasources == {}
+
+
+# ---------------------------------------------------------------------------
+# Provider-level configuration (new schema)
+# ---------------------------------------------------------------------------
+
+
+class TestProviderConfigurationDispatch:
+    """Cover ``ProviderConfig`` + the three-way dispatch in ``active_model()``.
+
+    Scenarios exercised:
+      - legacy string ``target`` continues to index ``agent.models``.
+      - structured ``(provider, model)`` synthesizes a ``ModelConfig``
+        from ``agent.providers`` plus the injected catalog.
+      - ``set_active_*`` helpers mutate in-memory state and persist to
+        ``./.datus/config.yml``.
+      - ``provider_available`` returns ``True`` when credentials are
+        present in overrides or env.
+    """
+
+    def _stub_catalog(self):
+        return {
+            "providers": {
+                "openai": {
+                    "type": "openai",
+                    "base_url": "https://api.openai.com/v1",
+                    "api_key_env": "OPENAI_API_KEY",
+                    "default_model": "gpt-4.1",
+                    "models": ["gpt-4.1", "gpt-4o"],
+                },
+                "kimi": {
+                    "type": "kimi",
+                    "base_url": "https://api.moonshot.cn/v1",
+                    "api_key_env": "KIMI_API_KEY",
+                    "default_model": "kimi-k2.5",
+                },
+            },
+            "model_overrides": {
+                "kimi-k2.5": {"temperature": 1.0, "top_p": 0.95},
+            },
+        }
+
+    def _make(self, tmp_path, **extra):
+        """Build an :class:`AgentConfig` with the stub catalog pre-injected."""
+        kwargs = dict(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "datus_home"),
+            target="legacy",
+            models={
+                "legacy": {
+                    "type": "openai",
+                    "api_key": "legacy-key",
+                    "model": "legacy-model",
+                    "base_url": "https://legacy.example.com",
+                }
+            },
+            project_root=str(tmp_path),
+            skip_init_dirs=True,
+        )
+        kwargs.update(extra)
+        cfg = AgentConfig(**kwargs)
+        cfg.set_provider_catalog(self._stub_catalog())
+        return cfg
+
+    # ── Legacy dispatch unchanged ──────────────────────────────────
+
+    def test_active_model_legacy_path_unchanged(self, tmp_path):
+        cfg = self._make(tmp_path)
+        active = cfg.active_model()
+        assert isinstance(active, ModelConfig)
+        assert active.model == "legacy-model"
+        assert active.api_key == "legacy-key"
+
+    # ── Provider-level dispatch ────────────────────────────────────
+
+    def test_provider_level_target_synthesizes_model_config(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            providers={"openai": {"api_key": "sk-test"}},
+            target_provider="openai",
+            target_model="gpt-4.1",
+        )
+        active = cfg.active_model()
+        assert active.type == "openai"
+        assert active.api_key == "sk-test"
+        assert active.model == "gpt-4.1"
+        assert active.base_url == "https://api.openai.com/v1"
+
+    def test_model_overrides_applied_when_synthesizing(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            providers={"kimi": {"api_key": "km-test"}},
+            target_provider="kimi",
+            target_model="kimi-k2.5",
+        )
+        active = cfg.active_model()
+        assert active.temperature == 1.0
+        assert active.top_p == 0.95
+
+    def test_env_fallback_used_when_user_api_key_empty(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "env-secret")
+        cfg = self._make(
+            tmp_path,
+            providers={"openai": {}},  # no explicit api_key
+            target_provider="openai",
+            target_model="gpt-4.1",
+        )
+        active = cfg.active_model()
+        assert active.api_key == "env-secret"
+
+    def test_active_model_raises_when_nothing_is_configured(self, tmp_path):
+        cfg = self._make(tmp_path, target="", models={})
+        with pytest.raises(DatusException) as exc_info:
+            cfg.active_model()
+        assert "/model" in exc_info.value.message
+        assert "datus init" in exc_info.value.message
+
+    # ── Setters ────────────────────────────────────────────────────
+
+    def test_set_active_provider_model_writes_project_config(self, tmp_path):
+        cfg = self._make(tmp_path)
+        cfg.set_active_provider_model("openai", "gpt-4.1")
+        # In-memory target now routes through provider synthesis.
+        assert cfg._target_provider == "openai"
+        assert cfg._target_model == "gpt-4.1"
+
+        project_cfg = tmp_path / ".datus" / "config.yml"
+        import yaml
+
+        payload = yaml.safe_load(project_cfg.read_text(encoding="utf-8"))
+        assert payload["target"] == {"provider": "openai", "model": "gpt-4.1"}
+
+    def test_set_active_custom_writes_custom_target(self, tmp_path):
+        cfg = self._make(tmp_path)
+        cfg.set_active_custom("legacy")
+        assert cfg.target == "legacy"
+        assert cfg._target_provider is None
+
+        project_cfg = tmp_path / ".datus" / "config.yml"
+        import yaml
+
+        payload = yaml.safe_load(project_cfg.read_text(encoding="utf-8"))
+        assert payload["target"] == {"custom": "legacy"}
+
+    def test_set_active_custom_rejects_unknown_name(self, tmp_path):
+        cfg = self._make(tmp_path)
+        with pytest.raises(DatusException):
+            cfg.set_active_custom("not-registered")
+
+    def test_set_provider_config_mutates_in_memory(self, tmp_path):
+        cfg = self._make(tmp_path)
+        cfg.set_provider_config("kimi", api_key="km-new", base_url="https://custom", persist=False)
+        assert cfg.providers["kimi"].api_key == "km-new"
+        assert cfg.providers["kimi"].base_url == "https://custom"
+
+    # ── provider_available ─────────────────────────────────────────
+
+    def test_provider_available_true_when_user_api_key_set(self, tmp_path):
+        cfg = self._make(tmp_path, providers={"openai": {"api_key": "sk-test"}})
+        assert cfg.provider_available("openai") is True
+
+    def test_provider_available_true_when_env_fallback_set(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "env-secret")
+        cfg = self._make(tmp_path)
+        assert cfg.provider_available("openai") is True
+
+    def test_provider_available_false_when_no_credentials(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        cfg = self._make(tmp_path)
+        assert cfg.provider_available("openai") is False

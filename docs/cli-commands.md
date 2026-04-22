@@ -4,7 +4,7 @@
 
 ### `datus configure`
 
-Interactive wizard to configure LLM provider, database connections, and workspace settings.
+Interactive wizard to configure database connections and workspace settings.
 
 Writes configuration to `~/.datus/conf/agent.yml` using the `services.datasources` format.
 
@@ -13,22 +13,20 @@ datus configure
 ```
 
 **Steps:**
-1. **[1/3] Configure LLM** — Select provider (OpenAI, DeepSeek, Claude, etc.), enter API key, test connectivity
-2. **[2/3] Configure Database** — Name the database, select type (duckdb, sqlite, snowflake, etc.), enter connection details, test connectivity
-3. **[3/3] Configure Workspace** — Set workspace directory path
+1. **[1/2] Configure Database** — Name the database, select type (duckdb, sqlite, snowflake, etc.), enter connection details, test connectivity
+2. **[2/2] Configure Workspace** — Set workspace directory path
+
+!!! note "LLM Configuration"
+    `datus configure` focuses on database connections only. Use the [`/model`](cli/model_command.md) slash command inside the CLI to configure and switch LLM providers interactively.
 
 **Repeatable:** Yes. If `~/.datus/conf/agent.yml` already exists, you'll be asked to confirm overwrite. The existing configuration is fully replaced.
 
 **Output:** `~/.datus/conf/agent.yml` with structure:
 ```yaml
 agent:
-  target: deepseek
-  models:
-    deepseek:
-      type: deepseek
-      base_url: https://api.deepseek.com
-      api_key: sk-xxx
-      model: deepseek-chat
+  providers:
+    openai:
+      api_key: ${OPENAI_API_KEY}
   services:
     databases:
       my_duckdb:
@@ -42,6 +40,8 @@ agent:
 ```
 
 **To add more databases later:** Use `datus service add`.
+
+**To configure LLM providers:** Use `/model` inside the CLI session.
 
 ---
 

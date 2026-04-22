@@ -59,12 +59,12 @@ class TestCodexModelInit:
         assert model.model_name == "gpt-5.3-codex"
         assert model._client is None  # lazy init
 
-    def test_model_specs(self, model_config, mock_oauth):
-        from datus.models.codex_model import _CODEX_MODEL_SPECS
+    def test_default_constants_present(self, model_config, mock_oauth):
+        """Defaults are used when providers.yml / cache do not cover the slug."""
+        from datus.models.codex_model import _CODEX_DEFAULT_CONTEXT_LENGTH, _CODEX_DEFAULT_MAX_TOKENS
 
-        assert "gpt-5.3-codex" in _CODEX_MODEL_SPECS
-        assert "gpt-5.1-codex-mini" in _CODEX_MODEL_SPECS
-        assert "o3-codex" in _CODEX_MODEL_SPECS
+        assert _CODEX_DEFAULT_CONTEXT_LENGTH == 192000
+        assert _CODEX_DEFAULT_MAX_TOKENS == 16384
 
 
 class TestCodexModelGenerate:
@@ -207,6 +207,57 @@ class TestCodexModelUtils:
         config = ModelConfig(type="codex", api_key="", model="unknown-codex-model", auth_type="oauth")
         model = CodexModel(model_config=config)
         assert model.context_length() == 192000  # default
+
+    @patch("datus.models.codex_model.OAuthManager")
+    def test_context_length_prefix_match_codex_mini_latest(self, mock_oauth_cls):
+        """``codex-mini-latest`` should inherit ``codex-mini``'s 192K window from providers.yml."""
+        import datus.models.openai_compatible as oc
+        from datus.models.codex_model import CodexModel
+
+        original_cache = oc._MODEL_SPECS_CACHE
+        oc._MODEL_SPECS_CACHE = None  # force reload from providers.yml
+        mock_oauth_cls.return_value = MagicMock()
+        config = ModelConfig(type="codex", api_key="", model="codex-mini-latest", auth_type="oauth")
+        model = CodexModel(model_config=config)
+        try:
+            assert model.context_length() == 192000
+            assert model.max_tokens() == 16384
+        finally:
+            oc._MODEL_SPECS_CACHE = original_cache
+
+    @patch("datus.models.codex_model.OAuthManager")
+    @patch("datus.cli.provider_model_catalog.load_cached_model_details", return_value=None)
+    def test_codex_model_uses_openai_spec_via_prefix(self, _mock_cache, mock_oauth_cls):
+        """A Codex slug like ``gpt-5.4-codex`` uses the OpenAI ``gpt-5`` spec via prefix matching."""
+        import datus.models.openai_compatible as oc
+        from datus.models.codex_model import CodexModel
+
+        original_cache = oc._MODEL_SPECS_CACHE
+        oc._MODEL_SPECS_CACHE = None
+        mock_oauth_cls.return_value = MagicMock()
+        config = ModelConfig(type="codex", api_key="", model="gpt-5.4-codex", auth_type="oauth")
+        model = CodexModel(model_config=config)
+        try:
+            assert model.context_length() == 400000
+        finally:
+            oc._MODEL_SPECS_CACHE = original_cache
+
+    @patch("datus.models.codex_model.OAuthManager")
+    def test_o3_codex_uses_its_larger_max_tokens(self, mock_oauth_cls):
+        """Direct match for ``o3-codex`` in providers.yml should yield its 100K max_tokens."""
+        import datus.models.openai_compatible as oc
+        from datus.models.codex_model import CodexModel
+
+        original_cache = oc._MODEL_SPECS_CACHE
+        oc._MODEL_SPECS_CACHE = None
+        mock_oauth_cls.return_value = MagicMock()
+        config = ModelConfig(type="codex", api_key="", model="o3-codex", auth_type="oauth")
+        model = CodexModel(model_config=config)
+        try:
+            assert model.context_length() == 200000
+            assert model.max_tokens() == 100000
+        finally:
+            oc._MODEL_SPECS_CACHE = original_cache
 
     @patch("datus.models.codex_model.OAuthManager")
     def test_convert_prompt_to_input(self, mock_oauth_cls, model_config):

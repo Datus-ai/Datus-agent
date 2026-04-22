@@ -32,9 +32,11 @@ import os
 import sys
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Callable, List, Optional, Tuple
+from contextlib import contextmanager
+from typing import Callable, Iterator, List, Optional, Tuple
 
 from prompt_toolkit.application import Application
+from prompt_toolkit.application.run_in_terminal import in_terminal
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer
 from prompt_toolkit.filters import has_completions, is_done, to_filter
@@ -248,6 +250,63 @@ class DatusApp:
             # Loop already closed; redraw is not meaningful anymore.
             pass
 
+    @contextmanager
+    def suspend_input(self, ready_timeout: float = 2.0) -> Iterator[None]:
+        """Release stdin so a nested Application run on the worker can own it.
+
+        Bridges the worker thread into the main loop's ``in_terminal()``
+        context: the main :class:`Application` erases its UI, detaches its
+        input reader, and switches the tty to cooked mode. The worker runs
+        its own interactive sub-Application inside the ``with`` block with
+        exclusive access to stdin; on exit the main app redraws itself.
+
+        The handshake uses two :class:`threading.Event` objects so either
+        side can observe failure without leaking the paused coroutine:
+        ``released`` is set by the coroutine once ``in_terminal()`` is
+        active; ``resume`` is set by the worker when it's done.
+
+        No-op outside TUI mode (``self._loop`` is ``None``), so callers
+        can wrap unconditionally.
+        """
+        if self._loop is None or self._app is None:
+            yield
+            return
+
+        released = threading.Event()
+        resume = threading.Event()
+
+        async def _paused() -> None:
+            async with in_terminal():
+                released.set()
+                # Off-loop wait so the asyncio loop stays responsive while
+                # the worker owns stdin.
+                await asyncio.get_running_loop().run_in_executor(None, resume.wait)
+
+        try:
+            fut = asyncio.run_coroutine_threadsafe(_paused(), self._loop)
+        except RuntimeError as exc:
+            # Loop already closed; nothing to suspend.
+            logger.debug("suspend_input: loop unavailable (%s)", exc)
+            yield
+            return
+
+        if not released.wait(timeout=ready_timeout):
+            resume.set()
+            try:
+                fut.result(timeout=ready_timeout)
+            except Exception:  # pragma: no cover - cleanup path
+                pass
+            raise RuntimeError("DatusApp failed to release stdin within timeout")
+
+        try:
+            yield
+        finally:
+            resume.set()
+            try:
+                fut.result(timeout=ready_timeout)
+            except Exception as exc:  # pragma: no cover - cleanup path
+                logger.debug("suspend_input cleanup raised: %s", exc)
+
     def submit_user_input(self, text: str) -> Optional[Future]:
         """Dispatch user input to the worker thread.
 
@@ -358,7 +417,12 @@ class DatusApp:
         def _enter(event) -> None:  # noqa: ANN001 - prompt_toolkit signature
             buffer = event.app.current_buffer
 
-            # Completion menu interaction mirrors the legacy PromptSession.
+            # Completion menu open: fold "accept highlight" + "submit" into a
+            # single Enter. Previously this handler returned after applying
+            # the completion, forcing the user to press Enter twice (once to
+            # dismiss the auto-opened menu, once to submit) — a common
+            # complaint for slash commands like ``/model`` where the menu
+            # pops up as soon as the user types ``/``.
             if buffer.complete_state:
                 cs = buffer.complete_state
                 comp = cs.current_completion
@@ -366,7 +430,6 @@ class DatusApp:
                     buffer.apply_completion(comp)
                 else:
                     buffer.cancel_completion()
-                return
 
             if self._agent_running.is_set():
                 # Editable but not submittable. Silently ignore Enter.

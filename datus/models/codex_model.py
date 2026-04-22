@@ -23,12 +23,9 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
-# Known Codex model specifications
-_CODEX_MODEL_SPECS: Dict[str, Dict[str, int]] = {
-    "gpt-5.3-codex": {"context_length": 192000, "max_tokens": 16384},
-    "gpt-5.1-codex-mini": {"context_length": 192000, "max_tokens": 16384},
-    "o3-codex": {"context_length": 200000, "max_tokens": 100000},
-}
+# Fallback values when providers.yml / OpenRouter cache do not cover a codex slug.
+_CODEX_DEFAULT_CONTEXT_LENGTH = 192000
+_CODEX_DEFAULT_MAX_TOKENS = 16384
 
 
 class CodexModel(LLMBaseModel):
@@ -312,6 +309,12 @@ class CodexModel(LLMBaseModel):
                     ) from e
                 raise
 
+            if session and hasattr(session, "store_run_usage"):
+                try:
+                    await session.store_run_usage(result)
+                except Exception as e:
+                    logger.warning(f"Failed to store run usage: {e}")
+
             usage_info = self._extract_usage_info(result)
 
             return {
@@ -547,6 +550,13 @@ class CodexModel(LLMBaseModel):
                     message=f"Codex streaming failed: {e}",
                 ) from e
 
+            # Store per-turn usage in turn_usage table
+            if session and hasattr(session, "store_run_usage"):
+                try:
+                    await session.store_run_usage(result)
+                except Exception as e:
+                    logger.warning(f"Failed to store run usage: {e}")
+
             # Final summary after streaming completes
             has_final_output = hasattr(result, "final_output")
             final_output = result.final_output if has_final_output else None
@@ -567,35 +577,103 @@ class CodexModel(LLMBaseModel):
             action_history_manager.add_action(final_action)
             yield final_action
 
-    @staticmethod
-    def _extract_usage_info(result) -> dict:
+    def _extract_usage_info(self, result) -> dict:
         """Extract usage info from Agent SDK result for token accounting."""
         if not (hasattr(result, "context_wrapper") and hasattr(result.context_wrapper, "usage")):
             return {}
         usage = result.context_wrapper.usage
-        input_tokens = getattr(usage, "input_tokens", 0)
-        output_tokens = getattr(usage, "output_tokens", 0)
-        total_tokens = getattr(usage, "total_tokens", 0)
+
+        def _int(val, default=0):
+            try:
+                return int(val)
+            except (TypeError, ValueError):
+                return default
+
+        input_tokens = _int(getattr(usage, "input_tokens", 0))
+        output_tokens = _int(getattr(usage, "output_tokens", 0))
+        total_tokens = _int(getattr(usage, "total_tokens", 0))
+
+        cached_tokens = 0
+        if hasattr(usage, "input_tokens_details") and usage.input_tokens_details:
+            cached_tokens = _int(getattr(usage.input_tokens_details, "cached_tokens", 0))
+
+        reasoning_tokens = 0
+        if hasattr(usage, "output_tokens_details") and usage.output_tokens_details:
+            reasoning_tokens = _int(getattr(usage.output_tokens_details, "reasoning_tokens", 0))
+
+        last_call_input_tokens = 0
+        try:
+            if hasattr(usage, "request_usage_entries") and usage.request_usage_entries:
+                last_call_input_tokens = _int(getattr(usage.request_usage_entries[-1], "input_tokens", 0))
+        except (IndexError, TypeError):
+            pass
+
+        cache_hit_rate = round(cached_tokens / input_tokens, 3) if input_tokens > 0 else 0
+
+        context_usage_ratio = 0
+        max_context = self.context_length()
+        if max_context and total_tokens > 0:
+            context_usage_ratio = round(total_tokens / max_context, 3)
+
         return {
+            "requests": _int(getattr(usage, "requests", 0)),
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "total_tokens": total_tokens,
+            "cached_tokens": cached_tokens,
+            "reasoning_tokens": reasoning_tokens,
+            "cache_hit_rate": cache_hit_rate,
+            "context_usage_ratio": context_usage_ratio,
+            "last_call_input_tokens": last_call_input_tokens,
         }
 
     def token_count(self, prompt: str) -> int:
         """Estimate token count using a simple heuristic."""
         return len(prompt) // 4
 
+    def _lookup_spec(self, field: str) -> Optional[int]:
+        """Look up ``field`` in providers.yml ``model_specs``.
+
+        Codex-gateway models are real OpenAI models (gpt-5.x, o3, etc.) so
+        their specs come from the same catalog — no codex-only filter.
+
+        Lookup order:
+        1. Exact match on model_name
+        2. OpenRouter-style slug match (``*/model_name``) — catches entries
+           from the OpenRouter cache that carry a provider prefix
+        3. Longest prefix match from providers.yml
+        """
+        from datus.models.openai_compatible import _load_model_specs
+
+        specs = _load_model_specs()
+
+        exact = specs.get(self.model_name)
+        if isinstance(exact, dict) and isinstance(exact.get(field), int):
+            return exact[field]
+
+        suffix = f"/{self.model_name}"
+        for spec_model, spec in specs.items():
+            if not isinstance(spec, dict) or not isinstance(spec.get(field), int):
+                continue
+            if spec_model.endswith(suffix):
+                return spec[field]
+
+        best_key: Optional[str] = None
+        for spec_model, spec in specs.items():
+            if not isinstance(spec, dict) or not isinstance(spec.get(field), int):
+                continue
+            if self.model_name.startswith(spec_model) and (best_key is None or len(spec_model) > len(best_key)):
+                best_key = spec_model
+        if best_key is None:
+            return None
+        return specs[best_key][field]
+
     def max_tokens(self) -> Optional[int]:
         """Return the max output tokens for the current model."""
-        specs = _CODEX_MODEL_SPECS.get(self.model_name)
-        if specs:
-            return specs["max_tokens"]
-        return 16384  # default
+        value = self._lookup_spec("max_tokens")
+        return value if value is not None else _CODEX_DEFAULT_MAX_TOKENS
 
     def context_length(self) -> Optional[int]:
         """Return the context length for the current model."""
-        specs = _CODEX_MODEL_SPECS.get(self.model_name)
-        if specs:
-            return specs["context_length"]
-        return 192000  # default
+        value = self._lookup_spec("context_length")
+        return value if value is not None else _CODEX_DEFAULT_CONTEXT_LENGTH

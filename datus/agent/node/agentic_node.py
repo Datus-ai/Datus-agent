@@ -123,7 +123,14 @@ class AgenticNode(Node):
         self.session_id: Optional[str] = None
         self._session: Optional[AdvancedSQLiteSession] = None
         self.ephemeral: bool = False  # When True, use in-memory session (no SQLite persistence)
-        self.context_length: Optional[int] = None
+        # Populated lazily via the ``model`` property so ``/model`` switches
+        # take effect on the next access without rebuilding the node.
+        # ``_pinned_model`` exists because the parent :class:`Node` writes
+        # ``self.model = None`` / ``self.model = llm_model`` directly; the
+        # property setter routes those writes here.
+        self._agent_config_ref: Optional[AgentConfig] = None
+        self._node_model_name: Optional[str] = None
+        self._pinned_model: Optional[LLMBaseModel] = None
 
         # Name of the previous node (set externally by the caller, e.g. the CLI
         # on agent switch). Nodes that need caller context — like feedback,
@@ -176,14 +183,76 @@ class AgenticNode(Node):
         # Setup skill func tools for non-chat nodes when explicitly configured
         self._setup_skill_func_tools()
 
-        # Initialize model: use node-specific model if configured, otherwise use default from agent_config
-        if agent_config:
-            model_name = self.node_config.get("model")  # Can be None, which will use active_model()
-            self.model = LLMBaseModel.create_model(model_name=model_name, agent_config=agent_config, scope=self.scope)
-            self.context_length = self.model.context_length() if self.model else None
+        # Resolve model lazily so ``/model`` can flip the active target at
+        # runtime without rebuilding every node. The node-specific override
+        # (``agent.agentic_nodes.<name>.model``) — when present — still wins
+        # because ``_resolve_model_name()`` forwards it to
+        # :meth:`LLMBaseModel.create_model`; otherwise the resolver falls
+        # back to ``agent_config.active_model()`` each call.
+        self._agent_config_ref = agent_config
+        self._node_model_name = self.node_config.get("model") if agent_config else None
 
         self.interaction_broker = InteractionBroker()
         self.interrupt_controller = InterruptController()
+
+    @property
+    def model(self) -> Optional[LLMBaseModel]:
+        """Return the currently active :class:`LLMBaseModel` for this node.
+
+        Reads :meth:`AgentConfig.active_model` on every access so a runtime
+        ``/model`` switch is picked up without recreating the node. The
+        heavy lifting is absorbed by :meth:`LLMBaseModel.create_model`'s
+        process-wide LRU cache — calls for the same config are O(1).
+
+        An explicit ``self.model = ...`` assignment (used by the parent
+        :class:`Node` initializer and by tests that inject a mock) pins
+        the instance via the setter below; pinned values win over lazy
+        resolution until explicitly cleared with ``self.model = None``.
+        """
+        if self._pinned_model is not None:
+            return self._pinned_model
+        if self._agent_config_ref is None:
+            return None
+        try:
+            return LLMBaseModel.create_model(
+                agent_config=self._agent_config_ref,
+                model_name=self._node_model_name,
+                scope=self.scope,
+            )
+        except Exception as exc:
+            logger.debug(f"Lazy model resolution failed for node {self.get_node_name()}: {exc}")
+            return None
+
+    @model.setter
+    def model(self, value: Optional[LLMBaseModel]) -> None:
+        """Pin (or clear) the model instance used by this node.
+
+        The parent :class:`Node` class writes ``self.model = None`` during
+        its own ``__init__`` and ``self.model = llm_model`` inside
+        ``_initialize``. Without a setter those assignments would raise
+        because ``model`` is declared as a property here. Storing the
+        value in ``_pinned_model`` preserves the existing contract for
+        legacy callers while still letting ``/model`` switches take effect
+        whenever callers clear the pin.
+        """
+        self._pinned_model = value
+
+    @property
+    def context_length(self) -> Optional[int]:
+        """Context window of the current model, refreshed per access.
+
+        Used by ``/compact`` / auto-compaction heuristics that divide
+        current token usage by the model's context budget. Falling back
+        to ``None`` (rather than 0) keeps those heuristics inert when the
+        active model doesn't publish a window.
+        """
+        current = self.model
+        if current is None:
+            return None
+        try:
+            return current.context_length()
+        except Exception:
+            return None
 
     def get_node_name(self) -> str:
         """

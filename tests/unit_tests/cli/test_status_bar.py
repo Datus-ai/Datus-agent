@@ -243,6 +243,51 @@ class TestStatusBarProviderModel:
         provider = StatusBarProvider(cli)
         assert provider.current_state().model == "-"
 
+    def test_provider_model_format_from_node(self):
+        node = SimpleNamespace(
+            model=SimpleNamespace(model_config=SimpleNamespace(model="gpt-5.4")),
+            session_id=None,
+            actions=[],
+            context_length=0,
+        )
+        cli = SimpleNamespace(
+            chat_commands=SimpleNamespace(current_subagent_name=None, current_node=node),
+            default_agent="",
+            agent_config=SimpleNamespace(
+                active_model=lambda: SimpleNamespace(model="gpt-5.4"),
+                _target_provider="openai",
+            ),
+            plan_mode_active=False,
+        )
+        provider = StatusBarProvider(cli)
+        assert provider.current_state().model == "openai/gpt-5.4"
+
+    def test_provider_model_format_from_config_fallback(self):
+        cli = SimpleNamespace(
+            chat_commands=SimpleNamespace(current_subagent_name=None, current_node=None),
+            default_agent="",
+            agent_config=SimpleNamespace(
+                active_model=lambda: SimpleNamespace(model="kimi-k2.5"),
+                _target_provider="kimi",
+            ),
+            plan_mode_active=False,
+        )
+        provider = StatusBarProvider(cli)
+        assert provider.current_state().model == "kimi/kimi-k2.5"
+
+    def test_no_provider_prefix_for_legacy_target(self):
+        cli = SimpleNamespace(
+            chat_commands=SimpleNamespace(current_subagent_name=None, current_node=None),
+            default_agent="",
+            agent_config=SimpleNamespace(
+                active_model=lambda: SimpleNamespace(model="custom-model"),
+                _target_provider=None,
+            ),
+            plan_mode_active=False,
+        )
+        provider = StatusBarProvider(cli)
+        assert provider.current_state().model == "custom-model"
+
 
 class TestStatusBarProviderTokens:
     def _make_cli(self, node, plan_mode=False):

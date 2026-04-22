@@ -261,15 +261,14 @@ class TestApplyProjectOverride:
             _apply_project_override(agent_raw)
         assert agent_raw["target"] == "deepseek"
 
-    def test_invalid_target_raises(self):
+    def test_invalid_target_stored_with_warning(self):
         agent_raw = self._base_raw()
         with patch(
             "datus.configuration.agent_config_loader.load_project_override",
             return_value=ProjectOverride(target="nonexistent"),
         ):
-            with pytest.raises(DatusException) as exc:
-                _apply_project_override(agent_raw)
-        assert "target" in str(exc.value)
+            _apply_project_override(agent_raw)
+        assert agent_raw["target"] == "nonexistent"
 
     def test_project_name_merged(self):
         agent_raw = self._base_raw()
@@ -281,7 +280,7 @@ class TestApplyProjectOverride:
         assert agent_raw["project_name"] == "my_proj"
 
     def test_valid_default_datasource_flips_default_flags(self):
-        """default_datasource overlay is applied by flipping databases[*].default
+        """default_datasource overlay is applied by flipping datasources[*].default
         so AgentConfig.services.default_datasource resolves to the override target
         uniformly across every entry point (REPL, datus-api, SDK)."""
         agent_raw = self._base_raw()
@@ -328,14 +327,14 @@ class TestApplyProjectOverride:
         assert agent_raw["target"] == "deepseek"
         assert agent_raw["project_name"] == "p"
 
-    def test_missing_models_section_invalid_target_raises(self):
+    def test_missing_models_section_target_stored_with_warning(self):
         agent_raw = {"services": {"datasources": {"db1": {}}}}
         with patch(
             "datus.configuration.agent_config_loader.load_project_override",
             return_value=ProjectOverride(target="deepseek"),
         ):
-            with pytest.raises(DatusException):
-                _apply_project_override(agent_raw)
+            _apply_project_override(agent_raw)
+        assert agent_raw["target"] == "deepseek"
 
     def test_missing_service_section_invalid_db_raises(self):
         agent_raw = {"models": {"openai": {}}}

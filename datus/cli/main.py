@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 """
-Datus-CLI: An AI-powered SQL command-line interface for data engineers.
+Datus-CLI: Data engineering agent builds evolvable context for your data system.
 Main entry point for the CLI application.
 """
 
@@ -22,7 +22,9 @@ logger = get_logger(__name__)
 
 class ArgumentParser:
     def __init__(self):
-        self.parser = argparse.ArgumentParser(description="Datus: AI-powered SQL command-line interface")
+        self.parser = argparse.ArgumentParser(
+            description="Datus: Data engineering agent builds evolvable context for your data system"
+        )
         self._setup_arguments()
 
     def _setup_arguments(self):
@@ -249,47 +251,53 @@ class Application:
         return ""
 
     def _ensure_project_config(self, args) -> None:
-        """Trigger the first-run wizard if ``./.datus/config.yml`` is absent,
-        or repair it when existing overrides no longer match the base
-        ``agent.yml`` (e.g. a ``target`` that was renamed or removed).
+        """Ensure ``./.datus/config.yml`` exists; create a minimal one when absent.
 
-        Idempotent: does nothing when the overlay file is valid. Loads the
-        base ``agent.yml`` first so the wizard can constrain choices to
-        models/datasources that actually exist; when the base config itself
-        cannot be loaded, surface that error directly (the wizard has
-        nothing to offer in that case).
+        Unlike the previous first-run wizard, this no longer prompts the user
+        to pick a model — the CLI starts with no active model and the user
+        can configure one later via ``/model``.  Only ``default_datasource``
+        is auto-selected (first DB from agent.yml) so that the REPL can
+        function immediately for database browsing.
 
-        Repair is REPL-only: API / print / web paths keep raising on
-        invalid overrides, because they have no broker to prompt the user.
+        When the file exists but references stale values, repair silently
+        (clear the model target instead of prompting).
         """
-        from datus.cli.project_init import run_project_init
         from datus.configuration.agent_config_loader import load_agent_config
-        from datus.configuration.project_config import project_config_path
+        from datus.configuration.project_config import (
+            ProjectOverride,
+            project_config_path,
+            save_project_override,
+        )
 
         if not project_config_path().exists():
             try:
                 base_config = load_agent_config(config=args.config or "", reload=True)
             except Exception as e:
-                logger.error(f"Cannot run project setup wizard: base agent.yml failed to load: {e}")
+                logger.error(f"Cannot create project config: base agent.yml failed to load: {e}")
                 raise
-            run_project_init(base_config)
+            default_datasource = base_config.services.default_datasource
+            if not default_datasource and base_config.services.datasources:
+                default_datasource = next(iter(base_config.services.datasources))
+            override = ProjectOverride(default_datasource=default_datasource)
+            written = save_project_override(override)
+            from rich.console import Console
+
+            console = Console()
+            console.print(f"[green]Created project config:[/] {written}")
+            console.print("[dim]No model configured yet — use /model inside the CLI to set one.[/]")
             return
 
         self._repair_project_overrides(args)
 
     def _repair_project_overrides(self, args) -> None:
-        """Re-prompt the user when ``./.datus/config.yml`` references a
-        ``target`` or ``default_datasource`` that no longer exists in the base
-        agent.yml, and persist the corrected values.
+        """Clear stale model target silently; re-prompt only for datasource.
 
-        Reads the raw agent.yml directly via ``configuration_manager`` to
-        avoid tripping ``_apply_project_override`` (which is exactly what
-        would raise on the stale value we're trying to fix).
+        Model target validation is deferred to runtime — if it is stale we
+        simply clear it so the CLI starts with no active model. The user
+        can pick one later via ``/model``.
 
-        Requires an interactive TTY: ``select_choice`` silently falls back
-        to its default when prompt_toolkit cannot run, which would
-        otherwise persist an unintended choice. When stdin is not a TTY,
-        raise instead of silently auto-writing.
+        For ``default_datasource`` we still prompt interactively because the
+        REPL needs a valid DB connection to be useful.
         """
         import sys
 
@@ -316,51 +324,21 @@ class Application:
         model_names = list((raw.get("models") or {}).keys())
         db_names = list(((raw.get("services") or {}).get("datasources") or {}).keys())
 
-        target_invalid = override.target is not None and override.target not in model_names
+        target_invalid, stale_desc = self._classify_target(override.target, raw, model_names)
         db_invalid = override.default_datasource is not None and override.default_datasource not in db_names
         if not (target_invalid or db_invalid):
             return
 
-        if not sys.stdin.isatty():
-            stale = []
-            if target_invalid:
-                stale.append(f"target={override.target!r}")
-            if db_invalid:
-                stale.append(f"default_datasource={override.default_datasource!r}")
-            raise DatusException(
-                code=ErrorCode.COMMON_CONFIG_ERROR,
-                message_args={
-                    "config_error": (
-                        f"Project config {project_config_path()} has stale values "
-                        f"({', '.join(stale)}) and stdin is not a TTY; cannot prompt "
-                        f"for replacements. Edit .datus/config.yml manually or rerun "
-                        f"the CLI in an interactive terminal."
-                    )
-                },
-            )
-
         console = Console()
-        console.print()
-        console.print(f"[yellow]Project config {project_config_path()} has stale values:[/]")
+        changed = False
 
         if target_invalid:
-            if not model_names:
-                raise DatusException(
-                    code=ErrorCode.COMMON_CONFIG_ERROR,
-                    message_args={
-                        "config_error": (
-                            "Base agent.yml has no 'agent.models' defined; cannot repair "
-                            f"target={override.target!r} in .datus/config.yml."
-                        )
-                    },
-                )
+            override.target = None
             console.print(
-                f"  [red]target[/] = {override.target!r} not found in agent.yml models "
-                f"({sorted(model_names)}). Please pick a replacement:"
+                f"[yellow]Cleared stale model target ({stale_desc}) from {project_config_path()}. "
+                f"Use /model to configure a new one.[/]"
             )
-            choices = {name: name for name in model_names}
-            picked = select_choice(console, choices, default=model_names[0])
-            override.target = picked or model_names[0]
+            changed = True
 
         if db_invalid:
             if not db_names:
@@ -373,20 +351,112 @@ class Application:
                         )
                     },
                 )
+            if not sys.stdin.isatty():
+                raise DatusException(
+                    code=ErrorCode.COMMON_CONFIG_ERROR,
+                    message_args={
+                        "config_error": (
+                            f"Project config {project_config_path()} has stale "
+                            f"default_datasource={override.default_datasource!r} and stdin is not a TTY. "
+                            f"Edit .datus/config.yml manually or rerun in an interactive terminal."
+                        )
+                    },
+                )
             console.print(
-                f"  [red]default_datasource[/] = {override.default_datasource!r} not found in agent.yml "
+                f"[yellow]default_datasource[/] = {override.default_datasource!r} not found in agent.yml "
                 f"services.datasources ({sorted(db_names)}). Please pick a replacement:"
             )
             db_types = (raw.get("services") or {}).get("datasources") or {}
             choices = {name: f"{name}  ({(db_types.get(name) or {}).get('type', 'unknown')})" for name in db_names}
             picked = select_choice(console, choices, default=db_names[0])
             override.default_datasource = picked or db_names[0]
+            changed = True
 
-        written = save_project_override(override)
-        console.print(
-            f"[green]Updated project config:[/] {written} "
-            f"(target={override.target}, default_datasource={override.default_datasource})"
-        )
+        if changed:
+            save_project_override(override)
+
+    @staticmethod
+    def _classify_target(target, raw, model_names):
+        """Return ``(invalid, description)`` for a project-level target.
+
+        Each target shape is validated against the right source:
+          - legacy string / ``ProjectTarget(custom=...)`` → ``agent.models``.
+          - ``ProjectTarget(provider=..., model=...)`` → credentials must be
+            resolvable for that provider via ``agent.providers`` or the
+            catalog's ``api_key_env``; otherwise we flag it stale so the
+            caller can fall back to a custom model.
+
+        ``description`` is a human-friendly string embedded in the prompt
+        and the non-TTY error message.
+        """
+        from datus.configuration.project_config import ProjectTarget
+
+        if target is None:
+            return False, ""
+        if isinstance(target, ProjectTarget):
+            if target.custom:
+                return target.custom not in model_names, f"custom={target.custom!r}"
+            if target.provider and target.model:
+                provider = target.provider
+                desc = f"provider={provider!r} model={target.model!r}"
+                if not Application._provider_has_credentials(provider, raw):
+                    return True, desc
+                return False, desc
+            return True, repr(target)
+        return target not in model_names, f"target={target!r}"
+
+    @staticmethod
+    def _provider_has_credentials(provider: str, raw: dict) -> bool:
+        """Lightweight credential check that mirrors
+        :meth:`AgentConfig.provider_available` without instantiating the
+        full config (which would re-run override validation and defeat the
+        whole repair flow).
+        """
+        import os
+
+        from datus.configuration.agent_config import _load_provider_catalog, resolve_env
+
+        providers_raw = raw.get("providers") or {}
+        user_entry = providers_raw.get(provider) if isinstance(providers_raw, dict) else None
+        if not isinstance(user_entry, dict):
+            user_entry = {}
+
+        try:
+            catalog = _load_provider_catalog()
+        except Exception:
+            catalog = {}
+        meta = {}
+        if isinstance(catalog, dict):
+            providers_meta = catalog.get("providers") or {}
+            if isinstance(providers_meta, dict):
+                meta = providers_meta.get(provider) or {}
+                if not isinstance(meta, dict):
+                    meta = {}
+
+        auth_type = meta.get("auth_type") or user_entry.get("auth_type") or "api_key"
+        if auth_type == "subscription":
+            try:
+                from datus.auth.claude_credential import get_claude_subscription_token
+
+                token, _ = get_claude_subscription_token(api_key_from_config=user_entry.get("api_key") or "")
+                return bool(token)
+            except Exception:
+                return False
+        if auth_type == "oauth":
+            try:
+                from datus.auth.oauth_manager import OAuthManager
+
+                return OAuthManager().is_authenticated()
+            except Exception:
+                return False
+
+        api_key = user_entry.get("api_key")
+        if api_key and resolve_env(str(api_key)).strip() and not resolve_env(str(api_key)).startswith("<MISSING:"):
+            return True
+        env_name = meta.get("api_key_env")
+        if env_name and os.getenv(str(env_name), "").strip():
+            return True
+        return False
 
     def _run_web_interface(self, args):
         """Launch web chatbot interface"""

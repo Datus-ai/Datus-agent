@@ -2,6 +2,6 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Datus - AI-powered SQL command-line interface"""
+"""Datus - Data engineering agent builds evolvable context for your data system"""
 
 __version__ = "0.2.6"

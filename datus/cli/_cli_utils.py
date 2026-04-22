@@ -491,6 +491,7 @@ def prompt_input(
     multiline: bool = False,
     style=None,
     allow_interrupt: bool = False,
+    is_password: bool = False,
 ):
     """
     Unified input method using prompt_toolkit to avoid conflicts with rich.Prompt.ask().
@@ -500,6 +501,8 @@ def prompt_input(
         default: Default value if user presses Enter without input
         choices: List of valid choices (validates input)
         multiline: Whether to allow multiline input
+        is_password: Mask input with ``*`` (e.g. API keys). Mutually exclusive
+            with ``multiline`` (prompt_toolkit ignores the mask in multiline).
 
     Returns:
         User input string or default value
@@ -561,6 +564,7 @@ def prompt_input(
             key_bindings=key_bindings,
             history=InMemoryHistory(),  # Separate history for sub-prompts
             style=style,  # Use same style as main session
+            is_password=is_password and not multiline,
         )
 
         return result if multiline else result.strip()
@@ -575,3 +579,19 @@ def prompt_input(
         logger.error(f"Input prompt error: {e}")
         console.print(f"[bold red]Input error:[/] {str(e)}")
         return default
+
+
+def confirm_prompt(console: Console, message: str, default: bool = False) -> bool:
+    """Yes/No prompt built on :func:`select_choice` — TUI worker-thread safe.
+
+    Replaces ``rich.prompt.Confirm.ask`` for callers that run inside the
+    :class:`~datus.cli.tui.app.DatusApp` worker thread, where the rich
+    prompt competes with prompt_toolkit's raw-mode stdin and swallows
+    keys. ``y``/``n`` shortcuts also work via ``select_choice``'s
+    single-character direct-select binding.
+    """
+    console.print(f"[bold]{message}[/bold]")
+    choices = {"y": "Yes", "n": "No"}
+    default_key = "y" if default else "n"
+    result = select_choice(console, choices, default=default_key)
+    return result == "y"

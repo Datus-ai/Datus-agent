@@ -4,14 +4,74 @@ The agent configuration defines the core settings for your Datus Agent, includin
 
 ## Configuration Structure
 
-### Target Model
+### LLM Configuration (Two-Tier Provider Model)
 
-The `target` field specifies the default LLM configuration that will be used across all nodes unless explicitly overridden.
+LLM selection uses a two-tier system. Most users only need the provider-level configuration; custom entries are for self-hosted or private endpoints.
+
+#### Provider-Level Configuration (Preferred)
+
+Configure credentials under `agent.providers.<name>`. Available models and metadata are loaded from `conf/providers.yml` automatically. Use the [`/model`](../cli/model_command.md) slash command in the CLI to switch between providers and models interactively.
 
 ```yaml
 agent:
-  target: openai  # Default model configuration key from models section
+  providers:
+    openai:
+      api_key: ${OPENAI_API_KEY}
+    deepseek:
+      api_key: ${DEEPSEEK_API_KEY}
+    claude_subscription:
+      auth_type: subscription
+    codex:
+      auth_type: oauth
 ```
+
+Only credentials need to be specified — `type`, `base_url`, and model lists are inherited from `conf/providers.yml`.
+
+#### Custom / Legacy Models
+
+For self-hosted or private-deployment models not covered by `providers.yml`, use `agent.models`:
+
+```yaml
+agent:
+  models:
+    my-internal:
+      type: openai
+      base_url: https://internal.example.com/v1
+      api_key: ${MY_KEY}
+      model: internal-gpt-4
+```
+
+Custom entries appear under the **Custom** tab in `/model` and can be activated with `/model custom:my-internal`.
+
+### Target Model Selection
+
+The active model is determined by project-level override (`.datus/config.yml`) or the base `agent.target` field. The `/model` command writes to the project override automatically.
+
+#### Project-Level Override (`.datus/config.yml`)
+
+The `/model` command persists selections to `.datus/config.yml` in the current working directory:
+
+```yaml
+# Provider-level selection
+target:
+  provider: openai
+  model: gpt-4.1
+
+# Or, custom model selection
+target:
+  custom: my-internal
+```
+
+#### Legacy Target (backwards compatible)
+
+The `agent.target` field in `agent.yml` is still honored when no project-level override exists:
+
+```yaml
+agent:
+  target: openai  # Legacy: key from agent.models section
+```
+
+Resolution order: `.datus/config.yml` → `agent.target`.
 
 ### Response Language
 
@@ -30,27 +90,26 @@ Built-in code → name mapping (injected into the system prompt): `en` → Engli
 
 Chat API requests can override this per task by sending a `language` field in the request body (see [Chat API](../API/chat.md)). CLI usage inherits the yaml default.
 
-### Models Configuration
+### Models Configuration (Custom Entries)
 
-Configure LLM providers that your agent can use. Each model configuration includes the provider type, API endpoints, credentials, and specific model names.
+The `agent.models` section is used for self-hosted or private-deployment LLM endpoints. For standard providers (OpenAI, DeepSeek, etc.), use `agent.providers` instead.
 
-**Required Parameters per provider entry:**
+**Required Parameters per custom entry:**
 
-- **Provider key (`models.<key>`)** - Logical provider identifier, referenced by `agent.target` and node `model` fields (you can name it as needed)
-- **`type`** - Interface type corresponding to LLM manufacturers
-- **`base_url`** - Base address of the model provider's API endpoint
-- **`api_key`** - API key for accessing the LLM service (supports environment variables)
-- **`model`** - Specific model name to use from the provider
+- **Entry key (`models.<key>`)** — Logical identifier, referenced by `target: {custom: <key>}` or node `model` fields
+- **`type`** — Interface type (`openai`, `claude`, `deepseek`, `kimi`, `gemini`, `minimax`, `glm`, `codex`)
+- **`base_url`** — API endpoint URL
+- **`api_key`** — API key (supports `${ENV_VAR}` substitution)
+- **`model`** — Model name / SKU
 
 ```yaml
 agent:
-  target: provider_name
   models:
-    provider_name:
-      type: provider_type
-      base_url: https://api.example.com/v1
-      api_key: ${API_KEY_ENV_VAR}
-      model: model-name
+    my-internal:
+      type: openai
+      base_url: https://internal.example.com/v1
+      api_key: ${MY_KEY}
+      model: internal-gpt-4
 ```
 
 !!! tip "Environment Variables"
@@ -66,10 +125,11 @@ agent:
 
 ## Supported LLM Providers
 
-Providers selected in `datus-agent configure` are written into `agent.models`, and `agent.target` points to the default one. In practice:
+Providers are defined in `conf/providers.yml` and activated by adding credentials under `agent.providers`. Use the `/model` command to configure and switch providers interactively.
 
-- The provider name you choose in `datus-agent configure` becomes the key under `agent.models.<provider>`
-- You can later edit `agent.yml` manually and bind different nodes to different model entries
+- Provider credentials live under `agent.providers.<name>` in `agent.yml`
+- The active provider/model is stored in `.datus/config.yml` (written by `/model`)
+- Node-level `model` overrides can still reference entries in `agent.models` for custom endpoints
 
 ### General-purpose providers
 
@@ -124,99 +184,61 @@ The current implementation also auto-applies fixed parameter overrides for a few
 
 ### Provider Configuration Examples
 
-=== "OpenAI"
+With the new provider-level configuration, you only need to set credentials. All other fields (`type`, `base_url`, models list) are inherited from `conf/providers.yml`:
+
+=== "API Key Providers (Minimal)"
 
     ```yaml
-    openai:
-      type: openai
-      base_url: https://api.openai.com/v1
-      api_key: ${OPENAI_API_KEY}
-      model: gpt-5.2
-    ```
-
-=== "Anthropic Claude"
-
-    ```yaml
-    claude:
-      type: claude
-      base_url: https://api.anthropic.com
-      api_key: ${ANTHROPIC_API_KEY}
-      model: claude-sonnet-4-5
-    ```
-
-=== "DeepSeek"
-
-    ```yaml
-    deepseek:
-      type: deepseek
-      base_url: https://api.deepseek.com
-      api_key: ${DEEPSEEK_API_KEY}
-      model: deepseek-chat
-    ```
-
-=== "Google Gemini"
-
-    ```yaml
-    gemini:
-      type: gemini
-      base_url: https://generativelanguage.googleapis.com/v1beta
-      api_key: ${GEMINI_API_KEY}
-      model: gemini-2.5-flash
-    ```
-
-=== "Kimi (Moonshot)"
-
-    ```yaml
-    kimi:
-      type: kimi
-      base_url: https://api.moonshot.cn/v1
-      api_key: ${KIMI_API_KEY}
-      model: kimi-k2.5
-    ```
-
-=== "Qwen (Alibaba)"
-
-    ```yaml
-    qwen:
-      type: openai
-      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      api_key: ${DASHSCOPE_API_KEY}
-      model: qwen3-max
-    ```
-
-=== "Alibaba Coding Plan"
-
-    ```yaml
-    alibaba_coding:
-      type: claude
-      base_url: https://coding-intl.dashscope.aliyuncs.com/apps/anthropic
-      api_key: ${DASHSCOPE_API_KEY}
-      model: qwen3-coder-plus
-      temperature: 1.0
-      top_p: 0.95
+    agent:
+      providers:
+        openai:
+          api_key: ${OPENAI_API_KEY}
+        deepseek:
+          api_key: ${DEEPSEEK_API_KEY}
+        claude:
+          api_key: ${ANTHROPIC_API_KEY}
+        gemini:
+          api_key: ${GEMINI_API_KEY}
+        kimi:
+          api_key: ${KIMI_API_KEY}
+        qwen:
+          api_key: ${DASHSCOPE_API_KEY}
     ```
 
 === "Claude Subscription"
 
     ```yaml
-    claude_subscription:
-      type: claude
-      base_url: https://api.anthropic.com
-      api_key: ${CLAUDE_CODE_OAUTH_TOKEN}
-      model: claude-sonnet-4-6
-      auth_type: subscription
+    agent:
+      providers:
+        claude_subscription:
+          auth_type: subscription
+          # Token is auto-detected or entered via /model
     ```
 
-=== "Codex"
+=== "Codex (ChatGPT Plus/Pro)"
 
     ```yaml
-    codex:
-      type: codex
-      base_url: https://chatgpt.com/backend-api/codex
-      api_key: ""
-      model: codex-mini-latest
-      auth_type: oauth
+    agent:
+      providers:
+        codex:
+          auth_type: oauth
+          # OAuth flow is handled via /model
     ```
+
+=== "Custom Model (agent.models)"
+
+    ```yaml
+    agent:
+      models:
+        my-internal:
+          type: openai
+          base_url: https://internal.example.com/v1
+          api_key: ${MY_KEY}
+          model: internal-gpt-4
+    ```
+
+!!! note "Legacy Format"
+    The previous format with full `type`, `base_url`, `api_key`, and `model` under `agent.models` is still supported for backward compatibility. Existing configurations continue to work without changes.
 
 ## Agentic Nodes
 
@@ -232,7 +254,7 @@ This section is used for:
 
 The runtime currently reads these commonly used fields from `agentic_nodes` entries:
 
-- `model`: provider key from `agent.models`
+- `model`: provider key from `agent.models` (custom entries only; omit to inherit the active provider/model)
 - `system_prompt`: subagent name / prompt template base name
 - `node_class`: node implementation to use, such as `gen_sql`, `gen_report`, `explore`, `gen_table`, `gen_skill`, `gen_dashboard`, or `scheduler`
 - `prompt_version`, `prompt_language`
@@ -321,42 +343,39 @@ agent:
 
 ## Complete Configuration Example
 
-Here's a comprehensive agent configuration example with multiple providers:
+Here's a comprehensive agent configuration example with the provider-level format:
 
-```yaml title="datus-config.yaml"
-# Complete Datus Agent Configuration
+```yaml title="agent.yml"
 agent:
-  target: alibaba_coding
-  models:
+  # Provider credentials (models and metadata from conf/providers.yml)
+  providers:
     openai:
-      type: openai
-      base_url: https://api.openai.com/v1
       api_key: ${OPENAI_API_KEY}
-      model: gpt-5.2
-
-    gemini:
-      type: gemini
-      base_url: https://generativelanguage.googleapis.com/v1beta
-      api_key: ${GEMINI_API_KEY}
-      model: gemini-2.5-flash
-
-    claude:
-      type: claude
-      base_url: https://api.anthropic.com
-      api_key: ${ANTHROPIC_API_KEY}
-      model: claude-sonnet-4-5
-
     deepseek:
-      type: deepseek
-      base_url: https://api.deepseek.com
       api_key: ${DEEPSEEK_API_KEY}
-      model: deepseek-chat
+    claude:
+      api_key: ${ANTHROPIC_API_KEY}
+    gemini:
+      api_key: ${GEMINI_API_KEY}
+    claude_subscription:
+      auth_type: subscription
+    codex:
+      auth_type: oauth
 
-    alibaba_coding:
-      type: claude
-      base_url: https://coding-intl.dashscope.aliyuncs.com/apps/anthropic
-      api_key: ${DASHSCOPE_API_KEY}
-      model: qwen3-coder-plus
-      temperature: 1.0
-      top_p: 0.95
+  # Custom models for self-hosted endpoints (optional)
+  models:
+    my-internal:
+      type: openai
+      base_url: https://internal.example.com/v1
+      api_key: ${MY_KEY}
+      model: internal-gpt-4
+```
+
+And the corresponding project-level override:
+
+```yaml title=".datus/config.yml"
+target:
+  provider: openai
+  model: gpt-4.1
+default_database: my_duckdb
 ```

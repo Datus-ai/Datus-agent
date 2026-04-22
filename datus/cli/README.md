@@ -2,7 +2,7 @@
 
 ## Overview
 
-Datus-CLI is a lightweight AI-powered SQL command-line interface designed for data engineers. It combines the power of AI with a modern TUI experience to enhance SQL development efficiency.
+Datus-CLI is a data engineering agent that builds evolvable context for your data system. It combines the power of AI with a modern TUI experience to enhance SQL development efficiency.
 
 ## Quick Start
 

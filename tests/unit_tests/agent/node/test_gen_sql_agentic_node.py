@@ -2577,7 +2577,6 @@ def _make_gensql_node(node_config=None, agent_config=None):
     node.tools = []
     node.mcp_servers = {}
     node.actions = []
-    node.context_length = None
     node.node_config = node_config or {}
     node.agent_config = agent_config
     node.permission_manager = None

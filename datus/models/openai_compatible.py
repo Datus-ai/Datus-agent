@@ -61,19 +61,49 @@ _MODEL_SPECS_LOCK = threading.Lock()
 
 
 def _load_model_specs() -> Dict[str, Dict[str, int]]:
-    """Load model specifications from conf/providers.yml (cached after first call, thread-safe)."""
+    """Load model specifications from conf/providers.yml (cached after first call, thread-safe).
+
+    Specs from ``providers.yml`` are authoritative. The OpenRouter cache at
+    ``~/.datus/cache/openrouter_models.json`` provides a fallback ``context_length``
+    for slugs the YAML doesn't enumerate — this keeps the status bar and
+    auto-compaction heuristic aware of fresh OpenRouter models without
+    requiring a YAML edit for every new release.
+    """
     global _MODEL_SPECS_CACHE
     if _MODEL_SPECS_CACHE is not None:
         return _MODEL_SPECS_CACHE
     with _MODEL_SPECS_LOCK:
         if _MODEL_SPECS_CACHE is None:
+            specs: Dict[str, Dict[str, int]] = {}
             try:
                 text = read_data_file_text("conf/providers.yml")
                 catalog = yaml.safe_load(text)
-                _MODEL_SPECS_CACHE = catalog.get("model_specs", {})
+                raw_specs = catalog.get("model_specs") or {}
+                if isinstance(raw_specs, dict):
+                    specs = {
+                        k: dict(v) for k, v in raw_specs.items() if isinstance(k, str) and k and isinstance(v, dict)
+                    }
             except Exception as e:
                 logger.warning(f"Failed to load model_specs from providers.yml, using empty specs: {e}")
-                _MODEL_SPECS_CACHE = {}
+
+            # Merge OpenRouter cache: YAML wins on shared keys.
+            try:
+                from datus.cli.provider_model_catalog import load_cached_model_details
+
+                cache_details = load_cached_model_details() or {}
+                for entries in cache_details.values():
+                    for entry in entries:
+                        slug = entry.get("id") if isinstance(entry, dict) else None
+                        if not isinstance(slug, str) or not slug:
+                            continue
+                        ctx_len = entry.get("context_length")
+                        if not isinstance(ctx_len, int):
+                            continue
+                        specs.setdefault(slug, {}).setdefault("context_length", ctx_len)
+            except Exception as e:
+                logger.debug(f"Failed to merge OpenRouter cache into model_specs: {e}")
+
+            _MODEL_SPECS_CACHE = specs
     return _MODEL_SPECS_CACHE
 
 
@@ -1369,41 +1399,37 @@ class OpenAICompatibleModel(LLMBaseModel):
         """Model specifications loaded from conf/providers.yml (cached)."""
         return _load_model_specs()
 
+    def _lookup_spec(self, field: str) -> Optional[int]:
+        """Look up ``field`` in ``model_specs`` with exact-then-longest-prefix matching.
+
+        Longest-prefix is important when specs declare both a generic family key
+        (e.g. ``gpt-5``) and a more specific variant (e.g. ``gpt-5.3-codex``): the
+        generic key would otherwise bleed into unrelated slugs that happen to
+        share a short prefix. Returns None when the field is missing —
+        OpenRouter-cache-only entries do not carry ``max_tokens``, so callers
+        must tolerate absence.
+        """
+        specs = self.model_specs
+        exact = specs.get(self.model_name)
+        if isinstance(exact, dict) and isinstance(exact.get(field), int):
+            return exact[field]
+        best_key: Optional[str] = None
+        for spec_model, spec in specs.items():
+            if not isinstance(spec, dict) or not isinstance(spec.get(field), int):
+                continue
+            if self.model_name.startswith(spec_model) and (best_key is None or len(spec_model) > len(best_key)):
+                best_key = spec_model
+        if best_key is None:
+            return None
+        return specs[best_key][field]
+
     def max_tokens(self) -> Optional[int]:
-        """
-        Get the max tokens from model specs with prefix matching.
-
-        Returns:
-            Max tokens from model specs, or None if unavailable
-        """
-        # First try exact match
-        if self.model_name in self.model_specs:
-            return self.model_specs[self.model_name]["max_tokens"]
-
-        # Try prefix matching for models like gpt-4o-mini, kimi-k2-0711-preview
-        for spec_model in self.model_specs:
-            if self.model_name.startswith(spec_model):
-                return self.model_specs[spec_model]["max_tokens"]
-
-        return None
+        """Max tokens from model specs with prefix matching, or None if unavailable."""
+        return self._lookup_spec("max_tokens")
 
     def context_length(self) -> Optional[int]:
-        """
-        Get the context length from model specs with prefix matching.
-
-        Returns:
-            Context length from model specs, or None if unavailable
-        """
-        # First try exact match
-        if self.model_name in self.model_specs:
-            return self.model_specs[self.model_name]["context_length"]
-
-        # Try prefix matching for models like gpt-4o-mini, kimi-k2-0711-preview
-        for spec_model in self.model_specs:
-            if self.model_name.startswith(spec_model):
-                return self.model_specs[spec_model]["context_length"]
-
-        return None
+        """Context length from model specs with prefix matching, or None if unavailable."""
+        return self._lookup_spec("context_length")
 
     def token_count(self, prompt: str) -> int:
         """
