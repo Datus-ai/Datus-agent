@@ -46,6 +46,20 @@ def test_select_impacted_unit_tests_includes_changed_unit_tests_and_dedupes():
     ]
 
 
+def test_select_impacted_unit_tests_maps_non_python_files_to_parent_directory():
+    impacted = run_pr_tests.select_impacted_unit_tests(
+        [
+            "tests/unit_tests/tools/fixtures/data.json",
+            "tests/unit_tests/fixtures/sample.yaml",
+        ]
+    )
+
+    assert impacted == [
+        "tests/unit_tests/tools/fixtures/",
+        "tests/unit_tests/fixtures/",
+    ]
+
+
 def test_merge_and_parse_junit_results_across_multiple_suites(tmp_path):
     suite_a = tmp_path / "suite-a.xml"
     suite_b = tmp_path / "suite-b.xml"
@@ -116,3 +130,27 @@ def test_run_tests_treats_empty_impacted_collection_as_success(tmp_path, monkeyp
         str(tmp_path / "test-results-acceptance.xml"),
         str(tmp_path / "test-results-impacted-unit.xml"),
     ]
+
+
+def test_main_returns_test_exit_code(monkeypatch):
+    monkeypatch.setattr(
+        run_pr_tests.argparse.ArgumentParser, "parse_args", lambda self: type("Args", (), {"base_ref": "main"})()
+    )
+    monkeypatch.setattr(run_pr_tests, "run_tests", lambda base_ref="": (3, ["report.xml"]))
+    monkeypatch.setattr(
+        run_pr_tests,
+        "parse_test_results",
+        lambda junit_xml_paths=None: {
+            "total": 0,
+            "passed": 0,
+            "failed": 0,
+            "errors": 0,
+            "skipped": 0,
+            "failures": [],
+        },
+    )
+    monkeypatch.setattr(run_pr_tests, "write_test_report", lambda test_results, output_path=None: "")
+    monkeypatch.setattr(run_pr_tests, "extract_coverage", lambda base_ref: (0.0, 0.0))
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+
+    assert run_pr_tests.main() == 3

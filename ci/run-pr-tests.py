@@ -24,15 +24,19 @@ Generated files (all written to ci/ directory):
     ci/pytest-coverage.txt      - Full pytest output
 """
 
+from __future__ import annotations
+
 import argparse
 import copy
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import threading
 import xml.etree.ElementTree as XMLTree
+from typing import Any, TextIO
 
 import defusedxml.ElementTree as ET
 
@@ -81,17 +85,22 @@ IMPACTED_TEST_MAPPING = [
 ]
 
 
-def log(msg):
+def log(msg: str) -> None:
     print(f"[ci] {msg}", flush=True)
 
 
 TEST_CMD_TIMEOUT = int(os.environ.get("TEST_CMD_TIMEOUT", "1800"))
 GIT_CMD_TIMEOUT = int(os.environ.get("GIT_CMD_TIMEOUT", "60"))
 DIFF_COVER_TIMEOUT = int(os.environ.get("DIFF_COVER_TIMEOUT", "300"))
-_COMPARE_BRANCH_CACHE = {}
+_COMPARE_BRANCH_CACHE: dict[str, str | None] = {}
+READER_JOIN_TIMEOUT_SECONDS = 5
 
 
-def _run_cmd(cmd, timeout, **kwargs):
+def _run_cmd(
+    cmd: list[str],
+    timeout: int,
+    **kwargs: Any,
+) -> subprocess.CompletedProcess[str] | None:
     """Run a command with timeout. Returns CompletedProcess or None on timeout."""
     try:
         return subprocess.run(cmd, timeout=timeout, **kwargs)
@@ -100,7 +109,7 @@ def _run_cmd(cmd, timeout, **kwargs):
         return None
 
 
-def _stream_process_output(proc, log_file):
+def _stream_process_output(proc: subprocess.Popen[str], log_file: TextIO) -> None:
     """Stream process output to stdout and the log file until EOF."""
     if not proc.stdout:
         return
@@ -109,16 +118,16 @@ def _stream_process_output(proc, log_file):
         log_file.write(line)
 
 
-def _normalize_path(path):
+def _normalize_path(path: str) -> str:
     normalized = path.replace("\\", "/")
     if normalized.startswith("./"):
         normalized = normalized[2:]
     return normalized
 
 
-def _dedupe_preserve(items):
+def _dedupe_preserve(items: list[str]) -> list[str]:
     seen = set()
-    ordered = []
+    ordered: list[str] = []
     for item in items:
         if item not in seen:
             seen.add(item)
@@ -126,14 +135,14 @@ def _dedupe_preserve(items):
     return ordered
 
 
-def _remove_output_path(path):
+def _remove_output_path(path: str) -> None:
     if os.path.isdir(path):
         shutil.rmtree(path, ignore_errors=True)
     elif os.path.exists(path):
         os.remove(path)
 
 
-def _reset_report_outputs():
+def _reset_report_outputs() -> None:
     for path in [
         DEFAULT_COVERAGE_XML,
         DEFAULT_COVERAGE_HTML,
@@ -149,7 +158,14 @@ def _reset_report_outputs():
         _remove_output_path(path)
 
 
-def _build_pytest_command(targets, junit_xml, *, mark_expr=None, append=False, emit_reports=True):
+def _build_pytest_command(
+    targets: list[str],
+    junit_xml: str,
+    *,
+    mark_expr: str | None = None,
+    append: bool = False,
+    emit_reports: bool = True,
+) -> list[str]:
     cmd = [
         sys.executable,
         "-m",
@@ -187,7 +203,16 @@ def _build_pytest_command(targets, junit_xml, *, mark_expr=None, append=False, e
     return cmd
 
 
-def _run_pytest_suite(targets, junit_xml, log_file, *, suite_name, mark_expr=None, append=False, emit_reports=True):
+def _run_pytest_suite(
+    targets: list[str],
+    junit_xml: str,
+    log_file: TextIO,
+    *,
+    suite_name: str,
+    mark_expr: str | None = None,
+    append: bool = False,
+    emit_reports: bool = True,
+) -> int:
     """Run one pytest suite and stream logs to stdout and the CI log file."""
     cmd = _build_pytest_command(
         targets,
@@ -206,13 +231,16 @@ def _run_pytest_suite(targets, junit_xml, log_file, *, suite_name, mark_expr=Non
     log_file.write(banner)
     log_file.flush()
 
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        env=env,
-    )
+    popen_kwargs: dict[str, Any] = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.STDOUT,
+        "text": True,
+        "env": env,
+    }
+    if os.name != "nt":
+        popen_kwargs["start_new_session"] = True
+
+    proc = subprocess.Popen(cmd, **popen_kwargs)
     reader = threading.Thread(target=_stream_process_output, args=(proc, log_file), daemon=True)
     reader.start()
 
@@ -220,29 +248,42 @@ def _run_pytest_suite(targets, junit_xml, log_file, *, suite_name, mark_expr=Non
         exit_code = proc.wait(timeout=TEST_CMD_TIMEOUT)
     except subprocess.TimeoutExpired:
         log(f"{suite_name} timed out after {TEST_CMD_TIMEOUT}s, killing process")
-        proc.kill()
+        if os.name != "nt":
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        else:
+            proc.kill()
         proc.wait()
         timeout_msg = f"\n[ci] TIMEOUT: {suite_name} killed after {TEST_CMD_TIMEOUT}s\n"
         sys.stdout.write(timeout_msg)
         log_file.write(timeout_msg)
         exit_code = 1
     finally:
-        reader.join()
+        reader.join(timeout=READER_JOIN_TIMEOUT_SECONDS)
+        if reader.is_alive():
+            log(f"{suite_name} output reader did not exit within {READER_JOIN_TIMEOUT_SECONDS}s")
 
     log(f"{suite_name} exited with code {exit_code}")
     return exit_code
 
 
-def _normalize_suite_exit_code(exit_code, *, suite_name, allow_empty_collection=False):
+def _normalize_suite_exit_code(
+    exit_code: int,
+    *,
+    suite_name: str,
+    allow_empty_collection: bool = False,
+) -> int:
     if exit_code == 5 and allow_empty_collection:
         log(f"{suite_name} collected no tests (pytest rc=5); treating as success")
         return 0
     return exit_code
 
 
-def select_impacted_unit_tests(changed_files):
+def select_impacted_unit_tests(changed_files: list[str]) -> list[str]:
     """Map changed source files to the unit-test paths that should run."""
-    impacted = []
+    impacted: list[str] = []
     for path in changed_files:
         normalized = _normalize_path(path)
         if not normalized:
@@ -252,7 +293,8 @@ def select_impacted_unit_tests(changed_files):
             if normalized.endswith(".py"):
                 impacted.append(normalized)
             else:
-                impacted.append(f"{normalized.rstrip('/')}/")
+                parent = normalized.rstrip("/").rsplit("/", 1)[0]
+                impacted.append(f"{parent}/" if parent else "tests/unit_tests/")
             continue
 
         for prefix, test_target in IMPACTED_TEST_MAPPING:
@@ -263,7 +305,7 @@ def select_impacted_unit_tests(changed_files):
     return _dedupe_preserve(impacted)
 
 
-def find_compare_branch(base_ref):
+def find_compare_branch(base_ref: str) -> str | None:
     """Determine the compare branch for diff-cover."""
     if base_ref in _COMPARE_BRANCH_CACHE:
         return _COMPARE_BRANCH_CACHE[base_ref]
@@ -359,7 +401,7 @@ def find_compare_branch(base_ref):
     return best_commit
 
 
-def list_changed_files(base_ref):
+def list_changed_files(base_ref: str) -> list[str]:
     """Return repository paths changed against the PR base."""
     compare_ref = find_compare_branch(base_ref)
     if not compare_ref:
@@ -382,7 +424,7 @@ def list_changed_files(base_ref):
     return changed
 
 
-def resolve_impacted_unit_tests(base_ref):
+def resolve_impacted_unit_tests(base_ref: str) -> list[str]:
     changed_files = list_changed_files(base_ref)
     impacted = select_impacted_unit_tests(changed_files)
     if impacted:
@@ -392,13 +434,13 @@ def resolve_impacted_unit_tests(base_ref):
     return impacted
 
 
-def run_tests(base_ref=""):
+def run_tests(base_ref: str = "") -> tuple[int, list[str]]:
     """Run PR acceptance plus impacted unit tests and return the exit code and JUnit XML paths."""
     _reset_report_outputs()
 
     impacted_targets = resolve_impacted_unit_tests(base_ref)
-    junit_xml_paths = []
-    exit_codes = []
+    junit_xml_paths: list[str] = []
+    exit_codes: list[int] = []
 
     with open(DEFAULT_PYTEST_LOG, "w", encoding="utf-8") as log_file:
         acceptance_xml = os.path.join(OUT_DIR, "test-results-acceptance.xml")
@@ -443,7 +485,7 @@ def run_tests(base_ref=""):
     return exit_code, junit_xml_paths
 
 
-def merge_junit_results(junit_xml_paths, output_path=None):
+def merge_junit_results(junit_xml_paths: list[str], output_path: str | None = None) -> str:
     """Merge one or more JUnit XML files into ci/test-results.xml."""
     if output_path is None:
         output_path = DEFAULT_JUNIT_XML
@@ -482,7 +524,7 @@ def merge_junit_results(junit_xml_paths, output_path=None):
     return output_path
 
 
-def parse_test_results(junit_xml_paths=None):
+def parse_test_results(junit_xml_paths: str | list[str] | None = None) -> dict[str, Any]:
     """Parse one or more JUnit XML files to extract test counts and failures."""
     if junit_xml_paths is None:
         junit_xml_paths = [DEFAULT_JUNIT_XML]
@@ -490,7 +532,7 @@ def parse_test_results(junit_xml_paths=None):
         junit_xml_paths = [junit_xml_paths]
 
     total = passed = failed = errors = skipped = 0
-    failures = []
+    failures: list[dict[str, str]] = []
     parsed_any = False
 
     for junit_xml_path in junit_xml_paths:
@@ -544,7 +586,7 @@ def parse_test_results(junit_xml_paths=None):
     }
 
 
-def write_test_report(test_results, output_path=None):
+def write_test_report(test_results: dict[str, Any], output_path: str | None = None) -> str:
     """Write a markdown report of test failures."""
     if output_path is None:
         output_path = os.path.join(OUT_DIR, "test-report.md")
@@ -589,7 +631,7 @@ def write_test_report(test_results, output_path=None):
     return report
 
 
-def extract_coverage(base_ref):
+def extract_coverage(base_ref: str) -> tuple[float, float]:
     """Extract overall and diff coverage metrics."""
     diff_json = os.path.join(OUT_DIR, "diff-cover.json")
     diff_report = os.path.join(OUT_DIR, "diff-cover-report.md")
@@ -644,7 +686,7 @@ def extract_coverage(base_ref):
     return overall, diff_pct
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run PR acceptance plus impacted unit tests with coverage and diff reporting.",
     )
@@ -688,7 +730,8 @@ def main():
             print(f"{key}={val}")
 
     log("Done")
+    return test_exit_code
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
