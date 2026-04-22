@@ -75,6 +75,7 @@ SLASH_COMMANDS: tuple[SlashSpec, ...] = (
     SlashSpec("agent", "Select or inspect the default agent", "agent"),
     SlashSpec("subagent", "Manage sub-agents (list/add/remove/update)", "agent"),
     SlashSpec("namespace", "Switch the current namespace", "agent"),
+    SlashSpec("language", "Set or show the response language for model outputs", "agent"),
     # system
     SlashSpec("mcp", "Manage MCP servers (list/add/remove/check/call/filter)", "system"),
     SlashSpec("skill", "Manage skills and marketplace (list/install/publish/...)", "system"),

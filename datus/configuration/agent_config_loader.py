@@ -229,6 +229,8 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
                 db_cfg["default"] = db_name == override.default_datasource
     if override.project_name is not None:
         agent_raw["project_name"] = override.project_name
+    if override.language is not None:
+        agent_raw["language"] = override.language
 
 
 def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:

@@ -327,6 +327,25 @@ class TestApplyProjectOverride:
         assert agent_raw["target"] == "deepseek"
         assert agent_raw["project_name"] == "p"
 
+    def test_language_merged(self):
+        agent_raw = self._base_raw()
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(language="zh"),
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["language"] == "zh"
+
+    def test_language_none_leaves_agent_raw_unchanged(self):
+        agent_raw = self._base_raw()
+        agent_raw["language"] = "en"
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(language=None),
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["language"] == "en"
+
     def test_missing_models_section_target_stored_with_warning(self):
         agent_raw = {"services": {"datasources": {"db1": {}}}}
         with patch(

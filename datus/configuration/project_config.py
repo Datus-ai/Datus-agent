@@ -35,7 +35,7 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 PROJECT_CONFIG_REL = ".datus/config.yml"
-ALLOWED_KEYS = frozenset({"target", "default_datasource", "project_name"})
+ALLOWED_KEYS = frozenset({"target", "default_datasource", "project_name", "language"})
 
 
 @dataclass
@@ -65,9 +65,15 @@ class ProjectOverride:
     target: Optional[Union[str, ProjectTarget]] = None
     default_datasource: Optional[str] = None
     project_name: Optional[str] = None
+    language: Optional[str] = None
 
     def is_empty(self) -> bool:
-        return self.target is None and self.default_datasource is None and self.project_name is None
+        return (
+            self.target is None
+            and self.default_datasource is None
+            and self.project_name is None
+            and self.language is None
+        )
 
 
 def project_config_path(cwd: Optional[str] = None) -> Path:
@@ -137,6 +143,7 @@ def load_project_override(cwd: Optional[str] = None) -> Optional[ProjectOverride
         target=_parse_target(raw.get("target")),
         default_datasource=raw.get("default_datasource"),
         project_name=raw.get("project_name"),
+        language=raw.get("language"),
     )
 
 
@@ -167,6 +174,7 @@ def save_project_override(override: ProjectOverride, cwd: Optional[str] = None) 
             "target": _target_to_yaml(override.target),
             "default_datasource": override.default_datasource,
             "project_name": override.project_name,
+            "language": override.language,
         }.items()
         if v is not None
     }

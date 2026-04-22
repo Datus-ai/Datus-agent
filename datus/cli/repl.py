@@ -48,6 +48,7 @@ from datus.cli.autocomplete import (
 from datus.cli.bi_dashboard import BiDashboardCommands
 from datus.cli.chat_commands import ChatCommands
 from datus.cli.context_commands import ContextCommands
+from datus.cli.language_commands import LanguageCommands
 from datus.cli.metadata_commands import MetadataCommands
 from datus.cli.model_commands import ModelCommands
 from datus.cli.service_commands import ServiceCommands
@@ -112,6 +113,7 @@ _LEGACY_PREFIX_HINTS: dict[str, str] = {
     ".mcp": "/mcp",
     ".skill": "/skill",
     ".bootstrap-bi": "/bootstrap-bi",
+    ".language": "/language",
     "@catalog": "/catalog",
     "@subject": "/subject",
 }
@@ -228,6 +230,7 @@ class DatusCLI:
         self.sub_agent_commands = SubAgentCommands(self)
         self.bi_dashboard_commands = BiDashboardCommands(self)
         self.model_commands = ModelCommands(self)
+        self.language_commands = LanguageCommands(self)
         self.service_commands = ServiceCommands(self)
         self._status_bar_provider = StatusBarProvider(self)
 
@@ -295,6 +298,7 @@ class DatusCLI:
             "agent": self._cmd_agent,
             "subagent": self.sub_agent_commands.cmd,
             "namespace": self._cmd_switch_namespace,
+            "language": self.language_commands.cmd_language,
             # system
             "mcp": self._cmd_mcp,
             "skill": self._cmd_skill,

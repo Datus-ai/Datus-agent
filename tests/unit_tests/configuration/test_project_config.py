@@ -69,6 +69,15 @@ class TestLoadProjectOverride:
         assert result.target == "deepseek"
         assert result.default_datasource is None
         assert result.project_name is None
+        assert result.language is None
+
+    def test_parse_language_field(self, tmp_path):
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({"language": "zh"}))
+        result = load_project_override(str(tmp_path))
+        assert result.language == "zh"
+        assert result.target is None
 
     def test_unknown_keys_warn_and_drop(self, tmp_path, caplog):
         path = tmp_path / PROJECT_CONFIG_REL
@@ -130,6 +139,19 @@ class TestSaveProjectOverride:
         loaded = load_project_override(str(tmp_path))
         assert loaded == original
 
+    def test_round_trip_with_language(self, tmp_path):
+        original = ProjectOverride(target="a", language="zh")
+        save_project_override(original, cwd=str(tmp_path))
+        loaded = load_project_override(str(tmp_path))
+        assert loaded.language == "zh"
+        assert loaded.target == "a"
+
+    def test_language_none_omitted_from_yaml(self, tmp_path):
+        override = ProjectOverride(target="x", language=None)
+        written = save_project_override(override, cwd=str(tmp_path))
+        loaded = yaml.safe_load(written.read_text())
+        assert "language" not in loaded
+
     def test_overwrites_existing(self, tmp_path):
         save_project_override(ProjectOverride(target="old"), cwd=str(tmp_path))
         save_project_override(ProjectOverride(target="new"), cwd=str(tmp_path))
@@ -138,8 +160,8 @@ class TestSaveProjectOverride:
 
 
 class TestAllowedKeys:
-    def test_whitelist_contains_exactly_three_keys(self):
-        assert ALLOWED_KEYS == frozenset({"target", "default_datasource", "project_name"})
+    def test_whitelist_contains_expected_keys(self):
+        assert ALLOWED_KEYS == frozenset({"target", "default_datasource", "project_name", "language"})
 
 
 class TestProjectOverrideDataclass:
@@ -152,6 +174,7 @@ class TestProjectOverrideDataclass:
             ("target", "x"),
             ("default_datasource", "y"),
             ("project_name", "z"),
+            ("language", "zh"),
         ],
     )
     def test_is_not_empty_when_any_set(self, field, value):
