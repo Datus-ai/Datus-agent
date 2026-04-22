@@ -307,6 +307,7 @@ class DatusCLI:
             "bootstrap-bi": self.bi_dashboard_commands.cmd,
             "model": self.model_commands.cmd_model,
             "services": self.service_commands.cmd_services,
+            "profile": self._cmd_profile_placeholder,
         }
 
     @property
@@ -1490,6 +1491,13 @@ class DatusCLI:
             except Exception as e:
                 logger.warning(f"Database connection closed failed, reason:{e}")
         return EXIT_SENTINEL
+
+    def _cmd_profile_placeholder(self, args: str) -> None:
+        """Placeholder for /profile — full handler lands in a follow-up commit."""
+        self.console.print(
+            "[yellow]/profile handler not yet implemented; "
+            "the real implementation lands in the next commit of this branch.[/]"
+        )
 
     def catalogs_callback(self, selected_path: str = "", selected_data: Optional[Dict[str, Any]] = None):
         if not selected_path:
