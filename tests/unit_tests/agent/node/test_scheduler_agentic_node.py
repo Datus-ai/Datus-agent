@@ -226,6 +226,19 @@ class TestSchedulerToolSetup:
             node = SchedulerAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
             assert "submit_sql_job" not in [t.name for t in node.tools]
 
+    def test_tool_category_map_registers_scheduler_tools(self, real_agent_config, mock_llm_create):
+        """``_tool_category_map`` must place scheduler tools under ``scheduler_tools``
+        so ``scheduler_tools.delete_job`` DENY rule fires under normal profile."""
+        _add_scheduler_config(real_agent_config)
+        with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
+            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
+
+            node = SchedulerAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+            mapping = node._tool_category_map()
+            tool_names = {t.name for t in mapping.get("scheduler_tools", [])}
+            assert "submit_sql_job" in tool_names
+            assert "trigger_scheduler_job" in tool_names
+
 
 # ---------------------------------------------------------------------------
 # Registration Coverage Tests (node.py, node_type.py, sub_agent_task_tool.py)

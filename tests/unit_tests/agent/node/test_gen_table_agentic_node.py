@@ -107,6 +107,18 @@ class TestGenTableAgenticNodeInit:
         node = GenTableAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         assert node.execution_mode == "workflow"
 
+    def test_tool_category_map_buckets_db_and_filesystem(self, real_agent_config, mock_llm_create):
+        """DB helpers (incl. ``execute_ddl``) land in ``db_tools`` and FS tools
+        in ``filesystem_tools`` so profile rules gate them correctly."""
+        from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
+
+        node = GenTableAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        mapping = node._tool_category_map()
+        db_names = {t.name for t in mapping.get("db_tools", [])}
+        assert "execute_ddl" in db_names
+        assert "read_query" in db_names
+        assert "filesystem_tools" in mapping
+
     def test_interactive_mode(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
 

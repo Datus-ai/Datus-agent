@@ -109,6 +109,22 @@ class TestGenMetricsAgenticNodeInit:
             if original is not None:
                 real_agent_config.agentic_nodes["gen_metrics"] = original
 
+    def test_tool_category_map_splits_semantic_and_db(self, real_agent_config, mock_llm_create):
+        """``_tool_category_map`` buckets semantic helpers into ``semantic_tools`` and
+        DB helpers into ``db_tools`` so profile rules for each match correctly."""
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        node = GenMetricsAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+        mapping = node._tool_category_map()
+        semantic_names = {t.name for t in mapping.get("semantic_tools", [])}
+        assert "end_metric_generation" in semantic_names
+        assert "check_semantic_object_exists" in semantic_names
+        assert "db_tools" in mapping
+        assert "filesystem_tools" in mapping
+
 
 # ---------------------------------------------------------------------------
 # Execution Tests

@@ -452,7 +452,6 @@ class TestGenDashboardPermissionWiring:
 
             node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
             hooks = node._compose_hooks()
-            assert hooks is not None
             assert isinstance(hooks, PermissionHooks)
 
     def test_tool_registry_routes_delete_chart_to_bi_tools(self, real_agent_config, mock_llm_create):
@@ -602,7 +601,6 @@ class TestGenDashboardRegistration:
         from datus.schemas.gen_dashboard_agentic_node_models import GenDashboardNodeInput
 
         result = NodeType.type_input(NodeType.TYPE_GEN_DASHBOARD, {}, ignore_require_check=True)
-        assert result is not None
         assert isinstance(result, GenDashboardNodeInput)
         assert result.database is None
 
@@ -639,7 +637,6 @@ class TestGenDashboardRegistration:
                 input_data=input_data,
                 agent_config=real_agent_config,
             )
-            assert node.input is not None
             assert node.input.user_message == "Create a sales dashboard"
 
     def test_from_dict_input_deserialization(self, real_agent_config, mock_llm_create):
@@ -662,7 +659,6 @@ class TestGenDashboardRegistration:
                 "metadata": {},
             }
             node = Node.from_dict(node_dict, agent_config=real_agent_config)
-            assert node.input is not None
             assert node.input.user_message == "List dashboards"
 
     def test_from_dict_result_deserialization(self, real_agent_config, mock_llm_create):
@@ -690,7 +686,6 @@ class TestGenDashboardRegistration:
                 "metadata": {},
             }
             node = Node.from_dict(node_dict, agent_config=real_agent_config)
-            assert node.result is not None
             assert node.result.response == "Dashboard created"
             assert node.result.dashboard_result == {"dashboard_id": 42}
 
@@ -897,7 +892,6 @@ class TestGenDashboardTemplateContext:
 
             node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
             assert node.bi_func_tool is None
-            assert node._bi_setup_error is not None
             assert "superset" in node._bi_setup_error
             assert "version mismatch" in node._bi_setup_error
 
@@ -913,7 +907,6 @@ class TestGenDashboardTemplateContext:
 
             node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
             assert node.bi_func_tool is None
-            assert node._bi_setup_error is not None
             assert "not installed" in node._bi_setup_error
             assert "superset" in node._bi_setup_error
 

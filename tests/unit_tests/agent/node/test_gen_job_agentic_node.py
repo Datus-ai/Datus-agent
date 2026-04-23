@@ -115,6 +115,18 @@ class TestGenJobAgenticNodeInit:
 
         check_dynamic_db_func_tool(GenJobAgenticNode, real_agent_config)
 
+    def test_tool_category_map_lumps_db_write_helpers_under_db_tools(self, real_agent_config, mock_llm_create):
+        """``_tool_category_map`` must keep ``execute_write`` / ``execute_ddl`` /
+        ``transfer_query_result`` in ``db_tools`` so profile ASK rules fire."""
+        from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
+
+        node = GenJobAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        mapping = node._tool_category_map()
+        db_names = {t.name for t in mapping.get("db_tools", [])}
+        assert "execute_ddl" in db_names
+        assert "execute_write" in db_names
+        assert "transfer_query_result" in db_names
+
 
 # ---------------------------------------------------------------------------
 # Execution Tests

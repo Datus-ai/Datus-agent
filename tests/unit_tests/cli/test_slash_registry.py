@@ -58,12 +58,10 @@ class TestSpecIntegrity:
 class TestLookup:
     def test_canonical_name_resolves(self):
         spec = lookup("help")
-        assert spec is not None
         assert spec.name == "help"
 
     def test_alias_resolves_to_canonical(self):
         spec = lookup("quit")
-        assert spec is not None
         assert spec.name == "exit"
 
     def test_unknown_token_returns_none(self):
