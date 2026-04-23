@@ -289,7 +289,7 @@ class DatasourceService:
             data = ListDatabasesData(
                 databases=databases,
                 total_count=len(databases),
-                current_db_name=self.current_db_name,
+                current_database=self.current_db_name,
             )
 
             return Result(success=True, data=data)

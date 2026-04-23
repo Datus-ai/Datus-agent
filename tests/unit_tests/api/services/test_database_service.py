@@ -144,12 +144,12 @@ class TestListDatabases:
         for db in result.data.databases:
             assert db.type is not None
 
-    def test_list_databases_has_current_db_name(self, real_agent_config):
-        """list_databases data includes current_db_name field."""
+    def test_list_databases_has_current_database(self, real_agent_config):
+        """list_databases data includes current_database field."""
         svc = DatasourceService(agent_config=real_agent_config)
         request = ListDatabasesInput()
         result = svc.list_databases(request)
-        assert result.data.current_db_name is not None
+        assert result.data.current_database is not None
 
 
 class TestGetTableSchema:
