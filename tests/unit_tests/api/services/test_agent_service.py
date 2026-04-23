@@ -294,7 +294,7 @@ class TestEditAgent:
 
         svc = AgentService()
         result = await svc.edit_agent(
-            EditAgentInput(name="nonexistent_agent", description="updated"),
+            EditAgentInput(id="nonexistent_id", name="nonexistent_agent", description="updated"),
             real_agent_config,
         )
         assert result.success is False
@@ -306,7 +306,7 @@ class TestEditAgent:
 
         svc = AgentService()
         result = await svc.edit_agent(
-            EditAgentInput(name="some_agent", tools=["bad_tools.bad"]),
+            EditAgentInput(id="some_id", name="some_agent", tools=["bad_tools.bad"]),
             real_agent_config,
         )
         assert result.success is False
@@ -325,13 +325,14 @@ class TestEditAgent:
 
         svc = AgentService()
         # Create first
-        await svc.create_agent(
+        create_result = await svc.create_agent(
             CreateAgentInput(name="edit_me", type="gen_sql", description="original"),
             real_agent_config,
         )
+        agent_id = create_result.data["id"]
         # Edit
         result = await svc.edit_agent(
-            EditAgentInput(name="edit_me", description="updated description"),
+            EditAgentInput(id=agent_id, name="edit_me", description="updated description"),
             real_agent_config,
         )
         assert result.success is True

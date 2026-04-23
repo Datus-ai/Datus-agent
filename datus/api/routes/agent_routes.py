@@ -42,16 +42,16 @@ async def get_agent_use_tools(
     "/agent",
     response_model=Result[dict],
     summary="Get Agent Detail",
-    description="Get configuration details for a specific agent by name",
+    description="Get configuration details for a specific agent by id",
 )
 async def get_agent(
     svc: ServiceDep,
-    name: str = Query(..., description="Agent name"),
+    agent_id: str = Query(..., description="Agent id"),
 ) -> Result[dict]:
     """Return agent configuration matching IAgentInfo."""
     agent_service = AgentService()
     return await agent_service.get_agent(
-        name=name,
+        agent_id=agent_id,
         agent_config=svc.agent_config,
     )
 

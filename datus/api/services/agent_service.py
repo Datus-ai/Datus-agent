@@ -6,7 +6,6 @@ from the BUILTIN_SUBAGENTS set; custom agents are persisted in agent.yml.
 """
 
 import os
-import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -128,34 +127,34 @@ class AgentService:
 
     async def get_agent(
         self,
-        name: str,
+        agent_id: str,
         agent_config: AgentConfig,
     ) -> Result[dict]:
         """Return agent configuration matching IAgentInfo."""
 
         # 1. Check builtin agents
-        if name in BUILTIN_SUBAGENTS:
+        if agent_id in BUILTIN_SUBAGENTS:
             return Result(
                 success=True,
                 data={
                     "agent": {
-                        "id": name,
-                        "name": name,
+                        "id": agent_id,
+                        "name": agent_id,
                         "type": "builtin",
                     }
                 },
             )
 
-        # 2. Query custom sub-agent from agent.yml
+        # 2. Query custom sub-agent from agent.yml (dict keyed by name, treated as id)
         agentic_nodes = agent_config.agentic_nodes or {}
-        agent = agentic_nodes.get(name)
+        agent = agentic_nodes.get(agent_id)
         if not agent:
-            return Result(success=False, errorCode="AGENT_NOT_FOUND", errorMessage=f"Agent '{name}' not found")
+            return Result(success=False, errorCode="AGENT_NOT_FOUND", errorMessage=f"Agent '{agent_id}' not found")
 
         # 3. Read prompt template content from project template file
         agent_type = agent.get("type", "gen_sql")
         prompt_content = self._read_prompt_template(
-            agent_name=name,
+            agent_name=agent_id,
             agent_type=agent_type,
             version=agent.get("prompt_version"),
             agent_config=agent_config,
@@ -165,8 +164,8 @@ class AgentService:
             success=True,
             data={
                 "agent": {
-                    "id": name,
-                    "name": name,
+                    "id": agent_id,
+                    "name": agent_id,
                     "type": agent_type,
                     "description": agent.get("description", ""),
                     "system_prompt": prompt_content or agent.get("prompt_template", ""),
@@ -241,8 +240,7 @@ class AgentService:
                 errorMessage=f"Agent '{request.name}' already exists",
             )
 
-        # Create new agent entry
-        agent_id = str(uuid.uuid4().hex[:24])
+        # Create new agent entry (dict keyed by name, which acts as the id)
         agent_entry = {
             "type": request.type or "gen_sql",
             "description": request.description or "",
@@ -271,7 +269,7 @@ class AgentService:
         except Exception:
             logger.warning(f"Failed to copy prompt template for agent '{request.name}' (non-fatal)", exc_info=True)
 
-        return Result(success=True, data={"name": request.name, "id": agent_id})
+        return Result(success=True, data={"name": request.name, "id": request.name})
 
     def _resolve_template_version(self, template_base: str, version: Optional[str] = None) -> Optional[str]:
         """Resolve prompt template version via PromptManager; returns latest if version is None."""
@@ -385,16 +383,16 @@ class AgentService:
                     errorMessage=f"Invalid tool(s): {', '.join(invalid)}. Valid categories: {', '.join(sorted(VALID_TOOL_CATEGORIES))}",
                 )
 
-        # Find the agent
+        # Find the agent (dict keyed by name, treated as id)
         agentic_nodes = agent_config.agentic_nodes or {}
-        if request.name not in agentic_nodes:
+        if request.id not in agentic_nodes:
             return Result(
                 success=False,
                 errorCode="AGENT_NOT_FOUND",
-                errorMessage=f"Agent '{request.name}' not found",
+                errorMessage=f"Agent '{request.id}' not found",
             )
 
-        agent = agentic_nodes[request.name]
+        agent = agentic_nodes[request.id]
 
         # If prompt_template content is provided, save to template file
         prompt_content = request.prompt_template
@@ -402,18 +400,18 @@ class AgentService:
             version = request.prompt_version or agent.get("prompt_version")
             try:
                 self._save_prompt_template(
-                    agent_name=request.name,
+                    agent_name=request.id,
                     version=version,
                     content=prompt_content,
                     agent_config=agent_config,
                 )
             except Exception:
-                logger.warning(f"Failed to save prompt template for agent '{request.name}' (non-fatal)", exc_info=True)
+                logger.warning(f"Failed to save prompt template for agent '{request.id}' (non-fatal)", exc_info=True)
 
-        # Update only provided fields
-        update_data = request.model_dump(exclude={"name", "prompt_template"}, exclude_none=True)
+        # Update only provided fields (name is the dict key and acts as id, so exclude it)
+        update_data = request.model_dump(exclude={"id", "name", "prompt_template"}, exclude_none=True)
         if not update_data and prompt_content is None:
-            return Result(success=True, data={"name": request.name, "id": request.name})
+            return Result(success=True, data={"name": request.id, "id": request.id})
 
         # Merge update data into the agent entry
         agent.update(update_data)
@@ -421,4 +419,4 @@ class AgentService:
         # Save back to agent.yml
         _save_agentic_nodes(agent_config, agentic_nodes)
 
-        return Result(success=True, data={"name": request.name, "id": request.name})
+        return Result(success=True, data={"name": request.id, "id": request.id})
