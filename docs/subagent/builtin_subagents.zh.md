@@ -1007,7 +1007,7 @@ agent:
     bi_platforms:
       superset:
         type: superset
-        api_url: "http://localhost:8088"
+        api_base_url: "http://localhost:8088"
         username: "${SUPERSET_USER}"
         password: "${SUPERSET_PASSWORD}"
         dataset_db:

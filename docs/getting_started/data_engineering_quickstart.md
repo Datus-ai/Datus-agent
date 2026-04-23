@@ -115,7 +115,7 @@ agent:
     bi_platforms:
       superset:
         type: superset
-        api_url: http://127.0.0.1:8088
+        api_base_url: http://127.0.0.1:8088
         username: admin
         password: admin
         dataset_db:

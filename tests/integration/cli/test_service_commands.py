@@ -284,7 +284,7 @@ def cli_with_superset(tmp_path, bi_core_stub):
         tmp_path,
         bi_tools={
             "superset": {
-                "api_url": "http://superset.test/api",
+                "api_base_url": "http://superset.test/api",
                 "username": "admin",
                 "password": "admin",
                 "type": "superset",
@@ -300,13 +300,13 @@ def cli_with_two_bi_services(tmp_path, bi_core_stub):
         tmp_path,
         bi_tools={
             "superset": {
-                "api_url": "http://superset.test/api",
+                "api_base_url": "http://superset.test/api",
                 "username": "admin",
                 "password": "admin",
                 "type": "superset",
             },
             "grafana_ro": {
-                "api_url": "http://grafana.test/api",
+                "api_base_url": "http://grafana.test/api",
                 "api_key": "token",
                 "type": "grafana_ro",
             },
@@ -471,13 +471,13 @@ class TestMultiInstanceSamePlatform:
             tmp_path,
             bi_tools={
                 "superset_prod": {
-                    "api_url": "http://prod.test/api",
+                    "api_base_url": "http://prod.test/api",
                     "username": "admin",
                     "password": "admin",
                     "type": "superset",
                 },
                 "superset_staging": {
-                    "api_url": "http://staging.test/api",
+                    "api_base_url": "http://staging.test/api",
                     "username": "admin",
                     "password": "admin",
                     "type": "superset",
@@ -527,7 +527,7 @@ class TestMissingAdapterEndToEnd:
         # fails the way it would on a real machine missing ``datus-bi-<x>``.
         agent_config = _build_agent_config(
             tmp_path,
-            bi_tools={"tableau": {"api_url": "http://tableau.test", "type": "tableau"}},
+            bi_tools={"tableau": {"api_base_url": "http://tableau.test", "type": "tableau"}},
         )
         return _FakeCLI(agent_config)
 

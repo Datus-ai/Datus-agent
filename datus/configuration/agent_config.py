@@ -392,7 +392,7 @@ class DashboardConfig:
     # dict lookup. May be an arbitrary user-chosen name (``superset_prod``,
     # ``grafana_staging``, ...).
     platform: str
-    api_url: str = ""
+    api_base_url: str = ""
     # use login or api_key
     username: str = ""
     password: str = ""
@@ -1479,7 +1479,7 @@ class AgentConfig:
             platform = str(service_name)
             # ``type`` is the adapter kind (``superset`` / ``grafana`` / ...).
             # When omitted, default to the key — preserves the single-instance
-            # convention ``services.bi_platforms.superset: { api_url: ... }``.
+            # convention ``services.bi_platforms.superset: { api_base_url: ... }``.
             # When provided and different from the key, the user is opting
             # into a multi-instance deployment (alias ``superset_prod`` or
             # similar); we keep both fields on ``DashboardConfig`` so the
@@ -1487,18 +1487,18 @@ class AgentConfig:
             # CLI / dashboard_config still key by the user-chosen alias.
             declared_type = auth_params.get("type")
             adapter_type = str(declared_type).strip() if declared_type else platform
-            api_url_raw = auth_params.get("api_url", "")
+            api_base_url_raw = auth_params.get("api_base_url", "")
             username_raw = auth_params.get("username", "")
             password_raw = auth_params.get("password", "")
             api_key_raw = auth_params.get("api_key", "")
-            api_url = resolve_env(str(api_url_raw)) if api_url_raw else ""
+            api_base_url = resolve_env(str(api_base_url_raw)) if api_base_url_raw else ""
             username = resolve_env(str(username_raw)) if username_raw else ""
             password = resolve_env(str(password_raw)) if password_raw else ""
             api_key = resolve_env(str(api_key_raw)) if api_key_raw else ""
             dataset_db = _resolve_nested_value(auth_params.get("dataset_db"))
             self.dashboard_config[platform] = DashboardConfig(
                 platform=platform,
-                api_url=api_url,
+                api_base_url=api_base_url,
                 username=username,
                 password=password,
                 api_key=api_key,

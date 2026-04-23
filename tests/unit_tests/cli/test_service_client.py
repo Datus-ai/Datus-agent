@@ -201,7 +201,7 @@ class TestServiceClientRegistry:
 
     def test_discover_lists_all_service_types(self):
         cfg = _fake_agent_config(
-            bi_platforms={"superset": {"api_url": "x"}, "grafana": {"api_url": "y"}},
+            bi_platforms={"superset": {"api_base_url": "x"}, "grafana": {"api_base_url": "y"}},
             schedulers={"airflow": {"type": "airflow"}},
             semantic_layer={"metricflow": {"namespace": "x"}},
         )

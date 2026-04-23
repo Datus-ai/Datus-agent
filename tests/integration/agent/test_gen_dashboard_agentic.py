@@ -66,7 +66,7 @@ def dashboard_agent_config():
 
     config.dashboard_config["superset"] = DashboardConfig(
         platform="superset",
-        api_url=SUPERSET_URL,
+        api_base_url=SUPERSET_URL,
         username=SUPERSET_USER,
         password=SUPERSET_PASS,
         extra={"provider": "db"},

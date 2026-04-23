@@ -243,7 +243,7 @@ def _build_tool(
             dataset_db["datasource_name"] = datasource_name
 
     dash_cfg = MagicMock()
-    dash_cfg.api_url = ""
+    dash_cfg.api_base_url = ""
     dash_cfg.username = ""
     dash_cfg.password = ""
     dash_cfg.api_key = ""

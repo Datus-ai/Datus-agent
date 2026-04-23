@@ -44,7 +44,7 @@ agent:
     bi_platforms:
       superset:
         type: superset
-        api_url: http://localhost:8088
+        api_base_url: http://localhost:8088
         username: ${SUPERSET_USER}
         password: ${SUPERSET_PASSWORD}
         dataset_db:
@@ -53,7 +53,7 @@ agent:
 
       grafana:
         type: grafana
-        api_url: http://localhost:3000
+        api_base_url: http://localhost:3000
         api_key: ${GRAFANA_API_KEY}
         dataset_db:
           uri: ${GRAFANA_DB_URI}

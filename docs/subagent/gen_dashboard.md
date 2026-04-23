@@ -95,7 +95,7 @@ agent:
     bi_platforms:
       superset:
         type: superset
-        api_url: "http://localhost:8088"
+        api_base_url: "http://localhost:8088"
         username: "${SUPERSET_USER}"
         password: "${SUPERSET_PASSWORD}"
         dataset_db:
@@ -103,7 +103,7 @@ agent:
           schema: "public"
       grafana:
         type: grafana
-        api_url: "http://localhost:3000"
+        api_base_url: "http://localhost:3000"
         api_key: "${GRAFANA_API_KEY}"
         dataset_db:
           uri: "${GRAFANA_DB_URI}"
@@ -124,7 +124,7 @@ agent:
 | `max_turns` | No | Maximum conversation turns | 30 |
 | `bi_platform` | No | Explicit platform key from `services.bi_platforms` (`superset`, `grafana`) | Auto-detected when only one BI platform is configured |
 | `services.bi_platforms.<platform>.type` | No | BI platform type. If set, it must match the config key | Uses the config key |
-| `services.bi_platforms.<platform>.api_url` | Yes | BI platform API endpoint | — |
+| `services.bi_platforms.<platform>.api_base_url` | Yes | BI platform API endpoint | — |
 | `services.bi_platforms.<platform>.username` | Superset | Login username | — |
 | `services.bi_platforms.<platform>.password` | Superset | Login password | — |
 | `services.bi_platforms.<platform>.api_key` | Grafana | Grafana API key | — |

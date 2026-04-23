@@ -211,7 +211,7 @@ def _add_dashboard_config(agent_config, platform="superset"):
     """Add dashboard config and gen_dashboard agentic node config to an AgentConfig."""
     agent_config.dashboard_config[platform] = DashboardConfig(
         platform=platform,
-        api_url="http://localhost:8088",
+        api_base_url="http://localhost:8088",
         username="admin",
         password="admin",
         extra={"provider": "db"},
@@ -280,7 +280,7 @@ class TestGenDashboardAgenticNodeInit:
         # Add dashboard config but no gen_dashboard agentic node
         real_agent_config.dashboard_config["superset"] = DashboardConfig(
             platform="superset",
-            api_url="http://localhost:8088",
+            api_base_url="http://localhost:8088",
             username="admin",
             password="admin",
         )
@@ -352,7 +352,7 @@ class TestGenDashboardToolSetup:
         """Read-only adapter should only expose read tools."""
         real_agent_config.dashboard_config["superset"] = DashboardConfig(
             platform="superset",
-            api_url="http://localhost:8088",
+            api_base_url="http://localhost:8088",
             username="admin",
             password="admin",
         )
@@ -394,7 +394,7 @@ class TestGenDashboardToolSetup:
         """When datus_bi_core import fails, node should have no BI tools."""
         real_agent_config.dashboard_config["superset"] = DashboardConfig(
             platform="superset",
-            api_url="http://localhost:8088",
+            api_base_url="http://localhost:8088",
             username="admin",
             password="admin",
         )
@@ -423,7 +423,7 @@ class TestGenDashboardAutoDetect:
         """When only one platform in dashboard_config and no explicit bi_platform, auto-detect it."""
         real_agent_config.dashboard_config["superset"] = DashboardConfig(
             platform="superset",
-            api_url="http://localhost:8088",
+            api_base_url="http://localhost:8088",
             username="admin",
             password="admin",
         )
@@ -445,13 +445,13 @@ class TestGenDashboardAutoDetect:
         """When multiple platforms configured and no explicit bi_platform, no tools should be set up."""
         real_agent_config.dashboard_config["superset"] = DashboardConfig(
             platform="superset",
-            api_url="http://localhost:8088",
+            api_base_url="http://localhost:8088",
             username="admin",
             password="admin",
         )
         real_agent_config.dashboard_config["grafana"] = DashboardConfig(
             platform="grafana",
-            api_url="http://localhost:3000",
+            api_base_url="http://localhost:3000",
             username="admin",
             password="admin",
         )
@@ -750,7 +750,7 @@ class TestGenDashboardTemplateContext:
         """write_query should only be marked available when dataset_db is configured."""
         real_agent_config.dashboard_config["superset"] = DashboardConfig(
             platform="superset",
-            api_url="http://localhost:8088",
+            api_base_url="http://localhost:8088",
             username="admin",
             password="admin",
             dataset_db={"uri": "postgresql://superset:superset@localhost:5432/superset"},
@@ -808,7 +808,7 @@ class TestGenDashboardTemplateContext:
         """The rendered prompt should describe write_query as conditional, not mandatory."""
         real_agent_config.dashboard_config["superset"] = DashboardConfig(
             platform="superset",
-            api_url="http://localhost:8088",
+            api_base_url="http://localhost:8088",
             username="admin",
             password="admin",
             dataset_db={"uri": "postgresql://superset:superset@localhost:5432/superset"},
@@ -857,7 +857,7 @@ class TestGenDashboardSkillContext:
         """Grafana nodes should switch the platform skill but keep shared validation."""
         real_agent_config.dashboard_config["grafana"] = DashboardConfig(
             platform="grafana",
-            api_url="http://localhost:3000",
+            api_base_url="http://localhost:3000",
             api_key="test-api-key",
         )
         real_agent_config.agentic_nodes["gen_dashboard"] = {

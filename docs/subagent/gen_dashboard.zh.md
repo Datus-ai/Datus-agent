@@ -95,7 +95,7 @@ agent:
     bi_platforms:
       superset:
         type: superset
-        api_url: "http://localhost:8088"
+        api_base_url: "http://localhost:8088"
         username: "${SUPERSET_USER}"
         password: "${SUPERSET_PASSWORD}"
         dataset_db:
@@ -103,7 +103,7 @@ agent:
           schema: "public"
       grafana:
         type: grafana
-        api_url: "http://localhost:3000"
+        api_base_url: "http://localhost:3000"
         api_key: "${GRAFANA_API_KEY}"
         dataset_db:
           uri: "${GRAFANA_DB_URI}"
@@ -124,7 +124,7 @@ agent:
 | `max_turns` | 否 | 最大对话轮数 | 30 |
 | `bi_platform` | 否 | `services.bi_platforms` 中的平台键（如 `superset`、`grafana`） | 仅配置一个 BI 平台时自动检测 |
 | `services.bi_platforms.<platform>.type` | 否 | BI 平台类型；如果填写，必须与配置键一致 | 使用配置键 |
-| `services.bi_platforms.<platform>.api_url` | 是 | BI 平台 API 地址 | — |
+| `services.bi_platforms.<platform>.api_base_url` | 是 | BI 平台 API 地址 | — |
 | `services.bi_platforms.<platform>.username` | Superset | 登录用户名 | — |
 | `services.bi_platforms.<platform>.password` | Superset | 登录密码 | — |
 | `services.bi_platforms.<platform>.api_key` | Grafana | Grafana API Key | — |

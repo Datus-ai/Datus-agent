@@ -164,7 +164,7 @@ class BIFuncTool:
                         pass
 
         return adapter_cls(
-            api_base_url=dash_cfg.api_url,
+            api_base_url=dash_cfg.api_base_url,
             auth_params=AuthParam(
                 username=dash_cfg.username,
                 password=dash_cfg.password,
