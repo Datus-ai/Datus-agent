@@ -100,7 +100,7 @@ class EditAgentInput(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str = Field(..., description="Agent id to edit")
-    name: Optional[str] = Field(..., description="Agent name to edit")
+    name: Optional[str] = Field(default=None, description="Agent name to edit")
     description: Optional[str] = None
     prompt_template: Optional[str] = Field(default=None, alias="system_prompt")
     prompt_version: Optional[str] = Field(default=None, description="Prompt version (None = latest)")
