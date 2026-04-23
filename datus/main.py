@@ -52,15 +52,6 @@ def create_parser() -> argparse.ArgumentParser:
     # Create subparsers for different commands, inheriting global options
     subparsers = parser.add_subparsers(dest="action", help="Action to perform")
 
-    # configure command — database connections only (use `/model` inside the
-    # CLI for LLM selection).
-    subparsers.add_parser(
-        "configure",
-        help="Configure database connections (use `/model` inside the CLI to switch LLMs)",
-        parents=[global_parser],
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-
     # init command — project workspace initialization (AGENTS.md)
     init_parser = subparsers.add_parser(
         "init",
@@ -521,13 +512,6 @@ def main():
     if not args.action:
         parser.print_help()
         return 1
-
-    # configure command — set up LLM + database (replaces old init config part)
-    if args.action == "configure":
-        configure_logging(args.debug, console_output=False)
-        from datus.cli.interactive_configure import InteractiveConfigure
-
-        return InteractiveConfigure().run()
 
     # init command — generate AGENTS.md workspace (requires configured LLM)
     if args.action == "init":

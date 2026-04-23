@@ -229,7 +229,7 @@ class Application:
 
         datasources = config.services.datasources
         if not datasources:
-            console.print("[yellow]No datasources configured. Run 'datus configure' first.[/yellow]")
+            console.print("[yellow]No datasources configured. Use /datasource to add one.[/yellow]")
             return ""
 
         # default_datasource reflects the project-level overlay when present — it

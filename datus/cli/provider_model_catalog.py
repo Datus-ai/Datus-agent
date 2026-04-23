@@ -4,7 +4,7 @@
 
 """Overlay provider model lists from OpenRouter's public catalog.
 
-Used by `datus configure` to present up-to-date model choices without shipping
+Used by the `/model` command to present up-to-date model choices without shipping
 an ever-expanding local list. Failures silently fall back through:
 
   L1 Remote GET https://openrouter.ai/api/v1/models  (8s timeout, no auth)

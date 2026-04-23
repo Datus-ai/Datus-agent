@@ -7,7 +7,7 @@
 Workspace initialization command for Datus Agent.
 
 Generates AGENTS.md in the current project directory. Requires a configured
-LLM (run `datus configure` first). Reads configured services from agent.yml,
+LLM (use `/model` inside the CLI). Reads configured services from agent.yml,
 scans the directory structure, and uses the LLM to produce a project-level
 AGENTS.md with Architecture, Directory Map, Services, and Artifacts sections.
 """
@@ -86,7 +86,7 @@ def _detect_project_type(root: str) -> str:
 def _build_services_section(datasources: Dict[str, Any]) -> str:
     """Build Services section from configured datasources."""
     if not datasources:
-        return "No services configured. Run `datus configure` to add datasources.\n"
+        return "No services configured. Use `/datasource` inside the CLI to add datasources.\n"
 
     lines = ["| Name | Type | Connection |", "|------|------|------------|"]
     for name, cfg in datasources.items():
@@ -123,7 +123,7 @@ class InitWorkspace:
                 )
             except Exception as e:
                 self.console.print(f"[red]Failed to load configuration: {e}[/red]")
-                self.console.print("Run 'datus configure' first to set up LLM and database connections.")
+                self.console.print("Run 'datus init' first to set up the configuration.")
                 return 1
 
             # Check for existing AGENTS.md

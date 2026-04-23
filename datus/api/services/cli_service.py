@@ -453,9 +453,9 @@ class CLIService:
                         }
                     else:
                         # Use real metrics RAG similar to ContextCommands.cmd_subject
-                        from datus.storage.metric.store import rag_by_configuration
+                        from datus.storage.metric.store import MetricRAG
 
-                        metrics_rag = rag_by_configuration(self.agent_config)
+                        metrics_rag = MetricRAG(self.agent_config)
                         metrics_count = metrics_rag.get_metrics_size()
                         rag_path = self.agent_config.rag_storage_path()
 
@@ -487,13 +487,11 @@ class CLIService:
                             "message": "SQL history context not available - agent config required",
                         }
                     else:
-                        # Use real SQL history RAG similar to ContextCommands.cmd_historical_sql
-                        from datus.storage.sql_history import (
-                            sql_history_rag_by_configuration,
-                        )
+                        # Use real reference SQL RAG
+                        from datus.storage.reference_sql.store import ReferenceSqlRAG
 
-                        sql_rag = sql_history_rag_by_configuration(self.agent_config)
-                        sql_count = sql_rag.get_sql_history_size()
+                        sql_rag = ReferenceSqlRAG(self.agent_config)
+                        sql_count = sql_rag.get_reference_sql_size()
                         rag_path = self.agent_config.rag_storage_path()
 
                         result_data.context_info = {

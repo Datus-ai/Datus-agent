@@ -233,17 +233,6 @@ class TestMainInitAction:
         mock_init.run.assert_called_once()
         assert result == 0
 
-    def test_configure_action_runs_interactive_configure(self):
-        mock_configure = MagicMock()
-        mock_configure.run.return_value = 0
-        with (
-            patch("datus.main.configure_logging"),
-            patch("datus.cli.interactive_configure.InteractiveConfigure", return_value=mock_configure),
-            patch.object(sys, "argv", ["datus", "configure"]),
-        ):
-            result = main()
-        mock_configure.run.assert_called_once()
-        assert result == 0
 
 
 class TestMainTutorialAction:

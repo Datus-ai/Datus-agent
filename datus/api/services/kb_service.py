@@ -255,7 +255,7 @@ class KbService:
         args: types.SimpleNamespace,
         emit,
     ) -> dict:
-        successful, error_message = init_success_story_semantic_model(args, config, emit=emit)
+        successful, error_message = init_success_story_semantic_model(config, args.success_story, emit=emit)
         if successful:
             rag = SemanticModelRAG(config)
             return {
@@ -274,7 +274,7 @@ class KbService:
         subject_tree: Optional[list],
         emit,
     ) -> dict:
-        successful, error_message, _ = init_success_story_metrics(args, config, subject_tree, emit=emit)
+        successful, error_message, _ = init_success_story_metrics(config, args.success_story, subject_tree, emit=emit)
         if successful:
             rag = MetricRAG(config)
             return {
@@ -298,7 +298,7 @@ class KbService:
         if hasattr(args, "ext_knowledge") and args.ext_knowledge:
             init_ext_knowledge(rag.store, args, build_mode=strategy, pool_size=pool_size)
         elif hasattr(args, "success_story") and args.success_story:
-            successful, error_message = init_success_story_knowledge(args, config, subject_tree)
+            successful, error_message = init_success_story_knowledge(config, args.success_story, subject_tree)
             if not successful:
                 return {"status": "failed", "message": error_message}
 

@@ -51,7 +51,7 @@ def run_project_init(base_config: AgentConfig, cwd: Optional[str] = None) -> Pro
             code=ErrorCode.COMMON_CONFIG_ERROR,
             message_args={
                 "config_error": (
-                    "Base agent.yml has no 'agent.models' defined. Run 'datus configure' to set up LLM providers first."
+                    "Base agent.yml has no 'agent.models' defined. Use /model inside the CLI to set up LLM providers."
                 )
             },
         )
@@ -61,7 +61,7 @@ def run_project_init(base_config: AgentConfig, cwd: Optional[str] = None) -> Pro
             message_args={
                 "config_error": (
                     "Base agent.yml has no 'agent.services.datasources' defined. "
-                    "Run 'datus configure' to add at least one datasource first."
+                    "Use /datasource inside the CLI to add at least one datasource."
                 )
             },
         )
