@@ -78,7 +78,10 @@ NORMAL = PermissionConfig(
 
 # --- Auto --------------------------------------------------------------------
 # Normal's rules + workspace writes + BI create/update + scheduler non-trigger.
-# DB writes remain ASK (no env detection in MVP). Named destructives remain DENY.
+# DB writes remain ASK (no env detection in MVP). Named destructives are
+# *downgraded* from DENY to ASK — the user is already in a productive
+# posture, so forcing them to switch to ``dangerous`` just to remove one
+# chart is hostile. ASK still gates each call via the broker.
 _AUTO_EXTRA_RULES = [
     # workspace writes (PathZone handles EXTERNAL ASK at hook layer)
     _rule("filesystem_tools", "write_file", PermissionLevel.ALLOW),
@@ -107,12 +110,11 @@ _AUTO_EXTRA_RULES = [
     _rule("db_tools", "execute_write", PermissionLevel.ASK),
     _rule("db_tools", "transfer_query_result", PermissionLevel.ASK),
     _rule("db_tools", "write_query", PermissionLevel.ASK),
-    # Defensive re-assert: with current rules, ``bi_tools.delete_*`` already
-    # stays DENY (inherited from NORMAL, not overridden by ``create_*``/
-    # ``update_*``/``add_*`` which don't pattern-match ``delete_dashboard``).
-    # Re-asserting keeps the invariant if a future patch introduces a broader
-    # ``bi_tools.*`` ALLOW that would otherwise clobber it.
-    _rule("bi_tools", "delete_*", PermissionLevel.DENY),
+    # Named destructives — downgrade NORMAL's DENY to ASK in Auto. The user
+    # can confirm at the prompt; DENY would force a profile switch to
+    # ``dangerous`` (which is far more permissive than just ``delete``).
+    _rule("bi_tools", "delete_*", PermissionLevel.ASK),
+    _rule("scheduler_tools", "delete_job", PermissionLevel.ASK),
 ]
 
 AUTO = PermissionConfig(

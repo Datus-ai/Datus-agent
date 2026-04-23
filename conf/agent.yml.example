@@ -81,7 +81,7 @@ agent:
   #
   # Profiles:
   #   normal    — Read-only allowed; all writes prompt; named destructive deny
-  #   auto      — Normal + workspace writes auto; DB writes still prompt
+  #   auto      — Normal + workspace writes auto; DB writes + destructives prompt (not deny)
   #   dangerous — Nearly everything auto (writes outside workspace still prompt)
   #
   # User rules in ``rules:`` are evaluated after the profile base, so they

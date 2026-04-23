@@ -77,16 +77,22 @@ class TestAutoProfile:
         assert _resolve(config, "filesystem_tools", "edit_file") == PermissionLevel.ALLOW
         assert _resolve(config, "filesystem_tools", "create_directory") == PermissionLevel.ALLOW
 
-    def test_bi_write_allowed_but_delete_denied(self):
+    def test_bi_write_allowed_delete_asks(self):
+        """Auto downgrades NORMAL's DENY on destructives to ASK — user is
+        already in productive mode, force-switch to Dangerous would be hostile."""
         config = AUTO
         assert _resolve(config, "bi_tools", "create_dashboard") == PermissionLevel.ALLOW
         assert _resolve(config, "bi_tools", "update_chart") == PermissionLevel.ALLOW
-        assert _resolve(config, "bi_tools", "delete_dashboard") == PermissionLevel.DENY
+        assert _resolve(config, "bi_tools", "delete_dashboard") == PermissionLevel.ASK
+        assert _resolve(config, "bi_tools", "delete_chart") == PermissionLevel.ASK
+        assert _resolve(config, "bi_tools", "delete_dataset") == PermissionLevel.ASK
 
     def test_scheduler_trigger_still_asks(self):
         config = AUTO
         assert _resolve(config, "scheduler_tools", "submit_sql_job") == PermissionLevel.ALLOW
         assert _resolve(config, "scheduler_tools", "trigger_scheduler_job") == PermissionLevel.ASK
+        # destructive also downgraded from DENY to ASK
+        assert _resolve(config, "scheduler_tools", "delete_job") == PermissionLevel.ASK
 
     def test_db_writes_still_ask(self):
         """No env detection in MVP — all DB writes always ASK."""

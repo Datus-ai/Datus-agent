@@ -122,11 +122,13 @@ Datus-Agent 当前的统一权限系统（`datus/tools/permission/`）通过 `Pe
 | `tools` | `todo_write` / `todo_update` | allow | Plan 写 |
 | `semantic_tools` | `end_*_generation` / `validate_semantic` / `generate_*_id` | allow | 生成收尾辅助 |
 | `bi_tools` | `create_*` / `update_*` / `add_*` | allow | BI 写（不含 delete_*） |
+| `bi_tools` | `delete_*` | **ask** | 覆盖 Normal 的 deny：Auto 下 destructive 逐次确认，不强制升到 Dangerous |
 | `scheduler_tools` | `submit_*` / `update_job` / `pause_job` / `resume_job` | allow | Scheduler 写 |
 | `scheduler_tools` | `trigger_*` | ask | job 触发仍弹框 |
+| `scheduler_tools` | `delete_job` | **ask** | 同上，覆盖 Normal 的 deny |
 | `db_tools` | `execute_ddl` / `execute_write` / `transfer_query_result` / `write_query` | ask | DB 写始终弹框（MVP 无环境检测） |
 
-Auto 保留 Normal 对命名 destructive 的 `deny`（`bi_tools.delete_*`、`scheduler_tools.delete_job`）。MCP 和 skills 维持 `ask`。
+Auto 把 Normal 对命名 destructive 的 `deny` 降级为 `ask`（`bi_tools.delete_*`、`scheduler_tools.delete_job`）—— 已经在生产力模式下的用户不应该为了删一张图/一个 job 被迫切到 Dangerous。MCP 和 skills 维持 `ask`。
 
 ### 4.3 Dangerous（`default_permission: allow`）
 
