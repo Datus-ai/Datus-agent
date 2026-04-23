@@ -762,11 +762,24 @@ class AgentConfig:
         """
         from datus.tools.permission.profiles import build_effective_config, get_profile
 
-        permissions_raw = permissions_raw or {}
+        if not permissions_raw:
+            permissions_raw = {}
+        elif not isinstance(permissions_raw, dict):
+            logger.warning(
+                "Invalid permissions section in agent.yml: expected mapping, got %s. Falling back to 'normal'.",
+                type(permissions_raw).__name__,
+            )
+            permissions_raw = {}
         # Stash a copy so /profile can rebuild effective config on switch
         # without re-reading YAML.
         self._raw_permissions = dict(permissions_raw)
-        requested_profile = permissions_raw.get("profile", "normal")
+        requested_profile = permissions_raw.get("profile") or "normal"
+        if not isinstance(requested_profile, str):
+            logger.warning(
+                "Invalid permissions.profile in agent.yml: %r. Falling back to 'normal'.",
+                requested_profile,
+            )
+            requested_profile = "normal"
 
         try:
             get_profile(requested_profile)  # validate only; result used below

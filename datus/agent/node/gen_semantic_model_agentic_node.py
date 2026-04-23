@@ -225,8 +225,8 @@ class GenSemanticModelAgenticNode(AgenticNode):
         if self.db_func_tool:
             mapping["db_tools"] = list(self.db_func_tool.available_tools())
         semantic_bucket: List[Any] = []
-        if getattr(self, "semantic_tools", None):
-            semantic_bucket.extend(self.semantic_tools.available_tools())
+        if getattr(self, "semantic_func_tool", None):
+            semantic_bucket.extend(self.semantic_func_tool.available_tools())
         if self.generation_tools:
             semantic_bucket.extend(
                 [

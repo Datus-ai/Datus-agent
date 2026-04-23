@@ -1589,8 +1589,18 @@ class AgenticNode(Node):
                 f"with {len(self.tool_registry)} tool mappings"
             )
         except Exception as e:
-            logger.error(f"Failed to build PermissionHooks for {self.get_node_name()}: {e}")
+            # Fail closed: leaving ``permission_hooks=None`` with a
+            # ``permission_manager`` present would silently bypass profile
+            # DENY/ASK checks on every tool call. Raise so the node refuses
+            # to run rather than executing with degraded enforcement.
+            from datus.utils.exceptions import DatusException, ErrorCode
+
+            logger.exception("Failed to build PermissionHooks for %s", self.get_node_name())
             self.permission_hooks = None
+            raise DatusException(
+                code=ErrorCode.COMMON_CONFIG_ERROR,
+                message_args={"config_error": f"Permission hook setup failed for {self.get_node_name()}: {e}"},
+            ) from e
 
     def _compose_hooks(self, extra: Any = None) -> Any:
         """Combine permission hooks with an optional per-node hook.

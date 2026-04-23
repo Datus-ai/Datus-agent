@@ -26,6 +26,7 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from rich.console import Console
 
+from datus.cli.cli_styles import print_error
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -63,7 +64,7 @@ class ProfilePickerApp:
             return None
         except Exception as exc:
             logger.error("ProfilePickerApp crashed: %s", exc)
-            self._console.print(f"[red]/profile error:[/] {exc}")
+            print_error(self._console, f"/profile error: {exc}")
             return None
 
     def _build_app(self) -> Application:
@@ -168,7 +169,7 @@ class DangerousConfirmApp:
             return False
         except Exception as exc:
             logger.error("DangerousConfirmApp crashed: %s", exc)
-            self._console.print(f"[red]/profile confirm error:[/] {exc}")
+            print_error(self._console, f"/profile confirm error: {exc}")
             return False
         return result == "enable"
 

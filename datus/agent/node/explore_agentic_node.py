@@ -274,6 +274,16 @@ class ExploreAgenticNode(AgenticNode):
         # table allowlist instead of only static agent.yml configuration.
         self.setup_tools()
 
+        # Tool surface changed — reset cached permission hooks and tool
+        # registry so ``_ensure_permission_hooks`` re-registers the new
+        # DB tools under ``db_tools`` before the next LLM turn. Without
+        # this, explore nodes reused across scoped and unscoped runs would
+        # enforce the previous run's tool mapping.
+        from datus.tools.registry.tool_registry import ToolRegistry
+
+        self.permission_hooks = None
+        self.tool_registry = ToolRegistry()
+
         # Create initial action
         action = ActionHistory.create_action(
             role=ActionRole.USER,

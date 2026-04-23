@@ -184,8 +184,24 @@ class GenDashboardAgenticNode(AgenticNode):
         import re
 
         msg = str(exc)
+        sensitive_key = r"(password|passwd|token|api[_-]?key|secret|authorization)"
+        # user:pass@host URL segments.
         msg = re.sub(r"://[^/\s@]+@", "://<redacted>@", msg)
-        msg = re.sub(r"(?i)(password|token|api[_-]?key)=\S+", r"\1=<redacted>", msg)
+        # key=value pairs (query strings, env-style dumps).
+        msg = re.sub(
+            rf"(?i)\b{sensitive_key}\s*=\s*[^\s,;&]+",
+            lambda m: f"{m.group(1)}=<redacted>",
+            msg,
+        )
+        # JSON / dict-style ``"password": "secret"``.
+        colon_pattern = rf"""(?ix)(["']?{sensitive_key}["']?\s*:\s*)["']?[^"',}}\s]+["']?"""
+        msg = re.sub(colon_pattern, lambda m: f"{m.group(1)}<redacted>", msg)
+        # HTTP ``Authorization: Bearer ...`` headers.
+        msg = re.sub(
+            r"(?i)\b(authorization\s*[:=]\s*)(bearer|basic)\s+\S+",
+            r"\1\2 <redacted>",
+            msg,
+        )
         if len(msg) > 300:
             msg = msg[:300] + "..."
         return f"{type(exc).__name__}: {msg}" if msg else type(exc).__name__

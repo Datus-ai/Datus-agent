@@ -113,5 +113,4 @@ def test_profile_command_is_in_system_group():
 
     spec = next(s for s in SLASH_COMMANDS if s.name == "profile")
     assert spec.group == "system"
-    assert spec.summary  # non-empty summary for autocomplete
-    assert "profile" in spec.summary.lower()
+    assert "profile" in spec.summary.lower()  # non-empty and autocomplete-relevant

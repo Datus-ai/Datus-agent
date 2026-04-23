@@ -507,13 +507,17 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
     def _tool_category_map(self) -> Dict[str, List[Any]]:
         """Route tools to permission categories so profile rules apply.
 
-        ``verify_sql`` is bound lazily from ``execute_stream`` and not listed
-        here because it may not be present when this node runs without a
-        gold_sql. The runtime hook falls back to ``tools`` if called.
+        ``verify_sql`` is lazily bound just before generation. Route it
+        into ``db_tools`` when present so profile rules for ``db_tools.*``
+        govern the SQL it executes; otherwise a DENY on ``db_tools.*``
+        would silently not cover the one tool that runs model-supplied SQL.
         """
         mapping = super()._tool_category_map()
         if self.db_func_tool:
             mapping["db_tools"] = list(self.db_func_tool.available_tools())
+        verify_sql_tools = [tool for tool in self.tools if getattr(tool, "name", None) == "verify_sql"]
+        if verify_sql_tools:
+            mapping.setdefault("db_tools", []).extend(verify_sql_tools)
         if getattr(self, "context_search_tools", None):
             mapping["context_search_tools"] = list(self.context_search_tools.available_tools())
         if self.filesystem_func_tool:

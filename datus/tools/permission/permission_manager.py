@@ -65,7 +65,11 @@ class PermissionManager:
                 is what the status bar displays and what :meth:`switch_profile`
                 mutates. Defaults to ``"normal"``.
         """
-        self.global_config = global_config or PermissionConfig()
+        # Copy the incoming config — ``get_profile`` returns shared module-level
+        # objects, and ``add_persistent_rule`` mutates ``global_config.rules``
+        # via ``insert(0, …)``. Without copying, every manager would share the
+        # same rules list and leak persistent rules into unrelated nodes.
+        self.global_config = self._copy_config(global_config) if global_config else PermissionConfig()
         self.node_overrides = node_overrides or {}
         self.active_profile = active_profile
         self._permission_callback: Optional[Callable[[str, str, Dict[str, Any]], Awaitable[bool]]] = None
@@ -82,6 +86,14 @@ class PermissionManager:
         logger.debug(
             f"PermissionManager initialized: profile={self.active_profile}, "
             f"{len(self.global_config.rules)} global rules"
+        )
+
+    @staticmethod
+    def _copy_config(config: PermissionConfig) -> PermissionConfig:
+        """Return a shallow copy of a ``PermissionConfig`` with a fresh rules list."""
+        return PermissionConfig(
+            default_permission=config.default_permission,
+            rules=list(config.rules),
         )
 
     def set_permission_callback(self, callback: Callable[[str, str, Dict[str, Any]], Awaitable[bool]]) -> None:
@@ -338,7 +350,12 @@ class PermissionManager:
                 code=ErrorCode.COMMON_CONFIG_ERROR,
                 message_args={"config_error": str(exc)},
             ) from exc
-        self.global_config = base.merge_with(user_overrides) if user_overrides else base
+        # Copy before merging/mutating — ``get_profile`` returns shared
+        # module-level configs and ``merge_with`` without overrides returns
+        # the same instance, so mutating ``global_config.rules`` below would
+        # corrupt the singleton.
+        base_copy = self._copy_config(base)
+        self.global_config = base_copy.merge_with(user_overrides) if user_overrides else base_copy
         # Re-inject persistent rules at the front so last-match-wins still
         # lets explicit YAML rules override them, while bare profile defaults
         # don't clobber their safety posture.

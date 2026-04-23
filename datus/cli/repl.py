@@ -47,6 +47,7 @@ from datus.cli.autocomplete import (
 )
 from datus.cli.bi_dashboard import BiDashboardCommands
 from datus.cli.chat_commands import ChatCommands
+from datus.cli.cli_styles import print_error, print_info, print_success, print_warning
 from datus.cli.context_commands import ContextCommands
 from datus.cli.language_commands import LanguageCommands
 from datus.cli.list_selector_app import ListItem, ListSelectorApp
@@ -1538,18 +1539,18 @@ class DatusCLI:
             return
 
         if choice not in PROFILE_NAMES:
-            self.console.print(f"[red]Unknown profile:[/] {choice}")
+            print_error(self.console, f"Unknown profile: {choice}")
             return
 
         if choice == current:
-            self.console.print(f"[dim]Already on {choice}.[/]")
+            print_info(self.console, f"Already on {choice}.")
             return
 
         # Dangerous second confirmation — every session transition re-confirms.
         if choice == "dangerous":
             confirmed = self._run_dangerous_confirm()
             if not confirmed:
-                self.console.print("[yellow]Dangerous mode cancelled.[/]")
+                print_warning(self.console, "Dangerous mode cancelled.")
                 return
 
         # Rebuild the user rules (exclude the profile key) and preserve the
@@ -1561,10 +1562,18 @@ class DatusCLI:
         try:
             new_effective = build_effective_config(choice, raw_user)
         except Exception as e:
-            logger.warning(
-                f"Failed to rebuild effective permissions for {choice!r}: {e}. Falling back to profile base only."
+            # Mirror startup: if ``permissions.rules`` can't be parsed, refuse
+            # to install a permissive profile base that would silently drop
+            # restrictive overrides. Fail closed to ``normal`` with a clear
+            # user-facing message instead of silently expanding privileges.
+            logger.warning(f"Failed to rebuild effective permissions for {choice!r}: {e}. Falling back to 'normal'.")
+            print_error(
+                self.console,
+                f"permissions.rules in agent.yml is malformed ({e}); refusing to switch to "
+                f"{choice!r} and falling back to 'normal'.",
             )
-            new_effective = get_profile(choice)
+            choice = "normal"
+            new_effective = get_profile("normal")
 
         # Reconstruct the user_rules_cfg for switch_profile (it takes a
         # separable override, not a pre-merged config).
@@ -1594,16 +1603,14 @@ class DatusCLI:
             try:
                 current_node.permission_manager.switch_profile(choice, user_overrides=user_rules_cfg)
             except Exception as e:
-                self.console.print(f"[red]Profile switch failed:[/] {e}")
+                print_error(self.console, f"Profile switch failed: {e}")
                 return
 
         self.agent_config.permissions_config = new_effective
         self.agent_config.active_profile_name = choice
         self.active_profile = choice
-        self.console.print(
-            f"[green]Profile switched:[/] {current} → {choice}\n"
-            f"[dim]Session approvals cleared (was: {prior_approvals})[/]"
-        )
+        print_success(self.console, f"Profile switched: {current} → {choice}")
+        print_info(self.console, f"Session approvals cleared (was: {prior_approvals})")
 
     def catalogs_callback(self, selected_path: str = "", selected_data: Optional[Dict[str, Any]] = None):
         if not selected_path:
