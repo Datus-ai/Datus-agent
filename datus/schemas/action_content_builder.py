@@ -113,22 +113,19 @@ def build_thinking_content(action: ActionHistory) -> Optional[List[MessageConten
 
 def build_interaction_content(action: ActionHistory) -> List[MessageContent]:
     """Build content for user interaction event (PROCESSING status)."""
-    input_data = action.input if isinstance(action.input, dict) else {}
+    from datus.schemas.interaction_event import InteractionEvent
 
-    # InteractionBroker sends "contents" (list) and "choices" (list of dicts)
-    contents = input_data.get("contents", [])
-    if len(contents) > 1:
-        content = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(contents))
-    elif contents:
-        content = contents[0]
+    events = InteractionEvent.from_broker_input(action.input if isinstance(action.input, dict) else {})
+
+    if len(events) > 1:
+        content = "\n".join(f"{i + 1}. {ev.content}" for i, ev in enumerate(events))
+    elif events:
+        content = events[0].content
     else:
-        content = input_data.get("content", "")
-    choices_list = input_data.get("choices", [])
-    choices = choices_list[0] if isinstance(choices_list, list) and choices_list else choices_list
+        content = ""
 
-    options = None
-    if choices and isinstance(choices, dict):
-        options = [{"key": key, "title": title} for key, title in choices.items()]
+    choices = events[0].choices if events else {}
+    options = [{"key": key, "title": title} for key, title in choices.items()] if choices else None
 
     payload_data = {
         "interactionKey": action.action_id,

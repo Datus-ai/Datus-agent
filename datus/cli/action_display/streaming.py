@@ -8,7 +8,7 @@ import asyncio
 import sys
 import threading
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
 from rich.console import Console, Group
 from rich.live import Live
@@ -20,6 +20,7 @@ from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
     from datus.cli.action_display.display import ActionHistoryDisplay
+    from datus.cli.execution_state import InteractionBroker
 
 logger = get_logger(__name__)
 
@@ -50,7 +51,7 @@ class InlineStreamingContext:
         history_turns: Optional[List[Tuple[str, List[ActionHistory]]]] = None,
         current_user_message: str = "",
         sync_mode: bool = False,
-        interaction_broker: Any = None,
+        interaction_broker: Optional["InteractionBroker"] = None,
     ):
         self.actions = actions_list
         self.display = display_instance
@@ -71,7 +72,7 @@ class InlineStreamingContext:
         self._verbose_frozen = False  # True = in frozen verbose mode, no real-time processing
         self._verbose_toggle_event = threading.Event()
         self._broker = interaction_broker
-        self._input_collector: Optional[Callable[[ActionHistory, Console], Optional[str]]] = None
+        self._input_collector: Optional[Callable[[ActionHistory, Console], Optional[List[List[str]]]]] = None
         self._event_loop: Optional[asyncio.AbstractEventLoop] = None
         self._clear_header_callback: Optional[Callable[[], None]] = None
 
@@ -101,10 +102,10 @@ class InlineStreamingContext:
         """Set the asyncio event loop for broker.submit calls from daemon thread."""
         self._event_loop = loop
 
-    def set_input_collector(self, collector: Callable[[ActionHistory, Console], Optional[str]]) -> None:
+    def set_input_collector(self, collector: Callable[[ActionHistory, Console], Optional[List[List[str]]]]) -> None:
         """Set the synchronous input collector callback for INTERACTION actions.
 
-        The collector returns the user's choice string, or None if the interaction was aborted.
+        The collector returns ``List[List[str]]`` answers, or None if aborted.
         """
         self._input_collector = collector
 
@@ -410,9 +411,6 @@ class InlineStreamingContext:
                 if action.status == ActionStatus.PROCESSING and self._input_collector:
                     self._stop_processing_live()
                     self._stop_subagent_live()
-                    with self._print_lock:
-                        renderables = self.display.renderer.render_interaction_request(action, self._verbose)
-                        self.display.renderer.print_renderables(self.display.console, renderables)
                     user_input = self._input_collector(action, self.display.console)
                     if user_input is None:
                         logger.warning("Interaction input aborted by collector")

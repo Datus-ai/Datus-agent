@@ -220,19 +220,17 @@ class TestOnPlanGenerated:
     async def test_no_todo_list_sends_error_message(self, broker, session):
         hooks = _make_hooks(broker, session)
         hooks.todo_storage.get_todo_list.return_value = None
-        callback = AsyncMock()
-        broker.request.return_value = ("1", callback)
+        broker.request.return_value = "1"
 
         await hooks._on_plan_generated()
 
-        callback.assert_awaited_once()
+        broker.request.assert_awaited_once()
 
     async def test_auto_mode_transitions_to_executing(self, broker, session):
         hooks = _make_hooks(broker, session, auto_mode=True)
         todo_list = _make_todo_list([_make_item()])
         hooks.todo_storage.get_todo_list.return_value = todo_list
-        callback = AsyncMock()
-        broker.request.return_value = ("1", callback)
+        broker.request.return_value = "1"
 
         await hooks._on_plan_generated()
 
@@ -243,8 +241,7 @@ class TestOnPlanGenerated:
         hooks = _make_hooks(broker, session)
         todo_list = _make_todo_list([_make_item()])
         hooks.todo_storage.get_todo_list.return_value = todo_list
-        callback = AsyncMock()
-        broker.request.return_value = ("1", callback)
+        broker.request.return_value = "1"
 
         await hooks._on_plan_generated()
 
@@ -255,8 +252,7 @@ class TestOnPlanGenerated:
         hooks = _make_hooks(broker, session)
         todo_list = _make_todo_list([_make_item()])
         hooks.todo_storage.get_todo_list.return_value = todo_list
-        callback = AsyncMock()
-        broker.request.return_value = ("2", callback)
+        broker.request.return_value = "2"
 
         await hooks._on_plan_generated()
 
@@ -267,8 +263,7 @@ class TestOnPlanGenerated:
         hooks = _make_hooks(broker, session)
         todo_list = _make_todo_list([_make_item()])
         hooks.todo_storage.get_todo_list.return_value = todo_list
-        callback = AsyncMock()
-        broker.request.return_value = ("4", callback)
+        broker.request.return_value = "4"
 
         with pytest.raises(UserCancelledException):
             await hooks._on_plan_generated()

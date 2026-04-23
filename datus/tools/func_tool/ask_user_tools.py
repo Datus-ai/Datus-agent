@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled
+from datus.schemas.interaction_event import InteractionEvent
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
 
@@ -38,6 +39,11 @@ class QuestionItem(BaseModel):
         description="When True, the user can select multiple options (checkbox-style). "
         "The answer will be a list of selected option texts. "
         "Only meaningful when options are provided.",
+    )
+    title: str = Field(
+        default="Question",
+        description="Short label (1-2 words) for the interaction header tab. "
+        "Example: 'Database', 'Approach', 'Confirm'.",
     )
 
 
@@ -81,8 +87,9 @@ class AskUserTool:
 
         Args:
             questions: A JSON array of question objects (NOT a JSON string).
-                Each object has a "question" string and optional "options" list.
-                Example: [{"question": "Which DB?", "options": ["MySQL", "PostgreSQL"]}]
+                Each object has a "question" string, optional "options" list,
+                and a "title" label (1-2 words).
+                Example: [{"question": "Which DB?", "options": ["MySQL", "PostgreSQL"], "title": "Database"}]
 
         Returns:
             FuncToolResult with the answers in the ``result`` field.
@@ -105,21 +112,21 @@ class AskUserTool:
 
         validated: List[Dict[str, Any]] = []
         for i, q in enumerate(questions):
-            # Accept both QuestionItem and plain dict (from tests / non-SDK callers)
             if isinstance(q, QuestionItem):
                 q_text = q.question
                 options = q.options
                 multi_select = q.multi_select
+                q_title = q.title
             elif isinstance(q, dict):
                 q_text = q.get("question", "")
                 options = q.get("options")
                 multi_select = q.get("multi_select", False)
+                q_title = q.get("title", "Question")
             else:
                 return FuncToolResult(success=0, error=f"questions[{i}] must be a dict")
 
             if not q_text or not str(q_text).strip():
                 return FuncToolResult(success=0, error=f"questions[{i}].question must not be empty")
-            # Treat empty list the same as None (free-text input)
             if isinstance(options, list) and len(options) == 0:
                 options = None
             if options is not None:
@@ -131,90 +138,54 @@ class AskUserTool:
                         error=f"questions[{i}].options must contain "
                         f"{self.MIN_OPTIONS_PER_QUESTION}-{self.MAX_OPTIONS_PER_QUESTION} items",
                     )
-                # Coerce all options to non-empty strings
                 options = [str(opt) for opt in options]
                 if any(not opt.strip() for opt in options):
                     return FuncToolResult(success=0, error=f"questions[{i}].options must be non-empty strings")
-            # Convert List[str] → Dict[str, str] for broker choices format
             choices_dict = {str(j): opt for j, opt in enumerate(options, 1)} if options else None
             validated.append(
                 {
                     "question": str(q_text).strip(),
                     "choices": choices_dict,
                     "multi_select": bool(multi_select) if options else False,
+                    "title": str(q_title).strip() or "Question",
                 }
             )
 
-        # --- pass to broker ---
-        contents = [q["question"] for q in validated]
-        choices = [q["choices"] or {} for q in validated]
-        multi_selects = [q["multi_select"] for q in validated]
+        # --- build InteractionEvent list and pass to broker ---
+        events = [
+            InteractionEvent(
+                title=q["title"],
+                content=q["question"],
+                choices=q["choices"] or {},
+                allow_free_text=True,
+                multi_select=q["multi_select"],
+            )
+            for q in validated
+        ]
 
         try:
-            choice, callback = await self._broker.request(
-                contents=contents,
-                choices=choices,
-                default_choices=[""] * len(validated),
-                allow_free_text=True,
-                multi_selects=multi_selects,
-            )
+            raw_answers = await self._broker.request(events)
 
-            # Reject None response (collector failure)
-            if choice is None:
-                logger.warning("AskUserTool: collector returned None (interaction failure)")
-                return FuncToolResult(success=0, error="No response received from collector")
-
-            # Parse the JSON response from the collector
-            try:
-                answers = json.loads(choice)
-                # For single-question: json.loads returns the raw answer directly
-                # (e.g. multi-select list ["1","3"]), wrap to match batch format [answer_for_q1]
-                if len(validated) == 1 and not (isinstance(answers, list) and len(answers) == len(validated)):
-                    # Reject list answers for single-select questions
-                    if isinstance(answers, list) and not validated[0].get("multi_select"):
-                        return FuncToolResult(success=0, error="Multiple values not allowed for single-select question")
-                    answers = [answers]
-            except (json.JSONDecodeError, TypeError):
-                if len(validated) == 1:
-                    answers = [choice]
-                else:
-                    logger.warning("AskUserTool: expected JSON array for multi-question batch response")
-                    return FuncToolResult(success=0, error="Malformed batch response from collector")
-
-            # Ensure answers is a list (json.loads may return dict/str/int)
-            if not isinstance(answers, list):
-                if len(validated) == 1:
-                    answers = [answers]
-                else:
-                    logger.warning(f"AskUserTool: expected list batch response, got type={type(answers).__name__}")
-                    return FuncToolResult(success=0, error="Malformed batch response from collector")
-
-            # Validate answer count matches question count
-            if len(answers) != len(validated):
-                logger.warning(f"AskUserTool: answer count mismatch (expected {len(validated)}, got {len(answers)})")
-                return FuncToolResult(success=0, error="Malformed batch response from collector")
+            # raw_answers is List[List[str]] — one inner list per question
+            if len(raw_answers) != len(validated):
+                logger.warning(
+                    f"AskUserTool: answer count mismatch (expected {len(validated)}, got {len(raw_answers)})"
+                )
+                return FuncToolResult(success=0, error="Answer count mismatch from collector")
 
             # Resolve choice keys to display values (e.g. "2" → "PostgreSQL")
-            for i, q in enumerate(validated):
-                if q["multi_select"] and q["choices"]:
-                    # Multi-select: answers[i] is a list of keys (e.g. ["1", "3"])
-                    if isinstance(answers[i], list):
-                        answers[i] = [q["choices"].get(str(k), str(k)) for k in answers[i]]
-                    elif isinstance(answers[i], str):
-                        # Fallback: comma-separated keys from free-text
-                        keys = [k.strip() for k in answers[i].split(",") if k.strip()]
-                        answers[i] = [q["choices"].get(k, k) for k in keys]
-                elif q["choices"] and str(answers[i]) in q["choices"]:
-                    answers[i] = q["choices"][str(answers[i])]
-
-            # Build structured result
             result_list = []
             for i, q in enumerate(validated):
-                result_list.append({"question": q["question"], "answer": answers[i]})
+                answer_list = raw_answers[i]
+                if q["multi_select"] and q["choices"]:
+                    resolved = [q["choices"].get(str(k), str(k)) for k in answer_list]
+                    result_list.append({"question": q["question"], "answer": resolved})
+                elif q["choices"] and len(answer_list) == 1 and answer_list[0] in q["choices"]:
+                    result_list.append({"question": q["question"], "answer": q["choices"][answer_list[0]]})
+                else:
+                    result_list.append({"question": q["question"], "answer": answer_list[0] if answer_list else ""})
 
             result_json = json.dumps(result_list, ensure_ascii=False)
-            await callback(f"User answered {len(result_list)} question(s)")
-
             logger.info(f"AskUserTool: completed batch clarification with {len(validated)} question(s)")
             return FuncToolResult(success=1, result=result_json)
 

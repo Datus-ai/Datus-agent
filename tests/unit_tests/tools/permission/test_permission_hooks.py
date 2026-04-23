@@ -509,8 +509,7 @@ class TestFilesystemZoneBranch:
 
         # Broker returns "a" (approve for session) on first call, should not be
         # called again on the second.
-        callback = AsyncMock()
-        mock_broker.request = AsyncMock(return_value=("a", callback))
+        mock_broker.request = AsyncMock(return_value="a")
 
         ctx = MagicMock()
         ctx.tool_arguments = f'{{"path": "{target}"}}'
@@ -532,8 +531,7 @@ class TestFilesystemZoneBranch:
         target = tmp_path / "other.md"
         target.write_text("x")
 
-        callback = AsyncMock()
-        mock_broker.request = AsyncMock(return_value=("n", callback))
+        mock_broker.request = AsyncMock(return_value="n")
 
         ctx = MagicMock()
         ctx.tool_arguments = f'{{"path": "{target}"}}'
@@ -753,7 +751,7 @@ class TestPermissionPromptLockPerLoop:
             )
             # Rebind broker inside the coroutine so the AsyncMock is bound to
             # the currently-running loop.
-            mock_broker.request = AsyncMock(return_value=("n", AsyncMock()))
+            mock_broker.request = AsyncMock(return_value="n")
             ctx = MagicMock()
             ctx.tool_arguments = f'{{"path": "{target}"}}'
             tool = MagicMock()

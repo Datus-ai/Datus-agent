@@ -97,7 +97,7 @@ class PrintModeRunner:
                     )
                     if not self.proxy_tool_patterns:
                         user_input = await asyncio.to_thread(self._read_interaction_input)
-                        await node.interaction_broker.submit(action.action_id, user_input)
+                        await node.interaction_broker.submit(action.action_id, [[user_input]])
                     continue
 
                 # Streaming thinking deltas: emit only when --stream is enabled

@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 from agents.lifecycle import AgentHooks
 
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled
+from datus.schemas.interaction_event import InteractionEvent
 from datus.tools.func_tool.fs_path_policy import PathZone, classify_path
 from datus.tools.permission.permission_config import PermissionLevel
 from datus.tools.registry.tool_registry import ToolRegistry
@@ -376,27 +377,24 @@ class PermissionHooks(AgentHooks):
             f"**Path:** `{abs_path}`  _(outside project root)_\n"
         )
         try:
-            choice, callback = await self.broker.request(
-                contents=[content],
-                choices=[
-                    {
-                        "y": "Allow (once)",
-                        "a": "Always allow (this path, session)",
-                        "n": "Deny",
-                    }
-                ],
-                default_choices=["n"],
+            answers = await self.broker.request(
+                [
+                    InteractionEvent(
+                        title="Permission",
+                        content=content,
+                        choices={"y": "Allow (once)", "a": "Always allow (this path, session)", "n": "Deny"},
+                        default_choice="n",
+                    )
+                ]
             )
+            choice = answers[0][0] if answers and answers[0] else ""
 
             if choice == "a":
                 cache_key = f"external::{abs_path}"
                 self.permission_manager.approve_for_session("filesystem_tools", cache_key)
-                await callback(f"**{abs_path}** approved for session")
                 return True
             if choice == "y":
-                await callback("**Approved**")
                 return True
-            await callback("**Denied**")
             return False
         except InteractionCancelled:
             return False
@@ -495,34 +493,26 @@ class PermissionHooks(AgentHooks):
             content += f"\n**Args:** `{args_str}`\n"
 
         try:
-            choice, callback = await self.broker.request(
-                contents=[content],
-                choices=[
-                    {
-                        "y": "Allow (once)",
-                        "a": "Always allow (session)",
-                        "n": "Deny",
-                    }
-                ],
-                default_choices=["n"],
+            answers = await self.broker.request(
+                [
+                    InteractionEvent(
+                        title="Permission",
+                        content=content,
+                        choices={"y": "Allow (once)", "a": "Always allow (session)", "n": "Deny"},
+                        default_choice="n",
+                    )
+                ]
             )
+            choice = answers[0][0] if answers and answers[0] else ""
 
             if choice == "a":
-                # Approve for session - all future calls to this tool are auto-approved
                 self.permission_manager.approve_for_session(category, pattern_name)
-                # Also cache tool-level key so all future calls of the same tool type are auto-approved
-                # e.g., load_skill("report-generator") also caches "skills.load_skill"
-                # so load_skill("sql-analysis") is auto-approved without a second prompt
                 if tool_name and tool_name != pattern_name:
                     self.permission_manager.approve_for_session(category, tool_name)
-                await callback(f"**{category}.{pattern_name}** approved for session")
                 return True
             elif choice == "y":
-                # One-time approval - do NOT cache, will prompt again next time
-                await callback("**Approved**")
                 return True
             else:
-                await callback("**Denied**")
                 return False
 
         except InteractionCancelled:

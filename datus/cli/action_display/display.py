@@ -15,6 +15,7 @@ from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
     from datus.cli.action_display.streaming import InlineStreamingContext
+    from datus.cli.execution_state import InteractionBroker
 
 logger = get_logger(__name__)
 
@@ -256,7 +257,7 @@ class ActionHistoryDisplay:
         actions: List[ActionHistory],
         history_turns: Optional[List[Tuple[str, List[ActionHistory]]]] = None,
         current_user_message: str = "",
-        interaction_broker=None,
+        interaction_broker: Optional["InteractionBroker"] = None,
     ) -> "InlineStreamingContext":
         """Create an inline streaming display context for actions (Claude Code style)"""
         from datus.cli.action_display.streaming import InlineStreamingContext

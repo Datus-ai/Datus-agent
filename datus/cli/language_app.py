@@ -30,7 +30,7 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from rich.console import Console
 
-from datus.cli.cli_styles import CLR_CURRENT, CLR_CURSOR, SYM_ARROW, print_error
+from datus.cli.cli_styles import CLR_CURRENT, CLR_CURSOR, SYM_ARROW, print_error, render_tui_title_bar
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -99,9 +99,9 @@ class LanguageApp:
         self._lang_offset: int = 0
         self._scope_offset: int = 0
 
-        # header(2) + 2 separators + footer = 5 lines of chrome
+        # title bar(1) + header(2) + 2 separators + footer = 6 lines of chrome
         term_height = shutil.get_terminal_size((120, 40)).lines
-        self._max_visible: int = max(3, min(15, term_height - 5))
+        self._max_visible: int = max(3, min(15, term_height - 6))
 
         if scope_only is not None:
             self._phase = _Phase.SCOPE
@@ -215,8 +215,14 @@ class LanguageApp:
             height=1,
         )
 
+        title_bar = Window(
+            content=FormattedTextControl(lambda: render_tui_title_bar("Language Selection")),
+            height=1,
+        )
+
         root = HSplit(
             [
+                title_bar,
                 header_window,
                 Window(height=1, char="\u2500"),
                 list_window,

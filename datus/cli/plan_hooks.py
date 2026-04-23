@@ -10,6 +10,7 @@ from agents import SQLiteSession
 from agents.lifecycle import AgentHooks
 
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled
+from datus.schemas.interaction_event import InteractionEvent
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -93,13 +94,16 @@ class PlanModeHooks(AgentHooks):
         self._transition_state("confirming", {"todo_count": len(todo_list.items) if todo_list else 0})
 
         if not todo_list:
-            # No plan generated - need a simple request to show error
-            choice, callback = await self.broker.request(
-                contents=["**No plan generated**\n\nPlease try again with a different request."],
-                choices=[{"1": "OK"}],
-                default_choices=["1"],
+            await self.broker.request(
+                [
+                    InteractionEvent(
+                        title="Plan",
+                        content="**No plan generated**\n\nPlease try again with a different request.",
+                        choices={"1": "OK"},
+                        default_choice="1",
+                    ),
+                ]
             )
-            await callback("Plan generation failed")
             return
 
         # Build plan display content (markdown format)
@@ -112,12 +116,16 @@ class PlanModeHooks(AgentHooks):
         if self.auto_mode:
             self.execution_mode = "auto"
             self._transition_state("executing", {"mode": "auto"})
-            choice, callback = await self.broker.request(
-                contents=[f"{plan_content}\n\n**Auto execution mode** (workflow/benchmark context)"],
-                choices=[{"1": "Continue"}],
-                default_choices=["1"],
+            await self.broker.request(
+                [
+                    InteractionEvent(
+                        title="Plan",
+                        content=f"{plan_content}\n\n**Auto execution mode** (workflow/benchmark context)",
+                        choices={"1": "Continue"},
+                        default_choice="1",
+                    ),
+                ]
             )
-            await callback("Auto execution mode started")
             return
 
         # Interactive mode: ask for user confirmation with plan content
@@ -129,45 +137,43 @@ class PlanModeHooks(AgentHooks):
 
     async def _get_user_confirmation(self, plan_content: str = ""):
         try:
-            # Merge plan content into request content
             request_content = ""
             if plan_content:
                 request_content = f"{plan_content}\n\n"
             request_content += "**Choose Execution Mode:**"
 
-            choice, callback = await self.broker.request(
-                contents=[request_content],
-                choices=[
-                    {
-                        "1": "Manual Confirm - Confirm each step",
-                        "2": "Auto Execute - Run all steps automatically",
-                        "3": "Revise - Provide feedback and regenerate plan",
-                        "4": "Cancel",
-                    }
-                ],
-                default_choices=["1"],
+            answers = await self.broker.request(
+                [
+                    InteractionEvent(
+                        title="Plan",
+                        content=request_content,
+                        choices={
+                            "1": "Manual Confirm - Confirm each step",
+                            "2": "Auto Execute - Run all steps automatically",
+                            "3": "Revise - Provide feedback and regenerate plan",
+                            "4": "Cancel",
+                        },
+                        default_choice="1",
+                    )
+                ]
             )
+            choice = answers[0][0] if answers and answers[0] else ""
 
-            if choice == "1":  # Manual
+            if choice == "1":
                 self.execution_mode = "manual"
                 self._transition_state("executing", {"mode": "manual"})
-                await callback("**Manual confirmation mode selected**")
                 return
-            elif choice == "2":  # Auto
+            elif choice == "2":
                 self.execution_mode = "auto"
                 self._transition_state("executing", {"mode": "auto"})
-                await callback("**Auto execution mode selected**")
                 return
-            elif choice == "3":  # Revise
-                await callback("Revising plan...")
+            elif choice == "3":
                 await self._handle_replan()
                 raise PlanningPhaseException(f"REPLAN_REQUIRED: Revise the plan with feedback: {self.replan_feedback}")
-            elif choice == "4":  # Cancel
+            elif choice == "4":
                 self._transition_state("cancelled", {})
-                await callback("**Plan cancelled**")
                 raise UserCancelledException("User cancelled plan execution")
             else:
-                await callback("**Invalid choice, please try again**")
                 await self._get_user_confirmation()
 
         except InteractionCancelled:
@@ -176,34 +182,26 @@ class PlanModeHooks(AgentHooks):
 
     async def _handle_replan(self):
         try:
-            # Request free-text input for replan feedback
-            feedback, callback = await self.broker.request(
-                contents=["### Provide feedback for replanning\n\nEnter your feedback:"],
-                choices=[{}],  # Empty dict means free-text input
-                default_choices=[""],
+            answers = await self.broker.request(
+                [
+                    InteractionEvent(
+                        title="Revise",
+                        content="### Provide feedback for replanning\n\nEnter your feedback:",
+                        allow_free_text=True,
+                    )
+                ]
             )
+            feedback = answers[0][0] if answers and answers[0] else ""
 
             if feedback:
-                todo_list = self.todo_storage.get_todo_list()
-                completed_items = [item for item in todo_list.items if item.status == "completed"] if todo_list else []
-
-                # Build callback content with status info
-                callback_content = ""
-                if completed_items:
-                    callback_content += f"Found {len(completed_items)} completed steps\n\n"
-                callback_content += f"**Replanning with feedback:** {feedback}"
-
-                await callback(callback_content)
                 self.replan_feedback = feedback
-                # Transition back to generating phase for replan
                 self._transition_state("generating", {"replan_triggered": True, "feedback": feedback})
             else:
-                await callback("**No feedback provided**")
                 if self.plan_phase == "confirming":
                     await self._get_user_confirmation()
 
         except InteractionCancelled:
-            pass  # Replan cancelled, no callback needed
+            pass
 
     async def _handle_execution_step(self, _tool_name: str):
         logger.info(f"PlanHooks: _handle_execution_step called with tool: {_tool_name}")
@@ -243,54 +241,54 @@ class PlanModeHooks(AgentHooks):
 
         try:
             if self.execution_mode == "auto":
-                # Merge progress into request content
-                choice, callback = await self.broker.request(
-                    contents=[f"{progress_content}\n\n**Auto Mode:** {current_item.content}"],
-                    choices=[{"y": "Execute", "n": "Cancel"}],
-                    default_choices=["y"],
+                answers = await self.broker.request(
+                    [
+                        InteractionEvent(
+                            title="Step",
+                            content=f"{progress_content}\n\n**Auto Mode:** {current_item.content}",
+                            choices={"y": "Execute", "n": "Cancel"},
+                            default_choice="y",
+                        )
+                    ]
                 )
+                choice = answers[0][0] if answers and answers[0] else ""
 
                 if choice == "y":
-                    await callback("**Executing...**")
                     return
                 else:
-                    await callback("**Execution cancelled**")
                     self.plan_phase = "cancelled"
                     raise UserCancelledException("Execution cancelled by user")
             else:
-                # Manual mode - merge progress into request content
-                choice, callback = await self.broker.request(
-                    contents=[f"{progress_content}"],
-                    choices=[
-                        {
-                            "1": "Execute this step",
-                            "2": "Execute this step and continue automatically",
-                            "3": "Revise remaining plan",
-                            "4": "Cancel",
-                        }
-                    ],
-                    default_choices=["1"],
+                answers = await self.broker.request(
+                    [
+                        InteractionEvent(
+                            title="Step",
+                            content=progress_content,
+                            choices={
+                                "1": "Execute this step",
+                                "2": "Execute this step and continue automatically",
+                                "3": "Revise remaining plan",
+                                "4": "Cancel",
+                            },
+                            default_choice="1",
+                        )
+                    ]
                 )
+                choice = answers[0][0] if answers and answers[0] else ""
 
-                if choice == "1":  # Execute this step
-                    await callback("**Executing step...**")
+                if choice == "1":
                     return
-                elif choice == "2":  # Execute and continue auto
+                elif choice == "2":
                     self.execution_mode = "auto"
-                    await callback("**Switching to auto mode...**")
                     return
-                elif choice == "3":  # Revise
-                    await callback("**Revising plan...**")
+                elif choice == "3":
                     await self._handle_replan()
                     raise PlanningPhaseException(
                         f"REPLAN_REQUIRED: Revise the plan with feedback: {self.replan_feedback}"
                     )
-                elif choice == "4":  # Cancel
+                elif choice == "4":
                     self._transition_state("cancelled", {"step": current_item.content, "user_choice": choice})
-                    await callback("**Execution cancelled**")
                     raise UserCancelledException("User cancelled execution")
-                else:
-                    await callback(f"**Invalid choice '{choice}'. Please enter 1, 2, 3, or 4.**")
 
         except InteractionCancelled:
             self._transition_state("cancelled", {"reason": "execution_interrupted"})

@@ -10,7 +10,6 @@ DatusService.task_manager) to run the agentic loop in a background
 asyncio.Task so that client disconnects do not cancel the computation.
 """
 
-import json
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, HTTPException, Path, Query
@@ -301,15 +300,7 @@ async def submit_user_interaction(
             errorMessage="Each answer must contain at least one value",
         )
 
-    # Convert List[List[str]] → broker format
-    # Single-element lists unwrap to string, multi-element stay as list
-    answers = [ans[0] if len(ans) == 1 else ans for ans in request.input]
-    if len(answers) == 1:
-        answer = answers[0]
-        user_choice = json.dumps(answer) if isinstance(answer, list) else answer
-    else:
-        user_choice = json.dumps(answers)
-    success = await broker.submit(request.interaction_key, user_choice)
+    success = await broker.submit(request.interaction_key, request.input)
     return Result[dict](
         success=success,
         data={"interaction_key": request.interaction_key, "submitted": success},

@@ -29,7 +29,7 @@ from prompt_toolkit.layout.containers import HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 
-from datus.cli.cli_styles import CLR_CURRENT, CLR_CURSOR, SYM_ARROW
+from datus.cli.cli_styles import CLR_CURRENT, CLR_CURSOR, SYM_ARROW, render_tui_title_bar
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -90,7 +90,7 @@ class ListSelectorApp:
 
         term = shutil.get_terminal_size((120, 40))
         self._content_width = term.columns - 8
-        self._max_visible = min(MAX_VISIBLE, max(1, (term.lines - 4) // (3 if self._has_secondary() else 2)))
+        self._max_visible = min(MAX_VISIBLE, max(1, (term.lines - 3) // (3 if self._has_secondary() else 2)))
 
         self._cursor = 0
         self._offset = 0
@@ -167,9 +167,9 @@ class ListSelectorApp:
         def _ctrl_c(event):
             event.app.exit(None)
 
-        header_window = Window(
-            content=FormattedTextControl(self._render_header, focusable=False),
-            height=Dimension(min=1, max=1),
+        title_bar = Window(
+            content=FormattedTextControl(lambda: render_tui_title_bar(self._title)),
+            height=1,
         )
 
         list_window = Window(
@@ -185,8 +185,7 @@ class ListSelectorApp:
 
         root = HSplit(
             [
-                header_window,
-                Window(height=1, char="\u2500"),
+                title_bar,
                 list_window,
                 Window(height=1, char="\u2500"),
                 hint_window,
@@ -200,10 +199,6 @@ class ListSelectorApp:
             mouse_support=False,
             erase_when_done=True,
         )
-
-    def _render_header(self) -> List[Tuple[str, str]]:
-        count = f"  ({self._total} items)" if self._total > self._max_visible else ""
-        return [("bold", f"  {self._title}{count}")]
 
     def _render_list(self) -> List[Tuple[str, str]]:
         if not self._items:

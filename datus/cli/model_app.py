@@ -41,7 +41,7 @@ from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.widgets import TextArea
 from rich.console import Console
 
-from datus.cli.cli_styles import CLR_CURRENT, CLR_CURSOR, SYM_ARROW, print_error
+from datus.cli.cli_styles import CLR_CURRENT, CLR_CURSOR, SYM_ARROW, print_error, render_tui_title_bar
 from datus.configuration.agent_config import AgentConfig, ProviderConfig
 from datus.utils.loggings import get_logger
 
@@ -188,9 +188,9 @@ class ModelApp:
         # clears the pending state.
         self._pending_delete_custom: Optional[str] = None
 
-        # tab strip(1) + 2 separators(2) + error bar(1) + footer(1) + scroll indicator(1) = 6 lines chrome
+        # title bar(1) + tab strip(1) + 2 separators(2) + error bar(1) + footer(1) + scroll indicator(1) = 7 lines chrome
         term_height = shutil.get_terminal_size((120, 40)).lines
-        self._max_visible: int = max(3, min(15, term_height - 6))
+        self._max_visible: int = max(3, min(15, term_height - 7))
 
         self._app = self._build_application()
 
@@ -371,8 +371,14 @@ class ModelApp:
             filter=Condition(lambda: bool(self._error_message)),
         )
 
+        title_bar = Window(
+            content=FormattedTextControl(lambda: render_tui_title_bar("Model Selection")),
+            height=1,
+        )
+
         root = HSplit(
             [
+                title_bar,
                 tab_window,
                 Window(height=1, char="\u2500", style="class:model-app.separator"),
                 body,

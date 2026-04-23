@@ -540,37 +540,32 @@ class ActionRenderer:
     def render_interaction_request(self, action: ActionHistory, verbose: bool) -> List[Union[Text, Markdown, Syntax]]:
         """Render INTERACTION PROCESSING -- request content.
 
-        Reads ``contents`` (list) and ``choices`` (list of dicts) from
-        ``action.input``.  Single-question renders with the legacy header;
-        multiple questions render a numbered overview.
+        Reads ``events`` from ``action.input`` (new format).
         """
-        input_data = action.input or {}
-        contents = input_data.get("contents", [])
-        content_type = input_data.get("content_type", "text")
+        from datus.schemas.interaction_event import InteractionEvent
+
+        events = InteractionEvent.from_broker_input(action.input or {})
 
         result: List[Union[Text, Markdown, Syntax]] = []
 
-        if not contents:
+        if not events:
             result.append(Text.from_markup("[bold bright_yellow]\u2753 Interaction Request[/bold bright_yellow]"))
-        elif len(contents) == 1:
-            # Single question
+        elif len(events) == 1:
+            ev = events[0]
             result.append(Text.from_markup("[bold bright_yellow]\u2753 Interaction Request[/bold bright_yellow]"))
-            content = contents[0]
-            if content:
-                if content_type == "yaml":
-                    result.append(Syntax(content, "yaml", theme="monokai", line_numbers=True))
-                elif content_type == "sql":
-                    result.append(Syntax(content, "sql", theme="monokai", line_numbers=True))
-                elif content_type == "markdown":
-                    result.append(Markdown(content))
+            if ev.content:
+                if ev.content_type == "yaml":
+                    result.append(Syntax(ev.content, "yaml", theme="monokai", line_numbers=True))
+                elif ev.content_type == "sql":
+                    result.append(Syntax(ev.content, "sql", theme="monokai", line_numbers=True))
+                elif ev.content_type == "markdown":
+                    result.append(Markdown(ev.content))
                 else:
-                    result.append(Text(content))
+                    result.append(Text(ev.content))
         else:
-            # Multiple questions — brief header only; individual questions
-            # are shown interactively by _collect_batch during input collection.
             result.append(
                 Text.from_markup(
-                    f"[bold bright_yellow]\u2753 Agent Questions ({len(contents)} questions)[/bold bright_yellow]"
+                    f"[bold bright_yellow]\u2753 Agent Questions ({len(events)} questions)[/bold bright_yellow]"
                 )
             )
 
@@ -579,20 +574,22 @@ class ActionRenderer:
     def render_interaction_success(self, action: ActionHistory, verbose: bool) -> List[Union[Text, Markdown, Syntax]]:
         """Render INTERACTION SUCCESS -- user choice + result content.
 
-        Reads ``contents`` from ``action.input`` to decide between single
+        Reads ``events`` from ``action.input`` to decide between single
         and batch rendering.
         """
-        input_data = action.input or {}
-        output_data = action.output or {}
-        contents = input_data.get("contents", [])
+        from datus.schemas.interaction_event import InteractionEvent
 
-        if len(contents) > 1:
+        events = InteractionEvent.from_broker_input(action.input or {})
+        output_data = action.output or {}
+
+        if len(events) > 1:
+            contents = [ev.content for ev in events]
             return self._render_batch_success(contents, output_data)
 
         # --- single question ---
-        content = output_data.get("content", "") or action.messages or ""
-        content_type = output_data.get("content_type", "markdown")
         user_choice = output_data.get("user_choice", "")
+        content = action.messages or ""
+        content_type = events[0].content_type if events else "markdown"
 
         result: List[Union[Text, Markdown, Syntax]] = []
 

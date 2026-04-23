@@ -31,6 +31,7 @@ from pygments.lexers.html import HtmlLexer
 
 from datus.agent.node.gen_sql_agentic_node import prepare_template_context
 from datus.cli.autocomplete import TableCompleter
+from datus.cli.cli_styles import render_tui_title_bar
 from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 from datus.tools.func_tool import PlatformDocSearchTool
@@ -1800,7 +1801,7 @@ class SubAgentWizard:
     def _update_layout(self):
         """Update the layout for the new step."""
         self.left_pane.children = [self._get_step_layout()]
-        self.title_control.text = f" Agent Add Wizard - Step {self.step + 1}/4 "
+        self._title_text = f"Agent Add Wizard - Step {self.step + 1}/4"
 
         if self.step == 0:
             self.app.layout.focus(self.name_buffer)
@@ -1818,7 +1819,7 @@ class SubAgentWizard:
             self._focus_rules_list()
 
     def _init_layout(self):
-        self.title_control = FormattedTextControl(f" Agent Add Wizard - Step {self.step + 1}/4 ")
+        self._title_text = f"Agent Add Wizard - Step {self.step + 1}/4"
 
         self.left_pane = HSplit([self._get_step_layout()])
 
@@ -1859,10 +1860,8 @@ class SubAgentWizard:
         root_container = HSplit(
             [
                 Window(
-                    content=self.title_control,
+                    content=FormattedTextControl(lambda: render_tui_title_bar(self._title_text)),
                     height=1,
-                    style="class:status-bar",
-                    align=WindowAlign.LEFT,
                 ),
                 body,
                 Window(

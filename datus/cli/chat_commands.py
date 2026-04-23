@@ -22,7 +22,6 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
-from datus.cli._cli_utils import select_choice
 from datus.cli.action_display.display import ActionHistoryDisplay
 from datus.cli.execution_state import ExecutionInterrupted, auto_submit_interaction
 from datus.cli.list_selector_app import ListItem, ListSelectorApp
@@ -171,8 +170,6 @@ class ChatCommands:
         """
         from datus.agent.node.node_factory import create_interactive_node
 
-        label = subagent_name or "chat"
-        self.console.print(f"[dim]Creating new {label} session...[/]")
         return create_interactive_node(
             subagent_name, self.cli.agent_config, node_id_suffix="_cli", scope=self.cli.scope
         )
@@ -744,165 +741,27 @@ class ChatCommands:
     def _make_input_collector(self, esc_guard):
         """Create a synchronous input collector callback for INTERACTION actions.
 
-        The returned callback is invoked from the daemon thread in InlineStreamingContext
-        when an INTERACTION PROCESSING action arrives.
-
-        Reads ``contents`` / ``choices`` / ``default_choices`` from ``action.input``.
-        Single question (len==1) uses select_choice; batch (len>1) iterates.
+        Returns ``List[List[str]]`` via :class:`InteractionApp`.
         """
 
-        def _collect_single_choice(console, choices, default_choice, allow_free_text):
-            """Collect a single choice or free-text answer."""
-            if not choices:
-                console.print()
-                console.print("[dim](Paste supported. Enter to submit)[/]")
-                return self.cli.prompt_input(message="Your input", multiline=True) or ""
-
-            keys = list(choices.keys())
-            default_key = default_choice if default_choice in keys else keys[0]
-            result = select_choice(
-                console,
-                choices=choices,
-                default=default_key,
-                allow_free_text=allow_free_text,
-            )
-            if result in choices:
-                console.print(f"[dim]Selected: {choices[result]}[/]")
-            if allow_free_text and result == "":
-                console.print("[yellow]No input provided.[/]")
-                return ""
-            return result or default_key
-
-        def _collect_multi_choice(console, choices, allow_free_text):
-            """Collect multiple choices via checkbox-style selector."""
-            from datus.cli._cli_utils import select_multi_choice
-
-            if not choices:
-                console.print()
-                console.print("[dim](Paste supported. Enter to submit)[/]")
-                return self.cli.prompt_input(message="Your input", multiline=True) or ""
-
-            selected_keys = select_multi_choice(
-                console,
-                choices=choices,
-                allow_free_text=allow_free_text,
-            )
-            if selected_keys:
-                selected_display = [choices.get(k, k) for k in selected_keys]
-                console.print(f"[dim]Selected: {', '.join(selected_display)}[/]")
-            else:
-                console.print("[yellow]No items selected.[/]")
-            return json.dumps(selected_keys, ensure_ascii=False)
-
-        def collect(action: ActionHistory, console) -> Optional[str]:
-
+        def collect(action: ActionHistory, console) -> Optional[List[List[str]]]:
             try:
-                input_data = action.input or {}
-                contents = input_data.get("contents", [])
-                choices_list = input_data.get("choices", [])
-                default_choices = input_data.get("default_choices", [])
-                allow_free_text = input_data.get("allow_free_text", False)
-                multi_selects = input_data.get("multi_selects", [])
+                from datus.cli.interaction_app import InteractionApp
+                from datus.schemas.interaction_event import InteractionEvent
+
+                events = InteractionEvent.from_broker_input(action.input or {})
+                if not events:
+                    return None
 
                 with esc_guard.paused():
-                    if len(contents) > 1:
-                        return self._collect_batch(console, contents, choices_list, multi_selects)
-
-                    # --- single question ---
-                    ch = choices_list[0] if choices_list else {}
-                    default = default_choices[0] if default_choices else ""
-                    is_multi = multi_selects[0] if multi_selects else False
-
-                    if is_multi and ch:
-                        return _collect_multi_choice(console, ch, allow_free_text)
-                    return _collect_single_choice(console, ch, default, allow_free_text)
+                    app = InteractionApp(events)
+                    result = app.run()
+                    return result.answers
             except Exception as e:
                 logger.error(f"Error collecting interaction input: {e}")
                 return None
 
         return collect
-
-    def _collect_batch(
-        self, console, contents: list, choices_list: list, multi_selects: Optional[list] = None
-    ) -> Optional[str]:
-        """Collect answers for a batch of questions.
-
-        Steps through each question, showing progress (e.g. [1/3]),
-        and returns a JSON-encoded list of answer strings.
-
-        Caller is responsible for holding ``esc_guard.paused()`` context.
-        """
-        if not contents:
-            return json.dumps([])
-
-        answers = []
-        total = len(contents)
-        if multi_selects is None:
-            multi_selects = []
-
-        for idx, q_text in enumerate(contents):
-            ch = choices_list[idx] if idx < len(choices_list) else {}
-            is_multi = multi_selects[idx] if idx < len(multi_selects) else False
-
-            # Show progress header
-            if total > 1:
-                if answers:
-                    prev_q = contents[idx - 1]
-                    short_q = prev_q[:50] + "..." if len(prev_q) > 50 else prev_q
-                    prev_answer = answers[-1]
-                    if isinstance(prev_answer, list):
-                        prev_ch = choices_list[idx - 1] if (idx - 1) < len(choices_list) else {}
-                        prev_display = ", ".join(str(prev_ch.get(k, k)) for k in prev_answer)
-                    else:
-                        prev_display = str(prev_answer)
-                    if len(prev_display) > 60:
-                        prev_display = prev_display[:60] + "..."
-                    console.print(f"  [green]\u2705[/green] [dim]{short_q} \u2192 {prev_display}[/dim]")
-                console.print(f"\n  [bold bright_cyan][{idx + 1}/{total}][/bold bright_cyan] {q_text}")
-            if not ch:
-                console.print()
-                console.print("[dim](Paste supported. Enter to submit)[/]")
-                answer = self.cli.prompt_input(message="Your input", multiline=True) or ""
-            elif is_multi:
-                from datus.cli._cli_utils import select_multi_choice
-
-                selected_keys = select_multi_choice(
-                    console,
-                    choices=ch,
-                    allow_free_text=True,
-                )
-                if selected_keys:
-                    selected_display = [ch.get(k, k) for k in selected_keys]
-                    console.print(f"[dim]Selected: {', '.join(selected_display)}[/]")
-                    answer = selected_keys
-                else:
-                    console.print("[yellow]No items selected.[/]")
-                    answer = []
-            else:
-                default_key = next(iter(ch.keys()))
-                result = select_choice(
-                    console,
-                    choices=ch,
-                    default=default_key,
-                    allow_free_text=True,
-                )
-                if result in ch:
-                    answer = ch[result]
-                    console.print(f"[dim]Selected: {answer}[/]")
-                else:
-                    answer = result
-
-            answers.append(answer)
-
-        # Show summary for multi-question batch
-        if total > 1:
-            console.print()
-            console.print(f"  [green]\u2705 Answers submitted ({total}/{total})[/green]")
-            for idx, answer in enumerate(answers):
-                short_q = contents[idx][:40] + "..." if len(contents[idx]) > 40 else contents[idx]
-                console.print(f"     [dim]{short_q} \u2192 {answer}[/dim]")
-
-        return json.dumps(answers, ensure_ascii=False)
 
     def _extract_report_from_json(self, response: str) -> Optional[str]:
         """
@@ -1209,12 +1068,13 @@ class ChatCommands:
 
             # If session_id provided directly, use it
             target_session_id = args.strip() if args else None
-            agent_label = self.current_subagent_name or "chat"
+            intended_agent = getattr(self.cli, "default_agent", "") or None
+            agent_label = intended_agent or "chat"
 
             if not target_session_id:
                 # List sessions for the current agent only
                 sessions = session_manager.list_sessions(sort_by_modified=True)
-                sessions = [sid for sid in sessions if session_matches_agent(sid, self.current_subagent_name)]
+                sessions = [sid for sid in sessions if session_matches_agent(sid, intended_agent)]
                 if not sessions:
                     self.console.print(f"[yellow]No sessions found for agent '{agent_label}'.[/]")
                     return
@@ -1394,7 +1254,7 @@ class ChatCommands:
                     timestamp = (turn_msg.get("created_at") or "")[:19]
                     items.append(ListItem(key=str(idx), primary=content, secondary=f"Turn: {idx}  {timestamp}"))
 
-                app = ListSelectorApp(title="Rewind to before turn", items=items)
+                app = ListSelectorApp(title="Session Rewind", items=items)
                 tui_app = getattr(self.cli, "tui_app", None)
                 if tui_app is not None:
                     with tui_app.suspend_input():

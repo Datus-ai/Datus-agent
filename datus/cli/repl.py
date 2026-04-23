@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from datetime import date, datetime
@@ -47,7 +48,7 @@ from datus.cli.autocomplete import (
 )
 from datus.cli.bi_dashboard import BiDashboardCommands
 from datus.cli.chat_commands import ChatCommands
-from datus.cli.cli_styles import print_error, print_info, print_success, print_warning
+from datus.cli.cli_styles import PASTE_COLLAPSE_THRESHOLD, print_error, print_info, print_success, print_warning
 from datus.cli.context_commands import ContextCommands
 from datus.cli.language_commands import LanguageCommands
 from datus.cli.list_selector_app import ListItem, ListSelectorApp
@@ -144,6 +145,7 @@ class DatusCLI:
 
         # Plan mode support
         self.plan_mode_active = False
+        self._last_ctrl_c_time: float = 0.0
         # Default agent for /message routing ("" = chat node)
         self.default_agent = ""
 
@@ -443,6 +445,7 @@ class DatusCLI:
                         "prompt": "ansigreen bold",
                         "input-prompt": "ansigreen bold",
                         "input-prompt.busy": "ansibrightblack",
+                        "input-prompt.hint": "italic #9a9aaa",
                         "input-area": "",
                         "status-bar": "#9a9aaa",
                         "status-bar.brand": "#ffd866 bold",
@@ -471,6 +474,7 @@ class DatusCLI:
                         "completion-menu.completion.current": "noreverse bg:default fg:ansibrightcyan bold",
                         "completion-menu.meta.completion": "bg:default fg:ansibrightblack",
                         "completion-menu.meta.completion.current": "noreverse bg:default fg:ansibrightcyan bold",
+                        "hint": "#9a9aaa italic",
                     }
                 ),
             ]
@@ -489,6 +493,16 @@ class DatusCLI:
         except Exception as e:  # pragma: no cover - defensive
             logger.debug(f"status bar render failed: {e}")
             return []
+
+    def _interrupt_agent(self) -> None:
+        chat_commands = getattr(self, "chat_commands", None)
+        current_node = getattr(chat_commands, "current_node", None) if chat_commands else None
+        controller = getattr(current_node, "interrupt_controller", None) if current_node else None
+        if controller is not None:
+            try:
+                controller.interrupt()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug(f"interrupt_controller.interrupt failed: {exc}")
 
     def _init_tui_app(self) -> None:
         """Create the persistent ``DatusApp`` and register REPL bindings."""
@@ -592,35 +606,29 @@ class DatusCLI:
             """
             if not self.tui_app._agent_running.is_set():
                 return
-
-            chat_commands = getattr(self, "chat_commands", None)
-            current_node = getattr(chat_commands, "current_node", None) if chat_commands else None
-            controller = getattr(current_node, "interrupt_controller", None) if current_node else None
-            if controller is not None:
-                try:
-                    controller.interrupt()
-                except Exception as exc:  # pragma: no cover - defensive
-                    logger.debug(f"interrupt_controller.interrupt failed: {exc}")
+            self._interrupt_agent()
 
         @self.tui_app.key_bindings.add("c-c")
         def _c_c(event):  # noqa: ANN001
-            """Ctrl+C: interrupt agent while running, clear buffer when idle.
-
-            Overrides the default DatusApp binding because the TUI needs a
-            handle to the chat node's interrupt_controller, which only
-            DatusCLI can resolve.
+            """Ctrl+C: double-press within 1s exits; single press interrupts
+            a running agent or clears the buffer when idle.
             """
-            if self.tui_app._agent_running.is_set():
-                chat_commands = getattr(self, "chat_commands", None)
-                current_node = getattr(chat_commands, "current_node", None) if chat_commands else None
-                controller = getattr(current_node, "interrupt_controller", None) if current_node else None
-                if controller is not None:
-                    try:
-                        controller.interrupt()
-                    except Exception as exc:  # pragma: no cover - defensive
-                        logger.debug(f"interrupt_controller.interrupt failed: {exc}")
+            now = time.monotonic()
+            if now - self._last_ctrl_c_time < 1.0:
+                self._last_ctrl_c_time = 0.0
+                self._interrupt_agent()
+                self.tui_app.exit(0)
                 return
+            self._last_ctrl_c_time = now
+
+            if self.tui_app._agent_running.is_set():
+                self._interrupt_agent()
+                self.tui_app.show_ctrl_c_hint()
+                return
+
+            self.tui_app.clear_paste_state()
             event.app.current_buffer.reset()
+            self.tui_app.show_ctrl_c_hint()
 
     def _init_prompt_session(self):
         # Setup prompt session with custom key bindings
@@ -686,7 +694,14 @@ class DatusCLI:
         # still useful.
         prompt_text = self._get_prompt_text()
         try:
-            self._echo_user_input(prompt_text, user_input)
+            lines = user_input.split("\n")
+            if len(lines) > PASTE_COLLAPSE_THRESHOLD:
+                summary_line = f"[Pasted content: {len(lines)} lines]"
+                self._echo_user_input(prompt_text, summary_line)
+                preview = "\n".join(lines[:3]) + "\n..."
+                self.console.print(f"[dim]{preview}[/]")
+            else:
+                self._echo_user_input(prompt_text, user_input)
         except Exception as e:  # pragma: no cover - defensive
             logger.debug(f"echo_user_input failed: {e}")
 
@@ -767,6 +782,11 @@ class DatusCLI:
                     return True
 
             except KeyboardInterrupt:
+                now = time.monotonic()
+                if now - self._last_ctrl_c_time < 1.0:
+                    return 0
+                self._last_ctrl_c_time = now
+                self.console.print("[dim]Press Ctrl+C again to exit[/]")
                 continue
             except EOFError:
                 return 0
@@ -1056,7 +1076,7 @@ class DatusCLI:
                 ListItem(key=name, primary=name, is_current=(name == current_default))
                 for name in sorted(visible_subagents)
             ]
-            app = ListSelectorApp(title="Select default agent", items=items)
+            app = ListSelectorApp(title="Agent Selection", items=items)
             tui_app = getattr(self, "tui_app", None)
             if tui_app is not None:
                 with tui_app.suspend_input():

@@ -102,20 +102,26 @@ class TestListSelectorAppInit:
         assert app2._has_secondary() is True
 
 
-class TestRenderHeader:
-    def test_shows_title(self):
+class TestTitleBarInLayout:
+    def test_title_appears_in_layout(self):
         items = [ListItem(key="a", primary="A")]
         app = ListSelectorApp(title="Pick one", items=items)
-        lines = app._render_header()
-        text = "".join(content for _style, content in lines)
+        root = app._app.layout.container
+        first_child = root.children[0]
+        ctrl = first_child.content
+        fragments = ctrl.text()
+        text = "".join(content for _style, content in fragments)
         assert "Pick one" in text
 
-    def test_shows_count_when_scrollable(self):
-        items = [ListItem(key=str(i), primary=f"Item {i}") for i in range(30)]
-        app = ListSelectorApp(title="Many items", items=items)
-        lines = app._render_header()
-        text = "".join(content for _style, content in lines)
-        assert "30 items" in text
+    def test_title_has_dash_prefix(self):
+        items = [ListItem(key="a", primary="A")]
+        app = ListSelectorApp(title="My list", items=items)
+        root = app._app.layout.container
+        first_child = root.children[0]
+        ctrl = first_child.content
+        fragments = ctrl.text()
+        text = "".join(content for _style, content in fragments)
+        assert "\u2500\u2500\u2500\u2500 My list" in text
 
 
 class TestRenderList:

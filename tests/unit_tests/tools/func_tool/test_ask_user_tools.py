@@ -59,7 +59,7 @@ class TestAskUserToolValidation:
             for _ in range(50):
                 if broker.has_pending:
                     pending = list(broker._pending.values())[0]
-                    await broker.submit(pending.action_id, json.dumps(["Yes"]))
+                    await broker.submit(pending.action_id, [["1"]])
                     return
                 await asyncio.sleep(0.01)
 
@@ -116,7 +116,7 @@ class TestAskUserToolValidation:
             for _ in range(50):
                 if broker.has_pending:
                     pending = list(broker._pending.values())[0]
-                    await broker.submit(pending.action_id, json.dumps(["my answer"]))
+                    await broker.submit(pending.action_id, [["my answer"]])
                     return
                 await asyncio.sleep(0.01)
 
@@ -186,8 +186,8 @@ class TestAskUserToolSingleQuestion:
             for _ in range(50):
                 if broker.has_pending:
                     pending = list(broker._pending.values())[0]
-                    # Submit JSON array with one answer
-                    await broker.submit(pending.action_id, json.dumps(["PostgreSQL"]))
+                    # Submit answer as List[List[str]] — choice key "2" = PostgreSQL
+                    await broker.submit(pending.action_id, [["2"]])
                     return
                 await asyncio.sleep(0.01)
 
@@ -211,7 +211,7 @@ class TestAskUserToolSingleQuestion:
             for _ in range(50):
                 if broker.has_pending:
                     pending = list(broker._pending.values())[0]
-                    await broker.submit(pending.action_id, json.dumps(["my_table"]))
+                    await broker.submit(pending.action_id, [["my_table"]])
                     return
                 await asyncio.sleep(0.01)
 
@@ -236,8 +236,8 @@ class TestAskUserToolBatch:
             for _ in range(50):
                 if broker.has_pending:
                     pending = list(broker._pending.values())[0]
-                    answers = json.dumps(["MySQL", "Last 30 days", "user_id > 1000"])
-                    await broker.submit(pending.action_id, answers)
+                    # Submit as List[List[str]] — one inner list per question
+                    await broker.submit(pending.action_id, [["1"], ["2"], ["user_id > 1000"]])
                     return
                 await asyncio.sleep(0.01)
 
@@ -266,7 +266,7 @@ class TestAskUserToolBatch:
             for _ in range(50):
                 if broker.has_pending:
                     pending = list(broker._pending.values())[0]
-                    await broker.submit(pending.action_id, json.dumps(["A", "B"]))
+                    await broker.submit(pending.action_id, [["1"], ["1"]])
                     return
                 await asyncio.sleep(0.01)
 
@@ -295,9 +295,9 @@ class TestAskUserToolBatch:
         processing_actions = [a for a in actions if a.status == ActionStatus.PROCESSING]
         assert len(processing_actions) >= 1
         assert processing_actions[0].action_type == "request_batch"
-        # Check contents are in input
-        contents_in_input = processing_actions[0].input.get("contents", [])
-        assert len(contents_in_input) == 2
+        # Check events are in input
+        events_in_input = processing_actions[0].input.get("events", [])
+        assert len(events_in_input) == 2
 
 
 class TestAskUserToolEdgeCases:
@@ -343,14 +343,14 @@ class TestAskUserToolEdgeCases:
         assert tool._tool_context == {"run_id": "abc"}
 
     @pytest.mark.asyncio
-    async def test_fallback_when_response_not_json(self, broker, tool):
-        """When broker returns non-JSON string, fallback to using it as-is for single question."""
+    async def test_free_text_answer(self, broker, tool):
+        """When broker returns free-text answer as List[List[str]], answer is extracted correctly."""
 
         async def simulate_user():
             for _ in range(50):
                 if broker.has_pending:
                     pending = list(broker._pending.values())[0]
-                    await broker.submit(pending.action_id, "plain text answer")
+                    await broker.submit(pending.action_id, [["plain text answer"]])
                     return
                 await asyncio.sleep(0.01)
 
@@ -363,15 +363,14 @@ class TestAskUserToolEdgeCases:
         assert answers[0]["answer"] == "plain text answer"
 
     @pytest.mark.asyncio
-    async def test_non_list_json_single_question_coerced(self, broker, tool):
-        """When broker returns valid JSON that is not a list (e.g. dict), coerce for single question."""
+    async def test_single_answer_extracted_correctly(self, broker, tool):
+        """When broker returns single answer as List[List[str]], answer is extracted correctly."""
 
         async def simulate_user():
             for _ in range(50):
                 if broker.has_pending:
                     pending = list(broker._pending.values())[0]
-                    # Submit a JSON string (not an array)
-                    await broker.submit(pending.action_id, json.dumps("direct answer"))
+                    await broker.submit(pending.action_id, [["direct answer"]])
                     return
                 await asyncio.sleep(0.01)
 
@@ -384,15 +383,15 @@ class TestAskUserToolEdgeCases:
         assert answers[0]["answer"] == "direct answer"
 
     @pytest.mark.asyncio
-    async def test_non_list_json_multi_question_rejected(self, broker, tool):
-        """When broker returns valid JSON that is not a list for multi-question, return error."""
+    async def test_answer_count_mismatch_multi_question(self, broker, tool):
+        """When answer count does not match question count, return error."""
 
         async def simulate_user():
             for _ in range(50):
                 if broker.has_pending:
                     pending = list(broker._pending.values())[0]
-                    # Submit a JSON dict (not an array)
-                    await broker.submit(pending.action_id, json.dumps({"key": "value"}))
+                    # Submit only 1 answer for 2 questions
+                    await broker.submit(pending.action_id, [["1"]])
                     return
                 await asyncio.sleep(0.01)
 
@@ -406,7 +405,7 @@ class TestAskUserToolEdgeCases:
         await task
 
         assert result.success == 0
-        assert "Malformed" in result.error
+        assert "mismatch" in result.error.lower()
 
     @pytest.mark.asyncio
     async def test_answer_count_mismatch_rejected(self, broker, tool):
@@ -416,8 +415,8 @@ class TestAskUserToolEdgeCases:
             for _ in range(50):
                 if broker.has_pending:
                     pending = list(broker._pending.values())[0]
-                    # Submit only 1 answer for 2 questions
-                    await broker.submit(pending.action_id, json.dumps(["only one"]))
+                    # Submit 3 answers for 2 questions
+                    await broker.submit(pending.action_id, [["1"], ["1"], ["extra"]])
                     return
                 await asyncio.sleep(0.01)
 
@@ -431,17 +430,17 @@ class TestAskUserToolEdgeCases:
         await task
 
         assert result.success == 0
-        assert "Malformed" in result.error
+        assert "mismatch" in result.error.lower()
 
     @pytest.mark.asyncio
-    async def test_none_collector_response_rejected(self, broker, tool):
-        """When collector returns None (interaction failure), return error instead of wrapping as answer."""
+    async def test_empty_answer_list_rejected(self, broker, tool):
+        """When collector returns empty answer list (interaction failure), return error."""
 
         async def simulate_user():
             for _ in range(50):
                 if broker.has_pending:
                     pending = list(broker._pending.values())[0]
-                    await broker.submit(pending.action_id, None)
+                    await broker.submit(pending.action_id, [])
                     return
                 await asyncio.sleep(0.01)
 
@@ -450,17 +449,18 @@ class TestAskUserToolEdgeCases:
         await task
 
         assert result.success == 0
-        assert "No response" in result.error
+        assert "mismatch" in result.error.lower()
 
     @pytest.mark.asyncio
-    async def test_multi_question_non_json_string_rejected(self, broker, tool):
-        """Multi-question batch with non-JSON string response returns error."""
+    async def test_multi_question_wrong_answer_count_rejected(self, broker, tool):
+        """Multi-question batch with wrong answer count returns error."""
 
         async def simulate_user():
             for _ in range(50):
                 if broker.has_pending:
                     pending = list(broker._pending.values())[0]
-                    await broker.submit(pending.action_id, "plain text not json")
+                    # Submit 1 answer for 2 questions — count mismatch
+                    await broker.submit(pending.action_id, [["1"]])
                     return
                 await asyncio.sleep(0.01)
 
@@ -474,7 +474,7 @@ class TestAskUserToolEdgeCases:
         await task
 
         assert result.success == 0
-        assert "Malformed" in result.error
+        assert "mismatch" in result.error.lower()
 
     @pytest.mark.asyncio
     async def test_choice_key_resolved_to_display_value(self, broker, tool):
@@ -484,8 +484,8 @@ class TestAskUserToolEdgeCases:
             for _ in range(50):
                 if broker.has_pending:
                     pending = list(broker._pending.values())[0]
-                    # Submit choice keys instead of display values
-                    await broker.submit(pending.action_id, json.dumps(["2"]))
+                    # Submit choice key as List[List[str]]
+                    await broker.submit(pending.action_id, [["2"]])
                     return
                 await asyncio.sleep(0.01)
 
@@ -505,14 +505,14 @@ class TestAskUserToolMultiSelect:
 
     @pytest.mark.asyncio
     async def test_single_question_multi_select_list_keys(self, broker, tool):
-        """Single question with multi_select: JSON array of keys is resolved to display values."""
+        """Single question with multi_select: answer list of keys is resolved to display values."""
 
         async def simulate_user():
             for _ in range(50):
                 if broker.has_pending:
                     pending = list(broker._pending.values())[0]
-                    # Simulate _collect_multi_choice: returns json.dumps(["1", "3"])
-                    await broker.submit(pending.action_id, json.dumps(["1", "3"]))
+                    # Multi-select: inner list has multiple selected keys
+                    await broker.submit(pending.action_id, [["1", "3"]])
                     return
                 await asyncio.sleep(0.01)
 
@@ -536,7 +536,8 @@ class TestAskUserToolMultiSelect:
             for _ in range(50):
                 if broker.has_pending:
                     pending = list(broker._pending.values())[0]
-                    await broker.submit(pending.action_id, json.dumps([]))
+                    # Empty inner list = no selections
+                    await broker.submit(pending.action_id, [[]])
                     return
                 await asyncio.sleep(0.01)
 
@@ -558,8 +559,8 @@ class TestAskUserToolMultiSelect:
             for _ in range(50):
                 if broker.has_pending:
                     pending = list(broker._pending.values())[0]
-                    # Q1 multi-select: list of keys; Q2 single-select: key string
-                    await broker.submit(pending.action_id, json.dumps([["1", "2"], "2"]))
+                    # Q1 multi-select: inner list with multiple keys; Q2 single-select: inner list with one key
+                    await broker.submit(pending.action_id, [["1", "2"], ["2"]])
                     return
                 await asyncio.sleep(0.01)
 
@@ -579,15 +580,15 @@ class TestAskUserToolMultiSelect:
         assert answers[1]["answer"] == "PostgreSQL"
 
     @pytest.mark.asyncio
-    async def test_single_question_multi_select_comma_string_fallback(self, broker, tool):
-        """Single question multi_select with comma-separated string fallback."""
+    async def test_single_question_multi_select_multiple_keys(self, broker, tool):
+        """Single question multi_select with multiple keys in inner list."""
 
         async def simulate_user():
             for _ in range(50):
                 if broker.has_pending:
                     pending = list(broker._pending.values())[0]
-                    # Plain text with comma-separated keys (non-JSON)
-                    await broker.submit(pending.action_id, "1, 3")
+                    # Multi-select: inner list with keys "1" and "3"
+                    await broker.submit(pending.action_id, [["1", "3"]])
                     return
                 await asyncio.sleep(0.01)
 

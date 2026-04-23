@@ -31,6 +31,7 @@ import contextvars
 import os
 import sys
 import threading
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from typing import Callable, Iterator, List, Optional, Tuple
@@ -39,10 +40,12 @@ from prompt_toolkit.application import Application
 from prompt_toolkit.application.run_in_terminal import in_terminal
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer
-from prompt_toolkit.filters import has_completions, is_done, to_filter
+from prompt_toolkit.document import Document
+from prompt_toolkit.filters import Condition, has_completions, is_done, to_filter
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import History
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, ScrollOffsets, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
@@ -53,6 +56,7 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import TextArea
 
+from datus.cli.cli_styles import PASTE_COLLAPSE_THRESHOLD
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -107,21 +111,14 @@ class DatusApp:
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="datus-tui-worker")
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._exit_code: int = 0
+        self._last_ctrl_c_time: float = 0.0
+        self._ctrl_c_hint: str = ""
 
-        # Input: multi-line TextArea. We intentionally do not set an
-        # ``accept_handler`` — Enter is handled by our own key binding so we
-        # can swallow it while the agent is running.
-        # ``preferred=1`` keeps the input collapsed to a single row by default
-        # so HSplit doesn't allocate the full remaining terminal height to
-        # the TextArea. ``max=6`` lets multi-line pastes expand up to a
-        # reasonable cap before the content itself needs to scroll inside the
-        # buffer. The inner Window created by TextArea defaults to
-        # ``dont_extend_height=not multiline`` (i.e. False when multiline is
-        # on), which makes the Window ignore ``preferred`` in favour of
-        # ``max`` when space is plentiful — override it after construction so
-        # the collapsed-by-default behaviour is actually honoured.
+        self._stored_paste: Optional[str] = None
+        self._paste_collapsed: bool = False
+
         self._input_area = TextArea(
-            height=Dimension(min=1, preferred=1, max=6),
+            height=self._get_input_height,
             multiline=True,
             wrap_lines=True,
             completer=completer,
@@ -133,11 +130,8 @@ class DatusApp:
             style="class:input-area",
             prompt=self._get_input_prompt,
         )
-        # ``Window.dont_extend_height`` is stored as a Filter instance
-        # (``to_filter`` runs in ``Window.__init__``), so assigning a plain
-        # ``True`` would break the callable the renderer later expects. Wrap
-        # the boolean so the override is honoured.
         self._input_area.window.dont_extend_height = to_filter(True)
+        self._input_area.buffer.on_text_changed += self._on_buffer_text_changed
 
         self._status_window = Window(
             content=FormattedTextControl(
@@ -174,6 +168,15 @@ class DatusApp:
             filter=has_completions & ~is_done,
         )
 
+        self._hint_window = ConditionalContainer(
+            content=Window(
+                content=FormattedTextControl(lambda: [("class:hint", self._ctrl_c_hint)]),
+                height=1,
+                wrap_lines=False,
+            ),
+            filter=Condition(lambda: bool(self._ctrl_c_hint)),
+        )
+
         root = HSplit(
             [
                 self._make_separator(),
@@ -182,6 +185,7 @@ class DatusApp:
                 self._input_area,
                 self._completions_menu,
                 self._make_separator(),
+                self._hint_window,
             ]
         )
 
@@ -201,7 +205,36 @@ class DatusApp:
         """Full-width horizontal rule rendered with box-drawing character."""
         return Window(height=1, char="\u2500", style="class:separator")
 
+    def show_ctrl_c_hint(self) -> None:
+        self._ctrl_c_hint = "Press Ctrl+C again to exit"
+        self._app.invalidate()
+        if self._loop is not None:
+            self._loop.call_later(1.0, self._clear_ctrl_c_hint)
+
+    def _clear_ctrl_c_hint(self) -> None:
+        self._ctrl_c_hint = ""
+        self._app.invalidate()
+
     # -- public API --------------------------------------------------------
+
+    def _get_input_height(self) -> Dimension:
+        try:
+            line_count = self._input_area.buffer.document.line_count
+        except AttributeError:
+            line_count = 1
+        preferred = min(line_count, 15)
+        return Dimension(min=1, preferred=max(preferred, 1), max=15)
+
+    @staticmethod
+    def _paste_placeholder(line_count: int) -> str:
+        return f"[Pasted content: {line_count} lines]"
+
+    def _on_buffer_text_changed(self, buffer: Buffer) -> None:
+        if self._stored_paste:
+            placeholder = self._paste_placeholder(self._stored_paste.count("\n") + 1)
+            if placeholder not in buffer.text:
+                self._stored_paste = None
+                self._paste_collapsed = False
 
     @property
     def application(self) -> Application:
@@ -219,6 +252,14 @@ class DatusApp:
     @property
     def agent_running(self) -> threading.Event:
         return self._agent_running
+
+    @property
+    def paste_collapsed(self) -> bool:
+        return self._paste_collapsed
+
+    def clear_paste_state(self) -> None:
+        self._stored_paste = None
+        self._paste_collapsed = False
 
     def set_input_text(self, text: str) -> None:
         """Prefill the input buffer (e.g. for ``.rewind``). Thread-safe."""
@@ -363,7 +404,10 @@ class DatusApp:
             with patch_stdout(raw=True):
                 asyncio.run(_main())
         finally:
-            self._executor.shutdown(wait=False)
+            try:
+                self._executor.shutdown(wait=True, cancel_futures=True)
+            except KeyboardInterrupt:
+                self._executor.shutdown(wait=False, cancel_futures=True)
         return self._exit_code
 
     # -- internals ---------------------------------------------------------
@@ -377,6 +421,13 @@ class DatusApp:
         return FormattedText(tokens)
 
     def _get_input_prompt(self) -> FormattedText:
+        if self._paste_collapsed:
+            return FormattedText(
+                [
+                    ("class:input-prompt", "> "),
+                    ("class:input-prompt.hint", "(Ctrl+E to expand) "),
+                ]
+            )
         try:
             text = self._input_prompt_fn() or "> "
         except Exception:  # pragma: no cover - defensive
@@ -413,16 +464,46 @@ class DatusApp:
         """
         kb = KeyBindings()
 
-        @kb.add("enter")
-        def _enter(event) -> None:  # noqa: ANN001 - prompt_toolkit signature
+        @kb.add(Keys.BracketedPaste)
+        def _bracketed_paste(event) -> None:  # noqa: ANN001
+            data = event.data.replace("\r\n", "\n").replace("\r", "\n")
+            line_count = data.count("\n") + 1
             buffer = event.app.current_buffer
 
-            # Completion menu open: fold "accept highlight" + "submit" into a
-            # single Enter. Previously this handler returned after applying
-            # the completion, forcing the user to press Enter twice (once to
-            # dismiss the auto-opened menu, once to submit) — a common
-            # complaint for slash commands like ``/model`` where the menu
-            # pops up as soon as the user types ``/``.
+            if line_count > PASTE_COLLAPSE_THRESHOLD:
+                cur_text = buffer.text
+                cur_pos = buffer.cursor_position
+                if self._stored_paste:
+                    old_ph = self._paste_placeholder(self._stored_paste.count("\n") + 1)
+                    if old_ph in cur_text:
+                        expanded = cur_text.replace(old_ph, self._stored_paste, 1)
+                        cur_pos += len(self._stored_paste) - len(old_ph)
+                        cur_text = expanded
+                self._stored_paste = data
+                self._paste_collapsed = True
+                placeholder = self._paste_placeholder(line_count)
+                new_text = cur_text[:cur_pos] + placeholder + cur_text[cur_pos:]
+                buffer.document = Document(new_text, cur_pos + len(placeholder))
+            else:
+                buffer.insert_text(data)
+
+        has_stored_paste = Condition(lambda: self._stored_paste is not None)
+
+        @kb.add("c-e", filter=has_stored_paste)
+        def _ctrl_e_toggle(event) -> None:  # noqa: ANN001
+            buffer = event.app.current_buffer
+            placeholder = self._paste_placeholder(self._stored_paste.count("\n") + 1)
+            if placeholder in buffer.text:
+                expanded = buffer.text.replace(placeholder, self._stored_paste, 1)
+                buffer.document = Document(expanded, len(expanded))
+            self._stored_paste = None
+            self._paste_collapsed = False
+            event.app.invalidate()
+
+        @kb.add("enter")
+        def _enter(event) -> None:  # noqa: ANN001
+            buffer = event.app.current_buffer
+
             if buffer.complete_state:
                 cs = buffer.complete_state
                 comp = cs.current_completion
@@ -432,12 +513,21 @@ class DatusApp:
                     buffer.cancel_completion()
 
             if self._agent_running.is_set():
-                # Editable but not submittable. Silently ignore Enter.
                 return
 
             text = buffer.text
+            if self._stored_paste:
+                placeholder = self._paste_placeholder(self._stored_paste.count("\n") + 1)
+                if placeholder in text:
+                    text = text.replace(placeholder, self._stored_paste, 1)
+                self._stored_paste = None
+                self._paste_collapsed = False
+
             if text.strip():
-                buffer.append_to_history()
+                history = buffer.history
+                strings = history.get_strings()
+                if not strings or strings[-1] != text:
+                    history.append_string(text)
             buffer.reset()
             self.submit_user_input(text)
 
@@ -455,10 +545,17 @@ class DatusApp:
 
         @kb.add("c-c")
         def _ctrl_c(event) -> None:  # noqa: ANN001
-            # When the agent is idle, clear any typed text (like bash).
-            # Agent-running handling is injected by the REPL (it has the
-            # interrupt_controller handle) via the shared KeyBindings.
+            now = time.monotonic()
+            if now - self._last_ctrl_c_time < 1.0:
+                self._last_ctrl_c_time = 0.0
+                self.exit(0)
+                return
+            self._last_ctrl_c_time = now
+
             if not self._agent_running.is_set():
+                self._stored_paste = None
+                self._paste_collapsed = False
                 event.app.current_buffer.reset()
+                self.show_ctrl_c_hint()
 
         return kb

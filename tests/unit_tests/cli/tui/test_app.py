@@ -431,3 +431,258 @@ def test_safe_dispatch_logs_and_returns_none_on_base_exception(tui_app: DatusApp
     # Defensive swallow: must return ``None`` (no crash) so the worker
     # can be reused for the next command.
     assert tui_app._safe_dispatch("anything") is None
+
+
+# -- Paste collapse tests ------------------------------------------------
+
+
+class TestPasteCollapse:
+    """Tests for the multi-line paste collapse feature."""
+
+    @staticmethod
+    def _paste_handler(app: DatusApp):
+        from prompt_toolkit.keys import Keys
+
+        return _binding_for_key(app, Keys.BracketedPaste)
+
+    @staticmethod
+    def _enter_handler(app: DatusApp):
+        from prompt_toolkit.keys import Keys
+
+        return _binding_for_key(app, Keys.ControlM)
+
+    @staticmethod
+    def _ctrl_c_handler(app: DatusApp):
+        from prompt_toolkit.keys import Keys
+
+        return _binding_for_key(app, Keys.ControlC)
+
+    def test_short_paste_inserted_normally(self, tui_app: DatusApp) -> None:
+        handler = self._paste_handler(tui_app)
+        event = mock.MagicMock()
+        event.data = "line1\nline2\nline3"
+        buffer = mock.MagicMock()
+        buffer.text = ""
+        event.app.current_buffer = buffer
+
+        handler(event)
+
+        buffer.insert_text.assert_called_once_with("line1\nline2\nline3")
+        assert tui_app._stored_paste is None
+
+    def test_long_paste_inserts_placeholder(self, tui_app: DatusApp) -> None:
+        handler = self._paste_handler(tui_app)
+        lines = "\n".join(f"line{i}" for i in range(15))
+        event = mock.MagicMock()
+        event.data = lines
+        buffer = tui_app.input_buffer
+        event.app.current_buffer = buffer
+
+        handler(event)
+
+        assert tui_app._paste_collapsed is True
+        assert tui_app._stored_paste == lines
+        assert "[Pasted content: 15 lines]" in buffer.text
+
+    def test_paste_preserves_existing_text(self, tui_app: DatusApp) -> None:
+        """Pasting inserts placeholder at cursor, does not clear existing text."""
+        from prompt_toolkit.document import Document
+
+        handler = self._paste_handler(tui_app)
+        buffer = tui_app.input_buffer
+        buffer.document = Document("prefix ", len("prefix "))
+
+        lines = "\n".join(f"line{i}" for i in range(12))
+        event = mock.MagicMock()
+        event.data = lines
+        event.app.current_buffer = buffer
+
+        handler(event)
+
+        assert tui_app._stored_paste == lines
+        assert buffer.text.startswith("prefix ")
+        assert "[Pasted content: 12 lines]" in buffer.text
+
+    def test_enter_replaces_placeholder_with_original(self, tui_app: DatusApp) -> None:
+        from prompt_toolkit.document import Document
+
+        paste_text = "\n".join(f"line{i}" for i in range(12))
+        tui_app._stored_paste = paste_text
+        tui_app._paste_collapsed = True
+        placeholder = tui_app._paste_placeholder(12)
+
+        buffer = tui_app.input_buffer
+        full_text = f"prefix {placeholder} suffix"
+        buffer.document = Document(full_text, len(full_text))
+
+        enter_handler = self._enter_handler(tui_app)
+        event = mock.MagicMock()
+        event.app.current_buffer = buffer
+        event.app.current_buffer.complete_state = None
+
+        enter_handler(event)
+
+        expected = f"prefix {paste_text} suffix"
+        assert tui_app._test_dispatch_log == [expected]
+        assert tui_app._stored_paste is None
+
+    def test_enter_records_expanded_text_in_history(self, tui_app: DatusApp) -> None:
+        from prompt_toolkit.document import Document
+
+        paste_text = "\n".join(f"line{i}" for i in range(12))
+        tui_app._stored_paste = paste_text
+        tui_app._paste_collapsed = True
+        placeholder = tui_app._paste_placeholder(12)
+
+        buffer = tui_app.input_buffer
+        buffer.document = Document(placeholder, len(placeholder))
+
+        enter_handler = self._enter_handler(tui_app)
+        event = mock.MagicMock()
+        event.app.current_buffer = buffer
+        event.app.current_buffer.complete_state = None
+
+        enter_handler(event)
+
+        history_strings = buffer.history.get_strings()
+        assert paste_text in history_strings
+
+    def test_ctrl_c_clears_paste_state(self, tui_app: DatusApp) -> None:
+        tui_app._stored_paste = "some\npasted\ntext"
+        tui_app._paste_collapsed = True
+
+        handler = self._ctrl_c_handler(tui_app)
+        event = mock.MagicMock()
+        event.app.current_buffer = mock.MagicMock()
+
+        handler(event)
+
+        assert tui_app._stored_paste is None
+        assert tui_app._paste_collapsed is False
+        event.app.current_buffer.reset.assert_called_once()
+
+    def test_ctrl_e_expands_inline(self, tui_app: DatusApp) -> None:
+        from prompt_toolkit.document import Document
+        from prompt_toolkit.keys import Keys
+
+        paste_text = "\n".join(f"line{i}" for i in range(12))
+        tui_app._stored_paste = paste_text
+        tui_app._paste_collapsed = True
+
+        placeholder = tui_app._paste_placeholder(12)
+        buffer = tui_app.input_buffer
+        buffer.document = Document(f"prefix {placeholder} suffix")
+
+        handler = _binding_for_key(tui_app, Keys.ControlE)
+        event = mock.MagicMock()
+        event.app.current_buffer = buffer
+
+        handler(event)
+
+        assert tui_app._stored_paste is None
+        assert tui_app._paste_collapsed is False
+        assert f"prefix {paste_text} suffix" == buffer.text
+
+    def test_ctrl_e_noop_without_paste(self, tui_app: DatusApp) -> None:
+        from prompt_toolkit.keys import Keys
+
+        assert tui_app._stored_paste is None
+        for binding in tui_app.key_bindings.bindings:
+            if Keys.ControlE in getattr(binding, "keys", ()):
+                assert not binding.filter()
+                return
+        pytest.fail("ControlE binding not found")
+
+    def test_placeholder_deleted_clears_state(self, tui_app: DatusApp) -> None:
+        """When user deletes the placeholder text, stored paste is discarded."""
+        from prompt_toolkit.document import Document
+
+        paste_text = "\n".join(f"line{i}" for i in range(12))
+        tui_app._stored_paste = paste_text
+        tui_app._paste_collapsed = True
+
+        buffer = tui_app.input_buffer
+        buffer.document = Document("user typed something else")
+
+        assert tui_app._stored_paste is None
+        assert tui_app._paste_collapsed is False
+
+    def test_editing_around_placeholder_keeps_state(self, tui_app: DatusApp) -> None:
+        """Typing before/after placeholder does NOT clear stored paste."""
+        from prompt_toolkit.document import Document
+
+        paste_text = "\n".join(f"line{i}" for i in range(12))
+        tui_app._stored_paste = paste_text
+        tui_app._paste_collapsed = True
+
+        placeholder = tui_app._paste_placeholder(12)
+        buffer = tui_app.input_buffer
+        buffer.document = Document(f"prefix {placeholder} suffix")
+
+        assert tui_app._stored_paste == paste_text
+        assert tui_app._paste_collapsed is True
+
+    def test_dynamic_height_follows_content(self, tui_app: DatusApp) -> None:
+        from prompt_toolkit.document import Document
+
+        dim = tui_app._get_input_height()
+        assert dim.preferred == 1
+        assert dim.max == 15
+
+        tui_app.input_buffer.document = Document("line1\nline2\nline3")
+        dim = tui_app._get_input_height()
+        assert dim.preferred == 3
+        assert dim.max == 15
+
+    def test_clear_paste_state_method(self, tui_app: DatusApp) -> None:
+        tui_app._stored_paste = "some text"
+        tui_app._paste_collapsed = True
+
+        tui_app.clear_paste_state()
+
+        assert tui_app._stored_paste is None
+        assert tui_app._paste_collapsed is False
+
+    def test_paste_placeholder_format(self) -> None:
+        assert DatusApp._paste_placeholder(15) == "[Pasted content: 15 lines]"
+        assert DatusApp._paste_placeholder(1) == "[Pasted content: 1 lines]"
+
+    def test_prompt_shows_hint_when_collapsed(self, tui_app: DatusApp) -> None:
+        tui_app._paste_collapsed = True
+        rendered = tui_app._get_input_prompt()
+        tokens = list(rendered)
+        assert ("class:input-prompt", "> ") in tokens
+        assert ("class:input-prompt.hint", "(Ctrl+E to expand) ") in tokens
+
+    def test_prompt_normal_when_not_collapsed(self, tui_app: DatusApp) -> None:
+        tui_app._paste_collapsed = False
+        rendered = tui_app._get_input_prompt()
+        tokens = list(rendered)
+        assert ("class:input-prompt", "> ") in tokens
+
+    def test_second_paste_expands_first(self, tui_app: DatusApp) -> None:
+        """A second large paste expands the first placeholder inline."""
+
+        handler = self._paste_handler(tui_app)
+        first_paste = "\n".join(f"a{i}" for i in range(12))
+        buffer = tui_app.input_buffer
+
+        event1 = mock.MagicMock()
+        event1.data = first_paste
+        event1.app.current_buffer = buffer
+        handler(event1)
+
+        assert tui_app._stored_paste == first_paste
+        first_ph = tui_app._paste_placeholder(12)
+        assert first_ph in buffer.text
+
+        second_paste = "\n".join(f"b{i}" for i in range(15))
+        event2 = mock.MagicMock()
+        event2.data = second_paste
+        event2.app.current_buffer = buffer
+        handler(event2)
+
+        assert tui_app._stored_paste == second_paste
+        assert first_ph not in buffer.text
+        assert first_paste in buffer.text
+        assert tui_app._paste_placeholder(15) in buffer.text

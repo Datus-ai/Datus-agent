@@ -382,25 +382,14 @@ class TestCreateNewNode:
         assert isinstance(node, GenReportAgenticNode)
         assert node.agent_config is real_agent_config
 
-    def test_console_output_on_chat_creation(self, real_agent_config, mock_llm_create):
-        """Console prints 'Creating new chat session...' for default chat."""
+    def test_create_node_no_console_output(self, real_agent_config, mock_llm_create):
+        """_create_new_node produces no console output."""
         console = Console(file=io.StringIO(), no_color=True)
         cmds = _make_chat_commands(real_agent_config, console=console)
         cmds._create_new_node()
 
         output = _get_console_output(console)
-        assert "Creating new chat session" in output
-        assert len(output) > 0
-
-    def test_console_output_on_subagent_creation(self, real_agent_config, mock_llm_create):
-        """Console prints the subagent name when creating a subagent node."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-        cmds._create_new_node(subagent_name="gen_semantic_model")
-
-        output = _get_console_output(console)
-        assert "gen_semantic_model" in output
-        assert "Creating new" in output
+        assert output.strip() == ""
 
 
 # ===========================================================================
@@ -3871,10 +3860,10 @@ class TestSessionFilterByAgent:
     """cmd_resume only surfaces sessions for the active agent."""
 
     def test_resume_interactive_empty_when_agent_has_no_sessions(self, real_agent_config, mock_llm_create):
-        """cmd_resume with no args filters by current agent; empty result message mentions agent."""
+        """cmd_resume with no args filters by intended agent (default_agent); empty result message mentions agent."""
         console = Console(file=io.StringIO(), no_color=True)
         cmds = _make_chat_commands(real_agent_config, console=console)
-        cmds.current_subagent_name = "gen_metrics"
+        cmds.cli.default_agent = "gen_metrics"
 
         _create_session_on_disk("chat_session_a", [("user", "hi")])
         cmds.cmd_resume("")

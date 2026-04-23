@@ -160,29 +160,22 @@ def _build_error_content(action: ActionHistory) -> List[IMessageContent]:
 
 def _build_interaction_content(action: ActionHistory) -> List[IMessageContent]:
     """Build content for user interaction event (PROCESSING status)."""
-    input_data = action.input if isinstance(action.input, dict) else {}
+    from datus.schemas.interaction_event import InteractionEvent
 
-    contents = input_data.get("contents", [])
-    choices_list = input_data.get("choices", [])
-    default_choices = input_data.get("default_choices", [])
-    multi_selects = input_data.get("multi_selects", [])
-    content_type = input_data.get("content_type", "markdown")
-    allow_free_text = input_data.get("allow_free_text", False)
+    events = InteractionEvent.from_broker_input(action.input if isinstance(action.input, dict) else {})
 
     requests_payload = []
-    for i, content in enumerate(contents):
-        choices = choices_list[i] if i < len(choices_list) else {}
-        options = [{"key": k, "title": v} for k, v in choices.items()] if choices else None
-        default_choice = default_choices[i] if i < len(default_choices) else ""
-        allow_multi_select = multi_selects[i] if i < len(multi_selects) else False
+    for ev in events:
+        options = [{"key": k, "title": v} for k, v in ev.choices.items()] if ev.choices else None
         requests_payload.append(
             {
-                "content": content,
+                "title": ev.title,
+                "content": ev.content,
                 "options": options,
-                "defaultChoice": default_choice,
-                "contentType": content_type,
-                "allowFreeText": allow_free_text,
-                "multiSelect": allow_multi_select,
+                "defaultChoice": ev.default_choice,
+                "contentType": ev.content_type,
+                "allowFreeText": ev.allow_free_text,
+                "multiSelect": ev.multi_select,
             }
         )
 

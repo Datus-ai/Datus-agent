@@ -19,6 +19,8 @@ Usage in command modules::
 
 from __future__ import annotations
 
+from typing import List, Tuple
+
 from rich.console import Console
 
 # ── Symbols ──────────────────────────────────────────────────
@@ -37,6 +39,9 @@ CLR_USAGE = "cyan"
 # prompt_toolkit ANSI names for interactive selectors
 CLR_CURSOR = "ansicyan"
 CLR_CURRENT = "ansigreen"
+
+# ── Paste collapse ─────────────────────────────────────────
+PASTE_COLLAPSE_THRESHOLD = 10
 
 # ── Table / code ────────────────────────────────────────────
 TABLE_HEADER_STYLE = "green"
@@ -85,3 +90,8 @@ def print_usage(console: Console, syntax: str) -> None:
 
 def print_empty_set(console: Console, message: str = "Empty set.") -> None:
     console.print(f"[{CLR_WARNING}]{message}[/]")
+
+
+def render_tui_title_bar(title: str) -> List[Tuple[str, str]]:
+    dash = "\u2500"
+    return [("", dash * 4 + " "), ("bold", title), ("", " " + dash * 200)]

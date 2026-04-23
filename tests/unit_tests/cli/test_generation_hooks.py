@@ -643,9 +643,8 @@ class TestHandleExtKnowledgeResult:
 
 @pytest.mark.asyncio
 class TestGetSyncConfirmation:
-    async def test_choice_yes_calls_sync_and_callback(self, hooks):
-        callback = AsyncMock()
-        hooks.broker.request = AsyncMock(return_value=("y", callback))
+    async def test_choice_yes_calls_sync(self, hooks):
+        hooks.broker.request = AsyncMock(return_value="y")
         hooks._sync_to_storage = AsyncMock(return_value="Synced!")
 
         await hooks._get_sync_confirmation(
@@ -655,13 +654,10 @@ class TestGetSyncConfirmation:
         )
 
         hooks._sync_to_storage.assert_awaited_once()
-        callback.assert_awaited_once()
-        args = callback.call_args[0][0]
-        assert "Synced!" in args
 
-    async def test_choice_no_calls_callback_with_file_only_message(self, hooks):
-        callback = AsyncMock()
-        hooks.broker.request = AsyncMock(return_value=("n", callback))
+    async def test_choice_no_skips_sync(self, hooks):
+        hooks.broker.request = AsyncMock(return_value="n")
+        hooks._sync_to_storage = AsyncMock()
 
         await hooks._get_sync_confirmation(
             yaml_content="key: val",
@@ -669,9 +665,7 @@ class TestGetSyncConfirmation:
             yaml_type="semantic",
         )
 
-        callback.assert_awaited_once()
-        args = callback.call_args[0][0]
-        assert "/tmp/test.yaml" in args
+        hooks._sync_to_storage.assert_not_called()
 
     async def test_interaction_cancelled_raises_generation_cancelled(self, hooks):
         hooks.broker.request = AsyncMock(side_effect=InteractionCancelled())
@@ -684,8 +678,7 @@ class TestGetSyncConfirmation:
             )
 
     async def test_with_prebuilt_display_content(self, hooks):
-        callback = AsyncMock()
-        hooks.broker.request = AsyncMock(return_value=("n", callback))
+        hooks.broker.request = AsyncMock(return_value="n")
 
         await hooks._get_sync_confirmation(
             yaml_content="key: val",
@@ -694,7 +687,7 @@ class TestGetSyncConfirmation:
             display_content="## Pre-built header\n```yaml\nkey: val\n```\n",
         )
         # Should not raise
-        callback.assert_awaited_once()
+        hooks.broker.request.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -1105,8 +1098,7 @@ class TestProcessMetricWithSemanticModel:
 class TestGetSyncConfirmationForPair:
     async def test_accept_syncs_both_files(self, hooks):
         """Choosing 'y' calls _sync_semantic_and_metric once."""
-        callback = AsyncMock()
-        hooks.broker.request = AsyncMock(return_value=("y", callback))
+        hooks.broker.request = AsyncMock(return_value="y")
         hooks._sync_semantic_and_metric = AsyncMock(return_value="Synced OK")
 
         await hooks._get_sync_confirmation_for_pair(
@@ -1115,12 +1107,10 @@ class TestGetSyncConfirmationForPair:
         )
 
         hooks._sync_semantic_and_metric.assert_awaited_once_with("/tmp/sem.yaml", "/tmp/met.yaml", None)
-        callback.assert_awaited_once()
 
     async def test_reject_skips_sync(self, hooks):
         """Choosing 'n' does not call _sync_semantic_and_metric."""
-        callback = AsyncMock()
-        hooks.broker.request = AsyncMock(return_value=("n", callback))
+        hooks.broker.request = AsyncMock(return_value="n")
         hooks._sync_semantic_and_metric = AsyncMock()
 
         await hooks._get_sync_confirmation_for_pair(
@@ -1129,7 +1119,6 @@ class TestGetSyncConfirmationForPair:
         )
 
         hooks._sync_semantic_and_metric.assert_not_called()
-        callback.assert_awaited_once()
 
     async def test_interaction_cancelled_raises_generation_cancelled(self, hooks):
         """InteractionCancelled is wrapped in GenerationCancelledException."""
@@ -1143,8 +1132,7 @@ class TestGetSyncConfirmationForPair:
 
     async def test_display_content_includes_both_files(self, hooks):
         """Request content includes both file names when display_content is pre-built."""
-        callback = AsyncMock()
-        hooks.broker.request = AsyncMock(return_value=("n", callback))
+        hooks.broker.request = AsyncMock(return_value="n")
 
         display = (
             "## Generated Semantic Model: sem.yaml\n\n"
@@ -1162,8 +1150,9 @@ class TestGetSyncConfirmationForPair:
             display_content=display,
         )
 
-        request_content = hooks.broker.request.call_args[1].get("contents") or hooks.broker.request.call_args[0][0]
-        content_str = str(request_content)
+        # broker.request() now takes a list of InteractionEvent as first positional arg
+        request_events = hooks.broker.request.call_args[0][0]
+        content_str = str(request_events)
         assert "sem.yaml" in content_str
         assert "met.yaml" in content_str
 

@@ -17,6 +17,7 @@ from datus_storage_base.conditions import And, eq
 
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled
 from datus.configuration.agent_config import AgentConfig
+from datus.schemas.interaction_event import InteractionEvent
 from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
@@ -622,25 +623,21 @@ class GenerationHooks(AgentHooks):
         try:
             request_content = f"{display_content}\n### Sync to Knowledge Base?"
 
-            choice, callback = await self.broker.request(
-                contents=[request_content],
-                choices=[{"y": "Yes - Save to Knowledge Base", "n": "No - Keep file only"}],
-                default_choices=["y"],
+            answers = await self.broker.request(
+                [
+                    InteractionEvent(
+                        title="Sync",
+                        content=request_content,
+                        choices={"y": "Yes - Save to Knowledge Base", "n": "No - Keep file only"},
+                        default_choice="y",
+                    )
+                ]
             )
+            choice = answers[0][0] if answers and answers[0] else ""
 
             if choice == "y":
-                # Sync both files to Knowledge Base
-                sync_result = await self._sync_semantic_and_metric(semantic_model_file, metric_file, metric_sqls)
-                callback_content = "---\n\n"
-                callback_content += sync_result
-                callback_content += "\n\n---\n**Generation workflow completed, generating report...**"
-                await callback(callback_content)
-            else:
-                # Keep files only
-                callback_content = "---\n\n"
-                callback_content += f"YAMLs saved to files only:\n- `{semantic_model_file}`\n- `{metric_file}`"
-                callback_content += "\n\n---\n**Generation workflow completed, generating report...**"
-                await callback(callback_content)
+                await self._sync_semantic_and_metric(semantic_model_file, metric_file, metric_sqls)
+            # else: keep files only, no action needed
 
         except InteractionCancelled:
             raise GenerationCancelledException("User interrupted")
@@ -669,7 +666,6 @@ class GenerationHooks(AgentHooks):
             display_content: Pre-built markdown content to display (header + YAML)
         """
         try:
-            # Build request content with YAML display
             if not display_content:
                 display_content = f"## Generated YAML: {os.path.basename(file_path)}\n\n"
                 display_content += f"*Path: {file_path}*\n\n"
@@ -677,26 +673,20 @@ class GenerationHooks(AgentHooks):
 
             request_content = f"{display_content}\n### Sync to Knowledge Base?"
 
-            choice, callback = await self.broker.request(
-                contents=[request_content],
-                choices=[{"y": "Yes - Save to Knowledge Base", "n": "No - Keep file only"}],
-                default_choices=["y"],
+            answers = await self.broker.request(
+                [
+                    InteractionEvent(
+                        title="Sync",
+                        content=request_content,
+                        choices={"y": "Yes - Save to Knowledge Base", "n": "No - Keep file only"},
+                        default_choice="y",
+                    )
+                ]
             )
+            choice = answers[0][0] if answers and answers[0] else ""
 
             if choice == "y":
-                # Sync to Knowledge Base
-                sync_result = await self._sync_to_storage(file_path, yaml_type, metric_sqls=metric_sqls)
-                # Build callback content with result
-                callback_content = "---\n\n"
-                callback_content += sync_result
-                callback_content += "\n\n---\n**Generation workflow completed, generating report...**"
-                await callback(callback_content)
-            else:
-                # Keep file only
-                callback_content = "---\n\n"
-                callback_content += f"YAML saved to file only: `{file_path}`"
-                callback_content += "\n\n---\n**Generation workflow completed, generating report...**"
-                await callback(callback_content)
+                await self._sync_to_storage(file_path, yaml_type, metric_sqls=metric_sqls)
 
         except InteractionCancelled:
             raise GenerationCancelledException("User interrupted")
