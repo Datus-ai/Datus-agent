@@ -52,6 +52,7 @@ INSTALLABLE_TYPES = (
 )
 
 _SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+_PW_PLACEHOLDER = "********"
 
 
 class _View(Enum):
@@ -125,6 +126,7 @@ class DatasourceApp:
         self._form_db_type: str = ""
         self._form_edit_name: str = ""
         self._form_field_names: List[str] = []
+        self._form_payload_keys: List[str] = []
         self._form_field_meta: List[Dict[str, Any]] = []
         self._form_textareas: List[TextArea] = []
         self._form_focus_order: List[TextArea] = []
@@ -375,28 +377,40 @@ class DatasourceApp:
         self._form_db_type = db_type
         self._form_edit_name = edit_name
         self._form_field_names = []
+        self._form_payload_keys = []
         self._form_field_meta = []
         self._form_textareas = []
 
+        alias_map = self._build_alias_map(adapter_metadata)
+
         max_label_len = 0
-        fields_to_add: List[Tuple[str, Dict[str, Any], str]] = []
+        fields_to_add: List[Tuple[str, str, Dict[str, Any], str]] = []
 
         if not edit_name:
-            fields_to_add.append(("_name", {"required": True, "input_type": "text"}, ""))
+            fields_to_add.append(("_name", "_name", {"required": True, "input_type": "text"}, ""))
             max_label_len = len("Datasource name")
 
         for fn, fi in config_fields.items():
             if fn in ("type", "name"):
                 continue
+            payload_key = alias_map.get(fn, fn)
             label = fn.replace("_", " ").capitalize()
             max_label_len = max(max_label_len, len(label))
             default_val = fi.get("default", "")
-            if existing and fn in existing and existing[fn]:
+            existing_key = (
+                fn
+                if (existing and fn in existing)
+                else (payload_key if (existing and payload_key in existing) else None)
+            )
+            if existing and existing_key:
                 is_pw = fi.get("input_type") == "password" or fn == "password"
-                default_val = "" if is_pw else existing[fn]
-            fields_to_add.append((fn, fi, str(default_val) if default_val else ""))
+                if is_pw:
+                    default_val = _PW_PLACEHOLDER if existing[existing_key] else ""
+                else:
+                    default_val = existing[existing_key] or ""
+            fields_to_add.append((fn, payload_key, fi, str(default_val) if default_val else ""))
 
-        for fn, fi, default_text in fields_to_add:
+        for fn, payload_key, fi, default_text in fields_to_add:
             if fn == "_name":
                 display_label = "Datasource name"
             else:
@@ -417,6 +431,7 @@ class DatasourceApp:
                 focus_on_click=True,
             )
             self._form_field_names.append(fn)
+            self._form_payload_keys.append(payload_key)
             self._form_field_meta.append(fi)
             self._form_textareas.append(ta)
 
@@ -435,6 +450,22 @@ class DatasourceApp:
 
     # ── Form helpers ──────────────────────────────────────────────
 
+    @staticmethod
+    def _build_alias_map(adapter_metadata) -> Dict[str, str]:
+        """Return ``{pydantic_field_name: alias}`` for fields that define an alias."""
+        cfg_cls = getattr(adapter_metadata, "config_class", None)
+        if cfg_cls is None:
+            return {}
+        model_fields = getattr(cfg_cls, "model_fields", None)
+        if model_fields is None:
+            return {}
+        mapping: Dict[str, str] = {}
+        for name, fi in model_fields.items():
+            alias = getattr(fi, "alias", None)
+            if alias and alias != name:
+                mapping[name] = alias
+        return mapping
+
     def _advance_form_focus(self, delta: int) -> None:
         if not self._form_focus_order:
             return
@@ -446,6 +477,7 @@ class DatasourceApp:
         for i, fn in enumerate(self._form_field_names):
             value = self._form_textareas[i].text.strip()
             meta = self._form_field_meta[i]
+            pk = self._form_payload_keys[i]
             required = meta.get("required", False)
 
             if fn == "_name":
@@ -475,17 +507,21 @@ class DatasourceApp:
                 self._app.layout.focus(self._form_textareas[i])
                 return
 
+            is_pw = meta.get("input_type") == "password" or fn == "password"
+            if is_pw and value == _PW_PLACEHOLDER:
+                continue
+
             if value:
                 field_type = meta.get("type", "")
-                if field_type == "int" or fn == "port":
+                if field_type == "int" or pk == "port":
                     try:
                         int_val = int(value)
-                        if fn == "port" and not (1 <= int_val <= 65535):
+                        if pk == "port" and not (1 <= int_val <= 65535):
                             self._error_message = "Port must be between 1 and 65535."
                             self._form_focus_idx = i
                             self._app.layout.focus(self._form_textareas[i])
                             return
-                        payload[fn] = int_val
+                        payload[pk] = int_val
                     except ValueError:
                         label = fn.replace("_", " ").capitalize()
                         self._error_message = f"{label} must be a valid integer."
@@ -493,7 +529,7 @@ class DatasourceApp:
                         self._app.layout.focus(self._form_textareas[i])
                         return
                 else:
-                    payload[fn] = value
+                    payload[pk] = value
 
         if self._form_edit_name:
             self._app.exit(result=DatasourceSelection(kind="edit_submit", name=self._form_edit_name, payload=payload))

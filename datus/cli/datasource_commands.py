@@ -157,6 +157,25 @@ class DatasourceCommands:
 
     # ── Edit submit ──────────────────────────────────────────────
 
+    @staticmethod
+    def _merge_password_fields(old_config: DbConfig, payload: Dict[str, Any]) -> None:
+        """Carry over password-type fields from *old_config* when they are
+        absent from *payload* (i.e. the user left them blank in the form)."""
+        from datus.tools.db_tools import connector_registry
+
+        old_dict = old_config.to_dict()
+        if isinstance(getattr(old_config, "extra", None), dict):
+            old_dict.update(old_config.extra)
+
+        adapter_meta = connector_registry.list_available_adapters().get(payload.get("type", ""))
+        if adapter_meta:
+            for fn, fi in adapter_meta.get_config_fields().items():
+                is_pw = fi.get("input_type") == "password" or fn == "password"
+                if is_pw and fn not in payload and old_dict.get(fn):
+                    payload[fn] = old_dict[fn]
+        elif "password" not in payload and old_dict.get("password"):
+            payload["password"] = old_dict["password"]
+
     def _handle_edit_submit(self, selection: DatasourceSelection) -> None:
         name = selection.name
         payload = selection.payload or {}
@@ -164,6 +183,8 @@ class DatasourceCommands:
         if not old_config:
             print_error(self.console, f"Datasource '{name}' not found.")
             return
+
+        self._merge_password_fields(old_config, payload)
 
         if not self._test_connectivity(name, payload):
             return
