@@ -474,49 +474,42 @@ class TestGenDashboardPermissionWiring:
             assert node.tool_registry.get("delete_dataset") == "bi_tools"
             assert node.tool_registry.get("list_dashboards") == "bi_tools"
 
-    def test_denied_tools_context_lists_delete_calls_under_normal(self, real_agent_config, mock_llm_create):
-        """Pre-flight injection must warn the LLM before it plans a destructive flow.
+    def test_no_denied_tools_injected_into_prompt(self, real_agent_config, mock_llm_create):
+        """The prompt must NOT list DENY'd tool names.
 
-        Without this, the LLM wastes turns planning, calls ``ask_user`` for
-        confirmation, and only fails at the final tool call — the worst UX.
+        An earlier iteration injected a ``<denied_tools>`` block that spelled
+        out ``delete_chart`` / ``delete_dataset`` — that's leaky prompt
+        engineering and duplicates work the permission layer should do at
+        runtime. Keep the system prompt profile-agnostic.
         """
         _add_dashboard_config(real_agent_config)
         _bi_core_mock.adapter_registry.get.return_value = lambda **kwargs: FullMockAdapter()
-        # Ensure we're on ``normal`` (delete_* is DENY there).
         real_agent_config.active_profile_name = "normal"
         with patch.dict(sys.modules, _BI_MODULES_PATCH):
             from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
 
             node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
             prompt = node._finalize_system_prompt("base prompt")
-            assert "<denied_tools>" in prompt
-            assert "Active permission profile: normal" in prompt
-            assert "bi_tools.delete_chart" in prompt
-            assert "bi_tools.delete_dataset" in prompt
-            assert "bi_tools.delete_dashboard" in prompt
-            # Must tell the LLM not to ask for confirmation on a doomed call.
-            assert "Do NOT" in prompt and "ask_user" in prompt
+            assert "<denied_tools>" not in prompt
+            assert "bi_tools.delete_chart" not in prompt
 
-    def test_denied_tools_context_empty_under_dangerous(self, real_agent_config, mock_llm_create):
-        """``dangerous`` profile has no DENYs — block must be omitted entirely.
+    def test_template_does_not_instruct_ask_user_before_delete(self, real_agent_config, mock_llm_create):
+        """Permission profile owns destructive confirmation — the template
+        should NOT tell the LLM to ``ask_user`` before every delete.
 
-        Injecting an empty ``<denied_tools>`` block would confuse the LLM
-        and waste tokens.
+        When both layers ask, users see two prompts for the same operation
+        (LLM ``ask_user`` confirmation + permission ASK) — or in ``normal``
+        they confirm via ``ask_user`` only for the delete to hard-fail
+        afterwards. Remove the rule entirely.
         """
         _add_dashboard_config(real_agent_config)
         _bi_core_mock.adapter_registry.get.return_value = lambda **kwargs: FullMockAdapter()
-        real_agent_config.active_profile_name = "dangerous"
-        # Rebuild PermissionConfig using the dangerous profile as base so
-        # ``check_permission`` actually returns ALLOW for everything.
-        from datus.tools.permission.profiles import get_profile
-
-        real_agent_config.permissions_config = get_profile("dangerous")
         with patch.dict(sys.modules, _BI_MODULES_PATCH):
             from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
 
             node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-            prompt = node._finalize_system_prompt("base prompt")
-            assert "<denied_tools>" not in prompt
+            prompt = node._get_system_prompt(template_context=node._prepare_template_context())
+            assert "Always confirm with the user before deleting" not in prompt
 
 
 # ---------------------------------------------------------------------------

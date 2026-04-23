@@ -396,13 +396,6 @@ class AgenticNode(Node):
             if skills_xml:
                 base_prompt = base_prompt + "\n\n" + skills_xml
 
-        # Inject denied-tools notice so the LLM skips destructive flows up
-        # front instead of planning them, confirming with the user, and then
-        # failing at the last tool call.
-        denied_ctx = self._get_denied_tools_context()
-        if denied_ctx:
-            base_prompt = base_prompt + "\n\n" + denied_ctx
-
         # Inject memory context for eligible nodes.
         base_prompt = self._inject_memory_context(base_prompt, override_node_name=memory_node_name_override)
 
@@ -1089,62 +1082,6 @@ class AgenticNode(Node):
             patterns=skill_patterns,
             node_class=self.get_node_class_name(),
         )
-
-    def _get_denied_tools_context(self) -> str:
-        """List tools the active profile will reject, for prompt injection.
-
-        Pre-flight: without this block the LLM plans a destructive flow,
-        confirms with the user via ``ask_user``, says "ok deleting", and
-        THEN hits ``PermissionDeniedException`` at the last step — the
-        worst possible UX. Listing DENY'd tools up front lets the model
-        refuse immediately.
-
-        Returns ``""`` when there are no DENY'd tools (e.g. ``dangerous``
-        profile or a node whose category map is empty).
-        """
-        if not self.permission_manager:
-            return ""
-        category_map = self._tool_category_map()
-        if not category_map:
-            return ""
-
-        from datus.tools.permission.permission_config import PermissionLevel
-
-        node_name = self.get_node_name()
-        denied: List[str] = []
-        for category, tools in category_map.items():
-            for tool in tools:
-                name = getattr(tool, "name", None)
-                if not name:
-                    continue
-                level = self.permission_manager.check_permission(category, name, node_name)
-                if level == PermissionLevel.DENY:
-                    denied.append(f"{category}.{name}")
-        if not denied:
-            return ""
-
-        profile = getattr(self.permission_manager, "active_profile", None) or "unknown"
-        lines = [
-            "<denied_tools>",
-            f"Active permission profile: {profile}",
-            "",
-            "The following tools are blocked by the current profile — calling them "
-            "will raise PermissionDeniedException and waste the turn:",
-        ]
-        for entry in sorted(set(denied)):
-            lines.append(f"  - {entry}")
-        lines.append("")
-        lines.append(
-            "If the user requests an operation that requires any of these tools, "
-            "decline up front. Tell them the operation is blocked by the "
-            f"'{profile}' profile and suggest /profile to switch (to 'auto' for "
-            "per-call confirmation, or 'dangerous' to disable all checks), or a "
-            "user-defined rule under ``permissions.rules`` in agent.yml. Do NOT "
-            "call ``ask_user`` to confirm an action you cannot execute — "
-            "confirmation is pointless if the call will fail."
-        )
-        lines.append("</denied_tools>")
-        return "\n".join(lines)
 
     def _get_tool_category(self, tool_name: str) -> str:
         """

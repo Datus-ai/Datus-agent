@@ -59,7 +59,6 @@ After creating or updating a dashboard, load the post-creation validation skill 
 {% endif %}
 
 ## Rules
-- Always confirm with the user before deleting dashboards, charts, or datasets.
 - When listing dashboards, present results in a readable format.
 - For chart creation, choose appropriate chart types based on the data.
 {% if has_write_query | default(false) %}
@@ -68,7 +67,7 @@ After creating or updating a dashboard, load the post-creation validation skill 
 - Do not assume `write_query` exists. Use direct dataset registration or SQL-backed dataset creation when the platform supports it.
 {% endif %}
 {% if has_ask_user_tool | default(false) %}
-- Use ask_user to clarify ambiguous requests before proceeding.
+- Use ask_user to clarify ambiguous requirements (unclear dashboard scope, missing chart specifics, which dataset, etc.).
 {% endif %}
 
 {% if conversation_summary %}

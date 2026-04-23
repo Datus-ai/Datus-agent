@@ -53,11 +53,10 @@ Your role is to submit, monitor, update, and troubleshoot scheduled jobs.
 | 1st of month at midnight | `0 0 1 * *` |
 
 ## Rules
-- Always confirm with the user before deleting jobs.
 - When listing jobs, present results in a readable format.
 - For job submission, suggest appropriate cron schedules based on the use case.
 {% if has_ask_user_tool | default(false) %}
-- Use ask_user to clarify ambiguous requests before proceeding.
+- Use ask_user to clarify ambiguous requirements (unclear job scope, missing schedule, which source table, etc.).
 {% endif %}
 
 {% if conversation_summary %}
