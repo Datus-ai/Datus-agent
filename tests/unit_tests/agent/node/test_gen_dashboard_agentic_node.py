@@ -412,6 +412,70 @@ class TestGenDashboardToolSetup:
 
 
 # ---------------------------------------------------------------------------
+# Permission Hook Wiring Tests
+# ---------------------------------------------------------------------------
+
+
+class TestGenDashboardPermissionWiring:
+    """Without proper wiring ``bi_tools.delete_*`` DENY rules silently leak."""
+
+    def test_tool_category_map_registers_bi_tools(self, real_agent_config, mock_llm_create):
+        """Every BI tool must land in the ``bi_tools`` category.
+
+        Falling back to the ``tools`` catch-all would prevent
+        ``bi_tools.delete_*`` DENY rules in the ``normal`` profile from
+        matching ``delete_chart`` / ``delete_dataset`` — the exact bug that
+        leaked destructive calls to Superset in production.
+        """
+        _add_dashboard_config(real_agent_config)
+        _bi_core_mock.adapter_registry.get.return_value = lambda **kwargs: FullMockAdapter()
+        with patch.dict(sys.modules, _BI_MODULES_PATCH):
+            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+            node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+            mapping = node._tool_category_map()
+            assert "bi_tools" in mapping
+            bi_names = {t.name for t in mapping["bi_tools"]}
+            assert {"delete_chart", "delete_dataset", "delete_dashboard"}.issubset(bi_names)
+
+    def test_compose_hooks_yields_permission_hooks(self, real_agent_config, mock_llm_create):
+        """``generate_with_tools_stream`` must receive a real hook, not None.
+
+        A ``None`` hook means the permission_manager never intercepts tool
+        calls — rules defined in the profile are effectively ignored.
+        """
+        _add_dashboard_config(real_agent_config)
+        _bi_core_mock.adapter_registry.get.return_value = lambda **kwargs: FullMockAdapter()
+        with patch.dict(sys.modules, _BI_MODULES_PATCH):
+            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+            from datus.tools.permission.permission_hooks import PermissionHooks
+
+            node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+            hooks = node._compose_hooks()
+            assert hooks is not None
+            assert isinstance(hooks, PermissionHooks)
+
+    def test_tool_registry_routes_delete_chart_to_bi_tools(self, real_agent_config, mock_llm_create):
+        """After ``_ensure_permission_hooks`` runs, registry must classify ``delete_chart``.
+
+        ``PermissionHooks._get_category_and_pattern`` looks up tool names in
+        the registry; without this category mapping all BI tools fall into
+        the generic ``tools`` bucket and profile rules under ``bi_tools``
+        can never match.
+        """
+        _add_dashboard_config(real_agent_config)
+        _bi_core_mock.adapter_registry.get.return_value = lambda **kwargs: FullMockAdapter()
+        with patch.dict(sys.modules, _BI_MODULES_PATCH):
+            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+            node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+            node._ensure_permission_hooks()
+            assert node.tool_registry.get("delete_chart") == "bi_tools"
+            assert node.tool_registry.get("delete_dataset") == "bi_tools"
+            assert node.tool_registry.get("list_dashboards") == "bi_tools"
+
+
+# ---------------------------------------------------------------------------
 # Auto-detect Platform Tests
 # ---------------------------------------------------------------------------
 
@@ -779,6 +843,75 @@ class TestGenDashboardTemplateContext:
             assert ctx["has_dashboard_write"] is False
             assert ctx["has_chart_write"] is False
             assert ctx["has_dataset_write"] is False
+            assert ctx["has_bi_tools"] is False
+            # No platform resolved → no attempt to build adapter → no error captured.
+            assert ctx["bi_setup_error"] is None
+
+    def test_bi_setup_error_captured_on_adapter_failure(self, real_agent_config, mock_llm_create):
+        """Adapter construction failure (e.g. version mismatch) is captured, not swallowed."""
+        _add_dashboard_config(real_agent_config)
+
+        def _raise_boom(**kwargs):
+            raise RuntimeError("version mismatch: PaginatedResult not exported")
+
+        _bi_core_mock.adapter_registry.get.return_value = _raise_boom
+        with patch.dict(sys.modules, _BI_MODULES_PATCH):
+            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+            node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+            assert node.bi_func_tool is None
+            assert node._bi_setup_error is not None
+            assert "superset" in node._bi_setup_error
+            assert "version mismatch" in node._bi_setup_error
+
+            ctx = node._prepare_template_context()
+            assert ctx["has_bi_tools"] is False
+            assert ctx["bi_setup_error"] == node._bi_setup_error
+
+    def test_bi_setup_error_captured_on_import_error(self, real_agent_config, mock_llm_create):
+        """ImportError also captures a user-facing error message."""
+        _add_dashboard_config(real_agent_config)
+        with patch.dict(sys.modules, {"datus_bi_core": None}):
+            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+            node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+            assert node.bi_func_tool is None
+            assert node._bi_setup_error is not None
+            assert "not installed" in node._bi_setup_error
+            assert "superset" in node._bi_setup_error
+
+    def test_system_prompt_warns_when_bi_setup_failed(self, real_agent_config, mock_llm_create):
+        """Rendered prompt surfaces the failure so the LLM can tell the user."""
+        _add_dashboard_config(real_agent_config)
+
+        def _raise_boom(**kwargs):
+            raise RuntimeError("adapter construction blew up")
+
+        _bi_core_mock.adapter_registry.get.return_value = _raise_boom
+        with patch.dict(sys.modules, _BI_MODULES_PATCH):
+            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+            node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+            prompt = node._get_system_prompt(template_context=node._prepare_template_context())
+            assert "BI Platform Unavailable" in prompt
+            assert "adapter construction blew up" in prompt
+            # Should NOT tell the model to load bi-validation when no skills are loaded.
+            assert "Post-Creation Validation" not in prompt
+
+    def test_system_prompt_omits_validation_when_readonly(self, real_agent_config, mock_llm_create):
+        """Read-only adapter (no write tools) → Post-Creation Validation section is suppressed."""
+        _add_dashboard_config(real_agent_config)
+        _bi_core_mock.adapter_registry.get.return_value = lambda **kwargs: ReadOnlyMockAdapter()
+        with patch.dict(sys.modules, _BI_MODULES_PATCH):
+            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+            node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+            prompt = node._get_system_prompt(template_context=node._prepare_template_context())
+            assert "Post-Creation Validation" not in prompt
+            # bi-validation must not be hard-referenced outside <available_skills>.
+            # It may still appear as an example inside the removed block — so guard
+            # specifically against the old mandatory wording.
+            assert 'load_skill(skill_name="bi-validation")' not in prompt
 
     def test_fallback_system_prompt(self, real_agent_config, mock_llm_create):
         """Fallback prompt should mention the BI platform and role."""

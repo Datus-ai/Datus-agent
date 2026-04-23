@@ -11,7 +11,7 @@ natural language descriptions). It includes DB tools, DDL execution,
 filesystem tools, and ask_user.
 """
 
-from typing import AsyncGenerator, Literal, Optional
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
@@ -125,6 +125,22 @@ class GenTableAgenticNode(AgenticNode):
             logger.debug(f"Setup filesystem tools with root path: {self.filesystem_func_tool.root_path}")
         except Exception as e:
             logger.error(f"Failed to setup filesystem tools: {e}")
+
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Register db / filesystem tools so write/destructive rules fire."""
+        mapping = super()._tool_category_map()
+        db_bucket: List[Any] = []
+        if getattr(self, "db_func_tool", None):
+            db_bucket.extend(self.db_func_tool.available_tools())
+            if hasattr(self.db_func_tool, "execute_ddl"):
+                db_bucket.append(trans_to_function_tool(self.db_func_tool.execute_ddl))
+        if db_bucket:
+            mapping["db_tools"] = db_bucket
+        if getattr(self, "filesystem_func_tool", None):
+            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
+        if self.ask_user_tool:
+            mapping.setdefault("tools", []).extend(self.ask_user_tool.available_tools())
+        return mapping
 
     def _prepare_template_context(self, user_input: SemanticNodeInput) -> dict:
         from datus.utils.node_utils import build_datasource_prompt_context
@@ -248,7 +264,7 @@ class GenTableAgenticNode(AgenticNode):
                 max_turns=user_input.max_turns if user_input.max_turns else self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
-                hooks=None,
+                hooks=self._compose_hooks(),
                 agent_name=self.get_node_name(),
                 interrupt_controller=self.interrupt_controller,
             ):

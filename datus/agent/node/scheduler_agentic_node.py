@@ -10,7 +10,7 @@ job scheduling management via Airflow (submit, monitor, troubleshoot).
 Only scheduler tools + ask_user are included — no DB/BI/filesystem tools exposed.
 """
 
-from typing import Any, AsyncGenerator, Literal, Optional
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
@@ -135,6 +135,15 @@ class SchedulerAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup scheduler tools: {e}")
 
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Register scheduler tools so ``scheduler_tools.delete_job`` DENY fires."""
+        mapping = super()._tool_category_map()
+        if self.scheduler_tools:
+            mapping["scheduler_tools"] = list(self.scheduler_tools.available_tools())
+        if self.ask_user_tool:
+            mapping.setdefault("tools", []).extend(self.ask_user_tool.available_tools())
+        return mapping
+
     # ── System Prompt ───────────────────────────────────────────────────
 
     def _prepare_template_context(self) -> dict:
@@ -250,7 +259,7 @@ class SchedulerAgenticNode(AgenticNode):
                 max_turns=self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
-                hooks=None,
+                hooks=self._compose_hooks(),
                 agent_name=self.get_node_name(),
                 interrupt_controller=self.interrupt_controller,
             ):

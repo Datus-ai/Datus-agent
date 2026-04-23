@@ -10,7 +10,7 @@ BI dashboard creation, management, and visualization (Superset, Grafana).
 Only BI tools + ask_user are included — no DB tools exposed.
 """
 
-from typing import Any, AsyncGenerator, Literal, Optional
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
@@ -77,6 +77,11 @@ class GenDashboardAgenticNode(AgenticNode):
 
         self.bi_func_tool = None
         self.ask_user_tool = None
+        # Populated by ``_setup_bi_tools`` when adapter construction fails so the
+        # system prompt can surface the failure to the LLM (and user). Without
+        # this, a misconfigured BI platform would leave the agent with only
+        # ``ask_user`` and no explanation of why every operation is impossible.
+        self._bi_setup_error: Optional[str] = None
         self.setup_tools()
 
     def get_node_name(self) -> str:
@@ -155,10 +160,18 @@ class GenDashboardAgenticNode(AgenticNode):
             # `self.bi_func_tool` as `None`.
             tools = bi_func_tool.available_tools()
         except ImportError as e:
+            # Adapter Python package not installed. Capture for the system
+            # prompt so the LLM can explain to the user, but don't raise from
+            # ``__init__`` — the user may still want other nodes running.
             logger.warning(f"BI adapter package not installed: {e}")
+            self._bi_setup_error = f"BI adapter package for '{bi_platform}' is not installed: {e}"
             return
         except Exception as e:
-            logger.error(f"Failed to setup BI tools: {e}")
+            # Adapter present but construction failed (version mismatch,
+            # unreachable API, invalid credentials, etc.). Same treatment —
+            # record for prompt injection, keep node alive.
+            logger.error(f"Failed to setup BI tools for '{bi_platform}': {e}", exc_info=True)
+            self._bi_setup_error = f"Failed to initialize BI platform '{bi_platform}': {e}"
             return
 
         self.bi_func_tool = bi_func_tool
@@ -188,6 +201,21 @@ class GenDashboardAgenticNode(AgenticNode):
 
         return None
 
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Declare categories so ``bi_tools.delete_*`` DENY rules fire.
+
+        Without this mapping ``PermissionHooks`` falls back to the catch-all
+        ``tools`` category for every BI tool, so no ``bi_tools.*`` rule can
+        ever match — every profile (even ``normal``) silently lets
+        ``delete_chart`` / ``delete_dataset`` through.
+        """
+        mapping = super()._tool_category_map()
+        if self.bi_func_tool:
+            mapping["bi_tools"] = list(self.bi_func_tool.available_tools())
+        if self.ask_user_tool:
+            mapping.setdefault("tools", []).extend(self.ask_user_tool.available_tools())
+        return mapping
+
     # ── System Prompt ───────────────────────────────────────────────────
 
     def _prepare_template_context(self) -> dict:
@@ -197,6 +225,8 @@ class GenDashboardAgenticNode(AgenticNode):
         context["has_ask_user_tool"] = self.ask_user_tool is not None
 
         # BI capability flags for template
+        context["has_bi_tools"] = self.bi_func_tool is not None
+        context["bi_setup_error"] = self._bi_setup_error
         if self.bi_func_tool:
             tool_names = {tool.name for tool in self.bi_func_tool.available_tools()}
             context["has_dashboard_write"] = "create_dashboard" in tool_names
@@ -331,7 +361,7 @@ class GenDashboardAgenticNode(AgenticNode):
                 max_turns=self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
-                hooks=None,
+                hooks=self._compose_hooks(),
                 agent_name=self.get_node_name(),
                 interrupt_controller=self.interrupt_controller,
             ):

@@ -10,7 +10,7 @@ metrics generation with support for filesystem tools, generation tools,
 hooks, and metricflow MCP server integration.
 """
 
-from typing import AsyncGenerator, Literal, Optional
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
@@ -217,6 +217,39 @@ class GenMetricsAgenticNode(AgenticNode):
             )
         except Exception as e:
             logger.error(f"Failed to setup gen_semantic_model tools: {e}")
+
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Map tools to permission categories so profile rules apply.
+
+        ``generation_tools`` / ``gen_semantic_model_tools`` expose semantic
+        layer operations (``end_metric_generation`` etc.) so they ride the
+        ``semantic_tools`` category for the sake of profile rules.
+        """
+        mapping = super()._tool_category_map()
+        if self.db_func_tool:
+            mapping["db_tools"] = list(self.db_func_tool.available_tools())
+        semantic_bucket: List[Any] = []
+        if getattr(self, "semantic_tools", None):
+            semantic_bucket.extend(self.semantic_tools.available_tools())
+        if self.generation_tools:
+            from datus.tools.func_tool import trans_to_function_tool
+
+            semantic_bucket.extend(
+                [
+                    trans_to_function_tool(self.generation_tools.check_semantic_object_exists),
+                    trans_to_function_tool(self.generation_tools.end_metric_generation),
+                    trans_to_function_tool(self.generation_tools.end_semantic_model_generation),
+                ]
+            )
+        if self.gen_semantic_model_tools:
+            semantic_bucket.extend(self.gen_semantic_model_tools.available_tools())
+        if semantic_bucket:
+            mapping["semantic_tools"] = semantic_bucket
+        if self.filesystem_func_tool:
+            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
+        if self.ask_user_tool:
+            mapping.setdefault("tools", []).extend(self.ask_user_tool.available_tools())
+        return mapping
 
     def _get_existing_subject_trees(self) -> list:
         """
@@ -433,7 +466,7 @@ class GenMetricsAgenticNode(AgenticNode):
                 max_turns=user_input.max_turns if user_input.max_turns else self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
-                hooks=None,
+                hooks=self._compose_hooks(self.hooks),
                 agent_name=self.get_node_name(),
                 interrupt_controller=self.interrupt_controller,
             ):

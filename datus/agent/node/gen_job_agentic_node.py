@@ -18,7 +18,7 @@ out of the box. When the target adapter does not implement ``MigrationTargetMixi
 the wrappers fall back to safe defaults so the LLM can still proceed.
 """
 
-from typing import AsyncGenerator, Literal, Optional
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
@@ -148,6 +148,36 @@ class GenJobAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup filesystem tools: {e}")
 
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Register db / filesystem tools for profile rule matching.
+
+        DB writes (``execute_ddl`` / ``execute_write`` / ``transfer_query_result``)
+        should ASK in ``normal`` and ``auto`` profiles — without this
+        mapping they'd fall into the ``tools`` catch-all and bypass
+        ``db_tools.*`` rules entirely.
+        """
+        mapping = super()._tool_category_map()
+        db_bucket: List[Any] = []
+        if getattr(self, "db_func_tool", None):
+            db_bucket.extend(self.db_func_tool.available_tools())
+            for attr in (
+                "execute_ddl",
+                "execute_write",
+                "transfer_query_result",
+                "get_migration_capabilities",
+                "suggest_table_layout",
+                "validate_ddl",
+            ):
+                if hasattr(self.db_func_tool, attr):
+                    db_bucket.append(trans_to_function_tool(getattr(self.db_func_tool, attr)))
+        if db_bucket:
+            mapping["db_tools"] = db_bucket
+        if getattr(self, "filesystem_func_tool", None):
+            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
+        if self.ask_user_tool:
+            mapping.setdefault("tools", []).extend(self.ask_user_tool.available_tools())
+        return mapping
+
     def _prepare_template_context(self, user_input: SemanticNodeInput) -> dict:
         from datus.utils.node_utils import build_datasource_prompt_context
 
@@ -266,7 +296,7 @@ class GenJobAgenticNode(AgenticNode):
                 max_turns=user_input.max_turns if user_input.max_turns else self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
-                hooks=None,
+                hooks=self._compose_hooks(),
                 agent_name=self.get_node_name(),
                 interrupt_controller=self.interrupt_controller,
             ):

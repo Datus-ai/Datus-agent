@@ -153,6 +153,11 @@ class AgenticNode(Node):
 
         # Permission and skill management
         self.permission_manager: Optional["PermissionManager"] = None
+        # PermissionHooks is attached lazily once tools are set up — see
+        # ``_ensure_permission_hooks``. Every subclass that runs the LLM
+        # loop must pass ``self._compose_hooks()`` into
+        # ``generate_with_tools_stream`` so rules actually fire.
+        self.permission_hooks: Optional[Any] = None
         self.skill_manager: Optional["SkillManager"] = None
         self.skill_func_tool = None
         self.ask_user_tool = None
@@ -1526,3 +1531,78 @@ class AgenticNode(Node):
         except Exception as e:
             logger.debug(f"Failed to build FilesystemPolicy: {e}")
             return None
+
+    # ── Permission hook wiring ──────────────────────────────────────────
+    # Subagent nodes historically passed ``hooks=None`` into
+    # ``generate_with_tools_stream`` — meaning profile rules (DENY, ASK)
+    # never fired for anything other than ``chat``. These helpers let
+    # every subclass participate in the permission system with one call.
+
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Return ``{category: tools}`` for permission registration.
+
+        Subclasses override this to declare which of ``self.tools`` belong
+        to which permission category (``bi_tools``, ``scheduler_tools``,
+        ``db_tools``, etc.). Categories not declared here fall back to the
+        ``tools`` catch-all, which only matches explicit ``tools.*`` rules.
+
+        The base implementation registers ``skill_func_tool`` under
+        ``skills`` so the ``skills.*`` profile rule applies to every
+        subagent that exposes ``load_skill``/``skill_execute_command`` —
+        overrides should ``super().__()`` + extend.
+        """
+        mapping: Dict[str, List[Any]] = {}
+        if self.skill_func_tool:
+            mapping["skills"] = list(self.skill_func_tool.available_tools())
+        return mapping
+
+    def _ensure_permission_hooks(self) -> None:
+        """Build ``self.permission_hooks`` once tools are in place.
+
+        Invoked lazily from :meth:`_compose_hooks` so subclasses don't have
+        to remember the ordering (``setup_tools`` must happen first). Safe
+        to call many times — short-circuits after the first successful
+        build. Silently no-ops when no ``permission_manager`` exists
+        (agent with permissions disabled).
+        """
+        if self.permission_hooks is not None:
+            return
+        if not self.permission_manager:
+            return
+        try:
+            for category, tools in self._tool_category_map().items():
+                if tools:
+                    self.tool_registry.register_tools(category, tools)
+            from datus.tools.permission.permission_hooks import PermissionHooks
+
+            self.permission_hooks = PermissionHooks(
+                broker=self._get_or_create_broker(),
+                permission_manager=self.permission_manager,
+                node_name=self.get_node_name(),
+                tool_registry=self.tool_registry,
+                fs_policy=self._make_filesystem_policy(),
+            )
+            logger.debug(
+                f"PermissionHooks attached to node '{self.get_node_name()}' "
+                f"with {len(self.tool_registry)} tool mappings"
+            )
+        except Exception as e:
+            logger.error(f"Failed to build PermissionHooks for {self.get_node_name()}: {e}")
+            self.permission_hooks = None
+
+    def _compose_hooks(self, extra: Any = None) -> Any:
+        """Combine permission hooks with an optional per-node hook.
+
+        ``extra`` is typically ``self.hooks`` for workflow nodes
+        (``feedback``, ``sql_summary``, …) that have their own todo/plan
+        hooks. Returns a :class:`CompositeHooks` when both are present,
+        a single hook when only one is present, or ``None`` when neither
+        exists. Callers pass the result directly into
+        ``generate_with_tools_stream(hooks=...)``.
+        """
+        self._ensure_permission_hooks()
+        if self.permission_hooks and extra:
+            from datus.tools.permission.permission_hooks import CompositeHooks
+
+            return CompositeHooks([extra, self.permission_hooks])
+        return self.permission_hooks or extra

@@ -11,7 +11,7 @@ SQL generation. It exposes only read-only tools and runs with a low max_turns
 budget for fast, focused exploration.
 """
 
-from typing import AsyncGenerator, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.workflow import Workflow
@@ -163,6 +163,33 @@ class ExploreAgenticNode(AgenticNode):
         except Exception as e:
             logger.warning(f"Failed to setup date parsing tools, continuing without: {e}")
 
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Register read-only tool surface so ``db_tools.read_*`` ALLOW rules fire."""
+        mapping = super()._tool_category_map()
+        if getattr(self, "db_func_tool", None):
+            # Mirror the subset actually exposed by this node — describe/read
+            # always, the rest only when scoped_tables isn't set.
+            db_bucket = [
+                trans_to_function_tool(self.db_func_tool.describe_table),
+                trans_to_function_tool(self.db_func_tool.read_query),
+            ]
+            scoped = isinstance(self.input, ExploreNodeInput) and self.input.scoped_tables
+            if not scoped:
+                db_bucket = list(self.db_func_tool.available_tools())
+            mapping["db_tools"] = db_bucket
+        if getattr(self, "context_search_tools", None):
+            mapping["context_search_tools"] = list(self.context_search_tools.available_tools())
+        if getattr(self, "filesystem_func_tool", None):
+            fs_bucket: List[Any] = []
+            for method_name in READONLY_FILESYSTEM_METHODS:
+                if hasattr(self.filesystem_func_tool, method_name):
+                    fs_bucket.append(trans_to_function_tool(getattr(self.filesystem_func_tool, method_name)))
+            if fs_bucket:
+                mapping["filesystem_tools"] = fs_bucket
+        if getattr(self, "date_parsing_tools", None):
+            mapping["date_parsing_tools"] = list(self.date_parsing_tools.available_tools())
+        return mapping
+
     def _get_system_prompt(
         self, conversation_summary: Optional[str] = None, prompt_version: Optional[str] = None
     ) -> str:
@@ -277,7 +304,7 @@ class ExploreAgenticNode(AgenticNode):
                 max_turns=self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
-                hooks=None,
+                hooks=self._compose_hooks(),
                 agent_name=self.get_node_name(),
                 interrupt_controller=self.interrupt_controller,
             ):
