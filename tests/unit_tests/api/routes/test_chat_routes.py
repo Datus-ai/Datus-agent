@@ -4,7 +4,6 @@
 
 """Unit tests for datus/api/routes/chat_routes.py — submit_user_interaction endpoint."""
 
-import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
