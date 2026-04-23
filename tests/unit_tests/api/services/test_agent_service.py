@@ -88,8 +88,9 @@ class TestConstants:
         assert set(SUBAGENT_TOOL_REFERENCE["gen_sql"]) == set(VALID_TOOL_METHODS.keys())
 
     def test_valid_tool_methods_db_tools_has_methods(self):
-        """db_tools category has at least one method."""
-        assert len(VALID_TOOL_METHODS["db_tools"]) > 0
+        """db_tools category exposes core query methods."""
+        assert "describe_table" in VALID_TOOL_METHODS["db_tools"]
+        assert "get_table_ddl" in VALID_TOOL_METHODS["db_tools"]
 
     def test_valid_tool_methods_filesystem_tools_contains_read_file(self):
         """filesystem_tools contains read_file."""
@@ -102,7 +103,7 @@ class TestAgentServiceInit:
     def test_init_succeeds(self):
         """AgentService can be instantiated."""
         svc = AgentService()
-        assert svc is not None
+        assert isinstance(svc, AgentService)
 
 
 class TestGetUseTools:
@@ -113,9 +114,7 @@ class TestGetUseTools:
         result = AgentService.get_use_tools("gen_sql")
         assert result.success is True
         assert isinstance(result.data, dict)
-        assert "tools" in result.data
-        assert isinstance(result.data["tools"], list)
-        assert len(result.data["tools"]) > 0
+        assert set(result.data["tools"]) == set(SUBAGENT_TOOL_REFERENCE["gen_sql"])
 
     def test_unknown_agent_type_returns_error(self):
         """get_use_tools returns error for unknown agent type."""
@@ -128,8 +127,7 @@ class TestGetUseTools:
         """get_use_tools returns tools for gen_report."""
         result = AgentService.get_use_tools("gen_report")
         assert result.success is True
-        assert isinstance(result.data, dict)
-        assert len(result.data["tools"]) > 0
+        assert set(result.data["tools"]) == set(SUBAGENT_TOOL_REFERENCE["gen_report"])
 
 
 @pytest.mark.asyncio
@@ -186,11 +184,12 @@ class TestGetAgent:
         svc = AgentService()
         # real_agent_config has agentic_nodes from conftest (e.g. 'gensql', 'chat', etc.)
         nodes = real_agent_config.agentic_nodes or {}
-        if nodes:
-            first_name = next(iter(nodes))
-            result = await svc.get_agent(first_name, real_agent_config)
-            assert result.success is True
-            assert result.data["agent"]["name"] == first_name
+        assert nodes, "real_agent_config fixture must provide agentic_nodes"
+        first_name = next(iter(nodes))
+        result = await svc.get_agent(first_name, real_agent_config)
+        assert result.success is True
+        assert result.data["agent"]["name"] == first_name
+        assert result.data["agent"]["id"] == first_name
 
 
 @pytest.mark.asyncio
