@@ -11,7 +11,7 @@ generation tools, and hooks.
 """
 
 from dataclasses import dataclass
-from typing import AsyncGenerator, Literal, Optional
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 import pandas as pd
 
@@ -504,6 +504,24 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
         except Exception as e:
             logger.error(f"Failed to setup generation_hooks: {e}")
 
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Route tools to permission categories so profile rules apply.
+
+        ``verify_sql`` is bound lazily from ``execute_stream`` and not listed
+        here because it may not be present when this node runs without a
+        gold_sql. The runtime hook falls back to ``tools`` if called.
+        """
+        mapping = super()._tool_category_map()
+        if self.db_func_tool:
+            mapping["db_tools"] = list(self.db_func_tool.available_tools())
+        if getattr(self, "context_search_tools", None):
+            mapping["context_search_tools"] = list(self.context_search_tools.available_tools())
+        if self.filesystem_func_tool:
+            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
+        if self.ask_user_tool:
+            mapping.setdefault("tools", []).extend(self.ask_user_tool.available_tools())
+        return mapping
+
     def _get_existing_subject_trees(self) -> list:
         """
         Query existing subject_path values from external knowledge storage.
@@ -874,7 +892,7 @@ Rules:
                     max_turns=self.max_turns,
                     session=session,
                     action_history_manager=action_history_manager,
-                    hooks=self.hooks if self.execution_mode == "interactive" else None,
+                    hooks=self._compose_hooks(self.hooks if self.execution_mode == "interactive" else None),
                     agent_name=self.get_node_name(),
                     interrupt_controller=self.interrupt_controller,
                 ):

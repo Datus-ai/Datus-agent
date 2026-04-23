@@ -447,8 +447,8 @@ class DatusCLI:
                         "status-bar.brand": "#ffd866 bold",
                         "status-bar.plan": "#9a9aaa",
                         "status-bar.profile": "#9a9aaa",
-                        "status-bar.profile.auto": "ansicyan bold",
-                        "status-bar.profile.dangerous": "ansired bold",
+                        "status-bar.profile.auto": "ansicyan",
+                        "status-bar.profile.dangerous": "ansired",
                         "status-bar.sep": "#9a9aaa",
                         "status-bar.agent": "#9a9aaa",
                         "status-bar.connector": "#9a9aaa",
@@ -1538,7 +1538,7 @@ class DatusCLI:
             return
 
         if choice not in PROFILE_NAMES:
-            self.console.print(f"[bold red]Unknown profile:[/] {choice}")
+            self.console.print(f"[red]Unknown profile:[/] {choice}")
             return
 
         if choice == current:
@@ -1583,17 +1583,22 @@ class DatusCLI:
                 logger.warning(f"Malformed user rules for {choice!r}: {e}. Applying profile base only.")
                 user_rules_cfg = None
 
-        self.agent_config.permissions_config = new_effective
-        self.agent_config.active_profile_name = choice
-
-        # Immediate effect on the current node (if any). Capture the prior
-        # approval count BEFORE switch_profile clears it.
+        # Apply the runtime switch FIRST. If ``switch_profile`` raises
+        # (unknown profile, malformed override, etc.) the config still
+        # reports the *old* profile so the status bar and PermissionManager
+        # stay consistent instead of publishing a half-applied state.
         prior_approvals = 0
         current_node = getattr(self.chat_commands, "current_node", None)
         if current_node is not None and hasattr(current_node, "permission_manager"):
             prior_approvals = len(getattr(current_node.permission_manager, "_session_approvals", {}))
-            current_node.permission_manager.switch_profile(choice, user_overrides=user_rules_cfg)
+            try:
+                current_node.permission_manager.switch_profile(choice, user_overrides=user_rules_cfg)
+            except Exception as e:
+                self.console.print(f"[red]Profile switch failed:[/] {e}")
+                return
 
+        self.agent_config.permissions_config = new_effective
+        self.agent_config.active_profile_name = choice
         self.active_profile = choice
         self.console.print(
             f"[green]Profile switched:[/] {current} → {choice}\n"

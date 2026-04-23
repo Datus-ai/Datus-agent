@@ -63,7 +63,7 @@ class ProfilePickerApp:
             return None
         except Exception as exc:
             logger.error("ProfilePickerApp crashed: %s", exc)
-            self._console.print(f"[bold red]/profile error:[/] {exc}")
+            self._console.print(f"[red]/profile error:[/] {exc}")
             return None
 
     def _build_app(self) -> Application:
@@ -168,7 +168,7 @@ class DangerousConfirmApp:
             return False
         except Exception as exc:
             logger.error("DangerousConfirmApp crashed: %s", exc)
-            self._console.print(f"[bold red]/profile confirm error:[/] {exc}")
+            self._console.print(f"[red]/profile confirm error:[/] {exc}")
             return False
         return result == "enable"
 
@@ -229,7 +229,7 @@ class DangerousConfirmApp:
 
     def _render_header(self) -> List[Tuple[str, str]]:
         return [
-            ("bold fg:ansired", "  WARNING: DANGEROUS PROFILE - Explicit Confirmation Required\n"),
+            ("fg:ansired", "  WARNING: DANGEROUS PROFILE - Explicit Confirmation Required\n"),
             ("", "\n"),
             ("", "  Switching to Dangerous will auto-execute:\n"),
             ("", "    - All DB writes (including DDL, DELETE)\n"),

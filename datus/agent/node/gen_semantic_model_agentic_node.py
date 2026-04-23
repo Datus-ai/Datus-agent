@@ -10,7 +10,7 @@ semantic model generation with support for filesystem tools, generation tools,
 database tools, hooks, and metricflow MCP server integration.
 """
 
-from typing import AsyncGenerator, Literal, Optional
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
@@ -217,6 +217,33 @@ class GenSemanticModelAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup generation_hooks: {e}")
 
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Route tools to permission categories so profile rules apply."""
+        from datus.tools.func_tool import trans_to_function_tool
+
+        mapping = super()._tool_category_map()
+        if self.db_func_tool:
+            mapping["db_tools"] = list(self.db_func_tool.available_tools())
+        semantic_bucket: List[Any] = []
+        if getattr(self, "semantic_tools", None):
+            semantic_bucket.extend(self.semantic_tools.available_tools())
+        if self.generation_tools:
+            semantic_bucket.extend(
+                [
+                    trans_to_function_tool(self.generation_tools.check_semantic_object_exists),
+                    trans_to_function_tool(self.generation_tools.end_semantic_model_generation),
+                ]
+            )
+        if self.gen_semantic_model_tools:
+            semantic_bucket.extend(self.gen_semantic_model_tools.available_tools())
+        if semantic_bucket:
+            mapping["semantic_tools"] = semantic_bucket
+        if self.filesystem_func_tool:
+            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
+        if self.ask_user_tool:
+            mapping.setdefault("tools", []).extend(self.ask_user_tool.available_tools())
+        return mapping
+
     def _get_existing_subject_trees(self) -> list:
         """
         Query existing subject_tree values from metrics storage.
@@ -420,7 +447,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
                 max_turns=user_input.max_turns if user_input.max_turns else self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
-                hooks=self.hooks if self.execution_mode == "interactive" else None,
+                hooks=self._compose_hooks(self.hooks if self.execution_mode == "interactive" else None),
                 agent_name=self.get_node_name(),
                 interrupt_controller=self.interrupt_controller,
             ):

@@ -825,7 +825,7 @@ class AgenticNode(Node):
             self.permission_manager = PermissionManager(
                 global_config=permissions_config,
                 node_overrides={self.get_node_name(): node_permissions} if node_permissions else {},
-                active_profile=getattr(self.agent_config, "active_profile_name", "normal"),
+                active_profile=getattr(self.agent_config, "active_profile_name", None) or "normal",
             )
             # Forward existing callback to permission manager
             if self._permission_callback:

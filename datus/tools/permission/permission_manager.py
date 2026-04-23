@@ -73,6 +73,12 @@ class PermissionManager:
         # Cache for session-approved permissions (tool_category.tool_name -> approved)
         self._session_approvals: Dict[str, bool] = {}
 
+        # Rules injected at runtime that must survive profile switches.
+        # E.g. chat adds ``skills.skill_execute_command → ASK`` at setup time
+        # as a belt-and-braces safeguard; a ``/profile dangerous`` switch
+        # should not silently drop that safeguard.
+        self._persistent_rules: List[PermissionRule] = []
+
         logger.debug(
             f"PermissionManager initialized: profile={self.active_profile}, "
             f"{len(self.global_config.rules)} global rules"
@@ -89,17 +95,24 @@ class PermissionManager:
     def get_effective_config(self, node_name: str) -> PermissionConfig:
         """Get effective permission config for a node (global + overrides).
 
-        Args:
-            node_name: Name of the agentic node
-
-        Returns:
-            Merged PermissionConfig
+        Node overrides without an explicit ``default`` / ``default_permission``
+        key inherit the profile base's default instead of ``PermissionConfig.from_dict``'s
+        built-in ``allow`` — otherwise an ``agentic_nodes.<name>.permissions.rules``
+        block quietly flips the node into ALLOW mode and bypasses the
+        surrounding profile posture.
         """
         node_override = self.node_overrides.get(node_name)
 
         # Convert dict to PermissionConfig if needed
         if node_override is not None and isinstance(node_override, dict):
-            node_override = PermissionConfig.from_dict(node_override)
+            raw = node_override
+            if "default" not in raw and "default_permission" not in raw:
+                dp = self.global_config.default_permission
+                raw = {
+                    **raw,
+                    "default_permission": dp.value if hasattr(dp, "value") else dp,
+                }
+            node_override = PermissionConfig.from_dict(raw)
 
         return self.global_config.merge_with(node_override)
 
@@ -281,6 +294,19 @@ class PermissionManager:
         """Clear all session approvals (e.g., on session end)."""
         self._session_approvals.clear()
 
+    def add_persistent_rule(self, rule: PermissionRule) -> None:
+        """Register a rule that must survive future ``switch_profile`` calls.
+
+        Used by nodes that inject belt-and-braces safeguards after setup
+        (e.g. ``skills.skill_execute_command → ASK`` in chat). Without this,
+        a runtime ``/profile dangerous`` rebuild of ``global_config`` would
+        silently drop the injected rule and weaken the shell-command gate.
+        """
+        self._persistent_rules.append(rule)
+        # Also install immediately so the current session picks it up.
+        if not any(r.tool == rule.tool and r.pattern == rule.pattern for r in self.global_config.rules):
+            self.global_config.rules.insert(0, rule)
+
     def switch_profile(
         self,
         profile_name: str,
@@ -291,20 +317,34 @@ class PermissionManager:
         Replaces ``global_config`` with ``get_profile(profile_name)`` merged
         with ``user_overrides`` (if any), updates ``active_profile``, and
         clears ``_session_approvals`` so prior ``always-allow`` grants never
-        leak across profiles (spec decision #7).
+        leak across profiles (spec decision #7). Any rules registered via
+        :meth:`add_persistent_rule` are re-applied after the rebuild so
+        runtime safeguards (chat's bash ASK, etc.) don't get dropped.
 
         Args:
             profile_name: One of ``"normal"``, ``"auto"``, ``"dangerous"``.
-                Raises ``ValueError`` on unknown names — callers are expected
-                to validate input before invoking.
             user_overrides: Optional user rules to layer on top (typically
                 reconstructed from ``agent.yml``'s ``permissions.rules``).
 
         Raises:
-            ValueError: if ``profile_name`` is not a known profile.
+            DatusException: if ``profile_name`` is not a known profile.
         """
-        base = get_profile(profile_name)  # raises ValueError on unknown name
+        try:
+            base = get_profile(profile_name)
+        except ValueError as exc:
+            from datus.utils.exceptions import DatusException, ErrorCode
+
+            raise DatusException(
+                code=ErrorCode.COMMON_CONFIG_ERROR,
+                message_args={"config_error": str(exc)},
+            ) from exc
         self.global_config = base.merge_with(user_overrides) if user_overrides else base
+        # Re-inject persistent rules at the front so last-match-wins still
+        # lets explicit YAML rules override them, while bare profile defaults
+        # don't clobber their safety posture.
+        for rule in self._persistent_rules:
+            if not any(r.tool == rule.tool and r.pattern == rule.pattern for r in self.global_config.rules):
+                self.global_config.rules.insert(0, rule)
         self.active_profile = profile_name
         self._session_approvals.clear()
         logger.info(

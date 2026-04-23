@@ -160,23 +160,35 @@ class GenDashboardAgenticNode(AgenticNode):
             # `self.bi_func_tool` as `None`.
             tools = bi_func_tool.available_tools()
         except ImportError as e:
-            # Adapter Python package not installed. Capture for the system
-            # prompt so the LLM can explain to the user, but don't raise from
-            # ``__init__`` — the user may still want other nodes running.
             logger.warning(f"BI adapter package not installed: {e}")
-            self._bi_setup_error = f"BI adapter package for '{bi_platform}' is not installed: {e}"
+            self._bi_setup_error = f"BI adapter package for '{bi_platform}' is not installed: {self._sanitize_error(e)}"
             return
         except Exception as e:
-            # Adapter present but construction failed (version mismatch,
-            # unreachable API, invalid credentials, etc.). Same treatment —
-            # record for prompt injection, keep node alive.
             logger.error(f"Failed to setup BI tools for '{bi_platform}': {e}", exc_info=True)
-            self._bi_setup_error = f"Failed to initialize BI platform '{bi_platform}': {e}"
+            self._bi_setup_error = f"Failed to initialize BI platform '{bi_platform}': {self._sanitize_error(e)}"
             return
 
         self.bi_func_tool = bi_func_tool
         self.tools.extend(tools)
         logger.info(f"BI tools initialized for platform '{bi_platform}'")
+
+    @staticmethod
+    def _sanitize_error(exc: BaseException) -> str:
+        """Redact potential credentials before surfacing an error to the LLM.
+
+        BI adapter failures frequently embed raw URLs or auth payloads
+        (``401 Unauthorized at https://user:pass@host/...``). The system prompt
+        surfaces ``_bi_setup_error`` to the model, so strip obvious
+        user:pass@ segments and cap the length. Full error stays in logs.
+        """
+        import re
+
+        msg = str(exc)
+        msg = re.sub(r"://[^/\s@]+@", "://<redacted>@", msg)
+        msg = re.sub(r"(?i)(password|token|api[_-]?key)=\S+", r"\1=<redacted>", msg)
+        if len(msg) > 300:
+            msg = msg[:300] + "..."
+        return f"{type(exc).__name__}: {msg}" if msg else type(exc).__name__
 
     def _resolve_bi_platform(self) -> Optional[str]:
         """Resolve which BI platform to use."""

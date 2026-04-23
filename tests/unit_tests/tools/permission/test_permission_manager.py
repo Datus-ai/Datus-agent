@@ -409,7 +409,8 @@ class TestPermissionManagerProfileSwitching:
         import pytest
 
         from datus.tools.permission.permission_manager import PermissionManager
+        from datus.utils.exceptions import DatusException
 
         mgr = PermissionManager()
-        with pytest.raises(ValueError, match="Unknown profile"):
+        with pytest.raises(DatusException, match="Unknown profile"):
             mgr.switch_profile("yolo")

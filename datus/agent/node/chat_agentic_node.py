@@ -191,22 +191,21 @@ class ChatAgenticNode(AgenticNode):
             else:
                 base_config = PermissionConfig()
 
-            # Add default ASK for skill_execute_command (bash) at position 0 (lowest priority)
-            has_bash_rule = any(r.tool == "skills" and r.pattern == "skill_execute_command" for r in base_config.rules)
-            if not has_bash_rule:
-                base_config.rules.insert(
-                    0,
-                    PermissionRule(
-                        tool="skills",
-                        pattern="skill_execute_command",
-                        permission=PermissionLevel.ASK,
-                    ),
-                )
-
             self.permission_manager = PermissionManager(
                 global_config=base_config,
                 node_overrides=self._get_node_permission_overrides(),
-                active_profile=getattr(self.agent_config, "active_profile_name", "normal"),
+                active_profile=getattr(self.agent_config, "active_profile_name", None) or "normal",
+            )
+            # Register bash ASK as a persistent rule so ``/profile dangerous``
+            # doesn't silently drop it on rebuild. ``add_persistent_rule``
+            # skips duplicates, so this is safe even if the profile base
+            # already contains the rule.
+            self.permission_manager.add_persistent_rule(
+                PermissionRule(
+                    tool="skills",
+                    pattern="skill_execute_command",
+                    permission=PermissionLevel.ASK,
+                )
             )
             self.permission_manager.set_permission_callback(self._handle_permission_ask)
 

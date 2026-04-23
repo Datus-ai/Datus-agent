@@ -780,12 +780,19 @@ class AgentConfig:
         try:
             return build_effective_config(self.active_profile_name, user_raw)
         except Exception as e:
-            # Malformed user rules (bad glob, bad permission literal, etc.)
-            # previously returned None silently — now we log and fall back
-            # to the profile base, matching the invalid-profile behavior
-            # above instead of crashing the CLI on startup.
-            logger.warning(f"Invalid permissions.rules in agent.yml: {e}. Falling back to profile base only.")
-            return get_profile(self.active_profile_name)
+            # Fail closed: malformed ``permissions.rules`` almost always means the
+            # user was trying to *tighten* an otherwise permissive profile. If
+            # the selected profile is ``dangerous`` and we silently dropped the
+            # overrides we'd hand the user an ALLOW-everything posture — the
+            # opposite of their intent. Fall back to ``normal`` (plus logged
+            # warning) so the worst-case is an over-prompt, never an under-gate.
+            logger.warning(
+                f"Invalid permissions.rules in agent.yml: {e}. "
+                f"Falling back to 'normal' profile instead of '{self.active_profile_name}' to avoid "
+                f"silently weakening the posture."
+            )
+            self.active_profile_name = "normal"
+            return get_profile("normal")
 
     def _init_skills_config(self, skills_raw: Dict[str, Any]):
         """Initialize skills configuration.
