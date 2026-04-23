@@ -1274,3 +1274,61 @@ class TestCollectCreatedResources:
         result = GenDashboardAgenticNode._collect_created_resources(ahm)
 
         assert result == {}  # no id means not collected
+
+
+class TestSanitizeError:
+    """``_sanitize_error`` redacts credentials before the error reaches the prompt.
+
+    ``_bi_setup_error`` is rendered into the system prompt, so anything
+    that slips past this sanitizer leaks credentials into the LLM context.
+    """
+
+    def test_redacts_user_pass_in_url(self):
+        from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+        msg = GenDashboardAgenticNode._sanitize_error(Exception("failed at https://admin:s3cret@bi.example.com/login"))
+        assert "s3cret" not in msg
+        assert "<redacted>@" in msg
+
+    def test_redacts_key_value_query_string(self):
+        from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+        msg = GenDashboardAgenticNode._sanitize_error(
+            Exception("connect fail password=hunter2 other=ok api_key=ABC123")
+        )
+        assert "hunter2" not in msg
+        assert "ABC123" not in msg
+        assert "other=ok" in msg
+
+    def test_redacts_json_dict_style_password(self):
+        from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+        msg = GenDashboardAgenticNode._sanitize_error(Exception('body={"username": "alice", "password": "s3cret"}'))
+        assert "s3cret" not in msg
+        assert "alice" in msg
+
+    def test_redacts_bearer_authorization_header(self):
+        from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+        msg = GenDashboardAgenticNode._sanitize_error(Exception("401 with Authorization: Bearer eyJhbGciOi-leaked"))
+        assert "eyJhbGciOi-leaked" not in msg
+        assert "<redacted>" in msg.lower()
+
+    def test_redacts_basic_authorization_header(self):
+        from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+        msg = GenDashboardAgenticNode._sanitize_error(Exception("authorization: Basic dXNlcjpwYXNz"))
+        assert "dXNlcjpwYXNz" not in msg
+
+    def test_truncates_very_long_error_message(self):
+        from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+        msg = GenDashboardAgenticNode._sanitize_error(Exception("x" * 500))
+        assert msg.endswith("...")
+        # ``Exception: `` prefix (~12 chars) + 300 body chars + ``...``.
+        assert len(msg) <= 320
+
+    def test_preserves_type_name_for_empty_message(self):
+        from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+        assert GenDashboardAgenticNode._sanitize_error(RuntimeError("")) == "RuntimeError"

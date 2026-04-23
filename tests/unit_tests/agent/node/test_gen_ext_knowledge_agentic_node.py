@@ -596,3 +596,94 @@ class TestGenExtKnowledgeValidateGoldSql:
         with pytest.raises(DatusException) as exc_info:
             node._validate_gold_sql("SELECT * FROM __no_such_table__")
         assert exc_info.value.code == ErrorCode.NODE_EXT_KNOWLEDGE_GOLD_SQL_INVALID
+
+
+class TestGenExtKnowledgeToolCategoryMap:
+    """``_tool_category_map`` routes tools to permission categories.
+
+    The main regression target is the lazy ``verify_sql`` tool — it must
+    land in ``db_tools`` so a ``db_tools.*`` DENY rule gates the tool that
+    executes model-supplied SQL, not the generic ``tools.*`` fallback.
+    """
+
+    def _make_bare_node(self):
+        """Instantiate skipping ``__init__`` so we can hand-set tool attrs."""
+        from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
+
+        node = GenExtKnowledgeAgenticNode.__new__(GenExtKnowledgeAgenticNode)
+        # Base class AgenticNode's ``_tool_category_map`` reads this one.
+        node.skill_func_tool = None
+        # Subclass attrs.
+        node.db_func_tool = None
+        node.context_search_tools = None
+        node.filesystem_func_tool = None
+        node.ask_user_tool = None
+        node.tools = []
+        return node
+
+    def test_empty_node_produces_empty_mapping(self):
+        assert self._make_bare_node()._tool_category_map() == {}
+
+    def test_db_func_tool_populates_db_tools_bucket(self):
+        from unittest.mock import MagicMock
+
+        node = self._make_bare_node()
+        db_tool = MagicMock(name="read_query")
+        node.db_func_tool = MagicMock()
+        node.db_func_tool.available_tools = MagicMock(return_value=[db_tool])
+
+        assert node._tool_category_map()["db_tools"] == [db_tool]
+
+    def test_verify_sql_lazy_tool_routed_to_db_tools(self):
+        from unittest.mock import MagicMock
+
+        node = self._make_bare_node()
+        verify_sql_tool = MagicMock()
+        verify_sql_tool.name = "verify_sql"
+        unrelated = MagicMock()
+        unrelated.name = "ask_user"
+        node.tools = [verify_sql_tool, unrelated]
+
+        read_query = MagicMock(name="read_query")
+        node.db_func_tool = MagicMock()
+        node.db_func_tool.available_tools = MagicMock(return_value=[read_query])
+
+        mapping = node._tool_category_map()
+        assert verify_sql_tool in mapping["db_tools"]
+        assert read_query in mapping["db_tools"]
+        assert unrelated not in mapping.get("db_tools", [])
+
+    def test_verify_sql_without_db_func_tool_still_lands_in_db_tools(self):
+        from unittest.mock import MagicMock
+
+        node = self._make_bare_node()
+        verify_sql_tool = MagicMock()
+        verify_sql_tool.name = "verify_sql"
+        node.tools = [verify_sql_tool]
+
+        assert node._tool_category_map()["db_tools"] == [verify_sql_tool]
+
+    def test_context_and_filesystem_buckets_populated(self):
+        from unittest.mock import MagicMock
+
+        node = self._make_bare_node()
+        ctx_tool = MagicMock(name="search_knowledge")
+        fs_tool = MagicMock(name="read_file")
+        node.context_search_tools = MagicMock()
+        node.context_search_tools.available_tools = MagicMock(return_value=[ctx_tool])
+        node.filesystem_func_tool = MagicMock()
+        node.filesystem_func_tool.available_tools = MagicMock(return_value=[fs_tool])
+
+        mapping = node._tool_category_map()
+        assert mapping["context_search_tools"] == [ctx_tool]
+        assert mapping["filesystem_tools"] == [fs_tool]
+
+    def test_ask_user_tool_extends_generic_tools_bucket(self):
+        from unittest.mock import MagicMock
+
+        node = self._make_bare_node()
+        ask_tool = MagicMock(name="ask_user")
+        node.ask_user_tool = MagicMock()
+        node.ask_user_tool.available_tools = MagicMock(return_value=[ask_tool])
+
+        assert node._tool_category_map()["tools"] == [ask_tool]

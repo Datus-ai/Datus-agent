@@ -90,7 +90,17 @@ class PermissionManager:
 
     @staticmethod
     def _copy_config(config: PermissionConfig) -> PermissionConfig:
-        """Return a shallow copy of a ``PermissionConfig`` with a fresh rules list."""
+        """Return a shallow copy of a ``PermissionConfig`` with a fresh rules list.
+
+        Only copies when the input is actually a ``PermissionConfig``. Some
+        unit tests stub ``agent_config.permissions_config`` with a
+        ``MagicMock`` — reconstructing a ``PermissionConfig`` around mocked
+        attributes would fail Pydantic validation, so fall back to returning
+        the input untouched. The copy semantic only matters when the source
+        is a real profile singleton anyway.
+        """
+        if not isinstance(config, PermissionConfig):
+            return config
         return PermissionConfig(
             default_permission=config.default_permission,
             rules=list(config.rules),

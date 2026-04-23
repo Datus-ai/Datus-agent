@@ -159,3 +159,36 @@ def test_malformed_user_rules_falls_back_to_base(caplog):
     assert any(
         "Invalid permissions.rules" in rec.message or "permissions.rules" in rec.message for rec in caplog.records
     )
+
+
+def test_non_mapping_permissions_falls_back_to_normal(caplog):
+    """A list/scalar in ``permissions`` must not crash the loader.
+
+    ``dict(raw)`` and ``raw.get("profile")`` both raise on a non-mapping, so
+    the loader has to detect the bad shape before calling them. Expect a
+    fall-back to ``normal`` and a warning that names the received type.
+    """
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="datus.configuration.agent_config"):
+        cfg = _make_config(["not", "a", "mapping"])
+    assert cfg.active_profile_name == "normal"
+    assert cfg.permissions_config.default_permission == PermissionLevel.ASK
+    assert any("expected mapping" in rec.message or "list" in rec.message for rec in caplog.records)
+
+
+def test_non_string_profile_field_falls_back_to_normal(caplog):
+    """``permissions.profile: 42`` is not a valid profile name.
+
+    ``get_profile`` would raise on the numeric value; catch it upstream and
+    log a warning.
+    """
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="datus.configuration.agent_config"):
+        cfg = _make_config({"profile": 42})
+    assert cfg.active_profile_name == "normal"
+    assert any(
+        "Invalid permissions.profile" in rec.message or "Falling back to 'normal'" in rec.message
+        for rec in caplog.records
+    )

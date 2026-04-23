@@ -182,3 +182,143 @@ def test_profile_no_current_node_still_works():
 
     assert cli.active_profile == "auto"
     assert agent_config.active_profile_name == "auto"
+
+
+def test_run_profile_picker_delegates_to_picker_app(monkeypatch):
+    """``_run_profile_picker`` hands selection off to ``ProfilePickerApp``
+    and respects the outer TUI's input-suspension contract when present.
+    """
+    from datus.cli.repl import DatusCLI
+
+    calls = {"run": 0}
+
+    class _FakePicker:
+        def __init__(self, console, current):
+            assert current == "normal"
+
+        def run(self):
+            calls["run"] += 1
+            return "dangerous"
+
+    monkeypatch.setattr("datus.cli.profile_picker_app.ProfilePickerApp", _FakePicker)
+
+    class _CLIStub:
+        console = MagicMock()
+        tui_app = None
+
+    result = DatusCLI._run_profile_picker(_CLIStub(), "normal")
+    assert result == "dangerous"
+    assert calls["run"] == 1
+
+
+def test_run_dangerous_confirm_delegates_to_confirm_app(monkeypatch):
+    """``_run_dangerous_confirm`` is a thin wrapper over ``DangerousConfirmApp``."""
+    from datus.cli.repl import DatusCLI
+
+    class _FakeConfirm:
+        def __init__(self, console):
+            pass
+
+        def run(self):
+            return True
+
+    monkeypatch.setattr("datus.cli.profile_picker_app.DangerousConfirmApp", _FakeConfirm)
+
+    class _CLIStub:
+        console = MagicMock()
+        tui_app = None
+
+    assert DatusCLI._run_dangerous_confirm(_CLIStub()) is True
+
+
+def test_run_profile_picker_suspends_tui_when_present(monkeypatch):
+    """When a TUI is active, the picker runs inside ``suspend_input()``.
+
+    Otherwise picker output races the outer Application's rendering and
+    breaks stdin exclusivity.
+    """
+    from contextlib import contextmanager
+
+    from datus.cli.repl import DatusCLI
+
+    suspend_entries = {"n": 0}
+
+    @contextmanager
+    def _fake_suspend():
+        suspend_entries["n"] += 1
+        yield
+
+    class _FakeTUI:
+        def suspend_input(self):
+            return _fake_suspend()
+
+    class _FakePicker:
+        def __init__(self, console, current):
+            pass
+
+        def run(self):
+            return "auto"
+
+    monkeypatch.setattr("datus.cli.profile_picker_app.ProfilePickerApp", _FakePicker)
+
+    class _CLIStub:
+        console = MagicMock()
+        tui_app = _FakeTUI()
+
+    DatusCLI._run_profile_picker(_CLIStub(), "normal")
+    assert suspend_entries["n"] == 1
+
+
+def test_profile_malformed_rules_fails_closed_to_normal():
+    """``/profile dangerous`` with a broken rules list must refuse to apply.
+
+    Mirrors startup's fail-closed: expanding permissions while silently
+    dropping restrictive user overrides is the worst-case outcome.
+    """
+    from datus.cli.repl import DatusCLI
+
+    # Start on ``auto``, user rules in ``_raw_permissions`` are malformed
+    # (a non-string pattern), so ``build_effective_config`` raises.
+    from datus.configuration.agent_config import AgentConfig
+
+    agent_config = AgentConfig.__new__(AgentConfig)
+    agent_config.active_profile_name = "auto"
+    agent_config._raw_permissions = {
+        "profile": "auto",
+        "rules": [{"tool": "db_tools", "pattern": "x", "permission": "not_a_valid_level"}],
+    }
+    agent_config.permissions_config = None  # overwritten below
+
+    manager = PermissionManager(active_profile="auto")
+    cli = _FakeCLI(manager, agent_config, profile_responses=["dangerous"], confirm_responses=[True])
+
+    DatusCLI._cmd_profile(cli, "")
+
+    # Fail-closed: we don't land on ``dangerous`` — we land on ``normal``.
+    assert cli.active_profile == "normal"
+    assert agent_config.active_profile_name == "normal"
+
+
+def test_profile_picker_returns_none_is_noop():
+    from datus.cli.repl import DatusCLI
+
+    manager = PermissionManager(active_profile="normal")
+    cli = _FakeCLI(manager, _make_agent_config("normal"), profile_responses=[None])
+
+    DatusCLI._cmd_profile(cli, "")
+
+    # Cancellation path: active profile unchanged, no confirm prompt asked.
+    assert cli.active_profile == "normal"
+    assert cli.confirm_calls == 0
+
+
+def test_profile_unknown_selection_is_noop():
+    from datus.cli.repl import DatusCLI
+
+    manager = PermissionManager(active_profile="normal")
+    cli = _FakeCLI(manager, _make_agent_config("normal"), profile_responses=["bogus"])
+
+    DatusCLI._cmd_profile(cli, "")
+
+    # Unknown profile name hits the guard, prints error, doesn't switch.
+    assert cli.active_profile == "normal"

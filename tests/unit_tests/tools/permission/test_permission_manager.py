@@ -414,3 +414,87 @@ class TestPermissionManagerProfileSwitching:
         mgr = PermissionManager()
         with pytest.raises(DatusException, match="Unknown profile"):
             mgr.switch_profile("yolo")
+
+
+class TestPermissionManagerPersistentRules:
+    """``add_persistent_rule`` injects rules that survive profile switches."""
+
+    def test_add_persistent_rule_installs_immediately(self):
+        from datus.tools.permission.permission_config import PermissionLevel, PermissionRule
+        from datus.tools.permission.permission_manager import PermissionManager
+
+        mgr = PermissionManager(active_profile="normal")
+        rule = PermissionRule(tool="skills", pattern="exec_*", permission=PermissionLevel.ASK)
+        mgr.add_persistent_rule(rule)
+
+        assert rule in mgr._persistent_rules
+        assert any(r.tool == "skills" and r.pattern == "exec_*" for r in mgr.global_config.rules)
+
+    def test_add_persistent_rule_skips_existing_identical_rule(self):
+        from datus.tools.permission.permission_config import PermissionLevel, PermissionRule
+        from datus.tools.permission.permission_manager import PermissionManager
+
+        mgr = PermissionManager(active_profile="normal")
+        rule = PermissionRule(tool="skills", pattern="exec_*", permission=PermissionLevel.ASK)
+        before = len(mgr.global_config.rules)
+        mgr.add_persistent_rule(rule)
+        mid = len(mgr.global_config.rules)
+        # Second call with same tool+pattern must not stack duplicates on the
+        # rules list (``_persistent_rules`` bookkeeping list still appends).
+        mgr.add_persistent_rule(rule)
+        after = len(mgr.global_config.rules)
+
+        assert mid == before + 1
+        assert after == mid
+        assert mgr._persistent_rules.count(rule) == 2
+
+    def test_switch_profile_reapplies_persistent_rule(self):
+        from datus.tools.permission.permission_config import PermissionLevel, PermissionRule
+        from datus.tools.permission.permission_manager import PermissionManager
+
+        mgr = PermissionManager(active_profile="normal")
+        rule = PermissionRule(tool="skills", pattern="bash_*", permission=PermissionLevel.ASK)
+        mgr.add_persistent_rule(rule)
+
+        mgr.switch_profile("dangerous")
+        assert any(r.tool == "skills" and r.pattern == "bash_*" for r in mgr.global_config.rules)
+
+    def test_switch_profile_persistent_rule_dedup_against_fresh_base(self):
+        """If the rebuilt base already contains the rule, don't insert again.
+
+        Exercises the ``if not any(...)`` branch inside ``switch_profile`` —
+        the safeguard must preserve last-match-wins semantics rather than
+        stacking duplicate ``skills.bash_*`` entries on every re-switch.
+        """
+        from datus.tools.permission.permission_config import PermissionLevel, PermissionRule
+        from datus.tools.permission.permission_manager import PermissionManager
+
+        mgr = PermissionManager(active_profile="normal")
+        rule = PermissionRule(tool="skills", pattern="*", permission=PermissionLevel.ASK)
+        mgr.add_persistent_rule(rule)
+        mgr.switch_profile("normal")
+        # ``skills.*`` is already in the NORMAL profile; persistent-rule
+        # re-application should be a no-op — assert we have exactly one.
+        matching = [r for r in mgr.global_config.rules if r.tool == "skills" and r.pattern == "*"]
+        assert len(matching) == 1
+
+    def test_copy_config_isolates_persistent_rule_from_shared_profile(self):
+        """Two managers with the same profile must not share a rules list.
+
+        Regression for the profile-singleton leak: ``add_persistent_rule``
+        on one manager previously mutated ``get_profile("normal").rules``
+        via ``insert(0, …)``, so every subsequent manager inherited the
+        custom rule. With ``_copy_config`` the rules list is independent.
+        """
+        from datus.tools.permission.permission_config import PermissionLevel, PermissionRule
+        from datus.tools.permission.permission_manager import PermissionManager
+        from datus.tools.permission.profiles import get_profile
+
+        before = len(get_profile("normal").rules)
+        mgr_a = PermissionManager(global_config=get_profile("normal"), active_profile="normal")
+        mgr_a.add_persistent_rule(PermissionRule(tool="skills", pattern="only_a", permission=PermissionLevel.ASK))
+        # Building another manager from the same profile must not see ``only_a``.
+        mgr_b = PermissionManager(global_config=get_profile("normal"), active_profile="normal")
+        assert not any(r.pattern == "only_a" for r in mgr_b.global_config.rules)
+        # The shared profile itself is untouched.
+        assert len(get_profile("normal").rules) == before
