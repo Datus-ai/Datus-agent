@@ -228,8 +228,14 @@ class PermissionHooks(AgentHooks):
 
         if permission == PermissionLevel.DENY:
             logger.warning(f"Tool '{tool_name}' denied by permission rules")
+            profile = getattr(self.permission_manager, "active_profile", None) or "unknown"
             raise PermissionDeniedException(
-                f"Tool '{tool_name}' is not permitted in node '{self.node_name}'",
+                (
+                    f"Tool '{tool_name}' ({category}) is denied by the "
+                    f"'{profile}' permission profile. Switch via /profile to "
+                    "'auto' (prompts per call) or 'dangerous' (allow all), or "
+                    "add a user rule under ``permissions.rules`` in agent.yml."
+                ),
                 tool_category=category,
                 tool_name=pattern_name,
             )
