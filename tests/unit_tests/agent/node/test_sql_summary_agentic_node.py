@@ -100,7 +100,7 @@ class TestSqlSummaryAgenticNodeInit:
 # ===========================================================================
 
 
-@pytest.mark.acceptance
+@pytest.mark.nightly
 class TestSqlSummaryAgenticNodeExecution:
     """Tests for SqlSummaryAgenticNode.execute_stream() with real tools."""
 

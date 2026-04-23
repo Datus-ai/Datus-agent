@@ -133,7 +133,7 @@ class TestGenJobAgenticNodeInit:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.acceptance
+@pytest.mark.nightly
 class TestGenJobExecution:
     """Test execute_stream error paths and basic workflow."""
 

@@ -188,7 +188,7 @@ class TestExploreAgenticNodeTools:
         assert "date_parsing_tools" in mapping
 
 
-@pytest.mark.acceptance
+@pytest.mark.nightly
 class TestExploreAgenticNodeExecution:
     """Tests for ExploreAgenticNode execute_stream."""
 

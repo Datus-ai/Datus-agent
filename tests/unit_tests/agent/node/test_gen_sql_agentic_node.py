@@ -168,7 +168,7 @@ class TestGenSQLAgenticNodeExecutionMode:
         assert "ask_user" not in tool_names
 
 
-@pytest.mark.acceptance
+@pytest.mark.nightly
 class TestGenSQLAgenticNodeExecution:
     """Tests for GenSQLAgenticNode execute_stream and related methods."""
 

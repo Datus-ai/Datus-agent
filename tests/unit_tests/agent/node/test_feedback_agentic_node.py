@@ -160,7 +160,7 @@ class TestFeedbackAgenticNodeInit:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.acceptance
+@pytest.mark.nightly
 class TestFeedbackAgenticNodeExecution:
     """Tests for FeedbackAgenticNode streaming execution."""
 

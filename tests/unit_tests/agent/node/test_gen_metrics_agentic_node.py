@@ -131,7 +131,7 @@ class TestGenMetricsAgenticNodeInit:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.acceptance
+@pytest.mark.nightly
 class TestGenMetricsAgenticNodeExecution:
     """Tests for GenMetricsAgenticNode streaming execution."""
 
