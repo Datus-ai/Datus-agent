@@ -43,10 +43,7 @@ def dashboard_agent_config():
         pytest.skip("DEEPSEEK_API_KEY not set")
     if not _is_superset_running():
         pytest.skip(f"Superset not reachable at {SUPERSET_URL}. Run docker compose up -d")
-    try:
-        import datus_bi_superset  # noqa: F401
-    except ImportError:
-        pytest.skip("datus-bi-superset package not installed")
+    pytest.importorskip("datus_bi_superset", reason="datus-bi-superset package not installed")
 
     from tests.conftest import load_acceptance_config
 
