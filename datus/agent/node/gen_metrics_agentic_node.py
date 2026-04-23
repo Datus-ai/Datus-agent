@@ -70,7 +70,7 @@ class GenMetricsAgenticNode(AgenticNode):
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 40)
 
-        self.metrics_dir = str(agent_config.path_manager.semantic_model_path())
+        self.metrics_dir = str(agent_config.path_manager.semantic_model_path(agent_config.current_datasource))
         self.knowledge_base_dir = str(agent_config.path_manager.subject_dir)
 
         from datus.configuration.node_type import NodeType
@@ -259,7 +259,7 @@ class GenMetricsAgenticNode(AgenticNode):
         context["semantic_model_dir"] = self.metrics_dir
         context["knowledge_base_dir"] = self.knowledge_base_dir
         # Filesystem tool is rooted at project_root; full path required.
-        context["kind_subdir"] = "subject/semantic_models"
+        context["kind_subdir"] = f"subject/semantic_models/{self.agent_config.current_datasource}"
         context["current_datasource"] = self.agent_config.current_datasource
         context["has_ask_user_tool"] = self.ask_user_tool is not None
         context.update(build_datasource_prompt_context(self.agent_config))

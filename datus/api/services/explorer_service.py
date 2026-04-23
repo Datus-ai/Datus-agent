@@ -834,7 +834,7 @@ class ExplorerService:
 
             # Step 3: Determine file path. Use the agent_config's own path_manager so
             # the project_root/subject anchoring propagates to derived paths.
-            semantic_dir = self.agent_config.path_manager.semantic_model_path()
+            semantic_dir = self.agent_config.path_manager.semantic_model_path(self.agent_config.current_datasource)
             file_path = os.path.join(str(semantic_dir), "metrics", f"{metric_name}.yml")
 
             # Step 4: Check for file conflict

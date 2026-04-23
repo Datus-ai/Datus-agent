@@ -67,7 +67,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 40)
 
-        self.semantic_model_dir = str(agent_config.path_manager.semantic_model_path())
+        self.semantic_model_dir = str(agent_config.path_manager.semantic_model_path(agent_config.current_datasource))
         # ``knowledge_base_dir`` is the sandbox root for FilesystemFuncTool. It
         # now points at the project-scoped ``subject/`` directory so tools can
         # browse all three KB subfolders but not escape the project.
@@ -255,7 +255,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
         context["knowledge_base_dir"] = self.knowledge_base_dir
         # Filesystem tool is now rooted at project_root (not subject/), so the
         # LLM must pass the full ``subject/<kind>/…`` relative path.
-        context["kind_subdir"] = "subject/semantic_models"
+        context["kind_subdir"] = f"subject/semantic_models/{self.agent_config.current_datasource}"
         context["current_datasource"] = self.agent_config.current_datasource
         context["has_ask_user_tool"] = self.ask_user_tool is not None
         context.update(build_datasource_prompt_context(self.agent_config))

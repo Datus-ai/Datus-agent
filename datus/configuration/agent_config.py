@@ -905,7 +905,8 @@ class AgentConfig:
             if db_config:
                 config.setdefault("db_config", db_config)
 
-        config.setdefault("semantic_models_path", str(self.path_manager.semantic_model_path()))
+        datasource_name = config.get("datasource", self.current_datasource)
+        config.setdefault("semantic_models_path", str(self.path_manager.semantic_model_path(datasource_name)))
         config.setdefault("agent_home", self.home)
         return config
 

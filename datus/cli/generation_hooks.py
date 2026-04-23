@@ -166,6 +166,8 @@ class GenerationHooks(AgentHooks):
             resolver = getattr(path_manager, resolver_name, None)
             if resolver is None:
                 return None
+            if kind == "semantic":
+                return str(resolver(datasource=self.agent_config.current_datasource))
             return str(resolver())
         except Exception as e:
             logger.warning(f"Failed to resolve base_dir for kind={kind}: {e}")

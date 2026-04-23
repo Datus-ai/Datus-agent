@@ -72,7 +72,7 @@ async def init_from_adapter(
                     for k, v in raw.items()
                     if v is not None and v != "" and k not in ("extra", "logic_name", "path_pattern", "catalog")
                 }
-            semantic_models_path = str(agent_config.path_manager.semantic_models_dir)
+            semantic_models_path = str(agent_config.path_manager.semantic_model_path(datasource))
 
             if metadata and metadata.config_class:
                 adapter_config = metadata.config_class(

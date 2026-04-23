@@ -155,7 +155,7 @@ class SemanticTools:
                 if adapter_config is None:
                     datasource = self.agent_config.current_datasource
                     db_config = self._extract_db_config(datasource)
-                    semantic_models_path = str(self.agent_config.path_manager.semantic_models_dir)
+                    semantic_models_path = str(self.agent_config.path_manager.semantic_model_path(datasource))
 
                     if metadata and metadata.config_class:
                         adapter_config = metadata.config_class(

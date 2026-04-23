@@ -440,7 +440,9 @@ class Agent:
                     # Only clear semantic_models/{datasource} directory when NOT using --from_adapter
                     # because MetricFlow adapter needs to read YAML files from this directory
                     if not (hasattr(self.args, "from_adapter") and self.args.from_adapter):
-                        semantic_yaml_dir = self.global_config.path_manager.semantic_model_path()
+                        semantic_yaml_dir = self.global_config.path_manager.semantic_model_path(
+                            self.global_config.current_datasource
+                        )
                         force = self._force_delete
                         if semantic_yaml_dir.exists() and not safe_rmtree(
                             semantic_yaml_dir, "semantic YAML directory", force=force
@@ -488,7 +490,9 @@ class Agent:
                     # Only clear semantic_models/{datasource} directory when NOT using --from_adapter
                     # because MetricFlow adapter needs to read YAML files from this directory
                     if not (hasattr(self.args, "from_adapter") and self.args.from_adapter):
-                        semantic_yaml_dir = self.global_config.path_manager.semantic_model_path()
+                        semantic_yaml_dir = self.global_config.path_manager.semantic_model_path(
+                            self.global_config.current_datasource
+                        )
                         force = self._force_delete
                         if semantic_yaml_dir.exists() and not safe_rmtree(
                             semantic_yaml_dir, "semantic YAML directory", force=force

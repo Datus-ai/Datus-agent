@@ -1528,7 +1528,7 @@ class DatusCLI:
         info = Table.grid(padding=(0, 2))
         info.add_column(style="dim", justify="left", no_wrap=True)
         info.add_column()
-        info.add_row("Database", Text.from_markup(db_line))
+        info.add_row("Datasource", Text.from_markup(db_line))
         if show_context:
             info.add_row("Context", Text.from_markup(f"[dim]{context_summary}[/]"))
         body.add_row(info)

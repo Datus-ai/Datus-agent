@@ -1506,7 +1506,7 @@ class TestEndToEndGenerationHooksInteraction:
 
         # Create a real YAML file under the project subject_dir so GenerationHooks
         # path containment check accepts it.
-        semantic_dir = real_agent_config.path_manager.semantic_model_path()
+        semantic_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
         yaml_path = os.path.join(str(semantic_dir), "test_semantic_model.yaml")
         _create_test_semantic_yaml(yaml_path)
 
@@ -1619,7 +1619,7 @@ class TestEndToEndGenerationHooksInteraction:
 
         # Create a real YAML file under the project subject_dir so GenerationHooks
         # path containment check accepts it.
-        semantic_dir = real_agent_config.path_manager.semantic_model_path()
+        semantic_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
         yaml_path = os.path.join(str(semantic_dir), "test_semantic_decline.yaml")
         _create_test_semantic_yaml(yaml_path)
 

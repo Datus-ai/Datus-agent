@@ -191,8 +191,8 @@ class TestDatusPathManagerDataPaths:
         assert pm.sessions_dir.exists()
 
     def test_semantic_model_path_creates_dir(self, pm):
-        path = pm.semantic_model_path()
-        assert path == pm.semantic_models_dir
+        path = pm.semantic_model_path("test_ds")
+        assert path == pm.semantic_models_dir / "test_ds"
         assert path.exists()
 
     def test_sql_summary_path_creates_dir(self, pm):

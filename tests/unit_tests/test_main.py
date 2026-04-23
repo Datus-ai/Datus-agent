@@ -234,7 +234,6 @@ class TestMainInitAction:
         assert result == 0
 
 
-
 class TestMainTutorialAction:
     def test_tutorial_action_runs_tutorial(self):
         mock_tutorial = MagicMock()

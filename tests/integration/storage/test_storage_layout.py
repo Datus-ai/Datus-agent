@@ -94,9 +94,9 @@ class TestStorageLayoutIntegration:
         project_root = tmp_path / "my_project"
         cfg = _make_config(home=datus_home, project_name="my_project", project_root=project_root)
 
-        produced = cfg.path_manager.semantic_model_path()
+        produced = cfg.path_manager.semantic_model_path("test_ds")
         assert produced.exists() and produced.is_dir()
-        assert produced == project_root.resolve() / "subject" / "semantic_models"
+        assert produced == project_root.resolve() / "subject" / "semantic_models" / "test_ds"
 
     def test_auto_project_name_from_cwd(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

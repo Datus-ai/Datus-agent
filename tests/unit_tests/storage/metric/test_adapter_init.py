@@ -200,7 +200,7 @@ class TestInitFromAdapter:
         config = MagicMock(spec=["current_datasource", "datasource_configs", "path_manager"])
         config.current_datasource = "ns1"
         config.datasource_configs = {}
-        config.path_manager.semantic_models_dir = "/tmp/project/subject/semantic_models"
+        config.path_manager.semantic_model_path.return_value = "/tmp/project/subject/semantic_models"
 
         await init_from_adapter(config, "metricflow")
 
@@ -252,7 +252,7 @@ class TestInitFromAdapter:
         config = MagicMock(spec=["current_datasource", "datasource_configs", "path_manager"])
         config.current_datasource = "fallback_ns"
         config.datasource_configs = {}
-        config.path_manager.semantic_models_dir = "/tmp/project/subject/semantic_models"
+        config.path_manager.semantic_model_path.return_value = "/tmp/project/subject/semantic_models"
 
         with patch("datus.tools.semantic_tools.config.SemanticAdapterConfig") as MockConfig:
             MockConfig.return_value = MagicMock()
@@ -296,7 +296,7 @@ class TestInitFromAdapter:
         config = MagicMock(spec=["current_datasource", "datasource_configs", "path_manager"])
         config.current_datasource = "ns1"
         config.datasource_configs = {"ns1": {"default": mock_db_config}}
-        config.path_manager.semantic_models_dir = "/tmp/project/subject/semantic_models"
+        config.path_manager.semantic_model_path.return_value = "/tmp/project/subject/semantic_models"
 
         await init_from_adapter(config, "metricflow")
 

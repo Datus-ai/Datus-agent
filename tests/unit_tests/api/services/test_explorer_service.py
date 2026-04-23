@@ -620,7 +620,9 @@ class TestExplorerServiceCreateMetric:
         svc = ExplorerService(agent_config=real_agent_config)
         await svc.create_directory(CreateDirectoryInput(subject_path=["metric_create_test"]))
 
-        metrics_dir = real_agent_config.path_manager.semantic_model_path() / "metrics"
+        metrics_dir = (
+            real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource) / "metrics"
+        )
         os.makedirs(metrics_dir, exist_ok=True)
 
         request = EditMetricInput(
@@ -644,7 +646,9 @@ class TestExplorerServiceCreateMetric:
         svc = ExplorerService(agent_config=real_agent_config)
         await svc.create_directory(CreateDirectoryInput(subject_path=["dup_file_dir"]))
 
-        metrics_dir = real_agent_config.path_manager.semantic_model_path() / "metrics"
+        metrics_dir = (
+            real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource) / "metrics"
+        )
         os.makedirs(metrics_dir, exist_ok=True)
 
         # Pre-create the file on disk
@@ -669,7 +673,9 @@ class TestExplorerServiceCreateMetric:
         svc = ExplorerService(agent_config=real_agent_config)
         await svc.create_directory(CreateDirectoryInput(subject_path=["tagged_dir"]))
 
-        metrics_dir = real_agent_config.path_manager.semantic_model_path() / "metrics"
+        metrics_dir = (
+            real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource) / "metrics"
+        )
         os.makedirs(metrics_dir, exist_ok=True)
 
         yaml_content = (

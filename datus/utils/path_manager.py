@@ -343,15 +343,17 @@ class DatusPathManager:
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         return self.sessions_dir / f"{session_id}.db"
 
-    def semantic_model_path(self) -> Path:
+    def semantic_model_path(self, datasource: str) -> Path:
         """
-        Semantic model directory for the current project.
+        Semantic model directory for a specific datasource.
+
+        Args:
+            datasource: Datasource name (required).
 
         Returns:
-            Path: ``{project_root}/subject/semantic_models``
+            Path: ``{project_root}/subject/semantic_models/{datasource}``
         """
-        path = self.semantic_models_dir
-        # Ensure the directory exists
+        path = self.semantic_models_dir / datasource
         path.mkdir(parents=True, exist_ok=True)
         return path
 
