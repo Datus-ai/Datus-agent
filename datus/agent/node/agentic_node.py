@@ -1575,8 +1575,10 @@ class AgenticNode(Node):
                     self.tool_registry.register_tools(category, tools)
             from datus.tools.permission.permission_hooks import PermissionHooks
 
+            # Never call ``_get_or_create_broker`` here — it resets the queue
+            # and orphans any parent CLI listener when running as a sub-agent.
             self.permission_hooks = PermissionHooks(
-                broker=self._get_or_create_broker(),
+                broker=self.interaction_broker,
                 permission_manager=self.permission_manager,
                 node_name=self.get_node_name(),
                 tool_registry=self.tool_registry,
