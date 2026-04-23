@@ -29,7 +29,11 @@ def _auto_install_adapter(db_type: str) -> None:
 
     python = sys.executable
     uv_path = shutil.which("uv")
-    cmd = [uv_path, "pip", "install", "--python", python, package] if uv_path else [python, "-m", "pip", "install", package]
+    cmd = (
+        [uv_path, "pip", "install", "--python", python, package]
+        if uv_path
+        else [python, "-m", "pip", "install", package]
+    )
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
