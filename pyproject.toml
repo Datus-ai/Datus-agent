@@ -195,6 +195,7 @@ omit = [
     "datus/cli/screen/*",
     "datus/cli/sub_agent_wizard.py",
     "datus/cli/bi_dashboard.py",
+    "datus/cli/profile_picker_app.py",
 ]
 
 [tool.coverage.report]
