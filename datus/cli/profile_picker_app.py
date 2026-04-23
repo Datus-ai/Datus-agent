@@ -26,7 +26,7 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from rich.console import Console
 
-from datus.cli.cli_styles import print_error
+from datus.cli.cli_styles import CLR_CURRENT, CLR_CURSOR, SYM_ARROW, print_error, render_tui_title_bar
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -90,6 +90,10 @@ class ProfilePickerApp:
         def _ctrl_c(event):
             event.app.exit(None)
 
+        title_bar = Window(
+            content=FormattedTextControl(lambda: render_tui_title_bar("Permission Profile Selection")),
+            height=1,
+        )
         header_window = Window(
             content=FormattedTextControl(self._render_header, focusable=False),
             height=Dimension(min=1, max=2),
@@ -106,10 +110,11 @@ class ProfilePickerApp:
 
         root = HSplit(
             [
+                title_bar,
                 header_window,
-                Window(height=1, char="─"),
+                Window(height=1, char="\u2500"),
                 list_window,
-                Window(height=1, char="─"),
+                Window(height=1, char="\u2500"),
                 hint_window,
             ]
         )
@@ -133,16 +138,19 @@ class ProfilePickerApp:
         for i, name in enumerate(self._PROFILES):
             desc = _PROFILE_DESCRIPTIONS[name]
             label = f"{name:<10}  {desc}"
-            if name == self._current:
-                label += "  <- current"
+            is_current = name == self._current
+            if is_current:
+                label += "  \u2190 current"
             if i == self._idx:
-                lines.append(("reverse", f"  -> {label}\n"))
+                lines.append((CLR_CURSOR, f"  {SYM_ARROW} {label}\n"))
+            elif is_current:
+                lines.append((CLR_CURRENT, f"    {label}\n"))
             else:
                 lines.append(("", f"    {label}\n"))
         return lines
 
     def _render_footer_hint(self) -> List[Tuple[str, str]]:
-        return [("", "  up/down navigate   Enter select   Esc cancel")]
+        return [("", "  \u2191\u2193 navigate   Enter select   Esc cancel")]
 
 
 class DangerousConfirmApp:
@@ -196,6 +204,10 @@ class DangerousConfirmApp:
         def _ctrl_c(event):
             event.app.exit("cancel")
 
+        title_bar = Window(
+            content=FormattedTextControl(lambda: render_tui_title_bar("Dangerous Profile Confirmation")),
+            height=1,
+        )
         header_window = Window(
             content=FormattedTextControl(self._render_header, focusable=False),
             height=Dimension(min=8, max=10),
@@ -212,10 +224,11 @@ class DangerousConfirmApp:
 
         root = HSplit(
             [
+                title_bar,
                 header_window,
-                Window(height=1, char="─"),
+                Window(height=1, char="\u2500"),
                 list_window,
-                Window(height=1, char="─"),
+                Window(height=1, char="\u2500"),
                 hint_window,
             ]
         )
@@ -230,13 +243,13 @@ class DangerousConfirmApp:
 
     def _render_header(self) -> List[Tuple[str, str]]:
         return [
-            ("fg:ansired", "  WARNING: DANGEROUS PROFILE - Explicit Confirmation Required\n"),
+            ("bold fg:ansired", "  WARNING: DANGEROUS PROFILE - Explicit Confirmation Required\n"),
             ("", "\n"),
             ("", "  Switching to Dangerous will auto-execute:\n"),
-            ("", "    - All DB writes (including DDL, DELETE)\n"),
-            ("", "    - All BI/Scheduler writes (including deletes)\n"),
-            ("", "    - All MCP tools\n"),
-            ("", "    - All skills\n"),
+            ("", "    \u2022 All DB writes (including DDL, DELETE)\n"),
+            ("", "    \u2022 All BI/Scheduler writes (including deletes)\n"),
+            ("", "    \u2022 All MCP tools\n"),
+            ("", "    \u2022 All skills\n"),
             ("", "\n"),
             ("", "  Still protected: writes outside workspace require ASK;\n"),
             ("", "  ~/.datus internals remain hidden."),
@@ -246,10 +259,10 @@ class DangerousConfirmApp:
         lines: List[Tuple[str, str]] = []
         for i, (_key, label) in enumerate(self._CHOICES):
             if i == self._idx:
-                lines.append(("reverse", f"  -> {label}\n"))
+                lines.append((CLR_CURSOR, f"  {SYM_ARROW} {label}\n"))
             else:
                 lines.append(("", f"    {label}\n"))
         return lines
 
     def _render_footer_hint(self) -> List[Tuple[str, str]]:
-        return [("", "  up/down navigate   Enter confirm   Esc cancel")]
+        return [("", "  \u2191\u2193 navigate   Enter confirm   Esc cancel")]
