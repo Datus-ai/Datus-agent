@@ -103,13 +103,12 @@ class TestDBFuncToolIntegrationReal:
         assert ssb_db_tool.connector.dialect == DBType.SQLITE
 
     def test_single_connector_mode_backward_compatibility(self, ssb_sqlite_config):
-        """Test that single connector mode still works."""
+        """Test that db_function_tool_instance still works (auto-creates DBManager)."""
         from datus.tools.func_tool.database import db_function_tool_instance
 
         tool = db_function_tool_instance(ssb_sqlite_config)
 
-        # Single connector mode should have db_manager = None
-        assert tool._db_manager is None
+        assert tool._db_manager is not None
         assert tool.connector is not None
 
 
@@ -135,24 +134,23 @@ class TestSqliteMultiConnector:
         """Test that multi-connector mode initializes correctly."""
 
         assert db_tool._db_manager is not None
-        assert db_tool._datasource == "california_schools"
         assert db_tool._default_datasource == "california_schools"
         assert db_tool._connector_cache_size > 1
 
     def test_database(self, db_tool):
         result = db_tool.list_databases()
         assert result.success == 1
-        available_names = {item["name"] for item in result.result if item.get("available")}
-        assert {"california_schools", "card_games"}.issubset(available_names)
+        available_names = set(result.result)
+        assert "main" in available_names
 
     def test_tables(self, db_tool):
-        result = db_tool.list_tables(database="california_schools")
+        result = db_tool.list_tables(datasource="california_schools")
         assert result.success == 1
         assert len(result.result) > 1
         table_names = set([item["name"] for item in result.result])
         assert table_names == {"frpm", "satscores", "schools"}
 
-        result = db_tool.list_tables(database="card_games")
+        result = db_tool.list_tables(datasource="card_games")
         assert result.success == 1
         assert len(result.result) > 1
         table_names = set([item["name"] for item in result.result])
