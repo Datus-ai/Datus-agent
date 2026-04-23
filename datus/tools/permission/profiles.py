@@ -66,6 +66,11 @@ _NORMAL_RULES = [
     _rule("filesystem_tools", "search_files", PermissionLevel.ALLOW),
     # plan read
     _rule("tools", "todo_read", PermissionLevel.ALLOW),
+    # sub-agent delegation: ALLOW. The ``task()`` tool just spawns a
+    # subagent; the tools the subagent actually invokes are gated by the
+    # subagent's own PermissionHooks instance. Double-prompting here would
+    # fire on nearly every chat interaction for zero safety benefit.
+    _rule("sub_agent_tools", "*", PermissionLevel.ALLOW),
     # mcp + skills: ASK (explicit so future defaults can shift default_permission)
     _rule("mcp.*", "*", PermissionLevel.ASK),
     _rule("skills", "*", PermissionLevel.ASK),

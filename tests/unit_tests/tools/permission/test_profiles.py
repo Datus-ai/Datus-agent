@@ -64,6 +64,11 @@ class TestNormalProfile:
         assert _resolve(config, "mcp.filesystem", "read_file") == PermissionLevel.ASK
         assert _resolve(config, "skills", "any-skill") == PermissionLevel.ASK
 
+    def test_sub_agent_delegation_allowed(self):
+        """``task()`` delegation is ALLOW — the subagent's own hooks gate its calls."""
+        config = NORMAL
+        assert _resolve(config, "sub_agent_tools", "task") == PermissionLevel.ALLOW
+
 
 class TestAutoProfile:
     def test_inherits_normal_reads(self):
