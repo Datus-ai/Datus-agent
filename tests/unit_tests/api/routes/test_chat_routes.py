@@ -34,57 +34,59 @@ def _mock_task(broker_submit_return=True):
 
 
 class TestSubmitUserInteractionConversion:
-    """Tests for the List[List[str]] → broker format conversion."""
+    """``submit_user_interaction`` forwards ``List[List[str]]`` to the broker unchanged.
+
+    ``InteractionBroker.submit`` takes ``List[List[str]]`` directly — one inner
+    list per question — so the route handler just passes ``request.input``
+    through without reshaping it.
+    """
 
     @pytest.mark.asyncio
     async def test_single_question_single_select(self):
-        """input=[['2']] → broker receives '2' (plain string)."""
+        """input=[['2']] is forwarded to the broker verbatim."""
         task = _mock_task()
         svc = _mock_svc(task=task)
         request = UserInteractionInput(session_id="s1", interaction_key="k1", input=[["2"]])
 
         result = await submit_user_interaction(request, svc)
 
-        task.node.interaction_broker.submit.assert_called_once_with("k1", "2")
+        task.node.interaction_broker.submit.assert_called_once_with("k1", [["2"]])
         assert result.success is True
 
     @pytest.mark.asyncio
     async def test_single_question_multi_select(self):
-        """input=[['1','3']] → broker receives '["1", "3"]' (JSON array string)."""
+        """input=[['1','3']] is forwarded to the broker verbatim."""
         task = _mock_task()
         svc = _mock_svc(task=task)
         request = UserInteractionInput(session_id="s1", interaction_key="k1", input=[["1", "3"]])
 
         result = await submit_user_interaction(request, svc)
 
-        submitted = task.node.interaction_broker.submit.call_args[0][1]
-        assert json.loads(submitted) == ["1", "3"]
+        task.node.interaction_broker.submit.assert_called_once_with("k1", [["1", "3"]])
         assert result.success is True
 
     @pytest.mark.asyncio
     async def test_batch_mixed(self):
-        """input=[['2'], ['1','3']] → broker receives '["2", ["1", "3"]]'."""
+        """input=[['2'], ['1','3']] is forwarded to the broker verbatim."""
         task = _mock_task()
         svc = _mock_svc(task=task)
         request = UserInteractionInput(session_id="s1", interaction_key="k1", input=[["2"], ["1", "3"]])
 
         result = await submit_user_interaction(request, svc)
 
-        submitted = task.node.interaction_broker.submit.call_args[0][1]
-        assert json.loads(submitted) == ["2", ["1", "3"]]
+        task.node.interaction_broker.submit.assert_called_once_with("k1", [["2"], ["1", "3"]])
         assert result.success is True
 
     @pytest.mark.asyncio
     async def test_batch_all_single_select(self):
-        """input=[['a'], ['b']] → broker receives '["a", "b"]'."""
+        """input=[['a'], ['b']] is forwarded to the broker verbatim."""
         task = _mock_task()
         svc = _mock_svc(task=task)
         request = UserInteractionInput(session_id="s1", interaction_key="k1", input=[["a"], ["b"]])
 
         await submit_user_interaction(request, svc)
 
-        submitted = task.node.interaction_broker.submit.call_args[0][1]
-        assert json.loads(submitted) == ["a", "b"]
+        task.node.interaction_broker.submit.assert_called_once_with("k1", [["a"], ["b"]])
 
     @pytest.mark.asyncio
     async def test_session_not_found(self):

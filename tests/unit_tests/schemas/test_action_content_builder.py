@@ -165,7 +165,7 @@ class TestBuildInteractionContent:
         action = _make_action(
             role=ActionRole.INTERACTION,
             status=ActionStatus.PROCESSING,
-            input_data={"content": "Pick one", "choices": {"y": "Yes", "n": "No"}},
+            input_data={"events": [{"content": "Pick one", "choices": {"y": "Yes", "n": "No"}}]},
         )
         contents = build_interaction_content(action)
         assert len(contents) == 1
@@ -178,28 +178,33 @@ class TestBuildInteractionContent:
         action = _make_action(
             role=ActionRole.INTERACTION,
             status=ActionStatus.PROCESSING,
-            input_data={"content": "Enter something"},
+            input_data={"events": [{"content": "Enter something"}]},
         )
         contents = build_interaction_content(action)
         assert contents[0].payload["options"] is None
 
     def test_with_broker_format_single(self):
-        """InteractionBroker format: single question with contents/choices lists."""
+        """Broker canonical format: single event with content + choices."""
         action = _make_action(
             role=ActionRole.INTERACTION,
             status=ActionStatus.PROCESSING,
-            input_data={"contents": ["Pick one"], "choices": [{"y": "Yes", "n": "No"}]},
+            input_data={"events": [{"content": "Pick one", "choices": {"y": "Yes", "n": "No"}}]},
         )
         contents = build_interaction_content(action)
         assert contents[0].payload["content"] == "Pick one"
         assert len(contents[0].payload["options"]) == 2
 
     def test_with_broker_format_batch(self):
-        """InteractionBroker format: multiple questions joined into numbered list."""
+        """Broker canonical format: multiple events joined into numbered list."""
         action = _make_action(
             role=ActionRole.INTERACTION,
             status=ActionStatus.PROCESSING,
-            input_data={"contents": ["Question A?", "Question B?"], "choices": [{"y": "Yes"}]},
+            input_data={
+                "events": [
+                    {"content": "Question A?", "choices": {"y": "Yes"}},
+                    {"content": "Question B?", "choices": {}},
+                ]
+            },
         )
         contents = build_interaction_content(action)
         content_text = contents[0].payload["content"]

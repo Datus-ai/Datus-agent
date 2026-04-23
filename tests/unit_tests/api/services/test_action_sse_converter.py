@@ -337,11 +337,15 @@ class TestBuildInteractionContent:
             action_id="interact-1",
             action_type="ask_user",
             input={
-                "contents": ["Choose a database:"],
-                "choices": [{"db1": "Database 1", "db2": "Database 2"}],
-                "default_choices": ["db1"],
-                "content_type": "markdown",
-                "allow_free_text": False,
+                "events": [
+                    {
+                        "content": "Choose a database:",
+                        "choices": {"db1": "Database 1", "db2": "Database 2"},
+                        "default_choice": "db1",
+                        "content_type": "markdown",
+                        "allow_free_text": False,
+                    }
+                ]
             },
         )
         contents = _build_interaction_content(action)
@@ -362,15 +366,18 @@ class TestBuildInteractionContent:
         assert contents[0].payload["requests"] == []
 
     def test_multi_select_field_present(self):
-        """multiSelect field is included in SSE payload when multi_selects is provided."""
+        """multiSelect field is included in SSE payload when multi_select is True on the event."""
         action = _make_action(
             action_id="interact-3",
             action_type="ask_user",
             input={
-                "contents": ["Pick databases:"],
-                "choices": [{"db1": "DB 1", "db2": "DB 2"}],
-                "default_choices": [""],
-                "multi_selects": [True],
+                "events": [
+                    {
+                        "content": "Pick databases:",
+                        "choices": {"db1": "DB 1", "db2": "DB 2"},
+                        "multi_select": True,
+                    }
+                ]
             },
         )
         contents = _build_interaction_content(action)
@@ -378,14 +385,18 @@ class TestBuildInteractionContent:
         assert req["multiSelect"] is True
 
     def test_multi_select_defaults_to_false(self):
-        """multiSelect defaults to False when multi_selects is not provided."""
+        """multiSelect defaults to False when multi_select is not set on the event."""
         action = _make_action(
             action_id="interact-4",
             action_type="ask_user",
             input={
-                "contents": ["Pick one:"],
-                "choices": [{"a": "A"}],
-                "default_choices": ["a"],
+                "events": [
+                    {
+                        "content": "Pick one:",
+                        "choices": {"a": "A"},
+                        "default_choice": "a",
+                    }
+                ]
             },
         )
         contents = _build_interaction_content(action)
@@ -393,15 +404,16 @@ class TestBuildInteractionContent:
         assert req["multiSelect"] is False
 
     def test_multi_select_batch_mixed(self):
-        """Batch with mixed multi_selects values."""
+        """Batch with mixed multi_select values across events."""
         action = _make_action(
             action_id="interact-5",
             action_type="ask_user",
             input={
-                "contents": ["Single select:", "Multi select:", "No flag:"],
-                "choices": [{"a": "A"}, {"b": "B", "c": "C"}, {"d": "D"}],
-                "default_choices": ["a", "", ""],
-                "multi_selects": [False, True],
+                "events": [
+                    {"content": "Single select:", "choices": {"a": "A"}, "default_choice": "a"},
+                    {"content": "Multi select:", "choices": {"b": "B", "c": "C"}, "multi_select": True},
+                    {"content": "No flag:", "choices": {"d": "D"}},
+                ]
             },
         )
         contents = _build_interaction_content(action)
@@ -409,7 +421,7 @@ class TestBuildInteractionContent:
         assert len(requests) == 3
         assert requests[0]["multiSelect"] is False
         assert requests[1]["multiSelect"] is True
-        assert requests[2]["multiSelect"] is False  # defaults when index out of range
+        assert requests[2]["multiSelect"] is False
 
 
 class TestBuildInteractionResultContent:
