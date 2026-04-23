@@ -407,6 +407,39 @@ def _parse_single_file_db(db_config: Dict[str, Any], dialect: str) -> DbConfig:
 
 
 @dataclass
+class ValidationConfig:
+    """Per-run knobs for :class:`datus.validation.hook.ValidationHook`.
+
+    ``skill_validators_enabled`` controls Layer B (LLM-driven validator skills).
+    When False, the hook still runs Layer A (built-in code-level invariants)
+    but skips spawning any validator sub-agents — this is the user-facing cost
+    escape hatch.
+
+    ``max_retries`` caps how many times the owning ``TableDeliverableAgenticNode``
+    re-runs the main agent after a blocking ``ValidationBlockingException``
+    before surfacing ``success=False``.
+    """
+
+    skill_validators_enabled: bool = True
+    max_retries: int = 3
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict[str, Any]]) -> "ValidationConfig":
+        if not data:
+            return cls()
+        try:
+            max_retries = int(data.get("max_retries", 3))
+        except (TypeError, ValueError):
+            max_retries = 3
+        if max_retries < 0:
+            max_retries = 0
+        return cls(
+            skill_validators_enabled=bool(data.get("skill_validators_enabled", True)),
+            max_retries=max_retries,
+        )
+
+
+@dataclass
 class AgentConfig:
     target: str
     models: Dict[str, ModelConfig]
@@ -591,6 +624,11 @@ class AgentConfig:
 
         # Initialize skills configuration
         self.skills_config = self._init_skills_config(kwargs.get("skills", {}))
+
+        # ValidationHook knobs (agent.validation.*). Read once at construction
+        # and kept stable for the life of this AgentConfig — hooks capture the
+        # value at node build time and do not hot-reload.
+        self.validation_config = ValidationConfig.from_dict(kwargs.get("validation", {}))
 
         # Initialize channels configuration for Datus Gateway IM gateway
         self.channels_config: Dict[str, Any] = kwargs.get("channels", {})

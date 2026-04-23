@@ -128,30 +128,26 @@ def _bootstrap_agent_config(config_path: Path) -> None:
     logger.info("Created minimal agent config at %s", config_path)
 
     home_dir = config_path.parent.parent
-    try:
-        from datus.utils.resource_utils import copy_data_file
+    from datus.utils.resource_utils import copy_data_file
 
+    try:
         template_dir = home_dir / "template"
         template_dir.mkdir(parents=True, exist_ok=True)
-        copy_data_file(resource_path="prompts", dest_dir=template_dir, overwrite=True)
+        copy_data_file(resource_path="prompts", target_dir=template_dir, replace=True)
     except Exception as e:
-        logger.debug("Error copying template files during bootstrap: %s", e)
+        logger.warning("Error copying template files during bootstrap: %s", e)
     try:
-        from datus.utils.resource_utils import copy_data_file
-
         sample_dir = home_dir / "sample"
         sample_dir.mkdir(parents=True, exist_ok=True)
-        copy_data_file(resource_path="sample_data", dest_dir=sample_dir, overwrite=False)
+        copy_data_file(resource_path="sample_data", target_dir=sample_dir, replace=False)
     except Exception as e:
-        logger.debug("Error copying sample files during bootstrap: %s", e)
+        logger.warning("Error copying sample files during bootstrap: %s", e)
     try:
-        from datus.utils.resource_utils import copy_data_file
-
         skills_dir = home_dir / "skills"
         skills_dir.mkdir(parents=True, exist_ok=True)
-        copy_data_file(resource_path="resources/skills", dest_dir=skills_dir, overwrite=False)
+        copy_data_file(resource_path="resources/skills", target_dir=skills_dir, replace=False)
     except Exception as e:
-        logger.debug("Error deploying built-in skills during bootstrap: %s", e)
+        logger.warning("Error deploying built-in skills during bootstrap: %s", e)
 
 
 def parse_config_path(config_file: str = "", create_if_missing: bool = False) -> Path:

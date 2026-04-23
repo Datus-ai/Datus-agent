@@ -270,6 +270,43 @@ class SkillRegistry:
         with self._lock:
             return [skill for skill in self._skills.values() if tag in skill.tags]
 
+    def get_validators(self, node_name: str, trigger: str, node_class: Optional[str] = None) -> List[SkillMetadata]:
+        """Return validator skills that should fire for (node_name, trigger).
+
+        Only skills with ``kind='validator'``, a matching trigger, ``severity != 'off'``,
+        and whose ``allowed_agents`` (if any) include ``node_name`` / ``node_class``
+        are returned. Per-target filtering (``skill.targets`` vs the active
+        deliverable) happens later in :class:`ValidationHook` — this accessor
+        does the coarse skill-level filtering.
+
+        Args:
+            node_name: Agent node alias
+            trigger: "on_tool_end" or "on_end"
+            node_class: Canonical class name for the node (e.g. gen_table);
+                matched against allowed_agents alongside node_name
+
+        Returns:
+            Ordered list of SkillMetadata matching the filter
+        """
+        if not self._scanned:
+            self.scan_directories()
+
+        with self._lock:
+            skills = list(self._skills.values())
+
+        result: List[SkillMetadata] = []
+        for skill in skills:
+            if skill.kind != "validator":
+                continue
+            if skill.severity == "off":
+                continue
+            if trigger not in skill.trigger:
+                continue
+            if not skill.is_allowed_for(node_name, node_class):
+                continue
+            result.append(skill)
+        return result
+
     def get_skill_count(self) -> int:
         """Get total number of discovered skills.
 

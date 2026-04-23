@@ -117,6 +117,13 @@ class SkillManager:
         # subagent aliases still pick up class-level scoping.
         all_skills = [s for s in all_skills if s.is_allowed_for(node_name, node_class)]
 
+        # Exclude validator skills. They are driven exclusively by
+        # ValidationHook and must NOT be exposed in the main agent's
+        # <available_skills> list or via SkillFuncTool — otherwise the
+        # validator body would run twice (softly by the main agent + hardly
+        # by the hook). See ValidationHook design doc (Part §5.3).
+        all_skills = [s for s in all_skills if not s.is_validator()]
+
         logger.debug(f"Available skills for {node_name}: {[s.name for s in all_skills]}")
         return all_skills
 

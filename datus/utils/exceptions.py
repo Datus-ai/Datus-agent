@@ -87,6 +87,20 @@ class ErrorCode(Enum):
     TOOL_EXECUTION_FAILED = ("400001", "Tool execution failed")
     TOOL_INVALID_INPUT = ("400002", "Invalid tool input")
 
+    # Validation errors (ValidationHook for table-producing subagents)
+    VALIDATION_BLOCKING_FAILURE = (
+        "400010",
+        "Deliverable validation failed: {failures}",
+    )
+    VALIDATION_OUTPUT_MALFORMED = (
+        "400011",
+        "Validator skill '{skill_name}' returned malformed output: {reason}",
+    )
+    VALIDATION_RUNNER_ERROR = (
+        "400012",
+        "Validation infrastructure error while running skill '{skill_name}': {error_message}",
+    )
+
     # Storage errors - Vector Database Operations
     STORAGE_FAILED = ("410000", "Vector database operation failed: {error_message}")
     STORAGE_CONNECTION_FAILED = ("410001", "Failed to connect to vector database at path: {storage_path}")

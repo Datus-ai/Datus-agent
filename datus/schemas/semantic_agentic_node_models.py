@@ -9,7 +9,7 @@ This module defines the input and output models for the SemanticAgenticNode,
 providing structured validation for semantic model generation interactions.
 """
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import ConfigDict, Field
 
@@ -52,3 +52,10 @@ class SemanticNodeResult(BaseResult):
     )
     tokens_used: int = Field(default=0, description="Total tokens used in this interaction")
     error: Optional[str] = Field(default=None, description="Error message if interaction failed")
+    # Optional validation report emitted by ValidationHook for table-producing
+    # subagents (gen_table, gen_job, ...). Stored as a dict to avoid importing
+    # the validation module in callers that only consume the node result.
+    validation_report: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Per-run validation report from ValidationHook; None when the node does not run validation",
+    )

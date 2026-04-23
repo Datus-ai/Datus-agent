@@ -11,9 +11,11 @@ Provides:
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
+
+from datus.validation.report import TargetFilter
 
 
 class SkillConfig(BaseModel):
@@ -137,6 +139,31 @@ class SkillMetadata(BaseModel):
     context: Optional[str] = Field(default=None, description="'fork' to run in isolated subagent")
     agent: Optional[str] = Field(default=None, description="Subagent type when context=fork")
 
+    # Validator skill extensions (ValidationHook infrastructure)
+    # Skills with kind="validator" are NOT injected into the main agent's
+    # prompt via SkillFuncTool — they are consumed exclusively by
+    # ValidationHook which fires them at trigger points on matching targets.
+    kind: Literal["skill", "validator"] = Field(
+        default="skill",
+        description="'skill' (default) is loaded by the main agent; 'validator' is driven by ValidationHook",
+    )
+    trigger: List[Literal["on_tool_end", "on_end"]] = Field(
+        default_factory=list,
+        description="When ValidationHook should invoke this validator (only for kind='validator')",
+    )
+    severity: Literal["blocking", "advisory", "off"] = Field(
+        default="advisory",
+        description="Blocking raises ValidationBlockingException; advisory reports only; off disables the validator",
+    )
+    mode: Literal["llm"] = Field(
+        default="llm",
+        description="Execution mode for the validator (future: 'declarative'); only 'llm' supported in current PR",
+    )
+    targets: List[TargetFilter] = Field(
+        default_factory=list,
+        description="Per-target filters (empty = match all); any matching filter activates the validator",
+    )
+
     # Marketplace metadata
     license: Optional[str] = Field(default=None, description="License identifier (e.g. Apache-2.0)")
     compatibility: Optional[Dict[str, Any]] = Field(default=None, description="Compatibility map")
@@ -171,6 +198,27 @@ class SkillMetadata(BaseModel):
         if not description:
             raise ValueError(f"Skill at {location} missing required 'description' field")
 
+        # Validator fields: parsed with pydantic's TargetFilter so YAML "schema"
+        # alias flows through to db_schema correctly.
+        raw_targets = frontmatter.get("targets", []) or []
+        parsed_targets: List[TargetFilter] = []
+        for t in raw_targets:
+            if isinstance(t, TargetFilter):
+                parsed_targets.append(t)
+            elif isinstance(t, dict):
+                parsed_targets.append(TargetFilter.model_validate(t))
+            else:
+                raise ValueError(f"Skill at {location}: invalid target entry (expected dict): {t!r}")
+
+        # YAML parses bare ``off`` / ``on`` as booleans (False / True). That
+        # collides with our ``severity: off`` spelling — coerce back to string
+        # so skill authors can write ``severity: off`` unquoted.
+        raw_severity = frontmatter.get("severity", "advisory")
+        if raw_severity is False:
+            raw_severity = "off"
+        elif raw_severity is True:
+            raw_severity = "on"  # not a valid enum value — pydantic will flag it
+
         return cls(
             name=name,
             description=description,
@@ -183,6 +231,11 @@ class SkillMetadata(BaseModel):
             allowed_agents=frontmatter.get("allowed_agents", []),
             context=frontmatter.get("context"),
             agent=frontmatter.get("agent"),
+            kind=frontmatter.get("kind", "skill"),
+            trigger=frontmatter.get("trigger", []) or [],
+            severity=raw_severity,
+            mode=frontmatter.get("mode", "llm"),
+            targets=parsed_targets,
             license=frontmatter.get("license"),
             compatibility=frontmatter.get("compatibility"),
         )
@@ -233,6 +286,14 @@ class SkillMetadata(BaseModel):
             return True
         return any(name in self.allowed_agents for name in node_names if name)
 
+    def is_validator(self) -> bool:
+        """Return True if this skill is a validator driven by ValidationHook.
+
+        Validator skills are excluded from the main agent's available-skills
+        list and are invoked exclusively by ``ValidationHook``.
+        """
+        return self.kind == "validator"
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization.
 
@@ -251,6 +312,11 @@ class SkillMetadata(BaseModel):
             "allowed_agents": self.allowed_agents,
             "context": self.context,
             "agent": self.agent,
+            "kind": self.kind,
+            "trigger": self.trigger,
+            "severity": self.severity,
+            "mode": self.mode,
+            "targets": [t.model_dump(by_alias=True, exclude_none=True) for t in self.targets],
             "license": self.license,
             "compatibility": self.compatibility,
             "source": self.source,

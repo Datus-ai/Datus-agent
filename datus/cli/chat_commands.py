@@ -15,7 +15,7 @@ import re
 import subprocess
 import sys
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -645,8 +645,107 @@ class ChatCommands:
         if ext_knowledge_file:
             self._display_ext_knowledge_file(ext_knowledge_file)
 
+        validation_report = final_action.output.get("validation_report")
+        if validation_report:
+            self._display_validation_report(validation_report)
+
         if clean_output and not skip_markdown_body:
             self._display_markdown_response(clean_output)
+
+    def _display_validation_report(self, report: Any) -> None:
+        """Render a compact validation panel for ValidationHook output.
+
+        Shows a per-check list with icons / severity colors plus any warnings
+        (e.g. malformed validator skill output). Rendered between other
+        artifacts (SQL, semantic model) and the main markdown response so the
+        user sees it inline with the final assistant turn.
+        """
+        if not isinstance(report, dict):
+            return
+        checks = report.get("checks") or []
+        warnings = report.get("warnings") or []
+        if not checks and not warnings:
+            return
+
+        passed = sum(1 for c in checks if isinstance(c, dict) and c.get("passed"))
+        failed = sum(1 for c in checks if isinstance(c, dict) and not c.get("passed"))
+        has_blocking = any(
+            isinstance(c, dict) and not c.get("passed") and c.get("severity") == "blocking" for c in checks
+        )
+
+        if has_blocking:
+            border_style = "red"
+            header_mark = "✗"
+            header_label = "FAILED"
+        elif failed > 0:
+            border_style = "yellow"
+            header_mark = "⚠"
+            header_label = "WARNINGS"
+        else:
+            border_style = "green"
+            header_mark = "✓"
+            header_label = "PASSED"
+
+        target = report.get("target") or {}
+        target_str = ""
+        if isinstance(target, dict):
+            ttype = target.get("type")
+            if ttype == "table":
+                schema = target.get("schema") or target.get("db_schema")
+                tname = target.get("table")
+                db = target.get("database")
+                fqn = f"{schema}.{tname}" if schema else tname
+                target_str = f"table [cyan]{db}.{fqn}[/]"
+            elif ttype == "transfer":
+                src = (target.get("source") or {}).get("name", "?")
+                tgt = target.get("target") or {}
+                tgt_schema = tgt.get("schema") or tgt.get("db_schema")
+                tgt_name = tgt.get("table")
+                tgt_fqn = f"{tgt_schema}.{tgt_name}" if tgt_schema else tgt_name
+                target_str = f"transfer [cyan]{src}[/] → [cyan]{tgt.get('database')}.{tgt_fqn}[/]"
+            elif ttype == "session":
+                n = len(target.get("targets") or [])
+                target_str = f"session with [cyan]{n}[/] target(s)"
+
+        lines = []
+        header = f"[bold]{header_mark} {header_label}[/]"
+        if target_str:
+            header += f" — {target_str}"
+        lines.append(header)
+        lines.append(f"[dim]{passed} passed, {failed} failed[/]")
+
+        for c in checks:
+            if not isinstance(c, dict):
+                continue
+            mark = "✓" if c.get("passed") else "✗"
+            if c.get("passed"):
+                color = "green"
+            elif c.get("severity") == "blocking":
+                color = "red"
+            else:
+                color = "yellow"
+            source = c.get("source", "?")
+            detail_parts = []
+            observed = c.get("observed")
+            if observed:
+                detail_parts.append(f"observed={observed}")
+            if not c.get("passed"):
+                err = c.get("error")
+                if err:
+                    detail_parts.append(err)
+            detail = f" — [dim]{'; '.join(detail_parts)}[/]" if detail_parts else ""
+            lines.append(f"  [{color}]{mark}[/] {c.get('name', '?')} [dim]({source})[/]{detail}")
+
+        for w in warnings:
+            lines.append(f"  [yellow]⚠[/] [dim]{w}[/]")
+
+        panel = Panel(
+            "\n".join(lines),
+            title="Validation Report",
+            border_style=border_style,
+            expand=False,
+        )
+        self.cli.console.print(panel)
 
     def _get_turn_token_usage_from_node(self, node) -> Optional[dict]:
         """Get detailed token usage from the node's session manager."""

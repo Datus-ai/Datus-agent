@@ -1162,13 +1162,18 @@ class DBFuncTool:
                 # Commit to release locks (critical for SQLAlchemy-based connectors)
                 if hasattr(connector, "connection") and hasattr(connector.connection, "commit"):
                     connector.connection.commit()
-                return FuncToolResult(
-                    result={
-                        "message": "DDL executed successfully",
-                        "sql": cleaned,
-                        "datasource": datasource or self._default_datasource,
-                    }
-                )
+                from datus.validation.target_extractor import extract_ddl_target
+
+                effective_ds = datasource or self._default_datasource
+                target = extract_ddl_target(cleaned, effective_ds, dialect=getattr(connector, "dialect", ""))
+                result_payload: Dict[str, Any] = {
+                    "message": "DDL executed successfully",
+                    "sql": cleaned,
+                    "datasource": effective_ds,
+                }
+                if target is not None:
+                    result_payload["deliverable_target"] = target.model_dump(by_alias=True, exclude_none=True)
+                return FuncToolResult(result=result_payload)
             else:
                 return FuncToolResult(success=0, error=result.error)
         except Exception as e:
@@ -1291,16 +1296,23 @@ class DBFuncTool:
                     "Note: the write has already been committed.",
                 )
 
-            return FuncToolResult(
-                result={
-                    "message": "Write executed successfully",
-                    "sql": normalized_sql,
-                    "sql_type": sql_type.value,
-                    "row_count": row_count,
-                    "datasource": datasource or self._default_datasource,
-                    "dry_run": dry_run,
-                }
-            )
+            from datus.validation.target_extractor import extract_dml_target
+
+            effective_ds = datasource or self._default_datasource
+            target = extract_dml_target(normalized_sql, effective_ds, dialect=getattr(connector, "dialect", ""))
+            result_payload: Dict[str, Any] = {
+                "message": "Write executed successfully",
+                "sql": normalized_sql,
+                "sql_type": sql_type.value,
+                "row_count": row_count,
+                "datasource": effective_ds,
+                "dry_run": dry_run,
+            }
+            if target is not None:
+                if row_count is not None:
+                    target = target.model_copy(update={"rows_affected": row_count})
+                result_payload["deliverable_target"] = target.model_dump(by_alias=True, exclude_none=True)
+            return FuncToolResult(result=result_payload)
         except Exception as e:
             return FuncToolResult(success=0, error=f"Write execution failed: {str(e)}")
 
@@ -1391,6 +1403,25 @@ class DBFuncTool:
                 "Do NOT fall back to a different target datasource — STOP and report this error to the user.",
             )
 
+        # Authoritative source row count — wrap the user's source_sql in a COUNT
+        # subquery so reconciliation does not need to re-run anything later.
+        # One extra query is cheap on OLTP engines and still acceptable on
+        # warehouse engines; see ValidationHook design doc §5.4.
+        source_row_count: Optional[int] = None
+        try:
+            if hasattr(source_conn, "execute_query"):
+                count_sql = f"SELECT COUNT(*) AS __datus_count FROM ({cleaned_sql}) AS __datus_src"
+                count_result = source_conn.execute_query(count_sql)
+                if count_result.success and count_result.sql_return:
+                    # execute_query returns a list of rows; first row, first col is the count
+                    first_row = count_result.sql_return[0]
+                    if isinstance(first_row, dict):
+                        source_row_count = int(next(iter(first_row.values())))
+                    else:
+                        source_row_count = int(first_row[0])
+        except Exception as e:
+            logger.debug("Source row count pre-check failed (non-fatal): %s", e)
+
         # Execute source query
         try:
             if not hasattr(source_conn, "execute_pandas"):
@@ -1440,7 +1471,16 @@ class DBFuncTool:
                     "target_datasource": target_datasource or self._default_datasource,
                     "mode": mode,
                     "rows_transferred": 0,
+                    "source_row_count": source_row_count if source_row_count is not None else 0,
+                    "transferred_row_count": 0,
                     "batch_size": batch_size,
+                    "deliverable_target": self._build_transfer_target(
+                        source_datasource=source_datasource,
+                        target_datasource=target_datasource or self._default_datasource,
+                        target_table=target_table,
+                        source_row_count=source_row_count if source_row_count is not None else 0,
+                        transferred_row_count=0,
+                    ),
                 }
             )
 
@@ -1509,9 +1549,42 @@ class DBFuncTool:
                 "target_datasource": target_datasource or self._default_datasource,
                 "mode": mode,
                 "rows_transferred": rows_written,
+                "source_row_count": source_row_count if source_row_count is not None else rows_written,
+                "transferred_row_count": rows_written,
                 "batch_size": batch_size,
+                "deliverable_target": self._build_transfer_target(
+                    source_datasource=source_datasource,
+                    target_datasource=target_datasource or self._default_datasource,
+                    target_table=target_table,
+                    source_row_count=source_row_count if source_row_count is not None else rows_written,
+                    transferred_row_count=rows_written,
+                ),
             }
         )
+
+    @staticmethod
+    def _build_transfer_target(
+        source_datasource: str,
+        target_datasource: str,
+        target_table: str,
+        source_row_count: int,
+        transferred_row_count: int,
+    ) -> Dict[str, Any]:
+        """Construct the ``deliverable_target`` payload for a transfer call."""
+        from datus.utils.sql_utils import parse_table_name_parts
+        from datus.validation.report import DBRef, TableTarget, TransferTarget
+
+        parts = parse_table_name_parts(target_table)
+        schema = parts.get("schema_name") or None
+        table = parts.get("table_name") or target_table
+
+        tgt = TransferTarget(
+            source=DBRef(name=source_datasource),
+            target=TableTarget(database=target_datasource, db_schema=schema, table=table),
+            source_row_count=source_row_count,
+            transferred_row_count=transferred_row_count,
+        )
+        return tgt.model_dump(by_alias=True, exclude_none=True)
 
     # ==================== Migration Target Wrappers ====================
     #

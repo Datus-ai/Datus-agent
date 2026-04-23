@@ -69,15 +69,16 @@ Activate when you need to:
 
 ### Phase 5: Reconcile
 
-Run all reconciliation checks using `read_query(database=...)` on both source and target. Checks must be executed in this order:
+Cross-database reconciliation (row count, null ratio, min/max, distinct
+count, duplicate key, sample diff, numeric aggregates) is **automatically
+enforced by the** `migration-reconciliation` **validator skill** via
+ValidationHook at the end of the agent run. You do **not** need to invoke
+those checks manually here — focus on correct transfer execution and let the
+hook drive reconciliation.
 
-1. **Row count** - Total row count comparison
-2. **Null ratio** - Null count per column comparison
-3. **Min/max** - Range comparison for numeric and date columns
-4. **Distinct count** - Cardinality comparison for key columns
-5. **Duplicate key** - Check for duplicate keys in target
-6. **Sample diff** - Key-based row sample comparison (top 10)
-7. **Numeric aggregate** - SUM/AVG comparison for numeric columns
+If the reconciliation validator reports blocking failures, the
+ValidationHook injects them back into this conversation and asks you to fix
+the transfer and retry.
 
 ### Phase 6: Report
 
