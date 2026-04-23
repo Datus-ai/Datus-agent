@@ -1105,7 +1105,6 @@ class DatusCLI:
                 return app.run()
         return app.run()
 
-
     def _parse_command(self, text: str) -> Tuple[CommandType, str, str]:
         """Classify raw user input into a ``CommandType`` + canonical cmd + args.
 
