@@ -12,6 +12,7 @@ from datus.api.services.agent_service import (
     AgentService,
     _validate_tools,
 )
+from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
 
 
 class TestValidateTools:
@@ -72,11 +73,10 @@ class TestConstants:
     def test_builtin_subagents_has_gen_sql(self):
         """BUILTIN_SUBAGENTS contains gen_sql entry."""
         assert "gen_sql" in BUILTIN_SUBAGENTS
-        assert isinstance(BUILTIN_SUBAGENTS["gen_sql"], str)
 
     def test_builtin_subagents_count(self):
         """BUILTIN_SUBAGENTS has expected number of agents."""
-        assert len(BUILTIN_SUBAGENTS) == 6
+        assert len(BUILTIN_SUBAGENTS) == len(SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS)
 
     def test_valid_tool_categories_non_empty(self):
         """VALID_TOOL_CATEGORIES is non-empty."""

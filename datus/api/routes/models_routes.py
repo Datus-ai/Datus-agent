@@ -86,6 +86,38 @@ def _build_model_info(
     )
 
 
+def _resolve_current_model(
+    agent_config: Any,
+    models: List[ModelInfo],
+) -> Optional[str]:
+    """Return the currently active model as ``"provider/model"``.
+
+    Resolution order:
+      1. Explicit target from ``.datus/config.yml`` (provider + model).
+      2. Legacy ``agent.target`` pointing to a custom model entry.
+      3. First custom model in the list.
+      4. First provider model in the list.
+    """
+    target_provider = getattr(agent_config, "_target_provider", None)
+    target_model = getattr(agent_config, "_target_model", None)
+    if target_provider and target_model:
+        return f"{target_provider}/{target_model}"
+
+    target = getattr(agent_config, "target", None)
+    custom_models = getattr(agent_config, "models", None)
+    if target and isinstance(custom_models, dict) and target in custom_models:
+        return f"custom/{target}"
+
+    for m in models:
+        if m.provider == "custom":
+            return f"custom/{m.id}"
+
+    if models:
+        return f"{models[0].provider}/{models[0].id}"
+
+    return None
+
+
 @router.get(
     "/models",
     response_model=Result[ModelsData],
@@ -162,11 +194,14 @@ async def list_models(svc: ServiceDep) -> Result[ModelsData]:
         if any(m.provider == "custom" for m in models):
             seen_providers.append("custom")
 
+    current_model = _resolve_current_model(agent_config, models)
+
     return Result(
         success=True,
         data=ModelsData(
             models=models,
             providers=seen_providers,
+            current_model=current_model,
             fetched_at=load_cache_fetched_at() if used_cache else None,
             source="cache" if used_cache else "catalog",
         ),

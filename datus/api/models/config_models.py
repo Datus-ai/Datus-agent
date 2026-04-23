@@ -238,5 +238,6 @@ class ModelsData(BaseModel):
 
     models: List[ModelInfo] = Field(..., description="Flat list of available models")
     providers: List[str] = Field(..., description="Provider keys represented in this response")
+    current_model: Optional[str] = Field(None, description="Currently active model as 'provider/model'")
     fetched_at: Optional[str] = Field(None, description="ISO-8601 timestamp of the OpenRouter cache")
     source: str = Field(..., description="Where the data came from: cache or catalog")

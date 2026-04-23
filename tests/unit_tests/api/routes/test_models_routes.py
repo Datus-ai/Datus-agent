@@ -20,6 +20,9 @@ def _make_svc(
     catalog: Dict[str, Any],
     available: Optional[Iterable[str]] = None,
     custom_models: Optional[Dict[str, Any]] = None,
+    target_provider: Optional[str] = None,
+    target_model: Optional[str] = None,
+    target: str = "",
 ) -> MagicMock:
     """Build a MagicMock svc with provider_catalog + provider_available wired up.
 
@@ -32,6 +35,9 @@ def _make_svc(
     svc.agent_config.provider_catalog = catalog
     svc.agent_config.provider_available.side_effect = lambda p: p in allowed
     svc.agent_config.models = custom_models if custom_models is not None else {}
+    svc.agent_config._target_provider = target_provider
+    svc.agent_config._target_model = target_model
+    svc.agent_config.target = target
     return svc
 
 
@@ -296,6 +302,10 @@ class TestDefensiveParsing:
         svc = MagicMock()
         svc.agent_config.provider_catalog = None
         svc.agent_config.provider_available.return_value = True
+        svc.agent_config.models = {}
+        svc.agent_config._target_provider = None
+        svc.agent_config._target_model = None
+        svc.agent_config.target = ""
 
         result = await list_models(svc)
         assert result.data.models == []
@@ -406,3 +416,80 @@ class TestCustomModels:
         assert len(custom_models) == 1
         assert custom_models[0].id == "my-ds"
         assert custom_models[0].model == "deepseek-chat"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Current model resolution
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestCurrentModel:
+    @pytest.mark.asyncio
+    async def test_provider_target_takes_priority(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
+
+        custom = {"my-ds": _custom_model("deepseek-chat", "deepseek")}
+        svc = _make_svc(
+            catalog=_basic_catalog(),
+            available={"openai"},
+            custom_models=custom,
+            target_provider="openai",
+            target_model="gpt-4.1",
+            target="my-ds",
+        )
+        result = await list_models(svc)
+
+        assert result.data.current_model == "openai/gpt-4.1"
+
+    @pytest.mark.asyncio
+    async def test_custom_target_used_when_no_provider_target(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
+
+        custom = {"my-ds": _custom_model("deepseek-chat", "deepseek")}
+        svc = _make_svc(
+            catalog=_basic_catalog(),
+            available=set(),
+            custom_models=custom,
+            target="my-ds",
+        )
+        result = await list_models(svc)
+
+        assert result.data.current_model == "custom/my-ds"
+
+    @pytest.mark.asyncio
+    async def test_fallback_to_first_custom_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
+
+        custom = {"alpha": _custom_model("gpt-4", "openai")}
+        svc = _make_svc(
+            catalog=_basic_catalog(),
+            available={"openai"},
+            custom_models=custom,
+        )
+        result = await list_models(svc)
+
+        assert result.data.current_model == "custom/alpha"
+
+    @pytest.mark.asyncio
+    async def test_fallback_to_first_provider_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
+
+        svc = _make_svc(catalog=_basic_catalog(), available={"openai"})
+        result = await list_models(svc)
+
+        assert result.data.current_model is not None
+        assert result.data.current_model.startswith("openai/")
+
+    @pytest.mark.asyncio
+    async def test_no_models_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(models_routes, "load_cached_model_details", lambda: None)
+        monkeypatch.setattr(models_routes, "load_cache_fetched_at", lambda: None)
+
+        svc = _make_svc(catalog=_basic_catalog(), available=set())
+        result = await list_models(svc)
+
+        assert result.data.current_model is None

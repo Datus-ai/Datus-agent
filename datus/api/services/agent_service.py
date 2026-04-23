@@ -16,6 +16,8 @@ from datus.prompts.prompt_manager import PromptManager
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.func_tool.platform_doc_search import PlatformDocSearchTool
+from datus.tools.func_tool.sub_agent_task_tool import BUILTIN_SUBAGENT_DESCRIPTIONS
+from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -39,18 +41,7 @@ VALID_TOOL_METHODS: dict[str, set[str]] = {
 
 VALID_TOOL_CATEGORIES = set(VALID_TOOL_METHODS.keys())
 
-# Built-in sub-agents available to all projects (descriptions keyed by name)
-BUILTIN_SUBAGENT_DESCRIPTIONS: dict[str, str] = {
-    "gen_sql": "Generate SQL queries",
-    "gen_report": "Generate reports",
-    "gen_semantic_model": "Generate semantic models",
-    "gen_metrics": "Generate metrics",
-    "gen_sql_summary": "Generate SQL summaries",
-    "gen_ext_knowledge": "Generate external knowledge",
-}
-
-# Re-export for backward compatibility
-BUILTIN_SUBAGENTS = BUILTIN_SUBAGENT_DESCRIPTIONS
+BUILTIN_SUBAGENTS = SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS
 
 # Tool reference for each agent type
 SUBAGENT_TOOL_REFERENCE: dict[str, list[str]] = {
@@ -186,9 +177,9 @@ class AgentService:
                 "id": name,
                 "name": name,
                 "type": "builtin",
-                "description": desc,
+                "description": BUILTIN_SUBAGENT_DESCRIPTIONS.get(name, ""),
             }
-            for name, desc in sorted(BUILTIN_SUBAGENTS.items())
+            for name in sorted(BUILTIN_SUBAGENTS)
         ]
 
         # 2. Custom sub-agents from agent.yml
