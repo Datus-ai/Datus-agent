@@ -17,6 +17,38 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
+def _auto_install_adapter(db_type: str) -> None:
+    """Attempt to pip-install the adapter package for *db_type* and register it."""
+    import importlib
+    import shutil
+    import subprocess
+    import sys
+
+    package = f"datus-{db_type}"
+    logger.info("Adapter '%s' not found, attempting auto-install: %s", db_type, package)
+
+    python = sys.executable
+    uv_path = shutil.which("uv")
+    cmd = [uv_path, "pip", "install", "--python", python, package] if uv_path else [python, "-m", "pip", "install", package]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode != 0:
+            logger.warning("Auto-install of %s failed: %s", package, result.stderr.strip())
+            return
+
+        importlib.invalidate_caches()
+        module_name = f"datus_{db_type}"
+        module = importlib.import_module(module_name)
+        if hasattr(module, "register"):
+            module.register()
+        logger.info("Auto-installed and loaded adapter: %s", db_type)
+    except subprocess.TimeoutExpired:
+        logger.warning("Auto-install of %s timed out", package)
+    except Exception as e:
+        logger.warning("Auto-install of %s failed: %s", package, e)
+
+
 def _normalize_dialect_name(db_type: Union[str, DBType, None]) -> str:
     """
     Normalize dialect names and collapse aliases so downstream checks work reliably.
@@ -230,6 +262,10 @@ class DBManager:
         """
         # Convert DbConfig to ConnectionConfig
         connection_config = self._db_config_to_connection_config(db_config)
+
+        db_type = _normalize_dialect_name(db_config.type)
+        if not connector_registry.is_registered(db_type):
+            _auto_install_adapter(db_type)
 
         # Use registry to create connector
         conn = connector_registry.create_connector(db_config.type, connection_config)
