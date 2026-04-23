@@ -740,7 +740,7 @@ class DBFuncTool:
                 return FuncToolResult(
                     success=0, error=f"Datasource '{datasource}' not found. Available: {list(self._datasources)}"
                 )
-            sources = [datasource] if datasource else self._datasources
+            sources = [datasource] if datasource else [self._default_datasource]
             for name in sources:
                 if not self._database_matches_scope(catalog, name):
                     continue

@@ -231,6 +231,9 @@ class DatusCLI:
         self.model_commands = ModelCommands(self)
         self.language_commands = LanguageCommands(self)
         self.service_commands = ServiceCommands(self)
+        from datus.cli.datasource_commands import DatasourceCommands
+
+        self.datasource_commands = DatasourceCommands(self)
         self._status_bar_provider = StatusBarProvider(self)
 
         # Dictionary of available commands - created after handlers are initialized
@@ -296,7 +299,7 @@ class DatusCLI:
             # agent
             "agent": self._cmd_agent,
             "subagent": self.sub_agent_commands.cmd,
-            "datasource": self._cmd_switch_datasource,
+            "datasource": self.datasource_commands.cmd,
             "language": self.language_commands.cmd_language,
             # system
             "mcp": self._cmd_mcp,
@@ -909,17 +912,6 @@ class DatusCLI:
             self.console.print("[red]Error:[/] AI features are not available. Agent initialization failed.")
             return False
 
-    def _cmd_list_datasources(self):
-        table = Table(show_header=True, header_style="bold green")
-        table.add_column("Datasource")
-        for datasource in self.agent_config.datasource_configs.keys():
-            if self.agent_config.current_datasource == datasource:
-                table.add_row(f"[green]{datasource}[/]")
-            else:
-                table.add_row(datasource)
-        self.console.print(table)
-        return
-
     def _cmd_mcp(self, args):
         from datus.cli.mcp_commands import MCPCommands
 
@@ -1078,35 +1070,6 @@ class DatusCLI:
         else:
             self.default_agent = args
             self.console.print(f"[green]Default agent set to: {args}[/]")
-
-    def _cmd_switch_datasource(self, args: str):
-        if args.strip() == "":
-            self._cmd_list_datasources()
-        elif self.agent_config.current_datasource == args.strip():
-            self.console.print(
-                (
-                    f"[yellow]It's now under the datasource [bold]{self.agent_config.current_datasource}[/]"
-                    " and doesn't need to be switched[/]"
-                )
-            )
-            self._cmd_list_datasources()
-            return
-        else:
-            next_datasource = args.strip()
-            name, connector = self.db_manager.first_conn_with_name(next_datasource)
-            self.agent_config.current_datasource = next_datasource
-            self.db_connector = connector
-            db_name = self.db_connector.database_name
-            db_logic_name = name or self.agent_config.current_datasource
-            self.cli_context.update_database_context(
-                catalog=self.db_connector.catalog_name,
-                db_name=db_name,
-                schema=self.db_connector.schema_name,
-                db_logic_name=db_logic_name,
-            )
-            self.reset_session()
-            self.chat_commands.update_chat_node_tools()
-            self.console.print(f"[green]Datasource changed to: {self.agent_config.current_datasource}[/]")
 
     def _parse_command(self, text: str) -> Tuple[CommandType, str, str]:
         """Classify raw user input into a ``CommandType`` + canonical cmd + args.

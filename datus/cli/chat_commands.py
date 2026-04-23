@@ -110,7 +110,6 @@ class ChatCommands:
 
         # Chat state management - unified node management
         self.current_node: ChatAgenticNode | None = None  # Can be ChatAgenticNode or GenSQLAgenticNode
-        self.chat_node: ChatAgenticNode | None = None  # Kept for backward compatibility
         self.current_subagent_name: str | None = None  # Track current subagent name
         self.chat_history = []
         self.last_actions = []
@@ -125,9 +124,6 @@ class ChatCommands:
         """Update current node tools when datasource changes."""
         if self.current_node and hasattr(self.current_node, "setup_tools"):
             self.current_node.setup_tools()
-        # Keep backward compatibility
-        if self.chat_node:
-            self.chat_node.setup_tools()
 
     def _should_create_new_node(self, subagent_name: str = None) -> bool:
         """Determine if a new node should be created."""
@@ -295,8 +291,6 @@ class ChatCommands:
                     self.current_subagent_name = subagent_name if subagent_name else None
                     if not is_switch:
                         self.all_turn_actions = []
-                    if not subagent_name:
-                        self.chat_node = self.current_node
 
                 current_node = self.current_node
 
@@ -1016,7 +1010,6 @@ class ChatCommands:
 
         # Reset all node references
         self.current_node = None
-        self.chat_node = None  # Keep backward compatibility
         self.all_turn_actions = []
 
     def cmd_chat_info(self, args: str):
@@ -1288,7 +1281,6 @@ class ChatCommands:
             # Update state
             self.current_node = new_node
             self.current_subagent_name = subagent_name
-            self.chat_node = new_node if not subagent_name else self.chat_node
 
             # Show conversation history with full formatting
             from rich.rule import Rule
@@ -1424,7 +1416,6 @@ class ChatCommands:
                 new_node = self._create_new_node(node_name if node_name != "chat" else None)
                 self.current_node = new_node
                 self.current_subagent_name = node_name if node_name != "chat" else None
-                self.chat_node = new_node if not self.current_subagent_name else self.chat_node
                 self.chat_history = []
                 self.all_turn_actions = []
                 self.last_actions = []
@@ -1447,7 +1438,6 @@ class ChatCommands:
 
             self.current_node = new_node
             self.current_subagent_name = subagent_name
-            self.chat_node = new_node if not subagent_name else self.chat_node
 
             # Show the rewound conversation
             from rich.rule import Rule

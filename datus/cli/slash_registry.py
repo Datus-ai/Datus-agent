@@ -74,7 +74,7 @@ SLASH_COMMANDS: tuple[SlashSpec, ...] = (
     # agent
     SlashSpec("agent", "Select or inspect the default agent", "agent"),
     SlashSpec("subagent", "Manage sub-agents (list/add/remove/update)", "agent"),
-    SlashSpec("datasource", "Switch the current datasource", "agent"),
+    SlashSpec("datasource", "Manage datasources (list/add/edit/delete/switch)", "agent"),
     SlashSpec("language", "Set or show the response language for model outputs", "agent"),
     # system
     SlashSpec("mcp", "Manage MCP servers (list/add/remove/check/call/filter)", "system"),

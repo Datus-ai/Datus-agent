@@ -66,6 +66,46 @@ def _validate_port(port_str: str) -> tuple[bool, str]:
         return False, "Port must be a valid number"
 
 
+def serialize_services_section(services_config) -> dict:
+    """Convert a ServicesConfig into a dict suitable for ConfigurationManager.update().
+
+    Shared by :class:`DatasourceManager` and :class:`DatasourceCommands`.
+    """
+    datasources_section = {}
+    for db_name, db_config in services_config.datasources.items():
+        if db_config.type in (DBType.SQLITE, DBType.DUCKDB):
+            entry: dict = {"type": db_config.type}
+            if db_config.path_pattern:
+                entry["path_pattern"] = db_config.path_pattern
+            elif db_config.uri:
+                entry["uri"] = db_config.uri
+            if db_config.logic_name and db_config.logic_name != db_name:
+                entry["name"] = db_config.logic_name
+        else:
+            entry = {
+                k: v
+                for k, v in db_config.to_dict().items()
+                if v and k not in ("logic_name", "path_pattern", "extra", "default")
+            }
+            if isinstance(db_config.extra, dict):
+                for extra_key, extra_value in db_config.extra.items():
+                    if extra_value in (None, ""):
+                        continue
+                    entry.setdefault(extra_key, extra_value)
+
+        if db_config.default:
+            entry["default"] = True
+
+        datasources_section[db_name] = entry
+
+    return {
+        "datasources": datasources_section,
+        "semantic_layer": dict(services_config.semantic_layer),
+        "bi_platforms": dict(services_config.bi_platforms),
+        "schedulers": dict(services_config.schedulers),
+    }
+
+
 class DatasourceManager:
     def __init__(self, config_path: str):
         self.config_path = config_path
@@ -301,42 +341,7 @@ class DatasourceManager:
         """Save configuration to agent.yml file."""
         try:
             configure_manager = configuration_manager(config_path=self.config_path, reload=True)
-            datasources_section = {}
-
-            for db_name, db_config in self.agent_config.services.datasources.items():
-                if db_config.type in (DBType.SQLITE, DBType.DUCKDB):
-                    entry: dict = {"type": db_config.type}
-                    if db_config.path_pattern:
-                        entry["path_pattern"] = db_config.path_pattern
-                    elif db_config.uri:
-                        entry["uri"] = db_config.uri
-                    if db_config.logic_name and db_config.logic_name != db_name:
-                        entry["name"] = db_config.logic_name
-                else:
-                    entry = {
-                        k: v
-                        for k, v in db_config.to_dict().items()
-                        if v and k not in ("logic_name", "path_pattern", "extra", "default")
-                    }
-                    # Preserve adapter-specific fields stored in DbConfig.extra
-                    if isinstance(db_config.extra, dict):
-                        for extra_key, extra_value in db_config.extra.items():
-                            if extra_value in (None, ""):
-                                continue
-                            entry.setdefault(extra_key, extra_value)
-
-                if db_config.default:
-                    entry["default"] = True
-
-                datasources_section[db_name] = entry
-
-            services_section = {
-                "datasources": datasources_section,
-                "semantic_layer": dict(self.agent_config.services.semantic_layer),
-                "bi_platforms": dict(self.agent_config.services.bi_platforms),
-                "schedulers": dict(self.agent_config.services.schedulers),
-            }
-
+            services_section = serialize_services_section(self.agent_config.services)
             configure_manager.update(updates={"services": services_section}, delete_old_key=True)
             console.print(f"Configuration saved to {configure_manager.config_path}")
             return True

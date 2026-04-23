@@ -26,7 +26,7 @@ from rich.console import Console
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
-from datus.cli._cli_utils import select_choice
+from datus.cli._cli_utils import BACK_SENTINEL, prompt_with_back, select_choice
 from datus.cli.init_util import detect_db_connectivity
 from datus.utils.loggings import get_logger, print_rich_exception
 from datus.utils.path_manager import get_path_manager
@@ -34,33 +34,8 @@ from datus.utils.resource_utils import copy_data_file
 
 logger = get_logger(__name__)
 
-_BACK = "__back__"
-
-
-def _prompt_with_back(label: str, default: str = "", password: bool = False) -> str:
-    """Prompt with ESC to go back. Uses prompt_toolkit for key handling.
-
-    Returns _BACK if ESC pressed, otherwise the entered value.
-    """
-    try:
-        from prompt_toolkit import PromptSession
-        from prompt_toolkit.key_binding import KeyBindings
-
-        kb = KeyBindings()
-
-        @kb.add("escape")
-        def _esc(event):
-            event.app.exit(result=_BACK)
-
-        session = PromptSession(key_bindings=kb)
-        suffix = f" ({default})" if default else ""
-        result = session.prompt(f"{label}{suffix}: ", is_password=password)
-        if result == _BACK:
-            return _BACK
-        return result.strip() if result.strip() else default
-
-    except (KeyboardInterrupt, EOFError):
-        return _BACK
+_BACK = BACK_SENTINEL
+_prompt_with_back = prompt_with_back
 
 
 class InteractiveConfigure:

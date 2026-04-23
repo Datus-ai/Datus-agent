@@ -46,8 +46,6 @@ class ChatExecutor:
                 current_node = cli.chat_commands._create_new_node(current_subagent)
                 cli.chat_commands.current_node = current_node
                 cli.chat_commands.current_subagent_name = current_subagent if current_subagent else None
-                if not current_subagent:
-                    cli.chat_commands.chat_node = current_node
             else:
                 current_node = cli.chat_commands.current_node
 

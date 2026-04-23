@@ -9,8 +9,7 @@ Tests cover:
 - CommandType enum
 - DatusCLI._parse_command: EXIT, TOOL, SLASH, CHAT, SQL, legacy-prefix UNKNOWN
 - DatusCLI.check_agent_available: ready / initializing / not ready
-- DatusCLI._cmd_list_datasources: smoke test
-- DatusCLI._cmd_switch_datasource: empty args, same datasource, switch
+- DatasourceCommands._switch: same datasource, switch to different
 - DatusCLI._smart_display_table: empty data, few columns, many columns
 - DatusCLI._get_prompt_text: normal/plan mode
 - DatusCLI.create_combined_completer: returns a completer
@@ -71,6 +70,9 @@ def _make_cli(agent_config, available_subagents=None):
     cli.service_commands = MagicMock()
     # Unknown services fall through to the "Unknown command" path.
     cli.service_commands.dispatch = MagicMock(return_value=False)
+    from datus.cli.datasource_commands import DatasourceCommands
+
+    cli.datasource_commands = DatasourceCommands(cli)
     cli._workflow_runner = None
     cli.last_sql = None
     cli.last_result = None
@@ -81,7 +83,7 @@ def _make_cli(agent_config, available_subagents=None):
         "!sl": cli.agent_commands.cmd_schema_linking,
         "/catalog": cli.context_commands.cmd_catalog,
         "/tables": cli.metadata_commands.cmd_tables,
-        "/datasource": cli._cmd_switch_datasource,
+        "/datasource": cli.datasource_commands.cmd,
         "/help": cli._cmd_help,
         "/exit": lambda a: None,
         "/quit": lambda a: None,
@@ -298,43 +300,11 @@ class TestGetPromptText:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _cmd_list_datasources
+# Tests: /datasource command (via DatasourceCommands)
 # ---------------------------------------------------------------------------
 
 
-class TestCmdListDatasources:
-    def test_lists_datasources(self, cli):
-        cli._cmd_list_datasources()
-        output = cli.console.file.getvalue()
-        # Should have printed something (the table)
-        assert len(output) > 0
-
-    def test_current_datasource_highlighted(self, cli):
-        cli.agent_config.current_datasource = "california_schools"
-        cli._cmd_list_datasources()
-        output = cli.console.file.getvalue()
-        # Each database is listed as its own datasource entry
-        assert "california_schools" in output
-
-
-# ---------------------------------------------------------------------------
-# Tests: _cmd_switch_datasource
-# ---------------------------------------------------------------------------
-
-
-class TestCmdSwitchDatasource:
-    def test_empty_args_lists_datasources(self, cli):
-        with patch.object(cli, "_cmd_list_datasources") as mock_list:
-            cli._cmd_switch_datasource("")
-        mock_list.assert_called_once()
-
-    def test_same_datasource_prints_message(self, cli):
-        current_ns = cli.agent_config.current_datasource
-        with patch.object(cli, "_cmd_list_datasources"):
-            cli._cmd_switch_datasource(current_ns)
-        output = cli.console.file.getvalue()
-        assert "doesn't need" in output or "already" in output.lower() or "now under" in output.lower()
-
+class TestCmdDatasource:
     def test_switch_to_different_datasource(self, cli):
         mock_conn = MagicMock()
         mock_conn.database_name = "newdb"
@@ -342,12 +312,17 @@ class TestCmdSwitchDatasource:
         mock_conn.schema_name = ""
         cli.db_manager.first_conn_with_name.return_value = ("newdb", mock_conn)
 
-        # Switch to the california_schools datasource
         with patch.object(cli, "reset_session"):
-            cli._cmd_switch_datasource("california_schools")
+            cli.datasource_commands._switch("california_schools")
 
         output = cli.console.file.getvalue()
         assert "california_schools" in output
+
+    def test_same_datasource_prints_warning(self, cli):
+        current_ns = cli.agent_config.current_datasource
+        cli.datasource_commands._switch(current_ns)
+        output = cli.console.file.getvalue()
+        assert "already" in output.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -703,7 +678,7 @@ class TestCreateCombinedCompleterExtended:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _cmd_switch_datasource extended
+# Tests: /datasource switch extended (via DatasourceCommands)
 # ---------------------------------------------------------------------------
 
 
@@ -715,8 +690,6 @@ class TestCmdSwitchDatasourceExtended:
         mock_conn.schema_name = ""
         cli.db_manager.first_conn_with_name.return_value = ("test_ns", mock_conn)
 
-        # Patch current_datasource property to return a different value so the
-        # "already on this datasource" branch is NOT taken; setter is a no-op.
         with patch.object(
             type(cli.agent_config),
             "current_datasource",
@@ -726,21 +699,16 @@ class TestCmdSwitchDatasourceExtended:
             ),
         ):
             with patch.object(cli, "reset_session"):
-                cli._cmd_switch_datasource("test_ns")
+                cli.datasource_commands._switch("test_ns")
 
         output = cli.console.file.getvalue()
-        # Output prints the new datasource name passed to _cmd_switch_datasource
         assert "Datasource changed" in output
 
-    def test_same_datasource_both_listed_and_message(self, cli):
+    def test_same_datasource_prints_warning(self, cli):
         current = cli.agent_config.current_datasource
-
-        with patch.object(cli, "_cmd_list_datasources") as mock_list:
-            cli._cmd_switch_datasource(current)
-
-        mock_list.assert_called()
+        cli.datasource_commands._switch(current)
         output = cli.console.file.getvalue()
-        assert "doesn't need" in output or "already" in output.lower()
+        assert "already" in output.lower()
 
 
 # ---------------------------------------------------------------------------

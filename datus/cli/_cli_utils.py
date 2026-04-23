@@ -13,6 +13,37 @@ logger = get_logger(__name__)
 
 _FREE_TEXT_SENTINEL = "__free_text__"
 
+BACK_SENTINEL = "__back__"
+
+
+def prompt_with_back(label: str, default: str = "", password: bool = False) -> str:
+    """Prompt with ESC to go back. Uses prompt_toolkit for key handling.
+
+    Returns :data:`BACK_SENTINEL` if ESC pressed, otherwise the entered value.
+    """
+
+    def _inner():
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.key_binding import KeyBindings
+
+        kb = KeyBindings()
+
+        @kb.add("escape")
+        def _esc(event):
+            event.app.exit(result=BACK_SENTINEL)
+
+        session = PromptSession(key_bindings=kb)
+        suffix = f" ({default})" if default else ""
+        result = session.prompt(f"{label}{suffix}: ", is_password=password)
+        if result == BACK_SENTINEL:
+            return BACK_SENTINEL
+        return result.strip() if result.strip() else default
+
+    try:
+        return _run_prompt_in_terminal(_inner)
+    except (KeyboardInterrupt, EOFError):
+        return BACK_SENTINEL
+
 
 def _run_prompt_in_terminal(fn: Any) -> Any:
     """Run a blocking prompt function, suspending the outer TUI if active.

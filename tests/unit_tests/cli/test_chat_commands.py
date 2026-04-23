@@ -181,7 +181,7 @@ class TestChatCommandsInit:
         cmds = _make_chat_commands(real_agent_config)
 
         assert cmds.current_node is None
-        assert cmds.chat_node is None
+        assert not hasattr(cmds, "chat_node")
         assert cmds.current_subagent_name is None
         assert cmds.chat_history == []
         assert cmds.last_actions == []
@@ -941,24 +941,21 @@ class TestCmdClearChat:
         cmds.cmd_clear_chat("")
 
         assert cmds.current_node is None
-        assert cmds.chat_node is None
+        assert not hasattr(cmds, "chat_node")
         output = _get_console_output(console)
         assert "cleared" in output.lower()
 
     def test_clear_with_existing_current_node(self, real_agent_config, mock_llm_create):
-        """Clearing with an existing node resets both current_node and chat_node."""
+        """Clearing with an existing node resets current_node."""
         console = Console(file=io.StringIO(), no_color=True)
         cmds = _make_chat_commands(real_agent_config, console=console)
 
-        # Create a node first
         cmds.current_node = cmds._create_new_node()
-        cmds.chat_node = cmds.current_node
         assert cmds.current_node is not None
 
         cmds.cmd_clear_chat("")
 
         assert cmds.current_node is None
-        assert cmds.chat_node is None
         output = _get_console_output(console)
         assert "cleared" in output.lower()
 
@@ -1225,9 +1222,7 @@ class TestUpdateChatNodeTools:
         """Calling update_chat_node_tools with no current node does not raise."""
         cmds = _make_chat_commands(real_agent_config)
         cmds.current_node = None
-        cmds.chat_node = None
 
-        # Should not raise
         cmds.update_chat_node_tools()
         assert cmds.current_node is None
 
@@ -1235,12 +1230,9 @@ class TestUpdateChatNodeTools:
         """Calling update_chat_node_tools with a current node calls setup_tools."""
         cmds = _make_chat_commands(real_agent_config)
         cmds.current_node = cmds._create_new_node()
-        cmds.chat_node = cmds.current_node
 
-        # Should not raise; setup_tools exists on ChatAgenticNode
         cmds.update_chat_node_tools()
         assert cmds.current_node is not None
-        assert cmds.chat_node is not None
 
 
 # ===========================================================================
@@ -1333,17 +1325,15 @@ class TestEdgeCases:
         output = _get_console_output(console)
         assert isinstance(output, str)
 
-    def test_cmd_clear_chat_resets_both_nodes(self, real_agent_config, mock_llm_create):
-        """cmd_clear_chat resets both current_node and chat_node to None."""
+    def test_cmd_clear_chat_resets_current_node(self, real_agent_config, mock_llm_create):
+        """cmd_clear_chat resets current_node to None."""
         cmds = _make_chat_commands(real_agent_config)
         cmds.current_node = cmds._create_new_node()
-        cmds.chat_node = cmds.current_node
         cmds.current_subagent_name = None
 
         cmds.cmd_clear_chat("")
 
         assert cmds.current_node is None
-        assert cmds.chat_node is None
 
     def test_add_in_sql_context_processing_action_skipped(self, real_agent_config, mock_llm_create):
         """read_query action with PROCESSING status is not considered (is_done() is False)."""
@@ -2183,7 +2173,7 @@ class TestCmdClearChatWithSession:
 
         output = _get_console_output(console)
         assert cmds.current_node is None
-        assert cmds.chat_node is None
+        assert not hasattr(cmds, "chat_node")
         assert "cleared" in output.lower()
 
 
@@ -2272,9 +2262,9 @@ class TestCmdResumeWithSession:
         # Verify state is updated correctly
         assert cmds.current_node is not None
         assert cmds.current_node.session_id == session_id
-        # chat session -> subagent_name should be None, chat_node should be updated
+        # chat session -> subagent_name should be None, current_node should be updated
         assert cmds.current_subagent_name is None
-        assert cmds.chat_node is not None
+        assert cmds.current_node is not None
 
     def test_resume_exception_handling(self, real_agent_config, mock_llm_create):
         """cmd_resume handles exceptions gracefully with invalid session_id."""
@@ -2559,7 +2549,6 @@ class TestCmdRewindWithSession:
         assert cmds.current_node is not None
         new_session_id = cmds.current_node.session_id
         assert new_session_id != session_id
-        assert cmds.chat_node is not None
 
     def test_rewind_no_messages_in_session(self, real_agent_config, mock_llm_create):
         """cmd_rewind with empty session shows 'no messages' warning."""
@@ -3421,17 +3410,13 @@ class TestUpdateChatNodeToolsExtended:
     def test_calls_setup_tools_on_current_node(self, chat_cmd):
         mock_node = MagicMock()
         chat_cmd.current_node = mock_node
-        chat_cmd.chat_node = None
         chat_cmd.update_chat_node_tools()
         mock_node.setup_tools.assert_called_once()
 
     def test_no_current_node_no_crash(self, chat_cmd):
         chat_cmd.current_node = None
-        chat_cmd.chat_node = None
         chat_cmd.update_chat_node_tools()
-        # Both node handles remain None — no setup work was attempted.
         assert chat_cmd.current_node is None
-        assert chat_cmd.chat_node is None
 
 
 # ---------------------------------------------------------------------------
