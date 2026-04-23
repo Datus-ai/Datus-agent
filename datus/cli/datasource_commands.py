@@ -233,9 +233,17 @@ class DatasourceCommands:
                 print_error(self.console, f"Install failed: {result.stderr.strip()}")
                 return False
 
-            from datus.tools.db_tools import connector_registry
+            import importlib
 
-            connector_registry.discover_adapters()
+            importlib.invalidate_caches()
+            db_type = package.removeprefix("datus-").replace("-", "_")
+            try:
+                module = importlib.import_module(f"datus_{db_type}")
+                if hasattr(module, "register"):
+                    module.register()
+                    logger.info("Loaded adapter after install: %s", db_type)
+            except Exception as e:
+                logger.warning("Adapter installed but failed to load in current session: %s", e)
             print_success(self.console, f"{package} installed successfully.", symbol=True)
             return True
         except subprocess.TimeoutExpired:

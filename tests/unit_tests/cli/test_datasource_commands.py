@@ -170,17 +170,34 @@ class TestSetDefault:
 
 
 class TestInstallPlugin:
-    def test_install_success(self):
+    def test_install_success_loads_adapter(self):
+        cli = _make_cli()
+        cmds = DatasourceCommands(cli)
+        mock_module = MagicMock()
+        mock_module.register = MagicMock()
+        with (
+            patch("subprocess.run") as mock_run,
+            patch("importlib.invalidate_caches") as mock_invalidate,
+            patch("importlib.import_module", return_value=mock_module) as mock_import,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            result = cmds._install_plugin("datus-mysql")
+            assert result is True
+            mock_invalidate.assert_called_once()
+            mock_import.assert_called_once_with("datus_mysql")
+            mock_module.register.assert_called_once()
+
+    def test_install_success_adapter_load_fails_still_succeeds(self):
         cli = _make_cli()
         cmds = DatasourceCommands(cli)
         with (
             patch("subprocess.run") as mock_run,
-            patch("datus.tools.db_tools.connector_registry.discover_adapters") as mock_discover,
+            patch("importlib.invalidate_caches"),
+            patch("importlib.import_module", side_effect=ImportError("missing native dep")),
         ):
             mock_run.return_value = MagicMock(returncode=0)
-            result = cmds._install_plugin("datus-postgresql")
+            result = cmds._install_plugin("datus-mysql")
             assert result is True
-            mock_discover.assert_called_once()
 
     def test_install_failure(self):
         cli = _make_cli()

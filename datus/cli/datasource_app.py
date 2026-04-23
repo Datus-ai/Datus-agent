@@ -37,7 +37,19 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
-INSTALLABLE_TYPES = ("snowflake", "mysql", "postgresql", "starrocks", "bigquery", "clickhouse", "oracle")
+INSTALLABLE_TYPES = (
+    "clickhouse",
+    "clickzetta",
+    "greenplum",
+    "hive",
+    "mysql",
+    "postgresql",
+    "redshift",
+    "snowflake",
+    "spark",
+    "starrocks",
+    "trino",
+)
 
 _SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 

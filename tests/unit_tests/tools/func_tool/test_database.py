@@ -731,23 +731,45 @@ class TestGetConnectorRouting:
         assert conn is mock_connector
         mock_db_manager.get_conn.assert_called_with("default_db", "default_db")
 
-    def test_list_databases_connector_raises_marks_unavailable(self):
-        """When _get_connector raises for a database, entry should have available=False."""
+    def test_list_databases_multi_connector_returns_real_databases(self):
+        """In multi-connector mode, list_databases should query the connector for real databases."""
         from datus.tools.db_tools.db_manager import DBManager
 
         mock_source = Mock()
         mock_source.dialect = "duckdb"
-        mock_source.get_databases.return_value = []
+        mock_source.get_databases.return_value = ["analytics", "staging"]
 
         mock_db_manager = Mock(spec=DBManager)
         mock_db_manager.first_conn.return_value = mock_source
+        mock_db_manager.get_conn.return_value = mock_source
 
-        def _get_conn(ns, name):
-            if name == "broken_db":
-                raise ConnectionError("adapter not installed")
-            return mock_source
+        mock_config = Mock()
+        mock_config.active_model.return_value.model = "gpt-5.4"
+        mock_config.current_datasource = "source_db"
+        databases = {"source_db": Mock(), "other_db": Mock()}
+        mock_config.current_db_configs.return_value = databases
 
-        mock_db_manager.get_conn.side_effect = _get_conn
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            tool = DBFuncTool(mock_db_manager, agent_config=mock_config, default_datasource=list(databases.keys())[0])
+        assert tool._is_multi_connector is True
+
+        result = tool.list_databases()
+
+        assert result.success == 1
+        assert result.result == ["analytics", "staging"]
+
+    def test_list_databases_multi_connector_error(self):
+        """In multi-connector mode, connector failure returns error result."""
+        from datus.tools.db_tools.db_manager import DBManager
+
+        mock_db_manager = Mock(spec=DBManager)
+        mock_db_manager.first_conn.return_value = Mock(dialect="duckdb")
+        mock_db_manager.get_conn.side_effect = ConnectionError("adapter not installed")
 
         mock_config = Mock()
         mock_config.active_model.return_value.model = "gpt-5.4"
@@ -766,12 +788,8 @@ class TestGetConnectorRouting:
 
         result = tool.list_databases()
 
-        assert result.success == 1
-        db_list = result.result
-        broken = next((e for e in db_list if e["name"] == "broken_db"), None)
-        assert broken is not None
-        assert broken["available"] is False
-        assert "error" in broken
+        assert result.success == 0
+        assert "adapter not installed" in result.error
 
 
 class TestTransferQueryResult:

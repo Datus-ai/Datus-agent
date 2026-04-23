@@ -732,31 +732,18 @@ class DBFuncTool:
             an explanatory error message.
         """
         if self._is_multi_connector:
-            # Return database names with type info and connectivity status.
-            # Only databases with installed adapters and working connections are marked available.
-            db_configs = self.agent_config.current_db_configs() if self.agent_config else {}
-            db_list = []
             if datasource and datasource not in self._datasources:
                 return FuncToolResult(
                     success=0, error=f"Datasource '{datasource}' not found. Available: {list(self._datasources)}"
                 )
-            sources = [datasource] if datasource else [self._default_datasource]
-            for name in sources:
-                if not self._database_matches_scope(catalog, name):
-                    continue
-                db_type = db_configs[name].type if name in db_configs else "unknown"
-                available = True
-                error_msg = ""
-                try:
-                    self._get_connector(name)
-                except Exception as e:
-                    available = False
-                    error_msg = str(e)
-                entry = {"name": name, "type": db_type, "available": available}
-                if not available:
-                    entry["error"] = error_msg
-                db_list.append(entry)
-            return FuncToolResult(success=1, result=db_list)
+            source = datasource or self._default_datasource
+            try:
+                connector = self._get_connector(source)
+                databases = connector.get_databases(catalog, include_sys=include_sys)
+                filtered = [db for db in databases if self._database_matches_scope(catalog, db)]
+                return FuncToolResult(result=filtered)
+            except Exception as e:
+                return FuncToolResult(success=0, error=str(e))
         try:
             connector = self._get_connector(datasource)
             databases = connector.get_databases(catalog, include_sys=include_sys)
