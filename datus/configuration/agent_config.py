@@ -623,12 +623,11 @@ class AgentConfig:
 
     @current_datasource.setter
     def current_datasource(self, value):
-        """Set the current datasource name (must exist in services.datasources)."""
+        """Set the current datasource name (must exist in services.datasources, or empty to clear)."""
         if not value:
-            raise DatusException(
-                code=ErrorCode.COMMON_FIELD_REQUIRED,
-                message_args={"field_name": "datasource"},
-            )
+            self._current_datasource = ""
+            self.db_type = ""
+            return
         if value not in self.services.datasources:
             raise DatusException(
                 code=ErrorCode.COMMON_UNSUPPORTED,

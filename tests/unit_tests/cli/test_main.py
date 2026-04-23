@@ -83,25 +83,38 @@ class TestArgumentParser:
 
 
 class TestApplicationRun:
-    def test_run_no_datasource_prints_help(self):
-        """When no database is set and _resolve_default_datasource fails, help is printed."""
+    def test_run_no_datasource_repl_proceeds(self):
+        """REPL mode proceeds even with no datasource (user configures via /datasource)."""
         app = Application()
         mock_args = SimpleNamespace(
             debug=False, datasource="", print_mode=None, web=False, resume=None, proxy_tools=None, config=None
         )
+        mock_cli = MagicMock()
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
             patch("datus.cli.main.configure_logging"),
             patch.object(app, "_ensure_project_config"),
             patch.object(app, "_resolve_default_datasource", return_value=""),
-            patch.object(app.arg_parser.parser, "print_help") as mock_help,
+            patch("datus.cli.main.DatusCLI", return_value=mock_cli) as mock_cli_cls,
         ):
             app.run()
-        # _resolve_default_datasource returning "" should cause early return without
-        # reaching the REPL; no test asserts print_help here because the real
-        # print_help is triggered inside _resolve_default_datasource (which we mocked).
-        # Just verify the run returned cleanly.
-        mock_help.assert_not_called()
+        mock_cli_cls.assert_called_once_with(mock_args)
+        mock_cli.run.assert_called_once()
+
+    def test_run_no_datasource_non_repl_exits(self):
+        """Non-REPL modes (--print) exit when no datasource is found."""
+        app = Application()
+        mock_args = SimpleNamespace(
+            debug=False, datasource="", print_mode="query", web=False, resume=None, proxy_tools=None, config=None
+        )
+        with (
+            patch.object(app.arg_parser, "parse_args", return_value=mock_args),
+            patch("datus.cli.main.configure_logging"),
+            patch.object(app, "_resolve_default_datasource", return_value=""),
+            patch("datus.cli.main.DatusCLI") as mock_cli_cls,
+        ):
+            app.run()
+        mock_cli_cls.assert_not_called()
 
     def test_resume_without_print_mode_errors(self):
         app = Application()

@@ -73,8 +73,9 @@ def test_configuration_load(database: str, agent_config: AgentConfig):
     assert storage_path.endswith("datus_db")
     assert f"/data/{agent_config.project_name}/datus_db" in storage_path.replace(os.sep, "/")
 
-    with pytest.raises(DatusException, match="Missing required field: datasource"):
-        agent_config.current_datasource = ""
+    agent_config.current_datasource = ""
+    assert agent_config.current_datasource == ""
+    assert agent_config.db_type == ""
 
     error_db = "abc"
     with pytest.raises(DatusException, match=f"Unsupported value `{error_db}` for field `datasource`"):

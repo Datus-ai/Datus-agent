@@ -191,10 +191,11 @@ class Application:
         if args.print_mode is None and not args.web:
             self._ensure_project_config(args)
 
+        is_repl = args.print_mode is None and not args.web
         if not args.datasource:
             # Try to auto-select: default datasource or single datasource
-            args.datasource = self._resolve_default_datasource(args)
-            if not args.datasource:
+            args.datasource = self._resolve_default_datasource(args, allow_empty=is_repl)
+            if not args.datasource and not is_repl:
                 return
 
         if args.resume and args.print_mode is None:
@@ -213,7 +214,7 @@ class Application:
             cli = DatusCLI(args)
             cli.run()
 
-    def _resolve_default_datasource(self, args) -> str:
+    def _resolve_default_datasource(self, args, allow_empty: bool = False) -> str:
         """Auto-select datasource when --datasource is not specified."""
         from rich.console import Console
         from rich.table import Table
@@ -222,14 +223,14 @@ class Application:
 
         console = Console()
         try:
-            config = load_agent_config(config=args.config or "", action="service", reload=True)
+            config = load_agent_config(config=args.config or "", action="service", reload=True, create_if_missing=True)
         except Exception:
-            self.arg_parser.parser.print_help()
+            if not allow_empty:
+                self.arg_parser.parser.print_help()
             return ""
 
         datasources = config.services.datasources
         if not datasources:
-            console.print("[yellow]No datasources configured. Use /datasource to add one.[/yellow]")
             return ""
 
         # default_datasource reflects the project-level overlay when present — it
@@ -238,6 +239,9 @@ class Application:
         default_db = config.services.default_datasource
         if default_db:
             return default_db
+
+        if allow_empty:
+            return ""
 
         # Multiple datasources, no default — show list and ask user to specify
         console.print("[yellow]Multiple datasources configured. Please specify --datasource <name>[/yellow]\n")
@@ -270,7 +274,7 @@ class Application:
 
         if not project_config_path().exists():
             try:
-                base_config = load_agent_config(config=args.config or "", reload=True)
+                base_config = load_agent_config(config=args.config or "", reload=True, create_if_missing=True)
             except Exception as e:
                 logger.error(f"Cannot create project config: base agent.yml failed to load: {e}")
                 raise

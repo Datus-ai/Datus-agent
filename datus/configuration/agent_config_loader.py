@@ -26,8 +26,8 @@ def load_node_config(node_type: str, data: dict) -> NodeConfig:
 
 
 class ConfigurationManager:
-    def __init__(self, config_path: str = ""):
-        self.config_path: Path = parse_config_path(config_path)
+    def __init__(self, config_path: str = "", create_if_missing: bool = False):
+        self.config_path: Path = parse_config_path(config_path, create_if_missing=create_if_missing)
 
         self.data = self._load().get("agent", {})
 
@@ -106,18 +106,55 @@ class ConfigurationManager:
 CONFIGURATION_MANAGER: ConfigurationManager | None = None
 
 
-def configuration_manager(config_path: str = "", reload: bool = False) -> ConfigurationManager:
+def configuration_manager(
+    config_path: str = "", reload: bool = False, create_if_missing: bool = False
+) -> ConfigurationManager:
     global CONFIGURATION_MANAGER
     should_reload = reload or not CONFIGURATION_MANAGER
     if not should_reload and config_path:
-        requested_path = parse_config_path(config_path)
+        requested_path = parse_config_path(config_path, create_if_missing=create_if_missing)
         should_reload = CONFIGURATION_MANAGER.config_path.resolve() != requested_path.resolve()
     if should_reload:
-        CONFIGURATION_MANAGER = ConfigurationManager(config_path)
+        CONFIGURATION_MANAGER = ConfigurationManager(config_path, create_if_missing=create_if_missing)
     return CONFIGURATION_MANAGER
 
 
-def parse_config_path(config_file: str = "") -> Path:
+def _bootstrap_agent_config(config_path: Path) -> None:
+    """Create a minimal agent.yml and copy template resources."""
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    minimal_config = {"agent": {"services": {"datasources": {}}}}
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(minimal_config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    logger.info("Created minimal agent config at %s", config_path)
+
+    home_dir = config_path.parent.parent
+    try:
+        from datus.utils.resource_utils import copy_data_file
+
+        template_dir = home_dir / "template"
+        template_dir.mkdir(parents=True, exist_ok=True)
+        copy_data_file(resource_path="prompts", dest_dir=template_dir, overwrite=True)
+    except Exception as e:
+        logger.debug("Error copying template files during bootstrap: %s", e)
+    try:
+        from datus.utils.resource_utils import copy_data_file
+
+        sample_dir = home_dir / "sample"
+        sample_dir.mkdir(parents=True, exist_ok=True)
+        copy_data_file(resource_path="sample_data", dest_dir=sample_dir, overwrite=False)
+    except Exception as e:
+        logger.debug("Error copying sample files during bootstrap: %s", e)
+    try:
+        from datus.utils.resource_utils import copy_data_file
+
+        skills_dir = home_dir / "skills"
+        skills_dir.mkdir(parents=True, exist_ok=True)
+        copy_data_file(resource_path="resources/skills", dest_dir=skills_dir, overwrite=False)
+    except Exception as e:
+        logger.debug("Error deploying built-in skills during bootstrap: %s", e)
+
+
+def parse_config_path(config_file: str = "", create_if_missing: bool = False) -> Path:
     """
     Parse and resolve agent configuration file path.
 
@@ -126,17 +163,18 @@ def parse_config_path(config_file: str = "") -> Path:
     2. ./conf/agent.yml in current directory
     3. ~/.datus/conf/agent.yml (fixed path, not from agent.home config)
 
-    Note: The third option uses a fixed ~/.datus path because we need to
-    read the config file first to determine the agent.home location.
+    When ``create_if_missing`` is True and no config file is found, a minimal
+    agent.yml is bootstrapped at ``~/.datus/conf/agent.yml`` instead of raising.
 
     Args:
         config_file: Optional explicit config file path
+        create_if_missing: Bootstrap a minimal config when no file exists
 
     Returns:
         Resolved Path to configuration file
 
     Raises:
-        DatusException: If configuration file not found
+        DatusException: If configuration file not found (and create_if_missing is False)
     """
     # 1. Check explicit config file
     if config_file:
@@ -158,6 +196,10 @@ def parse_config_path(config_file: str = "") -> Path:
     # to determine agent.home location for other directories
     home_config = Path.home() / ".datus" / "conf" / "agent.yml"
     if home_config.exists():
+        return home_config.resolve()
+
+    if create_if_missing:
+        _bootstrap_agent_config(home_config)
         return home_config.resolve()
 
     raise DatusException(
@@ -233,7 +275,7 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
         agent_raw["language"] = override.language
 
 
-def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
+def load_agent_config(reload: bool = False, create_if_missing: bool = False, **kwargs) -> AgentConfig:
     # Check config file in order: kwargs["config"] > conf/agent.yml > ~/.datus/conf/agent.yml
     # Load .env file if it exists
     try:
@@ -243,7 +285,11 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
     except Exception:
         pass
 
-    agent_raw = dict(configuration_manager(config_path=kwargs.get("config", ""), reload=reload).data)
+    agent_raw = dict(
+        configuration_manager(
+            config_path=kwargs.get("config", ""), reload=reload, create_if_missing=create_if_missing
+        ).data
+    )
     _apply_project_override(agent_raw)
     nodes = {}
     if "nodes" in agent_raw:

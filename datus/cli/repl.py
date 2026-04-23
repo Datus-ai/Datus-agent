@@ -134,7 +134,7 @@ class DatusCLI:
         self.scope = getattr(args, "session_scope", None)
 
         setup_exception_handler(console_logger=self.console.print, prefix_wrap_func=lambda x: f"[red]{x}[/red]")
-        self.db_connector: BaseSqlConnector
+        self.db_connector: BaseSqlConnector | None = None
 
         self.agent = None
         self.agent_initializing = False
@@ -147,7 +147,7 @@ class DatusCLI:
         self.default_agent = ""
 
         # Load agent config first so path-dependent helpers use the configured home.
-        self.agent_config = load_agent_config(**vars(self.args))
+        self.agent_config = load_agent_config(create_if_missing=True, **vars(self.args))
         self.configuration_manager = configuration_manager()
 
         # Bind the process-wide path-manager ContextVar once so implicit callers
@@ -732,6 +732,7 @@ class DatusCLI:
         """Classic ``PromptSession`` main loop (used for non-TTY fallback)."""
         self._print_welcome()
         self._warn_no_model()
+        self._warn_no_datasource()
 
         while True:
             try:
@@ -781,6 +782,7 @@ class DatusCLI:
         self._pin_tui_to_bottom()
         self._print_welcome()
         self._warn_no_model()
+        self._warn_no_datasource()
 
         # Prefill support mirrors the PromptSession path: ``.rewind`` stores
         # the replayed user message in ``_prefill_input`` and expects the
@@ -1555,6 +1557,11 @@ class DatusCLI:
         except Exception:
             self.console.print("[yellow]No model configured. Use /model to set up a model.[/]")
 
+    def _warn_no_datasource(self):
+        """Print a one-time hint when no datasource is configured."""
+        if not self.agent_config.services.datasources:
+            self.console.print("[yellow]No datasources configured. Use /datasource to add one.[/]")
+
     def prompt_input(self, message: str, default: str = "", choices: list = None, multiline: bool = False):
         """
         Unified input method using prompt_toolkit to avoid conflicts with rich.Prompt.ask().
@@ -1580,6 +1587,9 @@ class DatusCLI:
             timeout_seconds: Maximum time to wait for connection (default: 30 seconds)
         """
         current_datasource = self.agent_config.current_datasource
+        if not current_datasource:
+            self.db_connector = None
+            return
 
         def _do_init_connection():
             """Inner function to perform connection initialization."""
