@@ -198,10 +198,10 @@ class TestInteractionBrokerRequest:
 
         # Submit response so the task completes
         action_id = action.action_id
-        await broker.submit(action_id, "a")
+        await broker.submit(action_id, [["a"]])
         result = await task
 
-        assert result == "a"
+        assert result == [["a"]]
 
     @pytest.mark.asyncio
     async def test_submit_auto_generates_success_action(self):
@@ -227,17 +227,17 @@ class TestInteractionBrokerRequest:
         action_id = action.action_id
 
         # Submit — this auto-generates a SUCCESS action
-        await broker.submit(action_id, "y")
+        await broker.submit(action_id, [["y"]])
         choice = await task
 
-        assert choice == "y"
+        assert choice == [["y"]]
 
         # Verify submit() auto-queued a SUCCESS action
         success_action = broker._output_queue.get_nowait()
         assert success_action.role == ActionRole.INTERACTION
         assert success_action.status == ActionStatus.SUCCESS
         assert success_action.action_id == action_id
-        assert success_action.output["user_choice"] == "y"
+        assert success_action.output["user_choice"] == [["y"]]
 
     @pytest.mark.asyncio
     async def test_request_cancelled_raises_interaction_cancelled(self):
@@ -264,8 +264,34 @@ class TestInteractionBrokerSubmit:
     async def test_submit_unknown_action_id_returns_false(self):
         """submit() returns False when action_id is not found."""
         broker = InteractionBroker()
-        result = await broker.submit("nonexistent-id", "choice")
+        result = await broker.submit("nonexistent-id", [["choice"]])
         assert result is False
+
+    @pytest.mark.asyncio
+    async def test_submit_non_list_answers_returns_false(self):
+        """submit() returns False when answers is not a list (e.g. a bare string)."""
+        broker = InteractionBroker()
+
+        async def do_request():
+            return await broker.request([InteractionEvent(content="Pick", choices={"a": "A"}, default_choice="a")])
+
+        task = asyncio.create_task(do_request())
+        await asyncio.sleep(0.05)
+
+        action = broker._output_queue.get_nowait()
+        action_id = action.action_id
+
+        # Bare string violates the List[List[str]] contract
+        assert await broker.submit(action_id, "a") is False
+        # Nested non-list violates the contract
+        assert await broker.submit(action_id, ["a"]) is False
+        # Non-string leaf violates the contract
+        assert await broker.submit(action_id, [[1]]) is False
+
+        # Pending should still be live; submit valid answer to clean up
+        assert broker.has_pending is True
+        await broker.submit(action_id, [["a"]])
+        await task
 
     @pytest.mark.asyncio
     async def test_submit_invalid_choice_returns_false(self):
@@ -284,14 +310,14 @@ class TestInteractionBrokerSubmit:
         action_id = action.action_id
 
         # Submit an invalid choice
-        result = await broker.submit(action_id, "z")
+        result = await broker.submit(action_id, [["z"]])
         assert result is False
 
         # The pending should still be there
         assert broker.has_pending is True
 
         # Clean up: submit valid choice to unblock the task
-        await broker.submit(action_id, "a")
+        await broker.submit(action_id, [["a"]])
         await task
 
     @pytest.mark.asyncio
@@ -308,12 +334,12 @@ class TestInteractionBrokerSubmit:
         action = broker._output_queue.get_nowait()
         action_id = action.action_id
 
-        result = await broker.submit(action_id, "x")
+        result = await broker.submit(action_id, [["x"]])
         assert result is True
         assert broker.has_pending is False
 
         choice = await task
-        assert choice == "x"
+        assert choice == [["x"]]
 
     @pytest.mark.asyncio
     async def test_submit_empty_choices_accepts_any_text(self):
@@ -329,11 +355,11 @@ class TestInteractionBrokerSubmit:
         action = broker._output_queue.get_nowait()
         action_id = action.action_id
 
-        result = await broker.submit(action_id, "free text input")
+        result = await broker.submit(action_id, [["free text input"]])
         assert result is True
 
         choice = await task
-        assert choice == "free text input"
+        assert choice == [["free text input"]]
 
 
 class TestInteractionBrokerFetch:

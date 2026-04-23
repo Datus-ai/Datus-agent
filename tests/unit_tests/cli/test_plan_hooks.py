@@ -220,7 +220,7 @@ class TestOnPlanGenerated:
     async def test_no_todo_list_sends_error_message(self, broker, session):
         hooks = _make_hooks(broker, session)
         hooks.todo_storage.get_todo_list.return_value = None
-        broker.request.return_value = "1"
+        broker.request.return_value = [["1"]]
 
         await hooks._on_plan_generated()
 
@@ -230,7 +230,7 @@ class TestOnPlanGenerated:
         hooks = _make_hooks(broker, session, auto_mode=True)
         todo_list = _make_todo_list([_make_item()])
         hooks.todo_storage.get_todo_list.return_value = todo_list
-        broker.request.return_value = "1"
+        broker.request.return_value = [["1"]]
 
         await hooks._on_plan_generated()
 
@@ -241,7 +241,7 @@ class TestOnPlanGenerated:
         hooks = _make_hooks(broker, session)
         todo_list = _make_todo_list([_make_item()])
         hooks.todo_storage.get_todo_list.return_value = todo_list
-        broker.request.return_value = "1"
+        broker.request.return_value = [["1"]]
 
         await hooks._on_plan_generated()
 
@@ -252,7 +252,7 @@ class TestOnPlanGenerated:
         hooks = _make_hooks(broker, session)
         todo_list = _make_todo_list([_make_item()])
         hooks.todo_storage.get_todo_list.return_value = todo_list
-        broker.request.return_value = "2"
+        broker.request.return_value = [["2"]]
 
         await hooks._on_plan_generated()
 
@@ -263,7 +263,7 @@ class TestOnPlanGenerated:
         hooks = _make_hooks(broker, session)
         todo_list = _make_todo_list([_make_item()])
         hooks.todo_storage.get_todo_list.return_value = todo_list
-        broker.request.return_value = "4"
+        broker.request.return_value = [["4"]]
 
         with pytest.raises(UserCancelledException):
             await hooks._on_plan_generated()

@@ -2935,7 +2935,7 @@ class TestRenderInteraction:
             ActionRole.INTERACTION,
             ActionStatus.PROCESSING,
             messages="Choose option",
-            input_data={"contents": ["Please confirm"], "content_type": "text", "choices": [{}]},
+            input_data={"events": [{"content": "Please confirm", "content_type": "text", "choices": {}}]},
         )
         renderables = renderer.render_interaction_request(action, verbose=False)
         texts = [r.plain if hasattr(r, "plain") else str(r) for r in renderables]
@@ -2951,7 +2951,7 @@ class TestRenderInteraction:
         action = _make_action(
             ActionRole.INTERACTION,
             ActionStatus.PROCESSING,
-            input_data={"contents": ["key: value"], "content_type": "yaml", "choices": [{}]},
+            input_data={"events": [{"content": "key: value", "content_type": "yaml", "choices": {}}]},
         )
         renderables = renderer.render_interaction_request(action, verbose=False)
         from rich.syntax import Syntax
@@ -2966,7 +2966,7 @@ class TestRenderInteraction:
         action = _make_action(
             ActionRole.INTERACTION,
             ActionStatus.PROCESSING,
-            input_data={"contents": ["SELECT 1"], "content_type": "sql", "choices": [{}]},
+            input_data={"events": [{"content": "SELECT 1", "content_type": "sql", "choices": {}}]},
         )
         renderables = renderer.render_interaction_request(action, verbose=False)
         from rich.syntax import Syntax
@@ -2981,7 +2981,7 @@ class TestRenderInteraction:
         action = _make_action(
             ActionRole.INTERACTION,
             ActionStatus.PROCESSING,
-            input_data={"contents": ["## Title\nBody"], "content_type": "markdown", "choices": [{}]},
+            input_data={"events": [{"content": "## Title\nBody", "content_type": "markdown", "choices": {}}]},
         )
         renderables = renderer.render_interaction_request(action, verbose=False)
         assert any(isinstance(r, Markdown) for r in renderables)
@@ -2995,9 +2995,13 @@ class TestRenderInteraction:
             ActionRole.INTERACTION,
             ActionStatus.PROCESSING,
             input_data={
-                "contents": ["Pick one: y=Yes, n=No"],
-                "content_type": "text",
-                "choices": [{"y": "Yes", "n": "No"}],
+                "events": [
+                    {
+                        "content": "Pick one: y=Yes, n=No",
+                        "content_type": "text",
+                        "choices": {"y": "Yes", "n": "No"},
+                    }
+                ],
             },
         )
         renderables = renderer.render_interaction_request(action, verbose=False)
@@ -3015,8 +3019,9 @@ class TestRenderInteraction:
         action = _make_action(
             ActionRole.INTERACTION,
             ActionStatus.SUCCESS,
-            messages="Confirmed",
-            output_data={"content": "Saved!", "content_type": "text", "user_choice": "y"},
+            messages="Saved!",
+            input_data={"events": [{"content": "Confirm?", "content_type": "text"}]},
+            output_data={"user_choice": "y"},
         )
         renderables = renderer.render_interaction_success(action, verbose=False)
         texts = [r.plain if hasattr(r, "plain") else str(r) for r in renderables]

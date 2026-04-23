@@ -48,8 +48,8 @@ class TestCompletionsMenuWired:
         root = app.application.layout.container
         # DatusApp wraps the HSplit directly; grab the children list.
         children = list(root.get_children())
-        # Expected order: top_sep, status_window, mid_sep, input, menu, bottom_sep.
-        assert len(children) == 6, f"unexpected HSplit child count: {len(children)}"
+        # Expected order: top_sep, status_window, mid_sep, input, menu, bottom_sep, hint.
+        assert len(children) == 7, f"unexpected HSplit child count: {len(children)}"
         # The fifth child (index 4) must be the CompletionsMenu.
         assert children[4] is app._completions_menu
 

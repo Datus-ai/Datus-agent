@@ -485,7 +485,7 @@ class TestStreamChatActions:
         output = buf.getvalue().strip()
         data = json.loads(output)
         assert data["message_id"] == "int_1"
-        mock_node.interaction_broker.submit.assert_awaited_once_with("int_1", "user_response")
+        mock_node.interaction_broker.submit.assert_awaited_once_with("int_1", [["user_response"]])
 
     @pytest.mark.asyncio
     async def test_stream_chat_interaction_with_proxy_skips_stdin(self):

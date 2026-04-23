@@ -43,6 +43,7 @@ _NORMAL_RULES = [
     _rule("date_parsing_tools", "*", PermissionLevel.ALLOW),
     # db read
     _rule("db_tools", "read_query", PermissionLevel.ALLOW),
+    _rule("db_tools", "verify_sql", PermissionLevel.ALLOW),
     _rule("db_tools", "list_*", PermissionLevel.ALLOW),
     _rule("db_tools", "describe_*", PermissionLevel.ALLOW),
     _rule("db_tools", "get_*", PermissionLevel.ALLOW),

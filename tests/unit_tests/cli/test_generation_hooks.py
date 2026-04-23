@@ -644,7 +644,7 @@ class TestHandleExtKnowledgeResult:
 @pytest.mark.asyncio
 class TestGetSyncConfirmation:
     async def test_choice_yes_calls_sync(self, hooks):
-        hooks.broker.request = AsyncMock(return_value="y")
+        hooks.broker.request = AsyncMock(return_value=[["y"]])
         hooks._sync_to_storage = AsyncMock(return_value="Synced!")
 
         await hooks._get_sync_confirmation(
@@ -656,7 +656,7 @@ class TestGetSyncConfirmation:
         hooks._sync_to_storage.assert_awaited_once()
 
     async def test_choice_no_skips_sync(self, hooks):
-        hooks.broker.request = AsyncMock(return_value="n")
+        hooks.broker.request = AsyncMock(return_value=[["n"]])
         hooks._sync_to_storage = AsyncMock()
 
         await hooks._get_sync_confirmation(
@@ -678,7 +678,7 @@ class TestGetSyncConfirmation:
             )
 
     async def test_with_prebuilt_display_content(self, hooks):
-        hooks.broker.request = AsyncMock(return_value="n")
+        hooks.broker.request = AsyncMock(return_value=[["n"]])
 
         await hooks._get_sync_confirmation(
             yaml_content="key: val",
@@ -1098,7 +1098,7 @@ class TestProcessMetricWithSemanticModel:
 class TestGetSyncConfirmationForPair:
     async def test_accept_syncs_both_files(self, hooks):
         """Choosing 'y' calls _sync_semantic_and_metric once."""
-        hooks.broker.request = AsyncMock(return_value="y")
+        hooks.broker.request = AsyncMock(return_value=[["y"]])
         hooks._sync_semantic_and_metric = AsyncMock(return_value="Synced OK")
 
         await hooks._get_sync_confirmation_for_pair(
@@ -1110,7 +1110,7 @@ class TestGetSyncConfirmationForPair:
 
     async def test_reject_skips_sync(self, hooks):
         """Choosing 'n' does not call _sync_semantic_and_metric."""
-        hooks.broker.request = AsyncMock(return_value="n")
+        hooks.broker.request = AsyncMock(return_value=[["n"]])
         hooks._sync_semantic_and_metric = AsyncMock()
 
         await hooks._get_sync_confirmation_for_pair(
@@ -1132,7 +1132,7 @@ class TestGetSyncConfirmationForPair:
 
     async def test_display_content_includes_both_files(self, hooks):
         """Request content includes both file names when display_content is pre-built."""
-        hooks.broker.request = AsyncMock(return_value="n")
+        hooks.broker.request = AsyncMock(return_value=[["n"]])
 
         display = (
             "## Generated Semantic Model: sem.yaml\n\n"

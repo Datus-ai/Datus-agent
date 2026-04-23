@@ -851,10 +851,10 @@ class TestDisplaySuccess:
         return ActionHistory(
             action_id="test_success_1",
             role=ActionRole.INTERACTION,
-            messages="",
+            messages=content,
             action_type="request_choice",
-            input={},
-            output={"content": content, "content_type": content_type},
+            input={"events": [{"content": "", "content_type": content_type}]},
+            output={"user_choice": "y"},
             status=ActionStatus.SUCCESS,
         )
 
@@ -1496,10 +1496,10 @@ class TestDisplayExceptionPaths:
         action = ActionHistory(
             action_id="test_text_ct",
             role=ActionRole.INTERACTION,
-            messages="",
+            messages="Plain text result",
             action_type="request_choice",
-            input={},
-            output={"content": "Plain text result", "content_type": "text"},
+            input={"events": [{"content": "", "content_type": "text"}]},
+            output={"user_choice": "y"},
             status=ActionStatus.SUCCESS,
         )
         renderables = renderer.render_interaction_success(action, verbose=False)
@@ -3531,90 +3531,25 @@ class TestCmdChatInfoExtended:
         assert "sess_123" in output or "Session" in output
 
 
-# ===========================================================================
-# _collect_batch tests
-# ===========================================================================
-
-
-class TestCollectBatch:
-    """Test _collect_batch method for batch question collection."""
-
-    @staticmethod
-    def _make(real_agent_config):
-        """Create ChatCommands with a MinimalCLI that has controllable prompt_input."""
-        console = Console(file=io.StringIO(), no_color=True)
-        return _make_chat_commands(real_agent_config, console=console), console
-
-    def test_empty_contents_returns_empty_json(self, real_agent_config, mock_llm_create):
-        """Empty contents list returns '[]'."""
-        chat_cmd, console = self._make(real_agent_config)
-        result = chat_cmd._collect_batch(console, [], [])
-        assert result == json.dumps([])
-
-    def test_single_free_text_question(self, real_agent_config, mock_llm_create):
-        """Single free-text question collects via prompt_input."""
-        chat_cmd, console = self._make(real_agent_config)
-        chat_cmd.cli.prompt_input = MagicMock(return_value="my answer")
-        result = chat_cmd._collect_batch(console, ["What name?"], [{}])
-        answers = json.loads(result)
-        assert len(answers) == 1
-        assert answers[0] == "my answer"
-
-    @patch("datus.cli.chat_commands.select_choice", return_value="2")
-    def test_single_question_with_choices(self, mock_select, real_agent_config, mock_llm_create):
-        """Single question with choices uses select_choice."""
-        chat_cmd, console = self._make(real_agent_config)
-        result = chat_cmd._collect_batch(console, ["Pick DB?"], [{"1": "MySQL", "2": "PG"}])
-        answers = json.loads(result)
-        assert len(answers) == 1
-        assert answers[0] == "PG"
-
-    @patch("datus.cli.chat_commands.select_choice", return_value="1")
-    def test_multi_question_batch(self, mock_select, real_agent_config, mock_llm_create):
-        """Multiple questions with choices collects answers sequentially."""
-        chat_cmd, console = self._make(real_agent_config)
-        chat_cmd.cli.prompt_input = MagicMock(return_value="custom filter")
-        result = chat_cmd._collect_batch(
-            console,
-            ["DB?", "Time?", "Filter?"],
-            [{"1": "MySQL", "2": "PG"}, {"1": "7d", "2": "30d"}, {}],
-        )
-        answers = json.loads(result)
-        assert len(answers) == 3
-        assert answers[0] == "MySQL"
-        assert answers[1] == "7d"
-        assert answers[2] == "custom filter"
-
-    @patch("datus.cli.chat_commands.select_choice", return_value="custom text")
-    def test_free_text_option_preserves_input(self, mock_select, real_agent_config, mock_llm_create):
-        """Free-text input via select_choice is preserved as-is."""
-        chat_cmd, console = self._make(real_agent_config)
-        result = chat_cmd._collect_batch(console, ["Q?"], [{"1": "A", "2": "B"}])
-        answers = json.loads(result)
-        assert answers[0] == "custom text"
-
-    @patch("datus.cli.chat_commands.select_choice", return_value="1")
-    def test_multi_question_shows_summary(self, mock_select, real_agent_config, mock_llm_create):
-        """Multi-question batch prints summary to console."""
-        chat_cmd, console = self._make(real_agent_config)
-        result = chat_cmd._collect_batch(
-            console,
-            ["Q1?", "Q2?"],
-            [{"1": "A", "2": "B"}, {"1": "C", "2": "D"}],
-        )
-        output = console.file.getvalue()
-        assert "Answers submitted" in output
-        answers = json.loads(result)
-        assert len(answers) == 2
-
-
 class TestMakeInputCollector:
-    """Test _make_input_collector and the returned collect() closure."""
+    """Test ``_make_input_collector`` delegating to ``InteractionApp``.
+
+    ``_collect_batch`` and module-level ``select_choice`` have been replaced
+    by the TUI-based ``InteractionApp``; the collector now reads the
+    structured ``events`` payload and returns ``List[List[str]]``.
+    """
 
     @staticmethod
     def _make(real_agent_config):
         console = Console(file=io.StringIO(), no_color=True)
         return _make_chat_commands(real_agent_config, console=console), console
+
+    @staticmethod
+    def _make_esc_guard():
+        esc_guard = MagicMock()
+        esc_guard.paused.return_value.__enter__ = MagicMock()
+        esc_guard.paused.return_value.__exit__ = MagicMock()
+        return esc_guard
 
     @staticmethod
     def _make_action(action_type, input_data):
@@ -3627,86 +3562,60 @@ class TestMakeInputCollector:
             input=input_data,
         )
 
-    def test_collect_routes_batch_to_collect_batch(self, real_agent_config, mock_llm_create):
-        """collect() routes multi-question contents to _collect_batch."""
+    def test_collect_without_events_returns_none(self, real_agent_config, mock_llm_create):
+        """Empty/missing ``events`` yields ``None`` (no UI to display)."""
         chat_cmd, console = self._make(real_agent_config)
-        chat_cmd.cli.prompt_input = MagicMock(return_value="ans1")
-        esc_guard = MagicMock()
-        esc_guard.paused.return_value.__enter__ = MagicMock()
-        esc_guard.paused.return_value.__exit__ = MagicMock()
-        collector = chat_cmd._make_input_collector(esc_guard)
+        collector = chat_cmd._make_input_collector(self._make_esc_guard())
+        action = self._make_action("request_choice", {})
+        assert collector(action, console) is None
+
+    def test_collect_single_event_returns_answers(self, real_agent_config, mock_llm_create):
+        """Collector returns ``answers`` from ``InteractionApp.run``."""
+        chat_cmd, console = self._make(real_agent_config)
+        collector = chat_cmd._make_input_collector(self._make_esc_guard())
+        action = self._make_action(
+            "request_choice",
+            {"events": [{"content": "Confirm?", "choices": {"y": "Yes", "n": "No"}}]},
+        )
+        expected = [["y"]]
+        fake_app = MagicMock()
+        fake_app.run.return_value = MagicMock(answers=expected)
+        with patch("datus.cli.interaction_app.InteractionApp", return_value=fake_app) as app_cls:
+            result = collector(action, console)
+        assert result == expected
+        app_cls.assert_called_once()
+
+    def test_collect_multi_event_returns_answers(self, real_agent_config, mock_llm_create):
+        """Collector handles multi-event batches via ``InteractionApp``."""
+        chat_cmd, console = self._make(real_agent_config)
+        collector = chat_cmd._make_input_collector(self._make_esc_guard())
         action = self._make_action(
             "request_batch",
             {
-                "contents": ["Q1?", "Q2?"],
-                "choices": [{}, {}],
-                "default_choices": ["", ""],
-                "allow_free_text": True,
+                "events": [
+                    {"content": "Q1?", "choices": {"a": "A", "b": "B"}},
+                    {"content": "Q2?", "choices": {}, "allow_free_text": True},
+                ]
             },
         )
-        result = collector(action, console)
-        answers = json.loads(result)
-        assert len(answers) == 2
+        expected = [["a"], ["typed"]]
+        fake_app = MagicMock()
+        fake_app.run.return_value = MagicMock(answers=expected)
+        with patch("datus.cli.interaction_app.InteractionApp", return_value=fake_app):
+            result = collector(action, console)
+        assert result == expected
 
-    @patch("datus.cli.chat_commands.select_choice", return_value="y")
-    def test_collect_routes_choice_to_single(self, mock_select, real_agent_config, mock_llm_create):
-        """collect() routes single-question contents to single choice."""
+    def test_collect_swallows_exceptions_and_returns_none(self, real_agent_config, mock_llm_create):
+        """Errors from ``InteractionApp`` are logged and surface as ``None``."""
         chat_cmd, console = self._make(real_agent_config)
-        esc_guard = MagicMock()
-        esc_guard.paused.return_value.__enter__ = MagicMock()
-        esc_guard.paused.return_value.__exit__ = MagicMock()
-        collector = chat_cmd._make_input_collector(esc_guard)
+        collector = chat_cmd._make_input_collector(self._make_esc_guard())
         action = self._make_action(
             "request_choice",
-            {
-                "contents": ["Confirm?"],
-                "choices": [{"y": "Yes", "n": "No"}],
-                "default_choices": ["y"],
-                "allow_free_text": False,
-            },
+            {"events": [{"content": "Pick?", "choices": {"a": "A"}}]},
         )
-        result = collector(action, console)
-        assert result == "y"
-
-    def test_collect_free_text_no_choices(self, real_agent_config, mock_llm_create):
-        """collect() with empty choices calls prompt_input for free text."""
-        chat_cmd, console = self._make(real_agent_config)
-        chat_cmd.cli.prompt_input = MagicMock(return_value="typed answer")
-        esc_guard = MagicMock()
-        esc_guard.paused.return_value.__enter__ = MagicMock()
-        esc_guard.paused.return_value.__exit__ = MagicMock()
-        collector = chat_cmd._make_input_collector(esc_guard)
-        action = self._make_action(
-            "request_choice",
-            {
-                "contents": ["Enter text"],
-                "choices": [{}],
-                "default_choices": [""],
-                "allow_free_text": True,
-            },
-        )
-        result = collector(action, console)
-        assert result == "typed answer"
-
-    @patch("datus.cli.chat_commands.select_choice", return_value="")
-    def test_collect_empty_free_text_returns_empty(self, mock_select, real_agent_config, mock_llm_create):
-        """collect() with allow_free_text and empty result returns empty string."""
-        chat_cmd, console = self._make(real_agent_config)
-        esc_guard = MagicMock()
-        esc_guard.paused.return_value.__enter__ = MagicMock()
-        esc_guard.paused.return_value.__exit__ = MagicMock()
-        collector = chat_cmd._make_input_collector(esc_guard)
-        action = self._make_action(
-            "request_choice",
-            {
-                "contents": ["Pick?"],
-                "choices": [{"a": "Option A"}],
-                "default_choices": ["a"],
-                "allow_free_text": True,
-            },
-        )
-        result = collector(action, console)
-        assert result == ""
+        with patch("datus.cli.interaction_app.InteractionApp", side_effect=RuntimeError("boom")):
+            result = collector(action, console)
+        assert result is None
 
     def test_collect_exception_returns_none_for_choice(self, real_agent_config, mock_llm_create):
         """collect() returns None on exception for request_choice."""

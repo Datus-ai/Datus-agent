@@ -235,6 +235,14 @@ class InteractionBroker:
         Returns:
             True if submission was successful, False otherwise.
         """
+        if not isinstance(answers, list) or not all(
+            isinstance(inner, list) and all(isinstance(v, str) for v in inner) for inner in answers
+        ):
+            logger.warning(
+                f"InteractionBroker: submit requires List[List[str]], got {type(answers).__name__}={answers!r}"
+            )
+            return False
+
         with self._lock:
             if action_id not in self._pending:
                 logger.warning(f"InteractionBroker: submit called with unknown action_id={action_id}")
