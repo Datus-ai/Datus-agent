@@ -66,6 +66,15 @@ _NORMAL_RULES = [
     _rule("filesystem_tools", "search_files", PermissionLevel.ALLOW),
     # plan read
     _rule("tools", "todo_read", PermissionLevel.ALLOW),
+    # ``ask_user`` IS the user-interaction channel — gating "may I ask
+    # the user?" behind a permission prompt is absurd. Always ALLOW.
+    _rule("tools", "ask_user", PermissionLevel.ALLOW),
+    # ``tools`` bucket is chat's catch-all for benign helpers (platform
+    # doc lookups, doc search, etc.). Read-only patterns follow the
+    # project-wide convention: ``list_*`` / ``search_*`` / ``get_*``.
+    _rule("tools", "list_*", PermissionLevel.ALLOW),
+    _rule("tools", "search_*", PermissionLevel.ALLOW),
+    _rule("tools", "get_*", PermissionLevel.ALLOW),
     # sub-agent delegation: ALLOW. The ``task()`` tool just spawns a
     # subagent; the tools the subagent actually invokes are gated by the
     # subagent's own PermissionHooks instance. Double-prompting here would

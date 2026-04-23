@@ -109,6 +109,8 @@ Datus-Agent 当前的统一权限系统（`datus/tools/permission/`）通过 `Pe
 | `scheduler_tools` | `delete_job` | **deny** | 命名 destructive |
 | `filesystem_tools` | `read_*` / `list_*` / `directory_tree` / `search_files` | allow | FS 只读 |
 | `tools` | `todo_read` | allow | Plan 只读 |
+| `tools` | `ask_user` | allow | `ask_user` 就是用户交互本身，挡它无意义 |
+| `tools` | `list_*` / `search_*` / `get_*` | allow | 非侵入的 helper 读（如 platform doc、nav）按约定放行 |
 | `sub_agent_tools` | `*` | **allow** | `task()` 委托本身放行；subagent 内部的实际工具由其自己的 PermissionHooks 把关 |
 | `mcp.*` | `*` | ask | 所有 MCP 弹框 |
 | `skills` | `*` | ask | 所有 skill 调用弹框 |

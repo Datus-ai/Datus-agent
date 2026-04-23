@@ -69,6 +69,25 @@ class TestNormalProfile:
         config = NORMAL
         assert _resolve(config, "sub_agent_tools", "task") == PermissionLevel.ALLOW
 
+    def test_ask_user_always_allowed(self):
+        """``ask_user`` is the user-interaction channel itself — must be ALLOW.
+
+        Asking the permission broker "may I ask the user?" is absurd UX
+        (it is the user, already present). Regression guard.
+        """
+        config = NORMAL
+        assert _resolve(config, "tools", "ask_user") == PermissionLevel.ALLOW
+
+    def test_tools_bucket_read_patterns_allowed(self):
+        """Benign read-only helpers in the ``tools`` catch-all follow the
+        ``list_*`` / ``search_*`` / ``get_*`` convention and should ALLOW."""
+        config = NORMAL
+        assert _resolve(config, "tools", "list_document_nav") == PermissionLevel.ALLOW
+        assert _resolve(config, "tools", "search_document") == PermissionLevel.ALLOW
+        assert _resolve(config, "tools", "get_anything") == PermissionLevel.ALLOW
+        # Writes still ASK via default.
+        assert _resolve(config, "tools", "todo_write") == PermissionLevel.ASK
+
 
 class TestAutoProfile:
     def test_inherits_normal_reads(self):
