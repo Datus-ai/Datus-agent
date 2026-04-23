@@ -1184,6 +1184,12 @@ class TestEndToEndNodeHooksInteraction:
 # ===========================================================================
 
 
+# These plan-mode tests have an outstanding hang in the broker simulator
+# — on the CI runner they time out even though local pytest-timeout
+# catches them within 20s. Park them under ``nightly`` until the hang
+# is root-caused; keeping them on every PR starves the coverage job's
+# 1800s budget with a single hanging test.
+@pytest.mark.nightly
 class TestEndToEndPlanModeHooksInteraction:
     """End-to-end tests: ChatAgenticNode(plan_mode=True) → LLM calls todo_write → PlanModeHooks →
     on_tool_end sets _plan_generated_pending → on_llm_end → _on_plan_generated → broker.request → submit.
