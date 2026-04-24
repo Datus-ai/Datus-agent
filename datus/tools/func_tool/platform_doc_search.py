@@ -37,13 +37,40 @@ class PlatformDocSearchTool:
         return ["list_document_nav", "get_document", "search_document", "web_search_document"]
 
     def available_tools(self) -> List[Tool]:
-        """Return all platform doc search tools for LLM function calling."""
-        return [
-            trans_to_function_tool(self.list_document_nav),
-            trans_to_function_tool(self.get_document),
-            trans_to_function_tool(self.search_document),
-            trans_to_function_tool(self.web_search_document),
-        ]
+        """Return platform doc search tools, filtered by backing resource availability.
+
+        - Doc search trio (``list_document_nav`` / ``get_document`` /
+          ``search_document``) is exposed only when at least one platform
+          has an indexed docstore directory under the active project.
+        - ``web_search_document`` is exposed only when a Tavily key is
+          resolvable from ``agent_config.tavily_api_key`` or the
+          ``TAVILY_API_KEY`` environment variable.
+        """
+        import os
+
+        from datus.storage.document.store import list_indexed_platforms
+
+        tools: List[Tool] = []
+
+        if list_indexed_platforms():
+            tools.append(trans_to_function_tool(self.list_document_nav))
+            tools.append(trans_to_function_tool(self.get_document))
+            tools.append(trans_to_function_tool(self.search_document))
+        else:
+            logger.info(
+                "Skipping list_document_nav / get_document / search_document: "
+                "no indexed docstore found for the active project."
+            )
+
+        tavily_key = getattr(self.agent_config, "tavily_api_key", None) or os.environ.get("TAVILY_API_KEY")
+        if tavily_key:
+            tools.append(trans_to_function_tool(self.web_search_document))
+        else:
+            logger.info(
+                "Skipping web_search_document: neither agent.document.tavily_api_key nor TAVILY_API_KEY env var is set."
+            )
+
+        return tools
 
     def list_document_nav(
         self,

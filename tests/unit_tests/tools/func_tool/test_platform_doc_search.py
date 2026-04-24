@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 """Unit tests for PlatformDocSearchTool - CI level, zero external dependencies."""
 
+import logging
 from unittest.mock import Mock, patch
 
 import pytest
@@ -11,6 +12,8 @@ from datus.tools.func_tool.platform_doc_search import PlatformDocSearchTool
 # Patch targets for locally-imported symbols inside platform_doc_search.py methods
 _SEARCH_TOOL_PATH = "datus.tools.search_tools.search_tool.SearchTool"
 _TAVILY_PATH = "datus.tools.search_tools.search_tool.search_by_tavily"
+_LIST_PLATFORMS_PATH = "datus.storage.document.store.list_indexed_platforms"
+_TRANS_PATH = "datus.tools.func_tool.platform_doc_search.trans_to_function_tool"
 
 
 @pytest.fixture
@@ -36,11 +39,89 @@ class TestAllToolsName:
 
 
 class TestAvailableTools:
-    def test_returns_four_tools(self, doc_search_tool):
-        with patch("datus.tools.func_tool.platform_doc_search.trans_to_function_tool") as mock_trans:
-            mock_trans.side_effect = lambda f: Mock(name=f.__name__)
-            tools = doc_search_tool.available_tools()
-        assert len(tools) == 4
+    """Availability filter matrix: trio gated by indexed platforms,
+    web_search_document gated by tavily key (config OR env)."""
+
+    @staticmethod
+    def _tool_names(tools):
+        return [t._name for t in tools]
+
+    @pytest.fixture
+    def _patch_trans(self):
+        with patch(_TRANS_PATH) as mock_trans:
+
+            def _fake(func):
+                mock = Mock()
+                mock._name = func.__name__
+                return mock
+
+            mock_trans.side_effect = _fake
+            yield mock_trans
+
+    def test_all_available(self, mock_agent_config, _patch_trans, monkeypatch):
+        mock_agent_config.tavily_api_key = "k"
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        tool = PlatformDocSearchTool(agent_config=mock_agent_config)
+
+        with patch(_LIST_PLATFORMS_PATH, return_value=["duckdb"]):
+            tools = tool.available_tools()
+
+        names = self._tool_names(tools)
+        assert names == [
+            "list_document_nav",
+            "get_document",
+            "search_document",
+            "web_search_document",
+        ]
+
+    def test_only_web_when_no_platforms(self, mock_agent_config, _patch_trans, monkeypatch, caplog):
+        mock_agent_config.tavily_api_key = "k"
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        tool = PlatformDocSearchTool(agent_config=mock_agent_config)
+
+        with caplog.at_level(logging.INFO, logger="datus.tools.func_tool.platform_doc_search"):
+            with patch(_LIST_PLATFORMS_PATH, return_value=[]):
+                tools = tool.available_tools()
+
+        assert self._tool_names(tools) == ["web_search_document"]
+        assert any("no indexed docstore" in rec.message for rec in caplog.records)
+        assert not any("web_search_document" in rec.message and "Skipping" in rec.message for rec in caplog.records)
+
+    def test_only_trio_when_no_tavily(self, mock_agent_config, _patch_trans, monkeypatch, caplog):
+        mock_agent_config.tavily_api_key = None
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        tool = PlatformDocSearchTool(agent_config=mock_agent_config)
+
+        with caplog.at_level(logging.INFO, logger="datus.tools.func_tool.platform_doc_search"):
+            with patch(_LIST_PLATFORMS_PATH, return_value=["duckdb"]):
+                tools = tool.available_tools()
+
+        assert self._tool_names(tools) == ["list_document_nav", "get_document", "search_document"]
+        assert any("Skipping web_search_document" in rec.message for rec in caplog.records)
+
+    def test_empty_when_nothing_available(self, mock_agent_config, _patch_trans, monkeypatch, caplog):
+        mock_agent_config.tavily_api_key = None
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        tool = PlatformDocSearchTool(agent_config=mock_agent_config)
+
+        with caplog.at_level(logging.INFO, logger="datus.tools.func_tool.platform_doc_search"):
+            with patch(_LIST_PLATFORMS_PATH, return_value=[]):
+                tools = tool.available_tools()
+
+        assert tools == []
+        messages = " | ".join(rec.message for rec in caplog.records)
+        assert "no indexed docstore" in messages
+        assert "Skipping web_search_document" in messages
+
+    def test_tavily_env_fallback(self, mock_agent_config, _patch_trans, monkeypatch):
+        mock_agent_config.tavily_api_key = None
+        monkeypatch.setenv("TAVILY_API_KEY", "envkey")
+        tool = PlatformDocSearchTool(agent_config=mock_agent_config)
+
+        with patch(_LIST_PLATFORMS_PATH, return_value=[]):
+            tools = tool.available_tools()
+
+        assert self._tool_names(tools) == ["web_search_document"]
 
 
 class TestListDocumentNav:

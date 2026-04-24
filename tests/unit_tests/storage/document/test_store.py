@@ -9,7 +9,12 @@ from unittest.mock import patch
 import pytest
 
 from datus.storage.document.schemas import PlatformDocChunk
-from datus.storage.document.store import DocumentStore, document_store, get_platform_doc_schema
+from datus.storage.document.store import (
+    DocumentStore,
+    document_store,
+    get_platform_doc_schema,
+    list_indexed_platforms,
+)
 from datus.storage.embedding_models import get_document_embedding_model
 from datus.utils.exceptions import DatusException
 
@@ -537,3 +542,50 @@ class TestDocumentStoreFactory:
         """Platform with SQL injection attempt should raise DatusException."""
         with pytest.raises(DatusException, match="Invalid platform name"):
             document_store("test; DROP TABLE")
+
+
+class TestListIndexedPlatforms:
+    """Filesystem-scan based enumeration used by PlatformDocSearchTool.available_tools."""
+
+    @staticmethod
+    def _patch_environment(project_name, data_dir):
+        path_manager = type("PM", (), {"project_name": project_name})()
+        return (
+            patch("datus.utils.path_manager.get_path_manager", return_value=path_manager),
+            patch("datus.storage.backend_holder._data_dir", data_dir),
+        )
+
+    def test_empty_when_no_project_name(self, tmp_path):
+        pm_patch, dir_patch = self._patch_environment("", str(tmp_path))
+        with pm_patch, dir_patch:
+            assert list_indexed_platforms() == []
+
+    def test_empty_when_data_dir_blank(self):
+        pm_patch, dir_patch = self._patch_environment("myproj", "")
+        with pm_patch, dir_patch:
+            assert list_indexed_platforms() == []
+
+    def test_empty_when_data_dir_missing(self, tmp_path):
+        missing = tmp_path / "does_not_exist"
+        pm_patch, dir_patch = self._patch_environment("myproj", str(missing))
+        with pm_patch, dir_patch:
+            assert list_indexed_platforms() == []
+
+    def test_returns_platforms_from_matching_dirs(self, tmp_path):
+        (tmp_path / "myproj__docstore__duckdb").mkdir()
+        (tmp_path / "myproj__docstore__snowflake").mkdir()
+        (tmp_path / "other_project__docstore__pg").mkdir()
+        (tmp_path / "myproj__something_else").mkdir()
+        (tmp_path / "myproj__docstore__").mkdir()
+
+        pm_patch, dir_patch = self._patch_environment("myproj", str(tmp_path))
+        with pm_patch, dir_patch:
+            platforms = list_indexed_platforms()
+
+        assert platforms == ["duckdb", "snowflake"]
+
+    def test_empty_when_no_matching_dirs(self, tmp_path):
+        (tmp_path / "unrelated_dir").mkdir()
+        pm_patch, dir_patch = self._patch_environment("myproj", str(tmp_path))
+        with pm_patch, dir_patch:
+            assert list_indexed_platforms() == []
