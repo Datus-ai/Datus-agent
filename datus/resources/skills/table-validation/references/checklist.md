@@ -1,24 +1,33 @@
-# Table Schema Contract Checklist
+# Table Column Contract Checklist
+
+This skill checks the **column contract** only. Object existence and row
+count are handled by the builtin validation layer before this skill runs —
+do not re-check them here.
 
 Run checks in this order, stopping on the first blocking failure:
 
-1. **Object exists** — `describe_table(target)` returns a non-empty column
-   list. If not, the DDL did not actually produce the table.
-2. **Expected columns present** — when the caller passed an expected column
+1. **Expected columns present** — when the caller passed an expected column
    set, every expected column appears in `describe_table` output.
-3. **No unexpected columns** — when the caller requires exact match, flag
+2. **No unexpected columns** — when the caller requires exact match, flag
    any column in `describe_table` output that's not in the contract.
-4. **Types match** — per expected column, declared type in `describe_table`
+3. **Types match** — per expected column, declared type in `describe_table`
    matches the contract. Widening is acceptable only when the contract
    explicitly allows it.
-5. **Nullability matches** — per expected column, `NOT NULL` / nullable in
+4. **Nullability matches** — per expected column, `NOT NULL` / nullable in
    `describe_table` matches the contract.
+
+If no expected column contract was supplied, there is nothing to check —
+emit an empty `checks` list and return.
 
 ## Not in scope
 
-These belong to **project-level validator skills**, not this bundled skill:
+Already covered by the builtin layer (do **not** duplicate):
 
-- Row counts (> 0, ranges, minimums)
+- Object existence (whether the table was created)
+- Row count > 0
+
+Belongs in **project-level validator skills**, not this bundled skill:
+
 - Null ratios per column
 - Numeric ranges / min-max
 - Accepted value sets / enum membership
@@ -42,4 +51,6 @@ For each check executed, report:
 - pass / fail decision
 - short reason on failure
 
-Set `severity: "blocking"` only for genuine schema contract violations.
+Set `severity: "blocking"` only for genuine column contract violations that
+break downstream consumers. Use `severity: "advisory"` for cosmetic or
+widening-safe mismatches.

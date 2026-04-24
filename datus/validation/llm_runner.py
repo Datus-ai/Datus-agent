@@ -55,7 +55,7 @@ VALIDATOR_READONLY_TOOL_NAMES = {
 }
 
 
-VALIDATOR_MAX_TURNS = 10
+VALIDATOR_MAX_TURNS = 20
 
 
 OUTPUT_CONTRACT_INSTRUCTIONS = """
@@ -72,7 +72,7 @@ is free-form and ignored.
     {
       "name": "<short check identifier>",
       "passed": true,
-      "severity": "blocking",
+      "severity": "advisory",
       "observed": {"key": "value"},
       "expected": {"key": "value"}
     }
@@ -81,7 +81,10 @@ is free-form and ignored.
 }
 ```
 
-- ``severity`` must be ``"blocking"`` or ``"advisory"``.
+- ``severity`` must be ``"blocking"`` or ``"advisory"``. Prefer ``"advisory"``
+  unless the violation genuinely breaks downstream consumers — the builtin
+  layer already blocks on object existence and row-count invariants, so
+  B-class findings default to advisory.
 - ``observed`` / ``expected`` are optional dicts of whatever info helps explain the result.
 - ``blocking_issues`` is a flat list of short strings naming any must-fix problems.
 - If you have no findings, still emit the block with ``"checks": []``.
@@ -95,6 +98,7 @@ async def run_llm_validator(
     model: Any,
     db_func_tool: Optional["DBFuncTool"],
     precheck_context: Optional[ValidationReport] = None,
+    parent_session: Optional[Any] = None,
 ) -> ValidationReport:
     """Execute a single validator skill as an isolated LLM sub-agent run.
 
@@ -109,6 +113,12 @@ async def run_llm_validator(
         precheck_context: Optional Layer A report that's already been computed
             on this target; passed into the prompt so B-class validator does
             not repeat cheap lookups.
+        parent_session: Optional parent-agent session. When provided, tool-call
+            and tool-result items are copied into an ephemeral in-memory
+            session for the validator so it can see what the parent already
+            ran (DDL text, describe_table results) without re-exploring. User
+            messages and plain assistant reasoning are filtered out to avoid
+            prompt injection and decision contamination.
 
     Returns:
         :class:`ValidationReport` tagged with ``source="skill:<name>"``.
@@ -134,6 +144,13 @@ async def run_llm_validator(
     # ── prompt ────────────────────────────────────────────────────────
     prompt = _build_prompt(target, precheck_context)
 
+    # ── ephemeral filtered session (optional) ─────────────────────────
+    # Fork parent's tool-event history into an in-memory session so the
+    # validator can see what was already done without re-exploring. User text
+    # and assistant reasoning are filtered out — validator stays independent
+    # and immune to prompt injection via user messages.
+    validator_session = await _build_validator_session(parent_session, skill.name)
+
     # ── execute ───────────────────────────────────────────────────────
     raw_output = ""
     try:
@@ -143,7 +160,7 @@ async def run_llm_validator(
             mcp_servers={},
             instruction=instructions,
             max_turns=VALIDATOR_MAX_TURNS,
-            session=None,
+            session=validator_session,
             action_history_manager=None,
             hooks=None,
             agent_name=f"validator:{skill.name}",
@@ -175,23 +192,54 @@ async def run_llm_validator(
         )
         return report
 
+    report.checks.extend(_parse_validator_checks(parsed, skill.name))
+    return report
+
+
+def _parse_validator_checks(parsed: dict, skill_name: str) -> List[CheckResult]:
+    """Convert a parsed validator output dict into :class:`CheckResult` list.
+
+    Handles two forms declared by ``OUTPUT_CONTRACT_INSTRUCTIONS``:
+
+    - ``checks: [...]`` — explicit per-check records with pass/fail & severity.
+    - ``blocking_issues: [str, ...]`` — a flat list of must-fix problems.
+
+    The second form is easy for a validator to emit (just a list of strings),
+    so treat each entry as a failed blocking check. Without this, a validator
+    that declares a run broken purely via ``blocking_issues`` would leave
+    ``has_blocking_failure()`` at False and the hook would silently let the
+    run through.
+    """
+    out: List[CheckResult] = []
     for raw_check in parsed.get("checks", []) or []:
         if not isinstance(raw_check, dict):
             continue
         passed = bool(raw_check.get("passed", False))
         severity_raw = raw_check.get("severity", "blocking")
         severity = severity_raw if severity_raw in ("blocking", "advisory") else "blocking"
-        report.checks.append(
+        out.append(
             CheckResult(
                 name=str(raw_check.get("name", "unnamed")),
                 passed=passed,
                 severity=severity,
-                source=f"skill:{skill.name}",
+                source=f"skill:{skill_name}",
                 observed=raw_check.get("observed") if isinstance(raw_check.get("observed"), dict) else None,
                 expected=raw_check.get("expected") if isinstance(raw_check.get("expected"), dict) else None,
             )
         )
-    return report
+    for idx, issue in enumerate(parsed.get("blocking_issues", []) or []):
+        if not isinstance(issue, str) or not issue.strip():
+            continue
+        out.append(
+            CheckResult(
+                name=f"blocking_issue_{idx + 1}",
+                passed=False,
+                severity="blocking",
+                source=f"skill:{skill_name}",
+                error=issue.strip(),
+            )
+        )
+    return out
 
 
 def _select_readonly_tools(db_func_tool: Optional["DBFuncTool"]) -> List[Any]:
@@ -217,6 +265,8 @@ def _build_prompt(target: DeliverableTarget, precheck: Optional[ValidationReport
     lines: List[str] = []
     if isinstance(target, TableTarget):
         lines.append("Validate the table written by the most recent tool call.")
+        if target.catalog:
+            lines.append(f"Catalog: {target.catalog}")
         lines.append(f"Database: {target.database}")
         if target.db_schema:
             lines.append(f"Schema: {target.db_schema}")
@@ -226,7 +276,8 @@ def _build_prompt(target: DeliverableTarget, precheck: Optional[ValidationReport
     elif isinstance(target, TransferTarget):
         lines.append("Validate the cross-database transfer that just completed.")
         lines.append(f"Source database: {target.source.name}")
-        lines.append(f"Target: {target.target.database}.{target.target.fqn}")
+        tgt_prefix = f"{target.target.catalog}." if target.target.catalog else ""
+        lines.append(f"Target: {tgt_prefix}{target.target.database}.{target.target.fqn}")
         if target.source_row_count is not None:
             lines.append(f"Source row count (tool-reported): {target.source_row_count}")
         if target.transferred_row_count is not None:
@@ -235,10 +286,12 @@ def _build_prompt(target: DeliverableTarget, precheck: Optional[ValidationReport
         lines.append(f"Validate the run's {len(target.targets)} deliverable(s):")
         for t in target.targets:
             if isinstance(t, TableTarget):
-                lines.append(f"- table {t.database}.{t.fqn} (rows_affected={t.rows_affected})")
+                prefix = f"{t.catalog}." if t.catalog else ""
+                lines.append(f"- table {prefix}{t.database}.{t.fqn} (rows_affected={t.rows_affected})")
             elif isinstance(t, TransferTarget):
+                prefix = f"{t.target.catalog}." if t.target.catalog else ""
                 lines.append(
-                    f"- transfer {t.source.name} -> {t.target.database}.{t.target.fqn} "
+                    f"- transfer {t.source.name} -> {prefix}{t.target.database}.{t.target.fqn} "
                     f"(src={t.source_row_count}, tgt={t.transferred_row_count})"
                 )
 
@@ -256,6 +309,73 @@ def _build_prompt(target: DeliverableTarget, precheck: Optional[ValidationReport
         "and emit the required JSON output block."
     )
     return "\n".join(lines)
+
+
+async def _build_validator_session(parent_session: Optional[Any], skill_name: str) -> Optional[Any]:
+    """Fork the parent's tool-event history into an ephemeral in-memory session.
+
+    Copies only items that represent factual tool activity (tool calls issued
+    by the parent, tool results, system instructions) and drops user messages
+    and plain assistant text. Returns ``None`` when ``parent_session`` is
+    ``None`` or filtering yields nothing — the caller passes ``None`` straight
+    through to the SDK, which falls back to cold-start.
+    """
+    if parent_session is None:
+        return None
+    try:
+        items = await parent_session.get_items()
+    except Exception as e:
+        logger.warning("Failed to read parent session for validator %s: %s", skill_name, e)
+        return None
+    filtered = _filter_tool_events(items)
+    if not filtered:
+        return None
+    try:
+        from datus.models.session_manager import AdvancedSQLiteSession
+    except Exception as e:
+        logger.warning("AdvancedSQLiteSession unavailable; skipping validator session fork: %s", e)
+        return None
+    import uuid as _uuid
+
+    ephemeral_id = f"validator-{skill_name}-{_uuid.uuid4().hex[:8]}"
+    try:
+        session = AdvancedSQLiteSession(session_id=ephemeral_id, db_path=":memory:", create_tables=True)
+        await session.add_items(filtered)
+    except Exception as e:
+        logger.warning("Failed to populate validator session for %s: %s", skill_name, e)
+        return None
+    logger.debug(
+        "validator %s session forked with %d tool events (dropped %d non-tool items)",
+        skill_name,
+        len(filtered),
+        len(items) - len(filtered),
+    )
+    return session
+
+
+def _filter_tool_events(items: List[Any]) -> List[Any]:
+    """Keep only tool-call assistant items and tool-result items.
+
+    - Drops ``role: user`` (prompt-injection risk via user text)
+    - Drops ``role: assistant`` messages without ``tool_calls`` (reasoning
+      text — contamination risk)
+    - Drops ``role: system`` (validator has its own ``instructions``)
+    - Keeps ``role: tool`` (tool-result payloads — these are facts)
+    - Keeps ``role: assistant`` WITH ``tool_calls`` but strips text ``content``
+      so only the tool-call signature remains
+    """
+    kept: List[Any] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        if role == "tool":
+            kept.append(item)
+        elif role == "assistant" and item.get("tool_calls"):
+            # Strip text reasoning; keep only the tool_calls signature
+            clean = {k: v for k, v in item.items() if k != "content"}
+            kept.append(clean)
+    return kept
 
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)

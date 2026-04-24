@@ -3778,3 +3778,58 @@ class TestSessionFilterByAgent:
         output = _get_console_output(console)
         assert "gen_metrics" in output
         assert cmds.current_node is None
+
+
+class TestRenderFinalResponseValidationReport:
+    """``_render_final_response`` must surface ``validation_report`` even when
+    the final action status is FAILED, otherwise users don't see why the retry
+    budget was exhausted (P2 regression guard)."""
+
+    def _make_action(self, status, output):
+        return ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="test",
+            messages="",
+            input_data={},
+            output_data=output,
+            status=status,
+        )
+
+    def test_renders_validation_report_on_failed_status(self, real_agent_config, mock_llm_create):
+        """FAILED action with a validation_report must still trigger the panel."""
+        cmds = _make_chat_commands(real_agent_config)
+        report_payload = {"target": None, "checks": [{"name": "x", "passed": False, "severity": "blocking"}]}
+        action = self._make_action(
+            ActionStatus.FAILED,
+            {"validation_report": report_payload, "response": "ignored on failed"},
+        )
+        with patch.object(cmds, "_display_validation_report") as disp:
+            cmds._render_final_response(action)
+            disp.assert_called_once_with(report_payload)
+
+    def test_skips_success_rendering_on_failed(self, real_agent_config, mock_llm_create):
+        """FAILED still short-circuits SQL / markdown rendering — only the
+        validation panel is shown."""
+        cmds = _make_chat_commands(real_agent_config)
+        action = self._make_action(
+            ActionStatus.FAILED,
+            {"validation_report": {"checks": []}, "response": "not shown"},
+        )
+        with patch.object(cmds, "_display_markdown_response") as md:
+            cmds._render_final_response(action)
+            md.assert_not_called()
+
+    def test_renders_both_on_success(self, real_agent_config, mock_llm_create):
+        """SUCCESS path: validation panel + downstream rendering both run."""
+        cmds = _make_chat_commands(real_agent_config)
+        action = self._make_action(
+            ActionStatus.SUCCESS,
+            {"validation_report": {"checks": []}, "response": "hello"},
+        )
+        with (
+            patch.object(cmds, "_display_validation_report") as disp,
+            patch.object(cmds, "_display_markdown_response") as md,
+        ):
+            cmds._render_final_response(action)
+            disp.assert_called_once()
+            md.assert_called_once()

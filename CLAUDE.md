@@ -12,7 +12,7 @@ Datus-Agent is an AI-powered data analysis agent: natural language → SQL, mult
 
 ```bash
 uv sync                                    # Install dependencies
-uv run pytest tests/unit_tests/ -q                # CI tests (zero external deps)
+uv run pytest tests/unit_tests/ -m "not nightly" -q                # CI tests (zero external deps)
 uv run pytest -m nightly tests/             # Nightly tests (needs API keys)
 uv run pytest -m "nightly or regression" tests/  # Full regression
 uv run ruff format . && uv run ruff check --fix .      # Lint & format
@@ -162,7 +162,7 @@ Examples:
 
 1. **Pre-format**: Run `uv run ruff format . && uv run ruff check --fix .` before staging and committing, to avoid pre-commit hook failures.
 2. **Coverage gate (two dimensions — both must pass)**:
-   - **Overall coverage**: `uv run pytest tests/unit_tests/ --cov=datus --cov-report=xml:coverage.xml --cov-fail-under=80`
+   - **Overall coverage**: `uv run pytest tests/unit_tests/ -m "not nightly" --cov=datus --cov-report=xml:coverage.xml --cov-fail-under=80`
    - **Diff coverage** (new/changed lines): `uv run diff-cover coverage.xml --compare-branch=upstream/main --fail-under=80`
    - If diff coverage < 80%, run `uv run diff-cover coverage.xml --compare-branch=upstream/main --show-uncovered` to see exactly which new lines need tests, then add tests for those lines specifically.
    - Do NOT commit until both pass.

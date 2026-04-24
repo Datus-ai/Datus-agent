@@ -2,8 +2,10 @@
 
 Run checks in this order against each `TransferTarget`. Replace
 `{src}`, `{tgt}`, `{col}`, and `{key}` with the concrete names from the
-target. Use `read_query(database=source)` / `read_query(database=target)` —
-every statement is a single read-only SELECT.
+target. Use `read_query(datasource=source)` / `read_query(datasource=target)`
+to pick the right connector — every statement is a single read-only SELECT.
+If the SQL needs to disambiguate a database or schema, qualify it inside
+the query itself (e.g. `FROM <db>.<schema>.<table>`).
 
 ## 1. Row count
 
@@ -16,7 +18,7 @@ query.
 For each column `{col}` returned by `describe_table`:
 
 ```sql
--- Run once on source, once on target with database=target
+-- Run once on source (datasource=source), once on target (datasource=target)
 SELECT
   SUM(CASE WHEN {col} IS NULL THEN 1 ELSE 0 END) AS null_count,
   COUNT(*) AS total,

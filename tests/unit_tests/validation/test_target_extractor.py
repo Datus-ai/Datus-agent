@@ -6,7 +6,26 @@
 
 from __future__ import annotations
 
+import pytest
+
+from datus.tools.db_tools import connector_registry
 from datus.validation.target_extractor import extract_ddl_target, extract_dml_target
+
+
+@pytest.fixture(autouse=True)
+def _register_test_capabilities():
+    """Register capability sets for dialects referenced by these tests.
+
+    The validation layer consults ``connector_registry.support_catalog`` to
+    decide whether a three-part identifier should populate ``catalog``.
+    Unit-test harnesses only load sqlite / duckdb connectors by default, so
+    we register bare capability records for the engines exercised here —
+    matching the pattern used in ``test_sql_utils.py`` and
+    ``test_dashboard_assembler.py``.
+    """
+    connector_registry.register_handlers("starrocks", capabilities={"catalog", "database"})
+    connector_registry.register_handlers("postgres", capabilities={"database", "schema"})
+    yield
 
 
 class TestExtractDDLTarget:
@@ -50,13 +69,62 @@ class TestExtractDDLTarget:
         assert t.db_schema == "My Schema"
         assert t.table == "My Table"
 
-    def test_three_part_identifier(self):
-        """``db.schema.table`` — the SQL-level db wins over the tool's default."""
+    def test_three_part_identifier_default_dialect(self):
+        """Empty dialect defaults to catalog-tier semantics (the safer bet —
+        misreading a StarRocks three-part identifier as db.schema.table made
+        validator flag real tables as missing). Leading component becomes
+        ``catalog``, middle becomes ``database``, ``db_schema`` stays None."""
         t = extract_ddl_target("CREATE TABLE mydb.myschema.mytable (x INT)", "default_db")
         assert t is not None
-        assert t.database == "mydb"
-        assert t.db_schema == "myschema"
+        assert t.catalog == "mydb"
+        assert t.database == "myschema"
+        assert t.db_schema is None
         assert t.table == "mytable"
+
+    def test_three_part_identifier_starrocks_has_catalog(self):
+        """On StarRocks ``default_catalog.ac_manage.stats`` is
+        ``catalog.database.table`` (no schema tier). The middle component
+        must land on ``database``, not on ``schema`` — otherwise builtin
+        ``describe_table`` would query the wrong namespace and report the
+        table as missing (reviewer P2-A)."""
+        t = extract_ddl_target(
+            "CREATE TABLE default_catalog.ac_manage.stats (id INT)",
+            "default_db",
+            dialect="starrocks",
+        )
+        assert t is not None
+        assert t.catalog == "default_catalog"
+        assert t.database == "ac_manage"
+        assert t.db_schema is None
+        assert t.table == "stats"
+
+    def test_three_part_identifier_postgres_no_catalog(self):
+        """On Postgres the three-part form is ``db.schema.table`` — the
+        leading component is the database, NOT a catalog. Catalog stays
+        unset so validator prompts don't render a spurious ``Catalog:``
+        line."""
+        t = extract_ddl_target(
+            "CREATE TABLE mydb.public.users (id INT)",
+            "default_db",
+            dialect="postgres",
+        )
+        assert t is not None
+        assert t.catalog is None
+        assert t.database == "mydb"
+        assert t.db_schema == "public"
+        assert t.table == "users"
+
+    def test_two_part_identifier_catalog_is_none(self):
+        """Two-part ``schema.table`` leaves catalog unset."""
+        t = extract_ddl_target("CREATE TABLE analytics.users (x INT)", "db1")
+        assert t is not None
+        assert t.catalog is None
+
+    def test_one_part_identifier_catalog_is_none(self):
+        """Bare table name leaves catalog unset."""
+        t = extract_ddl_target("CREATE TABLE users (x INT)", "db1")
+        assert t is not None
+        assert t.catalog is None
 
     def test_drop_table_returns_none(self):
         assert extract_ddl_target("DROP TABLE foo", "db1") is None

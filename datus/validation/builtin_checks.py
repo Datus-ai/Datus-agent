@@ -26,6 +26,7 @@ from datus.validation.report import (
     TableTarget,
     TransferTarget,
     ValidationReport,
+    describe_target,
 )
 
 if TYPE_CHECKING:
@@ -62,6 +63,11 @@ async def run_builtin_checks(
     elif isinstance(target, SessionTarget):
         for inner in target.targets:
             nested = await run_builtin_checks(inner, db_func_tool=db_func_tool)
+            inner_tag = describe_target(inner)
+            for check in nested.checks:
+                observed = dict(check.observed) if check.observed else {}
+                observed["_target"] = inner_tag
+                check.observed = observed
             report.checks.extend(nested.checks)
             report.warnings.extend(nested.warnings)
 
@@ -125,12 +131,19 @@ async def _check_transfer(
 
 
 def _run_describe_table(target: TableTarget, db_func_tool: "DBFuncTool") -> CheckResult:
-    """Check that the target table exists and has at least one column."""
+    """Check that the target table exists and has at least one column.
+
+    Route to the datasource the tool wrote through. ``target.datasource``
+    carries the connector key (e.g. "ch_prod"); without it a cross-datasource
+    write would be validated against the node's default connector and
+    misreport the table as missing. See ``report.TableTarget.datasource``.
+    """
     try:
         result = db_func_tool.describe_table(
             table_name=target.table,
             database=target.database,
             schema_name=target.db_schema or "",
+            datasource=target.datasource or "",
         )
     except Exception as e:
         return CheckResult(

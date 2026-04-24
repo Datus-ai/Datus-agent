@@ -89,7 +89,7 @@ def extract_ddl_target(sql: str, database: str, dialect: str = "") -> Optional[T
     if not isinstance(target_expr, expressions.Table):
         return None
 
-    return _table_to_target(target_expr, database)
+    return _table_to_target(target_expr, database, dialect=dialect)
 
 
 def extract_dml_target(sql: str, database: str, dialect: str = "") -> Optional[TableTarget]:
@@ -129,20 +129,91 @@ def extract_dml_target(sql: str, database: str, dialect: str = "") -> Optional[T
     if not isinstance(target_expr, expressions.Table):
         return None
 
-    return _table_to_target(target_expr, database)
+    return _table_to_target(target_expr, database, dialect=dialect)
 
 
-def _table_to_target(table_expr: expressions.Table, database: str) -> Optional[TableTarget]:
-    """Convert a sqlglot :class:`Table` expression into :class:`TableTarget`."""
+def _dialect_has_catalog(dialect: str) -> bool:
+    """Does this dialect have a ``catalog`` tier above ``database``?
+
+    Delegates to :meth:`ConnectorRegistry.support_catalog`, which is the
+    single source of truth — each adapter declares its capabilities
+    (``{"catalog", "database", "schema"}``) at registration. Engines like
+    StarRocks / BigQuery / Trino that address tables as
+    ``catalog.database.table`` register with ``"catalog"``; Postgres /
+    Snowflake / MySQL do not.
+
+    When the dialect is unknown to the registry (not yet registered, or
+    empty string) we fall back to ``True`` — conservative, preserves the
+    historical behaviour of populating ``catalog`` so downstream validators
+    still have a leading component to render. Production runs register every
+    shipped adapter at startup, so this fallback mainly fires for empty
+    dialect strings.
+    """
+    if not dialect:
+        return True
+    try:
+        from datus.tools.db_tools import connector_registry
+
+        return bool(connector_registry.support_catalog(dialect))
+    except Exception as e:
+        logger.debug("connector_registry.support_catalog(%s) failed: %s", dialect, e)
+        return True
+
+
+def _table_to_target(table_expr: expressions.Table, database: str, dialect: str = "") -> Optional[TableTarget]:
+    """Convert a sqlglot :class:`Table` expression into :class:`TableTarget`.
+
+    Three-part identifier semantics depend on the dialect:
+
+    - Dialects with a real catalog tier (StarRocks, BigQuery, Trino):
+      ``a.b.c`` = ``catalog.database.table``. Populate ``catalog`` so
+      validators can reconstruct the fully-qualified lookup.
+    - Dialects without a catalog tier (Postgres, Snowflake, MySQL, SQLite):
+      ``a.b.c`` = ``database.schema.table``. sqlglot's ``catalog`` slot
+      actually holds the database here, so we roll it into ``database`` and
+      leave ``TableTarget.catalog`` unset — otherwise the validator prompt
+      would render a spurious ``Catalog:`` line and mislead the LLM.
+    """
     name = _identifier_name(table_expr.args.get("this"))
     if not name:
         return None
     schema = _identifier_name(table_expr.args.get("db")) or None
-    # If the SQL qualified with a leading DB (e.g. ``db.schema.table``) we
-    # prefer the one in the SQL over the tool-level ``database`` parameter.
-    sql_db = _identifier_name(table_expr.args.get("catalog")) or None
-    effective_db = sql_db or database or ""
-    return TableTarget(database=effective_db, db_schema=schema, table=name)
+    sql_catalog_slot = _identifier_name(table_expr.args.get("catalog")) or None
+
+    # ``database`` arg is the ``effective_ds`` — the mutating tool passes its
+    # datasource key here. We keep it as the routing value and carry it on a
+    # dedicated ``datasource`` field so the validator connects to the same
+    # connector the tool wrote through; the legacy ``database`` field stays
+    # backward-compatible (and can be overridden by an explicit SQL-level DB
+    # below).
+    datasource = database or None
+    catalog: Optional[str] = None
+    effective_db = database or ""
+    effective_schema = schema
+    if sql_catalog_slot:
+        if _dialect_has_catalog(dialect):
+            # a.b.c = catalog.<namespace>.table on catalog-tier engines
+            # (StarRocks: catalog.database.table with no schema tier; Trino:
+            # catalog.schema.table; BigQuery: project.dataset.table). sqlglot
+            # fills slots left-to-right, so the middle component lives in the
+            # "db" slot. Promote it to ``database`` and drop ``schema`` — the
+            # target connector decides how to interpret "database" for its
+            # own hierarchy.
+            catalog = sql_catalog_slot
+            effective_db = schema or ""
+            effective_schema = None
+        else:
+            # a.b.c = db.schema.table on schema-tier engines (Postgres,
+            # MySQL, Snowflake). Leading component is the database; schema
+            # stays in its slot.
+            effective_db = sql_catalog_slot
+    return TableTarget(
+        catalog=catalog,
+        datasource=datasource,
+        database=effective_db,
+        db_schema=effective_schema,
+        table=name,
+    )
 
 
 def _identifier_name(expr: Optional[expressions.Expression]) -> str:

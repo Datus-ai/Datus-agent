@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any, List, Optional
 from agents.lifecycle import AgentHooks
 
 from datus.utils.loggings import get_logger
-from datus.validation.builtin_checks import run_builtin_checks, run_session_builtin_checks
+from datus.validation.builtin_checks import run_session_builtin_checks
 from datus.validation.exceptions import ValidationBlockingException
 from datus.validation.llm_runner import run_llm_validator
 from datus.validation.report import (
@@ -78,6 +78,12 @@ class ValidationHook(AgentHooks):
         # Per-run state — reset() must be called at run boundaries.
         self._session_targets: List[DeliverableTarget] = []
         self._final_report: Optional[ValidationReport] = None
+        # Parent agent's SDK session — supplied by the owning node via
+        # :meth:`set_parent_session` before each stream attempt so Layer B
+        # validators can fork tool-event history. ``None`` when the node
+        # runs session-less (e.g. workflow mode) — validators fall back to
+        # cold-start then.
+        self._parent_session: Optional[Any] = None
 
     # ── public API ─────────────────────────────────────────────────────
 
@@ -85,6 +91,15 @@ class ValidationHook(AgentHooks):
         """Clear per-run state. Call at ``execute_stream`` entry AND between retries."""
         self._session_targets = []
         self._final_report = None
+
+    def set_parent_session(self, session: Optional[Any]) -> None:
+        """Update the parent-agent session reference used for Layer B forks.
+
+        The node owns the session lifecycle; this is a weak reference for
+        read-only item extraction in :func:`run_llm_validator`. Set to
+        ``None`` when no session is active.
+        """
+        self._parent_session = session
 
     @property
     def final_report(self) -> Optional[ValidationReport]:
@@ -99,40 +114,26 @@ class ValidationHook(AgentHooks):
     # ── AgentHooks implementation ──────────────────────────────────────
 
     async def on_tool_end(self, context, agent, tool, result) -> None:
-        """Fires after every tool call. If the tool self-reported a
-        ``deliverable_target``, run Layer A + Layer B validation against it.
+        """Fires after every tool call. Appends the tool's self-reported
+        ``deliverable_target`` to the session. Layer A + default Layer B
+        validators run at ``on_end``; this method is the escape hatch for
+        validator skills that explicitly declare ``trigger: [on_tool_end]``.
         """
         target = self._extract_target(result)
         if target is None:
             return
         self._session_targets.append(target)
 
-        combined = ValidationReport(target=target, checks=[])
-
-        # Layer A — built-in invariants, always run.
-        try:
-            a_report = await run_builtin_checks(target, db_func_tool=self.db_func_tool)
-            combined.checks.extend(a_report.checks)
-            combined.warnings.extend(a_report.warnings)
-        except Exception as e:
-            logger.exception("Layer A builtin_checks raised — treating as runner error")
-            combined.add_warning({"type": "builtin_checks_error", "error": str(e)})
-
-        # Short-circuit: if Layer A already blocks, don't pay for Layer B.
-        if combined.has_blocking_failure():
-            raise ValidationBlockingException(combined)
-
-        # Layer B — LLM validator skills, gated by config.
         if self.skill_validators_enabled:
+            combined = ValidationReport(target=target, checks=[])
             await self._run_layer_b(
                 trigger="on_tool_end",
                 target=target,
                 combined=combined,
-                precheck_context=combined.model_copy(deep=True),
+                precheck_context=None,
             )
-
-        if combined.has_blocking_failure():
-            raise ValidationBlockingException(combined)
+            if combined.has_blocking_failure():
+                raise ValidationBlockingException(combined)
 
     async def on_end(self, context, agent, output) -> None:
         """Fires when the agent run completes. Runs Layer A + Layer B against
@@ -233,6 +234,7 @@ class ValidationHook(AgentHooks):
                     model=self.model,
                     db_func_tool=self.db_func_tool,
                     precheck_context=precheck_context,
+                    parent_session=self._parent_session,
                 )
             except Exception as e:
                 logger.exception("Validator skill '%s' raised unexpectedly", skill.name)

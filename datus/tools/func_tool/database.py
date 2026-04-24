@@ -1580,7 +1580,12 @@ class DBFuncTool:
 
         tgt = TransferTarget(
             source=DBRef(name=source_datasource),
-            target=TableTarget(database=target_datasource, db_schema=schema, table=table),
+            target=TableTarget(
+                datasource=target_datasource,
+                database=target_datasource,
+                db_schema=schema,
+                table=table,
+            ),
             source_row_count=source_row_count,
             transferred_row_count=transferred_row_count,
         )

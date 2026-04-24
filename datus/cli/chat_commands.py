@@ -614,12 +614,19 @@ class ChatCommands:
                 accumulated body to the scrollback — without this guard the
                 user sees the same answer twice.
         """
-        if (
-            not final_action
-            or not final_action.output
-            or not isinstance(final_action.output, dict)
-            or final_action.status != ActionStatus.SUCCESS
-        ):
+        if not final_action or not final_action.output or not isinstance(final_action.output, dict):
+            return
+
+        # Render the validation report regardless of success/failure. When the
+        # retry budget is exhausted the node emits status=FAILED with a
+        # ``validation_report`` payload — that's precisely when the user needs
+        # to see *why* things blocked, so this cannot live behind the SUCCESS
+        # guard below.
+        validation_report = final_action.output.get("validation_report")
+        if validation_report:
+            self._display_validation_report(validation_report)
+
+        if final_action.status != ActionStatus.SUCCESS:
             return
 
         sql = final_action.output.get("sql")
@@ -644,10 +651,6 @@ class ChatCommands:
         ext_knowledge_file = final_action.output.get("ext_knowledge_file")
         if ext_knowledge_file:
             self._display_ext_knowledge_file(ext_knowledge_file)
-
-        validation_report = final_action.output.get("validation_report")
-        if validation_report:
-            self._display_validation_report(validation_report)
 
         if clean_output and not skip_markdown_body:
             self._display_markdown_response(clean_output)

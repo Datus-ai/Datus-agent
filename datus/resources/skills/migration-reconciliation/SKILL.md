@@ -69,7 +69,10 @@ write tool is explicitly excluded.
 
 ## Critical rules
 
-- Always qualify `read_query` with `database=<source or target>`.
+- Always route `read_query` with `datasource=<source or target>` — that's
+  the parameter the tool exposes for picking a connector. If the SQL needs
+  to disambiguate a database or schema, qualify it inside the query itself
+  (e.g. `SELECT COUNT(*) FROM <db>.<schema>.<table>`).
 - Source database is read-only. Do **not** attempt any DDL or write.
 - Report every check even when some fail — the hook's retry logic needs to
   see the full picture.

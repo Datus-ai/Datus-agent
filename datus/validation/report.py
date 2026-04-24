@@ -32,7 +32,23 @@ class TableTarget(BaseModel):
     model_config = ConfigDict(protected_namespaces=(), populate_by_name=True)
 
     type: Literal["table"] = "table"
-    database: str = Field(..., description="Database / connector key")
+    catalog: Optional[str] = Field(
+        default=None,
+        description="Catalog name for three-part identifiers (e.g. StarRocks default_catalog); None when not applicable",
+    )
+    datasource: Optional[str] = Field(
+        default=None,
+        description=(
+            "Datasource key used to route validator queries to the right connector. "
+            "Distinct from ``database``: when the mutating tool writes to a non-default "
+            "datasource the validator must hit that same connector rather than falling "
+            "through to the parent node's default."
+        ),
+    )
+    database: str = Field(
+        ...,
+        description="Database identifier — historically the datasource key; may also be a physical DB for three-part DDL",
+    )
     db_schema: Optional[str] = Field(
         default=None,
         description="Schema name; may be None for flat-namespace engines",
@@ -46,7 +62,9 @@ class TableTarget(BaseModel):
 
     @property
     def fqn(self) -> str:
-        """Fully qualified name (schema.table or just table)."""
+        """Fully qualified name (schema.table or just table). Catalog is intentionally
+        excluded — consumers that care about catalog read it from ``self.catalog``.
+        """
         if self.db_schema:
             return f"{self.db_schema}.{self.table}"
         return self.table
@@ -286,3 +304,111 @@ def _filter_matches(flt: TargetFilter, target: Union[TableTarget, TransferTarget
         if not table_name or not fnmatch(table_name, flt.table_pattern):
             return False
     return True
+
+
+def describe_target(target: Union[TableTarget, TransferTarget, SessionTarget]) -> str:
+    """Human-readable descriptor used to tag checks and render retry prompts."""
+    if isinstance(target, TableTarget):
+        prefix = f"{target.catalog}." if target.catalog else ""
+        return f"table {prefix}{target.database}.{target.fqn}"
+    if isinstance(target, TransferTarget):
+        prefix = f"{target.target.catalog}." if target.target.catalog else ""
+        return f"transfer {target.source.name} -> {prefix}{target.target.database}.{target.target.fqn}"
+    if isinstance(target, SessionTarget):
+        return f"session[{len(target.targets)}]"
+    return repr(target)
+
+
+def build_retry_prompt(
+    final_report: ValidationReport,
+    session_targets: List[Union[TableTarget, TransferTarget]],
+) -> str:
+    """Render a structured retry message that separates already-committed
+    correct targets from the ones that need fixing.
+
+    The agent receives this as a user message on the next attempt. Session
+    history still carries its own tool-call record, so the agent can
+    cross-reference which CREATE/INSERT/transfer already ran.
+    """
+    # Group checks by their ``_target`` tag (set by builtin_checks during
+    # SessionTarget recursion). Skill-based checks may not carry the tag; they
+    # go under "session" and are appended whole.
+    target_checks: Dict[str, List[CheckResult]] = {}
+    untagged: List[CheckResult] = []
+    for c in final_report.checks:
+        tag = (c.observed or {}).get("_target") if c.observed else None
+        if isinstance(tag, str):
+            target_checks.setdefault(tag, []).append(c)
+        else:
+            untagged.append(c)
+
+    ok_targets: List[Union[TableTarget, TransferTarget]] = []
+    failed_targets: List[tuple] = []  # (target, checks)
+    for target in session_targets:
+        tag = describe_target(target)
+        checks = target_checks.get(tag, [])
+        has_blocking = any((not c.passed) and c.severity == "blocking" for c in checks)
+        if has_blocking:
+            failed_targets.append((target, checks))
+        else:
+            ok_targets.append(target)
+
+    lines: List[str] = [
+        "The run was blocked by on_end validation. Please fix and retry.",
+        "",
+    ]
+
+    if ok_targets:
+        lines.append("## Already written and correct — DO NOT recreate:")
+        for t in ok_targets:
+            lines.append(f"  - {describe_target(t)}")
+        lines.append("")
+
+    if failed_targets:
+        lines.append("## Failed targets — fix these:")
+        for t, checks in failed_targets:
+            lines.append(f"### {describe_target(t)}")
+            for c in checks:
+                if c.passed:
+                    continue
+                line = f"  - **{c.name}** ({c.severity}) failed"
+                if c.observed:
+                    filtered = {k: v for k, v in c.observed.items() if k != "_target"}
+                    if filtered:
+                        line += f" — observed: {filtered}"
+                if c.expected:
+                    line += f"; expected: {c.expected}"
+                if c.error:
+                    line += f"; error: {c.error}"
+                lines.append(line)
+            lines.append(
+                "  Repair hint: if the table already exists but has the wrong schema, use "
+                "ALTER TABLE or DROP + CREATE; if it doesn't exist yet, CREATE it. "
+                "For transfer row-count mismatches, re-check the source query "
+                "and either re-transfer the missing rows or rewrite the filter."
+            )
+            lines.append("")
+
+    if untagged:
+        lines.append("## Session-level findings:")
+        for c in untagged:
+            if c.passed:
+                continue
+            line = f"  - [{c.severity.upper()}] {c.name} (source: {c.source})"
+            if c.observed:
+                line += f" — observed: {c.observed}"
+            if c.error:
+                line += f"; error: {c.error}"
+            lines.append(line)
+        lines.append("")
+
+    if final_report.warnings:
+        lines.append("## Warnings:")
+        for w in final_report.warnings:
+            lines.append(f"  - {w}")
+        lines.append("")
+
+    lines.append("---")
+    lines.append("Full report:")
+    lines.append(final_report.to_markdown())
+    return "\n".join(lines)

@@ -28,6 +28,7 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import MessagePart, build_structured_content
 from datus.validation import ValidationBlockingException, ValidationHook
+from datus.validation.report import build_retry_prompt
 
 logger = get_logger(__name__)
 
@@ -270,6 +271,11 @@ class TableDeliverableAgenticNode(AgenticNode):
                 max_retries = 1
             if self._validation_hook is not None:
                 self._validation_hook.reset_session()
+                # Expose the parent session so Layer B validators can fork its
+                # tool-event history (drop user/assistant text, keep tool calls
+                # and results). See :func:`run_llm_validator`'s
+                # ``parent_session`` parameter.
+                self._validation_hook.set_parent_session(session)
 
             current_prompt = enhanced_message
             response_content = ""
@@ -279,6 +285,10 @@ class TableDeliverableAgenticNode(AgenticNode):
             last_validation_report: Optional[dict] = None
 
             for attempt in range(1, max_retries + 1):
+                # Reset per-attempt so only the final attempt's outcome sticks.
+                # Without this a blocked attempt 1 would poison a recovered
+                # attempt 2's NodeResult.success.
+                last_validation_report = None
                 try:
                     async for stream_action in self.model.generate_with_tools_stream(
                         prompt=current_prompt,
@@ -301,9 +311,38 @@ class TableDeliverableAgenticNode(AgenticNode):
                                     response_content = raw_output
                                 elif raw_output:
                                     response_content = raw_output
+
+                    # Stream ended normally. Drive retry from on_end's accumulated
+                    # report if it recorded a blocking failure — on_end records
+                    # to final_report instead of raising (raising there would
+                    # skip downstream hook chain for the completed run).
+                    hook = self._validation_hook
+                    if hook is not None and hook.final_report is not None and hook.final_report.has_blocking_failure():
+                        last_validation_report = hook.final_report.model_dump(by_alias=True, exclude_none=True)
+                        if attempt >= max_retries:
+                            logger.warning(
+                                "on_end validation blocked after %d attempts for %s: %s",
+                                attempt,
+                                self.get_node_name(),
+                                [c.name for c in hook.final_report.checks if not c.passed],
+                            )
+                            break
+                        current_prompt = build_retry_prompt(hook.final_report, list(hook.session_targets))
+                        hook.reset_session()
+                        logger.info(
+                            "on_end validation blocked attempt %d/%d for %s, retrying with failure context",
+                            attempt,
+                            max_retries,
+                            self.get_node_name(),
+                        )
+                        continue
+
                     completed = True
                     break
                 except ValidationBlockingException as exc:
+                    # Escape-hatch path: a skill declared trigger=[on_tool_end]
+                    # and raised mid-stream. Feed the report back so the agent
+                    # can fix and retry.
                     last_validation_report = exc.report.model_dump(by_alias=True, exclude_none=True)
                     if attempt >= max_retries:
                         logger.warning(
@@ -313,14 +352,11 @@ class TableDeliverableAgenticNode(AgenticNode):
                             [c.name for c in exc.report.checks if not c.passed],
                         )
                         break
-                    # Inject the failure report as the next user message and
-                    # reset session_targets so the retry starts fresh.
-                    if self._validation_hook is not None:
-                        self._validation_hook.reset_session()
-                    retry_msg = (
-                        "The last write was blocked by validation. Please fix and retry.\n\n" + exc.report.to_markdown()
-                    )
-                    current_prompt = retry_msg
+                    hook = self._validation_hook
+                    session_snapshot = list(hook.session_targets) if hook is not None else []
+                    current_prompt = build_retry_prompt(exc.report, session_snapshot)
+                    if hook is not None:
+                        hook.reset_session()
                     logger.info(
                         "Validation blocked attempt %d/%d for %s, retrying with failure context",
                         attempt,
