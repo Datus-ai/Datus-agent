@@ -37,8 +37,8 @@ All slash commands available in Datus-CLI, grouped by category.
 
 | Command | Description |
 |---------|-------------|
-| `/agent` | Select or inspect the default agent |
-| `/subagent` | Manage sub-agents (list/add/remove/update) |
+| `/agent` | Open the unified agent manager (built-in overrides / default). `/agent <name>` still sets the default directly. |
+| `/subagent` | Open the unified agent manager, seeded on the Custom tab |
 | `/datasource` | Switch the current datasource |
 
 ## System

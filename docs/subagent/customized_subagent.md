@@ -2,16 +2,14 @@
 
 ## Overview
 
-Use `/subagent` to manage custom subagents stored under `agent.agentic_nodes` in `agent.yml`.
+Both `/agent` and `/subagent` open the **unified agent management TUI**. The TUI has two tabs:
 
-The current CLI supports:
+- **Built-in** — list the system subagents from `SYS_SUB_AGENTS`. Press `Enter` on a row to set it as the current agent, or `e` to open a single-field form that overrides `max_turns` (persisted under `agent.agentic_nodes.<name>`). `model` is intentionally not editable here — use the global `/model` picker or edit `agent.yml` directly if you really need a per-node model override.
+- **Custom** — list user-defined subagents stored under `agent.agentic_nodes` in `agent.yml`. Press `Enter` on a row to set it as the current agent, `e` to edit it in the wizard, `a` to add a new one, or `d d` (twice) to delete.
 
-- `add`: create a custom subagent with the interactive wizard
-- `list`: list configured custom subagents
-- `update <agent_name>`: edit an existing custom subagent
-- `remove <agent_name>`: delete a custom subagent
+The legacy `/subagent add|list|remove|update` text subcommands have been removed — all operations now live inside the TUI.
 
-Built-in system subagents from `SYS_SUB_AGENTS` are reserved and cannot be removed or edited with `/subagent`.
+`/agent <name>` still works as a non-TUI shortcut to switch the default directly.
 
 ## What the Wizard Creates
 
@@ -56,58 +54,31 @@ When the wizard saves the config, it also records the current database as `scope
 
 Rules are stored as a string list under `rules` and appended to the final system prompt.
 
-## Command Reference
+## TUI Reference
 
-### `/subagent add`
+Open the manager with `/agent` (lands on the Built-in tab) or `/subagent` (lands on the Custom tab).
 
-Starts the interactive wizard and creates a new custom subagent.
+Keyboard shortcuts (agent list view):
 
-```bash
-/subagent add
-```
+| Key | Action |
+|-----|--------|
+| ↑ ↓ / PageUp / PageDown | Navigate |
+| `Tab` or ← → | Switch Built-in ↔ Custom |
+| `Enter` | Set the highlighted agent as the current agent (the Custom tab's trailing `+ Add agent…` row opens the wizard instead) |
+| `e` | Built-in: open the model / max_turns override form. Custom: open the wizard for the selected agent. |
+| `a` | (Custom tab) Start the wizard to create a new custom subagent |
+| `d` twice | (Custom tab) Delete the highlighted custom subagent (two presses to confirm) |
+| `Esc` / `Ctrl+C` | Cancel |
 
-![Add subagent](../assets/add_subagent.png)
+Built-in edit form:
 
-### `/subagent list`
+| Key | Action |
+|-----|--------|
+| Type integer | Edit `max_turns` directly in the input |
+| `Enter` / `Ctrl+S` | Save override |
+| `Esc` | Back to the agent list |
 
-Lists configured custom subagents.
-
-```bash
-/subagent list
-```
-
-The table currently shows:
-
-- `Name`
-- `Scoped Context`
-- `Scoped KB`
-- `Tools`
-- `MCPs`
-- `Rules`
-
-`Scoped KB` is a legacy display column and is usually `—` for new configurations.
-
-The list is filtered by the current database when a subagent has scoped context.
-
-![List subagent](../assets/list_subagents.png)
-
-### `/subagent update <agent_name>`
-
-Loads the existing config into the wizard and saves changes back to `agent.yml`.
-
-```bash
-/subagent update finance_report
-```
-
-![Update subagent](../assets/update_subagent.png)
-
-### `/subagent remove <agent_name>`
-
-Deletes the config entry and its generated prompt template.
-
-```bash
-/subagent remove finance_report
-```
+Overrides write only `max_turns` into `agent.agentic_nodes.<name>`; sibling keys such as `scoped_context`, `rules`, or `tools` (if present) are preserved, and any hand-edited `model` override stays intact. Clearing the input (empty `max_turns`) removes the override; if the node has no other override fields, its entry is dropped from the YAML entirely.
 
 ## Example Output
 

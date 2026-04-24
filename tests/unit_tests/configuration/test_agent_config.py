@@ -1105,3 +1105,87 @@ class TestProviderConfigurationDispatch:
         cfg.set_provider_catalog(catalog)
         active = cfg.active_model()
         assert active.reasoning_effort == "high"
+
+
+# ---------------------------------------------------------------------------
+# set_agentic_node_override
+# ---------------------------------------------------------------------------
+
+
+class TestSetAgenticNodeOverride:
+    """Exercises the override helper wired to the unified agent TUI.
+
+    Only the in-memory contract is asserted here (``persist=False``). The
+    on-disk path is exercised indirectly via ``_persist_agentic_node_override``
+    tests below.
+    """
+
+    def _make(self, tmp_path, **extra):
+        kwargs = dict(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "home"),
+            target="legacy",
+            models={"legacy": {"type": "openai", "api_key": "k", "model": "legacy-model"}},
+            project_root=str(tmp_path),
+            skip_init_dirs=True,
+        )
+        kwargs.update(extra)
+        return AgentConfig(**kwargs)
+
+    def test_write_both_fields_from_empty(self, tmp_path):
+        cfg = self._make(tmp_path)
+        cfg.set_agentic_node_override("gen_sql", model="legacy", max_turns=25, persist=False)
+        entry = cfg.agentic_nodes["gen_sql"]
+        assert entry["model"] == "legacy"
+        assert entry["max_turns"] == 25
+        # ``system_prompt`` is auto-filled so the YAML stays round-trippable.
+        assert entry["system_prompt"] == "gen_sql"
+
+    def test_clear_model_preserves_max_turns(self, tmp_path):
+        """Passing ``model=None`` clears only that key; max_turns stays
+        put unless it is also set to ``None``."""
+        cfg = self._make(
+            tmp_path,
+            agentic_nodes={"gen_sql": {"system_prompt": "gen_sql", "model": "legacy", "max_turns": 25}},
+        )
+        cfg.set_agentic_node_override("gen_sql", model=None, max_turns=42, persist=False)
+        entry = cfg.agentic_nodes["gen_sql"]
+        assert "model" not in entry
+        assert entry["max_turns"] == 42
+
+    def test_clear_max_turns_preserves_model(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            agentic_nodes={"gen_sql": {"system_prompt": "gen_sql", "model": "legacy", "max_turns": 25}},
+        )
+        cfg.set_agentic_node_override("gen_sql", model="legacy", max_turns=None, persist=False)
+        entry = cfg.agentic_nodes["gen_sql"]
+        assert entry["model"] == "legacy"
+        assert "max_turns" not in entry
+
+    def test_existing_sibling_keys_are_preserved(self, tmp_path):
+        """Overrides must never clobber user-authored fields under the
+        same node (``tools``, ``rules``, ``scoped_context``)."""
+        cfg = self._make(
+            tmp_path,
+            agentic_nodes={
+                "my_custom": {
+                    "system_prompt": "my_custom",
+                    "tools": "db_tools",
+                    "rules": ["r1"],
+                    "scoped_context": {"datasource": "ds1"},
+                }
+            },
+        )
+        cfg.set_agentic_node_override("my_custom", model="legacy", max_turns=15, persist=False)
+        entry = cfg.agentic_nodes["my_custom"]
+        assert entry["tools"] == "db_tools"
+        assert entry["rules"] == ["r1"]
+        assert entry["scoped_context"] == {"datasource": "ds1"}
+        assert entry["model"] == "legacy"
+        assert entry["max_turns"] == 15
+
+    def test_max_turns_coerced_to_int(self, tmp_path):
+        cfg = self._make(tmp_path)
+        cfg.set_agentic_node_override("gen_sql", model=None, max_turns="30", persist=False)  # type: ignore[arg-type]
+        assert cfg.agentic_nodes["gen_sql"]["max_turns"] == 30

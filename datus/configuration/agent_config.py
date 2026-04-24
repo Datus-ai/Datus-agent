@@ -1430,6 +1430,42 @@ class AgentConfig:
         if persist:
             _persist_provider_section(provider, entry)
 
+    def set_agentic_node_override(
+        self,
+        name: str,
+        *,
+        model: Optional[str] = None,
+        max_turns: Optional[int] = None,
+        persist: bool = True,
+    ) -> None:
+        """Write ``agent.agentic_nodes.<name>.{model,max_turns}`` overrides.
+
+        The in-memory ``self.agentic_nodes[name]`` entry is patched with
+        exactly the two fields exposed by the unified agent TUI. Passing
+        ``None`` for a field *clears* that specific key (the node falls
+        back to the global default); passing a value sets it. All other
+        keys under ``agentic_nodes.<name>`` (``tools``, ``rules``,
+        ``scoped_context``, ``system_prompt``, ...) are preserved.
+
+        The on-disk write targets the loaded ``agent.yml`` via
+        :class:`ConfigurationManager`, matching the ergonomics of
+        :meth:`set_provider_config`.
+        """
+        entry = dict(self.agentic_nodes.get(name) or {})
+        if not entry.get("system_prompt"):
+            entry["system_prompt"] = name
+        if model is None:
+            entry.pop("model", None)
+        else:
+            entry["model"] = model
+        if max_turns is None:
+            entry.pop("max_turns", None)
+        else:
+            entry["max_turns"] = int(max_turns)
+        self.agentic_nodes[name] = entry
+        if persist:
+            _persist_agentic_node_override(name, entry)
+
     def provider_available(self, provider: str) -> bool:
         """Return True when the provider has usable credentials available.
 
@@ -1735,6 +1771,37 @@ def _persist_provider_section(provider: str, entry: "ProviderConfig") -> None:
         cfg_mgr.update_item("providers", current, delete_old_key=False, save=True)
     except Exception as e:  # pragma: no cover - defensive
         logger.warning(f"Failed to persist provider config `{provider}`: {e}")
+
+
+def _persist_agentic_node_override(name: str, entry: Dict[str, Any]) -> None:
+    """Write a single ``agent.agentic_nodes.<name>`` entry back into agent.yml.
+
+    The merge strategy mirrors :func:`_persist_provider_section`: read the
+    current ``agentic_nodes`` map, splice in the fresh entry (preserving
+    sibling agents), and hand the whole map back to
+    :class:`ConfigurationManager`. When ``entry`` collapses to just the
+    auto-filled ``system_prompt`` (i.e. both overrides were cleared and no
+    other keys existed), the node row is dropped entirely so the YAML
+    stays uncluttered.
+    """
+    try:
+        from datus.configuration.agent_config_loader import configuration_manager
+
+        cfg_mgr = configuration_manager()
+        current = cfg_mgr.get("agentic_nodes", {}) or {}
+        if not isinstance(current, dict):
+            current = {}
+        sanitized = {k: v for k, v in entry.items() if v is not None}
+        # If only ``system_prompt`` is left (no actual overrides / user fields),
+        # treat as "no override" and remove the entry entirely.
+        meaningful = {k: v for k, v in sanitized.items() if k != "system_prompt"}
+        if not meaningful:
+            current.pop(name, None)
+        else:
+            current[name] = sanitized
+        cfg_mgr.update_item("agentic_nodes", current, delete_old_key=True, save=True)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.warning(f"Failed to persist agentic_node override `{name}`: {e}")
 
 
 def load_model_config(data: dict) -> ModelConfig:

@@ -247,7 +247,7 @@ With the new provider-level configuration, you only need to set credentials. All
 This section is used for:
 
 - built-in agentic nodes such as `chat`, `explore`, `gen_sql`, `gen_report`, `gen_dashboard`, and `scheduler`
-- custom subagents created with `/subagent`
+- custom subagents created with the unified agent TUI (`/agent` or `/subagent`)
 - advanced manual aliases that point a custom name at a built-in node class
 
 ### Common Fields
@@ -294,7 +294,7 @@ scoped_context:
   sqls: finance.revenue.region_rollup
 ```
 
-When writing YAML manually, set `datasource` explicitly. The `/subagent` wizard fills it from the current database automatically.
+When writing YAML manually, set `datasource` explicitly. The unified agent TUI's Custom-tab wizard fills it from the current database automatically.
 
 ### Example
 

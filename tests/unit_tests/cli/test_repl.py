@@ -920,38 +920,40 @@ class TestCmdAgent:
         output = cli.console.file.getvalue()
         assert "Unknown agent" in output
 
-    def test_cmd_agent_no_args_interactive(self, cli):
-        """'.agent' (no args) uses ListSelectorApp for interactive selection."""
-        from datus.cli.list_selector_app import ListSelection
+    def test_cmd_agent_no_args_opens_unified_tui(self, cli):
+        """'.agent' (no args) opens the unified :class:`AgentApp` seeded
+        on the Built-in tab. A ``set_default`` selection from the app
+        updates ``default_agent``."""
+        from datus.cli.agent_app import AgentSelection
 
         cli.available_subagents = {"chat", "gen_sql"}
         cli.default_agent = ""
-        mock_selection = ListSelection(key="gen_sql")
-        with patch("datus.cli.repl.ListSelectorApp") as mock_cls:
-            mock_cls.return_value.run.return_value = mock_selection
+        with patch("datus.cli.agent_app.AgentApp") as mock_cls:
+            mock_cls.return_value.run.return_value = AgentSelection(kind="set_default", name="gen_sql")
             cli._cmd_agent("")
         mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["seed_tab"] == "builtin"
         assert cli.default_agent == "gen_sql"
 
-    def test_cmd_agent_interactive_no_change(self, cli):
-        """Interactive selection of same agent prints 'unchanged'."""
-        from datus.cli.list_selector_app import ListSelection
+    def test_cmd_subagent_opens_unified_tui_on_custom_tab(self, cli):
+        """'.subagent' opens :class:`AgentApp` seeded on the Custom tab."""
+        from datus.cli.agent_app import AgentSelection
 
         cli.available_subagents = {"chat", "gen_sql"}
         cli.default_agent = ""
-        mock_selection = ListSelection(key="chat")
-        with patch("datus.cli.repl.ListSelectorApp") as mock_cls:
-            mock_cls.return_value.run.return_value = mock_selection
-            cli._cmd_agent("")
+        with patch("datus.cli.agent_app.AgentApp") as mock_cls:
+            mock_cls.return_value.run.return_value = AgentSelection(kind="set_default", name="chat")
+            cli._cmd_subagent("")
+        assert mock_cls.call_args.kwargs["seed_tab"] == "custom"
         assert cli.default_agent == ""
-        output = cli.console.file.getvalue()
-        assert "unchanged" in output
 
-    def test_cmd_agent_interactive_cancel(self, cli):
-        """Escape / Ctrl-C during interactive pick is a no-op."""
+    def test_cmd_agent_cancel_is_noop(self, cli):
+        """``None`` from :class:`AgentApp` (Esc / Ctrl+C) must not touch
+        ``default_agent`` — we rely on this when the user opens the app
+        just to tweak Built-in overrides without changing routing."""
         cli.available_subagents = {"chat", "gen_sql"}
         cli.default_agent = ""
-        with patch("datus.cli.repl.ListSelectorApp") as mock_cls:
+        with patch("datus.cli.agent_app.AgentApp") as mock_cls:
             mock_cls.return_value.run.return_value = None
             cli._cmd_agent("")
         assert cli.default_agent == ""

@@ -52,13 +52,11 @@ from datus.cli.cli_styles import PASTE_COLLAPSE_THRESHOLD, print_error, print_in
 from datus.cli.context_commands import ContextCommands
 from datus.cli.effort_commands import EffortCommands
 from datus.cli.language_commands import LanguageCommands
-from datus.cli.list_selector_app import ListItem, ListSelectorApp
 from datus.cli.metadata_commands import MetadataCommands
 from datus.cli.model_commands import ModelCommands
 from datus.cli.service_commands import ServiceCommands
 from datus.cli.slash_registry import GROUP_ORDER, GROUP_TITLES, iter_visible, lookup
 from datus.cli.status_bar import StatusBarProvider
-from datus.cli.sub_agent_commands import SubAgentCommands
 from datus.cli.tui import DatusApp, tui_enabled
 from datus.cli.tui.app import EXIT_SENTINEL
 from datus.cli.tui.live_display_state import LiveDisplayState
@@ -236,7 +234,6 @@ class DatusCLI:
         self.chat_commands = ChatCommands(self)
         self.context_commands = ContextCommands(self)
         self.metadata_commands = MetadataCommands(self)
-        self.sub_agent_commands = SubAgentCommands(self)
         self.bi_dashboard_commands = BiDashboardCommands(self)
         self.model_commands = ModelCommands(self)
         self.language_commands = LanguageCommands(self)
@@ -309,7 +306,7 @@ class DatusCLI:
             "subject": self.context_commands.cmd_subject,
             # agent
             "agent": self._cmd_agent,
-            "subagent": self.sub_agent_commands.cmd,
+            "subagent": self._cmd_subagent,
             "datasource": self.datasource_commands.cmd,
             "language": self.language_commands.cmd_language,
             # system
@@ -1086,45 +1083,201 @@ class DatusCLI:
         return visible
 
     def _cmd_agent(self, args: str):
-        """Set or show the default agent for message routing.
+        """Open the unified agent management TUI (Built-in tab seed).
 
-        No args  -> interactive selector (up/down + Enter)
-        <name>   -> set directly
+        ``/agent`` with no args lands on the Built-in tab so users can
+        tweak ``model`` / ``max_turns`` overrides for system subagents.
+        ``/agent <name>`` keeps the legacy direct-setter shortcut for
+        scripting — no TUI is launched.
         """
-        args = args.strip()
-        visible_subagents = self._visible_subagents_for_default()
-
-        if not args:
-            current_default = self.default_agent or "chat"
-            items = [
-                ListItem(key=name, primary=name, is_current=(name == current_default))
-                for name in sorted(visible_subagents)
-            ]
-            app = ListSelectorApp(title="Agent Selection", items=items)
-            tui_app = getattr(self, "tui_app", None)
-            if tui_app is not None:
-                with tui_app.suspend_input():
-                    selection = app.run()
-            else:
-                selection = app.run()
-            if selection is None:
-                self.console.print("[dim]Default agent unchanged.[/]")
-                return
-            if selection.key == current_default:
-                self.console.print(f"[dim]Default agent unchanged: {current_default}[/]")
-                return
-            args = selection.key
-
-        if args not in visible_subagents:
-            self.console.print(f"[red]Error:[/] Unknown agent '{args}'. Run '/agent' to see available agents.")
+        name = args.strip()
+        if name:
+            self._set_default_agent_by_name(name)
             return
+        self._open_agent_app(seed_tab="builtin")
 
-        if args == "chat":
+    def _cmd_subagent(self, args: str):
+        """Open the unified agent management TUI (Custom tab seed).
+
+        Any arguments are ignored: the legacy ``add|list|remove|update``
+        subcommands were removed and all operations now live inside the
+        TUI (``a`` to add, ``d`` to delete, ``Enter`` to edit, ``s`` to
+        set as default).
+        """
+        if args and args.strip():
+            self.console.print("[dim]/subagent no longer accepts subcommands — opening the unified agent TUI.[/]")
+        self._open_agent_app(seed_tab="custom")
+
+    def _set_default_agent_by_name(self, name: str) -> None:
+        visible = self._visible_subagents_for_default()
+        if name not in visible:
+            self.console.print(f"[red]Error:[/] Unknown agent '{name}'. Run '/agent' to see available agents.")
+            return
+        if name == "chat":
             self.default_agent = ""
             self.console.print("[green]Default agent reset to: chat[/]")
         else:
-            self.default_agent = args
-            self.console.print(f"[green]Default agent set to: {args}[/]")
+            self.default_agent = name
+            self.console.print(f"[green]Default agent set to: {name}[/]")
+
+    def _open_agent_app(self, *, seed_tab: str = "builtin") -> None:
+        """Drive the unified :class:`AgentApp` with the follow-up handlers.
+
+        The app itself only persists Built-in overrides internally. All
+        other outcomes (wizard launch, deletion, default switch) are
+        applied here so we never nest prompt_toolkit Applications.
+        """
+        from datus.cli.agent_app import AgentApp
+
+        current_seed = seed_tab
+        while True:
+            visible_custom = self._visible_subagents_for_default() - SYS_SUB_AGENTS - {"chat"}
+            app = AgentApp(
+                agent_config=self.agent_config,
+                console=self.console,
+                default_agent=self.default_agent,
+                visible_custom_agents=visible_custom,
+                seed_tab=current_seed,
+            )
+            tui_app = getattr(self, "tui_app", None)
+            if tui_app is not None:
+                with tui_app.suspend_input():
+                    sel = app.run()
+            else:
+                sel = app.run()
+            if sel is None:
+                return
+            if sel.kind == "set_default":
+                self._set_default_agent_by_name(sel.name or "chat")
+                return
+            if sel.kind == "edit_custom" and sel.name:
+                self._launch_sub_agent_wizard(existing=sel.name)
+            elif sel.kind == "new_custom":
+                self._launch_sub_agent_wizard(existing=None)
+            elif sel.kind == "delete_custom" and sel.name:
+                self._delete_custom_agent(sel.name)
+            current_seed = sel.return_to_tab or "custom"
+
+    def _launch_sub_agent_wizard(self, *, existing: Optional[str]) -> None:
+        """Run :class:`SubAgentWizard` and persist the result.
+
+        ``existing=None`` starts with an empty form; passing a name
+        pre-fills the wizard from the current configuration. System
+        subagents are never routed here — the unified TUI's Built-in tab
+        handles them — so no :data:`SYS_SUB_AGENTS` guard is needed.
+        """
+        from datus.cli.cli_styles import print_error, print_success, print_warning
+        from datus.cli.sub_agent_wizard import run_wizard
+        from datus.schemas.agent_models import SubAgentConfig
+        from datus.utils.sub_agent_manager import SubAgentManager
+
+        sub_agent_manager = SubAgentManager(
+            configuration_manager=self.configuration_manager,
+            datasource=self.agent_config.current_datasource,
+            agent_config=self.agent_config,
+        )
+
+        data: Optional[Dict[str, Any]] = None
+        original_name: Optional[str] = None
+        if existing:
+            data = sub_agent_manager.get_agent(existing)
+            if data is None:
+                print_error(self.console, f"Agent '{existing}' not found.")
+                return
+            original_name = existing
+
+        try:
+            result = run_wizard(self, data)
+        except Exception as exc:  # pragma: no cover - defensive
+            print_error(self.console, f"An error occurred while running the wizard: {exc}", prefix=False)
+            logger.error("Sub-agent wizard failed: %s", exc)
+            return
+
+        if result is None:
+            print_warning(self.console, f"Agent cancelled {'creation' if not data else 'modification'}.")
+            return
+
+        agent_name = result.system_prompt
+        if agent_name in SYS_SUB_AGENTS:
+            print_error(
+                self.console,
+                f"'{agent_name}' is reserved for built-in sub-agents and cannot be used.",
+            )
+            return
+
+        if original_name is None and isinstance(data, SubAgentConfig):
+            original_name = data.system_prompt
+        elif original_name is None and isinstance(data, dict):
+            original_name = data.get("system_prompt")
+
+        try:
+            save_result = sub_agent_manager.save_agent(result, previous_name=original_name)
+        except Exception as exc:
+            print_error(self.console, f"Failed to persist sub-agent: {exc}", prefix=False)
+            logger.error("Failed to persist sub-agent '%s': %s", agent_name, exc)
+            return
+
+        changed = save_result.get("changed", True)
+        if not changed:
+            print_warning(self.console, "No changes detected; skipping save.")
+            return
+
+        self._refresh_agent_config_after_subagent_change(sub_agent_manager)
+
+        config_path = save_result.get("config_path")
+        prompt_path = save_result.get("prompt_path")
+        if config_path:
+            self.console.print(f"- Updated configuration file: [cyan]{config_path}[/]")
+        if prompt_path:
+            self.console.print(f"- Created prompt template: [cyan]{prompt_path}[/]")
+        if save_result.get("kb_action") == "cleared":
+            print_warning(self.console, "- Cleared scoped knowledge base for previous configuration.")
+
+        print_success(
+            self.console,
+            f"Sub-agent {agent_name} {'created' if not data else 'modified'} successfully.",
+        )
+
+    def _delete_custom_agent(self, name: str) -> None:
+        from datus.cli.cli_styles import print_error, print_success
+        from datus.utils.sub_agent_manager import SubAgentManager
+
+        if name in SYS_SUB_AGENTS:
+            print_error(self.console, f"System sub-agent '{name}' cannot be removed.")
+            return
+        sub_agent_manager = SubAgentManager(
+            configuration_manager=self.configuration_manager,
+            datasource=self.agent_config.current_datasource,
+            agent_config=self.agent_config,
+        )
+        try:
+            removed = sub_agent_manager.remove_agent(name)
+        except Exception as exc:
+            print_error(self.console, f"Error removing agent: {exc}", prefix=False)
+            logger.error("Failed to remove agent '%s': %s", name, exc)
+            return
+        if not removed:
+            print_error(self.console, f"Agent '{name}' not found.")
+            return
+        print_success(self.console, f"- Removed agent '{name}' from configuration.")
+        self._refresh_agent_config_after_subagent_change(sub_agent_manager)
+
+    def _refresh_agent_config_after_subagent_change(self, sub_agent_manager) -> None:
+        """Mirror :meth:`SubAgentCommands._refresh_agent_config` from the
+        retired text-based command so in-memory state stays consistent
+        after wizard / delete flows."""
+        try:
+            if hasattr(self.agent_config, "agentic_nodes"):
+                self.agent_config.agentic_nodes = sub_agent_manager.list_agents()
+            if hasattr(self, "available_subagents"):
+                self.available_subagents = set(SYS_SUB_AGENTS)
+                self.available_subagents.add("chat")
+                if self.agent_config.agentic_nodes:
+                    self.available_subagents.update(
+                        name for name in self.agent_config.agentic_nodes.keys() if name != "chat"
+                    )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Failed to refresh in-memory agent config: %s", exc)
 
     def _run_profile_picker(self, current: str) -> Optional[str]:
         """Run the standalone ProfilePickerApp; return selection or None."""

@@ -72,8 +72,8 @@ SLASH_COMMANDS: tuple[SlashSpec, ...] = (
     SlashSpec("catalog", "Display database catalog explorer", "context"),
     SlashSpec("subject", "Display semantic models, metrics, and references", "context"),
     # agent
-    SlashSpec("agent", "Select or inspect the default agent", "agent"),
-    SlashSpec("subagent", "Manage sub-agents (list/add/remove/update)", "agent"),
+    SlashSpec("agent", "Open the unified agent manager (built-in overrides / default)", "agent"),
+    SlashSpec("subagent", "Open the unified agent manager (custom sub-agents)", "agent"),
     SlashSpec("datasource", "Manage datasources (list/add/edit/delete/switch)", "agent"),
     SlashSpec("language", "Set or show the response language for model outputs", "agent"),
     # system

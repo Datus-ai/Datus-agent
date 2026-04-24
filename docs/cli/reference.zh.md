@@ -37,8 +37,8 @@ Datus-CLI 中所有可用的斜杠命令，按类别分组。
 
 | 命令 | 说明 |
 |------|------|
-| `/agent` | 选择或查看默认 agent |
-| `/subagent` | 管理子 agent（列表/添加/删除/更新） |
+| `/agent` | 打开统一 agent 管理 TUI（Built-in 覆写 / 设为默认）。`/agent <name>` 仍可直接切换默认 agent |
+| `/subagent` | 打开统一 agent 管理 TUI（Custom Tab） |
 | `/datasource` | 切换当前数据源 |
 
 ## 系统

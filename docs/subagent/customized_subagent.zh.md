@@ -2,16 +2,14 @@
 
 ## 概览
 
-`/subagent` 用于管理保存在 `agent.yml` 的 `agent.agentic_nodes` 下的自定义 subagent。
+`/agent` 和 `/subagent` 都会打开**统一的 agent 管理 TUI**，内含两个 Tab：
 
-当前 CLI 支持：
+- **Built-in** — 列出 `SYS_SUB_AGENTS` 中的系统 subagent。任意行按 `Enter` 把该 agent 设为当前会话默认；按 `e` 打开单字段表单覆写 `max_turns`（落盘到 `agent.agentic_nodes.<name>`）。`model` 不在 UI 中暴露——模型选择由全局 `/model` 负责，如果确实需要按节点指定 model 请直接编辑 `agent.yml`。
+- **Custom** — 列出 `agent.yml` 的 `agent.agentic_nodes` 下自定义 subagent。`Enter` 设为当前 agent，`e` 打开向导修改，`a` 启动向导新建，`d d`（两次）删除。
 
-- `add`：通过交互式向导创建自定义 subagent
-- `list`：列出已配置的自定义 subagent
-- `update <agent_name>`：编辑已有自定义 subagent
-- `remove <agent_name>`：删除自定义 subagent
+原来的 `/subagent add|list|remove|update` 文本子命令已全部移除，所有操作都在 TUI 内完成。
 
-来自 `SYS_SUB_AGENTS` 的内置系统 subagent 是保留名称，不能通过 `/subagent` 删除或修改。
+`/agent <name>` 仍保留为不启动 TUI 的快捷路径，直接把默认 agent 切到 `<name>`。
 
 ## 向导会生成什么
 
@@ -56,58 +54,31 @@
 
 Rules 会以字符串列表形式保存在 `rules` 中，并追加到最终系统提示词里。
 
-## 命令说明
+## TUI 操作说明
 
-### `/subagent add`
+用 `/agent`（落在 Built-in Tab）或 `/subagent`（落在 Custom Tab）打开管理界面。
 
-启动交互式向导并创建新的自定义 subagent。
+列表视图快捷键：
 
-```bash
-/subagent add
-```
+| 按键 | 动作 |
+|------|------|
+| ↑ ↓ / PageUp / PageDown | 上下移动 |
+| `Tab` 或 ← → | 切换 Built-in ↔ Custom |
+| `Enter` | 将高亮行设为当前 agent（Custom Tab 尾部的 `+ Add agent…` 行则进入向导新建态） |
+| `e` | Built-in：打开 model / max_turns 覆写表单；Custom：对高亮项启动向导 |
+| `a` | （Custom）启动向导创建新的自定义 subagent |
+| 连按两次 `d` | （Custom）删除高亮行（第一次预警、第二次确认） |
+| `Esc` / `Ctrl+C` | 取消 |
 
-![Add subagent](../assets/add_subagent.png)
+Built-in 编辑表单快捷键：
 
-### `/subagent list`
+| 按键 | 动作 |
+|------|------|
+| 输入整数 | 直接在输入框编辑 `max_turns` |
+| `Enter` / `Ctrl+S` | 保存覆写 |
+| `Esc` | 返回 agent 列表 |
 
-列出已配置的自定义 subagent。
-
-```bash
-/subagent list
-```
-
-当前表格会显示：
-
-- `Name`
-- `Scoped Context`
-- `Scoped KB`
-- `Tools`
-- `MCPs`
-- `Rules`
-
-其中 `Scoped KB` 是遗留展示列，对新配置通常显示为 `—`。
-
-当 subagent 配置了 scoped context 时，列表会按当前数据库进行过滤。
-
-![List subagent](../assets/list_subagents.png)
-
-### `/subagent update <agent_name>`
-
-把现有配置加载到向导中，修改后再写回 `agent.yml`。
-
-```bash
-/subagent update finance_report
-```
-
-![Update subagent](../assets/update_subagent.png)
-
-### `/subagent remove <agent_name>`
-
-删除配置项以及对应生成的提示词模板。
-
-```bash
-/subagent remove finance_report
-```
+覆写只会把 `max_turns` 写入 `agent.agentic_nodes.<name>`，同一节点下的 `scoped_context`、`rules`、`tools` 以及 YAML 中手工写入的 `model` 覆写都会被保留。清空输入（留空 `max_turns`）会移除覆写；若该节点下没有其他字段，整个节点配置项也会从 YAML 中删除。
 
 ## 配置示例
 
