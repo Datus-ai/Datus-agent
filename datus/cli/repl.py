@@ -50,6 +50,7 @@ from datus.cli.bi_dashboard import BiDashboardCommands
 from datus.cli.chat_commands import ChatCommands
 from datus.cli.cli_styles import PASTE_COLLAPSE_THRESHOLD, print_error, print_info, print_success, print_warning
 from datus.cli.context_commands import ContextCommands
+from datus.cli.effort_commands import EffortCommands
 from datus.cli.language_commands import LanguageCommands
 from datus.cli.list_selector_app import ListItem, ListSelectorApp
 from datus.cli.metadata_commands import MetadataCommands
@@ -237,6 +238,7 @@ class DatusCLI:
         self.bi_dashboard_commands = BiDashboardCommands(self)
         self.model_commands = ModelCommands(self)
         self.language_commands = LanguageCommands(self)
+        self.effort_commands = EffortCommands(self)
         self.service_commands = ServiceCommands(self)
         from datus.cli.datasource_commands import DatasourceCommands
 
@@ -313,6 +315,7 @@ class DatusCLI:
             "skill": self._cmd_skill,
             "bootstrap-bi": self.bi_dashboard_commands.cmd,
             "model": self.model_commands.cmd_model,
+            "effort": self.effort_commands.cmd_effort,
             "services": self.service_commands.cmd_services,
             "profile": self._cmd_profile,
         }

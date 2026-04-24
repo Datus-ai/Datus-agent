@@ -12,7 +12,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from datus.models.litellm_adapter import LiteLLMAdapter, create_litellm_adapter
+from datus.models.litellm_adapter import (
+    LiteLLMAdapter,
+    create_litellm_adapter,
+    is_known_non_thinking_model,
+)
 
 
 class TestLiteLLMAdapterInit:
@@ -48,10 +52,54 @@ class TestLiteLLMAdapterInit:
     def test_thinking_disabled_by_default(self):
         adapter = LiteLLMAdapter(provider="openai", model="gpt-4o", api_key="key")
         assert adapter.is_thinking_model is False
+        assert adapter.reasoning_effort_level is None
 
     def test_thinking_enabled(self):
         adapter = LiteLLMAdapter(provider="openai", model="gpt-4o", api_key="key", enable_thinking=True)
         assert adapter.is_thinking_model is True
+        # Legacy bool defaults to "medium" when no explicit effort is set.
+        assert adapter.reasoning_effort_level == "medium"
+
+    @pytest.mark.parametrize("effort", ["minimal", "low", "medium", "high"])
+    def test_reasoning_effort_level_explicit(self, effort):
+        adapter = LiteLLMAdapter(
+            provider="openai",
+            model="gpt-4o",
+            api_key="key",
+            reasoning_effort=effort,
+        )
+        assert adapter.reasoning_effort_level == effort
+        assert adapter.is_thinking_model is True
+
+    def test_reasoning_effort_off_overrides_enable_thinking(self):
+        adapter = LiteLLMAdapter(
+            provider="openai",
+            model="gpt-4o",
+            api_key="key",
+            enable_thinking=True,
+            reasoning_effort="off",
+        )
+        assert adapter.reasoning_effort_level is None
+        assert adapter.is_thinking_model is False
+
+    def test_reasoning_effort_wins_over_enable_thinking(self):
+        adapter = LiteLLMAdapter(
+            provider="openai",
+            model="gpt-4o",
+            api_key="key",
+            enable_thinking=True,
+            reasoning_effort="high",
+        )
+        assert adapter.reasoning_effort_level == "high"
+
+    def test_reasoning_effort_normalizes_case(self):
+        adapter = LiteLLMAdapter(
+            provider="openai",
+            model="gpt-4o",
+            api_key="key",
+            reasoning_effort="HIGH",
+        )
+        assert adapter.reasoning_effort_level == "high"
 
 
 class TestLiteLLMAdapterModelName:
@@ -164,7 +212,8 @@ class TestGetAgentsSdkModel:
                     adapter.get_agents_sdk_model()
 
     def test_returns_litellm_model(self):
-        adapter = LiteLLMAdapter(provider="openai", model="gpt-4o", api_key="key")
+        # deepseek is not routed to the Responses API, so it still uses LitellmModel.
+        adapter = LiteLLMAdapter(provider="deepseek", model="deepseek-chat", api_key="key")
         mock_model = MagicMock()
         mock_litellm_model_cls = MagicMock(return_value=mock_model)
         mock_module = MagicMock()
@@ -414,6 +463,54 @@ class TestCreateLiteLLMAdapter:
         assert adapter.default_headers == headers
 
 
+class TestIsKnownNonThinkingModel:
+    """The deny-list is narrow by design: only models explicitly known NOT to
+    support thinking are listed; everything else is treated as supported so
+    new DeepSeek/Kimi releases don't require a config edit."""
+
+    @pytest.mark.parametrize(
+        "provider,model",
+        [
+            ("deepseek", "deepseek-chat"),
+            ("deepseek", "DeepSeek-Chat"),  # case-insensitive
+            ("kimi", "kimi-k2"),
+            ("kimi", "moonshot-v1-8k"),
+            ("kimi", "moonshot-v1-32k"),
+            ("kimi", "moonshot-v1-128k"),
+            ("kimi", "moonshot-v1-auto"),
+        ],
+    )
+    def test_deny_listed_models(self, provider, model):
+        assert is_known_non_thinking_model(provider, model) is True
+
+    @pytest.mark.parametrize(
+        "provider,model",
+        [
+            # DeepSeek thinking-capable
+            ("deepseek", "deepseek-reasoner"),
+            ("deepseek", "deepseek-v4"),
+            ("deepseek", "deepseek-v4-pro"),
+            ("deepseek", "deepseek-v5-future"),  # unknown future release
+            # Kimi thinking-capable (must NOT match bare kimi-k2)
+            ("kimi", "kimi-k2.5"),
+            ("kimi", "kimi-k2.6"),
+            ("kimi", "kimi-k2-thinking"),
+            ("kimi", "kimi-k3-future"),
+            # Other providers are never on the deny-list
+            ("openai", "gpt-4.1"),
+            ("claude", "claude-haiku-4-5"),
+            ("gemini", "gemini-2.5-flash"),
+        ],
+    )
+    def test_allow_listed_by_omission(self, provider, model):
+        assert is_known_non_thinking_model(provider, model) is False
+
+    def test_none_inputs_are_safe(self):
+        assert is_known_non_thinking_model(None, "anything") is False
+        assert is_known_non_thinking_model("deepseek", None) is False
+        assert is_known_non_thinking_model(None, None) is False
+
+
 class TestGetAgentsSdkModelRouting:
     def test_claude_returns_cache_control_subclass(self):
         from agents.extensions.models.litellm_model import LitellmModel
@@ -425,12 +522,58 @@ class TestGetAgentsSdkModelRouting:
         assert isinstance(model, CacheControlLitellmModel)
         assert isinstance(model, LitellmModel)
 
-    def test_openai_returns_plain_litellm_model(self):
+    def test_official_openai_returns_responses_model(self):
+        """Official OpenAI endpoint routes through /v1/responses so reasoning +
+        function tools coexist without chat/completions limitations."""
+        from agents.models.openai_responses import OpenAIResponsesModel
+
+        adapter = LiteLLMAdapter(provider="openai", model="gpt-5.4", api_key="sk-test")
+        model = adapter.get_agents_sdk_model()
+        assert isinstance(model, OpenAIResponsesModel)
+
+    def test_openai_with_api_openai_com_base_url_uses_responses(self):
+        from agents.models.openai_responses import OpenAIResponsesModel
+
+        adapter = LiteLLMAdapter(
+            provider="openai",
+            model="gpt-4o",
+            api_key="sk-test",
+            base_url="https://api.openai.com/v1",
+        )
+        model = adapter.get_agents_sdk_model()
+        assert isinstance(model, OpenAIResponsesModel)
+
+    def test_openai_compatible_custom_endpoint_keeps_litellm(self):
+        """vLLM / self-hosted OpenAI-compatible proxies should stay on the LiteLLM path."""
         from agents.extensions.models.litellm_model import LitellmModel
+        from agents.models.openai_responses import OpenAIResponsesModel
 
-        from datus.models.litellm_cache_control import CacheControlLitellmModel
-
-        adapter = LiteLLMAdapter(provider="openai", model="gpt-4o", api_key="sk-test")
+        adapter = LiteLLMAdapter(
+            provider="openai",
+            model="Qwen3.5-397B",
+            api_key="key",
+            base_url="http://192.168.1.100:8015/v1",
+        )
         model = adapter.get_agents_sdk_model()
         assert isinstance(model, LitellmModel)
-        assert not isinstance(model, CacheControlLitellmModel)
+        assert not isinstance(model, OpenAIResponsesModel)
+
+    def test_deepseek_still_uses_litellm(self):
+        from agents.extensions.models.litellm_model import LitellmModel
+        from agents.models.openai_responses import OpenAIResponsesModel
+
+        adapter = LiteLLMAdapter(provider="deepseek", model="deepseek-chat", api_key="sk-test")
+        model = adapter.get_agents_sdk_model()
+        assert isinstance(model, LitellmModel)
+        assert not isinstance(model, OpenAIResponsesModel)
+
+    def test_kimi_still_uses_litellm(self):
+        """Kimi/Moonshot relies on sdk_patches.py for reasoning_content echo-back,
+        which only applies on the LiteLLM path. It must not be routed to Responses."""
+        from agents.extensions.models.litellm_model import LitellmModel
+        from agents.models.openai_responses import OpenAIResponsesModel
+
+        adapter = LiteLLMAdapter(provider="kimi", model="kimi-k2.5", api_key="sk-test")
+        model = adapter.get_agents_sdk_model()
+        assert isinstance(model, LitellmModel)
+        assert not isinstance(model, OpenAIResponsesModel)

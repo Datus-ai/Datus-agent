@@ -79,6 +79,39 @@ class TestLoadProjectOverride:
         assert result.language == "zh"
         assert result.target is None
 
+    @pytest.mark.parametrize("value", ["off", "minimal", "low", "medium", "high"])
+    def test_parse_reasoning_effort_field(self, tmp_path, value):
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({"reasoning_effort": value}))
+        result = load_project_override(str(tmp_path))
+        assert result.reasoning_effort == value
+
+    def test_invalid_reasoning_effort_dropped_with_warning(self, tmp_path, caplog):
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({"reasoning_effort": "nuclear"}))
+        with caplog.at_level(logging.WARNING):
+            result = load_project_override(str(tmp_path))
+        assert result.reasoning_effort is None
+        warning_text = " ".join(r.message for r in caplog.records)
+        assert "nuclear" in warning_text
+
+    def test_reasoning_effort_case_insensitive(self, tmp_path):
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({"reasoning_effort": "HIGH"}))
+        result = load_project_override(str(tmp_path))
+        assert result.reasoning_effort == "high"
+
+    def test_non_string_reasoning_effort_dropped(self, tmp_path, caplog):
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({"reasoning_effort": 3}))
+        with caplog.at_level(logging.WARNING):
+            result = load_project_override(str(tmp_path))
+        assert result.reasoning_effort is None
+
     def test_unknown_keys_warn_and_drop(self, tmp_path, caplog):
         path = tmp_path / PROJECT_CONFIG_REL
         path.parent.mkdir(parents=True)
@@ -152,6 +185,19 @@ class TestSaveProjectOverride:
         loaded = yaml.safe_load(written.read_text())
         assert "language" not in loaded
 
+    def test_round_trip_with_reasoning_effort(self, tmp_path):
+        original = ProjectOverride(target="a", reasoning_effort="high")
+        save_project_override(original, cwd=str(tmp_path))
+        loaded = load_project_override(str(tmp_path))
+        assert loaded.reasoning_effort == "high"
+        assert loaded.target == "a"
+
+    def test_reasoning_effort_none_omitted_from_yaml(self, tmp_path):
+        override = ProjectOverride(target="x")
+        written = save_project_override(override, cwd=str(tmp_path))
+        loaded = yaml.safe_load(written.read_text())
+        assert "reasoning_effort" not in loaded
+
     def test_overwrites_existing(self, tmp_path):
         save_project_override(ProjectOverride(target="old"), cwd=str(tmp_path))
         save_project_override(ProjectOverride(target="new"), cwd=str(tmp_path))
@@ -161,7 +207,9 @@ class TestSaveProjectOverride:
 
 class TestAllowedKeys:
     def test_whitelist_contains_expected_keys(self):
-        assert ALLOWED_KEYS == frozenset({"target", "default_datasource", "project_name", "language"})
+        assert ALLOWED_KEYS == frozenset(
+            {"target", "default_datasource", "project_name", "language", "reasoning_effort"}
+        )
 
 
 class TestProjectOverrideDataclass:
@@ -175,6 +223,7 @@ class TestProjectOverrideDataclass:
             ("default_datasource", "y"),
             ("project_name", "z"),
             ("language", "zh"),
+            ("reasoning_effort", "high"),
         ],
     )
     def test_is_not_empty_when_any_set(self, field, value):

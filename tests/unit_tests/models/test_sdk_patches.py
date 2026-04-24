@@ -6,7 +6,7 @@
 Unit tests for datus/models/sdk_patches.py.
 
 Tests cover:
-- _is_kimi_model: detection of Kimi/Moonshot model names
+- _is_kimi_model / _is_deepseek_model / _needs_reasoning_injection: provider detection
 - _normalize_provider_data: dict and Pydantic-style object normalization
 - _preprocess_items_for_reasoning: model name normalization for reasoning
 - _ReasoningContentStreamWrapper: streaming reasoning_content capture
@@ -21,7 +21,9 @@ import copy
 import pytest
 
 from datus.models.sdk_patches import (
+    _is_deepseek_model,
     _is_kimi_model,
+    _needs_reasoning_injection,
     _normalize_provider_data,
     _postprocess_messages_for_reasoning,
     _preprocess_items_for_reasoning,
@@ -48,6 +50,42 @@ class TestIsKimiModel:
         assert _is_kimi_model("deepseek-chat") is False
         assert _is_kimi_model("claude-3") is False
         assert _is_kimi_model("") is False
+
+
+class TestIsDeepSeekModel:
+    """Tests for _is_deepseek_model detection."""
+
+    def test_deepseek_model_detected(self):
+        """DeepSeek model names are correctly detected across aliases and litellm prefixes."""
+        assert _is_deepseek_model("deepseek-chat") is True
+        assert _is_deepseek_model("deepseek-reasoner") is True
+        assert _is_deepseek_model("deepseek-v4") is True
+        assert _is_deepseek_model("deepseek/deepseek-v4") is True
+        assert _is_deepseek_model("DeepSeek-V4") is True
+
+    def test_non_deepseek_model_not_detected(self):
+        """Other providers and empty strings return False."""
+        assert _is_deepseek_model("kimi-k2.5") is False
+        assert _is_deepseek_model("gpt-4") is False
+        assert _is_deepseek_model("claude-sonnet-4-5") is False
+        assert _is_deepseek_model("") is False
+        assert _is_deepseek_model(None) is False  # type: ignore[arg-type]
+
+
+class TestNeedsReasoningInjection:
+    """Tests for _needs_reasoning_injection combined gate."""
+
+    def test_returns_true_for_kimi_and_deepseek(self):
+        assert _needs_reasoning_injection("kimi-k2.5") is True
+        assert _needs_reasoning_injection("moonshot-v1") is True
+        assert _needs_reasoning_injection("deepseek-v4") is True
+        assert _needs_reasoning_injection("deepseek/deepseek-reasoner") is True
+
+    def test_returns_false_for_other_providers(self):
+        assert _needs_reasoning_injection("gpt-4") is False
+        assert _needs_reasoning_injection("claude-sonnet-4-5") is False
+        assert _needs_reasoning_injection("") is False
+        assert _needs_reasoning_injection(None) is False  # type: ignore[arg-type]
 
 
 class TestNormalizeProviderData:
@@ -349,6 +387,62 @@ class TestPostprocessMessagesForReasoning:
 
         _reasoning_content_cache.clear()
 
+    def test_deepseek_injects_reasoning_content_from_cache(self):
+        """DeepSeek model uses cached reasoning_content as fallback for tool_calls messages."""
+        _reasoning_content_cache.clear()
+        _reasoning_content_cache["deepseek/deepseek-v4"] = "cached deepseek thinking"
+
+        messages = [
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "1"}]},
+            {"role": "tool", "content": "result"},
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "2"}]},
+        ]
+        result = _postprocess_messages_for_reasoning(messages, "deepseek/deepseek-v4")
+        assert result[0]["reasoning_content"] == "cached deepseek thinking"
+        assert result[2]["reasoning_content"] == "cached deepseek thinking"
+        # content=None must be normalized to "" so the provider accepts tool_calls-only messages
+        assert result[0]["content"] == ""
+        assert result[2]["content"] == ""
+
+        _reasoning_content_cache.clear()
+
+    def test_deepseek_does_not_inject_empty_placeholder(self):
+        """DeepSeek must NOT get an empty reasoning_content placeholder when no source exists.
+
+        DeepSeek's API rejects empty reasoning_content in thinking mode with the same error
+        we're trying to fix; Kimi tolerates it. Only Kimi gets the "" fallback.
+        """
+        _reasoning_content_cache.clear()
+
+        messages = [
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "1"}]},
+        ]
+        result = _postprocess_messages_for_reasoning(messages, "deepseek-v4")
+        # Key should NOT be present (leave the message alone)
+        assert "reasoning_content" not in result[0]
+
+        _reasoning_content_cache.clear()
+
+    def test_deepseek_reuses_existing_reasoning_content_in_messages(self):
+        """Existing non-empty reasoning_content in messages is propagated to later tool_calls msgs."""
+        _reasoning_content_cache.clear()
+
+        messages = [
+            {
+                "role": "assistant",
+                "content": None,
+                "reasoning_content": "first turn thinking",
+                "tool_calls": [{"id": "1"}],
+            },
+            {"role": "tool", "content": "result"},
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "2"}]},
+        ]
+        result = _postprocess_messages_for_reasoning(messages, "deepseek-reasoner")
+        assert result[0]["reasoning_content"] == "first turn thinking"
+        assert result[2]["reasoning_content"] == "first turn thinking"
+
+        _reasoning_content_cache.clear()
+
 
 class TestApplyAndRemoveSdkPatches:
     """Tests for apply_sdk_patches and remove_sdk_patches lifecycle."""
@@ -476,6 +570,53 @@ class TestPatchedCompletionSync:
             litellm.completion = original_real
             _reasoning_content_cache.clear()
 
+    def test_patched_completion_caches_deepseek_reasoning_content(self):
+        """Patched litellm.completion caches reasoning_content for DeepSeek models."""
+        import litellm
+
+        remove_sdk_patches()
+        _reasoning_content_cache.clear()
+
+        fake_response = self._make_fake_response(content="Real answer", reasoning_content="DeepSeek thinking...")
+        original_real = litellm.completion
+        litellm.completion = lambda *args, **kwargs: fake_response
+
+        try:
+            apply_sdk_patches()
+            litellm.completion(model="deepseek/deepseek-v4", messages=[{"role": "user", "content": "hi"}])
+
+            assert "deepseek/deepseek-v4" in _reasoning_content_cache
+            assert _reasoning_content_cache["deepseek/deepseek-v4"] == "DeepSeek thinking..."
+            # DeepSeek: content must NOT be overwritten even if it were empty — the API returns real content
+            assert fake_response.choices[0].message.content == "Real answer"
+        finally:
+            remove_sdk_patches()
+            litellm.completion = original_real
+            _reasoning_content_cache.clear()
+
+    def test_patched_completion_deepseek_does_not_overwrite_empty_content(self):
+        """For DeepSeek, even when response.content is empty, we do NOT inject reasoning_content into it."""
+        import litellm
+
+        remove_sdk_patches()
+        _reasoning_content_cache.clear()
+
+        fake_response = self._make_fake_response(content="", reasoning_content="DeepSeek thinking...")
+        original_real = litellm.completion
+        litellm.completion = lambda *args, **kwargs: fake_response
+
+        try:
+            apply_sdk_patches()
+            litellm.completion(model="deepseek-reasoner", messages=[{"role": "user", "content": "hi"}])
+
+            assert _reasoning_content_cache["deepseek-reasoner"] == "DeepSeek thinking..."
+            # DeepSeek path must preserve the empty content — only Kimi rewrites it
+            assert fake_response.choices[0].message.content == ""
+        finally:
+            remove_sdk_patches()
+            litellm.completion = original_real
+            _reasoning_content_cache.clear()
+
     def test_patched_completion_handles_exception_in_caching_logs_debug(self):
         """Patched litellm.completion logs debug message when caching fails."""
         import litellm
@@ -513,7 +654,81 @@ class TestPatchedCompletionSync:
 
 
 class TestPatchedAcompletionAsync:
-    """Tests for the async litellm.acompletion patch (Kimi reasoning_content)."""
+    """Tests for the async litellm.acompletion patch (Kimi + DeepSeek reasoning_content)."""
+
+    def _make_fake_response(self, content="", reasoning_content=None):
+        class FakeMessage:
+            pass
+
+        msg = FakeMessage()
+        msg.content = content
+        if reasoning_content is not None:
+            msg.reasoning_content = reasoning_content
+
+        class FakeChoice:
+            pass
+
+        choice = FakeChoice()
+        choice.message = msg
+
+        class FakeResponse:
+            pass
+
+        resp = FakeResponse()
+        resp.choices = [choice]
+        return resp
+
+    @pytest.mark.asyncio
+    async def test_patched_acompletion_caches_deepseek_reasoning_content(self):
+        """Patched async litellm.acompletion caches reasoning_content for DeepSeek models."""
+        import litellm
+
+        remove_sdk_patches()
+        _reasoning_content_cache.clear()
+
+        fake_response = self._make_fake_response(content="Answer", reasoning_content="DeepSeek thought")
+        original_real = litellm.acompletion
+
+        async def fake_acompletion(*args, **kwargs):
+            return fake_response
+
+        litellm.acompletion = fake_acompletion
+
+        try:
+            apply_sdk_patches()
+            result = await litellm.acompletion(model="deepseek-v4", messages=[{"role": "user", "content": "hi"}])
+
+            assert result is fake_response
+            assert _reasoning_content_cache["deepseek-v4"] == "DeepSeek thought"
+        finally:
+            remove_sdk_patches()
+            litellm.acompletion = original_real
+            _reasoning_content_cache.clear()
+
+    @pytest.mark.asyncio
+    async def test_patched_acompletion_non_thinking_provider_skips_caching(self):
+        """Async patch must skip caching for providers outside the thinking-injection set."""
+        import litellm
+
+        remove_sdk_patches()
+        _reasoning_content_cache.clear()
+
+        fake_response = self._make_fake_response(content="Answer", reasoning_content="Something")
+        original_real = litellm.acompletion
+
+        async def fake_acompletion(*args, **kwargs):
+            return fake_response
+
+        litellm.acompletion = fake_acompletion
+
+        try:
+            apply_sdk_patches()
+            await litellm.acompletion(model="gpt-4", messages=[{"role": "user", "content": "hi"}])
+            assert "gpt-4" not in _reasoning_content_cache
+        finally:
+            remove_sdk_patches()
+            litellm.acompletion = original_real
+            _reasoning_content_cache.clear()
 
     @pytest.mark.asyncio
     async def test_patched_acompletion_handles_exception_in_caching(self):

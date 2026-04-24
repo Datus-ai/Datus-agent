@@ -24,6 +24,56 @@ logger = get_logger(__name__)
 # Note: SDK patches are applied in datus/models/__init__.py to ensure
 # they are applied before any agents SDK usage
 
+# Datus-maintained DENY-list of DeepSeek/Moonshot models that are known NOT to
+# support thinking/reasoning. Everything else in these two providers defaults
+# to "supports reasoning" so that future releases (DeepSeek V5, Kimi K3, …)
+# receive ``reasoning_effort`` and the native ``thinking`` switch without
+# waiting for a config edit.
+#
+# Why a deny-list (not allow-list):
+# - Every new LLM release in 2025+ ships thinking; the exceptions are legacy
+#   lines that the vendor explicitly keeps non-reasoning (DeepSeek-Chat,
+#   Moonshot-v1 classic, the bare ``kimi-k2`` non-thinking fork).
+# - LiteLLM's built-in capability table lags behind Chinese providers, so
+#   ``litellm.supports_reasoning`` returns False for many thinking models.
+#   Defaulting to "supported" compensates for that drift.
+#
+# Sources (verified 2026-04):
+# - DeepSeek: https://api-docs.deepseek.com/zh-cn/guides/thinking_mode
+# - Moonshot/Kimi: https://platform.kimi.com/docs/api/models-overview
+#
+# Matching rules:
+# - Entries ending in ``*`` are prefix-matched (``moonshot-v1*`` covers
+#   ``moonshot-v1-8k``, ``moonshot-v1-32k``, ``moonshot-v1-128k``, ...).
+# - Plain entries are compared by exact equality so ``kimi-k2`` does NOT
+#   accidentally match ``kimi-k2.5``, ``kimi-k2.6``, or ``kimi-k2-thinking``.
+NON_THINKING_MODEL_RULES: Dict[str, tuple[str, ...]] = {
+    "deepseek": ("deepseek-chat",),
+    "kimi": ("moonshot-v1*", "kimi-k2"),
+}
+
+
+def is_known_non_thinking_model(provider: Optional[str], model_name: Optional[str]) -> bool:
+    """Return True only when the (provider, model) is on the deny-list.
+
+    Unknown models — including every entry outside DeepSeek and Kimi, and every
+    new release not explicitly listed — return False, which lets the caller
+    treat them as thinking-capable.
+    """
+    if not provider or not model_name:
+        return False
+    rules = NON_THINKING_MODEL_RULES.get(provider.lower())
+    if not rules:
+        return False
+    name = model_name.lower()
+    for rule in rules:
+        if rule.endswith("*"):
+            if name.startswith(rule[:-1].lower()):
+                return True
+        elif name == rule.lower():
+            return True
+    return False
+
 
 class LiteLLMAdapter:
     """
@@ -109,6 +159,7 @@ class LiteLLMAdapter:
         api_key: str,
         base_url: Optional[str] = None,
         enable_thinking: bool = False,
+        reasoning_effort: Optional[str] = None,
         default_headers: Optional[Dict[str, str]] = None,
     ):
         """
@@ -119,7 +170,9 @@ class LiteLLMAdapter:
             model: The model name (e.g., gpt-4o, claude-sonnet-4, kimi-k2.5)
             api_key: API key for the provider
             base_url: Optional custom base URL (overrides default)
-            enable_thinking: Whether to enable thinking/reasoning mode (default: False)
+            enable_thinking: Legacy bool switch; True is equivalent to reasoning_effort="medium".
+            reasoning_effort: One of off|minimal|low|medium|high. Takes precedence
+                over ``enable_thinking`` when set; ``None`` defers to the bool.
             default_headers: Optional custom HTTP headers (e.g., User-Agent for Coding Plan endpoints)
         """
         # Auto-detect provider from model name if provider is generic
@@ -129,6 +182,7 @@ class LiteLLMAdapter:
         self.api_key = api_key
         self.base_url = base_url or self.DEFAULT_BASE_URLS.get(self.provider)
         self._enable_thinking = enable_thinking
+        self._reasoning_effort = reasoning_effort.strip().lower() if isinstance(reasoning_effort, str) else None
         self.default_headers = default_headers
         self._litellm_model_name = None
 
@@ -247,23 +301,83 @@ class LiteLLMAdapter:
         return f"{prefix}{self.model}"
 
     @property
+    def reasoning_effort_level(self) -> Optional[str]:
+        """Resolved reasoning effort level or ``None`` when disabled.
+
+        Priority: explicit ``reasoning_effort`` (except ``"off"``) wins; a
+        legacy ``enable_thinking=True`` falls back to ``"medium"`` to keep
+        existing configs working; otherwise reasoning is off. LiteLLM maps
+        the returned level into each vendor's dialect (OpenAI
+        ``reasoning_effort``, Anthropic ``thinking.budget_tokens``, Gemini
+        ``thinking_config.thinking_budget``, etc.).
+        """
+        if self._reasoning_effort == "off":
+            return None
+        if self._reasoning_effort:
+            return self._reasoning_effort
+        if self._enable_thinking:
+            return "medium"
+        return None
+
+    @property
     def is_thinking_model(self) -> bool:
         """
-        Check if thinking/reasoning mode is explicitly enabled for this model.
+        Check if thinking/reasoning mode is active for this model.
 
-        When enabled, the model returns reasoning_content in responses and needs
-        special handling to preserve thinking blocks in multi-turn conversations.
-
-        Disabled by default. Set enable_thinking: true in config to enable.
+        True when :attr:`reasoning_effort_level` resolves to a non-None level.
+        When enabled, the model returns reasoning_content in responses and
+        needs special handling to preserve thinking blocks in multi-turn
+        conversations.
         """
-        return bool(self._enable_thinking)
+        return self.reasoning_effort_level is not None
+
+    def _is_official_openai(self) -> bool:
+        """True when this adapter targets the canonical OpenAI API host.
+
+        The Responses API (``/v1/responses``) is the preferred endpoint for
+        reasoning models (o-series, gpt-5*) because ``chat/completions``
+        rejects ``reasoning_effort`` alongside function tools. LiteLLM goes
+        through ``chat/completions`` by default; routing official OpenAI
+        traffic through :class:`OpenAIResponsesModel` sidesteps the
+        restriction without adding per-model branches.
+
+        ``base_url`` of ``None`` implies the OpenAI SDK default
+        (``https://api.openai.com/v1``); a custom ``base_url`` whose host is
+        not ``api.openai.com`` is treated as a third-party OpenAI-compatible
+        proxy (vLLM, OpenRouter relays, Coding Plan endpoints) and keeps the
+        LiteLLM path.
+        """
+        if self.provider != "openai":
+            return False
+        if not self.base_url:
+            return True
+        try:
+            hostname = (urlparse(self.base_url).hostname or "").lower()
+        except Exception:
+            return False
+        return hostname == "api.openai.com"
 
     def get_agents_sdk_model(self) -> "Model":
         """
         Get an openai-agents SDK compatible Model instance.
 
-        Returns a LitellmModel for all providers. Kimi/Moonshot thinking models
-        are supported via SDK patches that extend the reasoning_content handling.
+        Routing:
+
+        - **Official OpenAI** (``provider=="openai"`` and ``base_url`` on
+          ``api.openai.com``) uses :class:`OpenAIResponsesModel`, which
+          speaks the Responses API. This is the only endpoint that accepts
+          ``reasoning_effort`` together with function tools for o-series /
+          gpt-5* reasoning models.
+        - **Anthropic Claude** uses :class:`CacheControlLitellmModel` so the
+          prompt caching control markers survive the LiteLLM transform.
+        - **Every other OpenAI-compatible provider** (DeepSeek, Kimi, Qwen,
+          Gemini, OpenRouter, GLM, MiniMax, vLLM, and self-hosted proxies)
+          uses :class:`LitellmModel` as before.
+
+        Kimi/Moonshot thinking models still go through the LiteLLM path and
+        continue to rely on :mod:`datus.models.sdk_patches` for the
+        ``reasoning_content`` echo-back behaviour required on tool-calling
+        turns.
 
         Returns:
             Model instance configured for this adapter
@@ -276,7 +390,10 @@ class LiteLLMAdapter:
                 "pip install 'openai-agents[litellm]'"
             ) from err
 
-        # Build model kwargs
+        if self._is_official_openai():
+            return self._build_openai_responses_model()
+
+        # Build model kwargs for the LiteLLM path
         model_kwargs = {
             "model": self.litellm_model_name,
         }
@@ -302,6 +419,27 @@ class LiteLLMAdapter:
             return CacheControlLitellmModel(**model_kwargs)
 
         return LitellmModel(**model_kwargs)
+
+    def _build_openai_responses_model(self) -> "Model":
+        """Construct an :class:`OpenAIResponsesModel` bound to this adapter.
+
+        A fresh :class:`AsyncOpenAI` client is created per adapter instance
+        so the SDK is free to reuse HTTP connections for repeated calls
+        without leaking state between ``/model`` switches. Custom
+        ``default_headers`` flow into the client so Coding Plan-style
+        User-Agent overrides still apply on the Responses path.
+        """
+        from agents.models.openai_responses import OpenAIResponsesModel
+        from openai import AsyncOpenAI
+
+        client_kwargs: Dict[str, object] = {"api_key": self.api_key or ""}
+        if self.base_url:
+            client_kwargs["base_url"] = self.base_url
+        if self.default_headers:
+            client_kwargs["default_headers"] = self.default_headers
+        async_client = AsyncOpenAI(**client_kwargs)
+        logger.debug(f"Creating OpenAIResponsesModel for official OpenAI model={self.model}")
+        return OpenAIResponsesModel(model=self.model, openai_client=async_client)
 
     def get_completion_kwargs(self) -> dict:
         """
@@ -332,6 +470,7 @@ def create_litellm_adapter(
     api_key: str,
     base_url: Optional[str] = None,
     enable_thinking: bool = False,
+    reasoning_effort: Optional[str] = None,
     default_headers: Optional[Dict[str, str]] = None,
 ) -> LiteLLMAdapter:
     """
@@ -342,7 +481,9 @@ def create_litellm_adapter(
         model: The model name
         api_key: API key for the provider
         base_url: Optional custom base URL
-        enable_thinking: Whether to enable thinking/reasoning mode (default: False)
+        enable_thinking: Legacy bool switch; True is equivalent to reasoning_effort="medium".
+        reasoning_effort: One of off|minimal|low|medium|high; takes precedence
+            over ``enable_thinking`` when set.
         default_headers: Optional custom HTTP headers
 
     Returns:
@@ -354,5 +495,6 @@ def create_litellm_adapter(
         api_key=api_key,
         base_url=base_url,
         enable_thinking=enable_thinking,
+        reasoning_effort=reasoning_effort,
         default_headers=default_headers,
     )

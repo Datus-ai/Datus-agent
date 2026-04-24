@@ -211,6 +211,7 @@ async def _collect_actions(events_list) -> List[ActionHistory]:
                 model.litellm_adapter.get_agents_sdk_model.return_value = MagicMock()
                 model.litellm_adapter.provider = "openai"
                 model.litellm_adapter.is_thinking_model = False
+                model.litellm_adapter.reasoning_effort_level = None
 
                 actions = []
                 async for action in model._generate_with_tools_stream_internal(

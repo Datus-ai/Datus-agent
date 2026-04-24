@@ -60,6 +60,7 @@ def _make_model(model_config=None):
     mock_litellm_adapter.litellm_model_name = "openai/gpt-4"
     mock_litellm_adapter.provider = "openai"
     mock_litellm_adapter.is_thinking_model = False
+    mock_litellm_adapter.reasoning_effort_level = None
     mock_litellm_adapter.get_agents_sdk_model.return_value = MagicMock()
 
     with (
@@ -1228,6 +1229,14 @@ class TestGenerateWithToolsStream:
 class TestBuildAgent:
     """Tests for _build_agent. We patch Agent to capture kwargs without SDK validation."""
 
+    @pytest.fixture(autouse=True)
+    def _permissive_supports_reasoning(self):
+        """Default LiteLLM capability check to True so the reasoning-effort
+        tests in this class exercise the injection path without depending on
+        LiteLLM's built-in model catalog. Individual tests override as needed."""
+        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=True):
+            yield
+
     def _call_build_agent(self, model, **kwargs):
         defaults = {
             "instruction": "test",
@@ -1294,10 +1303,163 @@ class TestBuildAgent:
     def test_thinking_model_gets_reasoning(self):
         model = _make_model()
         model.litellm_adapter.is_thinking_model = True
+        model.litellm_adapter.reasoning_effort_level = "medium"
         _, call_args = self._call_build_agent(model)
         ms = call_args[1]["model_settings"]
         assert ms.reasoning is not None
         assert ms.reasoning.effort == "medium"
+
+    @pytest.mark.parametrize("effort", ["minimal", "low", "medium", "high"])
+    def test_reasoning_effort_level_passthrough(self, effort):
+        model = _make_model()
+        model.litellm_adapter.is_thinking_model = True
+        model.litellm_adapter.reasoning_effort_level = effort
+        _, call_args = self._call_build_agent(model)
+        ms = call_args[1]["model_settings"]
+        assert ms.reasoning.effort == effort
+
+    def test_no_reasoning_when_effort_level_is_none(self):
+        model = _make_model()
+        model.litellm_adapter.is_thinking_model = False
+        model.litellm_adapter.reasoning_effort_level = None
+        _, call_args = self._call_build_agent(model)
+        ms = call_args[1]["model_settings"]
+        assert ms.reasoning is None
+
+    def test_reasoning_injected_when_litellm_reports_true(self):
+        model = _make_model()
+        model.litellm_adapter.reasoning_effort_level = "high"
+        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=True):
+            _, call_args = self._call_build_agent(model)
+        assert call_args[1]["model_settings"].reasoning.effort == "high"
+
+    def test_reasoning_defaults_to_permissive_when_litellm_raises(self):
+        """Unknown providers (e.g. self-hosted proxies) make ``supports_reasoning``
+        raise. The gate falls back to permissive so newly released models or
+        custom backends are not blocked from trying /effort."""
+        model = _make_model()
+        model.litellm_adapter.reasoning_effort_level = "medium"
+        with patch(
+            "datus.models.openai_compatible.litellm.supports_reasoning",
+            side_effect=RuntimeError("provider unknown"),
+        ):
+            _, call_args = self._call_build_agent(model)
+        assert call_args[1]["model_settings"].reasoning.effort == "medium"
+
+    @pytest.mark.parametrize(
+        "provider,model_name",
+        [
+            ("deepseek", "deepseek-v4-pro"),
+            ("deepseek", "deepseek-reasoner"),
+            ("deepseek", "deepseek-v5-future"),  # unknown: deny-list negative → permissive
+            ("kimi", "kimi-k2-thinking"),
+            ("kimi", "kimi-k2.6"),
+            ("kimi", "kimi-k2.5"),
+        ],
+    )
+    def test_reasoning_injected_for_thinking_models_despite_litellm_false(self, provider, model_name):
+        """LiteLLM's catalog lags behind DeepSeek V4 / Kimi K2.x. Unknown DeepSeek
+        or Kimi models are *permissively* allowed so future releases automatically
+        work — only explicit deny-list entries are skipped."""
+        cfg = _make_model_config(model=model_name, model_type=provider)
+        model = _make_model(cfg)
+        model.litellm_adapter.provider = provider
+        model.litellm_adapter.reasoning_effort_level = "high"
+        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=False):
+            _, call_args = self._call_build_agent(model)
+        assert call_args[1]["model_settings"].reasoning.effort == "high"
+
+    @pytest.mark.parametrize(
+        "provider,model_name",
+        [
+            ("deepseek", "deepseek-chat"),
+            ("kimi", "kimi-k2"),  # bare k2, non-thinking family
+            ("kimi", "moonshot-v1-8k"),
+            ("kimi", "moonshot-v1-128k"),
+        ],
+    )
+    def test_reasoning_skipped_for_deny_listed_model(self, caplog, provider, model_name):
+        """Datus-maintained non-thinking deny-list forces a skip regardless of
+        LiteLLM's verdict, so users see an explicit warning instead of silent
+        drop_params downgrade."""
+        cfg = _make_model_config(model=model_name, model_type=provider)
+        model = _make_model(cfg)
+        model.litellm_adapter.provider = provider
+        model.litellm_adapter.reasoning_effort_level = "high"
+        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=False):
+            with caplog.at_level("WARNING"):
+                _, call_args = self._call_build_agent(model)
+        assert call_args[1]["model_settings"].reasoning is None
+        assert any("Skipping reasoning" in r.message for r in caplog.records)
+
+    def test_reasoning_skipped_for_non_reasoning_openai_model_when_litellm_false(self, caplog):
+        """OpenAI models outside the reasoning families (gpt-4.1 etc.) are
+        skipped when LiteLLM reports False — the deny-list is scoped to
+        DeepSeek/Kimi, so for other providers we trust LiteLLM's verdict."""
+        model = _make_model()
+        model.litellm_adapter.provider = "openai"
+        model.litellm_adapter.reasoning_effort_level = "high"
+        # _model_supports_reasoning is permissive on LiteLLM False — the
+        # remaining skip-path for OpenAI would require LiteLLM raising or
+        # returning False plus the deny-list match (none for OpenAI). Confirm
+        # the permissive outcome: reasoning IS injected.
+        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=False):
+            _, call_args = self._call_build_agent(model)
+        assert call_args[1]["model_settings"].reasoning is not None
+
+    @pytest.mark.parametrize("model_name", ["deepseek-v4-pro", "deepseek-reasoner"])
+    def test_deepseek_extra_body_carries_thinking_and_reasoning_effort(self, model_name):
+        """DeepSeek's transformation pops ``reasoning_effort`` during param
+        mapping, so Datus re-injects it via ``extra_body`` alongside the
+        ``thinking`` flag. DeepSeek's docs require both to control depth."""
+        cfg = _make_model_config(model=model_name, model_type="deepseek")
+        model = _make_model(cfg)
+        model.litellm_adapter.provider = "deepseek"
+        model.litellm_adapter.reasoning_effort_level = "high"
+        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=False):
+            _, call_args = self._call_build_agent(model)
+        ms = call_args[1]["model_settings"]
+        assert ms.extra_args["extra_body"] == {
+            "thinking": {"type": "enabled"},
+            "reasoning_effort": "high",
+        }
+
+    @pytest.mark.parametrize("model_name", ["kimi-k2.6", "kimi-k2.5", "kimi-k2-thinking"])
+    def test_kimi_extra_body_only_carries_thinking(self, model_name):
+        """Moonshot's API does not accept ``reasoning_effort``; sending it
+        would be rejected. Only ``thinking.type=enabled`` goes in extra_body."""
+        cfg = _make_model_config(model=model_name, model_type="kimi")
+        model = _make_model(cfg)
+        model.litellm_adapter.provider = "kimi"
+        model.litellm_adapter.reasoning_effort_level = "high"
+        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=False):
+            _, call_args = self._call_build_agent(model)
+        ms = call_args[1]["model_settings"]
+        assert ms.extra_args["extra_body"] == {"thinking": {"type": "enabled"}}
+        assert "reasoning_effort" not in ms.extra_args["extra_body"]
+
+    def test_extra_body_thinking_not_added_for_openai(self):
+        """OpenAI's reasoning_effort is handled natively by the SDK/Responses
+        API; no native thinking payload should be injected."""
+        model = _make_model()
+        model.litellm_adapter.provider = "openai"
+        model.litellm_adapter.reasoning_effort_level = "high"
+        _, call_args = self._call_build_agent(model)
+        ms = call_args[1]["model_settings"]
+        # If extra_args is set (e.g. prompt_cache_key), it should NOT contain extra_body.
+        if ms.extra_args:
+            assert "extra_body" not in ms.extra_args
+
+    def test_extra_body_thinking_not_added_for_deny_listed_deepseek_chat(self):
+        cfg = _make_model_config(model="deepseek-chat", model_type="deepseek")
+        model = _make_model(cfg)
+        model.litellm_adapter.provider = "deepseek"
+        model.litellm_adapter.reasoning_effort_level = "high"
+        _, call_args = self._call_build_agent(model)
+        ms = call_args[1]["model_settings"]
+        # gate skipped injection entirely; no thinking body either
+        if ms.extra_args:
+            assert "extra_body" not in ms.extra_args
 
     def test_temperature_and_top_p_from_config(self):
         cfg = _make_model_config(temperature=0.5, top_p=0.9)

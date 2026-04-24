@@ -1017,3 +1017,91 @@ class TestProviderConfigurationDispatch:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         cfg = self._make(tmp_path)
         assert cfg.provider_available("openai") is False
+
+    # ── reasoning_effort ───────────────────────────────────────────
+
+    def test_target_reasoning_effort_overrides_legacy_model(self, tmp_path):
+        cfg = self._make(tmp_path, target_reasoning_effort="high")
+        active = cfg.active_model()
+        assert active.reasoning_effort == "high"
+
+    def test_target_reasoning_effort_overrides_synthesized_model(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            providers={"openai": {"api_key": "sk-test"}},
+            target_provider="openai",
+            target_model="gpt-4.1",
+            target_reasoning_effort="low",
+        )
+        active = cfg.active_model()
+        assert active.reasoning_effort == "low"
+
+    def test_target_reasoning_effort_off_clears_enable_thinking(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            models={
+                "legacy": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "legacy-model",
+                    "enable_thinking": True,
+                }
+            },
+            target_reasoning_effort="off",
+        )
+        active = cfg.active_model()
+        assert active.reasoning_effort == "off"
+        assert active.enable_thinking is False
+
+    def test_global_reasoning_effort_kwarg_falls_back(self, tmp_path):
+        """Top-level ``reasoning_effort`` in agent.yml acts as a default when
+        no project-level override is set."""
+        cfg = self._make(tmp_path, reasoning_effort="medium")
+        active = cfg.active_model()
+        assert active.reasoning_effort == "medium"
+
+    def test_project_reasoning_effort_wins_over_global(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            reasoning_effort="medium",
+            target_reasoning_effort="high",
+        )
+        active = cfg.active_model()
+        assert active.reasoning_effort == "high"
+
+    def test_set_active_reasoning_effort_persists_to_project_config(self, tmp_path):
+        cfg = self._make(tmp_path)
+        cfg.set_active_reasoning_effort("high")
+        assert cfg._target_reasoning_effort == "high"
+
+        project_cfg = tmp_path / ".datus" / "config.yml"
+        import yaml
+
+        payload = yaml.safe_load(project_cfg.read_text(encoding="utf-8"))
+        assert payload["reasoning_effort"] == "high"
+
+    def test_set_active_reasoning_effort_rejects_invalid_value(self, tmp_path):
+        cfg = self._make(tmp_path)
+        with pytest.raises(DatusException):
+            cfg.set_active_reasoning_effort("nuclear")
+
+    def test_set_active_reasoning_effort_none_clears_override(self, tmp_path):
+        cfg = self._make(tmp_path, target_reasoning_effort="high")
+        cfg.set_active_reasoning_effort(None, persist=False)
+        assert cfg._target_reasoning_effort is None
+
+    def test_model_overrides_reasoning_effort_picked_up(self, tmp_path):
+        """``providers.yml`` ``model_overrides.<model>.reasoning_effort`` flows
+        through ``_synthesize_model`` into the resolved :class:`ModelConfig`."""
+        cfg = self._make(
+            tmp_path,
+            providers={"openai": {"api_key": "sk"}},
+            target_provider="openai",
+            target_model="gpt-4.1",
+        )
+        # Inject a reasoning_effort override for gpt-4.1 in the catalog.
+        catalog = cfg.provider_catalog
+        catalog.setdefault("model_overrides", {})["gpt-4.1"] = {"reasoning_effort": "high"}
+        cfg.set_provider_catalog(catalog)
+        active = cfg.active_model()
+        assert active.reasoning_effort == "high"

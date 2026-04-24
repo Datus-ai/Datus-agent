@@ -115,6 +115,11 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
             api_key_digest,
             target_config.auth_type,
             scope or "",
+            # Include reasoning-related fields so ``/effort`` and a toggled
+            # ``enable_thinking`` produce a fresh adapter instead of reusing
+            # one bound to the previous effort level.
+            bool(target_config.enable_thinking),
+            target_config.reasoning_effort or "",
         )
 
         with cls._MODEL_CACHE_LOCK:

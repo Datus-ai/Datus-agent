@@ -6,15 +6,25 @@
 SDK Patches for openai-agents SDK.
 
 This module provides monkey patches to extend SDK functionality for
-providers not yet officially supported.
+providers whose thinking mode requires reasoning_content to be echoed
+back on every assistant-with-tool_calls turn.
 
 Current patches:
 - Kimi/Moonshot reasoning_content support in Converter.items_to_messages()
-- Kimi/Moonshot reasoning_content preservation in litellm.acompletion()
+- Kimi/Moonshot + DeepSeek reasoning_content preservation in
+  litellm.(a)completion() via a streaming cache fallback.
 
 Reference: https://github.com/openai/openai-agents-python/pull/2328
-The SDK already supports DeepSeek reasoning_content. This patch extends
-the same support to Kimi/Moonshot models.
+The SDK already supports DeepSeek reasoning_content when the streamed
+`summary` is populated. For DeepSeek V4 thinking mode, the SDK sometimes
+misses the reasoning delta (empty summary) and the provider rejects the
+next turn with:
+
+    The `reasoning_content` in the thinking mode must be passed back to
+    the API.
+
+This patch adds the same streaming cache + injection fallback used for
+Kimi/Moonshot to DeepSeek models.
 """
 
 import copy
@@ -33,6 +43,20 @@ def _is_kimi_model(model_name: str) -> bool:
     """Check if a model name is a Kimi/Moonshot model (kimi, moonshot, k2.5, k2-*, etc.)."""
     name = model_name.lower()
     return "kimi" in name or "moonshot" in name or "k2.5" in name or "k2-" in name
+
+
+def _is_deepseek_model(model_name: str) -> bool:
+    """Check if a model name is a DeepSeek model (deepseek-chat, deepseek-reasoner, deepseek-v4, ...)."""
+    if not model_name:
+        return False
+    return "deepseek" in model_name.lower()
+
+
+def _needs_reasoning_injection(model_name: str) -> bool:
+    """Providers whose thinking mode requires reasoning_content to be echoed back on tool-calling turns."""
+    if not model_name:
+        return False
+    return _is_kimi_model(model_name) or _is_deepseek_model(model_name)
 
 
 def _normalize_provider_data(item: Any) -> Any:
@@ -166,15 +190,17 @@ def _postprocess_messages_for_reasoning(
     model: str | None,
 ) -> list[dict[str, Any]]:
     """
-    Post-process messages to preserve reasoning_content for Kimi/Moonshot models
-    during tool calling.
+    Post-process messages to preserve reasoning_content for thinking-mode
+    providers (Kimi/Moonshot, DeepSeek) during tool calling.
 
     Per DeepSeek/Moonshot docs, reasoning_content must be passed back during
     tool calling to allow the model to continue reasoning.
     See: https://api-docs.deepseek.com/guides/thinking_mode
     """
-    if not model or not _is_kimi_model(model):
+    if not model or not _needs_reasoning_injection(model):
         return messages
+
+    is_kimi = _is_kimi_model(model)
 
     # Find the last non-empty reasoning_content to reuse if needed
     last_reasoning_content = None
@@ -192,25 +218,27 @@ def _postprocess_messages_for_reasoning(
             last_reasoning_content = cached_rc
             logger.debug(f"[SDK Patch] Using cached reasoning_content as fallback, length={len(cached_rc)}")
 
-    # Ensure all assistant messages with tool_calls have reasoning_content field.
-    # Kimi/Moonshot requires this field to be present when thinking is enabled.
+    # Ensure all assistant messages with tool_calls have reasoning_content field
+    # when the provider requires it (thinking mode enabled).
     for msg in messages:
         if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("tool_calls"):
             current_rc = msg.get("reasoning_content", "")
             if (not current_rc or not current_rc.strip()) and last_reasoning_content:
                 msg["reasoning_content"] = last_reasoning_content
                 logger.debug("[SDK Patch] Injected reasoning_content into assistant+tool_calls message")
-            elif "reasoning_content" not in msg:
-                # No reasoning_content available from messages or cache.
-                # Moonshot API requires non-empty reasoning_content for thinking models.
-                # This path should be rare after the streaming cache fix.
+            elif "reasoning_content" not in msg and is_kimi:
+                # Moonshot historically tolerates an empty reasoning_content field when
+                # thinking is off; DeepSeek rejects both missing and empty, so we must
+                # NOT inject an empty placeholder for DeepSeek — leave the message as-is
+                # and let the provider surface a clean error if thinking was actually on.
                 msg["reasoning_content"] = ""
                 logger.warning(
                     "[SDK Patch] No reasoning_content available for assistant+tool_calls message. "
                     "Moonshot API may reject this request. Check if streaming cache is working."
                 )
 
-            # Ensure content is empty string, not None (Moonshot requirement)
+            # Ensure content is empty string, not None (Moonshot requirement;
+            # DeepSeek also accepts content="" for tool_calls-only messages).
             if msg.get("content") is None:
                 msg["content"] = ""
 
@@ -262,7 +290,9 @@ def apply_sdk_patches() -> None:
         _original_items_to_messages = Converter.items_to_messages.__func__  # type: ignore
 
     Converter.items_to_messages = classmethod(_patched_items_to_messages)  # type: ignore
-    logger.info("Applied SDK patch: Converter.items_to_messages (Kimi/Moonshot reasoning_content)")
+    logger.info(
+        "Applied SDK patch: Converter.items_to_messages (Kimi/Moonshot reasoning_content + DeepSeek fallback injection)"
+    )
 
     # Patch 2: litellm.acompletion wrapper (safety net)
     # Re-applies reasoning_content preservation right before API calls,
@@ -279,7 +309,7 @@ def apply_sdk_patches() -> None:
 
             # Cache reasoning_content from the API response for future fallback.
             # This handles cases where the SDK converter fails to extract it from items.
-            if model and _is_kimi_model(model):
+            if model and _needs_reasoning_injection(model):
                 stream = kwargs.get("stream", False)
                 if stream:
                     # Streaming: wrap the async iterator to capture reasoning_content
@@ -305,7 +335,7 @@ def apply_sdk_patches() -> None:
             return response
 
         litellm.acompletion = _patched_acompletion
-        logger.info("Applied SDK patch: litellm.acompletion (Kimi/Moonshot reasoning_content)")
+        logger.info("Applied SDK patch: litellm.acompletion (Kimi/Moonshot + DeepSeek reasoning_content)")
 
     # Patch 3: litellm.completion wrapper (sync version)
     # The generate() method uses litellm.completion (sync), which was not patched.
@@ -320,8 +350,12 @@ def apply_sdk_patches() -> None:
                 kwargs["messages"] = _postprocess_messages_for_reasoning(kwargs["messages"], model)
             response = _original_completion(*args, **kwargs)
 
-            # Cache reasoning_content and inject it into message.content if empty
-            if model and _is_kimi_model(model):
+            # Cache reasoning_content and inject it into message.content if empty.
+            # The empty-content injection is Kimi-specific: Moonshot non-thinking
+            # responses may arrive with empty content + reasoning_content. DeepSeek's
+            # sync path returns real content, so we only cache (no content rewrite).
+            if model and _needs_reasoning_injection(model):
+                is_kimi = _is_kimi_model(model)
                 try:
                     for choice in getattr(response, "choices", []):
                         msg = getattr(choice, "message", None)
@@ -333,13 +367,14 @@ def apply_sdk_patches() -> None:
                                     f"[SDK Patch] Cached reasoning_content from sync response, "
                                     f"model={model}, length={len(rc)}"
                                 )
-                                # If main content is empty, inject reasoning_content
-                                content = getattr(msg, "content", None)
-                                if not content or not content.strip():
-                                    msg.content = rc
-                                    logger.debug(
-                                        "[SDK Patch] Injected reasoning_content into empty sync response content"
-                                    )
+                                # If main content is empty, inject reasoning_content (Kimi only)
+                                if is_kimi:
+                                    content = getattr(msg, "content", None)
+                                    if not content or not content.strip():
+                                        msg.content = rc
+                                        logger.debug(
+                                            "[SDK Patch] Injected reasoning_content into empty sync response content"
+                                        )
                                 break
                 except Exception as e:
                     logger.debug(f"[SDK Patch] Failed to cache reasoning_content from sync response: {e}")
@@ -347,7 +382,7 @@ def apply_sdk_patches() -> None:
             return response
 
         litellm.completion = _patched_completion
-        logger.info("Applied SDK patch: litellm.completion (Kimi/Moonshot reasoning_content sync)")
+        logger.info("Applied SDK patch: litellm.completion (Kimi/Moonshot + DeepSeek reasoning_content sync)")
 
 
 def remove_sdk_patches() -> None:

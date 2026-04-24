@@ -206,7 +206,10 @@ class ModelConfig:
     model: str
     base_url: Optional[str] = None
     save_llm_trace: bool = False
-    enable_thinking: bool = False  # Set True to enable thinking/reasoning mode
+    enable_thinking: bool = False  # Legacy bool switch; True is equivalent to reasoning_effort="medium".
+    # Reasoning depth for thinking-capable models. Values: off|minimal|low|medium|high.
+    # None defers to enable_thinking; LiteLLM maps the level to each vendor's dialect.
+    reasoning_effort: Optional[str] = None
     strict_json_schema: bool = True  # Enable strict JSON schema mode for structured output
     default_headers: Optional[Dict[str, str]] = None
     # Retry configuration for stream connection errors
@@ -458,6 +461,15 @@ class AgentConfig:
         # instead of indexing ``agent.models``.
         self._target_provider: Optional[str] = kwargs.get("target_provider") or None
         self._target_model: Optional[str] = kwargs.get("target_model") or None
+        # Reasoning effort override. ``target_reasoning_effort`` comes from
+        # ``./.datus/config.yml`` (project scope) and wins over the
+        # ``reasoning_effort`` top-level field in ``agent.yml`` (global
+        # default). When set, it replaces the value resolved from
+        # ``providers.yml.model_overrides`` or ``agent.models`` regardless of
+        # which dispatch path ``active_model()`` takes.
+        self._target_reasoning_effort: Optional[str] = (
+            kwargs.get("target_reasoning_effort") or kwargs.get("reasoning_effort") or None
+        )
         # Shared lazily-loaded ``conf/providers.yml`` catalog (metadata only:
         # default_model, base_url, api_key_env, type, model_overrides). Kept
         # as ``None`` until first access so tests that stub load paths can
@@ -1193,9 +1205,9 @@ class AgentConfig:
         existing call sites that index the return value directly.
         """
         if self._target_provider and self._target_model:
-            return self._synthesize_model(self._target_provider, self._target_model)
+            return self._apply_reasoning_override(self._synthesize_model(self._target_provider, self._target_model))
         if self.target and self.target in self.models:
-            return self.models[self.target]
+            return self._apply_reasoning_override(self.models[self.target])
         raise DatusException(
             code=ErrorCode.COMMON_FIELD_REQUIRED,
             message=(
@@ -1273,7 +1285,7 @@ class AgentConfig:
         model_kwargs: Dict[str, Any] = {}
         overrides = overrides_catalog.get(model_name, {}) if isinstance(overrides_catalog, dict) else {}
         if isinstance(overrides, dict):
-            for key in ("temperature", "top_p", "enable_thinking"):
+            for key in ("temperature", "top_p", "enable_thinking", "reasoning_effort"):
                 if key in overrides:
                     model_kwargs[key] = overrides[key]
 
@@ -1285,6 +1297,58 @@ class AgentConfig:
             auth_type=auth_type,
             **model_kwargs,
         )
+
+    def _apply_reasoning_override(self, config: ModelConfig) -> ModelConfig:
+        """Project-level ``reasoning_effort`` wins over catalog/agent.yml values.
+
+        Returns the same ``ModelConfig`` with ``reasoning_effort`` replaced by
+        :attr:`_target_reasoning_effort` when it is set. When the override is
+        ``"off"``, ``enable_thinking`` is also cleared so the legacy bool does
+        not reawaken reasoning via the adapter's fallback. Mutating the object
+        in place keeps the cached ``agent.models[name]`` entry coherent with
+        the active target, which matches how ``/model`` already reuses that
+        same instance across calls.
+        """
+        override = self._target_reasoning_effort
+        if override is None:
+            return config
+        config.reasoning_effort = override
+        if override == "off":
+            config.enable_thinking = False
+        return config
+
+    def set_active_reasoning_effort(self, effort: Optional[str], persist: bool = True) -> None:
+        """Switch the runtime reasoning effort level.
+
+        ``effort`` is one of ``off|minimal|low|medium|high``; ``None`` clears
+        the project override so the active model falls back to catalog
+        defaults or ``enable_thinking`` in ``agent.yml``. When ``persist`` is
+        ``True`` (default), writes the change to ``./.datus/config.yml`` so
+        the choice survives process restarts.
+        """
+        if effort is not None:
+            effort = effort.strip().lower()
+            from datus.configuration.project_config import REASONING_EFFORT_CHOICES
+
+            if effort not in REASONING_EFFORT_CHOICES:
+                raise DatusException(
+                    code=ErrorCode.COMMON_FIELD_INVALID,
+                    message=(
+                        f"Invalid reasoning_effort '{effort}'. Expected one of {sorted(REASONING_EFFORT_CHOICES)}."
+                    ),
+                )
+        self._target_reasoning_effort = effort
+        if not persist:
+            return
+        from datus.configuration.project_config import (
+            ProjectOverride,
+            load_project_override,
+            save_project_override,
+        )
+
+        current = load_project_override(cwd=str(self._project_root)) or ProjectOverride()
+        current.reasoning_effort = effort
+        save_project_override(current, cwd=str(self._project_root))
 
     def set_active_provider_model(self, provider: str, model: str, persist: bool = True) -> None:
         """Switch the active LLM to ``<provider>/<model>`` at runtime.

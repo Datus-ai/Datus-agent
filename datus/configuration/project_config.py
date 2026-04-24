@@ -18,6 +18,9 @@ pin a handful of values without copying the full config:
   match a key under ``agent.services.datasources``)
 - ``project_name``: shard name for ``~/.datus/sessions/{project_name}/``
   and ``~/.datus/data/{project_name}/`` (optional)
+- ``reasoning_effort``: one of ``off|minimal|low|medium|high`` — controls the
+  reasoning/thinking effort passed to the active model, mapped to each
+  vendor's native dialect by LiteLLM.
 
 Any other keys in the file are ignored with a warning so users do not
 mistakenly expect the overlay to accept arbitrary YAML.
@@ -35,7 +38,8 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 PROJECT_CONFIG_REL = ".datus/config.yml"
-ALLOWED_KEYS = frozenset({"target", "default_datasource", "project_name", "language"})
+ALLOWED_KEYS = frozenset({"target", "default_datasource", "project_name", "language", "reasoning_effort"})
+REASONING_EFFORT_CHOICES = frozenset({"off", "minimal", "low", "medium", "high"})
 
 
 @dataclass
@@ -60,12 +64,15 @@ class ProjectOverride:
     ``None`` means "not specified — fall back to base agent.yml".
     ``target`` may be a legacy string (``agent.models`` key) or a
     :class:`ProjectTarget` describing a provider-level entry.
+    ``reasoning_effort`` accepts ``off|minimal|low|medium|high``; any other
+    string is dropped by :func:`load_project_override` with a warning.
     """
 
     target: Optional[Union[str, ProjectTarget]] = None
     default_datasource: Optional[str] = None
     project_name: Optional[str] = None
     language: Optional[str] = None
+    reasoning_effort: Optional[str] = None
 
     def is_empty(self) -> bool:
         return (
@@ -73,6 +80,7 @@ class ProjectOverride:
             and self.default_datasource is None
             and self.project_name is None
             and self.language is None
+            and self.reasoning_effort is None
         )
 
 
@@ -144,7 +152,31 @@ def load_project_override(cwd: Optional[str] = None) -> Optional[ProjectOverride
         default_datasource=raw.get("default_datasource"),
         project_name=raw.get("project_name"),
         language=raw.get("language"),
+        reasoning_effort=_parse_reasoning_effort(raw.get("reasoning_effort")),
     )
+
+
+def _parse_reasoning_effort(raw: Any) -> Optional[str]:
+    """Normalize the ``reasoning_effort:`` field from raw YAML.
+
+    Accepts any case-insensitive string in :data:`REASONING_EFFORT_CHOICES`;
+    anything else is dropped with a warning so typos do not silently change
+    behaviour. ``None`` means "not specified — fall back to base agent.yml".
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        logger.warning(f"reasoning_effort must be a string, got {type(raw).__name__}. Ignoring.")
+        return None
+    value = raw.strip().lower()
+    if not value:
+        return None
+    if value not in REASONING_EFFORT_CHOICES:
+        logger.warning(
+            f"Ignoring invalid reasoning_effort '{raw}'. Expected one of {sorted(REASONING_EFFORT_CHOICES)}."
+        )
+        return None
+    return value
 
 
 def _target_to_yaml(target: Optional[Union[str, ProjectTarget]]) -> Any:
@@ -175,6 +207,7 @@ def save_project_override(override: ProjectOverride, cwd: Optional[str] = None) 
             "default_datasource": override.default_datasource,
             "project_name": override.project_name,
             "language": override.language,
+            "reasoning_effort": override.reasoning_effort,
         }.items()
         if v is not None
     }

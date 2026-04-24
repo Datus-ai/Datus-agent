@@ -273,6 +273,8 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
         agent_raw["project_name"] = override.project_name
     if override.language is not None:
         agent_raw["language"] = override.language
+    if override.reasoning_effort is not None:
+        agent_raw["target_reasoning_effort"] = override.reasoning_effort
 
 
 def load_agent_config(reload: bool = False, create_if_missing: bool = False, **kwargs) -> AgentConfig:

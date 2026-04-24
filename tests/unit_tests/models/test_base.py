@@ -136,3 +136,30 @@ class TestCreateModelCache:
                 cfg = ModelConfig(type="openai", api_key="k", model=f"m{i}", base_url="https://a")
                 LLMBaseModel.create_model(self._agent_config(cfg))
         assert len(LLMBaseModel._MODEL_CACHE) == LLMBaseModel._MODEL_CACHE_MAXSIZE
+
+    def test_different_reasoning_effort_yields_new_instance(self):
+        """Changing ``reasoning_effort`` must bust the cache so the new adapter
+        picks up the fresh effort level instead of reusing a stale binding."""
+        self._fresh_cache()
+        cfg_low = ModelConfig(type="openai", api_key="k", model="gpt-4.1", reasoning_effort="low")
+        cfg_high = ModelConfig(type="openai", api_key="k", model="gpt-4.1", reasoning_effort="high")
+        module = MagicMock()
+        module.OpenAIModel = MagicMock(side_effect=lambda **kw: MagicMock(name="Instance"))
+        with patch.dict("sys.modules", {"datus.models.openai_model": module}):
+            low = LLMBaseModel.create_model(self._agent_config(cfg_low))
+            high = LLMBaseModel.create_model(self._agent_config(cfg_high))
+        assert low is not high
+        assert module.OpenAIModel.call_count == 2
+
+    def test_different_enable_thinking_yields_new_instance(self):
+        """Toggling ``enable_thinking`` must bust the cache (previously a bug)."""
+        self._fresh_cache()
+        cfg_off = ModelConfig(type="openai", api_key="k", model="gpt-4.1", enable_thinking=False)
+        cfg_on = ModelConfig(type="openai", api_key="k", model="gpt-4.1", enable_thinking=True)
+        module = MagicMock()
+        module.OpenAIModel = MagicMock(side_effect=lambda **kw: MagicMock(name="Instance"))
+        with patch.dict("sys.modules", {"datus.models.openai_model": module}):
+            off = LLMBaseModel.create_model(self._agent_config(cfg_off))
+            on = LLMBaseModel.create_model(self._agent_config(cfg_on))
+        assert off is not on
+        assert module.OpenAIModel.call_count == 2
