@@ -14,8 +14,6 @@ from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.api.models.base_models import Result
 from datus.api.models.cli_models import (
     ChatHistoryData,
-    ChatModelData,
-    ChatModelInfo,
     ChatSessionData,
     ChatSessionItemInfo,
     CompactSessionData,
@@ -87,23 +85,6 @@ class ChatService:
         """Check if a session exists on disk."""
         session_mgr = SessionManager(session_dir=self._session_dir, scope=user_id)
         return session_mgr.session_exists(session_id)
-
-    def get_model(self) -> Result[ChatModelData]:
-        """Return the currently active chat model identity."""
-        try:
-            active = self.agent_config.active_model()
-            return Result[ChatModelData](
-                success=True,
-                data=ChatModelData(
-                    current=ChatModelInfo(type=active.type, model=active.model),
-                ),
-            )
-        except DatusException as e:
-            logger.warning("No active model: %s", e.message)
-            return Result[ChatModelData](success=False, errorCode=e.code.name, errorMessage=e.message)
-        except Exception as e:
-            logger.error(f"Failed to get active model: {e}")
-            return Result[ChatModelData](success=False, errorCode="MODEL_LOOKUP_ERROR", errorMessage=str(e))
 
     def list_sessions(
         self,

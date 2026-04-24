@@ -521,16 +521,3 @@ class ChatHistoryData(BaseModel):
     """Chat history data."""
 
     messages: List[SSEMessagePayload] = Field(default_factory=list, description="chat history messages")
-
-
-class ChatModelInfo(BaseModel):
-    """Chat model identity."""
-
-    type: str = Field(..., description="Model provider type (e.g., 'openai', 'claude')")
-    model: str = Field(..., description="Model identifier (e.g., 'gpt-4', 'claude-3-sonnet')")
-
-
-class ChatModelData(BaseModel):
-    """Current chat model data."""
-
-    current: ChatModelInfo = Field(..., description="The model currently active for chat")
