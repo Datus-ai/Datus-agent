@@ -468,10 +468,40 @@ class TestApplyAndRemoveSdkPatches:
         assert len(_reasoning_content_cache) == 0
 
     def test_apply_patches_idempotent(self):
-        """Calling apply_sdk_patches twice does not raise."""
+        """Calling apply_sdk_patches twice must not re-capture the already-patched
+        litellm functions as 'originals'. Otherwise remove_sdk_patches() would
+        restore the patched version instead of the true original.
+        """
+        import litellm
+
+        from datus.models import sdk_patches
+
+        # Capture the true originals before any patching.
+        true_original_completion = litellm.completion
+        true_original_acompletion = litellm.acompletion
+
         apply_sdk_patches()
-        apply_sdk_patches()  # Should not raise
-        remove_sdk_patches()
+        captured_after_first = sdk_patches._original_completion
+        captured_acompletion_after_first = sdk_patches._original_acompletion
+        patched_completion_first = litellm.completion
+
+        apply_sdk_patches()  # second call must be a no-op for capture
+        try:
+            # The stored "original" must still be the pre-patch function,
+            # not the patched wrapper captured on the first call.
+            assert sdk_patches._original_completion is true_original_completion
+            assert sdk_patches._original_acompletion is true_original_acompletion
+            assert sdk_patches._original_completion is captured_after_first
+            assert sdk_patches._original_acompletion is captured_acompletion_after_first
+            # The live litellm.completion should still be the patched wrapper
+            # (not re-wrapped into a double-patched function).
+            assert litellm.completion is patched_completion_first
+        finally:
+            remove_sdk_patches()
+
+        # After removal, litellm.completion is restored to the true original.
+        assert litellm.completion is true_original_completion
+        assert litellm.acompletion is true_original_acompletion
 
 
 class TestPatchedCompletionSync:

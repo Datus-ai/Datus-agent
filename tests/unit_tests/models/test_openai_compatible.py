@@ -1446,9 +1446,9 @@ class TestBuildAgent:
         model.litellm_adapter.reasoning_effort_level = "high"
         _, call_args = self._call_build_agent(model)
         ms = call_args[1]["model_settings"]
-        # If extra_args is set (e.g. prompt_cache_key), it should NOT contain extra_body.
-        if ms.extra_args:
-            assert "extra_body" not in ms.extra_args
+        # extra_args may be unset (None/empty) or set (e.g. prompt_cache_key);
+        # either way, extra_body must never appear for native-reasoning OpenAI.
+        assert "extra_body" not in (ms.extra_args or {})
 
     def test_extra_body_thinking_not_added_for_deny_listed_deepseek_chat(self):
         cfg = _make_model_config(model="deepseek-chat", model_type="deepseek")
@@ -1457,9 +1457,9 @@ class TestBuildAgent:
         model.litellm_adapter.reasoning_effort_level = "high"
         _, call_args = self._call_build_agent(model)
         ms = call_args[1]["model_settings"]
-        # gate skipped injection entirely; no thinking body either
-        if ms.extra_args:
-            assert "extra_body" not in ms.extra_args
+        # Gate skipped injection entirely; extra_body must never appear regardless
+        # of whether extra_args was populated by other settings.
+        assert "extra_body" not in (ms.extra_args or {})
 
     def test_temperature_and_top_p_from_config(self):
         cfg = _make_model_config(temperature=0.5, top_p=0.9)
