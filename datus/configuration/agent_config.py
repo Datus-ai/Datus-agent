@@ -344,6 +344,33 @@ class DocumentConfig:
 
 
 @dataclass
+class AutocompleteConfig:
+    """Runtime knobs for the CLI ``@``-reference autocomplete.
+
+    ``background_sync_enabled`` controls whether switching / adding /
+    editing a datasource kicks off a LanceDB metadata refresh in the
+    background so ``@Table`` always reflects the latest tables.
+    ``background_sync_on_startup`` extends the behavior to REPL boot.
+    ``background_sync_include_values`` trades speed for richer completion
+    hints (sample row fetch is an order of magnitude slower).
+    """
+
+    background_sync_enabled: bool = True
+    background_sync_on_startup: bool = True
+    background_sync_include_values: bool = False
+
+    @classmethod
+    def from_dict(cls, raw: Optional[Dict[str, Any]]) -> "AutocompleteConfig":
+        if not raw:
+            return cls()
+        return cls(
+            background_sync_enabled=bool(raw.get("background_sync_enabled", True)),
+            background_sync_on_startup=bool(raw.get("background_sync_on_startup", True)),
+            background_sync_include_values=bool(raw.get("background_sync_include_values", False)),
+        )
+
+
+@dataclass
 class DashboardConfig:
     # Service alias — the key under ``services.bi_platforms`` in agent.yml.
     # Used for CLI addressing (``/<platform>.<method>``) and ``dashboard_config``
@@ -603,6 +630,13 @@ class AgentConfig:
                     f"Only alphanumeric characters, underscores, and hyphens are allowed.",
                 )
             self.document_configs[name] = DocumentConfig.from_dict(cfg)
+
+        # CLI autocomplete runtime knobs (background metadata sync). Missing
+        # section falls back to defaults so legacy agent.yml keeps working.
+        autocomplete_raw = kwargs.get("autocomplete")
+        self.autocomplete = AutocompleteConfig.from_dict(
+            autocomplete_raw if isinstance(autocomplete_raw, dict) else None
+        )
 
     @property
     def filesystem_strict(self) -> bool:

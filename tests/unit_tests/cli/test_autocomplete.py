@@ -13,6 +13,8 @@ helpers.
 NO MOCK EXCEPT LLM.
 """
 
+from unittest.mock import MagicMock
+
 from prompt_toolkit.document import Document
 
 from datus.cli.autocomplete import (
@@ -22,6 +24,7 @@ from datus.cli.autocomplete import (
     CustomSqlLexer,
     DynamicAtReferenceCompleter,
     SQLCompleter,
+    _ContinuousPathCompleter,
     insert_into_dict,
     insert_into_dict_with_dict,
 )
@@ -297,13 +300,14 @@ class _StubCompleter(DynamicAtReferenceCompleter):
         super().__init__(**kwargs)
         self._stub_data = data or {}
 
-    def load_data(self):
-        # Populate flatten_data so fuzzy_match works
+    def _build_snapshot(self):
+        # Return a fresh flatten dict so reloads can replace prior snapshots
+        # without mutating the live instance state.
+        flatten = {}
         if isinstance(self._stub_data, dict):
             for key in self._stub_data:
-                self.flatten_data[key] = self._stub_data[key]
-        self.max_level = 2
-        return self._stub_data
+                flatten[key] = self._stub_data[key]
+        return self._stub_data, flatten, 2
 
 
 class TestDynamicAtReferenceCompleterInit:
@@ -341,15 +345,15 @@ class TestDynamicAtReferenceCompleterEnsureLoaded:
 
     def test_ensure_loaded_idempotent(self):
         call_count = 0
-        original_load = _StubCompleter.load_data
+        original_build = _StubCompleter._build_snapshot
 
-        def counting_load(self):
+        def counting_build(self):
             nonlocal call_count
             call_count += 1
-            return original_load(self)
+            return original_build(self)
 
         c = _StubCompleter(data={"a": 1})
-        c.load_data = lambda: counting_load(c)
+        c._build_snapshot = lambda: counting_build(c)
         c._ensure_loaded()
         c._ensure_loaded()
         assert call_count == 1
@@ -368,6 +372,83 @@ class TestDynamicAtReferenceCompleterReloadData:
         assert "new_key" in c.flatten_data
         assert c._loaded is True
 
+    def test_reload_is_atomic_under_concurrency(self):
+        """A reader threaded against concurrent reload_data() calls must
+        always observe the flatten_data of exactly one complete snapshot
+        — never a mix of old and new keys — and must never crash on dict
+        iteration.
+        """
+        import threading
+        import time
+
+        snapshots = [
+            {f"snap0_{i}": {} for i in range(50)},
+            {f"snap1_{i}": {} for i in range(50)},
+            {f"snap2_{i}": {} for i in range(50)},
+            {f"snap3_{i}": {} for i in range(50)},
+        ]
+        c = _StubCompleter(data=snapshots[0])
+        c._ensure_loaded()
+
+        stop = threading.Event()
+        errors = []
+
+        def reader():
+            try:
+                while not stop.is_set():
+                    # fuzzy_match iterates flatten_data; if reload mutated
+                    # the underlying dict in place, CPython may raise
+                    # "dictionary changed size during iteration".
+                    c.fuzzy_match("snap")
+            except Exception as exc:  # pragma: no cover - defensive
+                errors.append(exc)
+
+        def writer():
+            try:
+                for i in range(30):
+                    c._stub_data = snapshots[i % len(snapshots)]
+                    c.reload_data()
+            except Exception as exc:  # pragma: no cover - defensive
+                errors.append(exc)
+
+        r = threading.Thread(target=reader)
+        w1 = threading.Thread(target=writer)
+        w2 = threading.Thread(target=writer)
+        r.start()
+        w1.start()
+        w2.start()
+        w1.join()
+        w2.join()
+        # Give the reader one more tick to catch any final torn state
+        time.sleep(0.05)
+        stop.set()
+        r.join()
+
+        assert errors == []
+        # Final snapshot must be one of the valid ones (all keys share the
+        # same ``snapN_`` prefix), never a torn mix.
+        prefixes = {k.split("_")[0] for k in c.flatten_data.keys()}
+        assert len(prefixes) == 1, f"Torn snapshot: {prefixes}"
+
+    def test_reload_swaps_flatten_data_reference(self):
+        """reload_data must install a fresh dict so readers that captured a
+        reference to the old flatten_data still iterate their old snapshot
+        consistently (no in-place mutation of the previously returned
+        dict).
+        """
+        c = _StubCompleter(data={"key_a": {}})
+        c._ensure_loaded()
+        captured = c.flatten_data  # reader captures pre-reload reference
+
+        c._stub_data = {"key_b": {}}
+        c.reload_data()
+
+        # The captured dict must be untouched (still holds only the old key)
+        # and c.flatten_data must now point at a distinct dict.
+        assert "key_a" in captured and "key_b" not in captured
+        assert c.flatten_data is not captured
+        assert "key_b" in c.flatten_data
+
 
 class TestDynamicAtReferenceCompleterGetData:
     def test_get_data_lazy_loads(self):
@@ -376,6 +457,219 @@ class TestDynamicAtReferenceCompleterGetData:
         result = c.get_data()
         assert c._loaded is True
         assert result == {"x": 1}
+
+
+class TestDynamicAtReferenceCompleterLoadDataShim:
+    """The base class keeps ``load_data()`` as a shim over ``_build_snapshot``
+    for callers that still invoke the legacy API directly.
+    """
+
+    def test_load_data_returns_data_and_applies_snapshot(self):
+        c = _StubCompleter(data={"a": {}, "b": {}})
+        result = c.load_data()
+        assert result == {"a": {}, "b": {}}
+        # Side-effect: flatten_data + max_level are populated.
+        assert set(c.flatten_data.keys()) == {"a", "b"}
+        assert c.max_level == 2
+
+    def test_load_data_overwrites_prior_state(self):
+        c = _StubCompleter(data={"first": {}})
+        c._ensure_loaded()
+        # Swap stub data and re-invoke load_data directly.
+        c._stub_data = {"second": {}}
+        result = c.load_data()
+        assert "second" in result
+        assert "first" not in c.flatten_data
+
+
+class TestDynamicAtReferenceCompleterGetCompletions:
+    """Exercise the lock-protected snapshot read in get_completions."""
+
+    def test_get_completions_bails_out_beyond_max_level(self):
+        from prompt_toolkit.document import Document
+
+        c = _StubCompleter(data={"top": {"leaf": []}})
+        # Stub sets max_level=2 (see _StubCompleter). "x.y.z" has 3 levels.
+        doc = Document(text="a.b.c")
+        completions = list(c.get_completions(doc, None))
+        assert completions == []
+
+    def test_get_completions_yields_prefix_matches(self):
+        from prompt_toolkit.document import Document
+
+        c = _StubCompleter(data={"alpha": {}, "alabama": {}, "beta": {}})
+        doc = Document(text="al")
+        texts = [comp.text for comp in c.get_completions(doc, None)]
+        # Non-leaf completions append the separator so Tab keeps descending.
+        assert "alpha." in texts
+        assert "alabama." in texts
+        assert not any(t.startswith("beta") for t in texts)
+
+    def test_get_completions_non_leaf_appends_separator(self):
+        """Selecting a non-leaf level must produce ``name.`` so the next Tab
+        fires the downstream completer without manual separator input.
+        """
+        from prompt_toolkit.document import Document
+
+        c = _StubCompleter(data={"catalog": {"db": []}})
+        doc = Document(text="cat")
+        completions = list(c.get_completions(doc, None))
+        assert [comp.text for comp in completions] == ["catalog."]
+
+    def test_get_completions_substring_fallback(self):
+        """Typed chars that do not prefix-match any key should still surface
+        keys containing the substring, ranked after prefix hits.
+        """
+        from prompt_toolkit.document import Document
+
+        c = _StubCompleter(
+            data={
+                "california_schools": {},
+                "schools_meta": {},
+                "orders": {},
+            }
+        )
+        doc = Document(text="sch")
+        texts = [comp.text for comp in c.get_completions(doc, None)]
+        # Prefix hit first, substring hit second; ``orders`` lacks ``sch``.
+        assert texts == ["schools_meta.", "california_schools."]
+
+    def test_get_completions_cross_level_fuzzy_fallback(self):
+        """When nothing at the current level matches, fall back to
+        ``flatten_data`` so a single fragment can descend arbitrarily deep.
+        """
+        from prompt_toolkit.document import Document
+
+        class _DeepStub(DynamicAtReferenceCompleter):
+            def _build_snapshot(self):
+                data = {"my_cat": {"my_db": {"california_schools": []}}}
+                flatten = {"my_cat.my_db.california_schools": {"table_name": "california_schools"}}
+                return data, flatten, 3
+
+        c = _DeepStub()
+        doc = Document(text="sch")
+        texts = [comp.text for comp in c.get_completions(doc, None)]
+        # ``sch`` matches nothing at the top level (``my_cat``) — fallback
+        # yields the full dotted path so Tab fills it in one shot.
+        assert texts == ["my_cat.my_db.california_schools"]
+
+
+class TestContinuousPathCompleter:
+    """Wrapper must mirror ``display``'s trailing ``/`` onto ``text`` so Tab
+    keeps descending into nested directories without manual separator input.
+    """
+
+    def test_directory_completion_text_gets_trailing_slash(self, tmp_path):
+        from prompt_toolkit.completion import PathCompleter
+
+        (tmp_path / "subdir").mkdir()
+        (tmp_path / "file.txt").write_text("x")
+
+        inner = PathCompleter(get_paths=lambda: [str(tmp_path)])
+        wrapper = _ContinuousPathCompleter(inner)
+        doc = Document(text="")
+        comps = list(wrapper.get_completions(doc, None))
+        by_text = {c.text: c for c in comps}
+        assert "subdir/" in by_text
+        assert "file.txt" in by_text
+        assert not by_text["file.txt"].text.endswith("/")
+
+    def test_already_slashed_text_is_passed_through(self):
+        """Inner completers that already emit ``text`` with ``/`` (e.g. future
+        refactors of PathCompleter) must not get double slashes.
+        """
+        from prompt_toolkit.completion import Completer, Completion
+
+        class _Static(Completer):
+            def get_completions(self, document, complete_event):
+                yield Completion(text="dir/", start_position=0, display="dir/")
+
+        wrapper = _ContinuousPathCompleter(_Static())
+        comps = list(wrapper.get_completions(Document(text=""), None))
+        assert [c.text for c in comps] == ["dir/"]
+
+
+class TestTableCompleterBuildSnapshotByDbType:
+    """Exercise TableCompleter._build_snapshot against different connector
+    shapes so each hierarchy branch (catalog/database/schema/table,
+    database->schema->table, schema->table) is covered without a real
+    LanceDB.
+    """
+
+    @staticmethod
+    def _pyarrow_table(**cols):
+        import pyarrow as pa
+
+        return pa.table(cols)
+
+    def _mock_rag(self, monkeypatch, schema_table):
+        fake_storage = MagicMock()
+        fake_storage.search_all_schemas.return_value = schema_table
+        monkeypatch.setattr(
+            "datus.storage.schema_metadata.store.SchemaWithValueRAG",
+            lambda *a, **kw: fake_storage,
+        )
+
+    def _table_completer(self, db_type: str):
+        from datus.cli.autocomplete import TableCompleter
+
+        agent_config = MagicMock()
+        agent_config.db_type = db_type
+        tc = TableCompleter(agent_config)
+        return tc
+
+    def test_snapshot_empty_table_returns_empty(self, monkeypatch):
+        # No rows → data is an empty list, flatten is empty, max_level=0.
+        empty = self._pyarrow_table(
+            catalog_name=[],
+            database_name=[],
+            schema_name=[],
+            table_name=[],
+            table_type=[],
+            definition=[],
+            identifier=[],
+        )
+        self._mock_rag(monkeypatch, empty)
+        tc = self._table_completer(db_type="sqlite")
+        data, flatten, max_level = tc._build_snapshot()
+        assert data == []
+        assert flatten == {}
+        assert max_level == 0
+
+    def test_snapshot_sqlite_table_scoped(self, monkeypatch):
+        table = self._pyarrow_table(
+            catalog_name=["", ""],
+            database_name=["", ""],
+            schema_name=["", ""],
+            table_name=["t1", "t2"],
+            table_type=["BASE TABLE", "BASE TABLE"],
+            definition=["CREATE TABLE t1", "CREATE TABLE t2"],
+            identifier=["t1", "t2"],
+        )
+        self._mock_rag(monkeypatch, table)
+        tc = self._table_completer(db_type="sqlite")
+        data, flatten, max_level = tc._build_snapshot()
+        # SQLite default is table-only, not database-prefixed.
+        assert max_level == 1
+        assert set(flatten.keys()) == {"t1", "t2"}
+        assert data == ["t1", "t2"]
+
+    def test_snapshot_catches_storage_error_and_returns_empty(self, monkeypatch):
+        """A failure inside SchemaWithValueRAG.search_all_schemas must be
+        swallowed so the completer degrades to "no suggestions" instead of
+        propagating a startup-time LanceDB failure to the user.
+        """
+        fake_storage = MagicMock()
+        fake_storage.search_all_schemas.side_effect = RuntimeError("boom")
+        monkeypatch.setattr(
+            "datus.storage.schema_metadata.store.SchemaWithValueRAG",
+            lambda *a, **kw: fake_storage,
+        )
+        tc = self._table_completer(db_type="sqlite")
+        data, flatten, max_level = tc._build_snapshot()
+        assert data == []
+        assert flatten == {}
+        assert max_level == 0
 
 
 class TestDynamicAtReferenceCompleterFuzzyMatch:
@@ -391,12 +685,21 @@ class TestDynamicAtReferenceCompleterFuzzyMatch:
         results = c.fuzzy_match("")
         assert results == []
 
-    def test_fuzzy_match_limits_to_5(self):
+    def test_fuzzy_match_defaults_to_max_completions(self):
         data = {f"item_{i}": {} for i in range(20)}
         c = _StubCompleter(data=data)
         c._ensure_loaded()
+        # Default limit should match ``max_completions`` (10), not the old
+        # hard-coded 5, so short fragments with many hits are not truncated.
         results = c.fuzzy_match("item")
-        assert len(results) == 5
+        assert len(results) == c.max_completions
+
+    def test_fuzzy_match_honors_explicit_limit(self):
+        data = {f"item_{i}": {} for i in range(20)}
+        c = _StubCompleter(data=data)
+        c._ensure_loaded()
+        results = c.fuzzy_match("item", limit=3)
+        assert len(results) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -463,3 +766,57 @@ class TestAtReferenceCompleterParseAtContext:
         assert completer.table_completer._loaded is False
         completer.parse_at_context("@Table users")
         assert completer.table_completer._loaded is True
+
+
+class TestAtReferenceCompleterGetCompletions:
+    """The TUI refactor routes bare chat input (no leading ``/``) to the
+    default agent, so @Table completion must fire without a slash prefix.
+    """
+
+    def test_bare_at_triggers_type_candidate(self, real_agent_config):
+        completer = AtReferenceCompleter(real_agent_config)
+        doc = Document("@T", cursor_position=2)
+        completions = list(completer.get_completions(doc, None))
+        texts = [c.text for c in completions]
+        assert "Table" in texts
+
+    def test_bare_at_alone_yields_all_type_options(self, real_agent_config):
+        completer = AtReferenceCompleter(real_agent_config)
+        doc = Document("@", cursor_position=1)
+        completions = list(completer.get_completions(doc, None))
+        texts = [c.text for c in completions]
+        for opt in ("Table", "Metrics", "Sql", "File"):
+            assert opt in texts
+
+    def test_plain_text_without_at_yields_nothing(self, real_agent_config):
+        completer = AtReferenceCompleter(real_agent_config)
+        doc = Document("show me schools", cursor_position=15)
+        completions = list(completer.get_completions(doc, None))
+        assert completions == []
+
+    def test_slash_subagent_prefix_triggers_scope_switch(self, real_agent_config):
+        completer = AtReferenceCompleter(real_agent_config, available_subagents={"gensql"})
+        assert completer._sub_agent_name == ""
+        doc = Document("/gensql @T", cursor_position=10)
+        list(completer.get_completions(doc, None))
+        assert completer._sub_agent_name == "gensql"
+
+    def test_bare_input_resets_subagent_scope(self, real_agent_config):
+        """A fresh bare-chat line has no sub-agent prefix, so scope must
+        fall back to the global datasource.
+        """
+        completer = AtReferenceCompleter(real_agent_config, available_subagents={"gensql"}, sub_agent_name="gensql")
+        doc = Document("@T", cursor_position=2)
+        list(completer.get_completions(doc, None))
+        assert completer._sub_agent_name == ""
+
+    def test_chat_with_inline_at_table(self, real_agent_config):
+        """Natural-language chat with an inline @Table reference should
+        surface the type candidate.
+        """
+        completer = AtReferenceCompleter(real_agent_config)
+        text = "help me query @T"
+        doc = Document(text, cursor_position=len(text))
+        completions = list(completer.get_completions(doc, None))
+        texts = [c.text for c in completions]
+        assert "Table" in texts

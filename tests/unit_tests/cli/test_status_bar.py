@@ -140,6 +140,26 @@ class TestStatusBarState:
         styles = [style for style, _ in state.to_formatted_tokens()]
         assert "class:status-bar.connector" not in styles
 
+    def test_format_plain_shows_sync_segment_when_schema_sync_running(self):
+        state = StatusBarState(agent="chat", schema_sync_running=True)
+        text = state.format_plain()
+        assert "⟳ sync" in text
+
+    def test_format_plain_omits_sync_segment_when_idle(self):
+        state = StatusBarState(agent="chat", schema_sync_running=False)
+        text = state.format_plain()
+        assert "sync" not in text
+
+    def test_to_formatted_tokens_includes_sync_class_when_running(self):
+        state = StatusBarState(schema_sync_running=True)
+        styles = [style for style, _ in state.to_formatted_tokens()]
+        assert "class:status-bar.sync" in styles
+
+    def test_to_formatted_tokens_omits_sync_class_when_idle(self):
+        state = StatusBarState(schema_sync_running=False)
+        styles = [style for style, _ in state.to_formatted_tokens()]
+        assert "class:status-bar.sync" not in styles
+
     def test_to_formatted_tokens_leading_dot_uses_running_class_when_agent_running(self):
         # While the TUI worker dispatches, the leading activity dot switches
         # to the ``status-bar.running`` class and pulses between filled and
@@ -233,6 +253,42 @@ class TestStatusBarProviderAgent:
         cli = SimpleNamespace(default_agent="gen_sql", agent_config=None, plan_mode_active=False)
         provider = StatusBarProvider(cli)
         assert provider.current_state().agent == "gen_sql"
+
+
+class TestStatusBarProviderSchemaSync:
+    def test_schema_sync_running_reflected_when_bg_sync_active(self):
+        bg_sync = SimpleNamespace(is_running=lambda: True)
+        cli = SimpleNamespace(
+            chat_commands=SimpleNamespace(current_subagent_name=None, current_node=None),
+            default_agent="chat",
+            agent_config=None,
+            plan_mode_active=False,
+            bg_sync=bg_sync,
+        )
+        provider = StatusBarProvider(cli)
+        assert provider.current_state().schema_sync_running is True
+
+    def test_schema_sync_running_false_when_idle(self):
+        bg_sync = SimpleNamespace(is_running=lambda: False)
+        cli = SimpleNamespace(
+            chat_commands=SimpleNamespace(current_subagent_name=None, current_node=None),
+            default_agent="chat",
+            agent_config=None,
+            plan_mode_active=False,
+            bg_sync=bg_sync,
+        )
+        provider = StatusBarProvider(cli)
+        assert provider.current_state().schema_sync_running is False
+
+    def test_schema_sync_running_defaults_false_when_bg_sync_missing(self):
+        cli = SimpleNamespace(
+            chat_commands=SimpleNamespace(current_subagent_name=None, current_node=None),
+            default_agent="chat",
+            agent_config=None,
+            plan_mode_active=False,
+        )
+        provider = StatusBarProvider(cli)
+        assert provider.current_state().schema_sync_running is False
 
 
 class TestStatusBarProviderModel:

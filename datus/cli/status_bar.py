@@ -78,6 +78,7 @@ class StatusBarState:
     plan_mode: bool = False
     agent_running: bool = False
     profile: str = "normal"
+    schema_sync_running: bool = False
 
     def context_display(self) -> str:
         if self.context_total > 0:
@@ -99,6 +100,8 @@ class StatusBarState:
         segments.append(self.agent)
         if self.connector:
             segments.append(self.connector)
+        if self.schema_sync_running:
+            segments.append("⟳ sync")
         segments.append(self.profile)
         segments.extend(
             [
@@ -136,6 +139,11 @@ class StatusBarState:
         tokens.extend([sep, ("class:status-bar.agent", self.agent)])
         if self.connector:
             tokens.extend([sep, ("class:status-bar.connector", self.connector)])
+        if self.schema_sync_running:
+            # Lightweight inline indicator for the background metadata RAG
+            # refresh kicked off after /datasource switches. Appears only
+            # while the bg task is in-flight and disappears on completion.
+            tokens.extend([sep, ("class:status-bar.sync", "⟳ sync")])
         # Profile segment. Variant class (``status-bar.profile.auto`` /
         # ``.dangerous``) lets repl.py render risky profiles with bold/red
         # while leaving normal neutral.
@@ -174,6 +182,13 @@ class StatusBarProvider:
                 agent_running = tui_app.agent_running.is_set()
             except Exception as e:  # pragma: no cover - defensive
                 logger.debug(f"status_bar: failed to read agent_running: {e}")
+        bg_sync = getattr(self._cli, "bg_sync", None)
+        schema_sync_running = False
+        if bg_sync is not None:
+            try:
+                schema_sync_running = bool(bg_sync.is_running())
+            except Exception as e:  # pragma: no cover - defensive
+                logger.debug(f"status_bar: failed to read bg_sync state: {e}")
         return StatusBarState(
             agent=self._resolve_agent(),
             model=self._resolve_model(),
@@ -185,6 +200,7 @@ class StatusBarProvider:
             plan_mode=bool(getattr(self._cli, "plan_mode_active", False)),
             agent_running=agent_running,
             profile=self._resolve_profile(),
+            schema_sync_running=schema_sync_running,
         )
 
     def _resolve_profile(self) -> str:

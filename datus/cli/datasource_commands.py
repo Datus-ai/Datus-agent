@@ -117,6 +117,9 @@ class DatasourceCommands:
             self.cli.chat_commands.update_chat_node_tools()
             self._persist_default_datasource(name)
             print_success(self.console, f"Datasource changed to: {name}")
+            bg_sync = getattr(self.cli, "bg_sync", None)
+            if bg_sync is not None:
+                bg_sync.schedule(datasource=name, reason="switch")
         except Exception as e:
             print_error(self.console, f"Failed to switch datasource: {e}")
 
@@ -312,3 +315,7 @@ class DatasourceCommands:
             self.cli.reset_session()
         except Exception as e:
             logger.debug("Runtime reload after datasource change: %s", e)
+        bg_sync = getattr(self.cli, "bg_sync", None)
+        current = getattr(self.cli.agent_config, "current_datasource", "")
+        if bg_sync is not None and current:
+            bg_sync.schedule(datasource=current, reason="reload")

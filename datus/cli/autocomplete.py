@@ -8,12 +8,14 @@ Provides SQL keyword, table name, and column name autocompletion.
 """
 
 import re
+import threading
 from abc import abstractmethod
-from typing import Any, Dict, Iterable, List, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 import pyarrow
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
 from prompt_toolkit.document import Document
+from pygments.lexer import bygroups
 from pygments.lexers.sql import SqlLexer
 from pygments.styles.default import DefaultStyle
 from pygments.token import Token
@@ -387,14 +389,20 @@ class SQLCompleter(Completer):
 
 
 class CustomSqlLexer(SqlLexer):
-    """Custom lexer extending SqlLexer for @references with space separator."""
+    """Custom lexer extending SqlLexer for @references with space separator.
+
+    Only the ``@Type`` prefix is colored (via :class:`CustomPygmentsStyle`);
+    the trailing path / filename is emitted as ``Token.Text`` so it renders
+    in the terminal's default foreground — keeping the visual emphasis on
+    the reference kind, not the argument.
+    """
 
     tokens = {
         "root": [
-            (rf"@Table(?:\s+{REFERENCE_PATH_REGEX})?", Token.AtTables),
-            (rf"@Metrics(?:\s+{REFERENCE_PATH_REGEX})?", Token.AtMetrics),
-            (rf"@Sql(?:\s+{REFERENCE_PATH_REGEX})?", Token.AtReferenceSql),
-            (r"@File(?:\s+[^\r\n@]+)?", Token.AtFiles),
+            (rf"(@Table)(\s+{REFERENCE_PATH_REGEX})?", bygroups(Token.AtTables, Token.Text)),
+            (rf"(@Metrics)(\s+{REFERENCE_PATH_REGEX})?", bygroups(Token.AtMetrics, Token.Text)),
+            (rf"(@Sql)(\s+{REFERENCE_PATH_REGEX})?", bygroups(Token.AtReferenceSql, Token.Text)),
+            (r"(@File)(\s+[^\r\n@]+)?", bygroups(Token.AtFiles, Token.Text)),
         ]
         + SqlLexer.tokens["root"],
     }
@@ -404,10 +412,10 @@ class CustomPygmentsStyle(DefaultStyle):
     """Custom style for coloring the @ references."""
 
     styles = {
-        Token.AtTables: "#00CED1 bold",  # Pink
-        Token.AtMetrics: "#FFD700 bold",  # Gold
-        Token.AtReferenceSql: "#32CD32 bold",  # Green
-        Token.AtFiles: "ansiblue bold",  # Blue
+        Token.AtTables: "#00CED1",  # Cyan
+        Token.AtMetrics: "#FFD700",  # Gold
+        Token.AtReferenceSql: "#32CD32",  # Green
+        Token.AtFiles: "ansiblue",  # Blue
     }
 
 
@@ -419,43 +427,87 @@ class DynamicAtReferenceCompleter(Completer):
         self.max_completions = max_completions
         self.quote_leaf = quote_leaf
         self._loaded = False
+        # Serializes atomic swaps between reader threads (prompt_toolkit main
+        # thread calling get_completions / fuzzy_match) and writer threads
+        # (BackgroundSchemaSyncManager invoking reload_data on the bg event
+        # loop).
+        self._lock = threading.RLock()
 
     def clear(self):
-        self._data = {}
-        self.flatten_data = {}
-        self._loaded = False
-        self.max_level = 0
+        with self._lock:
+            self._data = {}
+            self.flatten_data = {}
+            self._loaded = False
+            self.max_level = 0
 
     def _ensure_loaded(self):
-        if not self._loaded:
-            self._data = self.load_data()
+        if self._loaded:
+            return
+        data, flatten, max_level = self._build_snapshot()
+        with self._lock:
+            if self._loaded:
+                return
+            self._data = data
+            self.flatten_data = flatten
+            self.max_level = max_level
             self._loaded = True
 
-    def fuzzy_match(self, text: str) -> List[str]:
+    def fuzzy_match(self, text: str, limit: Optional[int] = None) -> List[str]:
+        """Return flatten-path keys whose lower-cased form contains ``text``.
+
+        ``limit`` caps the number of results; defaults to ``self.max_completions``
+        (10) so the caller sees the same ceiling the per-level completer
+        uses instead of a hard-coded 5.
+        """
         self._ensure_loaded()
         text = text.strip().lower()
         if not text:
             return []
+        if limit is None:
+            limit = self.max_completions
+        with self._lock:
+            flatten = self.flatten_data
         result = []
-        for k in self.flatten_data.keys():
+        for k in flatten.keys():
             if text in k.lower():
                 result.append(k)
-                if len(result) == 5:
+                if len(result) >= limit:
                     break
         return result
 
     @abstractmethod
-    def load_data(self) -> Union[List[str], Dict[str, Any]]:
+    def _build_snapshot(self) -> Tuple[Union[List[str], Dict[str, Any]], Dict[str, Any], int]:
+        """Build a fresh (data, flatten_data, max_level) triple without
+        mutating instance state, so callers can atomically swap it in under
+        ``self._lock``.
+        """
         raise NotImplementedError()
 
+    def load_data(self) -> Union[List[str], Dict[str, Any]]:
+        """Back-compat shim: delegate to :meth:`_build_snapshot` and apply the
+        result in-place.
+        """
+        data, flatten, max_level = self._build_snapshot()
+        with self._lock:
+            self._data = data
+            self.flatten_data = flatten
+            self.max_level = max_level
+        return data
+
     def reload_data(self):
-        self.flatten_data = {}
-        self._data = self.load_data()
-        self._loaded = True
+        # Build outside the lock so readers are only blocked for the atomic
+        # reference swap, not the heavy LanceDB scan.
+        data, flatten, max_level = self._build_snapshot()
+        with self._lock:
+            self._data = data
+            self.flatten_data = flatten
+            self.max_level = max_level
+            self._loaded = True
 
     def get_data(self):
         self._ensure_loaded()
-        return self._data
+        with self._lock:
+            return self._data
 
     def _format_leaf_for_completion(self, leaf: str) -> str:
         """Wrap final component in quotes when required."""
@@ -483,7 +535,10 @@ class DynamicAtReferenceCompleter(Completer):
             document: Current document object
             complete_event: Completion event
         """
-        data = self.get_data()
+        self._ensure_loaded()
+        with self._lock:
+            data = self._data
+            max_level = self.max_level
         rest = document.text
         separator = "."
         levels = rest.split(separator)
@@ -497,7 +552,7 @@ class DynamicAtReferenceCompleter(Completer):
             prev_levels = levels[:-1]
             prefix = levels[-1] if levels else ""
             current_level = len(levels)
-        if current_level > self.max_level:
+        if current_level > max_level:
             return
         current_dict = data
         for lvl in prev_levels:
@@ -508,7 +563,19 @@ class DynamicAtReferenceCompleter(Completer):
         prefix_for_match = prefix.strip().lower()
         if self.quote_leaf:
             prefix_for_match = prefix_for_match.lstrip('"')
-        suggestions = [k for k in current_dict if k.lower().startswith(prefix_for_match)]
+        # Two-tier match: prefix hits first (most specific), then substring
+        # hits as a fuzzy fallback so e.g. ``sch`` still surfaces
+        # ``california_schools`` when no prefix match exists. Empty prefix
+        # degrades to "list everything" via the prefix tier alone.
+        prefix_hits: List[str] = []
+        substring_hits: List[str] = []
+        for k in current_dict:
+            kl = k.lower()
+            if kl.startswith(prefix_for_match):
+                prefix_hits.append(k)
+            elif prefix_for_match and prefix_for_match in kl:
+                substring_hits.append(k)
+        suggestions = sorted(prefix_hits) + sorted(substring_hits)
         # Smart filtering: show more items when user types more characters
         if len(prefix) >= 3:
             # User typed enough characters, can show more options
@@ -517,15 +584,44 @@ class DynamicAtReferenceCompleter(Completer):
             # User typed few characters, limit to avoid overwhelming
             effective_limit = self.max_completions
 
-        is_last_level = current_level == self.max_level
-        suggestions = sorted(suggestions)[:effective_limit]
-        for s in suggestions:
-            completion_text = s
+        # Cross-level fuzzy fallback: when the user typed a single fragment
+        # that matches nothing at the current level, search the pre-built
+        # ``flatten_data`` path index so e.g. ``@Table sch`` still surfaces
+        # ``catalog.db.schema.california_schools`` without forcing the user
+        # to walk every level manually. Gated on ``current_level == 1`` and
+        # ``not ends_with_sep`` so deeper drill-down / explicit separator
+        # listings keep their existing behaviour.
+        if prefix_for_match and not suggestions and current_level == 1 and not ends_with_sep:
+            with self._lock:
+                flat_keys = list(self.flatten_data.keys())
+            deep_hits: List[str] = []
+            for k in flat_keys:
+                # ``flatten_data`` uses ``/`` for metric / reference-sql paths
+                # and ``.`` for table paths; normalise to the dot form the
+                # completer advertises as ``separator``.
+                path = k.replace("/", ".")
+                if prefix_for_match in path.lower():
+                    deep_hits.append(path)
+                    if len(deep_hits) >= self.max_completions:
+                        break
+            rest_len = len(rest)
+            for full_path in deep_hits:
+                formatted = self.format_path_for_completion(full_path)
+                yield Completion(formatted, display=formatted, start_position=-rest_len)
+            return
 
-            # The display text (what user sees in menu)
-            display_text = s
+        is_last_level = current_level == max_level
+        suggestions = suggestions[:effective_limit]
+        for s in suggestions:
+            # Non-leaf levels append ``separator`` to the completion text so
+            # selecting e.g. ``catalog`` from the menu immediately produces
+            # ``catalog.``, letting prompt_toolkit fire the next round of
+            # completion on the same Tab stroke (``complete_while_typing``
+            # reacts to the buffer change). Without this, users had to type
+            # the separator manually between every layer.
             if not is_last_level:
-                display_text = f"{s}."
+                completion_text = f"{s}{separator}"
+                display_text = completion_text
             else:
                 completion_text = self._format_leaf_for_completion(s)
                 display_text = completion_text
@@ -555,8 +651,11 @@ class TableCompleter(DynamicAtReferenceCompleter):
         self.sqlite_show_db = sqlite_show_db
         self.sub_agent_name = sub_agent_name
 
-    def load_data(self) -> Union[List[str], Dict[str, Any]]:
+    def _build_snapshot(self) -> Tuple[Union[List[str], Dict[str, Any]], Dict[str, Any], int]:
         from datus.storage.schema_metadata.store import SchemaWithValueRAG
+
+        flatten: Dict[str, Any] = {}
+        max_level = 0
 
         storage = SchemaWithValueRAG(self.agent_config, sub_agent_name=self.sub_agent_name or None)
         try:
@@ -576,22 +675,22 @@ class TableCompleter(DynamicAtReferenceCompleter):
             schema_table = pyarrow.table([])
         logger.debug(f"Load table data for completer: {len(schema_table)}")
         if schema_table is None or schema_table.num_rows == 0:
-            return []
+            return [], flatten, max_level
 
         # Process schema table directly using pyarrow (no conversion to pylist)
         table_column = schema_table["table_name"]
 
         if self.agent_config.db_type == DBType.SQLITE and not self.sqlite_show_db:
-            self.max_level = 1
+            max_level = 1
             for table, definition, table_type in zip(
                 table_column, schema_table["definition"], schema_table["table_type"]
             ):
-                self.flatten_data[table.as_py()] = {
+                flatten[table.as_py()] = {
                     "table_name": table.as_py(),
                     "table_type": table_type.as_py(),
                     "definition": definition.as_py(),
                 }
-            return table_column.to_pylist()
+            return table_column.to_pylist(), flatten, max_level
 
         catalog_column = schema_table["catalog_name"]
         database_column = schema_table["database_name"]
@@ -604,7 +703,7 @@ class TableCompleter(DynamicAtReferenceCompleter):
             if connector_registry.support_database(self.agent_config.db_type):
                 if connector_registry.support_schema(self.agent_config.db_type):
                     # catalog -> database -> schema -> table
-                    self.max_level = 4
+                    max_level = 4
                     # Catalog -> Database -> Schema -> Table structure
                     for catalog, database, schema, table, definition, table_type, identifier in zip(
                         catalog_column,
@@ -616,7 +715,7 @@ class TableCompleter(DynamicAtReferenceCompleter):
                         identifier_column,
                     ):
                         insert_into_dict(data, [catalog.as_py(), database.as_py(), schema.as_py()], table.as_py())
-                        self.flatten_data[f"{catalog}.{database}.{schema}.{table}"] = {
+                        flatten[f"{catalog}.{database}.{schema}.{table}"] = {
                             "identifier": identifier.as_py(),
                             "catalog_name": catalog.as_py(),
                             "database_name": database.as_py(),
@@ -625,10 +724,10 @@ class TableCompleter(DynamicAtReferenceCompleter):
                             "table_type": table_type.as_py(),
                             "definition": definition.as_py(),
                         }
-                    return data
+                    return data, flatten, max_level
                 else:
                     # catalog -> database -> table
-                    self.max_level = 3
+                    max_level = 3
                     for catalog, database, table, definition, table_type, identifier in zip(
                         catalog_column,
                         database_column,
@@ -638,7 +737,7 @@ class TableCompleter(DynamicAtReferenceCompleter):
                         identifier_column,
                     ):
                         insert_into_dict(data, [catalog.as_py(), database.as_py()], table.as_py())
-                        self.flatten_data[f"{catalog}.{database}.{table}"] = {
+                        flatten[f"{catalog}.{database}.{table}"] = {
                             "identifier": identifier.as_py(),
                             "catalog_name": catalog.as_py(),
                             "database_name": database.as_py(),
@@ -646,9 +745,9 @@ class TableCompleter(DynamicAtReferenceCompleter):
                             "table_type": table_type.as_py(),
                             "definition": definition.as_py(),
                         }
-                    return data
+                    return data, flatten, max_level
             elif connector_registry.support_schema(self.agent_config.db_type):
-                self.max_level = 3
+                max_level = 3
                 # catalog -> schema -> table
                 for catalog, schema, table, definition, table_type, identifier in zip(
                     catalog_column,
@@ -659,7 +758,7 @@ class TableCompleter(DynamicAtReferenceCompleter):
                     identifier_column,
                 ):
                     insert_into_dict(data, [catalog.as_py(), schema.as_py()], table.as_py())
-                    self.flatten_data[f"{catalog}.{schema}.{table}"] = {
+                    flatten[f"{catalog}.{schema}.{table}"] = {
                         "identifier": identifier.as_py(),
                         "catalog_name": catalog.as_py(),
                         "schema_name": schema.as_py(),
@@ -672,7 +771,7 @@ class TableCompleter(DynamicAtReferenceCompleter):
             0
         ].as_py():
             if connector_registry.support_schema(self.agent_config.db_type) and schema_column[0].as_py():
-                self.max_level = 3
+                max_level = 3
                 # Database -> Schema -> Table structure
                 for database, schema, table, definition, table_type, identifier in zip(
                     database_column,
@@ -683,7 +782,7 @@ class TableCompleter(DynamicAtReferenceCompleter):
                     identifier_column,
                 ):
                     insert_into_dict(data, [database.as_py(), schema.as_py()], table.as_py())
-                    self.flatten_data[f"{database}.{schema}.{table}"] = {
+                    flatten[f"{database}.{schema}.{table}"] = {
                         "identifier": identifier.as_py(),
                         "database_name": database.as_py(),
                         "schema_name": schema.as_py(),
@@ -692,7 +791,7 @@ class TableCompleter(DynamicAtReferenceCompleter):
                         "definition": definition.as_py(),
                     }
             else:
-                self.max_level = 2
+                max_level = 2
                 # Database -> Table structure
                 for database, table, definition, table_type, identifier in zip(
                     database_column,
@@ -702,23 +801,23 @@ class TableCompleter(DynamicAtReferenceCompleter):
                     identifier_column,
                 ):
                     insert_into_dict(data, [database.as_py()], table.as_py())
-                    self.flatten_data[f"{database}.{table}"] = {
+                    flatten[f"{database}.{table}"] = {
                         "identifier": identifier.as_py(),
                         "database_name": database.as_py(),
                         "table_name": table.as_py(),
                         "table_type": table_type.as_py(),
                         "definition": definition.as_py(),
                     }
-            return data
+            return data, flatten, max_level
 
         if connector_registry.support_schema(self.agent_config.db_type):
-            self.max_level = 2
+            max_level = 2
             # schema -> table
             for schema, table, definition, table_type, identifier in zip(
                 schema_column, table_column, schema_table["definition"], schema_table["table_type"], identifier_column
             ):
                 insert_into_dict(data, [schema.as_py()], table.as_py())
-                self.flatten_data[f"{schema}.{table}"] = {
+                flatten[f"{schema}.{table}"] = {
                     "identifier": identifier.as_py(),
                     "schema_name": schema.as_py(),
                     "table_name": table.as_py(),
@@ -726,7 +825,7 @@ class TableCompleter(DynamicAtReferenceCompleter):
                     "definition": definition.as_py(),
                 }
 
-        return data
+        return data, flatten, max_level
 
 
 def insert_into_dict_with_dict(data: Dict, keys: List[str], leaf_key: str, value: str) -> None:
@@ -745,12 +844,13 @@ class MetricsCompleter(DynamicAtReferenceCompleter):
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
 
-    def load_data(self) -> Union[List[str], Dict[str, Any]]:
+    def _build_snapshot(self) -> Tuple[Union[List[str], Dict[str, Any]], Dict[str, Any], int]:
         from datus.storage.metric.store import MetricRAG
 
         rag = MetricRAG(self.agent_config, sub_agent_name=self.sub_agent_name or None)
         data = rag.search_all_metrics()
-        result = {}
+        result: Dict[str, Any] = {}
+        flatten: Dict[str, Any] = {}
         max_depth = 0
         for metric in data:
             subject_path = metric.get("subject_path", [])
@@ -764,12 +864,11 @@ class MetricsCompleter(DynamicAtReferenceCompleter):
 
             # Flatten key uses "/" separator
             flatten_key = "/".join(subject_path + [name]) if subject_path else name
-            self.flatten_data[flatten_key] = {
+            flatten[flatten_key] = {
                 "name": name,
                 "description": description,
             }
-        self.max_level = max_depth or 4
-        return result
+        return result, flatten, max_depth or 4
 
 
 class ReferenceSqlCompleter(DynamicAtReferenceCompleter):
@@ -778,12 +877,13 @@ class ReferenceSqlCompleter(DynamicAtReferenceCompleter):
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
 
-    def load_data(self) -> Union[List[str], Dict[str, Any]]:
+    def _build_snapshot(self) -> Tuple[Union[List[str], Dict[str, Any]], Dict[str, Any], int]:
         from datus.storage.reference_sql.store import ReferenceSqlRAG
 
         storage = ReferenceSqlRAG(self.agent_config, sub_agent_name=self.sub_agent_name or None)
         search_data = storage.search_all_reference_sql()
-        result = {}
+        result: Dict[str, Any] = {}
+        flatten: Dict[str, Any] = {}
         max_depth = 0
         for item in search_data:
             subject_path = item.get("subject_path", [])
@@ -796,15 +896,41 @@ class ReferenceSqlCompleter(DynamicAtReferenceCompleter):
 
             # Flatten key uses "/" separator
             flatten_key = "/".join(subject_path + [name]) if subject_path else name
-            self.flatten_data[flatten_key] = {
+            flatten[flatten_key] = {
                 "name": name,
                 "comment": item["comment"],
                 "summary": item["summary"],
                 "tags": item["tags"],
                 "sql": item["sql"],
             }
-        self.max_level = max_depth or 4
-        return result
+        return result, flatten, max_depth or 4
+
+
+class _ContinuousPathCompleter(Completer):
+    """Wrap ``PathCompleter`` so directory completions append ``/`` to the
+    completion text, not only to the display.
+
+    prompt_toolkit's stock ``PathCompleter`` yields ``Completion(text="dirname",
+    display="dirname/")`` for directories, forcing users to type the trailing
+    slash manually before Tab can descend into the next level. Appending the
+    slash to ``text`` lets ``complete_while_typing`` re-fire the completer on
+    the same keystroke so Tab walks a tree without interruption.
+    """
+
+    def __init__(self, inner: Completer) -> None:
+        self._inner = inner
+
+    def get_completions(self, document: Document, complete_event) -> Iterable[Completion]:
+        for comp in self._inner.get_completions(document, complete_event):
+            display_str = comp.display if isinstance(comp.display, str) else "".join(s for _, s in comp.display)
+            if display_str.endswith("/") and not comp.text.endswith("/"):
+                yield Completion(
+                    text=comp.text + "/",
+                    start_position=comp.start_position,
+                    display=comp.display,
+                )
+            else:
+                yield comp
 
 
 class AtReferenceCompleter(Completer):
@@ -840,7 +966,7 @@ class AtReferenceCompleter(Completer):
                 paths.insert(0, workspace_root)
             return paths
 
-        self.file_completer = PathCompleter(get_paths=get_search_paths)
+        self.file_completer = _ContinuousPathCompleter(PathCompleter(get_paths=get_search_paths))
 
         self.completer_dict = {
             "Table": self.table_completer,
@@ -933,19 +1059,19 @@ class AtReferenceCompleter(Completer):
         return first_token
 
     def get_completions(self, document, complete_event) -> Iterable[Completion]:
-        if not document.text.startswith("/"):
-            return
-
-        # Dynamically switch sub-agent context based on input prefix
-        detected = self._detect_sub_agent_from_input(document.text)
-        if detected != self._sub_agent_name:
-            self.set_sub_agent(detected)
-
         text = document.text_before_cursor
         at_pos = text.rfind("@")
 
         if at_pos == -1:
             return
+
+        # Sub-agent detection remains scoped to ``/<sub_agent> ...`` prefixes;
+        # bare chat input (no leading slash) resets the scope to the global
+        # datasource, which is what ``_detect_sub_agent_from_input`` returns
+        # for any non-slash text.
+        detected = self._detect_sub_agent_from_input(document.text)
+        if detected != self._sub_agent_name:
+            self.set_sub_agent(detected)
 
         prefix = text[at_pos:]
 
@@ -954,13 +1080,16 @@ class AtReferenceCompleter(Completer):
             type_prefix = prefix[1:]
 
             if type_prefix:  # Only do fuzzy matching if there's text after @
-                # Get fuzzy matches from each completer (max 5 each)
-                table_matches = self.table_completer.fuzzy_match(type_prefix)
-                metric_matches = self.metric_completer.fuzzy_match(type_prefix)
-                sql_matches = self.sql_completer.fuzzy_match(type_prefix)
-                file_matches = get_file_fuzzy_matches(type_prefix, path=self.workspace_root, max_matches=5)
+                # Pull up to ``max_completions`` (10) per completer so tables
+                # / metrics / sql / file matches are not silently truncated
+                # when the user types a short fragment that hits many rows.
+                fuzzy_limit = self.table_completer.max_completions
+                table_matches = self.table_completer.fuzzy_match(type_prefix, limit=fuzzy_limit)
+                metric_matches = self.metric_completer.fuzzy_match(type_prefix, limit=fuzzy_limit)
+                sql_matches = self.sql_completer.fuzzy_match(type_prefix, limit=fuzzy_limit)
+                file_matches = get_file_fuzzy_matches(type_prefix, path=self.workspace_root, max_matches=fuzzy_limit)
                 # Yield fuzzy match results first
-                for match in table_matches[:5]:
+                for match in table_matches:
                     # Extract the actual path from the match string
                     formatted = self.table_completer.format_path_for_completion(match)
                     display = f"📊 {formatted}"
@@ -971,14 +1100,14 @@ class AtReferenceCompleter(Completer):
                         style="class:fuzzy",
                     )
 
-                for match in metric_matches[:5]:
+                for match in metric_matches:
                     formatted = self.metric_completer.format_path_for_completion(match)
                     display = f"📈 {formatted}"
                     yield Completion(
                         f"@Metrics {formatted}", start_position=-len(prefix), display=display, style="class:fuzzy"
                     )
 
-                for match in sql_matches[:5]:
+                for match in sql_matches:
                     formatted = self.sql_completer.format_path_for_completion(match)
                     display = f"💻 {formatted}"
                     yield Completion(

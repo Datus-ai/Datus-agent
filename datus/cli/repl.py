@@ -243,6 +243,10 @@ class DatusCLI:
         from datus.cli.datasource_commands import DatasourceCommands
 
         self.datasource_commands = DatasourceCommands(self)
+
+        from datus.cli.background_sync import BackgroundSchemaSyncManager
+
+        self.bg_sync = BackgroundSchemaSyncManager(self)
         self._status_bar_provider = StatusBarProvider(self)
 
         # Dictionary of available commands - created after handlers are initialized
@@ -334,15 +338,21 @@ class DatusCLI:
 
         @kb.add("tab")
         def _(event):
-            """The Tab key triggers completion only, not navigation."""
+            """Tab confirms the highlighted completion (arrow keys navigate)."""
             buffer = event.app.current_buffer
 
             if buffer.complete_state:
-                # If the menu is already open, close it.
-                buffer.complete_next()
+                cs = buffer.complete_state
+                comp = cs.current_completion
+                if comp is not None:
+                    buffer.apply_completion(comp)
+                else:
+                    buffer.complete_next()
+                    cs = buffer.complete_state
+                    if cs and cs.current_completion is not None:
+                        buffer.apply_completion(cs.current_completion)
             else:
-                # If the menu is incomplete, trigger completion.
-                buffer.start_completion(select_first=False)
+                buffer.start_completion(select_first=True)
 
         @kb.add("s-tab")
         def _(event):
@@ -474,9 +484,9 @@ class DatusCLI:
                         # alone — bold bright cyan — with no colored band.
                         "completion-menu": "bg:default",
                         "completion-menu.completion": "bg:default fg:default",
-                        "completion-menu.completion.current": "noreverse bg:default fg:ansibrightcyan bold",
+                        "completion-menu.completion.current": "noreverse bg:default fg:ansibrightcyan",
                         "completion-menu.meta.completion": "bg:default fg:ansibrightblack",
-                        "completion-menu.meta.completion.current": "noreverse bg:default fg:ansibrightcyan bold",
+                        "completion-menu.meta.completion.current": "noreverse bg:default fg:ansibrightcyan",
                         "hint": "#9a9aaa italic",
                         # Pinned subagent/tool rolling-window lines. Dim grey
                         # to match the scrollback ``[dim]`` styling used by the
@@ -552,9 +562,17 @@ class DatusCLI:
         def _tab(event):  # noqa: ANN001 - prompt_toolkit signature
             buffer = event.app.current_buffer
             if buffer.complete_state:
-                buffer.complete_next()
+                cs = buffer.complete_state
+                comp = cs.current_completion
+                if comp is not None:
+                    buffer.apply_completion(comp)
+                else:
+                    buffer.complete_next()
+                    cs = buffer.complete_state
+                    if cs and cs.current_completion is not None:
+                        buffer.apply_completion(cs.current_completion)
             else:
-                buffer.start_completion(select_first=False)
+                buffer.start_completion(select_first=True)
 
         @self.tui_app.key_bindings.add("s-tab")
         def _s_tab(event):  # noqa: ANN001
@@ -933,6 +951,7 @@ class DatusCLI:
             self.agent_commands.update_agent_reference()
             self._pre_load_storage()
             self._workflow_runner = self._create_workflow_runner()
+            self._maybe_schedule_startup_sync()
             # self.console.print("[dim]Agent initialized successfully in background[/]")
         except Exception as e:
             self.console.print(f"[red]Error:[/]Failed to initialize agent in background: {str(e)}")
@@ -944,6 +963,23 @@ class DatusCLI:
         """Preload rag to avoid unnecessary printing"""
         if self.at_completer:
             self.at_completer.reload_data()
+
+    def _maybe_schedule_startup_sync(self) -> None:
+        """Kick off a one-shot background metadata sync for the default
+        datasource so the first ``@Table`` completion after launch reflects
+        any tables added since the last ``datus agent init``. Gated by
+        ``agent.autocomplete.background_sync_on_startup``.
+        """
+        bg_sync = getattr(self, "bg_sync", None)
+        if bg_sync is None:
+            return
+        ac = getattr(self.agent_config, "autocomplete", None)
+        if ac is None or not getattr(ac, "background_sync_on_startup", False):
+            return
+        current = getattr(self.agent_config, "current_datasource", "")
+        if not current:
+            return
+        bg_sync.schedule(datasource=current, reason="startup")
 
     # Historical ``_rebuild_llm_after_switch`` removed. ``/model`` now persists
     # the new target via :meth:`AgentConfig.set_active_*` and the Agent reads
@@ -1559,6 +1595,9 @@ class DatusCLI:
                 self.db_connector.close()
             except Exception as e:
                 logger.warning(f"Database connection closed failed, reason:{e}")
+        bg_sync = getattr(self, "bg_sync", None)
+        if bg_sync is not None:
+            bg_sync.shutdown()
         return EXIT_SENTINEL
 
     def _cmd_profile(self, args: str) -> None:

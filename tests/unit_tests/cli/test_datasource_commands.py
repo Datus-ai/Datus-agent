@@ -132,6 +132,52 @@ class TestSwitch:
         cli.console.print.assert_called()
         cli.db_manager.first_conn_with_name.assert_not_called()
 
+    def test_switch_schedules_background_sync(self):
+        """A successful datasource switch must request the background sync
+        manager to refresh the LanceDB schema index for the new datasource.
+        """
+        cli = _make_cli()
+        connector = MagicMock()
+        connector.catalog_name = ""
+        connector.database_name = "mydb"
+        connector.schema_name = "public"
+        cli.db_manager.first_conn_with_name.return_value = ("pg_db", connector)
+        cli.bg_sync = MagicMock()
+
+        cmds = DatasourceCommands(cli)
+        cmds._switch("pg_db")
+
+        cli.bg_sync.schedule.assert_called_once_with(datasource="pg_db", reason="switch")
+
+    def test_switch_same_datasource_does_not_schedule_sync(self):
+        cli = _make_cli(current="local_db")
+        cli.bg_sync = MagicMock()
+        cmds = DatasourceCommands(cli)
+        cmds._switch("local_db")
+        cli.bg_sync.schedule.assert_not_called()
+
+
+class TestReloadRuntime:
+    def test_reload_runtime_schedules_background_sync(self):
+        """Adding or editing a datasource funnels through _reload_runtime,
+        which must trigger the background sync for whatever datasource is
+        currently active.
+        """
+        cli = _make_cli(current="pg_db")
+        cli.bg_sync = MagicMock()
+        cmds = DatasourceCommands(cli)
+        with patch("datus.tools.db_tools.db_manager.db_manager_instance"):
+            cmds._reload_runtime()
+        cli.bg_sync.schedule.assert_called_once_with(datasource="pg_db", reason="reload")
+
+    def test_reload_runtime_skips_when_no_current_datasource(self):
+        cli = _make_cli(current="")
+        cli.bg_sync = MagicMock()
+        cmds = DatasourceCommands(cli)
+        with patch("datus.tools.db_tools.db_manager.db_manager_instance"):
+            cmds._reload_runtime()
+        cli.bg_sync.schedule.assert_not_called()
+
 
 class TestRunDelete:
     def test_delete_removes_datasource(self):

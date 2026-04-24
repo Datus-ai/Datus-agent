@@ -116,6 +116,64 @@ def cli(real_agent_config):
 # ---------------------------------------------------------------------------
 
 
+class TestMaybeScheduleStartupSync:
+    """Verify the REPL hooks background metadata sync off of
+    agent.autocomplete.background_sync_on_startup + current datasource.
+    """
+
+    def _configure(self, cli, *, on_startup: bool, current_ds: str):
+        from types import SimpleNamespace
+
+        cli.agent_config.autocomplete = SimpleNamespace(
+            background_sync_enabled=True,
+            background_sync_on_startup=on_startup,
+            background_sync_include_values=False,
+        )
+        cli.agent_config._current_datasource = current_ds
+
+    def test_startup_sync_fires_when_enabled_and_ds_set(self, cli):
+        self._configure(cli, on_startup=True, current_ds="local_db")
+        cli.bg_sync = MagicMock()
+        cli._maybe_schedule_startup_sync()
+        cli.bg_sync.schedule.assert_called_once_with(datasource="local_db", reason="startup")
+
+    def test_startup_sync_skipped_when_flag_off(self, cli):
+        self._configure(cli, on_startup=False, current_ds="local_db")
+        cli.bg_sync = MagicMock()
+        cli._maybe_schedule_startup_sync()
+        cli.bg_sync.schedule.assert_not_called()
+
+    def test_startup_sync_skipped_when_no_current_datasource(self, cli):
+        self._configure(cli, on_startup=True, current_ds="")
+        cli.bg_sync = MagicMock()
+        cli._maybe_schedule_startup_sync()
+        cli.bg_sync.schedule.assert_not_called()
+
+    def test_startup_sync_noop_without_bg_sync_attribute(self, cli):
+        """Early-init callers can invoke this before bg_sync is wired."""
+        self._configure(cli, on_startup=True, current_ds="local_db")
+        # Ensure attribute missing
+        if hasattr(cli, "bg_sync"):
+            delattr(cli, "bg_sync")
+        # Must not raise
+        cli._maybe_schedule_startup_sync()
+
+
+class TestCmdExitShutsDownBgSync:
+    def test_exit_calls_bg_sync_shutdown(self, cli):
+        cli.bg_sync = MagicMock()
+        cli.db_connector = MagicMock()
+        cli._cmd_exit("")
+        cli.bg_sync.shutdown.assert_called_once_with()
+
+    def test_exit_works_without_bg_sync(self, cli):
+        if hasattr(cli, "bg_sync"):
+            delattr(cli, "bg_sync")
+        cli.db_connector = MagicMock()
+        # Must not raise even when bg_sync is absent
+        cli._cmd_exit("")
+
+
 class TestCommandType:
     def test_all_types_exist(self):
         assert CommandType.SQL.value == "sql"

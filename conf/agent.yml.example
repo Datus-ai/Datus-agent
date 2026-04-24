@@ -358,6 +358,19 @@ agent:
       - ~/.datus/skills
       - ./skills
 
+  autocomplete:
+    # After switching / adding / editing a datasource, refresh the LanceDB
+    # schema index in the background so @Table completion reflects new
+    # tables without a manual rebuild. Set to ``false`` to disable.
+    background_sync_enabled: true
+    # Also run the background sync once at REPL startup for the default
+    # datasource.
+    background_sync_on_startup: true
+    # Include sample rows in the sync. Enabling this makes the sync
+    # noticeably slower (seconds → tens of seconds on large schemas) in
+    # exchange for richer completion hints.
+    background_sync_include_values: false
+
   agentic_nodes:
     # Built-in subagents ship with a ``DEFAULT_SKILLS`` class attribute so every
     # node loads its canonical skills out of the box. Override ``skills:`` here
