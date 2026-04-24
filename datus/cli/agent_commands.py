@@ -18,7 +18,14 @@ from rich.table import Table
 from datus.agent.evaluate import setup_node_input, update_context_from_node
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
-from datus.cli.cli_styles import CODE_THEME, print_error, print_success, print_warning
+from datus.cli.cli_styles import (
+    CODE_THEME,
+    HEADER_BOLD_CYAN,
+    TABLE_BORDER_STYLE,
+    print_error,
+    print_success,
+    print_warning,
+)
 from datus.cli.subject_rich_utils import build_historical_sql_tags
 from datus.configuration.node_type import NodeType
 from datus.schemas.base import BaseInput
@@ -430,8 +437,8 @@ class AgentCommands:
         table = Table(
             title="Schema Linking Results",
             show_header=True,
-            border_style="blue",
-            header_style="bold cyan",
+            border_style=TABLE_BORDER_STYLE,
+            header_style=HEADER_BOLD_CYAN,
             expand=True,
         )
         table.add_column("Catalog", style="green", max_width=20)
@@ -477,8 +484,8 @@ class AgentCommands:
             table = Table(
                 title="Metrics Search Results",
                 show_header=True,
-                header_style="bold cyan",
-                border_style="blue",
+                header_style=HEADER_BOLD_CYAN,
+                border_style=TABLE_BORDER_STYLE,
                 expand=True,
             )
             table.add_column("Name", style="bold green")
@@ -531,8 +538,8 @@ class AgentCommands:
             table = Table(
                 title="Reference SQL Search Results",
                 show_header=True,
-                border_style="blue",
-                header_style="bold cyan",
+                border_style=TABLE_BORDER_STYLE,
+                header_style=HEADER_BOLD_CYAN,
                 expand=True,
             )
             table.add_column("Name", style="bold green")
@@ -610,8 +617,8 @@ class AgentCommands:
                 self.console.print(f"\n[bold cyan]Keyword: {keyword}[/] ({len(chunks)} results)")
                 table = Table(
                     show_header=True,
-                    header_style="bold cyan",
-                    border_style="blue",
+                    header_style=HEADER_BOLD_CYAN,
+                    border_style=TABLE_BORDER_STYLE,
                     expand=True,
                 )
                 table.add_column("Title", style="bold green", max_width=30)

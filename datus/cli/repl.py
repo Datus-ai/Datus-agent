@@ -48,7 +48,14 @@ from datus.cli.autocomplete import (
 )
 from datus.cli.bi_dashboard import BiDashboardCommands
 from datus.cli.chat_commands import ChatCommands
-from datus.cli.cli_styles import PASTE_COLLAPSE_THRESHOLD, print_error, print_info, print_success, print_warning
+from datus.cli.cli_styles import (
+    PASTE_COLLAPSE_THRESHOLD,
+    STATUS_BAR_STYLE,
+    print_error,
+    print_info,
+    print_success,
+    print_warning,
+)
 from datus.cli.context_commands import ContextCommands
 from datus.cli.language_commands import LanguageCommands
 from datus.cli.list_selector_app import ListItem, ListSelectorApp
@@ -452,56 +459,7 @@ class DatusCLI:
         return merge_styles(
             [
                 style_from_pygments_cls(CustomPygmentsStyle),
-                Style.from_dict(
-                    {
-                        "prompt": "ansigreen bold",
-                        "input-prompt": "ansigreen bold",
-                        "input-prompt.busy": "ansibrightblack",
-                        "input-prompt.hint": "italic #9a9aaa",
-                        "input-area": "",
-                        "status-bar": "#9a9aaa",
-                        "status-bar.brand": "#ffd866 bold",
-                        "status-bar.plan": "#9a9aaa",
-                        "status-bar.profile": "#9a9aaa",
-                        "status-bar.profile.auto": "ansicyan",
-                        "status-bar.profile.dangerous": "ansired",
-                        "status-bar.sep": "#9a9aaa",
-                        "status-bar.agent": "#9a9aaa",
-                        "status-bar.connector": "#9a9aaa",
-                        "status-bar.model": "#9a9aaa",
-                        "status-bar.tokens": "#9a9aaa",
-                        "status-bar.ctx": "#9a9aaa",
-                        "status-bar.running": "#ffb86c bold",
-                        "status-bar.dot": "#ffb86c bold",
-                        "separator": "#444444",
-                        # Slash-command autocomplete popup. Every row pins
-                        # ``bg:default`` so the menu blends into the terminal
-                        # palette instead of prompt_toolkit's stock teal-on-
-                        # white block. prompt_toolkit's default style for
-                        # ``.current`` ships with ``reverse`` (swaps fg/bg,
-                        # producing a highlighted bar); ``noreverse`` strips
-                        # that so the selection is conveyed by text color
-                        # alone — bold bright cyan — with no colored band.
-                        "completion-menu": "bg:default",
-                        "completion-menu.completion": "bg:default fg:default",
-                        "completion-menu.completion.current": "noreverse bg:default fg:ansibrightcyan",
-                        "completion-menu.meta.completion": "bg:default fg:ansibrightblack",
-                        "completion-menu.meta.completion.current": "noreverse bg:default fg:ansibrightcyan",
-                        "hint": "#9a9aaa italic",
-                        # Pinned subagent/tool rolling-window lines. Dim grey
-                        # to match the scrollback ``[dim]`` styling used by the
-                        # Rich renderers so the visual weight stays consistent
-                        # between the pinned region and the append area.
-                        "subagent-live": "#6e6e6e",
-                        "processing-live": "#6e6e6e",
-                        # Pinned subagent header: plain cyan on the
-                        # "⏺ subagent_type" prefix, default colour on the
-                        # parenthesised goal so the prompt text does not
-                        # compete visually with the subagent name.
-                        "subagent-header-live": "ansicyan",
-                        "subagent-header-goal-live": "",
-                    }
-                ),
+                Style.from_dict(STATUS_BAR_STYLE),
             ]
         )
 

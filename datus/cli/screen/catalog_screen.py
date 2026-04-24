@@ -22,6 +22,7 @@ from textual.widgets import Tree as TextualTree
 from textual.widgets._tree import TreeNode
 from textual.worker import get_current_worker
 
+from datus.cli.cli_styles import HEADER_BOLD_CYAN, TABLE_BORDER_STYLE
 from datus.cli.screen.base_widgets import FocusableStatic, InputWithLabel
 from datus.cli.screen.context_screen import ContextScreen
 from datus.storage.catalog_manager import CatalogUpdater
@@ -688,7 +689,7 @@ class CatalogScreen(ContextScreen):
             title=(f"[bold cyan]📋 Semantic Model: {semantic_record.get('semantic_model_name', 'Unnamed')}[/]"),
             show_header=False,
             box=box.SIMPLE,
-            border_style="blue",
+            border_style=TABLE_BORDER_STYLE,
             expand=True,
             padding=(0, 1),
         )
@@ -828,8 +829,8 @@ class CatalogScreen(ContextScreen):
             title=f"[bold cyan]📊 {full_name}[/bold cyan]",
             show_header=True,
             box=box.SIMPLE,
-            border_style="blue",
-            header_style="bold cyan",
+            border_style=TABLE_BORDER_STYLE,
+            header_style=HEADER_BOLD_CYAN,
             expand=True,
             padding=(0, 1),
             row_styles=["on grey15", "on grey23"],

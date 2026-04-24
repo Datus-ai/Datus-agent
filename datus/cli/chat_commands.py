@@ -23,6 +23,7 @@ from rich.syntax import Syntax
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.cli.action_display.display import ActionHistoryDisplay
+from datus.cli.cli_styles import CODE_THEME
 from datus.cli.execution_state import ExecutionInterrupted, auto_submit_interaction
 from datus.cli.list_selector_app import ListItem, ListSelectorApp
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
@@ -708,7 +709,7 @@ class ChatCommands:
             # Display the SQL in a formatted panel
             self.console.print()
             sql_panel = Panel(
-                Syntax(sql, "sql", theme="monokai", word_wrap=True),
+                Syntax(sql, "sql", theme=CODE_THEME, word_wrap=True),
                 title=f"[bold cyan]Generated SQL{copied_indicator}[/]",
                 border_style="cyan",
                 expand=False,

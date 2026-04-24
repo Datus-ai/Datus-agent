@@ -19,6 +19,7 @@ from rich.markup import escape as rich_escape
 from rich.syntax import Syntax
 from rich.text import Text
 
+from datus.cli.cli_styles import ACTION_ROLE_COLOR_NAMES, CODE_THEME
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
 
@@ -62,12 +63,7 @@ def _get_assistant_content(action: ActionHistory) -> str:
 class BaseActionContentGenerator:
     def __init__(self) -> None:
         self.role_colors = {
-            ActionRole.SYSTEM: "bright_magenta",
-            ActionRole.ASSISTANT: "bright_blue",
-            ActionRole.USER: "bright_green",
-            ActionRole.TOOL: "bright_cyan",
-            ActionRole.WORKFLOW: "bright_yellow",
-            ActionRole.INTERACTION: "bright_yellow",
+            role: ACTION_ROLE_COLOR_NAMES[role.name] for role in ActionRole if role.name in ACTION_ROLE_COLOR_NAMES
         }
         self.status_icons = {
             ActionStatus.PROCESSING: "\u23f3",
@@ -555,9 +551,9 @@ class ActionRenderer:
             result.append(Text.from_markup("[bold bright_yellow]\u2753 Interaction Request[/bold bright_yellow]"))
             if ev.content:
                 if ev.content_type == "yaml":
-                    result.append(Syntax(ev.content, "yaml", theme="monokai", line_numbers=True))
+                    result.append(Syntax(ev.content, "yaml", theme=CODE_THEME, line_numbers=True))
                 elif ev.content_type == "sql":
-                    result.append(Syntax(ev.content, "sql", theme="monokai", line_numbers=True))
+                    result.append(Syntax(ev.content, "sql", theme=CODE_THEME, line_numbers=True))
                 elif ev.content_type == "markdown":
                     result.append(Markdown(ev.content))
                 else:
@@ -598,9 +594,9 @@ class ActionRenderer:
 
         if content:
             if content_type == "yaml":
-                result.append(Syntax(content, "yaml", theme="monokai", line_numbers=True))
+                result.append(Syntax(content, "yaml", theme=CODE_THEME, line_numbers=True))
             elif content_type == "sql":
-                result.append(Syntax(content, "sql", theme="monokai", line_numbers=True))
+                result.append(Syntax(content, "sql", theme=CODE_THEME, line_numbers=True))
             elif content_type == "markdown":
                 result.append(Markdown(content))
             else:

@@ -5,7 +5,14 @@ from typing import Any, Dict, List, Optional
 from prompt_toolkit.styles import Style
 from rich.console import Console
 
-from datus.cli.cli_styles import CLR_CURRENT, CLR_CURSOR, SYM_ARROW, print_error, print_warning
+from datus.cli.cli_styles import (
+    CLR_CURRENT,
+    CLR_CURSOR,
+    PROMPT_ONLY_STYLE,
+    SYM_ARROW,
+    print_error,
+    print_warning,
+)
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -638,11 +645,7 @@ def prompt_input(
         from prompt_toolkit.history import InMemoryHistory
 
         if not style:
-            style = Style.from_dict(
-                {
-                    "prompt": "ansigreen bold",
-                }
-            )
+            style = Style.from_dict(PROMPT_ONLY_STYLE)
 
         # When multiline, override Enter to submit (newlines only via paste).
         key_bindings = None

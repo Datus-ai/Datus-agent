@@ -8,20 +8,10 @@ from rich.console import RenderableType
 from rich.syntax import Syntax
 from rich.text import Text
 
+from datus.cli.cli_styles import SQL_TAG_COLORS
 from datus.utils.json_utils import to_pretty_str
 
-SQL_TAG_COLORS = [
-    "#4E79A7",
-    "#F28E2B",
-    "#E15759",
-    "#76B7B2",
-    "#59A14F",
-    "#EDC948",
-    "#B07AA1",
-    "#FF9DA7",
-    "#9C755F",
-    "#BAB0AC",
-]
+__all__ = ["SQL_TAG_COLORS", "build_historical_sql_tags"]
 
 
 def build_historical_sql_tags(tags: Any, tag_splitter: str = " ") -> RenderableType:

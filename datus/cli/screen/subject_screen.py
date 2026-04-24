@@ -20,6 +20,7 @@ from textual.widgets import Tree as TextualTree
 from textual.widgets._tree import TreeNode
 from textual.worker import get_current_worker
 
+from datus.cli.cli_styles import CODE_THEME, TABLE_BORDER_STYLE
 from datus.cli.screen.base_widgets import EditableTree, FocusableStatic, InputWithLabel, ParentSelectionTree
 from datus.cli.screen.context_screen import ContextScreen
 from datus.cli.subject_rich_utils import build_historical_sql_tags
@@ -1705,7 +1706,7 @@ class SubjectScreen(ContextScreen):
                 title=f"[bold cyan]📊 Metric #{idx}: {metric_name}[/bold cyan]",
                 show_header=False,
                 box=box.SIMPLE,
-                border_style="blue",
+                border_style=TABLE_BORDER_STYLE,
                 expand=True,
                 padding=(0, 1),
             )
@@ -1724,7 +1725,7 @@ class SubjectScreen(ContextScreen):
             if sql_value:
                 table.add_row(
                     "SQL",
-                    Syntax(sql_value, "sql", theme="monokai", word_wrap=True, line_numbers=True),
+                    Syntax(sql_value, "sql", theme=CODE_THEME, word_wrap=True, line_numbers=True),
                 )
 
             sections.append(table)
@@ -1738,7 +1739,7 @@ class SubjectScreen(ContextScreen):
                 title=f"[bold cyan]📝 SQL #{idx}: {sql_entry.get('name', 'Unnamed')}[/bold cyan]",
                 show_header=False,
                 box=box.SIMPLE,
-                border_style="blue",
+                border_style=TABLE_BORDER_STYLE,
                 expand=True,
                 padding=(0, 1),
             )
@@ -1755,7 +1756,7 @@ class SubjectScreen(ContextScreen):
 
             details.add_row(
                 "SQL",
-                Syntax(str(sql_entry.get("sql", "")), "sql", theme="monokai", word_wrap=True, line_numbers=True),
+                Syntax(str(sql_entry.get("sql", "")), "sql", theme=CODE_THEME, word_wrap=True, line_numbers=True),
             )
 
             sections.append(details)
@@ -1819,7 +1820,7 @@ class SubjectScreen(ContextScreen):
                 title=f"[bold cyan]📄 Template #{idx}: {entry.get('name', 'Unnamed')}[/bold cyan]",
                 show_header=False,
                 box=box.SIMPLE,
-                border_style="blue",
+                border_style=TABLE_BORDER_STYLE,
                 expand=True,
                 padding=(0, 1),
             )
@@ -1835,7 +1836,7 @@ class SubjectScreen(ContextScreen):
 
             details.add_row(
                 "Template",
-                Syntax(str(entry.get("template", "")), "sql", theme="monokai", word_wrap=True, line_numbers=True),
+                Syntax(str(entry.get("template", "")), "sql", theme=CODE_THEME, word_wrap=True, line_numbers=True),
             )
 
             sections.append(details)
@@ -1849,7 +1850,7 @@ class SubjectScreen(ContextScreen):
                 title=f"[bold cyan]📚 Knowledge #{idx}: {entry.get('name', 'Unnamed')}[/bold cyan]",
                 show_header=False,
                 box=box.SIMPLE,
-                border_style="blue",
+                border_style=TABLE_BORDER_STYLE,
                 expand=True,
                 padding=(0, 1),
             )

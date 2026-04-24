@@ -45,7 +45,119 @@ PASTE_COLLAPSE_THRESHOLD = 10
 
 # ── Table / code ────────────────────────────────────────────
 TABLE_HEADER_STYLE = "green"
+TABLE_BORDER_STYLE = "blue"
+HEADER_BOLD_CYAN = "bold cyan"
+HEADER_BOLD_GREEN = "bold green"
 CODE_THEME = "monokai"
+
+# ── Hex palette (kept raw; swap centrally to adapt themes) ──
+STATUS_BAR_FG_HINT = "#9a9aaa"  # dim/meta text in status bar and hints
+STATUS_BAR_BRAND = "#ffd866"  # brand badge
+STATUS_BAR_RUNNING = "#ffb86c"  # running indicator / spinner dot
+STATUS_BAR_SEP = "#444444"  # horizontal separator
+LIVE_SECONDARY = "#6e6e6e"  # subagent-live / processing-live lines
+DIALOG_BG = "#444444"
+DIALOG_FG = "#ffffff"
+DIALOG_SHADOW = "#000000"
+DIALOG_STATUS_BG = "#000044"
+
+# ── SQL tag palette (consumed by subject_rich_utils) ────────
+SQL_TAG_COLORS: list[str] = [
+    "#4E79A7",
+    "#F28E2B",
+    "#E15759",
+    "#76B7B2",
+    "#59A14F",
+    "#EDC948",
+    "#B07AA1",
+    "#FF9DA7",
+    "#9C755F",
+    "#BAB0AC",
+]
+
+# ── Autocomplete Pygments token colours ─────────────────────
+# Token keys are resolved in ``datus.cli.autocomplete`` so this
+# module stays free of Pygments imports.
+AUTOCOMPLETE_TOKEN_COLORS: dict[str, str] = {
+    "at_tables": "#00CED1",  # Cyan
+    "at_metrics": "#FFD700",  # Gold
+    "at_reference_sql": "#32CD32",  # Green
+    "at_files": "ansiblue",
+}
+
+# ── ActionRole colour map, keyed by ActionRole.name ─────────
+# Callers (``renderers.py``) materialise the enum-keyed dict.
+ACTION_ROLE_COLOR_NAMES: dict[str, str] = {
+    "SYSTEM": "bright_magenta",
+    "ASSISTANT": "bright_blue",
+    "USER": "bright_green",
+    "TOOL": "bright_cyan",
+    "WORKFLOW": "bright_yellow",
+    "INTERACTION": "bright_yellow",
+}
+
+# ── prompt_toolkit Style dicts ──────────────────────────────
+# Main REPL / TUI status bar + completion menu + pinned rolling window.
+STATUS_BAR_STYLE: dict[str, str] = {
+    "prompt": "ansigreen bold",
+    "input-prompt": "ansigreen bold",
+    "input-prompt.busy": "ansibrightblack",
+    "input-prompt.hint": f"italic {STATUS_BAR_FG_HINT}",
+    "input-area": "",
+    "status-bar": STATUS_BAR_FG_HINT,
+    "status-bar.brand": f"{STATUS_BAR_BRAND} bold",
+    "status-bar.plan": STATUS_BAR_FG_HINT,
+    "status-bar.profile": STATUS_BAR_FG_HINT,
+    "status-bar.profile.auto": "ansicyan",
+    "status-bar.profile.dangerous": "ansired",
+    "status-bar.sep": STATUS_BAR_FG_HINT,
+    "status-bar.agent": STATUS_BAR_FG_HINT,
+    "status-bar.connector": STATUS_BAR_FG_HINT,
+    "status-bar.model": STATUS_BAR_FG_HINT,
+    "status-bar.tokens": STATUS_BAR_FG_HINT,
+    "status-bar.ctx": STATUS_BAR_FG_HINT,
+    "status-bar.running": f"{STATUS_BAR_RUNNING} bold",
+    "status-bar.dot": f"{STATUS_BAR_RUNNING} bold",
+    "separator": STATUS_BAR_SEP,
+    # Slash-command autocomplete popup. ``bg:default`` blends into the
+    # terminal palette; ``noreverse`` strips prompt_toolkit's default
+    # reverse-video highlight so the selection is conveyed by bright
+    # cyan text alone.
+    "completion-menu": "bg:default",
+    "completion-menu.completion": "bg:default fg:default",
+    "completion-menu.completion.current": "noreverse bg:default fg:ansibrightcyan",
+    "completion-menu.meta.completion": "bg:default fg:ansibrightblack",
+    "completion-menu.meta.completion.current": "noreverse bg:default fg:ansibrightcyan",
+    "hint": f"{STATUS_BAR_FG_HINT} italic",
+    # Pinned subagent/tool rolling-window lines match scrollback [dim].
+    "subagent-live": LIVE_SECONDARY,
+    "processing-live": LIVE_SECONDARY,
+    # Pinned subagent header: plain cyan prefix, default colour goal.
+    "subagent-header-live": "ansicyan",
+    "subagent-header-goal-live": "",
+}
+
+# Sub-agent wizard modal dialog (prompt_toolkit full-screen Application).
+SUB_AGENT_WIZARD_STYLE: dict[str, str] = {
+    "status-bar": f"bg:{DIALOG_STATUS_BG} {DIALOG_FG}",
+    "input-window": "fg:ansigreen",
+    "textarea": "fg:ansigreen",
+    "label": "fg:ansicyan",
+    "tip": "fg:ansiyellow bold",
+    "separator": "fg:ansigray",
+    "dialog": f"bg:{DIALOG_BG}",
+    "dialog frame.label": f"fg:{DIALOG_FG} bg:{DIALOG_SHADOW}",
+    "dialog.body": f"bg:{DIALOG_BG} fg:{DIALOG_FG}",
+    "dialog shadow": f"bg:{DIALOG_SHADOW}",
+    "rule": "",
+    "rule.selected": "bg:ansiblue fg:ansiwhite",
+    "rule.editing": "bg:ansigreen fg:ansiwhite",
+}
+
+# Minimal style used by ad-hoc ``prompt()`` calls in ``_cli_utils``.
+PROMPT_ONLY_STYLE: dict[str, str] = {
+    "prompt": "ansigreen bold",
+}
 
 
 # ── Helper functions ────────────────────────────────────────

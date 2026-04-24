@@ -31,7 +31,7 @@ from pygments.lexers.html import HtmlLexer
 
 from datus.agent.node.gen_sql_agentic_node import prepare_template_context
 from datus.cli.autocomplete import TableCompleter
-from datus.cli.cli_styles import render_tui_title_bar
+from datus.cli.cli_styles import SUB_AGENT_WIZARD_STYLE, render_tui_title_bar
 from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 from datus.tools.func_tool import PlatformDocSearchTool
@@ -1880,23 +1880,7 @@ class SubAgentWizard:
 
         self.layout = Layout(FloatContainer(root_container, floats=[]), focused_element=self.name_buffer)
 
-        self.style = Style.from_dict(
-            {
-                "status-bar": "bg:#000044 #ffffff",
-                "input-window": "fg:ansigreen",
-                "textarea": "fg:ansigreen",
-                "label": "fg:ansicyan",
-                "tip": "fg:ansiyellow bold",
-                "separator": "fg:ansigray",
-                "dialog": "bg:#444444",
-                "dialog frame.label": "fg:#ffffff bg:#000000",
-                "dialog.body": "bg:#444444 fg:#ffffff",
-                "dialog shadow": "bg:#000000",
-                "rule": "",
-                "rule.selected": "bg:ansiblue fg:ansiwhite",
-                "rule.editing": "bg:ansigreen fg:ansiwhite",
-            }
-        )
+        self.style = Style.from_dict(SUB_AGENT_WIZARD_STYLE)
 
     def run(self) -> Optional[SubAgentConfig]:
         """Run the wizard application."""

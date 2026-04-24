@@ -20,6 +20,7 @@ from pygments.lexers.sql import SqlLexer
 from pygments.styles.default import DefaultStyle
 from pygments.token import Token
 
+from datus.cli.cli_styles import AUTOCOMPLETE_TOKEN_COLORS
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.db_tools import connector_registry
@@ -412,10 +413,10 @@ class CustomPygmentsStyle(DefaultStyle):
     """Custom style for coloring the @ references."""
 
     styles = {
-        Token.AtTables: "#00CED1",  # Cyan
-        Token.AtMetrics: "#FFD700",  # Gold
-        Token.AtReferenceSql: "#32CD32",  # Green
-        Token.AtFiles: "ansiblue",  # Blue
+        Token.AtTables: AUTOCOMPLETE_TOKEN_COLORS["at_tables"],
+        Token.AtMetrics: AUTOCOMPLETE_TOKEN_COLORS["at_metrics"],
+        Token.AtReferenceSql: AUTOCOMPLETE_TOKEN_COLORS["at_reference_sql"],
+        Token.AtFiles: AUTOCOMPLETE_TOKEN_COLORS["at_files"],
     }
 
 
