@@ -118,18 +118,10 @@ class TestGetAdapter:
     def test_success_with_mocked_registry(self):
         mock_adapter = MagicMock()
         tools = SchedulerTools(_make_agent_config())
-        with patch(
-            "datus.tools.func_tool.scheduler_tools.SchedulerAdapterRegistry",
-            create=True,
-        ):
-            # The import happens inside _get_adapter; patch sys.modules so it resolves
-            mock_registry = MagicMock()
-            mock_registry.create_adapter.return_value = mock_adapter
-            with patch.dict(
-                "sys.modules",
-                {"datus_scheduler_core.registry": MagicMock(SchedulerAdapterRegistry=mock_registry)},
-            ):
-                adapter = tools._get_adapter()
+        mock_registry = MagicMock()
+        mock_registry.create_adapter.return_value = mock_adapter
+        with patch("datus.tools.func_tool.scheduler_tools.SchedulerAdapterRegistry", mock_registry):
+            adapter = tools._get_adapter()
         assert adapter is mock_adapter
 
     def test_airflow_injects_project_name_as_file_scope_only(self):
@@ -158,10 +150,7 @@ class TestGetAdapter:
 
         mock_registry = MagicMock()
         mock_registry.create_adapter.return_value = MagicMock()
-        with patch.dict(
-            "sys.modules",
-            {"datus_scheduler_core.registry": MagicMock(SchedulerAdapterRegistry=mock_registry)},
-        ):
+        with patch("datus.tools.func_tool.scheduler_tools.SchedulerAdapterRegistry", mock_registry):
             tools._get_adapter()
 
         call_kwargs = mock_registry.create_adapter.call_args.kwargs
@@ -190,10 +179,7 @@ class TestGetAdapter:
 
         mock_registry = MagicMock()
         mock_registry.create_adapter.return_value = MagicMock()
-        with patch.dict(
-            "sys.modules",
-            {"datus_scheduler_core.registry": MagicMock(SchedulerAdapterRegistry=mock_registry)},
-        ):
+        with patch("datus.tools.func_tool.scheduler_tools.SchedulerAdapterRegistry", mock_registry):
             tools._get_adapter()
 
         call_kwargs = mock_registry.create_adapter.call_args.kwargs
@@ -215,10 +201,7 @@ class TestGetAdapter:
 
         mock_registry = MagicMock()
         mock_registry.create_adapter.return_value = MagicMock()
-        with patch.dict(
-            "sys.modules",
-            {"datus_scheduler_core.registry": MagicMock(SchedulerAdapterRegistry=mock_registry)},
-        ):
+        with patch("datus.tools.func_tool.scheduler_tools.SchedulerAdapterRegistry", mock_registry):
             tools._get_adapter()
 
         call_kwargs = mock_registry.create_adapter.call_args.kwargs

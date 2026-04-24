@@ -8,11 +8,13 @@ from pathlib import Path
 from typing import List, Optional
 
 from agents import Tool
+from datus_scheduler_core.models import SchedulerJobPayload
+from datus_scheduler_core.registry import SchedulerAdapterRegistry
 
 from datus.configuration.agent_config import AgentConfig
 from datus.tools import BaseTool
 from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, trans_to_function_tool
-from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.exceptions import DatusException
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -35,17 +37,7 @@ class SchedulerTools(BaseTool):
     # ── Adapter factory ────────────────────────────────────────────────────
 
     def _get_adapter(self):
-        """Lazily create a scheduler adapter from the configured scheduler."""
-        try:
-            from datus_scheduler_core.registry import SchedulerAdapterRegistry
-        except ImportError as exc:
-            raise DatusException(
-                ErrorCode.COMMON_MISSING_DEPENDENCY,
-                message_args={},
-                message="datus-scheduler-core is required for scheduler tools. "
-                "Install it with: pip install datus-scheduler-core",
-            ) from exc
-
+        """Create a scheduler adapter from the configured scheduler."""
         config = self._selected_scheduler_config()
         platform = config.get("type", "airflow")
 
@@ -91,11 +83,6 @@ class SchedulerTools(BaseTool):
         Returns:
             FuncToolResult with result containing job_id and status.
         """
-        try:
-            from datus_scheduler_core.models import SchedulerJobPayload
-        except ImportError as exc:
-            return FuncToolResult(success=0, error=f"datus-scheduler-core not installed: {exc}")
-
         # Read SQL file
         try:
             sql_path = Path(sql_file_path).expanduser()
@@ -110,7 +97,7 @@ class SchedulerTools(BaseTool):
         # Submit
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -165,11 +152,6 @@ class SchedulerTools(BaseTool):
             FuncToolResult with result containing job_id and status.
         """
         try:
-            from datus_scheduler_core.models import SchedulerJobPayload
-        except ImportError as exc:
-            return FuncToolResult(success=0, error=f"datus-scheduler-core not installed: {exc}")
-
-        try:
             sql_path = Path(sql_file_path).expanduser()
             if not sql_path.exists():
                 return FuncToolResult(success=0, error=f"SQL file not found: {sql_file_path}")
@@ -181,7 +163,7 @@ class SchedulerTools(BaseTool):
 
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -229,7 +211,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -265,7 +247,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -318,7 +300,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -382,7 +364,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -411,7 +393,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -440,7 +422,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -490,11 +472,6 @@ class SchedulerTools(BaseTool):
         if job_type not in ("sql", "sparksql"):
             return FuncToolResult(success=0, error=f"Unsupported job_type '{job_type}'. Use 'sql' or 'sparksql'.")
 
-        try:
-            from datus_scheduler_core.models import SchedulerJobPayload
-        except ImportError as exc:
-            return FuncToolResult(success=0, error=f"datus-scheduler-core not installed: {exc}")
-
         # Read SQL file
         try:
             sql_path = Path(sql_file_path).expanduser()
@@ -516,7 +493,7 @@ class SchedulerTools(BaseTool):
 
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -578,7 +555,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -618,7 +595,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:

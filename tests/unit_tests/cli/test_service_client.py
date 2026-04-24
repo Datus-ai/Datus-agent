@@ -456,63 +456,39 @@ class TestAdapterProbes:
         with patch.dict("sys.modules", {"datus_bi_core": stub_module}):
             assert _probe_bi_adapter(None, "superset") is False
 
-    def test_scheduler_probe_needs_core_package_importable(self):
-        from datus.cli.service_client import _probe_scheduler_adapter
-
-        # Force ImportError on the ``datus_scheduler_core.registry`` submodule
-        # import used by the probe. Zeroing both entries is defensive — other
-        # tests in the suite may have registered mock modules under either
-        # path, and sys.modules entries survive until patch.dict restores.
-        with patch.dict(
-            "sys.modules",
-            {"datus_scheduler_core": None, "datus_scheduler_core.registry": None},
-        ):
-            assert _probe_scheduler_adapter(None, "airflow") is False
-
     def test_scheduler_probe_checks_platform_registration(self):
-        """Core installed but platform adapter missing → probe returns False.
+        """Platform adapter missing → probe returns False.
 
-        ``datus-scheduler-core`` is typically present; the real-world gap is
-        the platform-specific package (e.g. ``datus-scheduler-airflow``) that
-        registers the adapter into ``SchedulerAdapterRegistry``.
+        ``datus-scheduler-core`` is a hard dep and always importable; the
+        real-world gap is the platform-specific package (e.g.
+        ``datus-scheduler-airflow``) that registers the adapter into
+        ``SchedulerAdapterRegistry``.
         """
         from datus.cli.service_client import _probe_scheduler_adapter
 
-        core_module = MagicMock()
-        core_module.registry.SchedulerAdapterRegistry.get_adapter_class.return_value = None
-        core_module.registry.SchedulerAdapterRegistry.has_adapter.return_value = None
-        core_module.registry.SchedulerAdapterRegistry.get.return_value = None
+        mock_registry = MagicMock()
+        mock_registry.get_adapter_class.return_value = None
+        mock_registry.has_adapter.return_value = None
+        mock_registry.get.return_value = None
         cfg = SimpleNamespace(
             get_scheduler_config=lambda name: {"type": "airflow"},
         )
-        with patch.dict(
-            "sys.modules",
-            {
-                "datus_scheduler_core": core_module,
-                "datus_scheduler_core.registry": core_module.registry,
-            },
-        ):
+        with patch("datus.cli.service_client.SchedulerAdapterRegistry", mock_registry):
             assert _probe_scheduler_adapter(cfg, "airflow_local") is False
 
     def test_scheduler_probe_returns_true_when_platform_registered(self):
         from datus.cli.service_client import _probe_scheduler_adapter
 
-        core_module = MagicMock()
-        core_module.registry.SchedulerAdapterRegistry.get_adapter_class.return_value = object()
+        mock_registry = MagicMock()
+        mock_registry.get_adapter_class.return_value = object()
         cfg = SimpleNamespace(
             get_scheduler_config=lambda name: {"type": "airflow"},
         )
-        with patch.dict(
-            "sys.modules",
-            {
-                "datus_scheduler_core": core_module,
-                "datus_scheduler_core.registry": core_module.registry,
-            },
-        ):
+        with patch("datus.cli.service_client.SchedulerAdapterRegistry", mock_registry):
             assert _probe_scheduler_adapter(cfg, "airflow_local") is True
             # The getter was asked about the platform from the config, not the
             # service name (which is only a user-chosen alias).
-            core_module.registry.SchedulerAdapterRegistry.get_adapter_class.assert_called_with("airflow")
+            mock_registry.get_adapter_class.assert_called_with("airflow")
 
     def test_probe_helper_defensive_on_exception(self):
         from datus.cli.service_client import _probe

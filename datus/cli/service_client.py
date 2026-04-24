@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
 
+from datus_scheduler_core.registry import SchedulerAdapterRegistry
+
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -242,21 +244,15 @@ def _probe_semantic_adapter(agent_config: "AgentConfig", service_name: str) -> b
 
 
 def _probe_scheduler_adapter(agent_config: "AgentConfig", service_name: str) -> bool:
-    """True when both ``datus-scheduler-core`` and the platform adapter
-    package are importable / registered.
+    """True when the platform adapter package is importable / registered.
 
-    A scheduler service entry has a ``type`` field (e.g. ``airflow``)
-    that points at a platform-specific adapter. Checking only that
-    ``datus_scheduler_core`` imports is not enough — core is the base
-    framework; the per-platform adapter (``datus-scheduler-airflow`` /
+    ``datus-scheduler-core`` is a hard dependency, so its presence is
+    guaranteed; a scheduler service entry has a ``type`` field (e.g.
+    ``airflow``) that points at a platform-specific adapter, and the
+    per-platform adapter (``datus-scheduler-airflow`` /
     ``datus-scheduler-dolphinscheduler`` / ...) is what actually
     registers ``SchedulerAdapterRegistry`` entries.
     """
-    try:
-        from datus_scheduler_core.registry import SchedulerAdapterRegistry
-    except ImportError:
-        return False
-
     # Read the platform from the service's config.
     platform = "airflow"
     try:
