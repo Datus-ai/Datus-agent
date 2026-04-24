@@ -518,18 +518,29 @@ class InlineStreamingContext:
             # *incremental* tail that arrives after this point — avoiding a
             # duplicate body in the scrollback.
             if self._deltas:
-                last_accumulated = ""
-                for delta in reversed(self._deltas):
-                    if isinstance(delta.output, dict):
-                        candidate = delta.output.get("accumulated", "")
-                        if isinstance(candidate, str) and candidate:
-                            last_accumulated = candidate
-                            break
-                if last_accumulated.strip():
-                    self.display.console.print(Markdown(last_accumulated))
-                    if self._markdown_buffer is not None:
-                        self._markdown_buffer.clear()
+                if self._markdown_buffer is not None and self._markdown_buffer.has_spilled():
+                    # Overflow paragraphs have already been committed to the
+                    # scrollback during the stream; only the unspilled tail
+                    # is still live. Print just that tail so we don't repeat
+                    # the already-committed prefix.
+                    remaining = self._markdown_buffer.get_tail()
+                    if remaining.strip():
+                        self.display.console.print(Markdown(remaining))
+                    self._markdown_buffer.clear()
                     self._stream_body_finalized = True
+                else:
+                    last_accumulated = ""
+                    for delta in reversed(self._deltas):
+                        if isinstance(delta.output, dict):
+                            candidate = delta.output.get("accumulated", "")
+                            if isinstance(candidate, str) and candidate:
+                                last_accumulated = candidate
+                                break
+                    if last_accumulated.strip():
+                        self.display.console.print(Markdown(last_accumulated))
+                        if self._markdown_buffer is not None:
+                            self._markdown_buffer.clear()
+                        self._stream_body_finalized = True
             # 4. Optionally render active subagent groups (verbose snapshot)
             if show_active_groups:
                 for _group_key, group in self._subagent_groups.items():
@@ -1101,13 +1112,15 @@ class InlineStreamingContext:
     def _handle_thinking_delta(self, action: ActionHistory) -> None:
         """Append a streaming text delta into the markdown buffer (TUI mode).
 
-        Accumulator-only policy: the buffer never splits stable segments
-        during the stream, so nothing is pushed to the scrollback while
-        the user is still typing. The pinned region renders the growing
-        accumulator on every tick; the full body only lands in the
-        scrollback on :meth:`_finalize_markdown_stream`, which runs at the
-        message boundary. This guarantees the final transcript contains
-        exactly one copy of the main-agent response.
+        Each call pipes the delta through :meth:`MarkdownStreamBuffer.append`,
+        which commits a stable prefix whenever either trigger fires:
+        (a) a ``"\\n\\n"`` markdown-segment boundary appeared, or (b) the
+        residual tail would overflow the pinned-region budget, in which
+        case everything up to the last ``"\\n"`` is handed off. Those
+        committed segments are printed to the scrollback immediately so
+        the user sees long responses stream upward; only the unfinished
+        tail stays live in the pinned region. A ``_finalize_markdown_stream``
+        at the message boundary drains whatever tail is left.
         """
         if self._markdown_buffer is None:
             return
@@ -1121,7 +1134,14 @@ class InlineStreamingContext:
         self._markdown_stream_has_streamed = True
         if action.action_id:
             self._markdown_active_stream_ids.add(action.action_id)
-        self._markdown_buffer.append_raw(delta)
+        stable_segments = self._markdown_buffer.append(delta)
+        for segment in stable_segments:
+            self._print_markdown_to_scrollback(segment)
+        if stable_segments:
+            # A portion of the body has already landed in the scrollback,
+            # so the outer ``_render_final_response`` must not repaint
+            # the whole response again.
+            self._stream_body_finalized = True
         self._repaint_live()
 
     def _print_markdown_to_scrollback(self, segment: str) -> None:

@@ -716,44 +716,48 @@ class TestStreamingMarkdown:
         # Nothing stable yet, so the scrollback console remains empty.
         assert "hello" not in buf.getvalue()
 
-    def test_delta_never_reaches_scrollback_until_finalize(self):
-        """Accumulator-only: mid-stream deltas never hit the scrollback.
+    def test_paragraph_boundary_streams_to_scrollback(self):
+        """Markdown segment end (``\\n\\n``) commits the prefix immediately.
 
-        Even when a delta ends with ``\\n\\n``, the buffer keeps the full
-        text — a single flush is performed by ``_finalize_markdown_stream``
-        at the message boundary so the final render is contiguous and
-        cannot be duplicated by the outer ``_display_markdown_response``.
+        Long bodies must stream upward into the scrollback as soon as a
+        paragraph closes, so the pinned region stays within the live
+        budget. The outer ``_display_markdown_response`` is blocked from
+        repainting because ``has_streamed_response`` is latched as soon
+        as any segment has been handed off.
         """
         ctx, live_state, buf = self._make_ctx()
 
-        ctx._handle_thinking_delta(self._make_delta("para one\n\n"))
+        ctx._handle_thinking_delta(self._make_delta("para one\n\nhead of two"))
 
-        # Full body stays in the buffer; pinned region paints it live.
-        assert ctx._markdown_buffer.get_tail() == "para one\n\n"
+        # The closed paragraph landed in the scrollback right away.
+        assert buf.getvalue().count("para one") == 1
+        # The unfinished second paragraph rides live in the pinned region.
+        assert ctx._markdown_buffer.get_tail() == "head of two"
         assert live_state.is_active() is True
-        assert "para one" not in buf.getvalue()
+        # Spill latch is set so ``_render_final_response`` will skip the
+        # one-shot repaint of the full body.
+        assert ctx.has_streamed_response is True
 
-        # Finalize lands the accumulator in the scrollback exactly once.
+        # Finalize drains the residual tail exactly once — no duplicate
+        # of the already-committed paragraph.
         ctx._finalize_markdown_stream()
         assert ctx._markdown_buffer.has_tail() is False
         assert buf.getvalue().count("para one") == 1
-        assert ctx.has_streamed_response is True
+        assert buf.getvalue().count("head of two") == 1
 
     def test_response_action_dedupes_when_stream_active(self):
-        """Paired terminal action triggers finalize + dedup of the main body.
+        """Paired terminal action must not duplicate the streamed body.
 
-        With the accumulator-only flow, the body is nowhere in the
-        scrollback during the stream — it only lands there when the paired
-        response action arrives (directly, or indirectly via
-        ``streaming_deltas.clear()`` detection in ``_process_deltas``).
-        The response action itself must not pass through
-        ``render_main_action``; otherwise the body would appear twice.
+        A delta that closes a paragraph with ``\\n\\n`` already lands in
+        the scrollback during the stream; the paired response action
+        arrives later and must be suppressed by ``render_main_action``
+        so the body doesn't appear twice.
         """
         ctx, _live_state, buf = self._make_ctx()
 
         ctx._handle_thinking_delta(self._make_delta("streamed body\n\n", action_id="stream-xyz"))
-        # Accumulator-only: nothing in the scrollback yet.
-        assert "streamed body" not in buf.getvalue()
+        # Paragraph boundary already committed the body to the scrollback.
+        assert buf.getvalue().count("streamed body") == 1
         assert "stream-xyz" in ctx._markdown_active_stream_ids
 
         # Terminal response arrives with the plain ``action_type="response"``
@@ -869,11 +873,11 @@ class TestStreamingMarkdown:
         """
         ctx, _live_state, buf = self._make_ctx()
         ctx._handle_thinking_delta(self._make_delta("final body text\n\n", action_id="stream-1"))
-        # Accumulator-only: body is only in the buffer so far.
-        assert "final body text" not in buf.getvalue()
+        # Paragraph boundary already committed the body during the stream.
+        assert buf.getvalue().count("final body text") == 1
 
         # First completion — the openai_compatible "response" (plain type) —
-        # triggers finalize; body lands in the scrollback exactly once.
+        # triggers finalize; the residual tail is empty so no extra print.
         ctx._print_completed_action(
             _make_action(
                 ActionRole.ASSISTANT,
@@ -905,19 +909,21 @@ class TestStreamingMarkdown:
     def test_unterminated_tail_with_paired_response_prints_once(self):
         """Regression: last paragraph without trailing ``\\n\\n`` must not duplicate.
 
-        With the accumulator-only flow, the entire body stays in the buffer
-        (no intermediate flushes) and lands in the scrollback exactly once
-        when the paired response action triggers
-        ``_finalize_markdown_stream``.
+        A paragraph that closes mid-stream commits straight to the
+        scrollback; whatever follows without a trailing ``\\n\\n`` rides in
+        the tail until ``_finalize_markdown_stream`` drains it. The
+        combined output must contain each span exactly once.
         """
         ctx, _live_state, buf = self._make_ctx()
         stream_id = "stream-unterminated"
 
         ctx._handle_thinking_delta(self._make_delta("Please let me know\n\n", action_id=stream_id))
         ctx._handle_thinking_delta(self._make_delta("what you need!", action_id=stream_id))
-        # Accumulator-only: buffer carries the full body until finalize.
-        assert ctx._markdown_buffer.get_tail() == "Please let me know\n\nwhat you need!"
-        assert "Please let me know" not in buf.getvalue()
+        # Closed paragraph is already in the scrollback; unfinished tail
+        # still rides live in the pinned region.
+        assert ctx._markdown_buffer.get_tail() == "what you need!"
+        assert buf.getvalue().count("Please let me know") == 1
+        assert "what you need!" not in buf.getvalue()
 
         # Paired response arrives with the same id and plain "response" type.
         response_action = _make_action(
@@ -930,7 +936,9 @@ class TestStreamingMarkdown:
         )
         ctx._print_completed_action(response_action)
         output = buf.getvalue()
-        # Both parts of the body appear exactly once — and only now.
+        # Both parts of the body appear exactly once across the whole
+        # scrollback — mid-stream commit for paragraph #1, finalize for
+        # the unterminated tail of paragraph #2.
         assert output.count("what you need!") == 1
         assert output.count("Please let me know") == 1
 
