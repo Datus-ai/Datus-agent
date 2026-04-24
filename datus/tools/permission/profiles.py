@@ -11,8 +11,8 @@ layered on top via ``PermissionConfig.merge_with`` (last-match-wins).
 
 The three profiles embody three security postures:
 
-* ``normal``:    read-only tools allowed, all writes ASK, named
-  destructive tools DENY. Default for new installs.
+* ``normal``:    read-only tools, semantic tools, and skill loading allowed,
+  all other writes ASK, named destructive tools DENY. Default for new installs.
 * ``auto``:      Normal + workspace writes auto-execute, BI/scheduler
   non-trigger writes auto, DB writes still ASK.
 * ``dangerous``: everything ALLOW. Filesystem EXTERNAL paths still
@@ -36,7 +36,7 @@ def _rule(tool: str, pattern: str, permission: PermissionLevel) -> PermissionRul
 
 
 # --- Normal ------------------------------------------------------------------
-# default=ASK + explicit reads ALLOW + named destructives DENY + MCP/skills ASK.
+# default=ASK + semantic/read/skill-load ALLOW + named destructives DENY + MCP/script ASK.
 _NORMAL_RULES = [
     # context search / date utilities
     _rule("context_search_tools", "*", PermissionLevel.ALLOW),
@@ -56,6 +56,11 @@ _NORMAL_RULES = [
     _rule("semantic_tools", "search_*", PermissionLevel.ALLOW),
     _rule("semantic_tools", "get_*", PermissionLevel.ALLOW),
     _rule("semantic_tools", "query_metrics", PermissionLevel.ALLOW),
+    # semantic generation helpers
+    _rule("semantic_tools", "check_semantic_object_exists", PermissionLevel.ALLOW),
+    _rule("semantic_tools", "end_*_generation", PermissionLevel.ALLOW),
+    _rule("semantic_tools", "generate_*_id", PermissionLevel.ALLOW),
+    _rule("semantic_tools", "*", PermissionLevel.ALLOW),
     # scheduler read + destructive deny
     _rule("scheduler_tools", "list_*", PermissionLevel.ALLOW),
     _rule("scheduler_tools", "get_*", PermissionLevel.ALLOW),
@@ -65,6 +70,8 @@ _NORMAL_RULES = [
     _rule("filesystem_tools", "list_*", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "directory_tree", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "search_files", PermissionLevel.ALLOW),
+    _rule("filesystem_tools", "glob", PermissionLevel.ALLOW),
+    _rule("filesystem_tools", "grep", PermissionLevel.ALLOW),
     # plan read
     _rule("tools", "todo_read", PermissionLevel.ALLOW),
     # ``ask_user`` IS the user-interaction channel — gating "may I ask
@@ -76,14 +83,16 @@ _NORMAL_RULES = [
     _rule("tools", "list_*", PermissionLevel.ALLOW),
     _rule("tools", "search_*", PermissionLevel.ALLOW),
     _rule("tools", "get_*", PermissionLevel.ALLOW),
+    _rule("tools", "validate_skill", PermissionLevel.ALLOW),
     # sub-agent delegation: ALLOW. The ``task()`` tool just spawns a
     # subagent; the tools the subagent actually invokes are gated by the
     # subagent's own PermissionHooks instance. Double-prompting here would
     # fire on nearly every chat interaction for zero safety benefit.
     _rule("sub_agent_tools", "*", PermissionLevel.ALLOW),
-    # mcp + skills: ASK (explicit so future defaults can shift default_permission)
+    # mcp: ASK; skill loading ALLOW, but skill script execution still ASK.
     _rule("mcp.*", "*", PermissionLevel.ASK),
-    _rule("skills", "*", PermissionLevel.ASK),
+    _rule("skills", "*", PermissionLevel.ALLOW),
+    _rule("skills", "skill_execute_command", PermissionLevel.ASK),
 ]
 
 NORMAL = PermissionConfig(
@@ -106,10 +115,7 @@ _AUTO_EXTRA_RULES = [
     # plan writes
     _rule("tools", "todo_write", PermissionLevel.ALLOW),
     _rule("tools", "todo_update", PermissionLevel.ALLOW),
-    # generation finalize helpers
-    _rule("semantic_tools", "end_*_generation", PermissionLevel.ALLOW),
     _rule("semantic_tools", "validate_semantic", PermissionLevel.ALLOW),
-    _rule("semantic_tools", "generate_*_id", PermissionLevel.ALLOW),
     # bi write (excluding delete_*, which stays DENY from NORMAL via earlier rule)
     _rule("bi_tools", "create_*", PermissionLevel.ALLOW),
     _rule("bi_tools", "update_*", PermissionLevel.ALLOW),

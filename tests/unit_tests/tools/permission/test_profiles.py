@@ -44,6 +44,8 @@ class TestNormalProfile:
         assert _resolve(config, "db_tools", "list_tables") == PermissionLevel.ALLOW
         assert _resolve(config, "bi_tools", "list_dashboards") == PermissionLevel.ALLOW
         assert _resolve(config, "filesystem_tools", "read_file") == PermissionLevel.ALLOW
+        assert _resolve(config, "filesystem_tools", "glob") == PermissionLevel.ALLOW
+        assert _resolve(config, "filesystem_tools", "grep") == PermissionLevel.ALLOW
 
     def test_writes_ask(self):
         """Normal ASKs on all write-ish tools via default_permission."""
@@ -59,10 +61,11 @@ class TestNormalProfile:
         assert _resolve(config, "bi_tools", "delete_chart") == PermissionLevel.DENY
         assert _resolve(config, "scheduler_tools", "delete_job") == PermissionLevel.DENY
 
-    def test_mcp_and_skills_ask(self):
+    def test_mcp_asks_skill_loading_allowed(self):
         config = NORMAL
         assert _resolve(config, "mcp.filesystem", "read_file") == PermissionLevel.ASK
-        assert _resolve(config, "skills", "any-skill") == PermissionLevel.ASK
+        assert _resolve(config, "skills", "any-skill") == PermissionLevel.ALLOW
+        assert _resolve(config, "skills", "skill_execute_command") == PermissionLevel.ASK
 
     def test_sub_agent_delegation_allowed(self):
         """``task()`` delegation is ALLOW — the subagent's own hooks gate its calls."""
@@ -85,8 +88,24 @@ class TestNormalProfile:
         assert _resolve(config, "tools", "list_document_nav") == PermissionLevel.ALLOW
         assert _resolve(config, "tools", "search_document") == PermissionLevel.ALLOW
         assert _resolve(config, "tools", "get_anything") == PermissionLevel.ALLOW
+        assert _resolve(config, "tools", "validate_skill") == PermissionLevel.ALLOW
         # Writes still ASK via default.
         assert _resolve(config, "tools", "todo_write") == PermissionLevel.ASK
+
+    def test_generation_helpers_allowed(self):
+        """GenerationTools helpers ride the ``semantic_tools`` category and
+        should not trigger permission prompts in normal mode."""
+        config = NORMAL
+        assert _resolve(config, "semantic_tools", "check_semantic_object_exists") == PermissionLevel.ALLOW
+        assert _resolve(config, "semantic_tools", "generate_sql_summary_id") == PermissionLevel.ALLOW
+        assert _resolve(config, "semantic_tools", "end_semantic_model_generation") == PermissionLevel.ALLOW
+        assert _resolve(config, "semantic_tools", "end_metric_generation") == PermissionLevel.ALLOW
+
+    def test_all_semantic_tools_allowed(self):
+        config = NORMAL
+        assert _resolve(config, "semantic_tools", "validate_semantic") == PermissionLevel.ALLOW
+        assert _resolve(config, "semantic_tools", "attribution_analyze") == PermissionLevel.ALLOW
+        assert _resolve(config, "semantic_tools", "future_semantic_tool") == PermissionLevel.ALLOW
 
 
 class TestAutoProfile:
@@ -125,10 +144,11 @@ class TestAutoProfile:
         assert _resolve(config, "db_tools", "execute_write") == PermissionLevel.ASK
         assert _resolve(config, "db_tools", "transfer_query_result") == PermissionLevel.ASK
 
-    def test_mcp_and_skills_still_ask(self):
+    def test_mcp_still_asks_skill_loading_allowed(self):
         config = AUTO
         assert _resolve(config, "mcp.filesystem", "read_file") == PermissionLevel.ASK
-        assert _resolve(config, "skills", "any-skill") == PermissionLevel.ASK
+        assert _resolve(config, "skills", "any-skill") == PermissionLevel.ALLOW
+        assert _resolve(config, "skills", "skill_execute_command") == PermissionLevel.ASK
 
 
 class TestDangerousProfile:
