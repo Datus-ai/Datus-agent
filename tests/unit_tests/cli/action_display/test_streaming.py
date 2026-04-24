@@ -502,3 +502,525 @@ class TestStreamingInteractionProcessing:
         output = buf.getvalue()
         assert "Previous question" in output
         assert "Confirmed" not in output
+
+
+# ── TUI path (LiveDisplayState injected) ─────────────────────────
+
+
+@pytest.mark.ci
+class TestTuiPath:
+    """When ``live_state`` is injected, rolling-window updates go through it
+    instead of Rich ``Live``."""
+
+    def _make_subagent_tool_action(self, parent_id: str, name: str) -> ActionHistory:
+        return _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            depth=1,
+            action_type="task_tool",
+            messages=name,
+            input_data={"function_name": name},
+            parent_action_id=parent_id,
+        )
+
+    def test_subagent_block_has_header_and_tool_tail(self):
+        """Rolling window pins header + tool tail for a single subagent."""
+        from datus.cli.tui.live_display_state import TOOL_LINES_PER_GROUP, LiveDisplayState
+
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        live_state = LiveDisplayState()
+        display = ActionHistoryDisplay(console, live_state=live_state)
+
+        ctx = InlineStreamingContext([], display, live_state=live_state)
+        parent_id = "parent-tui"
+        first = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            depth=1,
+            action_type="gen_metrics",
+            messages="task",
+            parent_action_id=parent_id,
+        )
+        ctx._start_subagent_group(first, group_key=parent_id)
+
+        for i in range(4):
+            ctx._update_subagent_display(
+                self._make_subagent_tool_action(parent_id, f"tool_{i}"),
+                group_key=parent_id,
+            )
+
+        snap = live_state.snapshot()
+        assert live_state.is_active() is True
+        # Header + at most TOOL_LINES_PER_GROUP tool rows.
+        assert live_state.line_count() == 1 + TOOL_LINES_PER_GROUP
+        # Header line splits into "⏺ name" (cyan) + "(goal)" (default).
+        header_segments = snap[0].segments
+        styles = [style for style, _ in header_segments]
+        assert "class:subagent-header-live" in styles
+        name_text = "".join(txt for style, txt in header_segments if style == "class:subagent-header-live")
+        assert "gen_metrics" in name_text
+        # Tool tail comes after the header and shows the most-recent tools.
+        last_line_text = "".join(seg for _, seg in snap[-1].segments)
+        assert "tool_3" in last_line_text
+
+    def test_parallel_subagents_each_have_own_header_and_tools(self):
+        """Each active subagent renders as its own header + tool block."""
+        from datus.cli.tui.live_display_state import TOOL_LINES_PER_GROUP, LiveDisplayState
+
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        live_state = LiveDisplayState()
+        display = ActionHistoryDisplay(console, live_state=live_state)
+        ctx = InlineStreamingContext([], display, live_state=live_state)
+
+        for parent_id, label in (("parent-A", "alpha"), ("parent-B", "beta")):
+            first = _make_action(
+                ActionRole.TOOL,
+                ActionStatus.PROCESSING,
+                depth=1,
+                action_type=label,
+                messages="task",
+                parent_action_id=parent_id,
+            )
+            ctx._start_subagent_group(first, group_key=parent_id)
+            for i in range(3):
+                ctx._update_subagent_display(
+                    self._make_subagent_tool_action(parent_id, f"{label}_tool_{i}"),
+                    group_key=parent_id,
+                )
+
+        snap = live_state.snapshot()
+        # Each group = 1 header + TOOL_LINES_PER_GROUP tool rows; two groups.
+        assert live_state.line_count() == 2 * (1 + TOOL_LINES_PER_GROUP)
+        # Block order must be header1, tools1..., header2, tools2... — NOT
+        # header1, header2, tools1, tools2.
+        block_size = 1 + TOOL_LINES_PER_GROUP
+
+        def _header_name(line) -> str:
+            return "".join(txt for style, txt in line.segments if style == "class:subagent-header-live")
+
+        assert "alpha" in _header_name(snap[0])
+        assert "beta" in _header_name(snap[block_size])
+        # alpha tool tail lands in rows 1..block_size-1 (immediately after header1).
+        alpha_tail = " ".join("".join(seg for _, seg in line.segments) for line in snap[1:block_size])
+        assert "alpha_tool_2" in alpha_tail
+        assert "beta_tool_2" not in alpha_tail
+
+    def test_end_subagent_group_clears_live_state_in_tui_mode(self):
+        """When the group ends, the pinned region clears (no reprint-with-collapse)."""
+        from datus.cli.tui.live_display_state import LiveDisplayState
+
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        live_state = LiveDisplayState()
+        display = ActionHistoryDisplay(console, live_state=live_state)
+        ctx = InlineStreamingContext([], display, live_state=live_state)
+
+        parent_id = "parent-end"
+        first = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            depth=1,
+            action_type="gen_metrics",
+            messages="task",
+            parent_action_id=parent_id,
+        )
+        ctx._start_subagent_group(first, group_key=parent_id)
+        ctx._update_subagent_display(self._make_subagent_tool_action(parent_id, "tool_end"), group_key=parent_id)
+        assert live_state.is_active() is True
+
+        end_action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+            parent_action_id=parent_id,
+            end_time=datetime.now() + timedelta(seconds=3),
+        )
+        ctx._end_subagent_group_by_key(parent_id, end_action)
+        assert live_state.is_active() is False
+
+    def test_tui_mode_does_not_create_rich_live(self):
+        """Confirm Rich ``Live`` is never instantiated on the TUI path."""
+        from datus.cli.tui.live_display_state import LiveDisplayState
+
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        live_state = LiveDisplayState()
+        display = ActionHistoryDisplay(console, live_state=live_state)
+        ctx = InlineStreamingContext([], display, live_state=live_state)
+
+        proc_action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            messages="slow_tool",
+            input_data={"function_name": "slow_tool"},
+        )
+        ctx._update_processing_live(proc_action)
+        assert ctx._live is None
+        assert ctx._subagent_live is None
+        assert live_state.is_active() is True
+
+
+# ── Streaming markdown (thinking_delta in TUI mode) ─────────────────
+
+
+@pytest.mark.ci
+class TestStreamingMarkdown:
+    """Cover the thinking_delta → pinned region + scrollback pipeline."""
+
+    def _make_delta(self, delta: str, action_id: str = "stream-1") -> ActionHistory:
+        return _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.PROCESSING,
+            action_type="thinking_delta",
+            input_data={},
+            output_data={"delta": delta, "accumulated": delta},
+            action_id=action_id,
+        )
+
+    def _make_ctx(self):
+        from datus.cli.tui.live_display_state import LiveDisplayState
+
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        live_state = LiveDisplayState()
+        display = ActionHistoryDisplay(console, live_state=live_state)
+        ctx = InlineStreamingContext([], display, live_state=live_state)
+        return ctx, live_state, buf
+
+    def test_non_tui_mode_has_no_markdown_buffer(self):
+        """Without a LiveDisplayState, streaming markdown stays disabled."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        ctx = InlineStreamingContext([], display)
+        assert ctx._markdown_buffer is None
+        assert ctx._tui_mode is False
+
+    def test_tui_mode_provisions_markdown_buffer(self):
+        ctx, _live_state, _buf = self._make_ctx()
+        assert ctx._markdown_buffer is not None
+        assert ctx._markdown_stream_has_streamed is False
+
+    def test_delta_populates_pinned_region(self):
+        """A partial delta with no blank-line boundary stays in the tail."""
+        ctx, live_state, buf = self._make_ctx()
+
+        ctx._handle_thinking_delta(self._make_delta("hello "))
+        ctx._handle_thinking_delta(self._make_delta("world"))
+
+        assert ctx._markdown_buffer.get_tail() == "hello world"
+        assert ctx._markdown_stream_has_streamed is True
+        assert live_state.is_active() is True
+        # Nothing stable yet, so the scrollback console remains empty.
+        assert "hello" not in buf.getvalue()
+
+    def test_delta_never_reaches_scrollback_until_finalize(self):
+        """Accumulator-only: mid-stream deltas never hit the scrollback.
+
+        Even when a delta ends with ``\\n\\n``, the buffer keeps the full
+        text — a single flush is performed by ``_finalize_markdown_stream``
+        at the message boundary so the final render is contiguous and
+        cannot be duplicated by the outer ``_display_markdown_response``.
+        """
+        ctx, live_state, buf = self._make_ctx()
+
+        ctx._handle_thinking_delta(self._make_delta("para one\n\n"))
+
+        # Full body stays in the buffer; pinned region paints it live.
+        assert ctx._markdown_buffer.get_tail() == "para one\n\n"
+        assert live_state.is_active() is True
+        assert "para one" not in buf.getvalue()
+
+        # Finalize lands the accumulator in the scrollback exactly once.
+        ctx._finalize_markdown_stream()
+        assert ctx._markdown_buffer.has_tail() is False
+        assert buf.getvalue().count("para one") == 1
+        assert ctx.has_streamed_response is True
+
+    def test_response_action_dedupes_when_stream_active(self):
+        """Paired terminal action triggers finalize + dedup of the main body.
+
+        With the accumulator-only flow, the body is nowhere in the
+        scrollback during the stream — it only lands there when the paired
+        response action arrives (directly, or indirectly via
+        ``streaming_deltas.clear()`` detection in ``_process_deltas``).
+        The response action itself must not pass through
+        ``render_main_action``; otherwise the body would appear twice.
+        """
+        ctx, _live_state, buf = self._make_ctx()
+
+        ctx._handle_thinking_delta(self._make_delta("streamed body\n\n", action_id="stream-xyz"))
+        # Accumulator-only: nothing in the scrollback yet.
+        assert "streamed body" not in buf.getvalue()
+        assert "stream-xyz" in ctx._markdown_active_stream_ids
+
+        # Terminal response arrives with the plain ``action_type="response"``
+        # shape emitted by openai_compatible.py after
+        # ``response.content_part.done``.
+        response_action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            action_type="response",
+            messages="streamed body",
+            output_data={"raw_output": "streamed body"},
+            action_id="stream-xyz",
+        )
+        ctx._print_completed_action(response_action)
+
+        # The body lands in the scrollback exactly once — via finalize.
+        assert buf.getvalue().count("streamed body") == 1
+        assert ctx.has_streamed_response is True
+        # Consumed id is retained for future reprint de-dup; active set cleared.
+        assert "stream-xyz" in ctx._markdown_stream_consumed_ids
+        assert "stream-xyz" not in ctx._markdown_active_stream_ids
+        assert ctx._markdown_stream_has_streamed is False
+
+    def test_response_action_without_stream_renders_normally(self):
+        """If no delta was seen (action_id not in active streams), render normally."""
+        ctx, _live_state, buf = self._make_ctx()
+        assert not ctx._markdown_active_stream_ids
+
+        response_action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            action_type="chat_response",
+            messages="fresh body",
+            output_data={"raw_output": "fresh body"},
+            action_id="resp-never-streamed",
+        )
+        ctx._print_completed_action(response_action)
+        # Markdown render path fired → body lands on the console.
+        assert "fresh body" in buf.getvalue()
+        assert "resp-never-streamed" not in ctx._markdown_stream_consumed_ids
+
+    def test_finalize_flushes_leftover_tail(self):
+        """Finalize flushes any pending tail even without a blank-line boundary."""
+        ctx, live_state, buf = self._make_ctx()
+        ctx._handle_thinking_delta(self._make_delta("tail only"))
+        assert ctx._markdown_buffer.has_tail()
+
+        ctx._finalize_markdown_stream()
+
+        assert ctx._markdown_buffer.has_tail() is False
+        assert ctx._markdown_stream_has_streamed is False
+        assert live_state.is_active() is False
+        assert "tail only" in buf.getvalue()
+
+    def test_repaint_priority_processing_over_markdown(self):
+        """Running tool blink takes the pinned region over markdown tail."""
+        ctx, live_state, _buf = self._make_ctx()
+
+        ctx._handle_thinking_delta(self._make_delta("md tail"))
+        md_snap = live_state.snapshot()
+        assert md_snap  # markdown tail occupying the region
+
+        proc = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            messages="busy_tool",
+            input_data={"function_name": "busy_tool"},
+        )
+        ctx._update_processing_live(proc)
+        proc_snap = live_state.snapshot()
+        # One pinned line for the blinking processing tool.
+        assert len(proc_snap) == 1
+        assert any(style == "class:processing-live" for style, _ in proc_snap[0].segments)
+
+        # Stop processing → markdown tail reclaims the region.
+        ctx._stop_processing_live()
+        restored = live_state.snapshot()
+        assert restored  # still painted with the tail
+        assert ctx._markdown_buffer.get_tail() == "md tail"
+
+    def test_repaint_priority_subagent_over_markdown(self):
+        """Active subagent block takes priority over streaming markdown tail."""
+        ctx, live_state, _buf = self._make_ctx()
+
+        ctx._handle_thinking_delta(self._make_delta("tail text"))
+        assert live_state.is_active() is True
+
+        parent_id = "parent-mix"
+        first = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            depth=1,
+            action_type="gen_metrics",
+            messages="task",
+            parent_action_id=parent_id,
+        )
+        ctx._start_subagent_group(first, group_key=parent_id)
+        snap = live_state.snapshot()
+        # At least one line is the subagent header (styled accordingly).
+        has_subagent_header = any(
+            any(style == "class:subagent-header-live" for style, _ in line.segments) for line in snap
+        )
+        assert has_subagent_header
+
+    def test_wrapper_response_after_stream_is_dropped(self):
+        """Regression: agent-node wrapper re-emissions must not re-render body.
+
+        ``chat_agentic_node`` often emits a ``chat_response`` action *after*
+        the underlying ``openai_compatible`` ``"response"`` action — same
+        turn, same body, different id. The first one drives finalize +
+        dedup; the wrapper falls into the ``_turn_finalized`` /
+        ``_stream_body_finalized`` branch and is silently dropped.
+        """
+        ctx, _live_state, buf = self._make_ctx()
+        ctx._handle_thinking_delta(self._make_delta("final body text\n\n", action_id="stream-1"))
+        # Accumulator-only: body is only in the buffer so far.
+        assert "final body text" not in buf.getvalue()
+
+        # First completion — the openai_compatible "response" (plain type) —
+        # triggers finalize; body lands in the scrollback exactly once.
+        ctx._print_completed_action(
+            _make_action(
+                ActionRole.ASSISTANT,
+                ActionStatus.SUCCESS,
+                action_type="response",
+                messages="final body text",
+                output_data={"raw_output": "final body text"},
+                action_id="stream-1",
+            )
+        )
+        assert ctx._turn_finalized is True
+        assert buf.getvalue().count("final body text") == 1
+
+        # Agent-node wrapper emission — same turn, *different* id, typical
+        # ``*_response`` action_type. Would previously re-render the body.
+        ctx._print_completed_action(
+            _make_action(
+                ActionRole.ASSISTANT,
+                ActionStatus.SUCCESS,
+                action_type="chat_response",
+                messages="final body text",
+                output_data={"raw_output": "final body text"},
+                action_id="wrapper-xyz",
+            )
+        )
+        assert buf.getvalue().count("final body text") == 1
+        assert "wrapper-xyz" in ctx._markdown_stream_consumed_ids
+
+    def test_unterminated_tail_with_paired_response_prints_once(self):
+        """Regression: last paragraph without trailing ``\\n\\n`` must not duplicate.
+
+        With the accumulator-only flow, the entire body stays in the buffer
+        (no intermediate flushes) and lands in the scrollback exactly once
+        when the paired response action triggers
+        ``_finalize_markdown_stream``.
+        """
+        ctx, _live_state, buf = self._make_ctx()
+        stream_id = "stream-unterminated"
+
+        ctx._handle_thinking_delta(self._make_delta("Please let me know\n\n", action_id=stream_id))
+        ctx._handle_thinking_delta(self._make_delta("what you need!", action_id=stream_id))
+        # Accumulator-only: buffer carries the full body until finalize.
+        assert ctx._markdown_buffer.get_tail() == "Please let me know\n\nwhat you need!"
+        assert "Please let me know" not in buf.getvalue()
+
+        # Paired response arrives with the same id and plain "response" type.
+        response_action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            action_type="response",
+            messages="",
+            output_data={"raw_output": "Please let me know\n\nwhat you need!"},
+            action_id=stream_id,
+        )
+        ctx._print_completed_action(response_action)
+        output = buf.getvalue()
+        # Both parts of the body appear exactly once — and only now.
+        assert output.count("what you need!") == 1
+        assert output.count("Please let me know") == 1
+
+    def test_incomplete_table_fallback_scope(self):
+        """Fallback is narrow: only header / header+separator trigger plain text.
+
+        Rich can already draw a correct box table from 3+ pipe rows, so we
+        *stop* falling back once the first body row arrives and let the
+        live pinned region show the real box-drawing rendering mid-stream.
+        """
+        from datus.cli.action_display.streaming import _tail_has_incomplete_table
+
+        # Only the header → fall back (Rich would lose the single pipe line).
+        assert _tail_has_incomplete_table("| a | b |") is True
+        # Header + separator → still fall back (Rich draws a broken grid).
+        assert _tail_has_incomplete_table("| a | b |\n| - | - |") is True
+        # Header + separator + body row → Rich can draw this correctly, so
+        # we hand it over even mid-stream for the "live markdown" feel.
+        assert _tail_has_incomplete_table("| a | b |\n| - | - |\n| 1 | 2 |\n") is False
+        # Closed with blank line → stable segment, not a fallback decision.
+        assert _tail_has_incomplete_table("| a | b |\n| - | - |\n| 1 | 2 |\n\n") is False
+        assert _tail_has_incomplete_table("plain prose\n") is False
+        assert _tail_has_incomplete_table("") is False
+
+        ctx, live_state, _buf = self._make_ctx()
+        # 3-row table tail — no fallback; pinned region carries Rich's
+        # ANSI output. We don't assert on exact glyphs (ANSI color codes
+        # vary) but the numeric values must remain visible.
+        ctx._handle_thinking_delta(self._make_delta("| x | y |\n| - | - |\n| 1 | 2 |"))
+        assert ctx._markdown_buffer.has_tail()
+        assert live_state.is_active() is True
+        snap = live_state.snapshot()
+        joined = "\n".join("".join(txt for _, txt in line.segments) for line in snap)
+        assert "1" in joined and "2" in joined
+
+    def test_verbose_frozen_forces_clear(self):
+        """Frozen verbose snapshot owns the screen — pinned region must clear."""
+        ctx, live_state, _buf = self._make_ctx()
+        ctx._handle_thinking_delta(self._make_delta("tail text"))
+        assert live_state.is_active() is True
+
+        ctx._verbose_frozen = True
+        ctx._repaint_live()
+        assert live_state.is_active() is False
+
+    def test_process_deltas_detects_clear_and_finalizes(self):
+        """``_process_deltas`` must finalize when the caller clears the queue.
+
+        The chat_commands pipeline calls ``streaming_deltas.clear()`` at
+        every message boundary. The streaming context — running on the
+        refresh daemon — should notice the queue shrank, flush the
+        accumulator to the scrollback, and reset its cursor so follow-up
+        deltas (next message) start fresh.
+        """
+        from datus.cli.tui.live_display_state import LiveDisplayState
+
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        live_state = LiveDisplayState()
+        display = ActionHistoryDisplay(console, live_state=live_state)
+        deltas: list[ActionHistory] = []
+        ctx = InlineStreamingContext([], display, live_state=live_state, streaming_deltas=deltas)
+
+        # Push two deltas through the public queue + run the pump.
+        deltas.append(self._make_delta("part a "))
+        deltas.append(self._make_delta("part b"))
+        ctx._process_deltas()
+        assert ctx._delta_processed_index == 2
+        assert ctx._markdown_buffer.get_tail() == "part a part b"
+        assert "part a" not in buf.getvalue()
+
+        # Caller signals message boundary by clearing the queue.
+        deltas.clear()
+        ctx._process_deltas()
+
+        # Body landed in the scrollback exactly once; cursor reset.
+        assert buf.getvalue().count("part a part b") == 1
+        assert ctx._delta_processed_index == 0
+        assert ctx._markdown_buffer.has_tail() is False
+        assert ctx.has_streamed_response is True
+
+    def test_has_streamed_response_is_false_without_deltas(self):
+        """Contexts that never painted a delta must not latch the flag.
+
+        Otherwise the outer ``_render_final_response`` would skip the
+        ``_display_markdown_response`` step on *every* turn, including
+        non-streaming providers that rely on it for their final output.
+        """
+        ctx, _live_state, _buf = self._make_ctx()
+        assert ctx.has_streamed_response is False
+        # Finalize with an empty buffer must not set the latch either.
+        ctx._finalize_markdown_stream()
+        assert ctx.has_streamed_response is False

@@ -290,16 +290,6 @@ class ChatCommands:
                         self.all_turn_actions = []
 
                 current_node = self.current_node
-
-                # Show session info for existing session
-                if not need_new_node or is_switch:
-                    session_info = asyncio.run(current_node.get_session_info())
-                    if session_info.get("session_id"):
-                        session_display = (
-                            f"[dim]Using existing session: {session_info['session_id']} "
-                            f"(tokens: {session_info['token_count']}, actions: {session_info['action_count']})[/]"
-                        )
-                        self.console.print(session_display)
             else:
                 # Non-interactive: always create a new node
                 self.current_node = self._create_new_node(None)
@@ -312,8 +302,20 @@ class ChatCommands:
             current_node.input = node_input
 
             # Initialize action history display
-            action_display = ActionHistoryDisplay(self.console)
+            action_display = ActionHistoryDisplay(self.console, live_state=getattr(self.cli, "live_state", None))
             incremental_actions = []
+            # Streaming text deltas (thinking_delta, depth=0) are routed to this
+            # separate queue so the main trace renderer never has to walk them
+            # again. The TUI streaming context pops deltas off this list as it
+            # repaints the pinned region, and drops the list on each paired
+            # terminal response so the accumulator resets per message.
+            streaming_deltas = []
+            # Will be set True after the streaming context exits if it has
+            # already flushed the main-agent body to the scrollback. When True,
+            # ``_render_final_response`` skips the one-shot
+            # ``_display_markdown_response`` step to avoid painting the body
+            # twice.
+            streamed_body = False
             node_final_action = None  # Node's final ASSISTANT action (e.g. chat_response)
             # Buffer for ASSISTANT text tagged as non-thinking by the model layer.
             # Tail text often duplicates the node's *_response; defer rendering
@@ -337,6 +339,14 @@ class ChatCommands:
                         # Skip TOOL PROCESSING entries — SUCCESS version follows
                         if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
                             continue
+                        # Streaming text deltas go to their own queue. Sub-agent
+                        # deltas (depth > 0) are ignored here — they'd pollute
+                        # the main-agent accumulator; sub-agents have their own
+                        # pinned-region path.
+                        if action.action_type == "thinking_delta":
+                            if action.depth == 0:
+                                streaming_deltas.append(action)
+                            continue
                         # Node final actions (e.g. chat_response) — keep for
                         # final response rendering but skip streaming trace.
                         # Only capture depth-0 (main node) responses; sub-agent
@@ -353,6 +363,26 @@ class ChatCommands:
                             pending_non_thinking = _drop_if_matches_final(
                                 pending_non_thinking, action, incremental_actions
                             )
+                            # Wrapper *_response closes the delta accumulator for
+                            # this message; reset so a follow-up turn doesn't see
+                            # the previous body in its replay.
+                            streaming_deltas.clear()
+                            continue
+                        # Plain "response" from the model layer (openai_compatible /
+                        # codex) is the paired terminal action for the delta
+                        # stream. Push it to the trace list and reset the delta
+                        # accumulator at the same time.
+                        if (
+                            action.role == ActionRole.ASSISTANT
+                            and action.depth == 0
+                            and action.action_type == "response"
+                            and action.status == ActionStatus.SUCCESS
+                        ):
+                            if pending_non_thinking is not None:
+                                incremental_actions.append(pending_non_thinking)
+                                pending_non_thinking = None
+                            incremental_actions.append(action)
+                            streaming_deltas.clear()
                             continue
                         # Defer ASSISTANT text flagged as non-thinking — it may
                         # be the tail text that duplicates the upcoming *_response.
@@ -383,6 +413,7 @@ class ChatCommands:
                     history_turns=self.all_turn_actions,
                     current_user_message=message,
                     interaction_broker=current_node.interaction_broker,
+                    streaming_deltas=streaming_deltas,
                 )
                 # Reprint the CLI banner at the top after Ctrl+O clears the screen.
                 banner_callback = getattr(self.cli, "_print_welcome", None)
@@ -416,6 +447,7 @@ class ChatCommands:
                             logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
                         except ExecutionInterrupted:
                             logger.info("ExecutionInterrupted caught, execution stopped gracefully")
+                    streamed_body = bool(getattr(streaming_ctx, "has_streamed_response", False))
                 finally:
                     self.current_streaming_ctx = None
             else:
@@ -435,6 +467,10 @@ class ChatCommands:
                             continue
                         if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
                             continue
+                        if action.action_type == "thinking_delta":
+                            if action.depth == 0:
+                                streaming_deltas.append(action)
+                            continue
                         # Node final actions (e.g. chat_response) — keep for
                         # final response rendering but skip streaming trace.
                         # Only capture depth-0 (main node) responses; sub-agent
@@ -451,6 +487,19 @@ class ChatCommands:
                             pending_non_thinking = _drop_if_matches_final(
                                 pending_non_thinking, action, incremental_actions
                             )
+                            streaming_deltas.clear()
+                            continue
+                        if (
+                            action.role == ActionRole.ASSISTANT
+                            and action.depth == 0
+                            and action.action_type == "response"
+                            and action.status == ActionStatus.SUCCESS
+                        ):
+                            if pending_non_thinking is not None:
+                                incremental_actions.append(pending_non_thinking)
+                                pending_non_thinking = None
+                            incremental_actions.append(action)
+                            streaming_deltas.clear()
                             continue
                         # Defer ASSISTANT text flagged as non-thinking — it may
                         # be the tail text that duplicates the upcoming *_response.
@@ -473,7 +522,10 @@ class ChatCommands:
                         incremental_actions.append(pending_non_thinking)
                         pending_non_thinking = None
 
-                with action_display.display_streaming_actions(incremental_actions):
+                ns_streaming_ctx = action_display.display_streaming_actions(
+                    incremental_actions, streaming_deltas=streaming_deltas
+                )
+                with ns_streaming_ctx:
                     try:
                         self.cli.run_on_bg_loop(run_stream())
                     except KeyboardInterrupt:
@@ -481,6 +533,7 @@ class ChatCommands:
                         logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
                     except ExecutionInterrupted:
                         logger.info("ExecutionInterrupted caught, execution stopped gracefully")
+                streamed_body = bool(getattr(ns_streaming_ctx, "has_streamed_response", False))
 
             # Display final response from the node's final action
             # (separated from incremental_actions to avoid streaming trace rendering)
@@ -508,13 +561,22 @@ class ChatCommands:
                     if sql:
                         self.add_in_sql_context(sql, clean_output, incremental_actions)
 
-                    self._render_final_response(final_action)
+                    self._render_final_response(final_action, skip_markdown_body=streamed_body)
 
                     # Merge node_final_action back for history tracking
                     all_actions = incremental_actions + ([node_final_action] if node_final_action else [])
                     self.last_actions = all_actions
                     self.all_turn_actions.append((message, all_actions))
                     self._trace_verbose = False  # reset toggle for new chat round
+
+                    # End-of-turn full-screen reprint — mirrors the Ctrl+O
+                    # toggle so the viewport ends up with a clean, fully
+                    # re-rendered transcript. Rich gets to lay out the final
+                    # body in one pass (no incremental artefacts on tables /
+                    # code blocks). Interactive mode only; non-interactive
+                    # runs (``/print``, pipes) must not rewrite stdout.
+                    if interactive:
+                        self._full_screen_reprint(verbose=self._trace_verbose)
 
                 if interactive:
                     self.cli.console.print("[bold bright_black]Press Ctrl+O to toggle trace details.[/]")
@@ -538,11 +600,19 @@ class ChatCommands:
             if _is_model_config_error(e):
                 self.console.print("[yellow]Hint: Use /model to configure or switch your model.[/]")
 
-    def _render_final_response(self, final_action: "ActionHistory") -> None:
+    def _render_final_response(self, final_action: "ActionHistory", skip_markdown_body: bool = False) -> None:
         """Render the final response output (SQL, markdown, etc.) from a node action.
 
         This is used both after streaming completes and when Ctrl+O re-renders.
         Side-effect free — does not modify history or state.
+
+        Args:
+            final_action: The node's terminal assistant action.
+            skip_markdown_body: When True, skip the final Markdown render of
+                the response body (the ``_display_markdown_response`` step).
+                Used when the streaming context has already flushed the
+                accumulated body to the scrollback — without this guard the
+                user sees the same answer twice.
         """
         if (
             not final_action
@@ -575,7 +645,7 @@ class ChatCommands:
         if ext_knowledge_file:
             self._display_ext_knowledge_file(ext_knowledge_file)
 
-        if clean_output:
+        if clean_output and not skip_markdown_body:
             self._display_markdown_response(clean_output)
 
     def _get_turn_token_usage_from_node(self, node) -> Optional[dict]:
@@ -918,6 +988,56 @@ class ChatCommands:
         else:
             self.console.print("[yellow]No active session.[/]")
 
+    def _full_screen_reprint(
+        self,
+        verbose: bool,
+        *,
+        mode_label: Optional[str] = None,
+        fallback_actions: Optional[List[ActionHistory]] = None,
+    ) -> None:
+        """Clear the screen and re-render the full multi-turn history.
+
+        The viewport ends up with exactly what Ctrl+O produces: banner →
+        optional mode label → every turn's trace + final response. The
+        scrollback is unchanged (``patch_stdout`` cannot erase it), so
+        earlier content remains reachable by scrolling up.
+
+        Args:
+            verbose: Render style for action trace lines.
+            mode_label: Optional banner text printed between the CLI banner
+                and the trace (used by Ctrl+O to show "switched to <mode>").
+            fallback_actions: When ``all_turn_actions`` is empty, render this
+                single action list instead. Used by Ctrl+O on the very first
+                turn before ``all_turn_actions.append`` runs.
+        """
+        self.console.clear()
+        sys.stdout.write("\033[3J")
+        sys.stdout.flush()
+        banner_callback = getattr(self.cli, "_print_welcome", None)
+        if banner_callback is not None:
+            banner_callback()
+        if mode_label:
+            self.console.print(f"[bold bright_black]  \u23af switched to {mode_label} mode \u23af[/]")
+        action_display = ActionHistoryDisplay(self.console, live_state=getattr(self.cli, "live_state", None))
+
+        def _render_turn_response(turn_actions: List[ActionHistory]) -> None:
+            """Callback to render the final response for each turn."""
+            final_action = self._find_node_final_action(turn_actions)
+            if final_action and final_action.depth == 0 and final_action.status == ActionStatus.SUCCESS:
+                # The viewport was just cleared — render the final Markdown
+                # body here. ``skip_markdown_body`` stays False because the
+                # streaming context's scrollback push is not visible in the
+                # viewport after the clear.
+                self._render_final_response(final_action)
+
+        if self.all_turn_actions:
+            action_display.render_multi_turn_history(
+                self.all_turn_actions, verbose=verbose, per_turn_callback=_render_turn_response
+            )
+        elif fallback_actions:
+            action_display.render_action_history(fallback_actions, verbose=verbose)
+            _render_turn_response(fallback_actions)
+
     def display_inline_trace_details(self, actions: List[ActionHistory]) -> None:
         """Toggle action history between compact and verbose modes (post-run Ctrl+O)."""
         if not actions:
@@ -925,28 +1045,11 @@ class ChatCommands:
             return
         self._trace_verbose = not self._trace_verbose
         mode_label = "verbose" if self._trace_verbose else "compact"
-        self.console.clear()
-        sys.stdout.write("\033[3J")
-        sys.stdout.flush()
-        banner_callback = getattr(self.cli, "_print_welcome", None)
-        if banner_callback is not None:
-            banner_callback()
-        self.console.print(f"[bold bright_black]  ⎯ switched to {mode_label} mode ⎯[/]")
-        action_display = ActionHistoryDisplay(self.console)
-
-        def _render_turn_response(turn_actions: List[ActionHistory]) -> None:
-            """Callback to render the final response for each turn."""
-            final_action = self._find_node_final_action(turn_actions)
-            if final_action and final_action.depth == 0 and final_action.status == ActionStatus.SUCCESS:
-                self._render_final_response(final_action)
-
-        if self.all_turn_actions:
-            action_display.render_multi_turn_history(
-                self.all_turn_actions, verbose=self._trace_verbose, per_turn_callback=_render_turn_response
-            )
-        else:
-            action_display.render_action_history(actions, verbose=self._trace_verbose)
-            _render_turn_response(actions)
+        self._full_screen_reprint(
+            verbose=self._trace_verbose,
+            mode_label=mode_label,
+            fallback_actions=actions,
+        )
 
         self.cli.console.print("[bold bright_black]Press Ctrl+O to toggle trace details.[/]")
 
@@ -1020,7 +1123,7 @@ class ChatCommands:
             from rich.rule import Rule
 
             self.console.print()
-            action_display = ActionHistoryDisplay(self.console)
+            action_display = ActionHistoryDisplay(self.console, live_state=getattr(self.cli, "live_state", None))
             last_assistant_actions = []
             current_user_msg = ""
 
@@ -1148,7 +1251,7 @@ class ChatCommands:
             messages = session_manager.get_session_messages(target_session_id)
             if messages:
                 self.console.print(f"\n[green]Session resumed![/] Showing {len(messages)} message(s):\n")
-                action_display = ActionHistoryDisplay(self.console)
+                action_display = ActionHistoryDisplay(self.console, live_state=getattr(self.cli, "live_state", None))
                 last_assistant_actions = []
                 for msg in messages:
                     role = msg.get("role", "unknown")
@@ -1308,7 +1411,7 @@ class ChatCommands:
                     f"\n[green]Rewound to before turn {turn_num}.[/] "
                     f"New session: [cyan]{new_session_id}[/] ({len(new_messages)} messages)\n"
                 )
-                action_display = ActionHistoryDisplay(self.console)
+                action_display = ActionHistoryDisplay(self.console, live_state=getattr(self.cli, "live_state", None))
                 for msg in new_messages:
                     role = msg.get("role", "unknown")
                     content = msg.get("content", "")

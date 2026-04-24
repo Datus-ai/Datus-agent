@@ -16,6 +16,7 @@ from datus.utils.loggings import get_logger
 if TYPE_CHECKING:
     from datus.cli.action_display.streaming import InlineStreamingContext
     from datus.cli.execution_state import InteractionBroker
+    from datus.cli.tui.live_display_state import LiveDisplayState
 
 logger = get_logger(__name__)
 
@@ -23,9 +24,15 @@ logger = get_logger(__name__)
 class ActionHistoryDisplay:
     """Display ActionHistory in a flat inline format (Claude Code style)"""
 
-    def __init__(self, console: Optional[Console] = None, enable_truncation: bool = True):
+    def __init__(
+        self,
+        console: Optional[Console] = None,
+        enable_truncation: bool = True,
+        live_state: Optional["LiveDisplayState"] = None,
+    ):
         self.console = console or Console()
         self.enable_truncation = enable_truncation
+        self.live_state = live_state
 
         # Create content generator with truncation setting
         self.content_generator = ActionContentGenerator(enable_truncation=enable_truncation)
@@ -146,8 +153,17 @@ class ActionHistoryDisplay:
             # Skip PROCESSING TOOL entries (only render SUCCESS/FAILED)
             if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
                 continue
-            # Skip node final actions (e.g. chat_response) — rendered separately
-            if action.role == ActionRole.ASSISTANT and action.action_type and action.action_type.endswith("_response"):
+            # Skip assistant terminal response actions — they are rendered by
+            # the per-turn callback (``_render_turn_response``) or by the
+            # external ``_render_final_response`` pipeline. Walking them here
+            # would paint the main body twice (once from plain ``response``,
+            # once from the wrapping ``*_response``).
+            if (
+                action.role == ActionRole.ASSISTANT
+                and action.action_type
+                and (action.action_type == "response" or action.action_type.endswith("_response"))
+                and action.depth == 0
+            ):
                 continue
 
             # -- subagent_complete action closes a group --
@@ -258,8 +274,16 @@ class ActionHistoryDisplay:
         history_turns: Optional[List[Tuple[str, List[ActionHistory]]]] = None,
         current_user_message: str = "",
         interaction_broker: Optional["InteractionBroker"] = None,
+        streaming_deltas: Optional[List[ActionHistory]] = None,
     ) -> "InlineStreamingContext":
-        """Create an inline streaming display context for actions (Claude Code style)"""
+        """Create an inline streaming display context for actions (Claude Code style).
+
+        ``streaming_deltas`` is an optional parallel queue for
+        ``thinking_delta`` actions; the caller populates it as delta events
+        arrive and clears it on each message boundary. The streaming context
+        reads from it for pinned-region live rendering and mid-run Ctrl+O
+        re-render of the main body.
+        """
         from datus.cli.action_display.streaming import InlineStreamingContext
 
         return InlineStreamingContext(
@@ -268,6 +292,8 @@ class ActionHistoryDisplay:
             history_turns=history_turns or [],
             current_user_message=current_user_message,
             interaction_broker=interaction_broker,
+            live_state=self.live_state,
+            streaming_deltas=streaming_deltas,
         )
 
     def stop_live(self) -> None:
@@ -287,6 +313,10 @@ class ActionHistoryDisplay:
                 logger.debug(f"Error restarting live display: {e}")
 
 
-def create_action_display(console: Optional[Console] = None, enable_truncation: bool = True) -> ActionHistoryDisplay:
+def create_action_display(
+    console: Optional[Console] = None,
+    enable_truncation: bool = True,
+    live_state: Optional["LiveDisplayState"] = None,
+) -> ActionHistoryDisplay:
     """Factory function to create ActionHistoryDisplay with truncation control"""
-    return ActionHistoryDisplay(console, enable_truncation)
+    return ActionHistoryDisplay(console, enable_truncation, live_state=live_state)

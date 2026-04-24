@@ -60,6 +60,7 @@ from datus.cli.status_bar import StatusBarProvider
 from datus.cli.sub_agent_commands import SubAgentCommands
 from datus.cli.tui import DatusApp, tui_enabled
 from datus.cli.tui.app import EXIT_SENTINEL
+from datus.cli.tui.live_display_state import LiveDisplayState
 from datus.configuration.agent_config_loader import configuration_manager, load_agent_config
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
@@ -198,6 +199,7 @@ class DatusCLI:
         # disabled via ``DATUS_TUI=0`` as an escape hatch.
         self._use_tui = self.interactive and tui_enabled()
         self.tui_app: Optional[DatusApp] = None
+        self.live_state: Optional[LiveDisplayState] = None
 
         self.at_completer: AtReferenceCompleter
         if self.interactive:
@@ -460,6 +462,7 @@ class DatusCLI:
                         "status-bar.tokens": "#9a9aaa",
                         "status-bar.ctx": "#9a9aaa",
                         "status-bar.running": "#ffb86c bold",
+                        "status-bar.dot": "#ffb86c bold",
                         "separator": "#444444",
                         # Slash-command autocomplete popup. Every row pins
                         # ``bg:default`` so the menu blends into the terminal
@@ -475,6 +478,18 @@ class DatusCLI:
                         "completion-menu.meta.completion": "bg:default fg:ansibrightblack",
                         "completion-menu.meta.completion.current": "noreverse bg:default fg:ansibrightcyan bold",
                         "hint": "#9a9aaa italic",
+                        # Pinned subagent/tool rolling-window lines. Dim grey
+                        # to match the scrollback ``[dim]`` styling used by the
+                        # Rich renderers so the visual weight stays consistent
+                        # between the pinned region and the append area.
+                        "subagent-live": "#6e6e6e",
+                        "processing-live": "#6e6e6e",
+                        # Pinned subagent header: plain cyan on the
+                        # "⏺ subagent_type" prefix, default colour on the
+                        # parenthesised goal so the prompt text does not
+                        # compete visually with the subagent name.
+                        "subagent-header-live": "ansicyan",
+                        "subagent-header-goal-live": "",
                     }
                 ),
             ]
@@ -517,6 +532,11 @@ class DatusCLI:
         # before constructing the app.
         completer = self.create_combined_completer()
 
+        # Build the shared live-render state first; DatusApp will wire its
+        # own ``invalidate`` into it once constructed (see LiveDisplayState
+        # docstring for the deferred-callback rationale).
+        self.live_state = LiveDisplayState()
+
         self.tui_app = DatusApp(
             status_tokens_fn=self._status_tokens_for_tui,
             dispatch_fn=self._dispatch_command_text,
@@ -525,6 +545,7 @@ class DatusCLI:
             lexer=PygmentsLexer(CustomSqlLexer),
             style=self._build_app_style(),
             input_prompt_fn=self._get_prompt_text,
+            live_display_state=self.live_state,
         )
 
         @self.tui_app.key_bindings.add("tab")

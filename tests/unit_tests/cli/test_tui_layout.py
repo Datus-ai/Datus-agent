@@ -40,18 +40,23 @@ class TestCompletionsMenuWired:
         assert isinstance(inner_window.content, CompletionsMenuControl)
 
     def test_menu_sits_between_input_and_bottom_separator(self):
-        """The HSplit order status → input → menu → separator is what lets
-        the input slide back to the bottom of the terminal once the menu
-        collapses. Any other ordering regresses the rendering."""
+        """The HSplit order input → menu → separator is what lets the input
+        slide back to the bottom of the terminal once the menu collapses.
+        Any other ordering regresses the rendering. The pinned live region
+        now sits at the very top (index 0) but doesn't affect the input ↔
+        menu adjacency that this test guards."""
 
         app = _build_app()
         root = app.application.layout.container
         # DatusApp wraps the HSplit directly; grab the children list.
         children = list(root.get_children())
-        # Expected order: top_sep, status_window, mid_sep, input, menu, bottom_sep, hint.
-        assert len(children) == 7, f"unexpected HSplit child count: {len(children)}"
-        # The fifth child (index 4) must be the CompletionsMenu.
-        assert children[4] is app._completions_menu
+        # Expected order: live_region, top_sep, status, mid_sep, input, menu,
+        # bottom_sep, hint.
+        assert len(children) == 8, f"unexpected HSplit child count: {len(children)}"
+        # The menu must sit at index 5, immediately after the input (index 4;
+        # the TextArea is flattened into its wrapping Window by prompt_toolkit
+        # so the identity check is made on the menu itself).
+        assert children[5] is app._completions_menu
 
 
 class TestCompletionsMenuConfig:

@@ -57,6 +57,7 @@ from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import TextArea
 
 from datus.cli.cli_styles import PASTE_COLLAPSE_THRESHOLD
+from datus.cli.tui.live_display_state import LiveDisplayState, compute_pinned_max_rows
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -101,11 +102,13 @@ class DatusApp:
         style: Optional[Style] = None,
         placeholder_fn: Optional[Callable[[], str]] = None,
         input_prompt_fn: Optional[Callable[[], str]] = None,
+        live_display_state: Optional[LiveDisplayState] = None,
     ) -> None:
         self._status_tokens_fn = status_tokens_fn
         self._dispatch_fn = dispatch_fn
         self._placeholder_fn = placeholder_fn or (lambda: "")
         self._input_prompt_fn = input_prompt_fn or (lambda: "> ")
+        self._live_state = live_display_state
 
         self._agent_running = threading.Event()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="datus-tui-worker")
@@ -177,8 +180,32 @@ class DatusApp:
             filter=Condition(lambda: bool(self._ctrl_c_hint)),
         )
 
+        # Pinned live-render region for subagent rolling window, processing-
+        # tool blink, and streaming-markdown tail. Sits between the
+        # patch_stdout scroll area and the status bar.
+        #
+        # Height is derived from the *current* terminal size on every render
+        # (see :meth:`_pinned_max_rows`) so a larger terminal gets a larger
+        # pinned area — enough room for a full markdown table to stay
+        # box-rendered — while a narrow terminal is protected from having
+        # the input row squeezed off screen. ``dont_extend_height=True``
+        # plus ``wrap_lines=False`` means we never steal more than our
+        # declared budget, and prompt_toolkit shrinks us first when the
+        # input area needs to grow (multi-line paste, completions, etc.).
+        live_state_active = Condition(self._live_state_is_active)
+        self._live_region = ConditionalContainer(
+            content=Window(
+                content=FormattedTextControl(self._render_live_region),
+                height=self._pinned_height_dimension,
+                dont_extend_height=True,
+                wrap_lines=False,
+            ),
+            filter=live_state_active,
+        )
+
         root = HSplit(
             [
+                self._live_region,
                 self._make_separator(),
                 self._status_window,
                 self._make_separator(),
@@ -200,10 +227,82 @@ class DatusApp:
             erase_when_done=False,
         )
 
+        # Wire the live-region repaint callback now that ``self.invalidate`` is
+        # bound; :class:`LiveDisplayState` defaults to a no-op callback so
+        # constructing it before the app is still safe. The row-budget
+        # provider delegates to :meth:`_pinned_max_rows` so writers (the
+        # streaming refresh daemon) shape their line lists against the
+        # same ceiling prompt_toolkit applies to the Window.
+        if self._live_state is not None:
+            self._live_state.set_invalidate(self.invalidate)
+            self._live_state.set_max_rows_provider(self._pinned_max_rows)
+
     @staticmethod
     def _make_separator() -> Window:
         """Full-width horizontal rule rendered with box-drawing character."""
         return Window(height=1, char="\u2500", style="class:separator")
+
+    def _live_state_is_active(self) -> bool:
+        return self._live_state is not None and self._live_state.is_active()
+
+    def _terminal_rows(self) -> int:
+        """Best-effort current terminal row count.
+
+        Prefers the live ``Application.output`` (accurate and resize-aware),
+        falls back to a sensible default when the app hasn't attached to
+        a terminal yet (e.g. early construction, unit tests).
+        """
+        app = getattr(self, "_app", None)
+        if app is not None:
+            try:
+                size = app.output.get_size()
+                if size and size.rows > 0:
+                    return int(size.rows)
+            except Exception:
+                pass
+        try:
+            import shutil
+
+            size = shutil.get_terminal_size(fallback=(80, 24))
+            return int(size.lines)
+        except Exception:
+            return 24
+
+    def _pinned_max_rows(self) -> int:
+        """Current row ceiling for the pinned region (terminal-aware)."""
+        return compute_pinned_max_rows(self._terminal_rows())
+
+    def _pinned_height_dimension(self) -> Dimension:
+        """Height dimension callback for the pinned Window.
+
+        ``Dimension.preferred`` is anchored to the current content size so a
+        short markdown tail doesn't grab extra rows it doesn't need, while
+        ``max`` rises with the terminal so a full table can live-render in
+        box form once the body has enough visible rows.
+        """
+        cap = self._pinned_max_rows()
+        preferred = 1
+        if self._live_state is not None:
+            preferred = max(1, min(cap, self._live_state.line_count()))
+        return Dimension(min=1, preferred=preferred, max=cap)
+
+    def _render_live_region(self) -> FormattedText:
+        """Flatten every pinned line into a single multiline FormattedText.
+
+        Lines are joined with ``\\n`` so the hosting Window sizes naturally
+        to the pinned-line count (each line contributes one terminal row).
+        """
+        if self._live_state is None:
+            return FormattedText([])
+        snap = self._live_state.snapshot()
+        if not snap:
+            return FormattedText([])
+        fragments: List[Tuple[str, str]] = []
+        for idx, line in enumerate(snap):
+            if idx > 0:
+                fragments.append(("", "\n"))
+            fragments.extend(line.segments)
+        return FormattedText(fragments)
 
     def show_ctrl_c_hint(self) -> None:
         self._ctrl_c_hint = "Press Ctrl+C again to exit"
@@ -395,9 +494,17 @@ class DatusApp:
 
         async def _main() -> None:
             self._loop = asyncio.get_running_loop()
+            blink_task = asyncio.create_task(self._blink_invalidate_loop())
             try:
                 await self._app.run_async()
             finally:
+                blink_task.cancel()
+                try:
+                    await blink_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug("blink_invalidate_loop cleanup raised: %s", exc)
                 self._loop = None
 
         try:
@@ -411,6 +518,32 @@ class DatusApp:
         return self._exit_code
 
     # -- internals ---------------------------------------------------------
+
+    # Cadence of the periodic invalidate that drives the status-bar running
+    # indicator blink. Matched to ``status_bar._RUNNING_BLINK_HALF_PERIOD`` so
+    # one full glyph cycle takes ~1s. Only fires while the agent is running,
+    # so idle REPLs do not redraw the layout.
+    _BLINK_INTERVAL_SECONDS = 0.5
+
+    async def _blink_invalidate_loop(self) -> None:
+        """Keep the status-bar ``running`` dot pulsing by periodic re-renders.
+
+        prompt_toolkit only re-renders on invalidate; the running-indicator
+        glyph is derived from ``time.monotonic()`` so it only animates when
+        the layout is refreshed. This task provides that cadence, but stays
+        idle when no agent is running so no unnecessary layout work happens
+        on the REPL prompt path.
+        """
+        try:
+            while True:
+                await asyncio.sleep(self._BLINK_INTERVAL_SECONDS)
+                if self._agent_running.is_set():
+                    try:
+                        self._app.invalidate()
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logger.debug("blink invalidate raised: %s", exc)
+        except asyncio.CancelledError:
+            raise
 
     def _safe_status_tokens(self) -> FormattedText:
         try:

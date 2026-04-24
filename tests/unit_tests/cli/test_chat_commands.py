@@ -1955,8 +1955,8 @@ class TestExecuteResponseProcessing:
         assert len(cmds.chat_history) == 1
         assert cmds.current_node is not None
 
-    def test_session_reuse_shows_session_info(self, real_agent_config, mock_llm_create):
-        """Second execute reusing same node shows 'Using existing session' info."""
+    def test_session_reuse_does_not_print_session_info(self, real_agent_config, mock_llm_create):
+        """Second execute reusing same node must not print the legacy session banner."""
         from tests.unit_tests.mock_llm_model import build_simple_response
 
         console = Console(file=io.StringIO(), no_color=True)
@@ -1965,15 +1965,13 @@ class TestExecuteResponseProcessing:
         mock_llm_create.reset(responses=[build_simple_response("First"), build_simple_response("Second")])
 
         cmds.execute_chat_command("First message")
-        # Clear console buffer for second call
         console.file = io.StringIO()
 
         cmds.execute_chat_command("Second message")
         output = _get_console_output(console)
 
         assert len(cmds.chat_history) == 2
-        # Second call reuses the node, may show session info
-        assert "Processing" in output or "Using existing session" in output
+        assert "Using existing session" not in output
 
 
 # ===========================================================================

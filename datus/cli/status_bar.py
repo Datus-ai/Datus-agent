@@ -12,6 +12,7 @@ usage. All token counters are expressed in KiB units where 1K = 1024 tokens.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, List, Tuple
 
@@ -23,6 +24,23 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _TOKEN_UNIT = 1024  # 1K == 1024 tokens
+
+# Half-period of the running-indicator blink in seconds. The DatusApp
+# periodic invalidate runs at the same cadence so one full cycle (on → off →
+# on) takes ~1s on the terminal.
+_RUNNING_BLINK_HALF_PERIOD = 0.5
+
+
+def _running_blink_symbol(now: float | None = None) -> str:
+    """Return the current blink glyph for the ``running`` indicator.
+
+    Toggles between a filled and hollow dot every ``_RUNNING_BLINK_HALF_PERIOD``
+    seconds based on :func:`time.monotonic`, so successive calls inside the
+    same frame render the same glyph. ``now`` is exposed for deterministic
+    testing.
+    """
+    t = time.monotonic() if now is None else now
+    return "●" if int(t / _RUNNING_BLINK_HALF_PERIOD) % 2 == 0 else "○"
 
 
 def _humanize_tokens(n: int) -> str:
@@ -96,7 +114,23 @@ class StatusBarState:
         sep: Tuple[str, str] = ("class:status-bar.sep", " │ ")
         pad: Tuple[str, str] = ("class:status-bar", " ")
 
-        tokens: List[Tuple[str, str]] = [pad, ("class:status-bar.brand", "Datus")]
+        # Activity dot sits to the left of the brand. Solid when idle,
+        # pulsing between filled and hollow while the agent is running so
+        # users can spot the busy state at a glance. The running variant
+        # uses ``status-bar.running`` so CSS stays consistent with the old
+        # trailing indicator; the idle variant falls back to a neutral
+        # ``status-bar.dot`` tone.
+        if self.agent_running:
+            dot_token: Tuple[str, str] = ("class:status-bar.running", _running_blink_symbol())
+        else:
+            dot_token = ("class:status-bar.dot", "●")
+
+        tokens: List[Tuple[str, str]] = [
+            pad,
+            dot_token,
+            ("class:status-bar", " "),
+            ("class:status-bar.brand", "Datus"),
+        ]
         if self.plan_mode:
             tokens.extend([sep, ("class:status-bar.plan", "PLAN")])
         tokens.extend([sep, ("class:status-bar.agent", self.agent)])
@@ -121,12 +155,6 @@ class StatusBarState:
                 ("class:status-bar.ctx", self.context_display()),
             ]
         )
-        if self.agent_running:
-            # Trailing indicator signals that the REPL is busy. It is only
-            # surfaced by the TUI path, which sets ``agent_running`` via
-            # ``StatusBarProvider.current_state``; the legacy PromptSession
-            # never exposes a truthy value so its rendering is unchanged.
-            tokens.extend([sep, ("class:status-bar.running", "● running")])
         tokens.append(pad)
         return tokens
 

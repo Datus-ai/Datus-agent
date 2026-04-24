@@ -11,7 +11,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from datus.cli.status_bar import StatusBarProvider, StatusBarState, _humanize_tokens
+from datus.cli.status_bar import (
+    StatusBarProvider,
+    StatusBarState,
+    _humanize_tokens,
+    _running_blink_symbol,
+)
 from datus.utils.constants import DBType
 
 
@@ -135,35 +140,62 @@ class TestStatusBarState:
         styles = [style for style, _ in state.to_formatted_tokens()]
         assert "class:status-bar.connector" not in styles
 
-    def test_to_formatted_tokens_appends_running_segment_when_agent_running(self):
-        # The TUI path sets ``agent_running`` true while the worker thread is
-        # dispatching; the status bar must surface a ``● running`` indicator
-        # as the trailing segment so users can tell the REPL is busy at a
-        # glance even though input remains editable.
+    def test_to_formatted_tokens_leading_dot_uses_running_class_when_agent_running(self):
+        # While the TUI worker dispatches, the leading activity dot switches
+        # to the ``status-bar.running`` class and pulses between filled and
+        # hollow glyphs so users can spot the busy state at a glance.
         state = StatusBarState(agent="chat", agent_running=True)
         tokens = state.to_formatted_tokens()
         styles = [style for style, _ in tokens]
         texts = [text for _, text in tokens]
         assert "class:status-bar.running" in styles
-        running_text = texts[styles.index("class:status-bar.running")]
-        assert "running" in running_text
-        # The running token must be the last meaningful segment (followed
-        # only by the trailing pad so the bar has a breathing space at the
-        # terminal edge).
-        last_non_pad = None
-        for style, text in reversed(tokens):
-            if style == "class:status-bar":
-                continue
-            last_non_pad = style
-            break
-        assert last_non_pad == "class:status-bar.running"
+        running_idx = styles.index("class:status-bar.running")
+        brand_idx = styles.index("class:status-bar.brand")
+        # Dot must precede the Datus brand token.
+        assert running_idx < brand_idx
+        assert texts[running_idx] in ("●", "○")
+        # Idle dot class must not appear while running.
+        assert "class:status-bar.dot" not in styles
 
-    def test_to_formatted_tokens_omits_running_segment_when_idle(self):
-        # The legacy PromptSession path never sets ``agent_running`` true,
-        # so the running indicator must never appear outside the TUI.
+    def test_to_formatted_tokens_leading_dot_solid_when_idle(self):
+        # The idle state still shows a solid dot to the left of Datus; it
+        # never animates and uses the neutral ``status-bar.dot`` class so
+        # the running orange is reserved for the busy indicator.
         state = StatusBarState(agent="chat")
-        styles = [style for style, _ in state.to_formatted_tokens()]
+        tokens = state.to_formatted_tokens()
+        styles = [style for style, _ in tokens]
+        texts = [text for _, text in tokens]
         assert "class:status-bar.running" not in styles
+        assert "class:status-bar.dot" in styles
+        dot_idx = styles.index("class:status-bar.dot")
+        brand_idx = styles.index("class:status-bar.brand")
+        assert dot_idx < brand_idx
+        assert texts[dot_idx] == "●"
+
+    def test_to_formatted_tokens_running_dot_glyph_is_one_of_two_phases(self):
+        # Phase depends on the wall clock; either glyph is valid but the
+        # word "running" must NOT appear — the textual label was removed
+        # and only the dot remains as the indicator.
+        state = StatusBarState(agent="chat", agent_running=True)
+        tokens = state.to_formatted_tokens()
+        texts = [text for _, text in tokens]
+        running_idx = [i for i, (style, _) in enumerate(tokens) if style == "class:status-bar.running"][0]
+        assert texts[running_idx] in ("●", "○")
+        assert not any("running" in text for _, text in tokens)
+
+
+class TestRunningBlinkSymbol:
+    def test_toggles_each_half_period(self):
+        # Phase 0 → filled, phase 1 → hollow, phase 2 → filled, …
+        assert _running_blink_symbol(0.0) == "●"
+        assert _running_blink_symbol(0.25) == "●"
+        assert _running_blink_symbol(0.5) == "○"
+        assert _running_blink_symbol(0.99) == "○"
+        assert _running_blink_symbol(1.0) == "●"
+
+    def test_returns_a_valid_glyph_with_default_clock(self):
+        # Live call must not crash and must return one of the two glyphs.
+        assert _running_blink_symbol() in ("●", "○")
 
 
 class TestStatusBarProviderAgent:

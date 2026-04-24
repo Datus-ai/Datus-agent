@@ -26,7 +26,7 @@ import asyncio
 from typing import Callable
 
 from prompt_toolkit.application import get_app_or_none
-from prompt_toolkit.application.run_in_terminal import run_in_terminal
+from prompt_toolkit.application.run_in_terminal import in_terminal, run_in_terminal
 
 
 def run_in_terminal_sync(func: Callable[[], None]) -> None:
@@ -34,32 +34,58 @@ def run_in_terminal_sync(func: Callable[[], None]) -> None:
 
     Safe to call from any thread. When no Application is active (non-TTY
     fallback path), simply invokes ``func`` directly.
+
+    Three paths:
+
+    * **On the prompt_toolkit event loop** (key-binding callbacks): dispatch
+      via :func:`run_in_terminal` and return immediately; blocking on the
+      future would deadlock the loop that must run the callback.
+    * **Off-loop thread (e.g. the streaming refresh daemon) with a live
+      Application**: ``asyncio.get_running_loop()`` raises, so we instead
+      submit a coroutine via :func:`asyncio.run_coroutine_threadsafe` against
+      ``app.loop`` and block on its completion. Using
+      :func:`run_in_terminal` here is unsafe because it calls
+      ``asyncio.ensure_future`` which needs a running loop on the calling
+      thread (Python 3.12+ no longer auto-creates one).
+    * **No Application**: direct call.
     """
     app = get_app_or_none()
     if app is None:
         func()
         return
 
-    future = run_in_terminal(func)
-
-    # Callers invoked from a prompt_toolkit key handler run on the same
-    # asyncio loop that schedules the ``run_in_terminal`` callback. Blocking
-    # that thread on ``future.result()`` deadlocks the loop. Detect the
-    # in-loop case and let the scheduled callback finish asynchronously.
     try:
         asyncio.get_running_loop()
+        on_event_loop = True
     except RuntimeError:
         on_event_loop = False
-    else:
-        on_event_loop = True
 
     if on_event_loop:
+        # Fire and forget — the callback is scheduled on the same loop and
+        # will run before control returns to the key handler.
+        run_in_terminal(func)
         return
 
-    # ``run_in_terminal`` returns an asyncio.Future; ``result()`` blocks until
-    # the callback completes on the Application event loop.
+    loop = getattr(app, "loop", None)
+    if loop is None:
+        # Application exists but its loop isn't running yet (pre-``run`` or
+        # post-shutdown). Safe to invoke directly — there's no pinned area
+        # to preserve.
+        func()
+        return
+
+    async def _wrap() -> None:
+        async with in_terminal():
+            func()
+
     try:
-        future.result()
+        cf = asyncio.run_coroutine_threadsafe(_wrap(), loop)
+    except RuntimeError:
+        # Loop closed between the getattr and the submit — just run inline.
+        func()
+        return
+    try:
+        cf.result()
     except Exception:  # pragma: no cover - defensive
         # Propagating would leak into background threads; callers that care
         # should wrap ``func`` themselves. Here we swallow to keep the TUI
