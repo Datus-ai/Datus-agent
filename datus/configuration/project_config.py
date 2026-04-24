@@ -130,11 +130,11 @@ def load_project_override(cwd: Optional[str] = None) -> Optional[ProjectOverride
     the whitelist is enforced rather than silently ignoring typos.
     """
     path = project_config_path(cwd)
-    if not path.exists():
-        return None
     try:
         with open(path, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        return None
     except yaml.YAMLError as e:
         logger.warning(f"Failed to parse {path}: {e}. Treating as no override.")
         return None

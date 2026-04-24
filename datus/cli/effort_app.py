@@ -16,7 +16,6 @@ Runs inside one Application so the outer TUI only needs to release
 
 from __future__ import annotations
 
-import shutil
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
@@ -88,10 +87,6 @@ class EffortApp:
         self._scope_keys: List[str] = list(SCOPE_CHOICES.keys())
         self._effort_idx: int = self._default_effort_index()
         self._scope_idx: int = 0
-
-        # title bar(1) + header(2) + 2 separators + footer = 6 lines of chrome
-        term_height = shutil.get_terminal_size((120, 40)).lines
-        self._max_visible: int = max(3, min(10, term_height - 6))
 
         if scope_only is not None:
             self._phase = _Phase.SCOPE

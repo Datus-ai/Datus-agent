@@ -12,7 +12,6 @@ import time
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
-from urllib.parse import urlparse
 
 import httpx
 import litellm
@@ -27,7 +26,7 @@ from pydantic import AnyUrl
 
 from datus.configuration.agent_config import ModelConfig
 from datus.models.base import LLMBaseModel
-from datus.models.litellm_adapter import LiteLLMAdapter, is_known_non_thinking_model
+from datus.models.litellm_adapter import LiteLLMAdapter, is_known_non_thinking_model, is_official_openai_endpoint
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
@@ -194,16 +193,7 @@ class OpenAICompatibleModel(LLMBaseModel):
 
     def _is_official_openai_api(self) -> bool:
         """Return True only for official OpenAI API endpoints."""
-        if self.model_config.type != "openai":
-            return False
-        if not self.base_url:
-            # When base_url is unset, the OpenAI SDK defaults to api.openai.com
-            return True
-        try:
-            hostname = (urlparse(self.base_url).hostname or "").lower()
-        except Exception:
-            return False
-        return hostname == "api.openai.com"
+        return is_official_openai_endpoint(self.model_config.type, self.base_url)
 
     def _default_prompt_cache_retention(self) -> Optional[str]:
         """Choose a safe default prompt cache retention policy for OpenAI."""

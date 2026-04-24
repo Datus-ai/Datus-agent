@@ -53,6 +53,24 @@ NON_THINKING_MODEL_RULES: Dict[str, tuple[str, ...]] = {
 }
 
 
+def is_official_openai_endpoint(provider: Optional[str], base_url: Optional[str]) -> bool:
+    """True iff ``provider`` is ``openai`` and ``base_url`` resolves to ``api.openai.com``.
+
+    A missing ``base_url`` implies the OpenAI SDK default
+    (``https://api.openai.com/v1``); any other host is treated as a third-party
+    OpenAI-compatible proxy (vLLM, OpenRouter relays, Coding Plan endpoints).
+    """
+    if provider != "openai":
+        return False
+    if not base_url:
+        return True
+    try:
+        hostname = (urlparse(base_url).hostname or "").lower()
+    except Exception:
+        return False
+    return hostname == "api.openai.com"
+
+
 def is_known_non_thinking_model(provider: Optional[str], model_name: Optional[str]) -> bool:
     """Return True only when the (provider, model) is on the deny-list.
 
@@ -340,22 +358,8 @@ class LiteLLMAdapter:
         through ``chat/completions`` by default; routing official OpenAI
         traffic through :class:`OpenAIResponsesModel` sidesteps the
         restriction without adding per-model branches.
-
-        ``base_url`` of ``None`` implies the OpenAI SDK default
-        (``https://api.openai.com/v1``); a custom ``base_url`` whose host is
-        not ``api.openai.com`` is treated as a third-party OpenAI-compatible
-        proxy (vLLM, OpenRouter relays, Coding Plan endpoints) and keeps the
-        LiteLLM path.
         """
-        if self.provider != "openai":
-            return False
-        if not self.base_url:
-            return True
-        try:
-            hostname = (urlparse(self.base_url).hostname or "").lower()
-        except Exception:
-            return False
-        return hostname == "api.openai.com"
+        return is_official_openai_endpoint(self.provider, self.base_url)
 
     def get_agents_sdk_model(self) -> "Model":
         """
