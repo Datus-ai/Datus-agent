@@ -3267,14 +3267,6 @@ class TestInlineStreamingContextProperties:
         ctx.toggle_verbose()
         assert ctx._verbose_toggle_event.is_set()
 
-    def test_recreate_live_display_calls_restart(self):
-        """recreate_live_display is a compatibility shim for restart_display."""
-        display = ActionHistoryDisplay()
-        ctx = InlineStreamingContext([], display)
-        ctx._paused = True
-        ctx.recreate_live_display()
-        assert ctx._paused is False
-
 
 @pytest.mark.ci
 class TestInlineStreamingContextFlush:

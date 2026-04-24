@@ -8,7 +8,6 @@ import asyncio
 import io
 import sys
 import threading
-import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Set, Tuple
 
@@ -134,7 +133,6 @@ class InlineStreamingContext:
         # and ``__exit__``) to avoid per-delta allocations.
         self._markdown_buffer: Optional[MarkdownStreamBuffer] = MarkdownStreamBuffer() if self._tui_mode else None
         self._markdown_stream_has_streamed: bool = False
-        self._last_delta_time: float = 0.0
         # Current PROCESSING action whose blink frame occupies the pinned
         # region (TUI mode). ``_repaint_live`` reads this together with
         # ``_tick`` to animate the frame.
@@ -166,16 +164,6 @@ class InlineStreamingContext:
         # per-turn — the accumulator-only flow only produces one body per
         # context, so one-shot latching is exactly right.
         self._stream_body_finalized: bool = False
-        # Deferred reprint flag: ``_print_completed_action`` can't invoke
-        # ``_reprint_with_collapse`` directly because the caller
-        # (``_process_actions``) still needs to advance ``_processed_index``
-        # past the response action it just handled — otherwise the reprint
-        # slices ``self.actions[:_processed_index]`` *before* that response
-        # and renders nothing. The caller checks this flag immediately
-        # after ``_processed_index += 1`` and triggers the reprint from
-        # there so the final Markdown render includes the just-completed
-        # response action.
-        self._reprint_pending: bool = False
 
     @property
     def live(self) -> Optional[Live]:
@@ -194,10 +182,6 @@ class InlineStreamingContext:
     def toggle_verbose(self) -> None:
         """Toggle verbose mode (called from Ctrl+O key callback)."""
         self._verbose_toggle_event.set()
-
-    def recreate_live_display(self):
-        """Compatibility shim: restart display after interaction."""
-        self.restart_display()
 
     def set_event_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Set the asyncio event loop for broker.submit calls from daemon thread."""
@@ -1134,7 +1118,6 @@ class InlineStreamingContext:
                 delta = raw
         if not delta:
             return
-        self._last_delta_time = time.monotonic()
         self._markdown_stream_has_streamed = True
         if action.action_id:
             self._markdown_active_stream_ids.add(action.action_id)
@@ -1180,7 +1163,6 @@ class InlineStreamingContext:
             # should not repeat this body.
             self._stream_body_finalized = True
         self._markdown_stream_has_streamed = False
-        self._last_delta_time = 0.0
         self._repaint_live()
 
     @property
@@ -1192,25 +1174,6 @@ class InlineStreamingContext:
         path has already landed the full body.
         """
         return self._stream_body_finalized
-
-    def _request_post_finalize_reprint(self) -> None:
-        """Clear the screen and reprint history once the main response is in.
-
-        Mimics a double Ctrl+O: compact-mode reprint of everything we've
-        seen so far, so Rich renders the final markdown from the completed
-        action list. Streaming tail passes sometimes leave a visual glitch
-        (half-parsed table border, stray inline code marker) which this
-        clean redraw wipes out. Failures are swallowed — the live scrollback
-        is still intact, so worst case the user keeps the pre-reprint view.
-        """
-        if not self._tui_mode:
-            return
-        if self._verbose_frozen:
-            return
-        try:
-            self._reprint_with_collapse()
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("post-finalize reprint failed: %s", exc)
 
     def _format_subagent_action_items(self, action: ActionHistory) -> List[Text]:
         """Format a single subagent action as a list of Text renderables."""

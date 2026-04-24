@@ -24,10 +24,6 @@ from typing import Callable, List, Optional, Tuple
 # rows (one header line + its rolling tool tail).
 TOOL_LINES_PER_GROUP = 2
 
-# Back-compat alias (older callers referred to a single per-group cap).
-MAX_LIVE_LINES_PER_GROUP = TOOL_LINES_PER_GROUP
-MAX_LIVE_LINES = TOOL_LINES_PER_GROUP
-
 # Hard safety cap — the pinned region never holds more than this many rows
 # regardless of what the terminal reports, to keep unbounded runaway fan-out
 # from eating unlimited memory. The *effective* ceiling per render is much
@@ -71,7 +67,7 @@ class LiveDisplayLine:
 class LiveDisplayState:
     """Thread-safe state for the TUI pinned live-render region.
 
-    The state holds at most ``MAX_LIVE_LINES`` rolling lines. All mutations
+    The state holds at most ``MAX_LIVE_LINES_TOTAL`` rolling lines. All mutations
     acquire an internal lock; reads (``snapshot``, ``is_active``, ``line_count``)
     also acquire it, so the main loop always sees consistent snapshots.
 
@@ -129,19 +125,27 @@ class LiveDisplayState:
         Writers are expected to pre-shape ``lines`` into a flat sequence;
         this method enforces the terminal-aware ceiling so even a writer
         that ignores :meth:`max_rows` cannot overflow the bottom area.
+        No-op when the trimmed payload equals the current state, so the
+        per-token streaming hot path doesn't wake prompt_toolkit's main
+        loop when nothing visible changed.
         """
         if not lines:
             with self._lock:
+                changed = bool(self._lines)
                 self._lines = []
                 cb = self._invalidate
-            cb()
+            if changed:
+                cb()
             return
         cap = self.max_rows()
         trimmed = list(lines[-cap:])
         with self._lock:
-            self._lines = trimmed
+            changed = trimmed != self._lines
+            if changed:
+                self._lines = trimmed
             cb = self._invalidate
-        cb()
+        if changed:
+            cb()
 
     def clear(self) -> None:
         with self._lock:
