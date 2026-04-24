@@ -15,7 +15,11 @@ import pytest
 from agents.exceptions import ModelBehaviorError
 from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
 
-from datus.models.openai_compatible import OpenAICompatibleModel, classify_openai_compatible_error
+from datus.models.openai_compatible import (
+    OpenAICompatibleModel,
+    _detect_tool_failure,
+    classify_openai_compatible_error,
+)
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.utils.exceptions import DatusException, ErrorCode
 
@@ -728,41 +732,136 @@ class TestFormatToolResultFromDict:
     def setup_method(self):
         self.model = _make_model()
 
+    # --- Generic result shapes ---------------------------------------------
+
     def test_result_is_list(self):
-        assert self.model._format_tool_result_from_dict({"result": [1, 2, 3]}) == "3 items"
+        assert self.model._format_tool_result_from_dict({"success": 1, "result": [1, 2, 3]}) == "3 items"
+
+    def test_result_is_single_item_list_uses_singular(self):
+        assert self.model._format_tool_result_from_dict({"success": 1, "result": [1]}) == "1 item"
 
     def test_result_is_int(self):
-        assert self.model._format_tool_result_from_dict({"result": 42}) == "42 rows"
+        assert self.model._format_tool_result_from_dict({"success": 1, "result": 42}) == "42 rows"
 
     def test_result_is_dict_with_count(self):
-        assert self.model._format_tool_result_from_dict({"result": {"count": 7}}) == "7 items"
+        assert self.model._format_tool_result_from_dict({"success": 1, "result": {"count": 7}}) == "7 items"
 
-    def test_result_is_dict_without_count(self):
-        assert self.model._format_tool_result_from_dict({"result": {"key": "val"}}) == "Success"
+    def test_result_is_dict_without_recognised_keys(self):
+        assert self.model._format_tool_result_from_dict({"success": 1, "result": {"key": "val"}}) == "OK"
 
-    def test_result_is_other_type(self):
-        assert self.model._format_tool_result_from_dict({"result": "string"}) == "Success"
+    def test_result_is_string(self):
+        assert self.model._format_tool_result_from_dict({"success": 1, "result": "string"}) == "string"
 
     def test_rows_field_int(self):
-        assert self.model._format_tool_result_from_dict({"rows": 10}) == "10 rows"
-
-    def test_rows_field_non_int(self):
-        assert self.model._format_tool_result_from_dict({"rows": "many"}) == "Success"
+        assert self.model._format_tool_result_from_dict({"success": 1, "rows": 10}) == "10 rows"
 
     def test_items_field(self):
-        assert self.model._format_tool_result_from_dict({"items": ["a", "b"]}) == "2 items"
+        assert self.model._format_tool_result_from_dict({"success": 1, "items": ["a", "b"]}) == "2 items"
+
+    def test_func_tool_list_envelope(self):
+        data = {"success": 1, "result": {"items": [{}, {}, {}], "total": 12, "has_more": True}}
+        assert self.model._format_tool_result_from_dict(data) == "3 items of 12 (+more)"
+
+    def test_func_tool_list_envelope_no_total(self):
+        data = {"success": 1, "result": {"items": [{}, {}], "total": None, "has_more": False}}
+        assert self.model._format_tool_result_from_dict(data) == "2 items"
+
+    def test_func_tool_list_envelope_total_equal_items(self):
+        # Single page: total matches items length; avoid redundant " of N".
+        data = {"success": 1, "result": {"items": [{}, {}], "total": 2, "has_more": False}}
+        assert self.model._format_tool_result_from_dict(data) == "2 items"
 
     def test_success_field_only_true(self):
-        assert self.model._format_tool_result_from_dict({"success": True}) == "Success"
+        # success-only dict becomes an OK signal (not a failure).
+        assert self.model._format_tool_result_from_dict({"success": True}) == "OK"
 
-    def test_success_field_only_false(self):
+    def test_success_field_only_false_is_failure(self):
         assert self.model._format_tool_result_from_dict({"success": False}) == "Failed"
 
     def test_count_field(self):
-        assert self.model._format_tool_result_from_dict({"count": 99}) == "99 items"
+        assert self.model._format_tool_result_from_dict({"success": 1, "count": 99}) == "99 items"
 
     def test_generic_dict(self):
-        assert self.model._format_tool_result_from_dict({"anything": "value"}) == "Success"
+        assert self.model._format_tool_result_from_dict({"success": 1, "anything": "value"}) == "OK"
+
+    # --- Failure prioritisation --------------------------------------------
+
+    def test_failure_with_success_flag_zero(self):
+        data = {"success": 0, "error": "syntax error near SELECT", "result": None}
+        assert self.model._format_tool_result_from_dict(data) == "Failed: syntax error near SELECT"
+
+    def test_failure_without_error_message(self):
+        assert self.model._format_tool_result_from_dict({"success": 0, "result": None}) == "Failed"
+
+    def test_failure_error_truncated(self):
+        long_error = "detail: " + ("x" * 300)
+        summary = self.model._format_tool_result_from_dict({"success": 0, "error": long_error})
+        assert summary.startswith("Failed: ")
+        # Error body capped at 100 chars plus the ellipsis marker.
+        assert len(summary) <= len("Failed: ") + 101
+
+    def test_failure_takes_priority_over_result_items(self):
+        # Even if a "result" with items exists, success=0 forces the failure branch.
+        data = {"success": 0, "error": "x", "result": {"items": [1, 2]}}
+        assert self.model._format_tool_result_from_dict(data) == "Failed: x"
+
+    def test_empty_result_dict(self):
+        assert self.model._format_tool_result_from_dict({"success": 1, "result": {}}) == "Empty result"
+
+    def test_empty_result_list(self):
+        assert self.model._format_tool_result_from_dict({"success": 1, "result": []}) == "Empty result"
+
+    def test_null_result(self):
+        assert self.model._format_tool_result_from_dict({"success": 1, "result": None}) == "Empty result"
+
+    # --- Tool-specific formatters ------------------------------------------
+
+    def test_read_query_uses_original_rows(self):
+        data = {
+            "success": 1,
+            "result": {
+                "original_rows": 42,
+                "original_columns": ["a", "b"],
+                "is_compressed": False,
+                "compressed_data": "...",
+            },
+        }
+        assert self.model._format_tool_result_from_dict(data, tool_name="read_query") == "42 rows"
+
+    def test_execute_write_uses_row_count(self):
+        data = {"success": 1, "result": {"row_count": 5, "sql": "UPDATE t SET x=1"}}
+        assert self.model._format_tool_result_from_dict(data, tool_name="execute_write") == "wrote 5 rows"
+
+    def test_execute_ddl_success_message(self):
+        data = {"success": 1, "result": {"message": "DDL executed successfully", "sql": "CREATE TABLE t(x INT)"}}
+        assert self.model._format_tool_result_from_dict(data, tool_name="execute_ddl") == "DDL OK"
+
+    def test_describe_table_columns(self):
+        data = {"success": 1, "result": {"columns": [{"name": "c"}] * 8}}
+        assert self.model._format_tool_result_from_dict(data, tool_name="describe_table") == "8 columns"
+
+    def test_get_table_ddl_identifier(self):
+        data = {
+            "success": 1,
+            "result": {"identifier": "public.orders", "table_name": "orders", "definition": "CREATE TABLE ..."},
+        }
+        assert self.model._format_tool_result_from_dict(data, tool_name="get_table_ddl") == "DDL of public.orders"
+
+    def test_load_skill_metadata_name(self):
+        data = {"success": 1, "result": {"content": "...", "metadata": {"name": "sql-best-practices"}}}
+        assert self.model._format_tool_result_from_dict(data, tool_name="load_skill") == "loaded 'sql-best-practices'"
+
+    def test_ask_user_content_truncated(self):
+        data = {"success": 1, "result": {"content": "  How many rows should we keep in the dashboard?  "}}
+        summary = self.model._format_tool_result_from_dict(data, tool_name="ask_user")
+        assert summary.startswith('"')
+        assert summary.endswith('"')
+
+    def test_tool_specific_formatter_falls_back_on_missing_fields(self):
+        # read_query without original_rows should degrade gracefully instead of crashing.
+        data = {"success": 1, "result": {"compressed_data": "..."}}
+        summary = self.model._format_tool_result_from_dict(data, tool_name="read_query")
+        assert summary == "OK"
 
 
 # ---------------------------------------------------------------------------
@@ -781,26 +880,79 @@ class TestFormatToolResult:
         assert self.model._format_tool_result(None) == "Empty result"
 
     def test_json_dict_delegates_to_from_dict(self):
-        result = self.model._format_tool_result('{"result": [1, 2]}')
+        result = self.model._format_tool_result('{"success": 1, "result": [1, 2]}')
         assert result == "2 items"
 
     def test_json_list(self):
         result = self.model._format_tool_result("[1, 2, 3]")
         assert result == "3 items"
 
-    def test_json_scalar(self):
+    def test_json_scalar_string(self):
         result = self.model._format_tool_result('"hello"')
-        assert "hello" in result
+        assert result == "hello"
 
     def test_plain_text_short(self):
         result = self.model._format_tool_result("short text")
-        assert "short text" in result
+        assert result == "short text"
 
-    def test_plain_text_long_truncated(self):
+    def test_plain_text_long_truncated_to_first_line(self):
         long_text = "x" * 200
         result = self.model._format_tool_result(long_text)
-        assert result.endswith("...")
-        assert len(result) <= 103  # 100 + "..."
+        assert result.endswith("…")
+        # First-line cap is 80 chars plus the ellipsis.
+        assert len(result) <= 81
+
+    def test_plain_text_multiline_keeps_first_non_empty_line(self):
+        assert self.model._format_tool_result("\n  first line  \nsecond line\n") == "first line"
+
+    def test_failure_json_payload(self):
+        payload = json.dumps({"success": 0, "error": "bad query", "result": None})
+        assert self.model._format_tool_result(payload) == "Failed: bad query"
+
+
+class TestDetectToolFailure:
+    """``_detect_tool_failure`` decides whether the tool output means FAILED/✗.
+
+    Without this, ``read_query('SELECT * FROM does_not_exist')`` still shows a
+    green ✓ in the CLI — the Agents SDK does not raise for FuncToolResult
+    payloads that report ``success=0`` internally.
+    """
+
+    def test_dict_with_success_zero_is_failure(self):
+        assert _detect_tool_failure({"success": 0, "error": "no such table", "result": None}) is True
+
+    def test_dict_with_success_false_is_failure(self):
+        assert _detect_tool_failure({"success": False, "error": "boom"}) is True
+
+    def test_dict_with_non_empty_error_is_failure(self):
+        # Some tools forget to flip ``success``; the error field alone should trip detection.
+        assert _detect_tool_failure({"error": "connection refused"}) is True
+
+    def test_dict_with_success_one_is_not_failure(self):
+        assert _detect_tool_failure({"success": 1, "result": [1, 2]}) is False
+
+    def test_dict_with_blank_error_is_not_failure(self):
+        assert _detect_tool_failure({"success": 1, "error": "  "}) is False
+
+    def test_json_string_failure(self):
+        payload = json.dumps({"success": 0, "error": "x"})
+        assert _detect_tool_failure(payload) is True
+
+    def test_json_string_success(self):
+        payload = json.dumps({"success": 1, "result": {"items": []}})
+        assert _detect_tool_failure(payload) is False
+
+    def test_non_json_string_defaults_to_not_failure(self):
+        # Plain-text tool outputs are treated as success; we only flip on a
+        # structured failure signal.
+        assert _detect_tool_failure("ok") is False
+
+    def test_list_payload_ignored(self):
+        assert _detect_tool_failure([{"success": 0}]) is False
+
+    def test_empty_inputs_are_not_failure(self):
+        assert _detect_tool_failure("") is False
+        assert _detect_tool_failure(None) is False
 
 
 # ---------------------------------------------------------------------------
