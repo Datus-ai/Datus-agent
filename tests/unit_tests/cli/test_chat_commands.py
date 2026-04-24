@@ -3833,3 +3833,35 @@ class TestRenderFinalResponseValidationReport:
             cmds._render_final_response(action)
             disp.assert_called_once()
             md.assert_called_once()
+
+    def test_display_validation_report_escapes_markup_brackets(self, real_agent_config, mock_llm_create):
+        """Values containing ``[...]`` (list repr, error mentioning ``[RED]``,
+        bracketed paths) must not be parsed as Rich markup tags — otherwise
+        this helper can swallow surrounding text or raise ``MarkupError``.
+        Regression guard for the CodeRabbit comment on chat_commands.py:676."""
+        cmds = _make_chat_commands(real_agent_config)
+        report = {
+            "target": {"type": "table", "database": "ch", "schema": "[bad]", "table": "rev"},
+            "checks": [
+                {
+                    "name": "row_count",
+                    "passed": False,
+                    "severity": "blocking",
+                    "source": "skill:[spicy]",
+                    "observed": {"rows": "[a, b, c]"},
+                    "error": "error with [brackets] and [RED]tag[/] markers",
+                }
+            ],
+            "warnings": [{"type": "x", "msg": "[unterminated"}],
+        }
+        # Must not raise, must invoke console.print exactly once with a Panel.
+        with patch.object(cmds.cli.console, "print") as printer:
+            cmds._display_validation_report(report)
+            assert printer.call_count == 1
+            panel_arg = printer.call_args.args[0]
+            rendered = str(panel_arg.renderable)
+            # Bracket content survives as literal text (escape turns ``[x]`` into ``\[x]``)
+            # so the raw substring "[bad]" still appears somewhere in the panel body.
+            assert "[bad]" in rendered
+            # The error string's ``[RED]`` must not be consumed as a color tag.
+            assert "[RED]" in rendered

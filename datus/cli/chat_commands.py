@@ -570,8 +570,13 @@ class ChatCommands:
                     if is_success or has_validation_report:
                         self._render_final_response(final_action, skip_markdown_body=streamed_body)
 
-                    if is_success:
-                        # Merge node_final_action back for history tracking
+                    if is_success or has_validation_report:
+                        # Merge node_final_action back for history tracking.
+                        # FAILED-with-validation_report turns are kept so
+                        # Ctrl+O (``_full_screen_reprint``) can replay them;
+                        # without this, the new "render on FAILED" branch in
+                        # ``_render_turn_response`` is unreachable because
+                        # ``all_turn_actions`` never sees the failed turn.
                         all_actions = incremental_actions + ([node_final_action] if node_final_action else [])
                         self.last_actions = all_actions
                         self.all_turn_actions.append((message, all_actions))
@@ -670,7 +675,15 @@ class ChatCommands:
         (e.g. malformed validator skill output). Rendered between other
         artifacts (SQL, semantic model) and the main markdown response so the
         user sees it inline with the final assistant turn.
+
+        All interpolated user / connector / validator values are run through
+        :func:`rich.markup.escape` — they can legitimately contain ``[`` (list
+        reprs, error messages, path names) which Rich would otherwise parse
+        as markup tags (potentially raising ``MarkupError`` or swallowing
+        subsequent text).
         """
+        from rich.markup import escape as _rich_escape
+
         if not isinstance(report, dict):
             return
         checks = report.get("checks") or []
@@ -706,14 +719,17 @@ class ChatCommands:
                 tname = target.get("table")
                 db = target.get("database")
                 fqn = f"{schema}.{tname}" if schema else tname
-                target_str = f"table [cyan]{db}.{fqn}[/]"
+                target_str = f"table [cyan]{_rich_escape(str(db))}.{_rich_escape(str(fqn))}[/]"
             elif ttype == "transfer":
                 src = (target.get("source") or {}).get("name", "?")
                 tgt = target.get("target") or {}
                 tgt_schema = tgt.get("schema") or tgt.get("db_schema")
                 tgt_name = tgt.get("table")
                 tgt_fqn = f"{tgt_schema}.{tgt_name}" if tgt_schema else tgt_name
-                target_str = f"transfer [cyan]{src}[/] → [cyan]{tgt.get('database')}.{tgt_fqn}[/]"
+                target_str = (
+                    f"transfer [cyan]{_rich_escape(str(src))}[/] → "
+                    f"[cyan]{_rich_escape(str(tgt.get('database')))}.{_rich_escape(str(tgt_fqn))}[/]"
+                )
             elif ttype == "session":
                 n = len(target.get("targets") or [])
                 target_str = f"session with [cyan]{n}[/] target(s)"
@@ -735,20 +751,21 @@ class ChatCommands:
                 color = "red"
             else:
                 color = "yellow"
-            source = c.get("source", "?")
+            source = _rich_escape(str(c.get("source", "?")))
+            name = _rich_escape(str(c.get("name", "?")))
             detail_parts = []
             observed = c.get("observed")
             if observed:
-                detail_parts.append(f"observed={observed}")
+                detail_parts.append(_rich_escape(f"observed={observed}"))
             if not c.get("passed"):
                 err = c.get("error")
                 if err:
-                    detail_parts.append(err)
+                    detail_parts.append(_rich_escape(str(err)))
             detail = f" — [dim]{'; '.join(detail_parts)}[/]" if detail_parts else ""
-            lines.append(f"  [{color}]{mark}[/] {c.get('name', '?')} [dim]({source})[/]{detail}")
+            lines.append(f"  [{color}]{mark}[/] {name} [dim]({source})[/]{detail}")
 
         for w in warnings:
-            lines.append(f"  [yellow]⚠[/] [dim]{w}[/]")
+            lines.append(f"  [yellow]⚠[/] [dim]{_rich_escape(str(w))}[/]")
 
         panel = Panel(
             "\n".join(lines),

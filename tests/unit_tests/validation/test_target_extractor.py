@@ -23,19 +23,26 @@ def _register_test_capabilities():
     matching the pattern used in ``test_sql_utils.py`` and
     ``test_dashboard_assembler.py``.
 
-    ``connector_registry._capabilities`` is a class-level singleton shared
-    across every test in the process. Snapshot it before mutating and
-    restore on teardown so test order can't leak dialect capabilities into
-    unrelated tests.
+    ``connector_registry`` holds three class-level dicts that
+    ``register_handlers`` can mutate: ``_capabilities``, ``_uri_builders``,
+    and ``_context_resolvers``. Snapshot all three and restore on teardown
+    so future ``register_handlers`` calls (or changes to the method itself)
+    can't leak into unrelated tests via execution order.
     """
-    saved = {k: set(v) for k, v in connector_registry._capabilities.items()}
+    snapshot_attrs = ("_capabilities", "_uri_builders", "_context_resolvers")
+    snapshots = {
+        attr: {k: (set(v) if isinstance(v, set) else v) for k, v in getattr(connector_registry, attr).items()}
+        for attr in snapshot_attrs
+    }
     connector_registry.register_handlers("starrocks", capabilities={"catalog", "database"})
     connector_registry.register_handlers("postgres", capabilities={"database", "schema"})
     try:
         yield
     finally:
-        connector_registry._capabilities.clear()
-        connector_registry._capabilities.update(saved)
+        for attr, saved in snapshots.items():
+            live = getattr(connector_registry, attr)
+            live.clear()
+            live.update(saved)
 
 
 class TestExtractDDLTarget:
