@@ -60,11 +60,17 @@ class TestSkillMetadataValidatorFields:
         assert m.severity == "off"
 
     def test_invalid_target_entry_raises(self):
-        with pytest.raises(ValueError):
+        """Invalid ``targets`` entries surface as ``DatusException`` with the
+        dedicated ``SKILL_FRONTMATTER_INVALID`` error code — the repo's
+        guardrail forbids bare ``ValueError`` for expected config failures."""
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        with pytest.raises(DatusException) as exc:
             SkillMetadata.from_frontmatter(
                 {"name": "x", "description": "y", "targets": [["not-a-dict"]]},
                 Path("/tmp/x"),
             )
+        assert exc.value.code == ErrorCode.SKILL_FRONTMATTER_INVALID
 
 
 class TestSkillRegistryGetValidators:

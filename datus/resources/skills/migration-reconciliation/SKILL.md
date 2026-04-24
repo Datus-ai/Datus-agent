@@ -40,6 +40,32 @@ You never call this skill directly. The hook starts a read-only sub-agent
 whose only job is to execute the checks below against the run's transfer
 targets and emit a structured JSON report.
 
+## What you receive
+
+The hook hands you a `SessionTarget` containing one or more
+`TransferTarget` records. Each record carries only:
+
+- `source.name` — the source connector key (route `read_query` here for
+  source-side probes).
+- `target.datasource` / `target.database` / `target.db_schema` /
+  `target.table` — the target coordinates.
+- `source_row_count`, `transferred_row_count` — tool-reported counts
+  (authoritative for check 1).
+
+**You do NOT receive the original `source_sql`.** For checks 2–7 that
+need to read source data, probe the source table directly with
+`describe_table` + `read_query` on the source datasource. When the
+transfer used a derived / joined source query, the session's tool-call
+history in your context window shows the `transfer_query_result` call
+that ran — use the `source_sql` argument recorded there. If your run
+was started without a parent session (workflow / sessionless mode, or
+interactive mode with `parent_session=None`) the tool-call history is
+empty; in that case, fall back to the simple table-vs-table comparison
+and rely on `source_row_count` / `transferred_row_count` for check 1.
+Any check you cannot run should be emitted as
+`{"passed": true, "severity": "advisory", "observed": {"skipped": "<reason>"}}`
+— never silently drop it.
+
 ## Core workflow
 
 For **every** `TransferTarget` in the session (the hook will tell you which

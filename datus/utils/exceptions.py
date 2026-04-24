@@ -100,6 +100,10 @@ class ErrorCode(Enum):
         "400012",
         "Validation infrastructure error while running skill '{skill_name}': {error_message}",
     )
+    SKILL_FRONTMATTER_INVALID = (
+        "400020",
+        "Skill at {location}: invalid frontmatter — {error_message}",
+    )
 
     # Storage errors - Vector Database Operations
     STORAGE_FAILED = ("410000", "Vector database operation failed: {error_message}")

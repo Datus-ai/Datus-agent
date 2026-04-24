@@ -221,6 +221,19 @@ class DBFuncTool:
         connector = self._get_connector(datasource)
         return connector.database_name
 
+    @staticmethod
+    def _active_database_of(connector: Any) -> str:
+        """Return the connector's active physical database as a plain string.
+
+        Some test fixtures use ``MagicMock`` connectors — attribute access
+        returns a ``Mock`` instance that is truthy, so a naive
+        ``getattr(c, "database_name", "") or ""`` leaks a Mock into the
+        ``TableTarget.database`` slot. Production connectors expose this as
+        a ``str``; this helper enforces that contract.
+        """
+        val = getattr(connector, "database_name", None)
+        return val if isinstance(val, str) else ""
+
     def _determine_field_order(self) -> Sequence[str]:
         dialect = getattr(self._primary_connector, "dialect", "") or ""
         fields: List[str] = []
@@ -1165,7 +1178,12 @@ class DBFuncTool:
                 from datus.validation.target_extractor import extract_ddl_target
 
                 effective_ds = datasource or self._default_datasource
-                target = extract_ddl_target(cleaned, effective_ds, dialect=getattr(connector, "dialect", ""))
+                target = extract_ddl_target(
+                    cleaned,
+                    effective_ds,
+                    active_database=self._active_database_of(connector),
+                    dialect=getattr(connector, "dialect", ""),
+                )
                 result_payload: Dict[str, Any] = {
                     "message": "DDL executed successfully",
                     "sql": cleaned,
@@ -1299,7 +1317,12 @@ class DBFuncTool:
             from datus.validation.target_extractor import extract_dml_target
 
             effective_ds = datasource or self._default_datasource
-            target = extract_dml_target(normalized_sql, effective_ds, dialect=getattr(connector, "dialect", ""))
+            target = extract_dml_target(
+                normalized_sql,
+                effective_ds,
+                active_database=self._active_database_of(connector),
+                dialect=getattr(connector, "dialect", ""),
+            )
             result_payload: Dict[str, Any] = {
                 "message": "Write executed successfully",
                 "sql": normalized_sql,
@@ -1438,6 +1461,13 @@ class DBFuncTool:
 
         # Check row limit
         row_count = len(df)
+        # If the wrapped COUNT(*) pre-check could not run (unsupported
+        # subquery on some engines, connector shape mismatch), the full
+        # source result is still materialized in ``df`` — use its row
+        # count as the authoritative ``source_row_count`` so Layer A's
+        # parity check remains meaningful instead of being skipped.
+        if source_row_count is None:
+            source_row_count = row_count
         if row_count > self._TRANSFER_MAX_ROWS:
             return FuncToolResult(
                 success=0,
@@ -1483,6 +1513,7 @@ class DBFuncTool:
                         target_table=target_table,
                         source_row_count=source_row_count,
                         transferred_row_count=0,
+                        target_active_database=self._active_database_of(target_conn),
                     ),
                 }
             )
@@ -1572,6 +1603,7 @@ class DBFuncTool:
                     target_table=target_table,
                     source_row_count=source_row_count,
                     transferred_row_count=rows_written,
+                    target_active_database=self._active_database_of(target_conn),
                 ),
             }
         )
@@ -1583,6 +1615,7 @@ class DBFuncTool:
         target_table: str,
         source_row_count: Optional[int],
         transferred_row_count: int,
+        target_active_database: str = "",
     ) -> Dict[str, Any]:
         """Construct the ``deliverable_target`` payload for a transfer call.
 
@@ -1590,19 +1623,27 @@ class DBFuncTool:
         failed). ``model_dump(exclude_none=True)`` drops it from the payload
         so ``_run_row_count_parity`` treats the check as skipped instead of
         trivially equal to ``transferred_row_count``.
+
+        ``TableTarget.database`` gets the *physical* database the transfer
+        wrote into — taken from the parsed ``target_table`` identifier when
+        it carries a ``db.schema.table`` qualifier, otherwise from the
+        target connector's active namespace (``target_active_database``),
+        with a final fallback to the datasource key for backward compat.
         """
         from datus.utils.sql_utils import parse_table_name_parts
         from datus.validation.report import DBRef, TableTarget, TransferTarget
 
         parts = parse_table_name_parts(target_table)
+        parsed_db = parts.get("database_name") or parts.get("catalog_name") or None
         schema = parts.get("schema_name") or None
         table = parts.get("table_name") or target_table
+        effective_database = parsed_db or target_active_database or target_datasource
 
         tgt = TransferTarget(
             source=DBRef(name=source_datasource),
             target=TableTarget(
                 datasource=target_datasource,
-                database=target_datasource,
+                database=effective_database,
                 db_schema=schema,
                 table=table,
             ),

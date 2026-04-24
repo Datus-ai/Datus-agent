@@ -30,7 +30,9 @@ from datus.validation.report import TableTarget
 logger = get_logger(__name__)
 
 
-def extract_ddl_target(sql: str, database: str, dialect: str = "") -> Optional[TableTarget]:
+def extract_ddl_target(
+    sql: str, datasource: str, active_database: str = "", dialect: str = ""
+) -> Optional[TableTarget]:
     """Parse a DDL statement and extract its target table, if any.
 
     Supports:
@@ -48,9 +50,18 @@ def extract_ddl_target(sql: str, database: str, dialect: str = "") -> Optional[T
     returns ``None`` — the hook will not run target-scoped checks.
 
     Args:
-        sql: Cleaned DDL statement (comments stripped, single statement)
-        database: Database this DDL is executed against
-        dialect: sqlglot dialect name (optional; empty = default parsing)
+        sql: Cleaned DDL statement (comments stripped, single statement).
+        datasource: Connector key the tool executed through. Carried on
+            :attr:`TableTarget.datasource` so Layer A routes ``describe_table``
+            back to the same connector.
+        active_database: Physical database currently selected on the
+            connector (e.g. ``ac_manage`` on StarRocks, the DuckDB file
+            stem). Used to populate :attr:`TableTarget.database` when the
+            SQL does not qualify the table with an explicit database.
+            Falls back to ``datasource`` when empty — keeps backward
+            compatibility for tests / adapters that never expose a
+            ``database`` attribute.
+        dialect: sqlglot dialect name (optional; empty = default parsing).
 
     Returns:
         :class:`TableTarget` when the DDL creates a table we can validate, else
@@ -89,16 +100,23 @@ def extract_ddl_target(sql: str, database: str, dialect: str = "") -> Optional[T
     if not isinstance(target_expr, expressions.Table):
         return None
 
-    return _table_to_target(target_expr, database, dialect=dialect)
+    return _table_to_target(target_expr, datasource, active_database, dialect=dialect)
 
 
-def extract_dml_target(sql: str, database: str, dialect: str = "") -> Optional[TableTarget]:
+def extract_dml_target(
+    sql: str, datasource: str, active_database: str = "", dialect: str = ""
+) -> Optional[TableTarget]:
     """Parse an INSERT / UPDATE / DELETE and extract its target table.
 
     Args:
-        sql: Cleaned DML statement
-        database: Database this DML is executed against
-        dialect: sqlglot dialect name
+        sql: Cleaned DML statement.
+        datasource: Connector key the tool executed through — carried on
+            :attr:`TableTarget.datasource` for Layer A routing.
+        active_database: Physical database currently selected on the
+            connector. Used to populate :attr:`TableTarget.database` when
+            the SQL does not explicitly qualify the table. Falls back to
+            ``datasource`` when empty.
+        dialect: sqlglot dialect name.
 
     Returns:
         :class:`TableTarget` for the table being written, else ``None``.
@@ -129,7 +147,7 @@ def extract_dml_target(sql: str, database: str, dialect: str = "") -> Optional[T
     if not isinstance(target_expr, expressions.Table):
         return None
 
-    return _table_to_target(target_expr, database, dialect=dialect)
+    return _table_to_target(target_expr, datasource, active_database, dialect=dialect)
 
 
 def _dialect_has_catalog(dialect: str) -> bool:
@@ -160,8 +178,22 @@ def _dialect_has_catalog(dialect: str) -> bool:
         return True
 
 
-def _table_to_target(table_expr: expressions.Table, database: str, dialect: str = "") -> Optional[TableTarget]:
+def _table_to_target(
+    table_expr: expressions.Table,
+    datasource: str,
+    active_database: str = "",
+    dialect: str = "",
+) -> Optional[TableTarget]:
     """Convert a sqlglot :class:`Table` expression into :class:`TableTarget`.
+
+    Field semantics:
+
+    - ``TableTarget.datasource`` always holds the connector routing key
+      (``datasource`` arg).
+    - ``TableTarget.database`` holds the **physical** database the table
+      was actually written into. Resolution order: explicit SQL-level
+      qualifier > ``active_database`` (connector's current namespace) >
+      fallback to ``datasource`` for backward compatibility.
 
     Three-part identifier semantics depend on the dialect:
 
@@ -180,15 +212,12 @@ def _table_to_target(table_expr: expressions.Table, database: str, dialect: str 
     schema = _identifier_name(table_expr.args.get("db")) or None
     sql_catalog_slot = _identifier_name(table_expr.args.get("catalog")) or None
 
-    # ``database`` arg is the ``effective_ds`` — the mutating tool passes its
-    # datasource key here. We keep it as the routing value and carry it on a
-    # dedicated ``datasource`` field so the validator connects to the same
-    # connector the tool wrote through; the legacy ``database`` field stays
-    # backward-compatible (and can be overridden by an explicit SQL-level DB
-    # below).
-    datasource = database or None
+    datasource_key = datasource or None
     catalog: Optional[str] = None
-    effective_db = database or ""
+    # Default the *physical* database to the connector's active namespace,
+    # fall back to the datasource key only when active_database is empty
+    # (tests / adapters that don't expose one).
+    effective_db = active_database or datasource or ""
     effective_schema = schema
     if sql_catalog_slot:
         if _dialect_has_catalog(dialect):
@@ -209,7 +238,7 @@ def _table_to_target(table_expr: expressions.Table, database: str, dialect: str 
             effective_db = sql_catalog_slot
     return TableTarget(
         catalog=catalog,
-        datasource=datasource,
+        datasource=datasource_key,
         database=effective_db,
         db_schema=effective_schema,
         table=name,

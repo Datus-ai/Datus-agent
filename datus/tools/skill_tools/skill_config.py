@@ -208,7 +208,15 @@ class SkillMetadata(BaseModel):
             elif isinstance(t, dict):
                 parsed_targets.append(TargetFilter.model_validate(t))
             else:
-                raise ValueError(f"Skill at {location}: invalid target entry (expected dict): {t!r}")
+                from datus.utils.exceptions import DatusException, ErrorCode
+
+                raise DatusException(
+                    ErrorCode.SKILL_FRONTMATTER_INVALID,
+                    message_args={
+                        "location": str(location),
+                        "error_message": f"invalid target entry (expected dict): {t!r}",
+                    },
+                )
 
         # YAML parses bare ``off`` / ``on`` as booleans (False / True). That
         # collides with our ``severity: off`` spelling — coerce back to string

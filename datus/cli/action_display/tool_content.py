@@ -971,7 +971,12 @@ def _build_read_query(action: ActionHistory, verbose: bool) -> ToolCallContent:
     tc = make_base_content(action)
     data = parse_output_data(action.output)
     tool_error: Optional[str] = None
-    if data is not None and data.get("success") == 0:
+    # Treat both the canonical ``success == 0`` shape AND an ``error``-only
+    # payload as failure. Some tool paths populate ``error`` without the
+    # ``success`` field (older adapters, nested results); without the second
+    # clause the compact mode still renders a success-looking result on a
+    # broken call.
+    if data is not None and (data.get("success") == 0 or data.get("error")):
         tool_error = str(data.get("error") or "Failed")
         tc.status_mark = "✗"
 

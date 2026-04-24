@@ -395,11 +395,15 @@ def _parse_json_block(raw: str) -> Optional[dict]:
             return json.loads(m.group(1))
         except json.JSONDecodeError:
             pass
-    # Fallback — look for a JSON object anywhere in the text
+    # Fallback — look for a JSON object anywhere in the text. Accept either
+    # the canonical ``checks`` form OR a bare ``blocking_issues`` payload:
+    # ``_parse_validator_checks`` handles both, and downgrading a
+    # ``{"blocking_issues": [...]}`` emission to a malformed-output warning
+    # would silently let a would-be-blocking run through.
     for match in _BARE_JSON_RE.findall(raw):
         try:
             obj = json.loads(match)
-            if isinstance(obj, dict) and "checks" in obj:
+            if isinstance(obj, dict) and ("checks" in obj or "blocking_issues" in obj):
                 return obj
         except json.JSONDecodeError:
             continue

@@ -141,6 +141,7 @@ def _run_describe_table(target: TableTarget, db_func_tool: "DBFuncTool") -> Chec
     try:
         result = db_func_tool.describe_table(
             table_name=target.table,
+            catalog=target.catalog or "",
             database=target.database,
             schema_name=target.db_schema or "",
             datasource=target.datasource or "",

@@ -182,8 +182,12 @@ class ValidationReport(BaseModel):
             source: If set, override the ``source`` field on merged checks (used
                 to tag checks with the originating skill name)
             severity_override: If set to ``"advisory"`` / ``"off"``, downgrade
-                the merged checks' severity. ``"off"`` drops the checks entirely
-                (the validator skill is declared off; its results are noise).
+                the merged checks' severity. ``"off"`` discards the merged
+                report in full — both ``checks`` and ``warnings`` — because
+                the validator skill is declared off and its entire output is
+                noise (including meta-warnings like
+                ``validator_skill_malformed``). ``"advisory"`` downgrades
+                only the checks; warnings still flow through.
         """
         if severity_override == "off":
             return self

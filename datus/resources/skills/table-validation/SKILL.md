@@ -26,6 +26,18 @@ Verify the **column contract** of a table that was just created or written:
 columns present, declared types correct, nullability correct. This skill is
 deliberately narrow.
 
+## Target shape (important)
+
+`ValidationHook.on_end` invokes this skill with the **whole session**, not
+a single table. The target you receive is a `SessionTarget` whose
+`.targets` is a list of `TableTarget` / `TransferTarget` records — one
+per mutating tool call in the run. When a node writes multiple tables
+(CTAS scaffolding, layered ETL), **loop over `session.targets`** and run
+the checks below independently for each `TableTarget`. Skip
+`TransferTarget` entries — they are covered by
+`migration-reconciliation`. Emit one `CheckResult` per (target, check)
+pair so the retry prompt can tell the agent which specific table failed.
+
 **Explicitly out of scope**:
 
 - *Object exists* and *row count > 0* — already checked by the builtin
