@@ -190,6 +190,23 @@ class TestLoadSkill:
         assert ok is True
         assert content == "# OK"
 
+    def test_load_refuses_validator_skill(self):
+        """Validators run exclusively via ValidationHook — ``load_skill``
+        must refuse so a hallucinated skill name can't trigger the
+        validator body a second time via SkillFuncTool (reviewer feedback)."""
+        registry = MagicMock()
+        registry.get_skill_count.return_value = 1
+        validator = _make_skill(kind="validator")
+        registry.get_skill.return_value = validator
+        assert validator.is_validator() is True  # sanity
+        manager = SkillManager(registry=registry)
+        ok, msg, content = manager.load_skill("test-skill", "gen_table")
+        assert ok is False
+        assert content is None
+        assert "validator" in msg.lower()
+        # Must not fall through to content-loading or permission checks.
+        registry.load_skill_content.assert_not_called()
+
     def test_load_scope_bypass_for_authoring_agent(self):
         """``check_scope=False`` bypasses the hard reject (skill-editing workflow)."""
         registry = MagicMock()

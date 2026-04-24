@@ -306,8 +306,13 @@ class TestBuildPromptExtras:
             transferred_row_count=99,
         )
         prompt = _build_prompt(tt, precheck=None)
-        assert "Source DB: pg" in prompt or "Source" in prompt or "pg" in prompt
+        # Require the concrete source name + both tool-reported counts to
+        # land in the prompt (previous assertion used ``or "Source"`` which
+        # is trivially truthy for any TransferTarget and verified nothing).
+        assert "Source database: pg" in prompt
         assert "ch.f" in prompt
+        assert "100" in prompt
+        assert "99" in prompt
 
     def test_session_target_aggregates_targets(self):
         s = SessionTarget(

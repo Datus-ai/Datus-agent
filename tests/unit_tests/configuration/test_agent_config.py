@@ -24,6 +24,7 @@ from datus.configuration.agent_config import (
     ModelConfig,
     NodeConfig,
     ServicesConfig,
+    ValidationConfig,
     file_stem_from_uri,
     load_model_config,
     resolve_env,
@@ -1189,3 +1190,53 @@ class TestSetAgenticNodeOverride:
         cfg = self._make(tmp_path)
         cfg.set_agentic_node_override("gen_sql", model=None, max_turns="30", persist=False)  # type: ignore[arg-type]
         assert cfg.agentic_nodes["gen_sql"]["max_turns"] == 30
+
+
+class TestValidationConfigFromDict:
+    """``ValidationConfig.from_dict`` must survive malformed YAML input.
+
+    YAML can produce non-mapping values for ``validation:`` (``false``,
+    ``[]``, a stray scalar). Those must fall back to defaults — otherwise
+    AgentConfig construction crashes with a raw AttributeError when the
+    user pastes a broken config (reviewer feedback, PR #657).
+    """
+
+    def test_none_returns_defaults(self):
+        cfg = ValidationConfig.from_dict(None)
+        assert cfg.skill_validators_enabled is True
+        assert cfg.max_retries == 3
+
+    def test_empty_dict_returns_defaults(self):
+        cfg = ValidationConfig.from_dict({})
+        assert cfg.skill_validators_enabled is True
+        assert cfg.max_retries == 3
+
+    def test_false_scalar_does_not_crash(self):
+        # YAML: ``validation: false``  → caller hands us ``False``.
+        cfg = ValidationConfig.from_dict(False)
+        assert cfg.skill_validators_enabled is True
+        assert cfg.max_retries == 3
+
+    def test_list_does_not_crash(self):
+        # YAML: ``validation: []``
+        cfg = ValidationConfig.from_dict([])
+        assert cfg.skill_validators_enabled is True
+        assert cfg.max_retries == 3
+
+    def test_string_does_not_crash(self):
+        cfg = ValidationConfig.from_dict("yes please")
+        assert cfg.skill_validators_enabled is True
+        assert cfg.max_retries == 3
+
+    def test_valid_dict_read_correctly(self):
+        cfg = ValidationConfig.from_dict({"skill_validators_enabled": False, "max_retries": 5})
+        assert cfg.skill_validators_enabled is False
+        assert cfg.max_retries == 5
+
+    def test_negative_retries_clamped(self):
+        cfg = ValidationConfig.from_dict({"max_retries": -4})
+        assert cfg.max_retries == 0
+
+    def test_non_numeric_retries_falls_back_to_default(self):
+        cfg = ValidationConfig.from_dict({"max_retries": "oops"})
+        assert cfg.max_retries == 3

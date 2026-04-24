@@ -22,10 +22,20 @@ def _register_test_capabilities():
     we register bare capability records for the engines exercised here —
     matching the pattern used in ``test_sql_utils.py`` and
     ``test_dashboard_assembler.py``.
+
+    ``connector_registry._capabilities`` is a class-level singleton shared
+    across every test in the process. Snapshot it before mutating and
+    restore on teardown so test order can't leak dialect capabilities into
+    unrelated tests.
     """
+    saved = {k: set(v) for k, v in connector_registry._capabilities.items()}
     connector_registry.register_handlers("starrocks", capabilities={"catalog", "database"})
     connector_registry.register_handlers("postgres", capabilities={"database", "schema"})
-    yield
+    try:
+        yield
+    finally:
+        connector_registry._capabilities.clear()
+        connector_registry._capabilities.update(saved)
 
 
 class TestExtractDDLTarget:

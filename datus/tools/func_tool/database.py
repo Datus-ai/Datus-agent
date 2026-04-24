@@ -1471,14 +1471,17 @@ class DBFuncTool:
                     "target_datasource": target_datasource or self._default_datasource,
                     "mode": mode,
                     "rows_transferred": 0,
-                    "source_row_count": source_row_count if source_row_count is not None else 0,
+                    # Leave as None when the pre-count failed; 0 is a legitimate
+                    # verified value (empty source). See _build_transfer_target.
+                    "source_row_count": source_row_count,
+                    "source_row_count_verified": source_row_count is not None,
                     "transferred_row_count": 0,
                     "batch_size": batch_size,
                     "deliverable_target": self._build_transfer_target(
                         source_datasource=source_datasource,
                         target_datasource=target_datasource or self._default_datasource,
                         target_table=target_table,
-                        source_row_count=source_row_count if source_row_count is not None else 0,
+                        source_row_count=source_row_count,
                         transferred_row_count=0,
                     ),
                 }
@@ -1540,6 +1543,16 @@ class DBFuncTool:
             )
 
         logger.info(f"Transferred {rows_written} rows to {target_table} (mode={mode})")
+        if source_row_count is None:
+            # Pre-count failed silently (logged at debug above). Do NOT
+            # backfill with rows_written — that would make Layer A's
+            # transfer-parity invariant trivially pass and defeat the point
+            # of verifying source vs target row counts. Leave as None so
+            # ``_run_row_count_parity`` skips instead of faking equality.
+            logger.warning(
+                "Transfer parity check will be skipped — source row pre-count was unavailable for transfer to %s",
+                target_table,
+            )
         return FuncToolResult(
             result={
                 "message": "Transfer completed successfully",
@@ -1549,14 +1562,15 @@ class DBFuncTool:
                 "target_datasource": target_datasource or self._default_datasource,
                 "mode": mode,
                 "rows_transferred": rows_written,
-                "source_row_count": source_row_count if source_row_count is not None else rows_written,
+                "source_row_count": source_row_count,
+                "source_row_count_verified": source_row_count is not None,
                 "transferred_row_count": rows_written,
                 "batch_size": batch_size,
                 "deliverable_target": self._build_transfer_target(
                     source_datasource=source_datasource,
                     target_datasource=target_datasource or self._default_datasource,
                     target_table=target_table,
-                    source_row_count=source_row_count if source_row_count is not None else rows_written,
+                    source_row_count=source_row_count,
                     transferred_row_count=rows_written,
                 ),
             }
@@ -1567,10 +1581,16 @@ class DBFuncTool:
         source_datasource: str,
         target_datasource: str,
         target_table: str,
-        source_row_count: int,
+        source_row_count: Optional[int],
         transferred_row_count: int,
     ) -> Dict[str, Any]:
-        """Construct the ``deliverable_target`` payload for a transfer call."""
+        """Construct the ``deliverable_target`` payload for a transfer call.
+
+        ``source_row_count=None`` signals "could not verify" (pre-count SQL
+        failed). ``model_dump(exclude_none=True)`` drops it from the payload
+        so ``_run_row_count_parity`` treats the check as skipped instead of
+        trivially equal to ``transferred_row_count``.
+        """
         from datus.utils.sql_utils import parse_table_name_parts
         from datus.validation.report import DBRef, TableTarget, TransferTarget
 

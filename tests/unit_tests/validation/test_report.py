@@ -295,9 +295,12 @@ class TestBuildRetryPrompt:
         assert "Warnings" in out
         assert "validator_skill_malformed" in out
 
-    def test_advisory_failure_still_listed_not_filtered(self):
-        """Advisory failures render in the 'failed target' section because
-        their target has them, even though the target itself doesn't block."""
+    def test_advisory_only_failure_keeps_target_in_already_written(self):
+        """A target whose only failed checks are advisory does not block the
+        run. ``build_retry_prompt``'s partition (report.py's ``has_blocking``
+        predicate) lists it under "Already written and correct" — the
+        retry prompt is for things the agent must fix, and advisory notes
+        are not must-fixes."""
         t = TableTarget(database="d", table="t")
         advisory = CheckResult(
             name="type_hint",
@@ -308,5 +311,6 @@ class TestBuildRetryPrompt:
         )
         report = ValidationReport(target=None, checks=[advisory])
         out = build_retry_prompt(report, [t])
-        # Advisory-only → target is OK, goes under "Already written"
         assert "Already written" in out
+        # And the target is NOT duplicated into the failed section.
+        assert "## Failed targets" not in out.split("---")[0]

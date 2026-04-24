@@ -545,29 +545,37 @@ class ChatCommands:
                 final_action = None
 
             if final_action:
-                if (
-                    final_action.output
-                    and isinstance(final_action.output, dict)
-                    and final_action.status == ActionStatus.SUCCESS
-                ):
-                    sql = final_action.output.get("sql")
-                    response = final_action.output.get("response")
+                if final_action.output and isinstance(final_action.output, dict):
+                    is_success = final_action.status == ActionStatus.SUCCESS
+                    has_validation_report = bool(final_action.output.get("validation_report"))
 
-                    extracted_sql, extracted_output = self._extract_sql_and_output_from_content(response)
-                    sql = sql or extracted_sql
+                    if is_success:
+                        sql = final_action.output.get("sql")
+                        response = final_action.output.get("response")
 
-                    clean_output = self._resolve_clean_output(sql, response, extracted_output)
+                        extracted_sql, extracted_output = self._extract_sql_and_output_from_content(response)
+                        sql = sql or extracted_sql
 
-                    if sql:
-                        self.add_in_sql_context(sql, clean_output, incremental_actions)
+                        clean_output = self._resolve_clean_output(sql, response, extracted_output)
 
-                    self._render_final_response(final_action, skip_markdown_body=streamed_body)
+                        if sql:
+                            self.add_in_sql_context(sql, clean_output, incremental_actions)
 
-                    # Merge node_final_action back for history tracking
-                    all_actions = incremental_actions + ([node_final_action] if node_final_action else [])
-                    self.last_actions = all_actions
-                    self.all_turn_actions.append((message, all_actions))
-                    self._trace_verbose = False  # reset toggle for new chat round
+                    # Always render when either the action succeeded OR it failed
+                    # with a validation_report — otherwise users of exhausted-retry
+                    # runs don't see why their deliverable was blocked. The helper
+                    # itself gates downstream SQL / markdown rendering by status;
+                    # ``skip_markdown_body`` is forwarded so the streaming
+                    # context's already-flushed body does not get reprinted.
+                    if is_success or has_validation_report:
+                        self._render_final_response(final_action, skip_markdown_body=streamed_body)
+
+                    if is_success:
+                        # Merge node_final_action back for history tracking
+                        all_actions = incremental_actions + ([node_final_action] if node_final_action else [])
+                        self.last_actions = all_actions
+                        self.all_turn_actions.append((message, all_actions))
+                        self._trace_verbose = False  # reset toggle for new chat round
 
                     # End-of-turn full-screen reprint — mirrors the Ctrl+O
                     # toggle so the viewport ends up with a clean, fully
@@ -1123,13 +1131,24 @@ class ChatCommands:
         action_display = ActionHistoryDisplay(self.console, live_state=getattr(self.cli, "live_state", None))
 
         def _render_turn_response(turn_actions: List[ActionHistory]) -> None:
-            """Callback to render the final response for each turn."""
+            """Callback to render the final response for each turn.
+
+            Render on SUCCESS, or on FAILED when a ``validation_report`` was
+            attached — otherwise Ctrl+O verbose mode hides blocking validation
+            details from runs whose retry budget was exhausted.
+            """
             final_action = self._find_node_final_action(turn_actions)
-            if final_action and final_action.depth == 0 and final_action.status == ActionStatus.SUCCESS:
-                # The viewport was just cleared — render the final Markdown
-                # body here. ``skip_markdown_body`` stays False because the
-                # streaming context's scrollback push is not visible in the
-                # viewport after the clear.
+            if not final_action or final_action.depth != 0:
+                return
+            # The viewport was just cleared — render the final Markdown
+            # body here. ``skip_markdown_body`` stays False because the
+            # streaming context's scrollback push is not visible in the
+            # viewport after the clear.
+            if final_action.status == ActionStatus.SUCCESS:
+                self._render_final_response(final_action)
+                return
+            output = final_action.output if isinstance(final_action.output, dict) else None
+            if output and output.get("validation_report"):
                 self._render_final_response(final_action)
 
         if self.all_turn_actions:

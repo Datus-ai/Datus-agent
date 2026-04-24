@@ -2,10 +2,13 @@
 
 Run checks in this order against each `TransferTarget`. Replace
 `{src}`, `{tgt}`, `{col}`, and `{key}` with the concrete names from the
-target. Use `read_query(datasource=source)` / `read_query(datasource=target)`
-to pick the right connector — every statement is a single read-only SELECT.
-If the SQL needs to disambiguate a database or schema, qualify it inside
-the query itself (e.g. `FROM <db>.<schema>.<table>`).
+target. Pick the right connector by reading the concrete keys out of the
+TransferTarget payload: `read_query(datasource=<TransferTarget.source.name>)`
+for the source side and `read_query(datasource=<TransferTarget.target.datasource>)`
+for the target side. Never pass the literal words `"source"`/`"target"` —
+those are not real datasource keys. Every statement is a single read-only
+SELECT. If the SQL needs to disambiguate a database or schema inside a
+connector, qualify it inside the query (e.g. `FROM <db>.<schema>.<table>`).
 
 ## 1. Row count
 
@@ -18,7 +21,8 @@ query.
 For each column `{col}` returned by `describe_table`:
 
 ```sql
--- Run once on source (datasource=source), once on target (datasource=target)
+-- Run once on source (datasource=<TransferTarget.source.name>),
+-- once on target (datasource=<TransferTarget.target.datasource>)
 SELECT
   SUM(CASE WHEN {col} IS NULL THEN 1 ELSE 0 END) AS null_count,
   COUNT(*) AS total,

@@ -427,6 +427,15 @@ class ValidationConfig:
     def from_dict(cls, data: Optional[Dict[str, Any]]) -> "ValidationConfig":
         if not data:
             return cls()
+        # YAML can produce non-mapping values for ``validation:`` (e.g. ``false``,
+        # ``[]``, or even a stray scalar) — fall back to defaults rather than
+        # crashing AgentConfig construction with a raw AttributeError.
+        if not isinstance(data, dict):
+            logger.warning(
+                "agent.validation must be a mapping; got %s. Using default ValidationConfig.",
+                type(data).__name__,
+            )
+            return cls()
         try:
             max_retries = int(data.get("max_retries", 3))
         except (TypeError, ValueError):

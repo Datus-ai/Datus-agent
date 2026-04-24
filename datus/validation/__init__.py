@@ -15,8 +15,9 @@ at the end of an agent run. It separates validation into two layers:
   ``agent.validation.skill_validators_enabled``.
 
 Blocking failures raise ``ValidationBlockingException`` which is caught in the
-owning node's ``execute_stream`` and used to drive up to 3 retries with the
-failure report injected as a user message.
+owning node's ``execute_stream`` and used to drive retries with the failure
+report injected as a user message. The retry budget is configurable via
+``agent.validation.max_retries`` (default 3).
 """
 
 from datus.validation.exceptions import ValidationBlockingException

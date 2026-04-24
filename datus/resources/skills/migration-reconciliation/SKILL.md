@@ -69,10 +69,17 @@ write tool is explicitly excluded.
 
 ## Critical rules
 
-- Always route `read_query` with `datasource=<source or target>` — that's
-  the parameter the tool exposes for picking a connector. If the SQL needs
-  to disambiguate a database or schema, qualify it inside the query itself
-  (e.g. `SELECT COUNT(*) FROM <db>.<schema>.<table>`).
+- `read_query` takes a `datasource=<connector key>` kwarg — it must be the
+  **concrete connector key** from the TransferTarget, not the literal words
+  "source" or "target". Read it from the target payload:
+    - For source-side queries: use the value of `TransferTarget.source.name`
+      (e.g. `datasource="pg_prod"`).
+    - For target-side queries: use the value of `TransferTarget.target.datasource`
+      (e.g. `datasource="ch_prod"`).
+  If the SQL needs to disambiguate a database or schema inside that
+  connector, qualify it in the query (e.g. `FROM <db>.<schema>.<table>`).
+  Never pass the strings `"source"`/`"target"` — those are not real
+  datasource keys and `read_query` will route to the wrong connector.
 - Source database is read-only. Do **not** attempt any DDL or write.
 - Report every check even when some fail — the hook's retry logic needs to
   see the full picture.
