@@ -16,7 +16,7 @@ allowed_agents:
 
 # Data Migration
 
-Use this skill when the `gen_job` agent is asked to move data between DIFFERENT database engines (any source → any target: e.g., DuckDB ↔ Greenplum, MySQL ↔ StarRocks, Postgres ↔ ClickHouse, Hive → Iceberg). When `source_database == target_database` the job stays inside `gen_job` but this skill does NOT apply — in that case follow the `gen-table` and `table-validation` skills for intra-database ETL instead.
+Use this skill when the `gen_job` agent is asked to move data between DIFFERENT database engines (any source → any target: e.g., DuckDB ↔ Greenplum, MySQL ↔ StarRocks, Postgres ↔ ClickHouse, Hive → Iceberg). When `source_database == target_database` the job stays inside `gen_job` and should use the `gen-table` path for intra-database ETL; `table-validation` is an automatic validator (`kind: validator`) invoked by `ValidationHook.on_end` for schema-contract checks, not a selectable workflow step.
 
 This skill covers the full lifecycle: source inspection, target DDL generation (using adapter Mixin hints), data transfer, and post-transfer reconciliation.
 

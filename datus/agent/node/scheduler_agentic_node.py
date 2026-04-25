@@ -110,11 +110,12 @@ class SchedulerAgenticNode(DeliverableAgenticNode):
             logger.error("Failed to setup scheduler tools: %s", e)
 
     def _setup_scheduler_skills(self):
-        """Inject platform-workflow + scheduler-validation skills when tools loaded.
+        """Inject only the platform-specific scheduler workflow skill.
 
         Platform-specific workflow skills (e.g. ``airflow-workflow``) assume
         the scheduler tools are present; we only inject them when
-        ``_setup_domain_tools`` succeeded.
+        ``_setup_domain_tools`` succeeded. Scheduler validation is handled by
+        :class:`ValidationHook` through the validator registry.
         """
         if not self.scheduler_tools:
             return

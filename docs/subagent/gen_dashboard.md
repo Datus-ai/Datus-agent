@@ -17,7 +17,7 @@ The gen_dashboard subagent is a specialized node (`GenDashboardAgenticNode`) tha
 - Connects to a configured BI platform (Superset or Grafana) via the `datus-bi-adapters` registry
 - Exposes platform-appropriate tools dynamically based on adapter Mixin capabilities
 - Registers the already-materialised table as a dataset / datasource and builds charts + dashboard on top
-- Validates the published dashboard via `bi-validation`
+- Automatic `bi-validation` runs after the agent finishes
 
 ## Quick Start
 
@@ -44,8 +44,8 @@ graph LR
     A[User request with existing serving table] --> B[gen_dashboard]
     B --> C[platform dashboard skill]
     C -->|Superset| I[list_bi_databases → create_dataset → create_chart → create_dashboard → add_chart_to_dashboard]
-    C -->|Grafana| J[list_bi_databases → create_dashboard → create_chart]
-    I --> K[bi-validation]
+    C -->|Grafana| J[create_dashboard → create_chart]
+    I --> K[ValidationHook.on_end]
     J --> K
     K --> L[dashboard_result]
 ```
@@ -57,14 +57,13 @@ graph LR
 3. `create_chart(type, title, dataset_id, metrics, ...)` — create the visualization
 4. `create_dashboard(title)` — create the dashboard container
 5. `add_chart_to_dashboard(chart_id, dashboard_id)` — assemble chart into dashboard
-6. Load `bi-validation` and run post-creation checks
+6. Finish the run; `bi-validation` runs automatically through `ValidationHook.on_end`
 
 ### Grafana Workflow
 
-1. `list_bi_databases()` — confirm the datasource is registered
-2. `create_dashboard(title)` — create the dashboard
-3. `create_chart(type, title, sql=..., dashboard_id=...)` — create panel with embedded SQL referencing the existing table
-4. Load `bi-validation` and run post-creation checks
+1. `create_dashboard(title)` — create the dashboard
+2. `create_chart(type, title, sql=..., dashboard_id=...)` — create panel with embedded SQL referencing the existing table; the datasource is auto-resolved from `dataset_db.bi_database_name`
+3. Finish the run; `bi-validation` runs automatically through `ValidationHook.on_end`
 
 ## Available Tools
 
@@ -163,7 +162,7 @@ All sensitive values support `${ENV_VAR}` substitution.
 | Database connection | `database_id` from `list_bi_databases()` | Datasource auto-resolved via `bi_database_name` |
 | `update_chart` support | Yes | No — delete and recreate |
 | Authentication | Username + password | API key |
-| Workflow steps | 6 | 4 |
+| Workflow steps | 6 | 3 |
 | `DatasetWriteMixin` | Implemented | Not implemented |
 
 ## Output Format

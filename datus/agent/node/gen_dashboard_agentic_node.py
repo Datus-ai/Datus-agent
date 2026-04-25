@@ -28,9 +28,9 @@ class GenDashboardAgenticNode(DeliverableAgenticNode):
     """BI dashboard / chart / dataset subagent.
 
     Registers a :class:`BIFuncTool` against the configured BI platform
-    (Superset or Grafana) and injects the platform-specific dashboard skill
-    plus ``bi-validation``. Post-write validation is driven by
-    :class:`ValidationHook` in the base class.
+    (Superset or Grafana) and injects the platform-specific dashboard skill via
+    ``skills_to_inject``. Validator skills such as ``bi-validation`` are
+    resolved by the validator registry and run through :class:`ValidationHook`.
     """
 
     NODE_NAME: ClassVar[str] = "gen_dashboard"
@@ -117,10 +117,11 @@ class GenDashboardAgenticNode(DeliverableAgenticNode):
         logger.info("BI tools initialized for platform '%s'", bi_platform)
 
     def _setup_dashboard_skills(self):
-        """Inject the platform-specific dashboard skill + ``bi-validation``.
+        """Inject only the platform-specific dashboard workflow skill.
 
         Only fires when BI tools are available — otherwise the skills would
         reference missing tools like ``create_dashboard`` / ``get_chart``.
+        Validation skills are handled by :class:`ValidationHook`.
         """
         if not self.bi_func_tool:
             return

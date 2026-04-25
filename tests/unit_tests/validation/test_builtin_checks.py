@@ -55,11 +55,19 @@ class FakeBITool:
             return FuncToolResult(result=payload)
         return FuncToolResult(success=0, error="chart not found")
 
-    def get_dataset(self, dataset_id):
-        self.calls.append(("get_dataset", dataset_id))
+    def get_dataset(self, dataset_id, dashboard_id=None):
+        self.calls.append(("get_dataset", dataset_id, dashboard_id))
         if self.dataset_found:
             return FuncToolResult(result={"id": dataset_id})
         return FuncToolResult(success=0, error="dataset not found")
+
+
+class EmptyPayloadBITool(FakeBITool):
+    """BI adapter returning an empty dict for an existing resource."""
+
+    def get_dashboard(self, dashboard_id):
+        self.calls.append(("get_dashboard", dashboard_id))
+        return FuncToolResult(result={})
 
 
 class FakeSchedulerTool:
@@ -85,6 +93,13 @@ class TestCheckDashboard:
         report = await run_builtin_checks(target, bi_tool=tool)
         assert any(c.name == "dashboard_exists" and c.passed for c in report.checks)
         assert ("get_dashboard", "42") in tool.calls
+
+    @pytest.mark.asyncio
+    async def test_empty_payload_still_counts_as_found_when_successful(self):
+        tool = EmptyPayloadBITool()
+        target = DashboardTarget(platform="superset", dashboard_id="42")
+        report = await run_builtin_checks(target, bi_tool=tool)
+        assert any(c.name == "dashboard_exists" and c.passed for c in report.checks)
 
     @pytest.mark.asyncio
     async def test_not_found_blocks(self):
@@ -137,6 +152,7 @@ class TestCheckDataset:
         target = DatasetTarget(platform="superset", dataset_id="d1")
         report = await run_builtin_checks(target, bi_tool=tool)
         assert any(c.name == "dataset_exists" and c.passed for c in report.checks)
+        assert ("get_dataset", "d1", None) in tool.calls
 
     @pytest.mark.asyncio
     async def test_not_found_blocks(self):

@@ -597,7 +597,8 @@ class BIFuncTool:
         """Fetch a single dataset's metadata. Read-only; used by ValidationHook's
         Layer A ``dataset_exists`` check."""
         try:
-            dash_id = dashboard_id.strip() or None
+            dashboard_arg = str(dashboard_id).strip() if dashboard_id is not None else ""
+            dash_id = dashboard_arg or None
             result = self.adapter.get_dataset(dataset_id, dashboard_id=dash_id)
             if result is None:
                 return FuncToolResult(success=0, error=f"Dataset {dataset_id} not found")

@@ -173,6 +173,14 @@ class TestDatasetDbConfig:
         assert cfg.datasource_ref == "serving_pg"
         assert cfg.bi_database_name is None
 
+    def test_bi_database_name_blank_is_unset(self):
+        cfg = DatasetDbConfig.from_dict({"datasource_ref": "serving_pg", "bi_database_name": "   "})
+        assert cfg.bi_database_name is None
+
+    def test_bi_database_name_must_be_string(self):
+        with pytest.raises(DatusException):
+            DatasetDbConfig.from_dict({"datasource_ref": "serving_pg", "bi_database_name": 123})
+
     def test_datasource_ref_required(self):
         """Missing datasource_ref must raise — no silent fallback to a default."""
         with pytest.raises(DatusException):

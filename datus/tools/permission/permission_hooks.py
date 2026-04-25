@@ -238,7 +238,7 @@ class PermissionHooks(AgentHooks):
                     "caller and stop. The user can run /profile to open the "
                     "profile picker and choose an appropriate mode with the "
                     "arrow keys, or add a permission rule under "
-                    "``permissions.rules`` in agent.yml."
+                    "`permissions.rules` in agent.yml."
                 ),
                 tool_category=category,
                 tool_name=pattern_name,

@@ -56,7 +56,7 @@ logger = get_logger(__name__)
 
 
 class ValidationHook(AgentHooks):
-    """Drives post-mutation validation for table-producing subagents.
+    """Drives post-mutation validation for deliverable-producing subagents.
 
     One instance per agent-run-owning node. State (``_session_targets``,
     ``_final_report``) is per-run — callers must call :meth:`reset_session`
@@ -146,8 +146,12 @@ class ValidationHook(AgentHooks):
                     and existing.platform == target.platform
                     and existing.chart_id == target.chart_id
                 ):
-                    self._session_targets[index] = target
-                    return
+                    if existing.dashboard_id == target.dashboard_id:
+                        self._session_targets[index] = target
+                        return
+                    if not existing.dashboard_id:
+                        self._session_targets[index] = target
+                        return
         self._session_targets.append(target)
 
     async def on_end(self, context, agent, output) -> None:

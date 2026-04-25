@@ -997,7 +997,7 @@ gen_dashboard subagent 在 Superset 和 Grafana 上创建、更新和管理 BI �
 - **多平台支持**：支持 Apache Superset 和 Grafana；平台可通过 `bi_platform` 显式指定，或从 `agent.services.bi_platforms` 自动检测
 - **动态工具暴露**：工具根据 adapter Mixin 能力动态暴露——只有平台实际支持的操作才作为 LLM 工具出现
 - **只处理已就位的 serving 数据**：数据准备由 `gen_job` / `scheduler` 单独完成；gen_dashboard 负责创建 BI dataset / chart / dashboard 资产
-- **Skill 引导**：平台 skill（`superset-dashboard`、`grafana-dashboard`）提供分步工作流；`bi-validation` 做发布后校验
+- **Skill 引导**：平台 skill（`superset-dashboard`、`grafana-dashboard`）提供分步工作流；`bi-validation` 在创建结束后自动运行
 
 ### 配置
 
@@ -1043,8 +1043,8 @@ graph LR
     C --> D[BIFuncTool.available_tools]
     D --> E[LLM Function Calling]
     E -->|Superset| F[list_bi_databases → create_dataset → create_chart → create_dashboard → add_chart_to_dashboard]
-    E -->|Grafana| G[list_bi_databases → create_dashboard → create_chart]
-    F --> H[bi-validation]
+    E -->|Grafana| G[create_dashboard → create_chart]
+    F --> H[ValidationHook.on_end]
     G --> H
 ```
 

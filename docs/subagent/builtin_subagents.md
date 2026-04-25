@@ -999,7 +999,7 @@ The gen_dashboard subagent creates, updates, and manages BI dashboards on Supers
 - **Multi-platform**: Supports Apache Superset and Grafana; platform is explicit via `bi_platform` or auto-detected from `agent.services.bi_platforms`
 - **Dynamic tool exposure**: Tools are exposed based on adapter Mixin capabilities — only operations the platform actually supports appear as LLM tools
 - **Existing serving data only**: data preparation is handled separately by `gen_job` / `scheduler`; gen_dashboard builds BI dataset / chart / dashboard assets
-- **Skill-guided workflows**: Platform skills (`superset-dashboard`, `grafana-dashboard`) provide step-by-step workflow guidance; `bi-validation` runs post-creation checks
+- **Skill-guided workflows**: Platform skills (`superset-dashboard`, `grafana-dashboard`) provide step-by-step workflow guidance; `bi-validation` runs automatically after creation
 
 ### Configuration
 
@@ -1045,8 +1045,8 @@ graph LR
     C --> D[BIFuncTool.available_tools]
     D --> E[LLM Function Calling]
     E -->|Superset| F[list_bi_databases → create_dataset → create_chart → create_dashboard → add_chart_to_dashboard]
-    E -->|Grafana| G[list_bi_databases → create_dashboard → create_chart]
-    F --> H[bi-validation]
+    E -->|Grafana| G[create_dashboard → create_chart]
+    F --> H[ValidationHook.on_end]
     G --> H
 ```
 

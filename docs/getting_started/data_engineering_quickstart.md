@@ -247,13 +247,25 @@ What to expect:
 - Airflow returns a `job_id`
 - the job becomes visible in the Airflow UI
 
-## Step 9: Create a Superset Dashboard
+## Step 9: Promote the Marts Table to the Superset Serving DB
 
-Once the marts table exists in the Superset-serving database, hand it to the BI
-subagent.
+The marts table above was built in `lever_duckdb`. Before `gen_dashboard` can
+create Superset assets, copy that table into the BI-registered
+`superset_serving` Postgres datasource referenced by `dataset_db.datasource_ref`.
 
 ```text
-/gen_dashboard Create a recruiting operations dashboard in Superset from marts.lever__recruitment_analytics_dashboard. Include KPI tiles for requisitions, applications, interviews, offers, and hires, plus a funnel chart and a weekly trend chart.
+/gen_job Copy lever_duckdb.marts.lever__recruitment_analytics_dashboard to superset_serving.public.lever__recruitment_analytics_dashboard using replace mode, then verify the transferred row count.
+```
+
+After this step, the table exists in the same database Superset knows as
+`bi_database_name: examples`.
+
+## Step 10: Create a Superset Dashboard
+
+Once the marts table exists in `superset_serving`, hand it to the BI subagent.
+
+```text
+/gen_dashboard Create a recruiting operations dashboard in Superset from public.lever__recruitment_analytics_dashboard. Include KPI tiles for requisitions, applications, interviews, offers, and hires, plus a funnel chart and a weekly trend chart.
 ```
 
 Under the hood, the Superset workflow is:
@@ -266,7 +278,7 @@ Data preparation is a separate `gen_job` / `scheduler` step. `gen_dashboard`
 expects the table or SQL dataset to already be available in the BI-registered
 database.
 
-## Step 10: Verify the End-to-End Result
+## Step 11: Verify the End-to-End Result
 
 You should now have:
 

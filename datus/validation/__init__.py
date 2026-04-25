@@ -3,14 +3,17 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-Validation infrastructure for table-producing subagents.
+Validation infrastructure for table-, chart-, dashboard-, dataset-, and
+scheduler job-producing subagents.
 
 This module provides hook-driven validation that fires automatically after
-mutating tool calls (execute_ddl, execute_write, transfer_query_result) and
+mutating tool calls (execute_ddl, execute_write, transfer_query_result,
+create_chart, create_dashboard, create_dataset, submit_sql_job, update_job) and
 at the end of an agent run. It separates validation into two layers:
 
 - Layer A (builtin_checks): code-level invariants (table exists, row count,
-  cross-DB row count parity). Always enforced.
+  cross-DB row count parity, BI resources exist, scheduler job exists/status).
+  Always enforced.
 - Layer B (llm_runner): LLM-interpreted validator skills. Gated by
   ``agent.validation.skill_validators_enabled``.
 

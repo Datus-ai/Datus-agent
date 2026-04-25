@@ -80,13 +80,13 @@ by name.
 
 ## Ownership
 
-Dashboard creation is split into two explicit steps:
+Dashboard creation is split into three explicit steps:
 
 1. `gen_job` or `scheduler` prepares / refreshes data in the serving DB
    referenced by `dataset_db.datasource_ref`.
 2. `gen_dashboard` builds the dataset / chart / dashboard on the BI side
    from tables or SQL datasets that already exist in that BI-registered DB.
-3. `bi-validation` runs post-creation checks.
+3. `bi-validation` runs post-creation checks automatically through `ValidationHook.on_end`.
 
 Source DB credentials never leave Datus — Superset / Grafana see only the
 serving DB registered under `bi_database_name`.

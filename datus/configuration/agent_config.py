@@ -425,7 +425,8 @@ class DatasetDbConfig:
                 ErrorCode.COMMON_FIELD_INVALID,
                 message="services.bi_platforms.<x>.dataset_db.bi_database_name must be a string.",
             )
-        return cls(datasource_ref=ref.strip(), bi_database_name=bi_db.strip() if bi_db else None)
+        normalized_bi_db = bi_db.strip() if bi_db is not None else None
+        return cls(datasource_ref=ref.strip(), bi_database_name=normalized_bi_db or None)
 
 
 @dataclass

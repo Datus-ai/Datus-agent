@@ -96,23 +96,18 @@ add_chart_to_dashboard(chart_id="<from step 3>", dashboard_id="<from step 4>")
 
 Repeat for each chart.
 
-### Step 6: Validate the Published Dashboard (`bi-validation`)
+### Step 6: Finish and Let Validation Run
 
-After assembling the dashboard, load `bi-validation` and verify:
+After assembling the dashboard, finish the run and return the created IDs.
+`bi-validation` is a validator skill invoked automatically by
+`ValidationHook.on_end`; do not call `load_skill("bi-validation")` or try to
+run validator checks manually.
 
-- the dashboard exists and is reachable via `get_dashboard`
-- the expected charts appear via `list_charts`
-- each chart is inspected via `get_chart`
-- chart titles, types, metrics, x-axis fields, dimensions, and dataset wiring match the intended configuration
-- each chart is checked with `get_chart_data` to confirm it runs without backend errors
-- key numeric values are compared where expected results or tolerances are available
-
-Publish is complete when the dashboard is reachable, the expected charts are
-attached, every chart can be inspected, and supported data checks run without
-backend errors. After those checks pass, return the `dashboard_id`,
-`dataset_id`, `chart_ids`, and validation summary. Treat follow-up layout or
-chart rewiring as a separate update request unless Step 6 found a concrete
-failing check.
+Publish is complete when the creation calls succeed and the dashboard / chart /
+dataset identifiers are known. The framework validates reachability and wiring
+after the agent run ends. Return the `dashboard_id`,
+`dataset_id`, and `chart_ids`. Treat follow-up layout or chart rewiring as a
+separate update request.
 
 ## Viewing & Querying
 

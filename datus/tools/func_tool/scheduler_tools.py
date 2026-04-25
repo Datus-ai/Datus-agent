@@ -668,7 +668,8 @@ class SchedulerTools(BaseTool):
         items = ", ".join(f"'{k}' ({v})" for k, v in connections.items())
         return f"\n\nAvailable conn_id values: {items}"
 
-    def _build_scheduler_target(self, job: Any) -> dict:
+    @staticmethod
+    def _build_scheduler_target(job: Any) -> dict:
         """Build a ``SchedulerJobTarget`` dict from a scheduler-core
         ``ScheduledJob`` return, for ValidationHook consumption. Attached by
         mutating methods (``submit_*`` / ``update_job``).

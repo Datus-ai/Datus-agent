@@ -53,7 +53,7 @@ task(type="gen_dashboard",
 1. Resolves the BI platform database / datasource.
 2. Registers the existing table or SQL dataset.
 3. Builds chart / dashboard assets against the BI platform.
-4. Runs `bi-validation` post-creation checks.
+4. Finishes the BI asset creation flow; `bi-validation` runs automatically through `ValidationHook.on_end`.
 
 ### Step 3 — Report results
 

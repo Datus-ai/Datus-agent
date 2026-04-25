@@ -206,8 +206,9 @@ class TestSchedulerToolSetup:
             assert "write_file" in tool_names
             assert "edit_file" in tool_names
 
-    def test_no_scheduler_config_no_tools(self, real_agent_config, mock_llm_create):
-        """Without scheduler service config, node should have 0 scheduler tools (graceful no-op)."""
+    def test_no_scheduler_config_filesystem_tools_only(self, real_agent_config, mock_llm_create):
+        """Without scheduler service config, scheduler submission tools are absent
+        but filesystem tools remain available for SQL file staging."""
         real_agent_config.services.schedulers = {}
         real_agent_config.init_scheduler_services({})
         from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
@@ -528,7 +529,6 @@ class TestSchedulerTemplateContext:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.ci
 class TestSchedulerCustomNodeName:
     """Tests for custom node_name support (e.g. my_scheduler: {node_class: scheduler})."""
 
@@ -622,7 +622,6 @@ class TestSchedulerCustomNodeName:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.ci
 class TestSchedulerPromptVersion:
     """Tests for prompt_version passthrough from input to _get_system_prompt."""
 

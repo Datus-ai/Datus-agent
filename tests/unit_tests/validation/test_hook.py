@@ -90,6 +90,20 @@ class TestOnToolEnd:
         assert hook.session_targets[0].dashboard_id == "42"
 
     @pytest.mark.asyncio
+    async def test_same_chart_on_different_dashboards_keeps_both_targets(self):
+        hook = _make_hook(FakeDBFuncTool(exists=True, rows=3))
+        hook.reset_session()
+
+        first = ChartTarget(platform="superset", chart_id="5", dashboard_id="42").model_dump(exclude_none=True)
+        second = ChartTarget(platform="superset", chart_id="5", dashboard_id="43").model_dump(exclude_none=True)
+
+        await hook.on_tool_end(None, None, None, FakeToolResult({"deliverable_target": first}))
+        await hook.on_tool_end(None, None, None, FakeToolResult({"deliverable_target": second}))
+
+        assert len(hook.session_targets) == 2
+        assert {t.dashboard_id for t in hook.session_targets if isinstance(t, ChartTarget)} == {"42", "43"}
+
+    @pytest.mark.asyncio
     async def test_on_tool_end_never_runs_layer_a(self):
         """Even when the table would fail Layer A (describe returns empty),
         on_tool_end must not raise and must not touch the DB. A-class runs
@@ -390,8 +404,8 @@ class TestResetSession:
 class TestSkillValidatorToggle:
     @pytest.mark.asyncio
     async def test_disabled_skips_layer_b_completely(self):
-        """With skill_validators_enabled=False, on_tool_end's escape-hatch path
-        is gated off and the registry is never queried."""
+        """With skill_validators_enabled=False, Layer A still runs at end of
+        stream but the validator registry is never queried."""
         hook = _make_hook(FakeDBFuncTool(exists=True), skill_validators_enabled=False)
         hook.reset_session()
         tgt = TableTarget(database="d", table="t", rows_affected=1).model_dump(by_alias=True, exclude_none=True)

@@ -17,7 +17,7 @@ gen_dashboard subagent 是一个专用节点（`GenDashboardAgenticNode`），�
 - 通过 `datus-bi-adapters` 注册表连接到已配置的 BI 平台（Superset 或 Grafana）
 - 根据 adapter Mixin 能力动态暴露适合当前平台的工具
 - 把已经存在的物化表注册为 dataset / datasource，在其上建图、建面板、组装仪表盘
-- 通过 `bi-validation` 完成发布后校验
+- agent 结束后自动运行 `bi-validation`
 
 ## 快速开始
 
@@ -44,8 +44,8 @@ graph LR
     A[包含现有 serving 表的用户请求] --> B[gen_dashboard]
     B --> H[平台 dashboard skill]
     H -->|Superset| I[list_bi_databases → create_dataset → create_chart → create_dashboard → add_chart_to_dashboard]
-    H -->|Grafana| J[list_bi_databases → create_dashboard → create_chart]
-    I --> K[bi-validation]
+    H -->|Grafana| J[create_dashboard → create_chart]
+    I --> K[ValidationHook.on_end]
     J --> K
     K --> L[dashboard_result]
 ```
@@ -57,14 +57,13 @@ graph LR
 3. `create_chart(type, title, dataset_id, metrics, ...)` — 创建可视化图表
 4. `create_dashboard(title)` — 创建仪表盘容器
 5. `add_chart_to_dashboard(chart_id, dashboard_id)` — 把图表组装进仪表盘
-6. 加载 `bi-validation` 做发布后校验
+6. 结束本次运行；`bi-validation` 会通过 `ValidationHook.on_end` 自动执行
 
 ### Grafana 工作流
 
-1. `list_bi_databases()` — 确认目标 datasource 已注册
-2. `create_dashboard(title)` — 创建仪表盘
-3. `create_chart(type, title, sql=..., dashboard_id=...)` — 创建内嵌 SQL 的面板，SQL 指向已存在的表
-4. 加载 `bi-validation` 做发布后校验
+1. `create_dashboard(title)` — 创建仪表盘
+2. `create_chart(type, title, sql=..., dashboard_id=...)` — 创建内嵌 SQL 的面板，SQL 指向已存在的表；datasource 根据 `dataset_db.bi_database_name` 自动解析
+3. 结束本次运行；`bi-validation` 会通过 `ValidationHook.on_end` 自动执行
 
 ## 可用工具
 
@@ -163,7 +162,7 @@ agent:
 | 数据库连接 | `database_id` 来自 `list_bi_databases()` | Datasource 由 `bi_database_name` 自动解析 |
 | `update_chart` 支持 | 支持 | 不支持，需删除后重建 |
 | 认证方式 | 用户名 + 密码 | API Key |
-| 工作流步骤数 | 6 步 | 4 步 |
+| 工作流步骤数 | 6 步 | 3 步 |
 | `DatasetWriteMixin` | 已实现 | 未实现 |
 
 ## 输出格式

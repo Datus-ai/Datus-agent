@@ -30,8 +30,8 @@ You receive `SessionTarget.targets` — loop over `SchedulerJobTarget` entries.
 Each carries `platform` + `job_id` + optional `job_name`.
 
 Layer A (the builtin hook) has already confirmed each job **exists** and
-**is not in a failed status**. Your job is to verify **runtime health**:
-schedule correctness and the fact that the job can actually run.
+**is not in a failed status**. Your job is to verify schedule correctness and
+recent runtime outcome when run history is available.
 
 ## Core workflow
 
@@ -61,8 +61,7 @@ For every `SchedulerJobTarget` in the session:
 | Check | Tool | What to verify |
 |-------|------|----------------|
 | Job exists | `get_scheduler_job` | Status is active, schedule is correct |
-| Test run triggered | `trigger_scheduler_job` | Returns a run_id |
-| Run completes | `list_job_runs` | Latest run status is `success` |
+| Latest run inspected | `list_job_runs` | Latest run status is `success`, or no run history is advisory |
 | Run log clean | `get_run_log` | No errors in output (only check on failure) |
 
 ## Output format
@@ -73,7 +72,7 @@ Report a table with these columns:
 |--------|-------------|
 | Job ID | The scheduler job identifier |
 | Schedule | Cron expression |
-| Test Run | PASS if run succeeded, FAIL + error summary otherwise |
+| Latest Run | PASS if latest run succeeded, FAIL + error summary if it failed, ADVISORY if absent/running |
 | Overall | PASS or FAIL |
 
-If the test run fails, include the error message from `get_run_log` so the user can diagnose the issue.
+If the latest run failed, include the error message from `get_run_log` so the user can diagnose the issue. Never call `trigger_scheduler_job`.

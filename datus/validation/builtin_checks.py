@@ -18,6 +18,7 @@ Always enforced, regardless of ``agent.validation.skill_validators_enabled``.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any, Optional
 
 from datus.utils.loggings import get_logger
@@ -79,22 +80,22 @@ async def run_builtin_checks(
         if bi_tool is None:
             logger.info("Layer A skipped for %s: no BI tool available", _target_descriptor(target))
             return report
-        _check_dashboard(target, bi_tool, report)
+        await asyncio.to_thread(_check_dashboard, target, bi_tool, report)
     elif isinstance(target, ChartTarget):
         if bi_tool is None:
             logger.info("Layer A skipped for %s: no BI tool available", _target_descriptor(target))
             return report
-        _check_chart(target, bi_tool, report)
+        await asyncio.to_thread(_check_chart, target, bi_tool, report)
     elif isinstance(target, DatasetTarget):
         if bi_tool is None:
             logger.info("Layer A skipped for %s: no BI tool available", _target_descriptor(target))
             return report
-        _check_dataset(target, bi_tool, report)
+        await asyncio.to_thread(_check_dataset, target, bi_tool, report)
     elif isinstance(target, SchedulerJobTarget):
         if scheduler_tool is None:
             logger.info("Layer A skipped for %s: no scheduler tool available", _target_descriptor(target))
             return report
-        _check_scheduler_job(target, scheduler_tool, report)
+        await asyncio.to_thread(_check_scheduler_job, target, scheduler_tool, report)
     elif isinstance(target, SessionTarget):
         for inner in target.targets:
             nested = await run_builtin_checks(
@@ -246,15 +247,12 @@ def _resource_exists_payload(result: Any) -> bool:
     """Shared predicate: BI adapters return a dict (possibly empty) on success.
 
     Existence is established by ``getattr(result, 'success', False)`` plus a
-    non-empty payload. Callers that need richer data pick it out of
-    ``result.result``.
+    non-``None`` payload. Callers that need richer data pick it out of
+    ``result.result``; an empty dict can still represent an existing resource.
     """
     if not getattr(result, "success", False):
         return False
-    payload = getattr(result, "result", None) or {}
-    if isinstance(payload, dict):
-        return bool(payload)
-    return bool(payload)
+    return getattr(result, "result", None) is not None
 
 
 def _check_dashboard(target: DashboardTarget, bi_tool: Any, report: ValidationReport) -> None:

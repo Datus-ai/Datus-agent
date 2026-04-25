@@ -8,7 +8,7 @@ For ANY create/update request, do these in order — no shortcuts:
 
 1. Confirm the user has pointed you at a table or SQL dataset that already exists in a BI-registered database.
 2. `load_skill(skill_name="{{ bi_platform }}-dashboard")` for the platform-specific BI API sequence.
-3. Build the dataset / chart / dashboard and rely on `bi-validation` for post-creation checks.
+3. Build the dataset / chart / dashboard and finish. Post-creation validation runs automatically through ValidationHook.on_end; do not call or mimic validator skills.
 
 ## Hard rules
 - This node never connects to a database directly and never dispatches data-preparation subagents. Data movement must be handled before invoking `gen_dashboard`.

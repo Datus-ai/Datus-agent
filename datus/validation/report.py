@@ -184,8 +184,9 @@ class TargetFilter(BaseModel):
 
     For BI / scheduler target types (``dashboard`` / ``chart`` / ``dataset`` /
     ``scheduler_job``) the table-oriented fields (``database`` / ``db_schema``
-    / ``table`` / ``table_pattern``) are not applicable and are treated as
-    wildcards — skill authors typically just filter by ``type``.
+    / ``table`` / ``table_pattern``) are exclusive to table-like targets. If
+    any table-oriented field is set, the filter will not match BI / scheduler
+    targets — skill authors typically just filter by ``type``.
     """
 
     model_config = ConfigDict(protected_namespaces=(), populate_by_name=True)
@@ -395,9 +396,9 @@ def _filter_matches(flt: TargetFilter, target: _FilterableTarget) -> bool:
     """Single filter vs single target match. All set fields must match.
 
     Non-table targets (dashboard / chart / dataset / scheduler_job) don't have
-    ``database`` / ``db_schema`` / ``table`` fields — those filter fields are
-    treated as wildcards for them. A set ``database`` filter value on a
-    non-table target therefore does not match (the value can't be satisfied).
+    ``database`` / ``db_schema`` / ``table`` fields. Table-oriented filter
+    fields are exclusive to table-like targets, so setting any of them makes
+    the filter inapplicable to non-table targets.
     """
     if flt.type and flt.type != target.type:
         return False

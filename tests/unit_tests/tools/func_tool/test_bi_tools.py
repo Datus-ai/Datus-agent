@@ -133,6 +133,9 @@ class FullMockAdapter(MockDashboardWriteMixin, MockChartWriteMixin, MockDatasetW
             extra={},
         )
 
+    def get_dataset(self, dataset_id, dashboard_id=None):
+        return _DatasetInfo(id=dataset_id, name="orders", dashboard_id=dashboard_id)
+
 
 class ReadOnlyMockAdapter:
     """Mock adapter with only read operations."""
@@ -153,6 +156,14 @@ class ReadOnlyMockAdapter:
 
     def list_datasets(self, dashboard_id="", limit=50, offset=0):
         return _PaginatedResult(items=[], total=0)
+
+    def get_dataset(self, dataset_id, dashboard_id=None):
+        return None
+
+
+class DatasetErrorAdapter(FullMockAdapter):
+    def get_dataset(self, dataset_id, dashboard_id=None):
+        raise RuntimeError("adapter exploded")
 
 
 class MethodOnlyChartDataAdapter:
@@ -796,6 +807,27 @@ class TestBIFuncToolDeliverableTarget:
         assert hasattr(tool, "get_dataset")
         tool_names = {t.name for t in tool.available_tools()}
         assert "get_dataset" in tool_names
+
+    def test_get_dataset_success(self):
+        tool = self._make_tool()
+        result = tool.get_dataset("3", dashboard_id=None)
+        assert result.success == 1
+        assert result.result["id"] == "3"
+        assert result.result["dashboard_id"] is None
+
+    def test_get_dataset_not_found(self):
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
+            tool = _build_tool(adapter=ReadOnlyMockAdapter())
+        result = tool.get_dataset("missing")
+        assert result.success == 0
+        assert "not found" in result.error
+
+    def test_get_dataset_adapter_exception(self):
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
+            tool = _build_tool(adapter=DatasetErrorAdapter())
+        result = tool.get_dataset("3")
+        assert result.success == 0
+        assert "adapter exploded" in result.error
 
 
 class TestGetBiServingTarget:

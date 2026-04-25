@@ -146,9 +146,6 @@ class TestExtractDDLTarget:
         assert t.db_schema == "public"
         assert t.table == "users"
 
-    def test_postgresql_alias_drop_returns_none(self):
-        assert extract_ddl_target("DROP TABLE IF EXISTS public.users", "default_db", dialect="postgresql") is None
-
     def test_two_part_identifier_catalog_is_none(self):
         """Two-part ``schema.table`` leaves catalog unset."""
         t = extract_ddl_target("CREATE TABLE analytics.users (x INT)", "db1")

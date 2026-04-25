@@ -32,15 +32,13 @@ that table, assemble the dashboard, validate.
 
 Follow these steps **in order**.
 
-### Step 1: Locate the BI database / datasource
+### Step 1: Confirm the Serving Datasource Contract
 
-```python
-list_bi_databases()
-```
-
-Confirm the configured `bi_database_name` / datasource is registered in
-Grafana. If it's missing, bail with a structured error. Do NOT try to
-auto-provision.
+Grafana does not expose `list_bi_databases`. Use `get_bi_serving_target()` when
+available to confirm the configured serving datasource, or proceed with the
+configured `dataset_db.bi_database_name`; `create_chart` resolves the Grafana
+datasource automatically. If the datasource cannot be resolved, bail with a
+structured error. Do NOT try to auto-provision.
 
 ### Step 2: Create Dashboard (`create_dashboard`)
 
@@ -83,19 +81,16 @@ If a chart needs a different data shape and the table isn't available, stop
 and return a structured error listing the missing table. The caller must
 prepare or refresh that data separately before retrying.
 
-### Step 4: Validate the Published Dashboard (`bi-validation`)
+### Step 4: Finish and Let Validation Run
 
-After creating the dashboard and panels, load `bi-validation` and verify:
+After creating the dashboard and panels, finish the run and return the created
+IDs. `bi-validation` is a validator skill invoked automatically by
+`ValidationHook.on_end`; do not call `load_skill("bi-validation")` or try to
+run validator checks manually.
 
-- the dashboard exists and is reachable via `get_dashboard`
-- the expected panels appear via `list_charts`
-- each panel can be inspected via `get_chart(chart_id, dashboard_id)`
-- panel titles and chart types match the intended configuration
-- panel SQL points at the expected tables and uses the correct time alias when required
-- the configuration check covers every panel on the dashboard
-- `get_chart_data` is not available in Grafana yet, so report the data check as unsupported / N/A unless you have a separate reference query or known expected values
-
-Do not report success until this validation pass completes.
+Publish is complete when the creation calls succeed and the dashboard / panel
+identifiers are known. The framework validates reachability and wiring after
+the agent run ends.
 
 ## Viewing & Querying
 

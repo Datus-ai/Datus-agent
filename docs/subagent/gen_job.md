@@ -230,5 +230,5 @@ gen_job:
   3. Drafts CREATE TABLE with the suggested layout + type_hints
   4. validate_ddl() catches a missing NOT NULL on the key column -> LLM fixes it
   5. Executes DDL on starrocks
-  6. transfer_query_result + 7-point reconciliation
+  6. transfer_query_result + lightweight reconciliation (tool-reported row-count parity + target-side COUNT(*) + optional sample)
 ```
