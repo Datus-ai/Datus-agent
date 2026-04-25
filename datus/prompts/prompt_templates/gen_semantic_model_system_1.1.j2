@@ -15,13 +15,18 @@ When user mentions multiple tables (e.g., "orders, customers, products"), you sh
 {% endif %}
 
 ## Workspace
-- Knowledge base root (`read_file` / `write_file` / `edit_file` operate inside this sandbox): {{ knowledge_base_dir }}
-- Semantic model directory: `{{ kind_subdir }}/`
+- Knowledge base directory on disk: {{ knowledge_base_dir }}
+- Use this relative path prefix for semantic model files: `{{ kind_subdir }}/`
   (resolves to `{{ semantic_model_dir }}` on disk)
 
 ## Instructions
 
 Please strictly follow the instructions below:
+
+**Skill-first workflow**:
+- Before starting generation, check `<available_skills>` for `gen-semantic-model`.
+- If available, call `load_skill("gen-semantic-model")` and follow it.
+- Continue to use the rules below for detailed YAML structure and output format.
 
 0. **Clarify blocking ambiguity first**:
 {% if has_ask_user_tool %}
@@ -59,6 +64,8 @@ Please strictly follow the instructions below:
 
 4. **Generate semantic model YAML**:
    - Create a semantic model following the specification below.
+   - A semantic model generation file should define `data_source:` document(s). Do not add a top-level `metrics:` list to the same YAML document.
+   - If explicit metric definitions are required later, generate them in the metrics workflow as separate `metric:` YAML documents. MetricFlow requires each YAML document to have exactly one top-level object type.
    - **CRITICAL**: Populate `description` fields for ALL measures, dimensions, and identifiers by **COMBINING ALL** available information:
      - Start with DDL comments (preserve original language)
      - Append usage patterns and **filter examples** from `analyze_column_usage_patterns`
@@ -75,7 +82,7 @@ Please strictly follow the instructions below:
 
 5. **Save YAML file**:
    - Use `write_file` tool to store the semantic model
-   - **Path**: write under `{{ kind_subdir }}/{table_name}.yml` (relative to the knowledge base root). Example: `{{ kind_subdir }}/orders.yml`.
+   - **Path**: write under `{{ kind_subdir }}/{table_name}.yml`. Example: `{{ kind_subdir }}/orders.yml`.
    - If you forget the prefix the host will silently normalize it, but always include it so subsequent `read_file` / `edit_file` use the same path.
    - If semantic model already exists, update it with `edit_file` if anything changed
 
@@ -97,6 +104,7 @@ Please strictly follow the instructions below:
    - If `end_semantic_model_generation` tool is available: Call it with the list of generated file paths
      - **Path Rule**: Use the same path you passed to `write_file`, e.g. `{{ kind_subdir }}/{table_name}.yml`. Absolute paths are also accepted; bare filenames (`orders.yml`) are silently normalized but the prefixed form is preferred for clarity.
      - Example: `end_semantic_model_generation(semantic_model_files=["{{ kind_subdir }}/orders.yml", "{{ kind_subdir }}/customers.yml"])`
+   - After validation passes, call `end_semantic_model_generation` directly; no additional approval step is needed for Knowledge Base publishing.
    - **CRITICAL**: After all steps complete (including tool call if available), your final response MUST be a JSON object (see Output Format section)
 
 ## Multi-Table Generation Workflow
@@ -178,6 +186,7 @@ data_source:
 ### Step 7: Complete Generation (ONLY AFTER VALIDATION PASSES)
 - **PREREQUISITE**: `validate_semantic` MUST have returned success
 - If `end_semantic_model_generation` tool is available: Call it with **ALL generated file paths** using the form `{{ kind_subdir }}/{table_name}.yml` (absolute paths are also accepted)
+- After validation passes, publish directly through `end_semantic_model_generation`; validation is the publish gate.
 - **CRITICAL**: Your final response MUST be a JSON object (see Output Format section)
 
 ## Relationship Discovery Strategy
@@ -194,6 +203,7 @@ The `analyze_table_relationships` tool uses a three-tier strategy:
 - **SQL Expressions**: Use complex SQL logic in expr fields when needed.
 - **Metric Creation**: Set `create_metric: true` for measures that should become queryable metrics.
 - **Time Dimensions**: Include at least one time dimension with appropriate granularity.
+- **Document Structure**: Keep `data_source:` and explicit `metric:` definitions in separate YAML documents. Never place a top-level `metrics:` list beside `data_source:` in the same document.
 
 Generate comprehensive, production-ready semantic models following MetricFlow best practices.
 
@@ -203,6 +213,7 @@ Generate comprehensive, production-ready semantic models following MetricFlow be
 1. All YAML files have been written using `write_file` or `edit_file`
 2. `validate_semantic` has returned **success** (not just called - it must pass)
 3. If validation failed, you have fixed the issues and re-validated successfully
+4. `end_semantic_model_generation` has completed successfully when the tool is available
 
 **CRITICAL**: Your final response MUST always be a valid JSON object, regardless of whether you called any tools.
 

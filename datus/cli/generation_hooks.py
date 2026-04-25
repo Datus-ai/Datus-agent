@@ -17,11 +17,11 @@ from datus_storage_base.conditions import And, eq
 
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.interaction_event import InteractionEvent
 from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.db_tools import connector_registry
+from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
@@ -134,7 +134,12 @@ class GenerationHooks(AgentHooks):
         "ext_knowledge": "ext_knowledge_path",
     }
 
-    def __init__(self, broker: InteractionBroker, agent_config: AgentConfig = None):
+    def __init__(
+        self,
+        broker: InteractionBroker,
+        agent_config: AgentConfig = None,
+        generation_evidence: Optional[GenerationEvidence] = None,
+    ):
         """
         Initialize generation hooks.
 
@@ -147,6 +152,7 @@ class GenerationHooks(AgentHooks):
         """
         self.broker = broker
         self.agent_config = agent_config
+        self.generation_evidence = generation_evidence or GenerationEvidence()
         self.processed_files = set()  # Track files that have been processed to avoid duplicates
         logger.debug(f"GenerationHooks initialized with config: {agent_config is not None}")
 
@@ -233,10 +239,12 @@ class GenerationHooks(AgentHooks):
 
         logger.debug(f"Tool end: {tool_name}, result type: {type(result)}")
 
-        # Intercept semantic model generation completion
-        if tool_name == "end_semantic_model_generation":
+        if tool_name == "validate_semantic":
+            self.generation_evidence.record_validation_result(result)
+        elif tool_name == "query_metrics":
+            self._record_query_metrics_result(context, result)
+        elif tool_name == "end_semantic_model_generation":
             await self._handle_end_semantic_model_generation(result)
-        # Intercept metric generation completion
         elif tool_name == "end_metric_generation":
             await self._handle_end_metric_generation(result)
         # Intercept write_file tool and check if it's SQL summary
@@ -257,6 +265,25 @@ class GenerationHooks(AgentHooks):
     async def on_end(self, context, agent, output) -> None:
         pass
 
+    def _result_success(self, result) -> bool:
+        if isinstance(result, dict):
+            return result.get("success", 1) in (1, True)
+        if hasattr(result, "success"):
+            return result.success in (1, True)
+        return False
+
+    def _record_query_metrics_result(self, context, result) -> None:
+        try:
+            if not hasattr(context, "tool_arguments") or not context.tool_arguments:
+                return
+            tool_args = json.loads(context.tool_arguments)
+            if not isinstance(tool_args, dict) or tool_args.get("dry_run") is not True:
+                return
+            metrics = tool_args.get("metrics") or []
+            self.generation_evidence.record_metric_dry_run(metrics, result)
+        except Exception as e:
+            logger.debug(f"Error recording query_metrics evidence: {e}")
+
     async def _handle_end_semantic_model_generation(self, result):
         """
         Handle end_semantic_model_generation tool result.
@@ -265,6 +292,10 @@ class GenerationHooks(AgentHooks):
             result: Tool result containing semantic_model_files list
         """
         try:
+            if not self._result_success(result):
+                logger.info(f"Skipping semantic model sync because generation tool failed: {result}")
+                return
+
             file_paths = self._extract_filepaths_from_result(result)
 
             if not file_paths:
@@ -290,6 +321,10 @@ class GenerationHooks(AgentHooks):
             result: Tool result containing metric_file, optional semantic_model_file, and metric_sqls
         """
         try:
+            if not self._result_success(result):
+                logger.info(f"Skipping metric sync because generation tool failed: {result}")
+                return
+
             metric_file, semantic_model_file, metric_sqls = self._extract_metric_generation_result(result)
 
             if not metric_file:
@@ -374,7 +409,7 @@ class GenerationHooks(AgentHooks):
 
     async def _process_single_file(self, file_path: str, metric_sqls: dict = None):
         """
-        Process a single YAML file: display and get user confirmation.
+        Process a single YAML file and sync it to Knowledge Base.
 
         Args:
             file_path: Path to the YAML file
@@ -401,15 +436,7 @@ class GenerationHooks(AgentHooks):
         # Mark file as processed
         self.processed_files.add(file_path)
 
-        # Build display content (markdown format)
-        display_content = f"## Generated YAML: {os.path.basename(file_path)}\n\n"
-        display_content += f"*Path: {file_path}*\n\n"
-        display_content += f"```yaml\n{yaml_content}\n```\n"
-
-        # Get user confirmation to sync (content will be shown in request)
-        await self._get_sync_confirmation(
-            yaml_content, file_path, "semantic", metric_sqls=metric_sqls, display_content=display_content
-        )
+        await self._sync_generated_file(yaml_content, file_path, "semantic", metric_sqls=metric_sqls)
 
     async def _process_metric_with_semantic_model(
         self, semantic_model_file: str, metric_file: str, metric_sqls: dict = None
@@ -456,19 +483,7 @@ class GenerationHooks(AgentHooks):
             logger.warning("Empty content in semantic model or metric file")
             return
 
-        # Build display content (markdown format) with both files
-        display_content = f"## Generated Semantic Model: {os.path.basename(semantic_model_file)}\n\n"
-        display_content += f"*Path: {semantic_model_file}*\n\n"
-        display_content += f"```yaml\n{semantic_content}\n```\n\n"
-        display_content += "---\n\n"
-        display_content += f"## Generated Metric: {os.path.basename(metric_file)}\n\n"
-        display_content += f"*Path: {metric_file}*\n\n"
-        display_content += f"```yaml\n{metric_content}\n```\n"
-
-        # Get user confirmation to sync both files together
-        await self._get_sync_confirmation_for_pair(
-            semantic_model_file, metric_file, metric_sqls, display_content=display_content
-        )
+        await self._sync_generated_pair(semantic_model_file, metric_file, metric_sqls)
 
     async def _handle_sql_summary_result(self, result):
         """
@@ -524,13 +539,7 @@ class GenerationHooks(AgentHooks):
                 logger.warning(f"Empty content in {file_path}")
                 return
 
-            # Build display content (markdown format)
-            display_content = "## Generated Reference SQL YAML\n\n"
-            display_content += f"*File: {file_path}*\n\n"
-            display_content += f"```yaml\n{yaml_content}\n```\n"
-
-            # Get user confirmation to sync (this is for SQL summary)
-            await self._get_sync_confirmation(yaml_content, file_path, "sql_summary", display_content=display_content)
+            await self._sync_generated_file(yaml_content, file_path, "sql_summary")
 
         except GenerationCancelledException:
             raise
@@ -591,20 +600,14 @@ class GenerationHooks(AgentHooks):
                 logger.warning(f"Empty content in {file_path}")
                 return
 
-            # Build display content (markdown format)
-            display_content = "## Generated External Knowledge YAML\n\n"
-            display_content += f"*File: {file_path}*\n\n"
-            display_content += f"```yaml\n{yaml_content}\n```\n"
-
-            # Get user confirmation to sync (this is for external knowledge)
-            await self._get_sync_confirmation(yaml_content, file_path, "ext_knowledge", display_content=display_content)
+            await self._sync_generated_file(yaml_content, file_path, "ext_knowledge")
 
         except GenerationCancelledException:
             raise
         except Exception as e:
             logger.error(f"Error handling write_file_ext_knowledge result: {e}", exc_info=True)
 
-    async def _get_sync_confirmation_for_pair(
+    async def _sync_generated_pair(
         self,
         semantic_model_file: str,
         metric_file: str,
@@ -612,42 +615,26 @@ class GenerationHooks(AgentHooks):
         display_content: str = "",
     ):
         """
-        Get user confirmation to sync semantic model and metric files together to Knowledge Base.
+        Sync semantic model and metric files together to Knowledge Base.
 
         Args:
             semantic_model_file: Path to semantic model YAML file
             metric_file: Path to metric YAML file
             metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
-            display_content: Pre-built markdown content to display (headers + YAML contents)
+            display_content: Deprecated. Kept for caller compatibility; ignored.
         """
         try:
-            request_content = f"{display_content}\n### Sync to Knowledge Base?"
-
-            answers = await self.broker.request(
-                [
-                    InteractionEvent(
-                        title="Sync",
-                        content=request_content,
-                        choices={"y": "Yes - Save to Knowledge Base", "n": "No - Keep file only"},
-                        default_choice="y",
-                    )
-                ]
-            )
-            choice = answers[0][0] if answers and answers[0] else ""
-
-            if choice == "y":
-                await self._sync_semantic_and_metric(semantic_model_file, metric_file, metric_sqls)
-            # else: keep files only, no action needed
+            await self._sync_semantic_and_metric(semantic_model_file, metric_file, metric_sqls)
 
         except InteractionCancelled:
             raise GenerationCancelledException("User interrupted")
         except GenerationCancelledException:
             raise
         except Exception as e:
-            logger.error(f"Error in sync confirmation: {e}", exc_info=True)
+            logger.error(f"Error during Knowledge Base sync: {e}", exc_info=True)
             raise
 
-    async def _get_sync_confirmation(
+    async def _sync_generated_file(
         self,
         yaml_content: str,
         file_path: str,
@@ -656,44 +643,24 @@ class GenerationHooks(AgentHooks):
         display_content: str = "",
     ):
         """
-        Get user confirmation to sync to Knowledge Base.
+        Sync a generated YAML file to Knowledge Base.
 
         Args:
             yaml_content: Generated YAML content
             file_path: Path where YAML was saved
             yaml_type: YAML type - "semantic" or "sql_summary"
             metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
-            display_content: Pre-built markdown content to display (header + YAML)
+            display_content: Deprecated. Kept for caller compatibility; ignored.
         """
         try:
-            if not display_content:
-                display_content = f"## Generated YAML: {os.path.basename(file_path)}\n\n"
-                display_content += f"*Path: {file_path}*\n\n"
-                display_content += f"```yaml\n{yaml_content}\n```\n\n"
-
-            request_content = f"{display_content}\n### Sync to Knowledge Base?"
-
-            answers = await self.broker.request(
-                [
-                    InteractionEvent(
-                        title="Sync",
-                        content=request_content,
-                        choices={"y": "Yes - Save to Knowledge Base", "n": "No - Keep file only"},
-                        default_choice="y",
-                    )
-                ]
-            )
-            choice = answers[0][0] if answers and answers[0] else ""
-
-            if choice == "y":
-                await self._sync_to_storage(file_path, yaml_type, metric_sqls=metric_sqls)
+            await self._sync_to_storage(file_path, yaml_type, metric_sqls=metric_sqls)
 
         except InteractionCancelled:
             raise GenerationCancelledException("User interrupted")
         except GenerationCancelledException:
             raise
         except Exception as e:
-            logger.error(f"Error in sync confirmation: {e}", exc_info=True)
+            logger.error(f"Error during Knowledge Base sync: {e}", exc_info=True)
             raise
 
     async def _sync_to_storage(self, file_path: str, yaml_type: str, metric_sqls: dict = None) -> str:
@@ -737,6 +704,10 @@ class GenerationHooks(AgentHooks):
                 return f"**Error:** Invalid yaml_type: {yaml_type}\n\nYAML saved to file: `{file_path}`"
 
             if result.get("success"):
+                if yaml_type == "semantic":
+                    self.generation_evidence.mark_kb_sync("semantic")
+                else:
+                    self.generation_evidence.mark_kb_sync(yaml_type)
                 result_content = f"**Successfully synced {item_type} to Knowledge Base**\n\n"
                 message = result.get("message", "")
                 if message:
@@ -806,6 +777,7 @@ class GenerationHooks(AgentHooks):
                 )
 
                 if result.get("success"):
+                    self.generation_evidence.mark_kb_sync("metric")
                     result_content = "**Successfully synced semantic model and metrics to Knowledge Base**\n\n"
                     message = result.get("message", "")
                     if message:
@@ -1159,9 +1131,17 @@ class GenerationHooks(AgentHooks):
                     if m_type == "measure_proxy":
                         # Single measure reference
                         measure = type_params.get("measure")
-                        if measure:
+                        if isinstance(measure, str):
                             measure_expr = measure
                             base_measures = [measure]
+                        elif isinstance(measure, dict):
+                            measure_name = measure.get("name", "")
+                            if measure_name:
+                                measure_expr = str(measure_name)
+                                base_measures = [str(measure_name)]
+                                constraint = measure.get("constraint")
+                                if constraint:
+                                    measure_expr = f"{measure_expr} WHERE {constraint}"
                         # Or multiple measures
                         measures_list = type_params.get("measures", [])
                         for m in measures_list:

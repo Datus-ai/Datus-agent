@@ -19,6 +19,7 @@ from datus.storage.metric.store import MetricRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.func_tool.attribution_utils import DimensionAttributionUtil
 from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, normalize_null, trans_to_function_tool
+from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.semantic_tools.base import BaseSemanticAdapter
 from datus.tools.semantic_tools.models import AnomalyContext
 from datus.tools.semantic_tools.registry import semantic_adapter_registry
@@ -92,6 +93,7 @@ class SemanticTools:
         agent_config: AgentConfig,
         sub_agent_name: Optional[str] = None,
         adapter_type: Optional[str] = None,
+        generation_evidence: Optional[GenerationEvidence] = None,
     ):
         """
         Initialize semantic function tool.
@@ -104,6 +106,7 @@ class SemanticTools:
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
         self.adapter_type = adapter_type
+        self.generation_evidence = generation_evidence
 
         # Initialize storage RAG interfaces
         self.semantic_model_rag = SemanticModelRAG(agent_config, sub_agent_name)
@@ -513,10 +516,13 @@ class SemanticTools:
                 "metadata": safe_metadata,
             }
 
-            return FuncToolResult(
+            tool_result = FuncToolResult(
                 success=1,
                 result=result_dict,
             )
+            if dry_run and self.generation_evidence:
+                self.generation_evidence.record_metric_dry_run(metrics, tool_result)
+            return tool_result
 
         except Exception as e:
             logger.error(f"Error querying metrics: {e}")
@@ -558,11 +564,14 @@ class SemanticTools:
                 logger.info("Validation succeeded, reloading adapter to pick up new metrics...")
                 self._reload_adapter()
 
-            return FuncToolResult(
+            tool_result = FuncToolResult(
                 success=1 if validation_result.valid else 0,
                 result={"valid": validation_result.valid, "issues": issues_data},
                 error=None if validation_result.valid else f"{len(validation_result.issues)} validation errors",
             )
+            if self.generation_evidence:
+                self.generation_evidence.record_validation_result(tool_result)
+            return tool_result
 
         except Exception as e:
             logger.error(f"Error validating semantic config: {e}", exc_info=True)

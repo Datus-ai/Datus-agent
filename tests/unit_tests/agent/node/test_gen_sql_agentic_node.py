@@ -15,7 +15,7 @@ real PathManager.
 """
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -1500,22 +1500,19 @@ def _create_test_semantic_yaml(file_path: str) -> None:
 
 
 class TestEndToEndGenerationHooksInteraction:
-    """End-to-end tests: ChatAgenticNode + GenerationHooks → LLM calls end_semantic_model_generation →
-    on_tool_end → _handle_end_semantic_model_generation → _get_sync_confirmation → broker.request → submit.
+    """End-to-end tests: ChatAgenticNode + GenerationHooks -> LLM calls end_semantic_model_generation ->
+    on_tool_end -> _handle_end_semantic_model_generation -> direct Knowledge Base sync.
 
     Tests the full production flow for generation hooks interactions:
     1. ChatAgenticNode is created with a fake end_semantic_model_generation tool
     2. GenerationHooks is attached via the node's permission_hooks slot
     3. MockLLM calls end_semantic_model_generation with YAML file path
-    4. GenerationHooks.on_tool_end reads the YAML file and calls broker.request(y/n)
-    5. UI simulator submits choice
-    6. Hook processes sync or skip accordingly
+    4. GenerationHooks.on_tool_end reads the YAML file and syncs it directly
     """
 
     @pytest.mark.asyncio
-    async def test_e2e_generation_hooks_user_approves_sync(self, real_agent_config, mock_llm_create, tmp_path):
-        """Full flow: LLM calls end_semantic_model_generation → user approves sync ('y') → sync to KB."""
-        import asyncio
+    async def test_e2e_generation_hooks_auto_syncs_to_kb(self, real_agent_config, mock_llm_create, tmp_path):
+        """Full flow: LLM calls end_semantic_model_generation -> syncs to KB without a prompt."""
         import os
 
         from agents import FunctionTool
@@ -1584,51 +1581,28 @@ class TestEndToEndGenerationHooksInteraction:
             database="california_schools",
         )
 
-        # Concurrent UI simulator: approve sync ('y')
-        async def ui_approve_sync():
-            for _ in range(300):
-                await asyncio.sleep(0.02)
-                if broker.has_pending:
-                    action_id = list(broker._pending.keys())[0]
-                    await broker.submit(action_id, [["y"]])  # Yes - Save to KB
-                    return
-            pytest.fail("Timed out waiting for generation sync interaction")
-
-        ui_task = asyncio.create_task(ui_approve_sync())
-
         ahm = ActionHistoryManager()
         actions = []
-        async for action in node.execute_stream_with_interactions(ahm):
-            actions.append(action)
-
-        await ui_task
+        with patch.object(GenerationHooks, "_sync_to_storage", new_callable=AsyncMock) as mock_sync_to_storage:
+            async for action in node.execute_stream_with_interactions(ahm):
+                actions.append(action)
 
         # Verify the tool was executed
         end_gen_results = [r for r in mock_llm_create.tool_results if r["tool"] == "end_semantic_model_generation"]
         assert len(end_gen_results) >= 1
         assert end_gen_results[0]["executed"] is True
 
-        # Verify INTERACTION actions appeared in the merged stream
-        interaction_actions = [a for a in actions if a.role == ActionRole.INTERACTION]
-        assert len(interaction_actions) >= 1
+        mock_sync_to_storage.assert_awaited_once_with(yaml_path, "semantic", metric_sqls=None)
 
-        # Verify the PROCESSING interaction contained the YAML display prompt
-        processing_interactions = [
-            a for a in actions if a.role == ActionRole.INTERACTION and a.status == ActionStatus.PROCESSING
-        ]
-        assert len(processing_interactions) >= 1
-        # The interaction content should reference the YAML file
-        interaction_input = processing_interactions[0].input
-        assert isinstance(interaction_input, dict)
-        events = interaction_input.get("events", [])
-        assert events
-        content = events[0].get("content", "")
-        assert "Sync to Knowledge Base" in content or "yaml" in content.lower()
+        # Direct sync should not create a user interaction.
+        interaction_actions = [a for a in actions if a.role == ActionRole.INTERACTION]
+        assert len(interaction_actions) == 0
 
     @pytest.mark.asyncio
-    async def test_e2e_generation_hooks_user_declines_sync(self, real_agent_config, mock_llm_create, tmp_path):
-        """Full flow: LLM calls end_semantic_model_generation → user declines sync ('n') → file kept only."""
-        import asyncio
+    async def test_e2e_generation_hooks_sync_error_logs_without_prompt(
+        self, real_agent_config, mock_llm_create, tmp_path, caplog
+    ):
+        """Full flow: sync errors are logged without falling back to a prompt."""
         import os
 
         from agents import FunctionTool
@@ -1639,7 +1613,7 @@ class TestEndToEndGenerationHooksInteraction:
         # Create a real YAML file under the project subject_dir so GenerationHooks
         # path containment check accepts it.
         semantic_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
-        yaml_path = os.path.join(str(semantic_dir), "test_semantic_decline.yaml")
+        yaml_path = os.path.join(str(semantic_dir), "test_semantic_sync_error.yaml")
         _create_test_semantic_yaml(yaml_path)
 
         # Create a fake end_semantic_model_generation tool
@@ -1690,45 +1664,30 @@ class TestEndToEndGenerationHooksInteraction:
         node.permission_hooks = generation_hooks
 
         node.input = ChatNodeInput(
-            user_message="Generate but decline sync",
+            user_message="Generate semantic model",
             database="california_schools",
         )
 
-        # Concurrent UI simulator: decline sync ('n')
-        async def ui_decline_sync():
-            for _ in range(300):
-                await asyncio.sleep(0.02)
-                if broker.has_pending:
-                    action_id = list(broker._pending.keys())[0]
-                    await broker.submit(action_id, [["n"]])  # No - Keep file only
-                    return
-            pytest.fail("Timed out waiting for generation sync interaction")
-
-        ui_task = asyncio.create_task(ui_decline_sync())
-
+        caplog.set_level("ERROR", logger="datus.cli.generation_hooks")
         ahm = ActionHistoryManager()
         actions = []
-        async for action in node.execute_stream_with_interactions(ahm):
-            actions.append(action)
-
-        await ui_task
+        with patch.object(
+            GenerationHooks,
+            "_sync_to_storage",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("sync failed"),
+        ) as mock_sync_to_storage:
+            async for action in node.execute_stream_with_interactions(ahm):
+                actions.append(action)
 
         # Verify the tool was executed
         end_gen_results = [r for r in mock_llm_create.tool_results if r["tool"] == "end_semantic_model_generation"]
         assert len(end_gen_results) >= 1
+        mock_sync_to_storage.assert_awaited_once_with(yaml_path, "semantic", metric_sqls=None)
 
-        # Verify INTERACTION actions in stream
         interaction_actions = [a for a in actions if a.role == ActionRole.INTERACTION]
-        assert len(interaction_actions) >= 1
-
-        # Verify the SUCCESS action indicates the user declined ('n')
-        success_interactions = [
-            a for a in actions if a.role == ActionRole.INTERACTION and a.status == ActionStatus.SUCCESS
-        ]
-        assert len(success_interactions) >= 1
-        callback_output = success_interactions[0].output
-        assert isinstance(callback_output, dict)
-        assert callback_output.get("user_choice") == [["n"]]
+        assert len(interaction_actions) == 0
+        assert "Error handling end_semantic_model_generation: sync failed" in caplog.text
 
     @pytest.mark.asyncio
     async def test_e2e_generation_hooks_no_yaml_no_interaction(self, real_agent_config, mock_llm_create, tmp_path):

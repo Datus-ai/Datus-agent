@@ -161,8 +161,8 @@ class TestInitSuccessStoryMetricsAsync:
         assert "extra_instructions" in param_names
 
     @pytest.mark.asyncio
-    async def test_batch_flow_pins_prompt_version_1_1(self):
-        """Batch flow must pin prompt_version='1.1' to avoid using v1.2 interactive prompt."""
+    async def test_batch_flow_uses_latest_prompt_version(self):
+        """Batch flow uses the latest gen_metrics prompt instead of pinning an old version."""
         from unittest.mock import patch
 
         from datus.schemas.action_history import ActionStatus
@@ -176,6 +176,7 @@ class TestInitSuccessStoryMetricsAsync:
             captured_input["input"] = mock_node.input
             action = MagicMock()
             action.status = ActionStatus.SUCCESS
+            action.action_type = "metrics_response"
             action.output = {"response": "done"}
             action.messages = "ok"
             yield action
@@ -184,11 +185,14 @@ class TestInitSuccessStoryMetricsAsync:
 
         mock_config = MagicMock()
         mock_config.current_db_config.return_value = MagicMock(catalog="", database="test_db", schema="")
+        mock_prompt_manager = MagicMock()
+        mock_prompt_manager.get_latest_version.return_value = "1.2"
 
         import pandas as pd
 
         with (
             patch("datus.storage.metric.metric_init.extract_tables_from_sql_list", return_value=[]),
+            patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_prompt_manager),
             patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", return_value=mock_node),
             patch("datus.storage.metric.metric_init.pd.read_csv") as mock_read_csv,
         ):
@@ -200,7 +204,107 @@ class TestInitSuccessStoryMetricsAsync:
 
         assert success is True
         node_input = captured_input["input"]
-        assert node_input.prompt_version == "1.1", f"Expected '1.1', got '{node_input.prompt_version}'"
+        assert node_input.prompt_version == "1.2", f"Expected latest '1.2', got '{node_input.prompt_version}'"
+
+    @pytest.mark.asyncio
+    async def test_batch_flow_failed_action_returns_failure(self):
+        """A final node failure must not be masked by earlier successful tool actions."""
+        from unittest.mock import patch
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.storage.metric.metric_init import init_success_story_metrics_async
+
+        mock_node = MagicMock()
+
+        async def fake_execute_stream(action_manager):
+            tool_action = MagicMock()
+            tool_action.status = ActionStatus.SUCCESS
+            tool_action.action_type = "write_file"
+            tool_action.output = {"raw_output": {"success": 1}}
+            tool_action.messages = "tool ok"
+            yield tool_action
+
+            failed_action = MagicMock()
+            failed_action.status = ActionStatus.FAILED
+            failed_action.action_type = "error"
+            failed_action.output = {"error": "Metric generation did not publish to Knowledge Base"}
+            failed_action.messages = "Metric generation did not publish to Knowledge Base"
+            yield failed_action
+
+        mock_node.execute_stream = fake_execute_stream
+
+        mock_config = MagicMock()
+        mock_config.current_db_config.return_value = MagicMock(catalog="", database="test_db", schema="")
+        mock_prompt_manager = MagicMock()
+        mock_prompt_manager.get_latest_version.return_value = "1.2"
+
+        import pandas as pd
+
+        with (
+            patch("datus.storage.metric.metric_init.extract_tables_from_sql_list", return_value=[]),
+            patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_prompt_manager),
+            patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", return_value=mock_node),
+            patch("datus.storage.metric.metric_init.pd.read_csv") as mock_read_csv,
+        ):
+            mock_read_csv.return_value = pd.DataFrame([{"question": "Revenue?", "sql": "SELECT SUM(a) FROM t"}])
+            success, error, result = await init_success_story_metrics_async(
+                agent_config=mock_config,
+                success_story="dummy.csv",
+            )
+
+        assert success is False
+        assert result is None
+        assert "did not publish" in error
+
+    @pytest.mark.asyncio
+    async def test_batch_flow_allows_recoverable_tool_failure(self):
+        """A failed intermediate tool action should not abort a later successful metrics response."""
+        from unittest.mock import patch
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.storage.metric.metric_init import init_success_story_metrics_async
+
+        mock_node = MagicMock()
+
+        async def fake_execute_stream(action_manager):
+            failed_tool_action = MagicMock()
+            failed_tool_action.status = ActionStatus.FAILED
+            failed_tool_action.action_type = "validate_semantic"
+            failed_tool_action.output = {"raw_output": {"success": 0, "error": "invalid yaml"}}
+            failed_tool_action.messages = "validation failed"
+            yield failed_tool_action
+
+            final_action = MagicMock()
+            final_action.status = ActionStatus.SUCCESS
+            final_action.action_type = "metrics_response"
+            final_action.output = {"response": "done"}
+            final_action.messages = "ok"
+            yield final_action
+
+        mock_node.execute_stream = fake_execute_stream
+
+        mock_config = MagicMock()
+        mock_config.current_db_config.return_value = MagicMock(catalog="", database="test_db", schema="")
+        mock_prompt_manager = MagicMock()
+        mock_prompt_manager.get_latest_version.return_value = "1.2"
+
+        import pandas as pd
+
+        with (
+            patch("datus.storage.metric.metric_init.extract_tables_from_sql_list", return_value=[]),
+            patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_prompt_manager),
+            patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", return_value=mock_node),
+            patch("datus.storage.metric.metric_init.pd.read_csv") as mock_read_csv,
+        ):
+            mock_read_csv.return_value = pd.DataFrame([{"question": "Revenue?", "sql": "SELECT SUM(a) FROM t"}])
+            success, error, result = await init_success_story_metrics_async(
+                agent_config=mock_config,
+                success_story="dummy.csv",
+            )
+
+        assert success is True
+        assert error == ""
+        assert result == {"response": "done"}
 
 
 # ---------------------------------------------------------------------------

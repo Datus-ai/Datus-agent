@@ -22,14 +22,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from datus.cli.execution_state import InteractionCancelled
 from datus.cli.generation_hooks import (
     GenerationCancelledException,
     GenerationHooks,
     normalize_kb_relative_path,
     resolve_kb_sandbox_path,
 )
+from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool  # noqa: F401
+from datus.tools.func_tool.generation_evidence import GenerationEvidence
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -138,6 +139,38 @@ class TestOnToolEnd:
         tool.__name__ = "end_semantic_model_generation"
         await hooks.on_tool_end(MagicMock(), MagicMock(), tool, "result")
         hooks._handle_end_semantic_model_generation.assert_awaited_once()
+
+    async def test_records_validate_semantic_success(self, broker, agent_config):
+        evidence = GenerationEvidence()
+        hooks = GenerationHooks(broker=broker, agent_config=agent_config, generation_evidence=evidence)
+        tool = MagicMock()
+        tool.name = "validate_semantic"
+        result = FuncToolResult(success=1, result={"valid": True, "issues": []})
+
+        await hooks.on_tool_end(MagicMock(), MagicMock(), tool, result)
+
+        assert evidence.validation_passed is True
+
+    async def test_records_query_metrics_dry_run_success(self, broker, agent_config):
+        evidence = GenerationEvidence()
+        hooks = GenerationHooks(broker=broker, agent_config=agent_config, generation_evidence=evidence)
+        tool = MagicMock()
+        tool.name = "query_metrics"
+        ctx = MagicMock()
+        ctx.tool_arguments = json.dumps({"metrics": ["revenue"], "dry_run": True})
+        result = FuncToolResult(
+            success=1,
+            result={
+                "columns": [],
+                "data": [],
+                "metadata": {"sql": "SELECT SUM(revenue) AS revenue FROM orders"},
+            },
+        )
+
+        await hooks.on_tool_end(ctx, MagicMock(), tool, result)
+
+        assert evidence.metric_dry_run_passed is True
+        assert evidence.metric_sqls == {"revenue": "SELECT SUM(revenue) AS revenue FROM orders"}
 
 
 # ---------------------------------------------------------------------------
@@ -321,12 +354,12 @@ class TestResolvePath:
 @pytest.mark.asyncio
 class TestProcessSingleFile:
     async def test_file_not_found(self, hooks):
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         await hooks._process_single_file("/nonexistent/file.yaml")
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
     async def test_empty_file_skipped(self, hooks):
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write("")  # empty
             path = f.name
@@ -334,10 +367,10 @@ class TestProcessSingleFile:
             await hooks._process_single_file(path)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
     async def test_already_processed_skipped(self, hooks):
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write("key: value\n")
             path = f.name
@@ -346,10 +379,10 @@ class TestProcessSingleFile:
             await hooks._process_single_file(path)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
-    async def test_happy_path_calls_confirmation(self, hooks):
-        hooks._get_sync_confirmation = AsyncMock()
+    async def test_happy_path_auto_syncs(self, hooks):
+        hooks._sync_generated_file = AsyncMock()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write("key: value\n")
             path = f.name
@@ -357,7 +390,7 @@ class TestProcessSingleFile:
             await hooks._process_single_file(path)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_awaited_once()
+        hooks._sync_generated_file.assert_awaited_once()
         assert path in hooks.processed_files
 
 
@@ -369,16 +402,16 @@ class TestProcessSingleFile:
 @pytest.mark.asyncio
 class TestHandleSqlSummaryResult:
     async def test_no_file_path_returns_early(self, hooks):
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         result = {"result": "some unrelated message"}
         await hooks._handle_sql_summary_result(result)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
     async def test_file_not_exists_returns_early(self, hooks):
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         result = {"result": "File written successfully: /nonexistent/path.sql"}
         await hooks._handle_sql_summary_result(result)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +421,19 @@ class TestHandleSqlSummaryResult:
 
 @pytest.mark.asyncio
 class TestHandleEndSemanticModelGeneration:
+    async def test_failed_tool_result_skips_sync(self, hooks, agent_config):
+        hooks._process_single_file = AsyncMock()
+        sem_dir = Path(str(agent_config.path_manager.subject_dir)) / "semantic_models"
+        result = FuncToolResult(
+            success=0,
+            error="validate_semantic must pass",
+            result={"semantic_model_files": [str(sem_dir / "a.yaml")]},
+        )
+
+        await hooks._handle_end_semantic_model_generation(result)
+
+        hooks._process_single_file.assert_not_called()
+
     async def test_no_file_paths_logs_warning(self, hooks):
         hooks._process_single_file = AsyncMock()
         result = {"result": {}}  # no semantic_model_files
@@ -492,23 +538,23 @@ class TestIsExtKnowledgeToolCall:
 class TestHandleSqlSummaryResultExtended:
     async def test_result_object_with_no_match(self, hooks):
         """result.result doesn't match expected pattern -> early return."""
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         result = MagicMock()
         result.result = "Some unrelated message"
         await hooks._handle_sql_summary_result(result)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
     async def test_result_object_file_written_but_not_exists(self, hooks):
         """result.result matches pattern but file doesn't exist -> early return."""
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         result = MagicMock()
         result.result = "File written successfully: /nonexistent/path.yaml"
         await hooks._handle_sql_summary_result(result)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
     async def test_already_processed_skipped(self, hooks):
         """File already in processed_files -> skipped."""
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write("name: test_sql\nsql: SELECT 1\n")
             path = f.name
@@ -518,11 +564,11 @@ class TestHandleSqlSummaryResultExtended:
             await hooks._handle_sql_summary_result(result)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
-    async def test_happy_path_calls_confirmation(self, hooks, agent_config):
-        """File exists with content -> confirmation called."""
-        hooks._get_sync_confirmation = AsyncMock()
+    async def test_happy_path_auto_syncs(self, hooks, agent_config):
+        """File exists with content -> sync called."""
+        hooks._sync_generated_file = AsyncMock()
         sql_dir = Path(str(agent_config.path_manager.subject_dir)) / "sql_summaries"
         path_obj = sql_dir / "q_happy.yaml"
         path_obj.write_text("name: test_sql\nsql: SELECT 1\n")
@@ -532,12 +578,12 @@ class TestHandleSqlSummaryResultExtended:
             await hooks._handle_sql_summary_result(result)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_awaited_once()
+        hooks._sync_generated_file.assert_awaited_once()
         assert path in hooks.processed_files
 
     async def test_reference_sql_file_written_pattern(self, hooks, agent_config):
         """'Reference SQL file written successfully:' pattern is also matched."""
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         sql_dir = Path(str(agent_config.path_manager.subject_dir)) / "sql_summaries"
         path_obj = sql_dir / "q_ref.yaml"
         path_obj.write_text("name: test_sql\nsql: SELECT 1\n")
@@ -547,7 +593,7 @@ class TestHandleSqlSummaryResultExtended:
             await hooks._handle_sql_summary_result(result)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_awaited_once()
+        hooks._sync_generated_file.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -558,19 +604,19 @@ class TestHandleSqlSummaryResultExtended:
 @pytest.mark.asyncio
 class TestHandleExtKnowledgeResult:
     async def test_no_match_returns_early(self, hooks):
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         result = {"result": "unrelated message"}
         await hooks._handle_ext_knowledge_result(result)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
     async def test_file_not_exists_returns_early(self, hooks):
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         result = {"result": "File written successfully: /nonexistent/ext.yaml"}
         await hooks._handle_ext_knowledge_result(result)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
-    async def test_happy_path_calls_confirmation(self, hooks, agent_config):
-        hooks._get_sync_confirmation = AsyncMock()
+    async def test_happy_path_auto_syncs(self, hooks, agent_config):
+        hooks._sync_generated_file = AsyncMock()
         ext_dir = Path(str(agent_config.path_manager.subject_dir)) / "ext_knowledge"
         path_obj = ext_dir / "ext_happy.yaml"
         path_obj.write_text("key: value\n")
@@ -580,11 +626,11 @@ class TestHandleExtKnowledgeResult:
             await hooks._handle_ext_knowledge_result(result)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_awaited_once()
+        hooks._sync_generated_file.assert_awaited_once()
         assert path in hooks.processed_files
 
     async def test_ext_knowledge_file_written_pattern(self, hooks, agent_config):
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         ext_dir = Path(str(agent_config.path_manager.subject_dir)) / "ext_knowledge"
         path_obj = ext_dir / "ext_pattern.yaml"
         path_obj.write_text("key: value\n")
@@ -594,10 +640,10 @@ class TestHandleExtKnowledgeResult:
             await hooks._handle_ext_knowledge_result(result)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_awaited_once()
+        hooks._sync_generated_file.assert_awaited_once()
 
     async def test_already_processed_skipped(self, hooks):
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write("key: value\n")
             path = f.name
@@ -607,10 +653,10 @@ class TestHandleExtKnowledgeResult:
             await hooks._handle_ext_knowledge_result(result)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
     async def test_empty_file_returns_early(self, hooks):
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write("")
             path = f.name
@@ -619,10 +665,10 @@ class TestHandleExtKnowledgeResult:
             await hooks._handle_ext_knowledge_result(result)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
     async def test_result_object_with_match(self, hooks, agent_config):
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         ext_dir = Path(str(agent_config.path_manager.subject_dir)) / "ext_knowledge"
         path_obj = ext_dir / "ext_match.yaml"
         path_obj.write_text("key: value\n")
@@ -633,61 +679,52 @@ class TestHandleExtKnowledgeResult:
             await hooks._handle_ext_knowledge_result(result)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_awaited_once()
+        hooks._sync_generated_file.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
-# Tests: _get_sync_confirmation
+# Tests: _sync_generated_file
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-class TestGetSyncConfirmation:
-    async def test_choice_yes_calls_sync(self, hooks):
-        hooks.broker.request = AsyncMock(return_value=[["y"]])
+class TestSyncGeneratedFile:
+    async def test_auto_sync_calls_sync(self, hooks):
+        hooks.broker.request = AsyncMock()
         hooks._sync_to_storage = AsyncMock(return_value="Synced!")
 
-        await hooks._get_sync_confirmation(
+        await hooks._sync_generated_file(
             yaml_content="key: val",
             file_path="/tmp/test.yaml",
             yaml_type="semantic",
         )
 
         hooks._sync_to_storage.assert_awaited_once()
+        hooks.broker.request.assert_not_awaited()
 
-    async def test_choice_no_skips_sync(self, hooks):
-        hooks.broker.request = AsyncMock(return_value=[["n"]])
-        hooks._sync_to_storage = AsyncMock()
+    async def test_auto_sync_ignores_deprecated_display_content(self, hooks):
+        hooks.broker.request = AsyncMock()
+        hooks._sync_to_storage = AsyncMock(return_value="Synced!")
 
-        await hooks._get_sync_confirmation(
-            yaml_content="key: val",
-            file_path="/tmp/test.yaml",
-            yaml_type="semantic",
-        )
-
-        hooks._sync_to_storage.assert_not_called()
-
-    async def test_interaction_cancelled_raises_generation_cancelled(self, hooks):
-        hooks.broker.request = AsyncMock(side_effect=InteractionCancelled())
-
-        with pytest.raises(GenerationCancelledException):
-            await hooks._get_sync_confirmation(
-                yaml_content="key: val",
-                file_path="/tmp/test.yaml",
-                yaml_type="semantic",
-            )
-
-    async def test_with_prebuilt_display_content(self, hooks):
-        hooks.broker.request = AsyncMock(return_value=[["n"]])
-
-        await hooks._get_sync_confirmation(
+        await hooks._sync_generated_file(
             yaml_content="key: val",
             file_path="/tmp/test.yaml",
             yaml_type="sql_summary",
             display_content="## Pre-built header\n```yaml\nkey: val\n```\n",
         )
-        # Should not raise
-        hooks.broker.request.assert_awaited_once()
+
+        hooks._sync_to_storage.assert_awaited_once_with("/tmp/test.yaml", "sql_summary", metric_sqls=None)
+        hooks.broker.request.assert_not_awaited()
+
+    async def test_sync_error_propagates(self, hooks):
+        hooks._sync_to_storage = AsyncMock(side_effect=RuntimeError("sync failed"))
+
+        with pytest.raises(RuntimeError, match="sync failed"):
+            await hooks._sync_generated_file(
+                yaml_content="key: val",
+                file_path="/tmp/test.yaml",
+                yaml_type="semantic",
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -712,6 +749,7 @@ class TestSyncToStorage:
         with patch("datus.cli.generation_hooks.GenerationHooks._sync_semantic_to_db", return_value=mock_result):
             result = await hooks._sync_to_storage("/tmp/file.yaml", "semantic")
         assert "Successfully synced" in result
+        assert hooks.generation_evidence.semantic_kb_sync_passed is True
 
     async def test_semantic_type_sync_failure(self, hooks):
         mock_result = {"success": False, "error": "YAML parse error"}
@@ -725,6 +763,7 @@ class TestSyncToStorage:
         with patch("datus.cli.generation_hooks.GenerationHooks._sync_reference_sql_to_db", return_value=mock_result):
             result = await hooks._sync_to_storage("/tmp/file.yaml", "sql_summary")
         assert "Successfully synced" in result
+        assert hooks.generation_evidence.generic_kb_sync_passed is True
 
     async def test_ext_knowledge_type_calls_sync(self, hooks):
         mock_result = {"success": True, "message": "Ext knowledge synced"}
@@ -1010,7 +1049,7 @@ class TestProcessMetricWithSemanticModel:
         hooks._process_single_file.assert_not_called()
 
     async def test_both_already_processed_skipped(self, hooks):
-        hooks._get_sync_confirmation_for_pair = AsyncMock()
+        hooks._sync_generated_pair = AsyncMock()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as sf:
             sf.write("data_source:\n  name: orders\n")
             sem_path = sf.name
@@ -1024,10 +1063,10 @@ class TestProcessMetricWithSemanticModel:
         finally:
             os.unlink(sem_path)
             os.unlink(metric_path)
-        hooks._get_sync_confirmation_for_pair.assert_not_called()
+        hooks._sync_generated_pair.assert_not_called()
 
-    async def test_happy_path_calls_confirmation_for_pair(self, hooks):
-        hooks._get_sync_confirmation_for_pair = AsyncMock()
+    async def test_happy_path_auto_syncs_pair(self, hooks):
+        hooks._sync_generated_pair = AsyncMock()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as sf:
             sf.write("data_source:\n  name: orders\n")
             sem_path = sf.name
@@ -1039,12 +1078,12 @@ class TestProcessMetricWithSemanticModel:
         finally:
             os.unlink(sem_path)
             os.unlink(metric_path)
-        hooks._get_sync_confirmation_for_pair.assert_awaited_once()
+        hooks._sync_generated_pair.assert_awaited_once()
         assert sem_path in hooks.processed_files
         assert metric_path in hooks.processed_files
 
     async def test_empty_content_returns_early(self, hooks):
-        hooks._get_sync_confirmation_for_pair = AsyncMock()
+        hooks._sync_generated_pair = AsyncMock()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as sf:
             sf.write("")
             sem_path = sf.name
@@ -1056,11 +1095,11 @@ class TestProcessMetricWithSemanticModel:
         finally:
             os.unlink(sem_path)
             os.unlink(metric_path)
-        hooks._get_sync_confirmation_for_pair.assert_not_called()
+        hooks._sync_generated_pair.assert_not_called()
 
-    async def test_confirmation_error_propagates(self, hooks):
-        """Exception in _get_sync_confirmation_for_pair propagates to caller."""
-        hooks._get_sync_confirmation_for_pair = AsyncMock(side_effect=RuntimeError("broker down"))
+    async def test_sync_error_propagates(self, hooks):
+        """Exception in _sync_generated_pair propagates to caller."""
+        hooks._sync_generated_pair = AsyncMock(side_effect=RuntimeError("broker down"))
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as sf:
             sf.write("data_source:\n  name: orders\n")
             sem_path = sf.name
@@ -1090,71 +1129,46 @@ class TestProcessMetricWithSemanticModel:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _get_sync_confirmation_for_pair
+# Tests: _sync_generated_pair
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-class TestGetSyncConfirmationForPair:
-    async def test_accept_syncs_both_files(self, hooks):
-        """Choosing 'y' calls _sync_semantic_and_metric once."""
-        hooks.broker.request = AsyncMock(return_value=[["y"]])
+class TestSyncGeneratedPair:
+    async def test_auto_syncs_both_files(self, hooks):
+        """Pair sync goes directly to storage."""
+        hooks.broker.request = AsyncMock()
         hooks._sync_semantic_and_metric = AsyncMock(return_value="Synced OK")
 
-        await hooks._get_sync_confirmation_for_pair(
+        await hooks._sync_generated_pair(
             semantic_model_file="/tmp/sem.yaml",
             metric_file="/tmp/met.yaml",
         )
 
         hooks._sync_semantic_and_metric.assert_awaited_once_with("/tmp/sem.yaml", "/tmp/met.yaml", None)
+        hooks.broker.request.assert_not_awaited()
 
-    async def test_reject_skips_sync(self, hooks):
-        """Choosing 'n' does not call _sync_semantic_and_metric."""
-        hooks.broker.request = AsyncMock(return_value=[["n"]])
-        hooks._sync_semantic_and_metric = AsyncMock()
+    async def test_display_content_is_ignored(self, hooks):
+        hooks.broker.request = AsyncMock()
+        hooks._sync_semantic_and_metric = AsyncMock(return_value="Synced OK")
 
-        await hooks._get_sync_confirmation_for_pair(
+        await hooks._sync_generated_pair(
             semantic_model_file="/tmp/sem.yaml",
             metric_file="/tmp/met.yaml",
+            display_content="ignored",
         )
 
-        hooks._sync_semantic_and_metric.assert_not_called()
+        hooks._sync_semantic_and_metric.assert_awaited_once_with("/tmp/sem.yaml", "/tmp/met.yaml", None)
+        hooks.broker.request.assert_not_awaited()
 
-    async def test_interaction_cancelled_raises_generation_cancelled(self, hooks):
-        """InteractionCancelled is wrapped in GenerationCancelledException."""
-        hooks.broker.request = AsyncMock(side_effect=InteractionCancelled())
+    async def test_sync_error_propagates(self, hooks):
+        hooks._sync_semantic_and_metric = AsyncMock(side_effect=RuntimeError("sync failed"))
 
-        with pytest.raises(GenerationCancelledException, match="User interrupted"):
-            await hooks._get_sync_confirmation_for_pair(
+        with pytest.raises(RuntimeError, match="sync failed"):
+            await hooks._sync_generated_pair(
                 semantic_model_file="/tmp/sem.yaml",
                 metric_file="/tmp/met.yaml",
             )
-
-    async def test_display_content_includes_both_files(self, hooks):
-        """Request content includes both file names when display_content is pre-built."""
-        hooks.broker.request = AsyncMock(return_value=[["n"]])
-
-        display = (
-            "## Generated Semantic Model: sem.yaml\n\n"
-            "*Path: /tmp/sem.yaml*\n\n"
-            "```yaml\ndata_source:\n  name: orders\n```\n\n"
-            "---\n\n"
-            "## Generated Metric: met.yaml\n\n"
-            "*Path: /tmp/met.yaml*\n\n"
-            "```yaml\nmetric: revenue\n```\n"
-        )
-
-        await hooks._get_sync_confirmation_for_pair(
-            semantic_model_file="/tmp/sem.yaml",
-            metric_file="/tmp/met.yaml",
-            display_content=display,
-        )
-
-        # broker.request() now takes a list of InteractionEvent as first positional arg
-        request_events = hooks.broker.request.call_args[0][0]
-        content_str = str(request_events)
-        assert "sem.yaml" in content_str
-        assert "met.yaml" in content_str
 
 
 # ---------------------------------------------------------------------------
@@ -1321,6 +1335,68 @@ class TestSyncSemanticToDbBooleanCoercion:
 
 
 # ---------------------------------------------------------------------------
+# Tests: _sync_semantic_to_db — metric reference normalization
+# ---------------------------------------------------------------------------
+
+
+class TestSyncSemanticToDbMetricReferenceNormalization:
+    def test_measure_proxy_nested_measure_is_stored_as_string(self, agent_config, tmp_path):
+        yaml_file = tmp_path / "metrics.yml"
+        yaml_file.write_text(
+            """
+data_source:
+  name: orders
+  sql_table: public.orders
+  measures:
+    - name: order_count
+      agg: COUNT
+      expr: "1"
+  dimensions:
+    - name: status
+      type: CATEGORICAL
+      expr: status
+---
+metric:
+  name: completed_order_count
+  description: "Completed orders"
+  type: measure_proxy
+  type_params:
+    measure:
+      name: order_count
+      constraint: "status = 'completed'"
+""",
+            encoding="utf-8",
+        )
+
+        captured_metric = []
+        mock_semantic_rag = MagicMock()
+        mock_semantic_rag.upsert_batch = MagicMock()
+        mock_metric_rag = MagicMock()
+        mock_metric_rag.upsert_batch = lambda objects: captured_metric.extend(objects)
+        db_config = MagicMock()
+        db_config.catalog = ""
+        db_config.database = "test_db"
+        db_config.schema = ""
+        agent_config.current_db_config.return_value = db_config
+
+        with (
+            patch("datus.cli.generation_hooks.SemanticModelRAG", return_value=mock_semantic_rag),
+            patch("datus.cli.generation_hooks.MetricRAG", return_value=mock_metric_rag),
+        ):
+            result = GenerationHooks._sync_semantic_to_db(
+                file_path=str(yaml_file),
+                agent_config=agent_config,
+                include_semantic_objects=False,
+                include_metrics=True,
+            )
+
+        assert result["success"], f"Sync failed: {result.get('error')}"
+        assert len(captured_metric) == 1
+        assert captured_metric[0]["base_measures"] == ["order_count"]
+        assert captured_metric[0]["measure_expr"] == "order_count WHERE status = 'completed'"
+
+
+# ---------------------------------------------------------------------------
 # Tests: _sync_semantic_to_db actionable error for empty metric-only sync
 # ---------------------------------------------------------------------------
 
@@ -1418,6 +1494,22 @@ class TestResolvePathCommonpathValueError:
 
 @pytest.mark.asyncio
 class TestHandleEndMetricGeneration:
+    async def test_failed_tool_result_skips_sync(self, hooks):
+        hooks._extract_metric_generation_result = MagicMock()
+        hooks._process_single_file = AsyncMock()
+        hooks._process_metric_with_semantic_model = AsyncMock()
+        result = FuncToolResult(
+            success=0,
+            error="query_metrics dry-run must pass",
+            result={"metric_file": "metrics/orders.yml"},
+        )
+
+        await hooks._handle_end_metric_generation(result)
+
+        hooks._extract_metric_generation_result.assert_not_called()
+        hooks._process_single_file.assert_not_called()
+        hooks._process_metric_with_semantic_model.assert_not_called()
+
     async def test_missing_metric_file_warns_and_returns(self, hooks):
         hooks._extract_metric_generation_result = MagicMock(return_value=(None, None, {}))
         hooks._process_single_file = AsyncMock()

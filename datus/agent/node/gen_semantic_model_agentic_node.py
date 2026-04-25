@@ -21,6 +21,7 @@ from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, Semant
 from datus.tools.func_tool import DBFuncTool
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.gen_semantic_model_tools import GenSemanticModelTools
+from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import MessagePart, build_structured_content
@@ -43,6 +44,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
     """
 
     NODE_NAME = "gen_semantic_model"
+    DEFAULT_SKILLS = "gen-semantic-model"
 
     def __init__(
         self,
@@ -97,6 +99,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
         self.gen_semantic_model_tools: Optional[GenSemanticModelTools] = None
         self.ask_user_tool = None
         self.hooks = None
+        self.generation_evidence = GenerationEvidence()
         self.setup_tools()
 
         # Debug: log hooks status after setup
@@ -172,6 +175,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
                 agent_config=self.agent_config,
                 sub_agent_name=self.NODE_NAME,
                 adapter_type=adapter_type,
+                generation_evidence=self.generation_evidence,
             )
 
             # Add all available tools from semantic func tool
@@ -199,7 +203,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
         try:
             from datus.tools.func_tool import trans_to_function_tool
 
-            self.generation_tools = GenerationTools(self.agent_config)
+            self.generation_tools = GenerationTools(self.agent_config, generation_evidence=self.generation_evidence)
 
             self.tools.append(trans_to_function_tool(self.generation_tools.check_semantic_object_exists))
             self.tools.append(trans_to_function_tool(self.generation_tools.end_semantic_model_generation))
@@ -212,7 +216,11 @@ class GenSemanticModelAgenticNode(AgenticNode):
         """Setup hooks for interactive mode."""
         try:
             broker = self._get_or_create_broker()
-            self.hooks = GenerationHooks(broker=broker, agent_config=self.agent_config)
+            self.hooks = GenerationHooks(
+                broker=broker,
+                agent_config=self.agent_config,
+                generation_evidence=self.generation_evidence,
+            )
             logger.info("Setup hooks: generation_hooks")
         except Exception as e:
             logger.error(f"Failed to setup generation_hooks: {e}")
@@ -518,6 +526,12 @@ class GenSemanticModelAgenticNode(AgenticNode):
                 except Exception as e:
                     logger.error(f"Failed to auto-save to database: {e}")
 
+            if semantic_model_files and not self.generation_evidence.semantic_kb_sync_passed:
+                raise RuntimeError(
+                    "Semantic model generation did not publish to Knowledge Base. "
+                    "Call end_semantic_model_generation after validate_semantic succeeds."
+                )
+
             # Create final result
             result = SemanticNodeResult(
                 success=True,
@@ -663,6 +677,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
             )
 
             if result.get("success"):
+                self.generation_evidence.mark_kb_sync("semantic")
                 logger.info(f"Successfully saved to database: {result.get('message')}")
             else:
                 error = result.get("error", "Unknown error")

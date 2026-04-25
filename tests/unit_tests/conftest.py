@@ -213,7 +213,6 @@ def real_agent_config(tmp_path, reset_global_singletons):
             "gen_metrics": {
                 "system_prompt": "gen_metrics",
                 "max_turns": 5,
-                "prompt_version": "1.1",
             },
             "gen_semantic_model": {
                 "system_prompt": "gen_semantic_model",

@@ -1,6 +1,6 @@
 ---
 name: gen-metrics
-description: Interactively define MetricFlow metrics from natural language business descriptions
+description: Generate MetricFlow metrics from natural language business descriptions
 tags:
   - metrics
   - metricflow
@@ -12,9 +12,9 @@ allowed_agents:
   - gen_metrics
 ---
 
-# Define Metric Skill
+# Generate Metrics Skill
 
-Guide the user through interactive metric definition using natural language business descriptions.
+Guide the user through metric generation using natural language business descriptions.
 
 ## Phase 0: Discovery — Scan Existing Assets
 
@@ -84,14 +84,26 @@ From N SQL queries, propose at most a **small set of core metrics** (typically f
 
 **Step 1-batch-d: MUST call `ask_user`** to confirm with the user:
 - Present the deduplicated core metrics as **options** with `multi_select: true`
-- Example: `ask_user(questions=[{"question": "I analyzed N SQL queries and identified the following core metrics. Select which ones to generate:", "options": ["total_revenue - SUM(amount) on orders", "order_count - COUNT on orders", ...], "multi_select": true}])`
+- Pass `questions` as an actual array argument, not a JSON string. Example tool arguments:
+  ```json
+  {
+    "questions": [
+      {
+        "title": "Metrics",
+        "question": "I analyzed N SQL queries and identified the following core metrics. Select which ones to generate:",
+        "options": ["total_revenue - SUM(amount) on orders", "order_count - COUNT on orders"],
+        "multi_select": true
+      }
+    ]
+  }
+  ```
 - Clearly show how many SQL queries were analyzed and how many core metrics were extracted
 - If the user wants additional derived/ratio metrics beyond the core set, they can request them after the base metrics are created
 
 ### Metric type detection rules
 
-1. **Simple counting + filter**: "How many completed orders" → `measure_proxy` with `constraint`
-2. **Aggregation + filter**: "Total revenue from premium customers" → `measure_proxy` with `constraint`
+1. **Simple counting + filter**: "How many completed orders" → conditional measure in the semantic model + `measure_proxy` metric referencing that measure by string
+2. **Aggregation + filter**: "Total revenue from premium customers" → conditional measure in the semantic model + `measure_proxy` metric referencing that measure by string
 3. **Ratio**: "Order completion rate", "Conversion rate" → `ratio` type
 4. **Derived/Expression**: "Average order value", "Revenue per user" → `expr` type combining metrics
 5. **Cumulative**: "Running total of revenue", "MTD sales", "Year-to-date signups" → `cumulative` type
@@ -121,6 +133,8 @@ For each table involved in the metric:
 ### 2b. Create Missing Model
 
 If the semantic model is missing, use the analysis tools to build a high-quality model:
+
+Follow the `gen-semantic-model` workflow when that skill is available. The compact process is:
 
 1. **Gather table structure:**
    - Call `describe_table(table_name)` to get column names and types
@@ -164,7 +178,7 @@ If the semantic model is missing, use the analysis tools to build a high-quality
      ```
    - This prevents incorrect aggregation across time (e.g., summing daily balances)
 
-4. Save with `write_file` using the path `semantic_models/{current_database}/{table_name}.yml` (relative to the knowledge base root) → `validate_semantic` (MUST pass before continuing) → `end_semantic_model_generation`
+4. Save with `write_file` under the semantic model directory shown in the system prompt, preferably `subject/semantic_models/<current_datasource>/{table_name}.yml` → `validate_semantic` (MUST pass before continuing) → `end_semantic_model_generation`
 
 ### 2c. Multi-Table / JOIN SQL Modeling
 
@@ -214,15 +228,17 @@ Use when: non-equi JOINs, > 2 hop joins, subqueries, LATERAL/CROSS joins, comple
 
 ## Phase 3: Generate and Validate
 
-**File paths**: All `write_file` / `edit_file` / `read_file` calls use paths relative to the **knowledge base root** (shown in system prompt as `knowledge_base_dir`). Always include the `semantic_models/{current_database}/` prefix so subsequent reads find the file. For example:
-- Semantic model: `semantic_models/{current_database}/{table_name}.yml`
-- Metric file: `semantic_models/{current_database}/metrics/{table_name}_metrics.yml`
+**File paths**: All `write_file` / `edit_file` / `read_file` calls use paths relative to the filesystem sandbox root. Always use the semantic model directory shown in the system prompt so subsequent reads find the file. For example:
+- Semantic model: `subject/semantic_models/<current_datasource>/{table_name}.yml`
+- Metric file: `subject/semantic_models/<current_datasource>/metrics/{table_name}_metrics.yml`
 
 Bare filenames are silently normalized by the host, but the prefixed form is preferred for clarity. Absolute paths are also tolerated.
 
 1. **Check existing**: Call `check_semantic_object_exists(name="{metric_name}", kind="metric")` for each metric confirmed in Phase 1. If it already exists, inform the user and skip it.
 
-2. **Write metric YAML**: Use `write_file` to save each metric definition to `semantic_models/{current_database}/metrics/{table_name}_metrics.yml`.
+2. **Write metric YAML**: Use `write_file` to save each metric definition to `subject/semantic_models/<current_datasource>/metrics/{table_name}_metrics.yml`.
+   - For `measure_proxy`, keep `type_params.measure` as a string measure name.
+   - For filtered metrics, add a dedicated conditional measure to the semantic model first, then reference that measure from the metric YAML.
 
 3. **Validate (MUST PASS)**: Call `validate_semantic` to check the metric YAML.
    - If validation fails, fix errors with `edit_file` and retry until it **passes**.
@@ -231,57 +247,34 @@ Bare filenames are silently normalized by the host, but the prefixed form is pre
 4. **Dry-run SQL**: Call `query_metrics(metrics=["{metric_name}"], dry_run=True)` to generate the SQL.
    - Collect the SQL into a dict: `{"{metric_name}": "SELECT ..."}`
 
-**Do NOT call `end_metric_generation` yet** — proceed to Phase 4 for user review.
+## Phase 4: Batch Sync to Knowledge Base
 
-## Phase 4: User Review — One by One (MANDATORY ask_user)
+After all generated metrics have passed validation and dry-run:
+- Collect all generated metrics and their dry-run SQLs into `metric_sqls_json`
+- Call `end_metric_generation(metric_file, semantic_model_file, metric_sqls_json)` **ONCE** to sync them to Knowledge Base
+- If no metrics were generated, do NOT call `end_metric_generation`
 
-After generating and validating, present each metric to the user **one at a time** via `ask_user`.
-
-**For each metric, present:**
-- **Metric name** and **type**
-- **YAML content** (the actual metric definition)
-- **Generated SQL** from dry-run
-- **Subject tree** classification
-
-**Ask the user to choose ONE of:**
-1. **Confirm** — approve this metric
-2. **Modify** — specify what to change
-3. **Reject** — remove this metric
-
-**Based on user response:**
-
-- **If Confirm**: Mark as approved, proceed to the next metric.
-
-- **If Modify**: Use `edit_file` to modify the metric YAML based on user feedback → re-validate → dry-run SQL again → present updated results to user via `ask_user` again (loop until user confirms or rejects this metric). Then proceed to the next metric.
-
-- **If Reject**: Use `edit_file` to remove this metric entry from the YAML file. Proceed to the next metric.
-
-## Phase 5: Batch Sync to Knowledge Base
-
-After ALL metrics have been reviewed one by one:
-- Collect all approved metrics and their dry-run SQLs into `metric_sqls_json`
-- Call `end_metric_generation(metric_file, semantic_model_file, metric_sqls_json)` **ONCE** to sync all approved metrics to Knowledge Base
-- If no metrics were approved (all rejected), do NOT call `end_metric_generation`
-
-**IMPORTANT**: NEVER call `end_metric_generation` without explicit user approval from Phase 4.
+Phase 1 confirms the generation scope; validation plus dry-run are the acceptance gate before syncing.
 
 ## Common Pitfalls (MUST avoid)
 
-1. **Do NOT use `create_metric: true`**: Never set `create_metric: true` on measures. Always write explicit metric YAML files under `semantic_models/{current_database}/metrics/`. Reason: `create_metric: true` only creates metrics at MetricFlow runtime — they are NOT synced to the Knowledge Base (vector DB). Only explicit `metric:` YAML entries get imported.
+1. **Explicit metric files**: Write explicit metric YAML files under the semantic model directory's `metrics/` subdirectory instead of relying on `create_metric: true`. Runtime-generated metrics are not part of the persisted metric catalog.
 
 2. **Metric name must match measure name**: For a `measure_proxy` metric, the metric name should typically equal the measure name (or be a clear derivative). The `type_params.measure` must exactly match a measure name from the semantic model. Do NOT invent unrelated names (e.g., measure `activity_count` → metric name should be `activity_count`, NOT `total_activity_count` or `activity_count_metric`).
 
-3. **Check before creating**: ALWAYS call `check_semantic_object_exists(name="{metric_name}", kind="metric")` before writing a new metric. If the metric already exists, skip it.
+3. **Filtered metrics**: Model reusable filter logic as a conditional measure in the semantic model, such as `expr: "CASE WHEN status = 'completed' THEN 1 ELSE 0 END"` with `agg: SUM`, then write `type_params.measure: completed_order_count` in the metric YAML.
 
-4. **Verify names after validation**: After `validate_semantic` succeeds and the adapter reloads, call `list_metrics` to see the exact metric names available. Use these exact names when calling `query_metrics`.
+4. **Check before creating**: ALWAYS call `check_semantic_object_exists(name="{metric_name}", kind="metric")` before writing a new metric. If the metric already exists, skip it.
 
-5. **Every metric needs explicit YAML**: Whether it's a simple aggregation, filtered variant, ratio, derived, cumulative, or conversion — always write a `metric:` entry in the metrics YAML file. This is the only way metrics get synced to the Knowledge Base.
+5. **Verify names after validation**: After `validate_semantic` succeeds and the adapter reloads, call `list_metrics` to see the exact metric names available. Use these exact names when calling `query_metrics`.
+
+6. **Every metric needs explicit YAML**: Whether it's a simple aggregation, filtered variant, ratio, derived, cumulative, or conversion — write a `metric:` entry in the metrics YAML file so it can be persisted and discovered later.
 
 ## Important Rules
 
 - **Phase 1**: MUST call `ask_user` to confirm which metrics to generate before proceeding.
-- **Phase 4**: MUST call `ask_user` to let user review generated results before syncing to DB.
 - **Validation MUST pass** — always call `validate_semantic` and ensure it passes before proceeding to the next phase. If it fails, fix and retry until it passes.
+- **Sync automatically after validation** — once validation and dry-run pass, call `end_metric_generation` without another user confirmation.
 - **COUNT agg must use `expr: "1"`** — never use `expr: {column}` with COUNT (use COUNT_DISTINCT for that).
 - For ratio metrics, both numerator and denominator measures must exist in the semantic model.
 - For derived metrics, all referenced metrics must already be defined.
@@ -291,4 +284,4 @@ After ALL metrics have been reviewed one by one:
 - Every data_source MUST have a primary time dimension (`type: TIME` with `is_primary: true`).
 - Measure names must be globally unique across all data sources.
 - For snapshot/balance data, always add `non_additive_dimension` to prevent incorrect time aggregation.
-- **Do NOT create extra files** — only write semantic model YAML and metric YAML files. Do NOT manually create knowledge base documents, summaries, or any other files. The ONLY way to sync metrics to the Knowledge Base is via `end_metric_generation`.
+- **Keep files scoped** — only write semantic model YAML and metric YAML files. Sync metrics through `end_metric_generation`.

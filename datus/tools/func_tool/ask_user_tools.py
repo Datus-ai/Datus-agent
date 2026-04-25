@@ -87,9 +87,12 @@ class AskUserTool:
 
         Args:
             questions: A JSON array of question objects (NOT a JSON string).
+                When calling the tool, pass structured arguments like
+                {"questions": [{"title": "Database", "question": "Which DB?",
+                "options": ["MySQL", "PostgreSQL"], "multi_select": false}]}.
+                Avoid passing {"questions": "[{\"question\": ...}]"}.
                 Each object has a "question" string, optional "options" list,
-                and a "title" label (1-2 words).
-                Example: [{"question": "Which DB?", "options": ["MySQL", "PostgreSQL"], "title": "Database"}]
+                optional "multi_select" boolean, and a "title" label (1-2 words).
 
         Returns:
             FuncToolResult with the answers in the ``result`` field.

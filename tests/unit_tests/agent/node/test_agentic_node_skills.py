@@ -877,6 +877,11 @@ class TestBuiltinNodeDefaultSkills:
 
         assert GenMetricsAgenticNode.DEFAULT_SKILLS == "gen-metrics"
 
+    def test_gen_semantic_model_defaults(self):
+        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+
+        assert GenSemanticModelAgenticNode.DEFAULT_SKILLS == "gen-semantic-model"
+
     def test_gen_dashboard_leaves_defaults_unset(self):
         """gen_dashboard injects {platform}-dashboard dynamically in setup, not via DEFAULT_SKILLS."""
         from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
@@ -945,6 +950,7 @@ class TestSkillAllowedAgentsConsistency:
         [
             ("gen_job", ["gen-table", "table-validation", "data-migration"]),
             ("gen_table", ["gen-table", "table-validation"]),
+            ("gen_semantic_model", ["gen-semantic-model"]),
             ("gen_metrics", ["gen-metrics"]),
             ("gen_dashboard", ["bi-validation", "grafana-dashboard", "superset-dashboard"]),
             ("gen_skill", ["create-skill", "optimize-skill"]),

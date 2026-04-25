@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from datus.tools.func_tool.base import FuncToolResult, normalize_null
+from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.semantic_tools import _run_async
 from datus.tools.semantic_tools.models import QueryResult
 
@@ -194,6 +195,35 @@ class TestQueryMetricsCompression:
 
         assert result.result["columns"] == ["metric_time__day", "revenue", "cost"]
         assert result.result["metadata"] == {"sql": "SELECT ...", "row_count": 1}
+
+    def test_query_metrics_dry_run_records_generation_evidence(self, semantic_tools):
+        """Successful dry-run evidence gates metric publishing."""
+        evidence = GenerationEvidence()
+        semantic_tools.generation_evidence = evidence
+        query_result = QueryResult(
+            columns=[],
+            data=[],
+            metadata={"sql": "SELECT SUM(revenue) AS revenue FROM orders"},
+        )
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+            result = semantic_tools.query_metrics(metrics=["revenue"], dry_run=True)
+
+        assert result.success == 1
+        assert evidence.metric_dry_run_passed is True
+        assert evidence.metric_sqls == {"revenue": "SELECT SUM(revenue) AS revenue FROM orders"}
+
+    def test_query_metrics_non_dry_run_does_not_record_publish_evidence(self, semantic_tools):
+        evidence = GenerationEvidence()
+        semantic_tools.generation_evidence = evidence
+        query_result = QueryResult(columns=[], data=[], metadata={"sql": "SELECT 1"})
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+            result = semantic_tools.query_metrics(metrics=["revenue"], dry_run=False)
+
+        assert result.success == 1
+        assert evidence.metric_dry_run_passed is False
+        assert evidence.metric_sqls == {}
 
     def test_query_metrics_drops_non_serializable_metadata(self, semantic_tools):
         """Test that non-JSON-serializable metadata values are dropped."""
@@ -588,6 +618,8 @@ class TestValidateSemantic:
 
     def test_valid_result(self, semantic_tools_with_adapter):
         tool, mock_adapter = semantic_tools_with_adapter
+        evidence = GenerationEvidence()
+        tool.generation_evidence = evidence
 
         mock_validation = Mock()
         mock_validation.valid = True
@@ -600,9 +632,12 @@ class TestValidateSemantic:
         assert result.success == 1
         assert result.result["valid"] is True
         assert result.result["issues"] == []
+        assert evidence.validation_passed is True
 
     def test_invalid_result(self, semantic_tools_with_adapter):
         tool, mock_adapter = semantic_tools_with_adapter
+        evidence = GenerationEvidence()
+        tool.generation_evidence = evidence
 
         mock_issue = Mock()
         mock_issue.model_dump.return_value = {"severity": "error", "message": "bad config"}
@@ -617,6 +652,7 @@ class TestValidateSemantic:
         assert result.result["valid"] is False
         assert len(result.result["issues"]) == 1
         assert "1 validation errors" in result.error
+        assert evidence.validation_passed is False
 
     def test_exception_returns_failure(self, semantic_tools_with_adapter):
         tool, mock_adapter = semantic_tools_with_adapter

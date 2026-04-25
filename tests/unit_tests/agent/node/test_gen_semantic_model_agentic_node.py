@@ -521,6 +521,39 @@ class TestExecuteStreamGenSemanticModelError:
         assert last.action_type == "error"
 
     @pytest.mark.asyncio
+    async def test_final_semantic_files_without_publish_fails(self, real_agent_config, mock_llm_create):
+        """A final JSON file list is not enough; the node must observe KB publish evidence."""
+        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response(
+                    json.dumps(
+                        {
+                            "semantic_model_files": ["orders.yml"],
+                            "output": "Generated semantic model.",
+                        }
+                    )
+                ),
+            ]
+        )
+
+        node = GenSemanticModelAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+        node.input = SemanticNodeInput(user_message="Generate semantic model")
+
+        action_manager = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(action_manager):
+            actions.append(action)
+
+        assert actions[-1].status == ActionStatus.FAILED
+        assert actions[-1].action_type == "error"
+        assert "did not publish to Knowledge Base" in actions[-1].output["error"]
+
+    @pytest.mark.asyncio
     async def test_execute_stream_with_catalog_context(self, real_agent_config, mock_llm_create):
         """Test execute_stream with catalog enriches the enhanced message."""
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode

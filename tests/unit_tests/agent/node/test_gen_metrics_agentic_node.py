@@ -610,7 +610,7 @@ class TestPrepareTemplateContext:
 
 
 class TestGetSystemPrompt:
-    def test_workflow_uses_prompt_version_from_config(self, real_agent_config, mock_llm_create):
+    def test_workflow_uses_latest_prompt_when_version_unset(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create, execution_mode="workflow")
         node.input = SemanticNodeInput(user_message="Generate metrics")
 
@@ -621,7 +621,7 @@ class TestGetSystemPrompt:
 
             call_kwargs = mock_pm.return_value.render_template.call_args
             version = call_kwargs.kwargs.get("version")
-            assert version == "1.1", f"Expected configured version '1.1', got '{version}'"
+            assert version is None
 
     def test_input_prompt_version_overrides_config(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create, execution_mode="workflow")
@@ -714,6 +714,40 @@ class TestExecuteStreamGenMetricsError:
         last = actions[-1]
         assert last.status == ActionStatus.FAILED
         assert last.action_type == "error"
+
+    @pytest.mark.asyncio
+    async def test_final_metric_file_without_publish_fails(self, real_agent_config, mock_llm_create):
+        """A final JSON metric_file is not enough; end_metric_generation must publish."""
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response(
+                    json.dumps(
+                        {
+                            "semantic_model_file": "orders.yml",
+                            "metric_file": "orders_metrics.yml",
+                            "output": "Generated metrics.",
+                        }
+                    )
+                ),
+            ]
+        )
+
+        node = GenMetricsAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+        node.input = SemanticNodeInput(user_message="Generate metrics")
+
+        action_manager = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(action_manager):
+            actions.append(action)
+
+        assert actions[-1].status == ActionStatus.FAILED
+        assert actions[-1].action_type == "error"
+        assert "did not publish to Knowledge Base" in actions[-1].output["error"]
 
 
 class TestGenMetricsFilesystemRootPath:

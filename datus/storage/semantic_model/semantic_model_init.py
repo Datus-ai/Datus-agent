@@ -116,6 +116,7 @@ async def init_success_story_semantic_model_async(
 
     try:
         generated_files = []
+        terminal_error = None
         async for action in semantic_node.execute_stream(action_history_manager):
             # Emit streaming messages
             if emit and action.messages:
@@ -127,7 +128,8 @@ async def init_success_story_semantic_model_async(
                     )
                 )
 
-            if action.status == ActionStatus.SUCCESS and action.output:
+            action_type = getattr(action, "action_type", "")
+            if action.status == ActionStatus.SUCCESS and action_type == "semantic_response" and action.output:
                 if isinstance(action.output, dict):
                     # Check for semantic_models field (from SemanticNodeResult)
                     if "semantic_models" in action.output:
@@ -136,6 +138,15 @@ async def init_success_story_semantic_model_async(
                             generated_files.extend(models)
                         elif models:  # Single file as string
                             generated_files.append(models)
+            elif action.status == ActionStatus.FAILED and action_type == "error":
+                terminal_error = action.messages or "Semantic model generation failed"
+                logger.error(terminal_error)
+                continue
+
+        if terminal_error:
+            if emit:
+                emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_FAILED, error=terminal_error))
+            return False, terminal_error
 
         if not generated_files:
             error_msg = f"Failed to generate any semantic models from {len(all_sqls)} SQL queries in '{csv_path}'"

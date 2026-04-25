@@ -10,6 +10,7 @@ import pandas as pd
 
 from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 from datus.configuration.agent_config import AgentConfig
+from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.action_history import ActionHistoryManager, ActionStatus
 from datus.schemas.batch_events import BatchEventEmitter, BatchEventHelper
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
@@ -91,13 +92,14 @@ async def init_success_story_metrics_async(
 
     # Get database context
     current_db_config = agent_config.current_db_config()
+    latest_prompt_version = get_prompt_manager(agent_config=agent_config).get_latest_version("gen_metrics_system")
 
     metrics_input = SemanticNodeInput(
         user_message=batch_message,
         catalog=current_db_config.catalog,
         database=current_db_config.database,
         db_schema=current_db_config.schema,
-        prompt_version="1.1",
+        prompt_version=latest_prompt_version,
     )
 
     metrics_node = GenMetricsAgenticNode(
@@ -114,6 +116,7 @@ async def init_success_story_metrics_async(
 
     try:
         final_result = None
+        terminal_error = None
         async for action in metrics_node.execute_stream(action_history_manager):
             if event_helper:
                 event_helper.item_processing(
@@ -123,9 +126,17 @@ async def init_success_story_metrics_async(
                     messages=action.messages,
                     output=action.output,
                 )
-            if action.status == ActionStatus.SUCCESS and action.output:
+            action_type = getattr(action, "action_type", "")
+            if action.status == ActionStatus.FAILED and action_type == "error":
+                terminal_error = action.messages or "Metrics extraction failed"
+                logger.error(terminal_error)
+                continue
+            if action.status == ActionStatus.SUCCESS and action_type == "metrics_response" and action.output:
                 final_result = action.output
                 logger.debug(f"Metrics generation action: {action.messages}")
+        if terminal_error:
+            event_helper.task_failed(error=terminal_error)
+            return False, terminal_error, None
         if final_result is None:
             error_msg = "Metrics extraction completed but produced no output"
             logger.warning(error_msg)

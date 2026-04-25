@@ -18,6 +18,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SemanticNodeResult
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import MessagePart, build_structured_content
@@ -102,6 +103,7 @@ class GenMetricsAgenticNode(AgenticNode):
         self.generation_tools: Optional[GenerationTools] = None
         self.ask_user_tool = None
         self.hooks = None
+        self.generation_evidence = GenerationEvidence()
         self.setup_tools()
 
     def get_node_name(self) -> str:
@@ -146,7 +148,7 @@ class GenMetricsAgenticNode(AgenticNode):
         try:
             from datus.tools.func_tool import trans_to_function_tool
 
-            self.generation_tools = GenerationTools(self.agent_config)
+            self.generation_tools = GenerationTools(self.agent_config, generation_evidence=self.generation_evidence)
 
             self.tools.append(trans_to_function_tool(self.generation_tools.check_semantic_object_exists))
             self.tools.append(trans_to_function_tool(self.generation_tools.end_metric_generation))
@@ -175,6 +177,7 @@ class GenMetricsAgenticNode(AgenticNode):
                 agent_config=self.agent_config,
                 sub_agent_name=self.NODE_NAME,
                 adapter_type=adapter_type,
+                generation_evidence=self.generation_evidence,
             )
 
             # Add all available tools from semantic func tool
@@ -501,6 +504,12 @@ class GenMetricsAgenticNode(AgenticNode):
             )
             if extracted_output:
                 response_content = extracted_output
+
+            if metric_file and not self.generation_evidence.metric_kb_sync_passed:
+                raise RuntimeError(
+                    "Metric generation did not publish to Knowledge Base. "
+                    "Call end_metric_generation after validate_semantic and query_metrics(dry_run=True) succeed."
+                )
 
             # Extract token usage (only in interactive mode with session)
             tokens_used = 0

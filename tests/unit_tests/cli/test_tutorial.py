@@ -626,6 +626,7 @@ def test_init_success_story_metrics_success(monkeypatch):
         def execute_stream(self, action_history_manager):
             action = SimpleNamespace(
                 status=ActionStatus.SUCCESS,
+                action_type="metrics_response",
                 output={"metrics": []},
                 messages="Metrics extracted",
             )
