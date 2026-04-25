@@ -3,7 +3,12 @@
 
 import pytest
 
-from datus.utils.text_utils import LITELLM_EMPTY_PLACEHOLDER, clean_text, strip_litellm_placeholder
+from datus.utils.text_utils import (
+    LITELLM_EMPTY_PLACEHOLDER,
+    LitellmPlaceholderStreamFilter,
+    clean_text,
+    strip_litellm_placeholder,
+)
 
 
 class TestCleanText:
@@ -106,3 +111,82 @@ class TestStripLitellmPlaceholder:
 
     def test_non_string_returns_unchanged(self):
         assert strip_litellm_placeholder(42) == 42
+
+
+class TestLitellmPlaceholderStreamFilter:
+    @staticmethod
+    def _drive(filter_obj: LitellmPlaceholderStreamFilter, chunks: list[str]) -> str:
+        emitted = "".join(filter_obj.feed(chunk) for chunk in chunks)
+        emitted += filter_obj.finalize()
+        return emitted
+
+    def test_normal_text_passes_through_unchanged(self):
+        f = LitellmPlaceholderStreamFilter()
+        assert self._drive(f, ["Hello, ", "world!"]) == "Hello, world!"
+
+    def test_normal_text_starting_with_bracket_passes_through(self):
+        f = LitellmPlaceholderStreamFilter()
+        assert self._drive(f, ["[", "INFO", "] ready"]) == "[INFO] ready"
+
+    def test_exact_placeholder_token_by_token_dropped(self):
+        f = LitellmPlaceholderStreamFilter()
+        chunks = list(LITELLM_EMPTY_PLACEHOLDER)
+        assert self._drive(f, chunks) == ""
+
+    def test_exact_placeholder_single_chunk_dropped(self):
+        f = LitellmPlaceholderStreamFilter()
+        assert self._drive(f, [LITELLM_EMPTY_PLACEHOLDER]) == ""
+
+    def test_placeholder_chunked_typical_split_dropped(self):
+        f = LitellmPlaceholderStreamFilter()
+        chunks = ["[System", ": Empty ", "message content ", "sanitised to satisfy ", "protocol]"]
+        assert "".join(chunks) == LITELLM_EMPTY_PLACEHOLDER
+        assert self._drive(f, chunks) == ""
+
+    def test_placeholder_followed_by_real_text_emits_only_tail(self):
+        f = LitellmPlaceholderStreamFilter()
+        chunks = [LITELLM_EMPTY_PLACEHOLDER, " continuing"]
+        assert self._drive(f, chunks) == " continuing"
+
+    def test_placeholder_split_then_followed_by_text(self):
+        f = LitellmPlaceholderStreamFilter()
+        chunks = [LITELLM_EMPTY_PLACEHOLDER[:10], LITELLM_EMPTY_PLACEHOLDER[10:] + " tail"]
+        assert self._drive(f, chunks) == " tail"
+
+    def test_prefix_that_diverges_is_flushed(self):
+        f = LitellmPlaceholderStreamFilter()
+        # "[Sys" is a prefix of placeholder; "tem error" diverges from "tem: ..."
+        chunks = ["[Sys", "tem error]"]
+        assert self._drive(f, chunks) == "[System error]"
+
+    def test_partial_prefix_then_stream_ends_returns_buffer(self):
+        f = LitellmPlaceholderStreamFilter()
+        # Stream ends mid-placeholder-prefix — return what we got
+        assert self._drive(f, ["[Sys"]) == "[Sys"
+
+    def test_empty_and_none_chunks_ignored(self):
+        f = LitellmPlaceholderStreamFilter()
+        assert f.feed("") == ""
+        assert f.feed(None) == ""  # type: ignore[arg-type]
+        assert f.finalize() == ""
+
+    def test_passthrough_state_preserved_across_chunks(self):
+        f = LitellmPlaceholderStreamFilter()
+        # First chunk diverges → passthrough activated
+        assert f.feed("hi ") == "hi "
+        # Subsequent chunks always pass through directly
+        assert f.feed("[System: Empty") == "[System: Empty"
+        assert f.feed(" tail") == " tail"
+
+    def test_reset_allows_reuse(self):
+        f = LitellmPlaceholderStreamFilter()
+        assert self._drive(f, [LITELLM_EMPTY_PLACEHOLDER]) == ""
+        # After finalize, the filter is reset and reusable
+        assert self._drive(f, ["normal text"]) == "normal text"
+
+    def test_finalize_returns_empty_when_buffer_exactly_placeholder(self):
+        f = LitellmPlaceholderStreamFilter()
+        # Feed the placeholder split into pieces so the buffer holds it at finalize
+        for ch in LITELLM_EMPTY_PLACEHOLDER:
+            f.feed(ch)
+        assert f.finalize() == ""

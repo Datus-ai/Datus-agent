@@ -34,7 +34,7 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
 from datus.utils.resource_utils import read_data_file_text
-from datus.utils.text_utils import strip_litellm_placeholder
+from datus.utils.text_utils import LitellmPlaceholderStreamFilter, strip_litellm_placeholder
 from datus.utils.traceable_utils import setup_tracing
 
 logger = get_logger(__name__)
@@ -1105,6 +1105,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                 # Streaming thinking state: accumulate text deltas for real-time output
                 thinking_stream_id: Optional[str] = None
                 thinking_accumulated = ""
+                placeholder_filter = LitellmPlaceholderStreamFilter()
 
                 while not result.is_complete:
                     if interrupt_controller and interrupt_controller.is_interrupted:
@@ -1128,7 +1129,8 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                             # Stream text delta: yield thinking_delta for real-time display
                             if raw_type == "response.output_text.delta":
-                                delta_text = strip_litellm_placeholder(getattr(raw_data, "delta", None))
+                                raw_delta = getattr(raw_data, "delta", None) or ""
+                                delta_text = placeholder_filter.feed(raw_delta)
                                 if delta_text:
                                     if thinking_stream_id is None:
                                         thinking_stream_id = f"thinking_stream_{uuid.uuid4().hex[:8]}"
@@ -1148,6 +1150,9 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                             # Content part done: emit completed thinking action
                             if raw_type == "response.content_part.done":
+                                tail = placeholder_filter.finalize()
+                                if tail:
+                                    thinking_accumulated += tail
                                 full_text = strip_litellm_placeholder(thinking_accumulated.strip())
                                 if full_text:
                                     text_content_split = full_text if len(full_text) <= 200 else f"{full_text[:200]}..."
