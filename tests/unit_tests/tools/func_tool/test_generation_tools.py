@@ -320,6 +320,7 @@ class TestEndMetricGenerationPreflight:
 
     def test_accepts_file_with_metric_block(self, generation_tools, tmp_path):
         self._mark_ready_to_publish(generation_tools)
+        generation_tools.generation_evidence.metric_dry_run_metrics.add("revenue_total")
         good = tmp_path / "good_metric.yml"
         good.write_text("metric:\n  name: revenue_total\n  type: measure_proxy\n  type_params:\n    measure: revenue\n")
         with (
@@ -328,6 +329,19 @@ class TestEndMetricGenerationPreflight:
         ):
             result = generation_tools.end_metric_generation(metric_file=str(good))
         assert result.success == 1
+
+    def test_rejects_metric_not_covered_by_dry_run(self, generation_tools, tmp_path):
+        self._mark_ready_to_publish(generation_tools)
+        good = tmp_path / "good_metric.yml"
+        good.write_text("metric:\n  name: revenue_total\n  type: measure_proxy\n  type_params:\n    measure: revenue\n")
+        with (
+            self._patch_path_resolution(generation_tools, tmp_path),
+            patch.object(generation_tools, "_sync_metric_to_db") as sync_mock,
+        ):
+            result = generation_tools.end_metric_generation(metric_file=str(good))
+        assert result.success == 0
+        assert "revenue_total" in result.error
+        sync_mock.assert_not_called()
 
 
 class TestValidateMetricFileHasBlocks:
@@ -402,7 +416,10 @@ class TestSyncMetricToDb:
         mock_sync.assert_called_once_with(
             str(metric_file),
             generation_tools.agent_config,
+            include_semantic_objects=False,
+            include_metrics=True,
             metric_sqls=None,
+            original_yaml_path=str(metric_file),
         )
 
     def test_metric_with_semantic_model_combines_files(self, generation_tools, tmp_path):
@@ -461,7 +478,10 @@ class TestSyncMetricToDb:
         mock_sync.assert_called_once_with(
             str(metric_file),
             generation_tools.agent_config,
+            include_semantic_objects=False,
+            include_metrics=True,
             metric_sqls=None,
+            original_yaml_path=str(metric_file),
         )
 
     def test_sync_failure_propagated(self, generation_tools, tmp_path):

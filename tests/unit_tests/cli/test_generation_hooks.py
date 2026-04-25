@@ -393,6 +393,22 @@ class TestProcessSingleFile:
         hooks._sync_generated_file.assert_awaited_once()
         assert path in hooks.processed_files
 
+    async def test_yaml_type_is_forwarded(self, hooks):
+        hooks._sync_generated_file = AsyncMock()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write("key: value\n")
+            path = f.name
+        try:
+            await hooks._process_single_file(path, metric_sqls={"m": "SQL"}, yaml_type="metric")
+        finally:
+            os.unlink(path)
+        hooks._sync_generated_file.assert_awaited_once_with(
+            "key: value\n",
+            path,
+            "metric",
+            metric_sqls={"m": "SQL"},
+        )
+
 
 # ---------------------------------------------------------------------------
 # Tests: _handle_sql_summary_result
@@ -750,6 +766,22 @@ class TestSyncToStorage:
             result = await hooks._sync_to_storage("/tmp/file.yaml", "semantic")
         assert "Successfully synced" in result
         assert hooks.generation_evidence.semantic_kb_sync_passed is True
+
+    async def test_metric_type_calls_sync_metric(self, hooks):
+        mock_result = {"success": True, "message": "1 metric synced"}
+        with patch("datus.cli.generation_hooks.GenerationHooks._sync_semantic_to_db", return_value=mock_result) as sync:
+            result = await hooks._sync_to_storage("/tmp/metric.yaml", "metric", metric_sqls={"m": "SQL"})
+        assert "Successfully synced" in result
+        assert hooks.generation_evidence.metric_kb_sync_passed is True
+        assert hooks.generation_evidence.semantic_kb_sync_passed is False
+        sync.assert_called_once_with(
+            "/tmp/metric.yaml",
+            hooks.agent_config,
+            include_semantic_objects=False,
+            include_metrics=True,
+            metric_sqls={"m": "SQL"},
+            original_yaml_path="/tmp/metric.yaml",
+        )
 
     async def test_semantic_type_sync_failure(self, hooks):
         mock_result = {"success": False, "error": "YAML parse error"}
@@ -1541,7 +1573,11 @@ class TestHandleEndMetricGeneration:
 
         await hooks._handle_end_metric_generation({"result": {}})
 
-        hooks._process_single_file.assert_awaited_once_with("/ws/sm/metrics/orders.yml", metric_sqls={"m": "SQL"})
+        hooks._process_single_file.assert_awaited_once_with(
+            "/ws/sm/metrics/orders.yml",
+            metric_sqls={"m": "SQL"},
+            yaml_type="metric",
+        )
 
     async def test_cancelled_exception_absorbed(self, hooks):
         hooks._extract_metric_generation_result = MagicMock(return_value=("m.yml", None, {}))

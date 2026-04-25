@@ -299,6 +299,21 @@ class GenerationTools:
                         "metric_sqls": metric_sqls,
                     },
                 )
+            metric_names = self._extract_metric_names_from_file(abs_metric)
+            if metric_names and not self.generation_evidence.has_metric_dry_run(metric_names):
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        "query_metrics(dry_run=True) must pass for generated metric(s): "
+                        f"{', '.join(metric_names)}. Run a dry-run query for these metric names, "
+                        "fix any issues, and retry end_metric_generation."
+                    ),
+                    result={
+                        "metric_file": metric_file,
+                        "semantic_model_file": semantic_model_file,
+                        "metric_sqls": metric_sqls,
+                    },
+                )
 
             # Auto-sync to Knowledge Base
             sync_result = self._sync_metric_to_db(abs_metric, abs_semantic, metric_sqls)
@@ -316,7 +331,7 @@ class GenerationTools:
                 )
 
             self.generation_evidence.mark_kb_sync("metric")
-            if semantic_model_file:
+            if abs_semantic and os.path.exists(abs_semantic):
                 self.generation_evidence.mark_kb_sync("semantic")
 
             return FuncToolResult(
@@ -364,6 +379,27 @@ class GenerationTools:
             "`create_metric: true` on semantic-model measures — those only emit "
             "metrics at MetricFlow runtime and are NOT synced to the Knowledge Base."
         )
+
+    @staticmethod
+    def _extract_metric_names_from_file(metric_file: str) -> List[str]:
+        """Return metric names declared in top-level ``metric:`` YAML blocks."""
+        try:
+            with open(metric_file, "r", encoding="utf-8") as f:
+                docs = list(yaml.safe_load_all(f))
+        except (OSError, yaml.YAMLError):
+            return []
+
+        names: List[str] = []
+        for doc in docs:
+            if not isinstance(doc, dict):
+                continue
+            metric = doc.get("metric")
+            if not isinstance(metric, dict):
+                continue
+            name = metric.get("name")
+            if isinstance(name, str) and name:
+                names.append(name)
+        return names
 
     def _sync_metric_to_db(
         self,
@@ -435,7 +471,10 @@ class GenerationTools:
                 result = GenerationHooks._sync_semantic_to_db(
                     metric_file,
                     self.agent_config,
+                    include_semantic_objects=False,
+                    include_metrics=True,
                     metric_sqls=metric_sqls,
+                    original_yaml_path=metric_file,
                 )
 
             if result.get("success"):

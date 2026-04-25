@@ -130,6 +130,7 @@ class GenerationHooks(AgentHooks):
     # Looked up lazily per call so sub-agent datasource switches are honored.
     _BASE_DIR_RESOLVERS = {
         "semantic": "semantic_model_path",
+        "metric": "semantic_model_path",
         "sql_summary": "sql_summary_path",
         "ext_knowledge": "ext_knowledge_path",
     }
@@ -347,7 +348,7 @@ class GenerationHooks(AgentHooks):
                 await self._process_metric_with_semantic_model(semantic_model_file, metric_file, metric_sqls)
             else:
                 # Process metric file alone (semantic model already exists in KB)
-                await self._process_single_file(metric_file, metric_sqls=metric_sqls)
+                await self._process_single_file(metric_file, metric_sqls=metric_sqls, yaml_type="metric")
 
         except GenerationCancelledException:
             logger.info("Generation workflow cancelled")
@@ -407,13 +408,14 @@ class GenerationHooks(AgentHooks):
         logger.warning(f"Could not extract metric_generation_result from: {result}")
         return "", "", {}
 
-    async def _process_single_file(self, file_path: str, metric_sqls: dict = None):
+    async def _process_single_file(self, file_path: str, metric_sqls: dict = None, yaml_type: str = "semantic"):
         """
         Process a single YAML file and sync it to Knowledge Base.
 
         Args:
             file_path: Path to the YAML file
             metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
+            yaml_type: YAML type to sync, e.g. "semantic", "metric", "sql_summary", or "ext_knowledge"
         """
         # Check if file exists
         if not os.path.exists(file_path):
@@ -436,7 +438,7 @@ class GenerationHooks(AgentHooks):
         # Mark file as processed
         self.processed_files.add(file_path)
 
-        await self._sync_generated_file(yaml_content, file_path, "semantic", metric_sqls=metric_sqls)
+        await self._sync_generated_file(yaml_content, file_path, yaml_type, metric_sqls=metric_sqls)
 
     async def _process_metric_with_semantic_model(
         self, semantic_model_file: str, metric_file: str, metric_sqls: dict = None
@@ -455,7 +457,7 @@ class GenerationHooks(AgentHooks):
             logger.warning(f"Semantic model file {semantic_model_file} does not exist")
             # Still try to process metric file alone
             if os.path.exists(metric_file):
-                await self._process_single_file(metric_file, metric_sqls=metric_sqls)
+                await self._process_single_file(metric_file, metric_sqls=metric_sqls, yaml_type="metric")
             return
 
         if not os.path.exists(metric_file):
@@ -648,7 +650,7 @@ class GenerationHooks(AgentHooks):
         Args:
             yaml_content: Generated YAML content
             file_path: Path where YAML was saved
-            yaml_type: YAML type - "semantic" or "sql_summary"
+            yaml_type: YAML type - "semantic", "metric", "sql_summary", or "ext_knowledge"
             metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
             display_content: Deprecated. Kept for caller compatibility; ignored.
         """
@@ -669,7 +671,7 @@ class GenerationHooks(AgentHooks):
 
         Args:
             file_path: File path to sync
-            yaml_type: YAML type - "semantic" or "sql_summary"
+            yaml_type: YAML type - "semantic", "metric", "sql_summary", or "ext_knowledge"
             metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
 
         Returns:
@@ -690,6 +692,19 @@ class GenerationHooks(AgentHooks):
                     lambda: GenerationHooks._sync_semantic_to_db(file_path, self.agent_config, metric_sqls=metric_sqls),
                 )
                 item_type = "semantic model"
+            elif yaml_type == "metric":
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: GenerationHooks._sync_semantic_to_db(
+                        file_path,
+                        self.agent_config,
+                        include_semantic_objects=False,
+                        include_metrics=True,
+                        metric_sqls=metric_sqls,
+                        original_yaml_path=file_path,
+                    ),
+                )
+                item_type = "metric"
             elif yaml_type == "sql_summary":
                 result = await loop.run_in_executor(
                     None, GenerationHooks._sync_reference_sql_to_db, file_path, self.agent_config
@@ -706,6 +721,8 @@ class GenerationHooks(AgentHooks):
             if result.get("success"):
                 if yaml_type == "semantic":
                     self.generation_evidence.mark_kb_sync("semantic")
+                elif yaml_type == "metric":
+                    self.generation_evidence.mark_kb_sync("metric")
                 else:
                     self.generation_evidence.mark_kb_sync(yaml_type)
                 result_content = f"**Successfully synced {item_type} to Knowledge Base**\n\n"

@@ -7,12 +7,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional, Set
 
 
 def _result_success(result: Any) -> bool:
     if isinstance(result, dict):
-        return result.get("success", 1) in (1, True)
+        return result.get("success") in (1, True)
     if hasattr(result, "success"):
         return result.success in (1, True)
     return False
@@ -32,6 +32,8 @@ def _metadata_from_result(result: Any) -> Dict[str, Any]:
         metadata = payload.get("metadata")
         if isinstance(metadata, dict):
             return metadata
+    elif hasattr(payload, "metadata") and isinstance(payload.metadata, dict):
+        return payload.metadata
     return {}
 
 
@@ -46,6 +48,7 @@ class GenerationEvidence:
 
     validation_passed: bool = False
     metric_dry_run_passed: bool = False
+    metric_dry_run_metrics: Set[str] = field(default_factory=set)
     metric_sqls: Dict[str, str] = field(default_factory=dict)
     semantic_kb_sync_passed: bool = False
     metric_kb_sync_passed: bool = False
@@ -67,12 +70,14 @@ class GenerationEvidence:
         self.metric_dry_run_passed = True
 
         metrics_list = [m for m in (metrics or []) if isinstance(m, str) and m]
+        self.metric_dry_run_metrics.update(metrics_list)
         metadata = _metadata_from_result(result)
         metric_sqls = metadata.get("metric_sqls")
         if isinstance(metric_sqls, dict):
             for name, sql in metric_sqls.items():
                 if isinstance(name, str) and isinstance(sql, str) and sql:
                     self.metric_sqls[name] = sql
+                    self.metric_dry_run_metrics.add(name)
             return
 
         sql = None
@@ -82,8 +87,16 @@ class GenerationEvidence:
                 sql = value
                 break
         if sql:
-            for metric in metrics_list or ["__query_metrics_dry_run__"]:
-                self.metric_sqls[metric] = sql
+            if len(metrics_list) == 1:
+                self.metric_sqls[metrics_list[0]] = sql
+            else:
+                self.metric_sqls["__query_metrics_dry_run__"] = sql
+
+    def has_metric_dry_run(self, metric_names: Optional[Iterable[str]] = None) -> bool:
+        names = {m for m in (metric_names or []) if isinstance(m, str) and m}
+        if not names:
+            return self.metric_dry_run_passed
+        return self.metric_dry_run_passed and names.issubset(self.metric_dry_run_metrics)
 
     def mark_kb_sync(self, kind: str = "") -> None:
         if kind == "metric":

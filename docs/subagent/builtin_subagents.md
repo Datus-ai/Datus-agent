@@ -81,7 +81,7 @@ agent:
 
 **Built-in configurations** (no setup needed):
 - **Tools**: Automatically configured based on subagent type
-- **Hooks**: Workflow-specific validation, approval, and Knowledge Base sync
+- **Hooks**: Workflow-specific validation and Knowledge Base sync
 - **MCP Servers**: MetricFlow validation (for gen_semantic_model and gen_metrics)
 - **System Prompts**: Built-in templates; latest versions are used unless `prompt_version` is set
 - **Workspace**: `~/.datus/data/{datasource}/` with subagent-specific subdirectories
@@ -1156,7 +1156,7 @@ agent:
 - Minimal configuration required (only `model` and `max_turns` optional)
 - Automatic tool setup, hooks, and MCP server integration
 - Built-in system prompts, with the latest available version selected by default
-- Workflow-specific validation, approval, and Knowledge Base sync
+- Workflow-specific validation and Knowledge Base sync
 - Knowledge Base integration for semantic search
 - Automatic workspace management
 

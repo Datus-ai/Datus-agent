@@ -4,8 +4,7 @@ description: Generate MetricFlow metrics from natural language business descript
 tags:
   - metrics
   - metricflow
-  - interactive
-version: "1.1.0"
+version: "1.2.0"
 user_invocable: false
 disable_model_invocation: false
 allowed_agents:
@@ -132,53 +131,7 @@ For each table involved in the metric:
 
 ### 2b. Create Missing Model
 
-If the semantic model is missing, use the analysis tools to build a high-quality model:
-
-Follow the `gen-semantic-model` workflow when that skill is available. The compact process is:
-
-1. **Gather table structure:**
-   - Call `describe_table(table_name)` to get column names and types
-   - If multiple tables are involved, call `analyze_table_relationships(tables=[...])` to discover foreign key relationships and JOIN patterns
-   - Call `analyze_column_usage_patterns(table_name)` to understand how columns are typically queried and filtered in historical SQL
-
-2. **Use `ask_user` to confirm column roles:**
-   - Which columns should be **measures** (aggregatable numeric columns)?
-   - Which columns should be **dimensions** (grouping/filtering columns)?
-   - Which column is the **primary time dimension** (required — every data_source must have exactly one)?
-   - For multi-table scenarios: which columns are **primary key** and **foreign keys** linking to other tables?
-
-3. **Generate semantic model YAML following these rules:**
-
-   **Identifiers (optional for single-table, required for multi-table):**
-   - Identifiers are only needed when joining multiple data sources or for entity-based metrics (e.g., conversion)
-   - For single-table metrics, identifiers can be omitted entirely — do NOT ask the user for a primary key if the metric only involves one table
-   - When needed: use `type: PRIMARY` for the main key, `type: FOREIGN` for columns referencing other tables
-   - Also available: `type: UNIQUE` for natural keys, `type: NATURAL` for business keys
-
-   **Measures:**
-   - `agg: COUNT` MUST include `expr: "1"` (counts rows, not a column value)
-   - `agg: COUNT_DISTINCT` uses `expr: {column}` (counts distinct values of a column)
-   - `agg: SUM|AVERAGE|MIN|MAX` uses `expr: {column}`
-   - `agg: PERCENTILE` requires `percentile: 0.95` (or other value) in `agg_params`
-   - `agg: MEDIAN` is shorthand for PERCENTILE(0.5)
-   - Measure names MUST be globally unique across ALL data sources
-   - Do NOT use `create_metric: true` — always write explicit metric YAML files instead (see Common Pitfalls)
-
-   **Dimensions:**
-   - `type: TIME` dimensions MUST include `type_params` with `time_granularity`
-   - Exactly ONE time dimension must have `type_params.is_primary: true`
-   - `type: CATEGORICAL` for all non-time dimensions
-
-   **non_additive_dimension** (for snapshot/balance metrics):
-   - If a measure represents a point-in-time value (account balance, inventory count, active users), add:
-     ```yaml
-     non_additive_dimension:
-       name: {time_dimension_name}
-       window_choice: min|max  # max = latest snapshot, min = earliest
-     ```
-   - This prevents incorrect aggregation across time (e.g., summing daily balances)
-
-4. Save with `write_file` under the semantic model directory shown in the system prompt, preferably `subject/semantic_models/<current_datasource>/{table_name}.yml` → `validate_semantic` (MUST pass before continuing) → `end_semantic_model_generation`
+If the semantic model is missing, follow the `gen-semantic-model` workflow when that skill is available. In brief: inspect table structure with `describe_table`, discover joins with `analyze_table_relationships` when multiple tables are involved, use `analyze_column_usage_patterns` for likely measures and dimensions, write the semantic model YAML under the semantic model directory shown in the system prompt, then run `validate_semantic` and fix issues until it passes before continuing.
 
 ### 2c. Multi-Table / JOIN SQL Modeling
 

@@ -12,6 +12,49 @@ from datus.tools.func_tool.semantic_tools import _run_async
 from datus.tools.semantic_tools.models import QueryResult
 
 
+class TestGenerationEvidence:
+    def test_missing_success_key_is_not_success(self):
+        evidence = GenerationEvidence()
+
+        evidence.record_validation_result({"result": {"valid": True, "issues": []}})
+        evidence.record_metric_dry_run(["revenue"], {"result": {"metadata": {"sql": "SELECT 1"}}})
+
+        assert evidence.validation_passed is False
+        assert evidence.metric_dry_run_passed is False
+        assert evidence.metric_sqls == {}
+
+    def test_attr_payload_metadata_is_recorded(self):
+        evidence = GenerationEvidence()
+        payload = Mock()
+        payload.metadata = {"sql": "SELECT 1"}
+        result = FuncToolResult(success=1, result=payload)
+
+        evidence.record_metric_dry_run(["revenue"], result)
+
+        assert evidence.metric_dry_run_passed is True
+        assert evidence.metric_sqls == {"revenue": "SELECT 1"}
+
+    def test_single_sql_fallback_not_fanned_out_to_multiple_metrics(self):
+        evidence = GenerationEvidence()
+        result = FuncToolResult(success=1, result={"metadata": {"sql": "SELECT 1"}})
+
+        evidence.record_metric_dry_run(["revenue", "cost"], result)
+
+        assert evidence.metric_dry_run_passed is True
+        assert evidence.metric_sqls == {"__query_metrics_dry_run__": "SELECT 1"}
+        assert evidence.has_metric_dry_run(["revenue", "cost"]) is True
+
+    def test_dry_run_success_without_sql_metadata_records_coverage(self):
+        evidence = GenerationEvidence()
+        result = FuncToolResult(success=1, result={"metadata": {}})
+
+        evidence.record_metric_dry_run(["revenue"], result)
+
+        assert evidence.metric_dry_run_passed is True
+        assert evidence.metric_sqls == {}
+        assert evidence.has_metric_dry_run(["revenue"]) is True
+
+
 class TestNormalizeNull:
     """Tests for normalize_null utility function."""
 

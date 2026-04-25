@@ -1651,8 +1651,8 @@ class TestEndToEndGenerationHooksInteraction:
         )
 
         node = ChatAgenticNode(
-            node_id="e2e_gen_decline",
-            description="E2E generation decline test",
+            node_id="e2e_gen_sync_error",
+            description="E2E generation sync error test",
             node_type=NodeType.TYPE_CHAT,
             agent_config=real_agent_config,
         )

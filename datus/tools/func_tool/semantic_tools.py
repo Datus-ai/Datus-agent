@@ -102,6 +102,8 @@ class SemanticTools:
             agent_config: Agent configuration
             sub_agent_name: Optional sub-agent name for scoped storage
             adapter_type: Optional adapter type (e.g., "metricflow"). If not provided, tools will use storage only.
+            generation_evidence: Optional shared tracker for validate_semantic and query_metrics(dry_run=True)
+                publish-gate evidence.
         """
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name

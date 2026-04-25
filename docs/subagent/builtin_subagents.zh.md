@@ -81,7 +81,7 @@ agent:
 
 **内置配置**（无需设置）：
 - **工具**：根据 subagent 类型自动配置
-- **Hooks**：按工作流启用验证、审批和知识库同步
+- **Hooks**：按工作流启用验证和知识库同步
 - **MCP 服务器**：MetricFlow 验证（用于 gen_semantic_model 和 gen_metrics）
 - **系统提示**：内置模板；未设置 `prompt_version` 时使用最新可用版本
 - **工作空间**：`~/.datus/data/{datasource}/` 及 subagent 特定子目录
@@ -1154,7 +1154,7 @@ agent:
 - 最小化配置（仅 `model` 和 `max_turns` 可选）
 - 自动工具设置、hooks 和 MCP 服务器集成
 - 内置系统提示，默认选择最新可用版本
-- 按工作流启用验证、审批和知识库同步
+- 按工作流启用验证和知识库同步
 - 知识库集成用于语义搜索
 - 自动工作空间管理
 
