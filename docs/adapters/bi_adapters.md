@@ -8,8 +8,12 @@ BI adapters let Datus connect to external dashboard platforms and expose a commo
 
 - listing dashboards, charts, and datasets
 - creating dashboards and charts
-- materializing SQL results into a BI-facing database
 - registering datasets when the platform supports them
+
+Data movement into the BI serving DB is **not** handled by BI adapters or
+`gen_dashboard`. Prepare or refresh serving tables separately with `gen_job`
+or `scheduler`, then invoke `gen_dashboard` to create BI datasets, charts, and
+dashboards on top of those existing tables.
 
 BI runtime configuration lives under `agent.services.bi_platforms` in `agent.yml`.
 
@@ -36,11 +40,23 @@ Once installed, Datus discovers the adapter automatically through Python entry p
 
 ## Configuration
 
-Configure BI platforms under `agent.services.bi_platforms`:
+Configure BI platforms under `agent.services.bi_platforms`. The serving DB
+itself is a regular `services.datasources` entry; the BI platform references
+it by name via `dataset_db.datasource_ref`.
 
 ```yaml
 agent:
   services:
+    datasources:
+      serving_pg:
+        type: postgresql
+        host: 127.0.0.1
+        port: 5433
+        database: superset_examples
+        schema: bi_public
+        username: ${SERVING_WRITE_USER}
+        password: ${SERVING_WRITE_PASSWORD}
+
     bi_platforms:
       superset:
         type: superset
@@ -48,16 +64,16 @@ agent:
         username: ${SUPERSET_USER}
         password: ${SUPERSET_PASSWORD}
         dataset_db:
-          uri: ${SUPERSET_DB_URI}
-          schema: public
+          datasource_ref: serving_pg
+          bi_database_name: analytics_pg
 
       grafana:
         type: grafana
         api_base_url: http://localhost:3000
         api_key: ${GRAFANA_API_KEY}
         dataset_db:
-          uri: ${GRAFANA_DB_URI}
-          datasource_name: PostgreSQL
+          datasource_ref: serving_pg          # can share the same DB
+          bi_database_name: PostgreSQL        # Grafana datasource name
 
   agentic_nodes:
     gen_dashboard:
@@ -76,15 +92,20 @@ agent:
 ### Superset
 
 - Authentication uses `username` and `password`.
-- `dataset_db.uri` is the SQLAlchemy target where `write_query` materializes data.
-- The corresponding database connection should already exist in Superset so `create_dataset` can register the table.
+- `dataset_db.datasource_ref` points at the serving DB. Datus uses the
+  referenced datasource's adapter (e.g. `datus-postgresql`) for both schema
+  introspection and writes.
+- `dataset_db.bi_database_name` matches the alias Superset shows in
+  `list_bi_databases()` — `gen_dashboard` uses it to resolve `database_id`
+  for `create_dataset`.
 
 ### Grafana
 
 - Authentication uses `api_key`.
-- `dataset_db.uri` is the SQLAlchemy target where `write_query` materializes data.
-- `dataset_db.datasource_name` should match an existing Grafana datasource.
-- Grafana panels embed SQL directly, so there is no separate dataset registration step.
+- `dataset_db.bi_database_name` should match an existing Grafana datasource
+  name (Grafana's equivalent of a connection alias).
+- Grafana panels embed SQL directly, so there is no separate dataset
+  registration step.
 
 ## Workflow Differences
 
@@ -93,13 +114,16 @@ agent:
 | Authentication | Username + password | API key |
 | Dataset registration | Yes | No |
 | Chart prerequisite | `dataset_id` | `dashboard_id` + SQL |
-| Materialization target | `dataset_db.uri` | `dataset_db.uri` |
-| Extra selector | none | `dataset_db.datasource_name` |
+| Serving DB alias | `dataset_db.bi_database_name` | `dataset_db.bi_database_name` |
 
 ## Runtime Notes
 
 - `services.bi_platforms` is the only runtime source for BI credentials.
 - Sensitive values support `${ENV_VAR}` substitution.
+- The legacy inline forms (`dataset_db: {uri: "..."}` or
+  `dataset_db: {type: ..., host: ..., ...}`) are no longer supported — move
+  the connection to `services.datasources.<name>` and reference it via
+  `dataset_db.datasource_ref`.
 
 ## Related Docs
 

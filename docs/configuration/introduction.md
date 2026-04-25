@@ -53,7 +53,7 @@ agent:
       model: "internal-gpt-4"
 
   services:
-    databases:
+    datasources:
       production:
         type: snowflake
         account: "${SNOWFLAKE_ACCOUNT}"

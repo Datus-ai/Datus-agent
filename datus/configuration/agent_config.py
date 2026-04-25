@@ -374,6 +374,61 @@ class AutocompleteConfig:
 
 
 @dataclass
+class DatasetDbConfig:
+    """Thin BI serving-layer descriptor. The DB connection itself lives under
+    ``services.datasources.<datasource_ref>`` so connector pooling, schema
+    metadata and credentials are shared with the rest of Datus. This record
+    only carries the BI-platform-specific bits.
+
+    Fields:
+        datasource_ref: Name of a ``services.datasources`` entry that points
+            at the serving DB. Datus uses that datasource's connector to
+            both read (schema introspection) and write (transfer jobs).
+        bi_database_name: Alias under which the BI platform (Superset,
+            Grafana, ...) has the same DB registered. Used by ``gen_dashboard``
+            to resolve ``database_id`` via ``list_bi_databases()``.
+    """
+
+    datasource_ref: str
+    bi_database_name: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, raw: Dict[str, Any]) -> "DatasetDbConfig":
+        if not isinstance(raw, dict):
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_INVALID,
+                message="services.bi_platforms.<x>.dataset_db must be a mapping.",
+            )
+        legacy_keys = {"uri", "dialect", "host", "port", "database", "username", "password", "schema", "type"}
+        leaked = legacy_keys.intersection(raw)
+        if leaked:
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_INVALID,
+                message=(
+                    f"services.bi_platforms.<x>.dataset_db no longer accepts inline DB fields ({sorted(leaked)}). "
+                    "Move the connection under `services.datasources.<name>` and reference it from "
+                    "`dataset_db.datasource_ref`."
+                ),
+            )
+        ref = raw.get("datasource_ref")
+        if not ref or not isinstance(ref, str):
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_INVALID,
+                message=(
+                    "services.bi_platforms.<x>.dataset_db.datasource_ref is required: "
+                    "set it to the name of a `services.datasources` entry."
+                ),
+            )
+        bi_db = raw.get("bi_database_name")
+        if bi_db is not None and not isinstance(bi_db, str):
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_INVALID,
+                message="services.bi_platforms.<x>.dataset_db.bi_database_name must be a string.",
+            )
+        return cls(datasource_ref=ref.strip(), bi_database_name=bi_db.strip() if bi_db else None)
+
+
+@dataclass
 class DashboardConfig:
     # Service alias — the key under ``services.bi_platforms`` in agent.yml.
     # Used for CLI addressing (``/<platform>.<method>``) and ``dashboard_config``
@@ -386,8 +441,9 @@ class DashboardConfig:
     password: str = ""
     api_key: str = ""
     extra: Optional[Dict[str, Any]] = field(default_factory=dict, init=True)
-    # BI platform's dataset database: {uri: "postgresql+psycopg2://...", schema: "public"}
-    dataset_db: Optional[Dict[str, Any]] = field(default=None, init=True)
+    # BI platform's serving-layer DB. Same schema as a ``services.datasources``
+    # entry, plus optional ``bi_database_name`` naming the BI platform alias.
+    dataset_db: Optional[DatasetDbConfig] = field(default=None, init=True)
     # The actual adapter kind this service targets — what
     # ``datus_bi_core.adapter_registry`` looks up. Defaults to ``platform``
     # when the user omits ``type`` (single-instance config). Set explicitly
@@ -442,9 +498,9 @@ class ValidationConfig:
     but skips spawning any validator sub-agents — this is the user-facing cost
     escape hatch.
 
-    ``max_retries`` caps how many times the owning ``TableDeliverableAgenticNode``
-    re-runs the main agent after a blocking ``ValidationBlockingException``
-    before surfacing ``success=False``.
+    ``max_retries`` caps how many times the owning ``DeliverableAgenticNode``
+    re-runs the main agent after a blocking validation report before surfacing
+    ``success=False``.
     """
 
     skill_validators_enabled: bool = True
@@ -1677,7 +1733,28 @@ class AgentConfig:
             username = resolve_env(str(username_raw)) if username_raw else ""
             password = resolve_env(str(password_raw)) if password_raw else ""
             api_key = resolve_env(str(api_key_raw)) if api_key_raw else ""
-            dataset_db = _resolve_nested_value(auth_params.get("dataset_db"))
+            dataset_db_raw = _resolve_nested_value(auth_params.get("dataset_db"))
+            dataset_db: Optional[DatasetDbConfig] = None
+            if dataset_db_raw is not None:
+                if not isinstance(dataset_db_raw, dict):
+                    raise DatusException(
+                        ErrorCode.COMMON_FIELD_INVALID,
+                        message=(
+                            f"services.bi_platforms.{platform}.dataset_db must be a mapping; "
+                            f"got {type(dataset_db_raw).__name__}."
+                        ),
+                    )
+                dataset_db = DatasetDbConfig.from_dict(dataset_db_raw)
+                if dataset_db.datasource_ref not in self.services.datasources:
+                    raise DatusException(
+                        ErrorCode.COMMON_FIELD_INVALID,
+                        message=(
+                            f"services.bi_platforms.{platform}.dataset_db.datasource_ref="
+                            f"'{dataset_db.datasource_ref}' does not match any entry under "
+                            f"services.datasources. Configured datasources: "
+                            f"{sorted(self.services.datasources.keys())}."
+                        ),
+                    )
             self.dashboard_config[platform] = DashboardConfig(
                 platform=platform,
                 api_base_url=api_base_url,

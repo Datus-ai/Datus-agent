@@ -70,6 +70,14 @@ class BaseResult(BaseModel):
         default=None, description="Execution statistics (tokens, tools called, duration, etc.)"
     )
 
+    # Validation report emitted by ValidationHook for deliverable-producing
+    # subagents. Stored as a dict so consumers don't have to import the
+    # validation module.
+    validation_report: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Per-run validation report from ValidationHook; None when the node does not run validation",
+    )
+
     def get(self, key: str, default: Any = None) -> Any:
         """Get a value by key with an optional default value."""
         return getattr(self, key, default)

@@ -34,8 +34,10 @@ Execution guide for the scheduler subagent working with Airflow.
 
 1. **Check current state** — `get_scheduler_job(job_id)` to see existing config
 2. **Pause the job** — `pause_job(job_id)` to prevent runs during update
-3. **Update** — `update_job(job_id, sql_file_path=..., job_name=..., conn_id=...)`
-4. **Resume and verify** — `resume_job(job_id)`, then `trigger_scheduler_job(job_id)` to test
+3. **Write SQL** — use `write_file` or `edit_file` to save the new SQL under
+   `jobs/<job_name>.sql`
+4. **Update** — `update_job(job_id, sql_file_path=..., job_name=..., conn_id=...)`
+5. **Resume and verify** — `resume_job(job_id)`, then `trigger_scheduler_job(job_id)` to test
 
 ## DB Connection (`conn_id`)
 
@@ -48,6 +50,10 @@ Available conn_id values are shown in the `submit_sql_job` and `update_job` tool
 
 - `job_name`: `<frequency>_<domain>_<description>`, e.g. `daily_sales_summary`, `hourly_order_count`
 - SQL file: `jobs/<job_name>.sql`
+
+Before calling `submit_sql_job` or `update_job`, create or update that SQL
+file with `write_file` / `edit_file`. Do not ask the user to create the file
+when filesystem tools are available.
 
 ## Common Cron Expressions
 
@@ -63,6 +69,7 @@ Available conn_id values are shown in the `submit_sql_job` and `update_job` tool
 
 | Goal | Tool |
 |------|------|
+| Create SQL file | `write_file(path="jobs/<job_name>.sql", content=...)` |
 | Submit SQL job | `submit_sql_job(job_name, sql_file_path, conn_id)` |
 | Submit SparkSQL job | `submit_sparksql_job(job_name, sql_file_path)` |
 | Check job status | `get_scheduler_job(job_id)` |

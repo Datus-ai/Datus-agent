@@ -93,10 +93,54 @@ class TransferTarget(BaseModel):
         return self.target.database
 
 
+class DashboardTarget(BaseModel):
+    """Deliverable target: a BI dashboard created or updated by a mutating BI tool."""
+
+    type: Literal["dashboard"] = "dashboard"
+    platform: str = Field(..., description="BI platform key (e.g. superset, grafana)")
+    dashboard_id: str = Field(..., description="Dashboard id reported by the BI adapter")
+    dashboard_name: Optional[str] = None
+
+
+class ChartTarget(BaseModel):
+    """Deliverable target: a single BI chart created or updated by a mutating BI tool."""
+
+    type: Literal["chart"] = "chart"
+    platform: str = Field(..., description="BI platform key (e.g. superset, grafana)")
+    chart_id: str = Field(..., description="Chart id reported by the BI adapter")
+    chart_name: Optional[str] = None
+    dashboard_id: Optional[str] = Field(default=None, description="Parent dashboard id if the chart is embedded there")
+
+
+class DatasetTarget(BaseModel):
+    """Deliverable target: a BI dataset created or updated by a mutating BI tool."""
+
+    type: Literal["dataset"] = "dataset"
+    platform: str = Field(..., description="BI platform key (e.g. superset, grafana)")
+    dataset_id: str = Field(..., description="Dataset id reported by the BI adapter")
+    dataset_name: Optional[str] = None
+
+
+class SchedulerJobTarget(BaseModel):
+    """Deliverable target: a scheduler job submitted or updated by a mutating scheduler tool."""
+
+    type: Literal["scheduler_job"] = "scheduler_job"
+    platform: str = Field(..., description="Scheduler platform key (e.g. airflow, dolphinscheduler)")
+    job_id: str = Field(..., description="Scheduler job id")
+    job_name: Optional[str] = None
+
+
 # Discriminated union used by tools to report the deliverable produced by a
 # single mutating tool call. ``DeliverableTarget.model_validate(dict)`` will
 # pick the right subclass based on the ``type`` discriminator.
-DeliverableTarget = Union[TableTarget, TransferTarget]
+DeliverableTarget = Union[
+    TableTarget,
+    TransferTarget,
+    DashboardTarget,
+    ChartTarget,
+    DatasetTarget,
+    SchedulerJobTarget,
+]
 
 
 class SessionTarget(BaseModel):
@@ -107,14 +151,28 @@ class SessionTarget(BaseModel):
     """
 
     type: Literal["session"] = "session"
-    targets: List[Union[TableTarget, TransferTarget]] = Field(default_factory=list)
+    targets: List[
+        Union[
+            TableTarget,
+            TransferTarget,
+            DashboardTarget,
+            ChartTarget,
+            DatasetTarget,
+            SchedulerJobTarget,
+        ]
+    ] = Field(default_factory=list)
 
     @property
     def database(self) -> Optional[str]:
-        """Convenience: the database of the first target, if any."""
-        if not self.targets:
-            return None
-        return self.targets[0].database
+        """Convenience: the database of the first table-bearing target, if any.
+
+        Non-db targets (dashboard / chart / dataset / scheduler_job) don't have
+        a database, so they are skipped.
+        """
+        for t in self.targets:
+            if isinstance(t, (TableTarget, TransferTarget)):
+                return t.database
+        return None
 
 
 class TargetFilter(BaseModel):
@@ -123,11 +181,16 @@ class TargetFilter(BaseModel):
     All set fields must match for the filter to apply; any unset (``None``)
     field is a wildcard. A skill with an empty ``targets: []`` matches every
     target.
+
+    For BI / scheduler target types (``dashboard`` / ``chart`` / ``dataset`` /
+    ``scheduler_job``) the table-oriented fields (``database`` / ``db_schema``
+    / ``table`` / ``table_pattern``) are not applicable and are treated as
+    wildcards — skill authors typically just filter by ``type``.
     """
 
     model_config = ConfigDict(protected_namespaces=(), populate_by_name=True)
 
-    type: Optional[Literal["table", "transfer"]] = None
+    type: Optional[Literal["table", "transfer", "dashboard", "chart", "dataset", "scheduler_job"]] = None
     database: Optional[str] = None
     db_schema: Optional[str] = Field(default=None, alias="schema")
     table: Optional[str] = None
@@ -149,9 +212,17 @@ class CheckResult(BaseModel):
 class ValidationReport(BaseModel):
     """Aggregated validation outcome surfaced into ``NodeResult``."""
 
-    target: Optional[Union[TableTarget, TransferTarget, SessionTarget]] = Field(
-        default=None, description="The deliverable this report concerns"
-    )
+    target: Optional[
+        Union[
+            TableTarget,
+            TransferTarget,
+            DashboardTarget,
+            ChartTarget,
+            DatasetTarget,
+            SchedulerJobTarget,
+            SessionTarget,
+        ]
+    ] = Field(default=None, description="The deliverable this report concerns")
     checks: List[CheckResult] = Field(default_factory=list)
     warnings: List[Dict[str, Any]] = Field(
         default_factory=list,
@@ -162,7 +233,20 @@ class ValidationReport(BaseModel):
     )
 
     @classmethod
-    def empty(cls, target: Optional[Union[TableTarget, TransferTarget, SessionTarget]] = None) -> "ValidationReport":
+    def empty(
+        cls,
+        target: Optional[
+            Union[
+                TableTarget,
+                TransferTarget,
+                DashboardTarget,
+                ChartTarget,
+                DatasetTarget,
+                SchedulerJobTarget,
+                SessionTarget,
+            ]
+        ] = None,
+    ) -> "ValidationReport":
         return cls(target=target, checks=[], warnings=[])
 
     def has_blocking_failure(self) -> bool:
@@ -218,6 +302,9 @@ class ValidationReport(BaseModel):
                 lines.append(f"**Target:** transfer `{tgt.source.name}` → `{tgt.target.database}.{tgt.target.fqn}`")
             elif isinstance(tgt, SessionTarget):
                 lines.append(f"**Target:** session with {len(tgt.targets)} deliverable(s)")
+            else:
+                # BI / scheduler targets share the same descriptor as describe_target().
+                lines.append(f"**Target:** {describe_target(tgt)}")
 
         failed = [c for c in self.checks if not c.passed]
         passed = [c for c in self.checks if c.passed]
@@ -251,7 +338,15 @@ class ValidationReport(BaseModel):
 
 def skill_matches_target(
     targets: List[TargetFilter],
-    target: Union[TableTarget, TransferTarget, SessionTarget],
+    target: Union[
+        TableTarget,
+        TransferTarget,
+        DashboardTarget,
+        ChartTarget,
+        DatasetTarget,
+        SchedulerJobTarget,
+        SessionTarget,
+    ],
 ) -> bool:
     """Decide whether a skill with the given ``targets`` frontmatter applies.
 
@@ -276,9 +371,19 @@ def skill_matches_target(
     return _filter_any_match(targets, target)
 
 
+_FilterableTarget = Union[
+    TableTarget,
+    TransferTarget,
+    DashboardTarget,
+    ChartTarget,
+    DatasetTarget,
+    SchedulerJobTarget,
+]
+
+
 def _filter_any_match(
     filters: List[TargetFilter],
-    target: Union[TableTarget, TransferTarget],
+    target: _FilterableTarget,
 ) -> bool:
     for flt in filters:
         if _filter_matches(flt, target):
@@ -286,20 +391,39 @@ def _filter_any_match(
     return False
 
 
-def _filter_matches(flt: TargetFilter, target: Union[TableTarget, TransferTarget]) -> bool:
-    """Single filter vs single target match. All set fields must match."""
+def _filter_matches(flt: TargetFilter, target: _FilterableTarget) -> bool:
+    """Single filter vs single target match. All set fields must match.
+
+    Non-table targets (dashboard / chart / dataset / scheduler_job) don't have
+    ``database`` / ``db_schema`` / ``table`` fields — those filter fields are
+    treated as wildcards for them. A set ``database`` filter value on a
+    non-table target therefore does not match (the value can't be satisfied).
+    """
     if flt.type and flt.type != target.type:
         return False
-    if flt.database and flt.database != target.database:
-        return False
+
+    # Extract table-bearing fields only when applicable.
     table_name: Optional[str] = None
     schema_name: Optional[str] = None
+    database_name: Optional[str] = None
     if isinstance(target, TableTarget):
         table_name = target.table
         schema_name = target.db_schema
+        database_name = target.database
     elif isinstance(target, TransferTarget):
         table_name = target.target.table
         schema_name = target.target.db_schema
+        database_name = target.database
+    else:
+        # Non-table target (dashboard / chart / dataset / scheduler_job): the
+        # table-oriented filter fields are not applicable. If any of them are
+        # set, the filter cannot match.
+        if flt.database or flt.db_schema or flt.table or flt.table_pattern:
+            return False
+        return True
+
+    if flt.database and flt.database != database_name:
+        return False
     if flt.db_schema and flt.db_schema != schema_name:
         return False
     if flt.table and flt.table != table_name:
@@ -310,7 +434,17 @@ def _filter_matches(flt: TargetFilter, target: Union[TableTarget, TransferTarget
     return True
 
 
-def describe_target(target: Union[TableTarget, TransferTarget, SessionTarget]) -> str:
+def describe_target(
+    target: Union[
+        TableTarget,
+        TransferTarget,
+        DashboardTarget,
+        ChartTarget,
+        DatasetTarget,
+        SchedulerJobTarget,
+        SessionTarget,
+    ],
+) -> str:
     """Human-readable descriptor used to tag checks and render retry prompts."""
     if isinstance(target, TableTarget):
         prefix = f"{target.catalog}." if target.catalog else ""
@@ -318,14 +452,64 @@ def describe_target(target: Union[TableTarget, TransferTarget, SessionTarget]) -
     if isinstance(target, TransferTarget):
         prefix = f"{target.target.catalog}." if target.target.catalog else ""
         return f"transfer {target.source.name} -> {prefix}{target.target.database}.{target.target.fqn}"
+    if isinstance(target, DashboardTarget):
+        name = f" '{target.dashboard_name}'" if target.dashboard_name else ""
+        return f"dashboard {target.platform}:{target.dashboard_id}{name}"
+    if isinstance(target, ChartTarget):
+        name = f" '{target.chart_name}'" if target.chart_name else ""
+        parent = f" in dashboard {target.dashboard_id}" if target.dashboard_id else ""
+        return f"chart {target.platform}:{target.chart_id}{name}{parent}"
+    if isinstance(target, DatasetTarget):
+        name = f" '{target.dataset_name}'" if target.dataset_name else ""
+        return f"dataset {target.platform}:{target.dataset_id}{name}"
+    if isinstance(target, SchedulerJobTarget):
+        name = f" '{target.job_name}'" if target.job_name else ""
+        return f"scheduler_job {target.platform}:{target.job_id}{name}"
     if isinstance(target, SessionTarget):
         return f"session[{len(target.targets)}]"
     return repr(target)
 
 
+def _repair_hint_for(target: _FilterableTarget) -> str:
+    """Target-type-aware fix suggestion appended under each failed target."""
+    if isinstance(target, TableTarget):
+        return (
+            "if the table already exists but has the wrong schema, use ALTER TABLE "
+            "or DROP + CREATE; if it doesn't exist yet, CREATE it."
+        )
+    if isinstance(target, TransferTarget):
+        return "re-check the source query and either re-transfer the missing rows or rewrite the filter."
+    if isinstance(target, DashboardTarget):
+        return (
+            "inspect it with get_dashboard and compare chart membership "
+            "against the failed check. If a concrete mismatch remains, apply "
+            "the smallest supported dashboard or chart update."
+        )
+    if isinstance(target, ChartTarget):
+        return (
+            "inspect with get_chart and get_chart_data. If the chart is "
+            "reachable and data returns successfully, preserve it and report "
+            "the validated state; if a concrete mismatch remains, apply the "
+            "smallest supported chart update."
+        )
+    if isinstance(target, DatasetTarget):
+        return (
+            "inspect with get_dataset and reuse reachable datasets that match "
+            "the expected schema or SQL. If a concrete mismatch remains, "
+            "create or update a dataset with the expected definition."
+        )
+    if isinstance(target, SchedulerJobTarget):
+        return (
+            "the job exists but may have the wrong SQL / schedule — inspect "
+            "with get_scheduler_job and re-run update_job. If a run already "
+            "failed, check get_run_log for the error."
+        )
+    return ""
+
+
 def build_retry_prompt(
     final_report: ValidationReport,
-    session_targets: List[Union[TableTarget, TransferTarget]],
+    session_targets: List[_FilterableTarget],
 ) -> str:
     """Render a structured retry message that separates already-committed
     correct targets from the ones that need fixing.
@@ -346,7 +530,7 @@ def build_retry_prompt(
         else:
             untagged.append(c)
 
-    ok_targets: List[Union[TableTarget, TransferTarget]] = []
+    ok_targets: List[_FilterableTarget] = []
     failed_targets: List[tuple] = []  # (target, checks)
     for target in session_targets:
         tag = describe_target(target)
@@ -363,7 +547,7 @@ def build_retry_prompt(
     ]
 
     if ok_targets:
-        lines.append("## Already written and correct — DO NOT recreate:")
+        lines.append("## Already written and validated — reuse these targets:")
         for t in ok_targets:
             lines.append(f"  - {describe_target(t)}")
         lines.append("")
@@ -385,12 +569,7 @@ def build_retry_prompt(
                 if c.error:
                     line += f"; error: {c.error}"
                 lines.append(line)
-            lines.append(
-                "  Repair hint: if the table already exists but has the wrong schema, use "
-                "ALTER TABLE or DROP + CREATE; if it doesn't exist yet, CREATE it. "
-                "For transfer row-count mismatches, re-check the source query "
-                "and either re-transfer the missing rows or rewrite the filter."
-            )
+            lines.append(f"  Repair hint: {_repair_hint_for(t)}")
             lines.append("")
 
     if untagged:

@@ -3,41 +3,43 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-Shared base class for table-producing subagents (``gen_table``, ``gen_job``).
+Shared base class for deliverable-producing subagents — ``gen_table`` and
+``gen_job`` today; ``gen_dashboard`` and ``scheduler`` join in follow-up chunks.
 
-Centralizes the ~85 % of boilerplate that used to be copy-pasted between the
-two nodes: tool/filesystem/prompt setup, the stream loop, session handling,
-and ValidationHook wiring (with retry loop).
+Centralizes ~85 % of the boilerplate that used to be copy-pasted across nodes:
+tool / filesystem / prompt setup, the stream loop, session handling, and
+ValidationHook wiring (with retry loop).
 
 Subclasses provide four class-level constants (:attr:`NODE_NAME`,
 :attr:`DEFAULT_SKILLS`, :attr:`PROMPT_TEMPLATE`, :attr:`ACTION_TYPE`) and one
-hook method :meth:`_setup_db_tools` — everything else is inherited.
+hook method :meth:`_setup_domain_tools` — everything else is inherited.
 """
 
 from __future__ import annotations
 
-from typing import AsyncGenerator, ClassVar, Literal, Optional
+from typing import Any, AsyncGenerator, ClassVar, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
-from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SemanticNodeResult
+from datus.schemas.semantic_agentic_node_models import SemanticNodeResult
 from datus.tools.func_tool import DBFuncTool, FilesystemFuncTool
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import MessagePart, build_structured_content
-from datus.validation import ValidationBlockingException, ValidationHook
+from datus.validation import ValidationHook
 from datus.validation.report import build_retry_prompt
 
 logger = get_logger(__name__)
 
 
-class TableDeliverableAgenticNode(AgenticNode):
-    """Base class for subagents whose deliverable is a physical table.
+class DeliverableAgenticNode(AgenticNode):
+    """Base class for subagents that produce validation-worthy deliverables
+    (tables, transfers, dashboards, charts, datasets, scheduler jobs, ...).
 
     Subclasses must set the four class constants below and implement
-    :meth:`_setup_db_tools`. Everything else (including the validation retry
+    :meth:`_setup_domain_tools`. Everything else (including the validation retry
     loop) is provided by this class.
     """
 
@@ -73,6 +75,7 @@ class TableDeliverableAgenticNode(AgenticNode):
         execution_mode: Literal["interactive", "workflow"] = "interactive",
         node_id: Optional[str] = None,
         node_name: Optional[str] = None,
+        scope: Optional[str] = None,
         is_subagent: bool = False,
     ):
         self.execution_mode = execution_mode
@@ -88,12 +91,13 @@ class TableDeliverableAgenticNode(AgenticNode):
 
         super().__init__(
             node_id=node_id or f"{self.NODE_NAME}_node",
-            description=f"Table-deliverable node: {self.NODE_NAME}",
+            description=f"Deliverable-producing node: {self.NODE_NAME}",
             node_type=self.NODE_TYPE,
             input_data=None,
             agent_config=agent_config,
             tools=[],
             mcp_servers={},
+            scope=scope,
             is_subagent=is_subagent,
         )
 
@@ -117,20 +121,20 @@ class TableDeliverableAgenticNode(AgenticNode):
         if not self.agent_config:
             return
         self.tools = []
-        self._setup_db_tools()
+        self._setup_domain_tools()
         self._setup_filesystem_tools()
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
         logger.debug("Setup %d tools for %s: %s", len(self.tools), self.NODE_NAME, [t.name for t in self.tools])
 
-    def _setup_db_tools(self) -> None:
+    def _setup_domain_tools(self) -> None:
         """Subclass-specific tool registration.
 
         gen_table registers only ``execute_ddl``; gen_job additionally registers
         ``execute_write``, ``transfer_query_result``, and the MigrationTargetMixin
         wrappers.
         """
-        raise NotImplementedError("_setup_db_tools must be implemented by subclasses")
+        raise NotImplementedError("_setup_domain_tools must be implemented by subclasses")
 
     def _setup_filesystem_tools(self) -> None:
         try:
@@ -162,20 +166,19 @@ class TableDeliverableAgenticNode(AgenticNode):
                 registry=registry,
                 model=self.model,
                 db_func_tool=self.db_func_tool,
+                bi_tool=getattr(self, "bi_func_tool", None),
+                scheduler_tool=getattr(self, "scheduler_func_tool", None),
                 skill_validators_enabled=enabled,
             )
 
             if enabled:
                 node = self.get_node_name()
                 klass = self.get_node_class_name()
-                has_any = bool(
-                    registry.get_validators(node, "on_tool_end", node_class=klass)
-                    or registry.get_validators(node, "on_end", node_class=klass)
-                )
+                has_any = bool(registry.get_validators(node, node_class=klass))
                 if not has_any:
                     logger.warning(
                         "No validator skills discovered for '%s'. Run `datus configure` (shell) "
-                        "to deploy bundled skills (table-validation, migration-reconciliation) "
+                        "to deploy bundled skills (table-validation, transfer-reconciliation) "
                         "into ~/.datus/skills, or author project-level validators under "
                         "./.datus/skills.",
                         node,
@@ -184,7 +187,7 @@ class TableDeliverableAgenticNode(AgenticNode):
             logger.error("Failed to setup ValidationHook: %s", e)
             self._validation_hook = None
 
-    def _prepare_template_context(self, user_input: SemanticNodeInput) -> dict:
+    def _prepare_template_context(self, user_input: Any) -> dict:
         from datus.utils.node_utils import build_datasource_prompt_context
 
         context = {
@@ -200,9 +203,16 @@ class TableDeliverableAgenticNode(AgenticNode):
         self,
         conversation_summary: Optional[str] = None,
         template_context: Optional[dict] = None,
+        prompt_version: Optional[str] = None,
     ) -> str:
-        version = self.node_config.get("prompt_version")
-        template_name = self.PROMPT_TEMPLATE or f"{self.NODE_NAME}_system"
+        version = prompt_version or self.node_config.get("prompt_version")
+        # Template resolution order:
+        # 1. ``node_config.system_prompt`` — user-specified override in agent.yml
+        # 2. Alias-aware: ``{node_name}_system`` where node_name may be the
+        #    alias (``my_dashboard`` → ``my_dashboard_system``)
+        # 3. Class-level :attr:`PROMPT_TEMPLATE` fallback when set
+        system_prompt_name = self.node_config.get("system_prompt") or self.get_node_name()
+        template_name = f"{system_prompt_name}_system" if system_prompt_name else self.PROMPT_TEMPLATE
         try:
             template_vars = {
                 "agent_config": self.agent_config,
@@ -259,11 +269,15 @@ class TableDeliverableAgenticNode(AgenticNode):
                 session, conversation_summary = self._get_or_create_session()
 
             template_context = self._prepare_template_context(user_input)
-            system_instruction = self._get_system_prompt(conversation_summary, template_context)
+            system_instruction = self._get_system_prompt(
+                conversation_summary,
+                template_context,
+                prompt_version=getattr(user_input, "prompt_version", None),
+            )
 
             enhanced_message = self._build_enhanced_message(user_input)
 
-            # Retry loop around ValidationBlockingException. Capped at
+            # Retry loop driven by on_end's blocking ValidationReport. Capped at
             # ``agent.validation.max_retries`` (default 3). See design doc §5.7.
             validation_cfg = getattr(self.agent_config, "validation_config", None)
             max_retries = int(getattr(validation_cfg, "max_retries", 3)) if validation_cfg else 3
@@ -289,80 +303,55 @@ class TableDeliverableAgenticNode(AgenticNode):
                 # Without this a blocked attempt 1 would poison a recovered
                 # attempt 2's NodeResult.success.
                 last_validation_report = None
-                try:
-                    async for stream_action in self.model.generate_with_tools_stream(
-                        prompt=current_prompt,
-                        tools=self.tools,
-                        mcp_servers=self.mcp_servers,
-                        instruction=system_instruction,
-                        max_turns=user_input.max_turns if user_input.max_turns else self.max_turns,
-                        session=session,
-                        action_history_manager=action_history_manager,
-                        hooks=self._compose_hooks(self._validation_hook),
-                        agent_name=self.get_node_name(),
-                        interrupt_controller=self.interrupt_controller,
-                    ):
-                        yield stream_action
-                        if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
-                            if isinstance(stream_action.output, dict):
-                                last_successful_output = stream_action.output
-                                raw_output = stream_action.output.get("raw_output", "")
-                                if isinstance(raw_output, dict):
-                                    response_content = raw_output
-                                elif raw_output:
-                                    response_content = raw_output
+                async for stream_action in self.model.generate_with_tools_stream(
+                    prompt=current_prompt,
+                    tools=self.tools,
+                    mcp_servers=self.mcp_servers,
+                    instruction=system_instruction,
+                    max_turns=getattr(user_input, "max_turns", None) or self.max_turns,
+                    session=session,
+                    action_history_manager=action_history_manager,
+                    hooks=self._compose_hooks(self._validation_hook),
+                    agent_name=self.get_node_name(),
+                    interrupt_controller=self.interrupt_controller,
+                ):
+                    yield stream_action
+                    if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
+                        if isinstance(stream_action.output, dict):
+                            last_successful_output = stream_action.output
+                            raw_output = stream_action.output.get("raw_output", "")
+                            if isinstance(raw_output, dict):
+                                response_content = raw_output
+                            elif raw_output:
+                                response_content = raw_output
 
-                    # Stream ended normally. Drive retry from on_end's accumulated
-                    # report if it recorded a blocking failure — on_end records
-                    # to final_report instead of raising (raising there would
-                    # skip downstream hook chain for the completed run).
-                    hook = self._validation_hook
-                    if hook is not None and hook.final_report is not None and hook.final_report.has_blocking_failure():
-                        last_validation_report = hook.final_report.model_dump(by_alias=True, exclude_none=True)
-                        if attempt >= max_retries:
-                            logger.warning(
-                                "on_end validation blocked after %d attempts for %s: %s",
-                                attempt,
-                                self.get_node_name(),
-                                [c.name for c in hook.final_report.checks if not c.passed],
-                            )
-                            break
-                        current_prompt = build_retry_prompt(hook.final_report, list(hook.session_targets))
-                        hook.reset_session()
-                        logger.info(
-                            "on_end validation blocked attempt %d/%d for %s, retrying with failure context",
-                            attempt,
-                            max_retries,
-                            self.get_node_name(),
-                        )
-                        continue
-
-                    completed = True
-                    break
-                except ValidationBlockingException as exc:
-                    # Escape-hatch path: a skill declared trigger=[on_tool_end]
-                    # and raised mid-stream. Feed the report back so the agent
-                    # can fix and retry.
-                    last_validation_report = exc.report.model_dump(by_alias=True, exclude_none=True)
+                # Stream ended normally. Drive retry from on_end's accumulated
+                # report if it recorded a blocking failure — on_end records
+                # to final_report instead of raising (raising there would
+                # skip downstream hook chain for the completed run).
+                hook = self._validation_hook
+                if hook is not None and hook.final_report is not None and hook.final_report.has_blocking_failure():
+                    last_validation_report = hook.final_report.model_dump(by_alias=True, exclude_none=True)
                     if attempt >= max_retries:
                         logger.warning(
-                            "Validation blocked after %d attempts for %s: %s",
+                            "on_end validation blocked after %d attempts for %s: %s",
                             attempt,
                             self.get_node_name(),
-                            [c.name for c in exc.report.checks if not c.passed],
+                            [c.name for c in hook.final_report.checks if not c.passed],
                         )
                         break
-                    hook = self._validation_hook
-                    session_snapshot = list(hook.session_targets) if hook is not None else []
-                    current_prompt = build_retry_prompt(exc.report, session_snapshot)
-                    if hook is not None:
-                        hook.reset_session()
+                    current_prompt = build_retry_prompt(hook.final_report, list(hook.session_targets))
+                    hook.reset_session()
                     logger.info(
-                        "Validation blocked attempt %d/%d for %s, retrying with failure context",
+                        "on_end validation blocked attempt %d/%d for %s, retrying with failure context",
                         attempt,
                         max_retries,
                         self.get_node_name(),
                     )
+                    continue
+
+                completed = True
+                break
 
             if not response_content and last_successful_output:
                 raw_output = last_successful_output.get("raw_output", "")
@@ -394,15 +383,13 @@ class TableDeliverableAgenticNode(AgenticNode):
                 final_validation = last_validation_report
 
             success = completed and last_validation_report is None
-            result = SemanticNodeResult(
+            result = self._make_success_result(
                 success=success,
-                response=response_content
-                if response_content
-                else (last_validation_report and "Validation failed") or "",
-                semantic_models=[],
+                response_content=response_content,
                 tokens_used=int(tokens_used),
-                error=None if success else "Validation blocked the run" if last_validation_report else None,
                 validation_report=final_validation,
+                last_successful_output=last_successful_output,
+                blocked=last_validation_report is not None,
             )
             self.actions.extend(action_history_manager.get_actions())
 
@@ -421,11 +408,9 @@ class TableDeliverableAgenticNode(AgenticNode):
             raise
         except Exception as e:
             logger.error("%s execution error: %s", self.get_node_name(), e)
-            error_result = SemanticNodeResult(
-                success=False,
+            error_result = self._make_error_result(
                 error=str(e),
-                response="Sorry, I encountered an error while processing your request.",
-                tokens_used=0,
+                action_history_manager=action_history_manager,
             )
             error_action = ActionHistory.create_action(
                 role=ActionRole.ASSISTANT,
@@ -438,23 +423,71 @@ class TableDeliverableAgenticNode(AgenticNode):
             action_history_manager.add_action(error_action)
             yield error_action
 
-    def _build_enhanced_message(self, user_input: SemanticNodeInput) -> str:
-        """Enrich the user message with catalog / database / schema context."""
+    # ── result construction hooks ─────────────────────────────────────
+    #
+    # Subclasses with their own *NodeResult schema (gen_dashboard →
+    # GenDashboardNodeResult, scheduler → SchedulerNodeResult) override these
+    # two hooks. The default returns a :class:`SemanticNodeResult` so gen_table
+    # and gen_job keep working unchanged.
+
+    def _make_success_result(
+        self,
+        *,
+        success: bool,
+        response_content: Any,
+        tokens_used: int,
+        validation_report: Optional[dict],
+        last_successful_output: Optional[dict],
+        blocked: bool,
+    ) -> Any:
+        """Build the ``NodeResult`` returned after the stream completes."""
+        return SemanticNodeResult(
+            success=success,
+            response=response_content if response_content else ("Validation failed" if blocked else ""),
+            semantic_models=[],
+            tokens_used=tokens_used,
+            error=None if success else ("Validation blocked the run" if blocked else None),
+            validation_report=validation_report,
+        )
+
+    def _make_error_result(
+        self,
+        *,
+        error: str,
+        action_history_manager: ActionHistoryManager,
+    ) -> Any:
+        """Build the ``NodeResult`` returned when the stream raises."""
+        return SemanticNodeResult(
+            success=False,
+            error=error,
+            response="Sorry, I encountered an error while processing your request.",
+            tokens_used=0,
+        )
+
+    def _build_enhanced_message(self, user_input: Any) -> str:
+        """Enrich the user message with catalog / database / schema context.
+
+        Uses ``getattr`` so subclasses with narrower Input schemas (e.g.
+        ``GenDashboardNodeInput`` omits ``catalog`` / ``db_schema``) still work.
+        """
         from datus.utils.node_utils import resolve_database_name_for_prompt
 
         enhanced_parts = []
+        catalog = getattr(user_input, "catalog", None)
+        db_schema = getattr(user_input, "db_schema", None)
+        database_raw = getattr(user_input, "database", None) or ""
         effective_db = resolve_database_name_for_prompt(
             self.db_func_tool.connector if self.db_func_tool else None,
-            user_input.database or "",
+            database_raw,
         )
-        if user_input.catalog or effective_db or user_input.db_schema:
+        if catalog or effective_db or db_schema:
             context_parts = []
-            if user_input.catalog:
-                context_parts.append(f"catalog: {user_input.catalog}")
+            if catalog:
+                context_parts.append(f"catalog: {catalog}")
             if effective_db:
                 context_parts.append(f"database: {effective_db}")
-            if user_input.db_schema:
-                context_parts.append(f"schema: {user_input.db_schema}")
+            if db_schema:
+                context_parts.append(f"schema: {db_schema}")
             enhanced_parts.append(f"Context: {', '.join(context_parts)}")
 
         if enhanced_parts:

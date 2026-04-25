@@ -2,9 +2,9 @@
 
 ## Overview
 
-The `gen_job` subagent is a built-in data engineering agent that covers BOTH single-database ETL and cross-database migration. It builds or updates target tables from one or more source tables, transferring data across database engines when the source and target differ, and validates the result.
+The `gen_job` subagent is a built-in data engineering agent that covers BOTH single-database ETL and cross-database transfer. It builds or updates target tables from one or more source tables, transferring data across database engines when the source and target differ, and validates the result.
 
-The agent auto-detects the path based on the user's prompt: if the source and target are the same database, it runs intra-DB ETL (CREATE TABLE AS SELECT / INSERT from SELECT). If they differ, it runs cross-DB migration (via `transfer_query_result`) and activates the `data-migration` skill for mandatory reconciliation.
+The agent auto-detects the path based on the user's prompt: if the source and target are the same database, it runs intra-DB ETL (CREATE TABLE AS SELECT / INSERT from SELECT). If they differ, it runs a cross-DB transfer (via `transfer_query_result`) and activates the `data-migration` skill for lightweight reconciliation.
 
 ## Quick Start
 
@@ -14,8 +14,8 @@ Start Datus CLI and use the gen_job subagent via natural language:
 # Single-database ETL
 /gen_job Build a summary table from orders and customers tables
 
-# Cross-database migration
-/gen_job Migrate the users table from local_duckdb to greenplum
+# Cross-database transfer
+/gen_job Transfer the users table from local_duckdb to greenplum
 ```
 
 The chat agent can also automatically delegate to gen_job when it detects an ETL or migration task.
@@ -55,7 +55,7 @@ agent:
 
 Each database entry has a **logical name** (the YAML key, e.g., `local_duckdb`, `greenplum`). This is the name you reference when specifying source and target databases.
 
-### For Cross-database Migration
+### For Cross-database Transfer
 
 - Both source and target databases must be accessible
 - Source database must support pandas query execution (DuckDB, PostgreSQL, etc.)
@@ -90,11 +90,11 @@ All database tools accept an optional `database` parameter for explicit routing 
 ```
 Phase 1: Inspect source and target tables
 Phase 2: Generate and execute DDL / DML
-Phase 3: Validate result (row count, schema, data quality)
+Phase 3: Validate result (built-in existence/row count plus explicit schema contract checks)
 Phase 4: Summarize
 ```
 
-### Cross-database Migration
+### Cross-database Transfer
 
 ```
 Phase 1: Discover databases (list_databases) and inspect source
@@ -102,11 +102,11 @@ Phase 2: Call get_migration_capabilities() on target for dialect hints
          + suggest_table_layout() for OLAP targets
 Phase 3: Draft target DDL → validate_ddl() → execute_ddl()
 Phase 4: Transfer data (transfer_query_result)
-Phase 5: Reconcile source vs target (7 checks)
+Phase 5: Reconcile row counts and target-side sanity checks
 Phase 6: Summarize with reconciliation report
 ```
 
-## Cross-database Migration Details
+## Cross-database Transfer Details
 
 ### Database Discovery
 
@@ -153,15 +153,13 @@ Limitations:
 
 ### Reconciliation Checks
 
-After migration, 7 reconciliation checks are run automatically:
+After `transfer_query_result`, validation runs lightweight reconciliation:
 
-1. **Row count** - Total row count comparison
-2. **Null ratio** - Null count per column
-3. **Min/max** - Range comparison for numeric/date columns
-4. **Distinct count** - Cardinality comparison
-5. **Duplicate key** - Check for duplicate keys in target
-6. **Sample diff** - Key-based row sample comparison
-7. **Numeric aggregate** - SUM/AVG comparison
+1. **Tool-reported row count parity** - compare `source_row_count` and `transferred_row_count`.
+2. **Target row count** - run one target-side `COUNT(*)` and compare it with `transferred_row_count`.
+3. **Target sample** - optionally read a small target sample to confirm the table is queryable.
+
+More expensive checks such as null ratios, min/max, distinct counts, duplicate-key checks, sample diffs, and numeric aggregates should be added as project-specific validator skills when the table contract requires them.
 
 ## Optional Configuration
 
@@ -179,8 +177,8 @@ agent:
 gen_job leverages three skills:
 
 - **gen-table** - Table creation and DDL decisions
-- **table-validation** - Schema and data quality checks
-- **data-migration** - Cross-database migration workflow and reconciliation
+- **table-validation** - Explicit schema contract checks
+- **data-migration** - Cross-database transfer workflow and lightweight reconciliation
 
 ## Examples
 
@@ -198,7 +196,7 @@ gen_job:
   5. Returns summary
 ```
 
-### Example 2: Migrate DuckDB to Greenplum
+### Example 2: Transfer DuckDB to Greenplum
 
 ```
 User: Migrate the users table from local_duckdb to greenplum,
@@ -215,7 +213,7 @@ gen_job:
   6. Executes DDL via execute_ddl(database="greenplum")
   7. Calls transfer_query_result(source_database="local_duckdb",
      target_database="greenplum", mode="replace")
-  8. Activates data-migration skill; runs 7 reconciliation checks
+  8. Activates data-migration skill; runs row-count and target-side sanity checks
   9. Returns migration report with pass/fail status
 ```
 

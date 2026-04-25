@@ -10,6 +10,7 @@ scheduler subagent 是一个专用节点（`SchedulerAgenticNode`），它：
 
 - 通过 `datus-scheduler-airflow` 包连接到已配置的 Airflow 实例
 - 提供 12 个工具，覆盖完整的作业生命周期：提交、触发、暂停、恢复、更新、删除和监控
+- 提供文件系统工具，可先把生成的 SQL 写入项目文件再提交作业
 - 支持 SQL 和 SparkSQL 两种作业类型
 - 支持获取日志并对失败或运行中的作业进行排查
 
@@ -56,11 +57,12 @@ graph LR
 提交新作业时：
 
 1. LLM 从用户请求中识别 SQL 文件路径、连接名和调度计划
-2. 调用 `list_scheduler_connections` 发现可用的 Airflow 连接
-3. `submit_sql_job` 或 `submit_sparksql_job` 读取 `.sql` 文件并使用指定的 cron 调度创建 Airflow DAG
-4. 作业 ID 和状态以 `scheduler_result` 形式返回
+2. 如果 SQL 是对话过程中生成的，先用 `write_file` 写到项目路径，例如 `jobs/<job_name>.sql`
+3. 调用 `list_scheduler_connections` 发现可用的 Airflow 连接
+4. `submit_sql_job` 或 `submit_sparksql_job` 读取 `.sql` 文件并使用指定的 cron 调度创建 Airflow DAG
+5. 作业 ID 和状态以 `scheduler_result` 形式返回
 
-> **注意：** `submit_sql_job` 和 `submit_sparksql_job` 需要一个 `sql_file_path` 参数，指向主机上已有的 `.sql` 文件。scheduler 节点不包含文件系统工具（write_file 等），因此 SQL 文件必须在调用 scheduler subagent 之前准备好。
+> **注意：** `submit_sql_job` 和 `submit_sparksql_job` 需要一个 `sql_file_path` 参数，指向主机上已有的 `.sql` 文件。scheduler subagent 可以在提交前用文件系统工具创建或更新该文件。
 
 ## 可用工具
 
@@ -78,6 +80,7 @@ graph LR
 | `list_scheduler_connections` | 列出可用于作业配置的 Airflow 连接 |
 | `list_job_runs` | 列出特定作业的近期运行记录 |
 | `get_run_log` | 获取特定作业运行的执行日志 |
+| `read_file` / `write_file` / `edit_file` | 读取、创建或更新定时作业使用的 SQL 文件 |
 
 ## 配置
 

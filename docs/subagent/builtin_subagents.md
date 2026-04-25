@@ -992,20 +992,30 @@ Or let the chat agent delegate via `task(type="gen_skill")`.
 
 ### Overview
 
-The gen_dashboard subagent creates, updates, and manages BI dashboards on Superset and Grafana. It is invoked by the chat agent via `task(type="gen_dashboard")` and uses the BI tools from `BIFuncTool` to drive the full dashboard creation workflow through LLM function calling.
+The gen_dashboard subagent creates, updates, and manages BI dashboards on Superset and Grafana. It is invoked by the chat agent via `task(type="gen_dashboard")` and uses BI tools from `BIFuncTool` to build dashboard assets on existing serving tables or SQL datasets.
 
 ### Key Features
 
 - **Multi-platform**: Supports Apache Superset and Grafana; platform is explicit via `bi_platform` or auto-detected from `agent.services.bi_platforms`
 - **Dynamic tool exposure**: Tools are exposed based on adapter Mixin capabilities — only operations the platform actually supports appear as LLM tools
-- **Data materialization**: `write_query` bridges source database results to the BI platform's own database, decoupling source data from visualization
-- **Skill-guided workflows**: The built-in `gen-dashboard` skill provides step-by-step workflow guidance for each platform
+- **Existing serving data only**: data preparation is handled separately by `gen_job` / `scheduler`; gen_dashboard builds BI dataset / chart / dashboard assets
+- **Skill-guided workflows**: Platform skills (`superset-dashboard`, `grafana-dashboard`) provide step-by-step workflow guidance; `bi-validation` runs post-creation checks
 
 ### Configuration
 
 ```yaml
 agent:
   services:
+    datasources:
+      serving_pg:
+        type: postgresql
+        host: 127.0.0.1
+        port: 5433
+        database: superset_examples
+        schema: bi_public
+        username: "${SERVING_WRITE_USER}"
+        password: "${SERVING_WRITE_PASSWORD}"
+
     bi_platforms:
       superset:
         type: superset
@@ -1013,8 +1023,8 @@ agent:
         username: "${SUPERSET_USER}"
         password: "${SUPERSET_PASSWORD}"
         dataset_db:
-          uri: "${SUPERSET_DB_URI}"
-          schema: "public"
+          datasource_ref: serving_pg
+          bi_database_name: analytics_pg
 
   agentic_nodes:
     gen_dashboard:
@@ -1031,13 +1041,13 @@ agent:
 
 ```mermaid
 graph LR
-    A[chat agent] -->|task type=gen_dashboard| B[GenDashboardAgenticNode]
-    B --> C[_setup_bi_tools]
-    C --> D[adapter_registry.get platform]
-    D --> E[BIFuncTool.available_tools]
-    E --> F[LLM Function Calling]
-    F -->|Superset| G[write_query → create_dataset → create_chart → create_dashboard]
-    F -->|Grafana| H[write_query → create_dashboard → create_chart]
+    A[task gen_dashboard] --> C[GenDashboardAgenticNode]
+    C --> D[BIFuncTool.available_tools]
+    D --> E[LLM Function Calling]
+    E -->|Superset| F[list_bi_databases → create_dataset → create_chart → create_dashboard → add_chart_to_dashboard]
+    E -->|Grafana| G[list_bi_databases → create_dashboard → create_chart]
+    F --> H[bi-validation]
+    G --> H
 ```
 
 ### Available Tools
@@ -1062,7 +1072,7 @@ Tools are exposed dynamically based on which Mixins the platform adapter impleme
 | `create_dataset` | `DatasetWriteMixin` | Register a dataset |
 | `list_bi_databases` | `DatasetWriteMixin` | List BI platform database connections |
 | `delete_dataset` | `DatasetWriteMixin` | Delete a dataset |
-| `write_query` | `dataset_db_uri` configured | Materialize query results to BI database |
+| `get_bi_serving_target` | `dataset_db` configured | Return serving DB contract for orchestrator hand-off |
 
 ### Output Format
 
@@ -1108,6 +1118,7 @@ The scheduler subagent submits, monitors, updates, and troubleshoots scheduled j
 
 - **Full job lifecycle**: Submit, trigger, pause, resume, update, and delete Airflow DAG jobs
 - **SQL and SparkSQL support**: Submit both SQL and SparkSQL job types
+- **SQL file management**: Create or update job SQL files with filesystem tools before submission
 - **Monitoring**: List job runs, fetch run logs, and troubleshoot failures
 - **Connection discovery**: List available Airflow connections for job configuration
 
@@ -1141,10 +1152,11 @@ agent:
 graph LR
     A[chat agent] -->|task type=scheduler| B[SchedulerAgenticNode]
     B --> C[LLM Function Calling]
-    C --> D[submit_sql_job / submit_sparksql_job]
-    C --> E[trigger_scheduler_job]
-    C --> F[pause_job / resume_job]
-    C --> G[list_job_runs / get_run_log]
+    C --> D[write_file / edit_file]
+    D --> E[submit_sql_job / submit_sparksql_job]
+    C --> F[trigger_scheduler_job]
+    C --> G[pause_job / resume_job]
+    C --> H[list_job_runs / get_run_log]
 ```
 
 ### Available Tools
@@ -1153,6 +1165,7 @@ graph LR
 |------|-------------|
 | `submit_sql_job` | Submit a scheduled SQL job from a `.sql` file with cron expression |
 | `submit_sparksql_job` | Submit a scheduled SparkSQL job from a `.sql` file |
+| `read_file` / `write_file` / `edit_file` | Read, create, or update SQL files used by scheduled jobs |
 | `trigger_scheduler_job` | Manually trigger an existing job run |
 | `pause_job` | Pause a scheduled job |
 | `resume_job` | Resume a paused job |
@@ -1210,9 +1223,9 @@ agent:
 | `gen_sql` | Generate optimized SQL | SQL query / SQL file | N/A | Deep SQL expertise, auto-validation, file-based output |
 | `gen_report` | Flexible report generation | Structured report | N/A | Configurable tools, extensible, custom report subagents |
 | `gen_table` | Create tables interactively | DDL + execution result | Database | DDL confirmation, CTAS or natural-language schema creation |
-| `gen_job` | Data pipeline jobs (intra-DB ETL + cross-DB migration) | Job / migration result | Source + target databases | DDL/DML execution, cross-dialect type mapping via MigrationTargetMixin, `transfer_query_result`, mandatory reconciliation when source ≠ target |
+| `gen_job` | Data pipeline jobs (intra-DB ETL + cross-DB transfer) | Job / transfer result | Source + target databases | DDL/DML execution, cross-dialect type mapping via MigrationTargetMixin, `transfer_query_result`, lightweight reconciliation when source != target |
 | `gen_skill` | Create or optimize skills | Skill path | Skills directory | Interactive authoring, validation, skill loading |
-| `gen_dashboard` | BI dashboard CRUD (Superset, Grafana) | Dashboard result | BI platform | Dynamic tool exposure, data materialization, multi-platform |
+| `gen_dashboard` | BI dashboard CRUD (Superset, Grafana) | Dashboard result | BI platform | Dynamic tool exposure, existing serving data, multi-platform |
 | `scheduler` | Airflow job lifecycle management | Scheduler result | Airflow | Submit, monitor, update, and troubleshoot jobs |
 
 **Built-in Features Across All Subagents:**

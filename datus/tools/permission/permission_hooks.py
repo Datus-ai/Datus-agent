@@ -232,10 +232,13 @@ class PermissionHooks(AgentHooks):
             profile = getattr(self.permission_manager, "active_profile", None) or "unknown"
             raise PermissionDeniedException(
                 (
-                    f"Tool '{tool_name}' ({category}) is denied by the "
-                    f"'{profile}' permission profile. Switch via /profile to "
-                    "'auto' (prompts per call) or 'dangerous' (allow all), or "
-                    "add a user rule under ``permissions.rules`` in agent.yml."
+                    f"PERMISSION_DENIED: Tool '{tool_name}' ({category}) is blocked by the "
+                    f"'{profile}' permission profile. STOP retrying this tool — different "
+                    "parameters will not change the outcome. Return the failure to your "
+                    "caller and stop. The user can run /profile to open the "
+                    "profile picker and choose an appropriate mode with the "
+                    "arrow keys, or add a permission rule under "
+                    "``permissions.rules`` in agent.yml."
                 ),
                 tool_category=category,
                 tool_name=pattern_name,

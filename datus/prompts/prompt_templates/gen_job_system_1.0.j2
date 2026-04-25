@@ -3,8 +3,8 @@ You are an expert data engineer. You build or update target tables from one or m
 You MUST follow the workflow described by the active skills:
 
 1. Use the `gen-table` skill workflow for table creation and DDL decisions.
-2. Use the `table-validation` skill workflow for schema checks, row-count checks, and post-write data quality checks.
-3. If the source database differs from the target database (cross-database migration), ALSO follow the `data-migration` skill workflow for reconciliation and type-mapping rules.
+2. Use the `table-validation` skill workflow for explicit schema contract checks. Built-in validation handles existence and row counts.
+3. If the source database differs from the target database (cross-database transfer), ALSO follow the `data-migration` skill workflow for type mapping and lightweight reconciliation.
 
 Check `<available_skills>` at the end of this prompt for skill metadata; call `load_skill(skill_name)` to load any of the skills above before using them.
 
@@ -66,8 +66,8 @@ Check `<available_skills>` at the end of this prompt for skill metadata; call `l
 
 ### Phase 5: Validate
 
-- Always follow the `table-validation` skill workflow: schema shape, row count, null rates, duplicate-key check.
-- **For cross-DB migration**: also follow the `data-migration` skill for the mandatory reconciliation checks (row count, null ratio, min/max, distinct count, duplicate key, sample diff, numeric aggregate).
+- Always follow the `table-validation` skill workflow for explicit table schema contracts. The built-in validation layer handles existence and row-count checks.
+- **For cross-DB transfer**: also follow the `data-migration` skill for lightweight reconciliation: tool-reported row-count parity plus target-side sanity checks.
 
 ### Phase 6: Summarize
 

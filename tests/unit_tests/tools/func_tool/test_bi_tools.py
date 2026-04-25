@@ -221,26 +221,55 @@ def _build_tool(
     dataset_db_uri: str = "",
     dataset_db_schema: str = "",
     datasource_name: str = "",
+    dataset_db_config=None,
     bi_service: str = "test_bi",
+    features=None,
+    serving_datasource_name: str = "serving_pg",
+    serving_db_config=None,
 ):
     """Construct ``BIFuncTool`` with a mock ``agent_config`` for tests.
 
-    Keeps tests concise by stubbing out the ``DashboardConfig`` lookup that
-    production code now uses for ``dataset_db_uri`` / ``dataset_db_schema`` /
-    ``datasource_name``. ``adapter`` is injected directly so the adapter
-    registry is never touched.
+    The new ``DatasetDbConfig`` model carries only ``datasource_ref`` +
+    ``bi_database_name``; the actual DB connection lives under
+    ``services.datasources.<ref>``. This helper accepts either:
+
+    - ``dataset_db_config``: a ready-made DatasetDbConfig (ref-form)
+    - legacy URI-form args (``dataset_db_uri`` / ``dataset_db_schema``) plus
+      the new ``datasource_name`` alias for ``DatasetDbConfig.bi_database_name``
+
+    The linked ``DbConfig`` is registered on the mock agent_config under
+    ``services.datasources[serving_datasource_name]`` so ``serving_db_config``
+    can resolve it.
     """
+    from datus.configuration.agent_config import DatasetDbConfig, DbConfig, ServicesConfig
     from datus.tools.func_tool.bi_tools import BIFuncTool
 
-    dataset_db = None
-    if dataset_db_uri or dataset_db_schema or datasource_name:
-        dataset_db = {}
-        if dataset_db_uri:
-            dataset_db["uri"] = dataset_db_uri
-        if dataset_db_schema:
-            dataset_db["schema"] = dataset_db_schema
-        if datasource_name:
-            dataset_db["datasource_name"] = datasource_name
+    cfg = dataset_db_config
+    db_cfg = serving_db_config
+    if cfg is None:
+        if dataset_db_uri or dataset_db_schema or datasource_name:
+            kwargs = {}
+            if dataset_db_uri:
+                from sqlalchemy.engine.url import make_url
+
+                url = make_url(dataset_db_uri)
+                backend = url.get_backend_name()
+                kwargs["type"] = "postgresql" if backend == "postgresql" else backend
+                kwargs["host"] = url.host or ""
+                kwargs["port"] = str(url.port) if url.port else ""
+                kwargs["database"] = url.database or ""
+                kwargs["username"] = url.username or ""
+                kwargs["password"] = url.password or ""
+            if dataset_db_schema:
+                kwargs["schema"] = dataset_db_schema
+            db_cfg = DbConfig(**kwargs)
+            cfg = DatasetDbConfig(
+                datasource_ref=serving_datasource_name,
+                bi_database_name=datasource_name or None,
+            )
+
+    if cfg is not None and db_cfg is None:
+        db_cfg = DbConfig(type="postgresql", host="127.0.0.1", port="5433", database="d", schema="s", username="u")
 
     dash_cfg = MagicMock()
     dash_cfg.api_base_url = ""
@@ -248,10 +277,16 @@ def _build_tool(
     dash_cfg.password = ""
     dash_cfg.api_key = ""
     dash_cfg.extra = {}
-    dash_cfg.dataset_db = dataset_db
+    dash_cfg.dataset_db = cfg
+    dash_cfg.features = features
+
+    services = ServicesConfig()
+    if cfg is not None and db_cfg is not None:
+        services.datasources[cfg.datasource_ref] = db_cfg
 
     mock_cfg = MagicMock()
     mock_cfg.dashboard_config = {bi_service: dash_cfg}
+    mock_cfg.services = services
     mock_cfg.datasource_configs = {}
     mock_cfg.current_datasource = ""
 
@@ -343,6 +378,15 @@ class TestBIFuncToolReadOps:
         assert result.result["id"] == "1"
         assert result.result["name"] == "Test Chart"
 
+    def test_get_chart_accepts_none_dashboard_id(self):
+        """Layer A validation passes ChartTarget.dashboard_id through directly.
+        Standalone Superset charts have ``dashboard_id=None``; that should be
+        treated the same as an empty dashboard scope."""
+        tool = self._make_tool()
+        result = tool.get_chart("1", dashboard_id=None)
+        assert result.success == 1
+        assert result.result["id"] == "1"
+
     def test_get_chart_data_success(self):
         tool = self._make_tool()
         result = tool.get_chart_data("1", limit=1)
@@ -351,6 +395,12 @@ class TestBIFuncToolReadOps:
         assert result.result["columns"] == ["category", "value"]
         assert result.result["row_count"] == 1
         assert result.result["rows"] == [{"category": "A", "value": 10}]
+
+    def test_get_chart_data_accepts_none_dashboard_id(self):
+        tool = self._make_tool()
+        result = tool.get_chart_data("1", dashboard_id=None, limit=1)
+        assert result.success == 1
+        assert result.result["chart_id"] == "1"
 
 
 class TestBIFuncToolWriteOps:
@@ -591,193 +641,204 @@ class TestBIFuncToolWriteOps:
         assert "connection failed" in result.error
 
 
-class TestBIFuncToolWriteQuery:
-    """Tests for write_query: source DB → dashboard DB materialisation."""
-
-    def _make_tool_with_dataset_db(self):
-        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
-            return _build_tool(
-                adapter=FullMockAdapter(),
-                dataset_db_uri="postgresql+psycopg2://superset:superset@localhost:5432/superset",
-                dataset_db_schema="public",
-            )
-
-    def test_write_query_no_dataset_db_uri_returns_error(self):
-        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
-            tool = _build_tool(adapter=FullMockAdapter())
-            result = tool.write_query("SELECT 1", "my_table")
-        assert result.success == 0
-        assert "dataset_db" in result.error
-
-    def test_write_query_no_read_connector_returns_error(self):
-        tool = self._make_tool_with_dataset_db()
-        # No _read_connector set — lazy property will try db_manager lookup and fail
-        result = tool.write_query("SELECT 1", "my_table")
-        assert result.success == 0
-        assert "connector" in result.error.lower()
-
-    def test_write_query_rejects_non_select_sql(self):
-        tool = self._make_tool_with_dataset_db()
-        result = tool.write_query("DROP TABLE users", "my_table")
-        assert result.success == 0
-        assert "SELECT" in result.error
-
-    def test_write_query_rejects_multi_statement_sql(self):
-        tool = self._make_tool_with_dataset_db()
-        result = tool.write_query("SELECT 1; DROP TABLE users", "my_table")
-        assert result.success == 0
-        assert "Multi-statement" in result.error
-
-    def test_write_query_allows_trailing_semicolon(self):
-        """A single trailing semicolon is harmless and should be allowed."""
-        tool = self._make_tool_with_dataset_db()
-        # Mark connector as loaded=True + None so lazy path is skipped
-        tool._read_connector_loaded = True
-        tool._read_connector = None
-        result = tool.write_query("SELECT 1;", "my_table")
-        # Should pass SQL validation but fail at connector check
-        assert "connector" in result.error.lower()
-
-    def test_write_query_rejects_invalid_table_name(self):
-        tool = self._make_tool_with_dataset_db()
-        result = tool.write_query("SELECT 1", "123-bad-name!")
-        assert result.success == 0
-        assert "table_name" in result.error.lower()
-
-    def test_write_query_rejects_invalid_if_exists(self):
-        tool = self._make_tool_with_dataset_db()
-        result = tool.write_query("SELECT 1", "my_table", if_exists="drop")
-        assert result.success == 0
-        assert "if_exists" in result.error
-
-    def test_write_query_success(self):
-        import pandas as pd
-
-        tool = self._make_tool_with_dataset_db()
-
-        # Build a fake ExecuteSQLResult
-        mock_execute_result = MagicMock()
-        mock_execute_result.success = True
-        mock_execute_result.sql_return = pd.DataFrame({"col": [1, 2, 3]})
-
-        mock_connector = MagicMock()
-        mock_connector.execute_query.return_value = mock_execute_result
-        tool._read_connector = mock_connector
-
-        mock_engine = MagicMock()
-        tool._write_engine = mock_engine
-
-        # Patch DataFrame.to_sql so no real DB is needed
-        with patch.object(pd.DataFrame, "to_sql", return_value=None):
-            result = tool.write_query("SELECT col FROM t", "my_materialized_table")
-
-        assert result.success == 1
-        assert result.result["table_name"] == "my_materialized_table"
-        assert result.result["rows_written"] == 3
-        assert result.result["schema"] == "public"
-        mock_connector.execute_query.assert_called_once_with("SELECT col FROM t", result_format="pandas")
-
-    def test_write_query_connector_failure_propagates(self):
-        tool = self._make_tool_with_dataset_db()
-
-        mock_execute_result = MagicMock()
-        mock_execute_result.success = False
-        mock_execute_result.error = "Table not found"
-
-        mock_connector = MagicMock()
-        mock_connector.execute_query.return_value = mock_execute_result
-        tool._read_connector = mock_connector
-        tool._write_engine = MagicMock()
-
-        result = tool.write_query("SELECT * FROM nonexistent", "my_table")
-        assert result.success == 0
-        assert "Table not found" in result.error
-
-    def test_write_query_appears_in_available_tools_when_dataset_db_set(self):
-        tool = self._make_tool_with_dataset_db()
-        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
-            tools = tool.available_tools()
-        tool_names = {t.name for t in tools}
-        assert "write_query" in tool_names
-
-
 class TestBIFuncToolResolveGrafanaDatasource:
-    """Tests for _resolve_grafana_datasource_uid: lookup pre-configured datasources."""
+    """``_resolve_grafana_datasource_uid`` looks up a pre-registered Grafana
+    datasource and returns its UID. Used by Grafana adapter when building
+    panels — the BI layer does not register datasources, only resolves them."""
 
     def test_returns_cached_uid(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
             tool = _build_tool(adapter=FullMockAdapter())
-            tool._grafana_ds_uid = "cached-uid-123"
-            assert tool._resolve_grafana_datasource_uid() == "cached-uid-123"
+        tool._grafana_ds_uid = "cached-uid"
+        assert tool._resolve_grafana_datasource_uid() == "cached-uid"
 
-    def test_returns_none_when_no_list_datasets(self):
+    def test_match_by_bi_database_name(self):
+        ds_info = MagicMock()
+        ds_info.name = "PostgreSQL"
+        ds_info.extra = {"grafana_ds": {"uid": "primary-uid"}}
+        adapter = MagicMock()
+        adapter.list_datasets.return_value = [ds_info]
+
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
-            adapter = MagicMock(spec=[])  # no list_datasets
-            tool = _build_tool(adapter=adapter)
-            assert tool._resolve_grafana_datasource_uid() is None
-
-    def test_matches_by_datasource_name(self):
-        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
-            ds_info = MagicMock()
-            ds_info.name = "My-PostgreSQL"
-            ds_info.extra = {"grafana_ds": {"uid": "matched-uid"}}
-
-            adapter = MagicMock()
-            adapter.list_datasets.return_value = [ds_info]
-
-            tool = _build_tool(adapter=adapter, datasource_name="My-PostgreSQL")
-            uid = tool._resolve_grafana_datasource_uid()
-            assert uid == "matched-uid"
-            assert tool._grafana_ds_uid == "matched-uid"
-
-    def test_fallback_matches_by_database_name(self):
-        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
-            ds_info = MagicMock()
-            ds_info.name = "some-other-name"
-            ds_info.extra = {"grafana_ds": {"uid": "fallback-uid", "jsonData": {"database": "grafana_data"}}}
-
-            adapter = MagicMock()
-            adapter.list_datasets.return_value = [ds_info]
-
             tool = _build_tool(
                 adapter=adapter,
-                dataset_db_uri="postgresql+psycopg2://user:pass@localhost:5434/grafana_data",
+                datasource_name="PostgreSQL",
             )
-            uid = tool._resolve_grafana_datasource_uid()
-            assert uid == "fallback-uid"
+        uid = tool._resolve_grafana_datasource_uid()
+        assert uid == "primary-uid"
+
+    def test_fallback_match_by_database(self):
+        ds_info = MagicMock()
+        ds_info.name = "unrelated"
+        ds_info.extra = {"grafana_ds": {"uid": "fallback-uid", "jsonData": {"database": "superset_examples"}}}
+        adapter = MagicMock()
+        adapter.list_datasets.return_value = [ds_info]
+
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
+            tool = _build_tool(
+                adapter=adapter,
+                dataset_db_uri="postgresql+psycopg2://u:p@h/superset_examples",
+            )
+        uid = tool._resolve_grafana_datasource_uid()
+        assert uid == "fallback-uid"
 
     def test_returns_none_when_no_match(self):
+        ds_info = MagicMock()
+        ds_info.name = "unrelated"
+        ds_info.extra = {"grafana_ds": {"uid": "x", "jsonData": {"database": "other_db"}}}
+        adapter = MagicMock()
+        adapter.list_datasets.return_value = [ds_info]
+
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
-            ds_info = MagicMock()
-            ds_info.name = "unrelated"
-            ds_info.extra = {"grafana_ds": {"uid": "some-uid", "jsonData": {"database": "other_db"}}}
-
-            adapter = MagicMock()
-            adapter.list_datasets.return_value = [ds_info]
-
             tool = _build_tool(
                 adapter=adapter,
                 datasource_name="NonExistent",
-                dataset_db_uri="postgresql+psycopg2://user:pass@localhost/my_db",
+                dataset_db_uri="postgresql+psycopg2://u:p@h/my_db",
             )
-            uid = tool._resolve_grafana_datasource_uid()
-            assert uid is None
+        uid = tool._resolve_grafana_datasource_uid()
+        assert uid is None
 
 
-class TestBIFuncToolWriteQueryContinued:
-    """Continuation of write_query tests (split to keep class sizes manageable)."""
+class TestBIFuncToolDeliverableTarget:
+    """The 5 mutating BI tools (create_dashboard / update_dashboard / create_chart
+    / update_chart / create_dataset) must attach a DeliverableTarget to
+    ``result.result`` so ValidationHook can see what was delivered."""
 
-    def _make_tool_with_dataset_db(self):
+    def _make_tool(self):
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
+            return _build_tool(adapter=FullMockAdapter(), bi_service="superset")
+
+    def test_create_dashboard_attaches_dashboard_target(self):
+        tool = self._make_tool()
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
+            result = tool.create_dashboard("My Dash", description="d")
+        assert result.success == 1
+        target = result.result.get("deliverable_target")
+        assert target is not None
+        assert target["type"] == "dashboard"
+        assert target["platform"] == "superset"
+        assert target["dashboard_id"] == "10"
+        assert target["dashboard_name"] == "My Dash"
+
+    def test_update_dashboard_attaches_dashboard_target(self):
+        tool = self._make_tool()
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
+            result = tool.update_dashboard("10", title="Renamed", description="x")
+        assert result.success == 1
+        target = result.result.get("deliverable_target")
+        assert target is not None
+        assert target["type"] == "dashboard"
+        assert target["dashboard_id"] == "10"
+
+    def test_create_chart_attaches_chart_target(self):
+        tool = self._make_tool()
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
+            result = tool.create_chart(
+                chart_type="bar",
+                title="Sales",
+                dataset_id="1",
+                metrics="revenue",
+                dashboard_id="42",
+            )
+        assert result.success == 1
+        target = result.result.get("deliverable_target")
+        assert target is not None
+        assert target["type"] == "chart"
+        assert target["platform"] == "superset"
+        assert target["chart_id"] == "5"
+        assert target["chart_name"] == "Sales"
+        assert target["dashboard_id"] == "42"
+
+    def test_update_chart_attaches_chart_target(self):
+        tool = self._make_tool()
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
+            result = tool.update_chart("5", title="Renamed Chart")
+        assert result.success == 1
+        target = result.result.get("deliverable_target")
+        assert target is not None
+        assert target["type"] == "chart"
+        assert target["chart_id"] == "5"
+
+    def test_create_dataset_attaches_dataset_target(self):
+        tool = self._make_tool()
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
+            result = tool.create_dataset("events", database_id="1", sql="SELECT 1")
+        assert result.success == 1
+        target = result.result.get("deliverable_target")
+        assert target is not None
+        assert target["type"] == "dataset"
+        assert target["platform"] == "superset"
+        assert target["dataset_id"] == "3"
+        assert target["dataset_name"] == "events"
+
+    def test_delete_dashboard_does_not_attach_target(self):
+        """Deletes don't produce deliverables — no target should be attached."""
+        tool = self._make_tool()
+        result = tool.delete_dashboard("10")
+        assert result.success == 1
+        assert "deliverable_target" not in result.result
+
+    def test_add_chart_to_dashboard_attaches_dashboard_scoped_chart_target(self):
+        """Linking enriches the chart target with its dashboard scope."""
+        tool = self._make_tool()
+        result = tool.add_chart_to_dashboard("5", "42")
+        assert result.success == 1
+        target = result.result.get("deliverable_target")
+        assert target is not None
+        assert target["type"] == "chart"
+        assert target["platform"] == "superset"
+        assert target["chart_id"] == "5"
+        assert target["dashboard_id"] == "42"
+
+    def test_get_dataset_exists(self):
+        """BIFuncTool exposes get_dataset so Layer A can verify dataset existence."""
+        tool = self._make_tool()
+        assert hasattr(tool, "get_dataset")
+        tool_names = {t.name for t in tool.available_tools()}
+        assert "get_dataset" in tool_names
+
+
+class TestGetBiServingTarget:
+    """``get_bi_serving_target`` hands orchestrators the four fields they need
+    to route a transfer job (gen_job) and a dashboard build (gen_dashboard)
+    without each subagent re-reading agent.yml."""
+
+    def _dataset_cfg(self):
+        from datus.configuration.agent_config import DatasetDbConfig
+
+        return DatasetDbConfig(datasource_ref="serving_pg", bi_database_name="analytics_pg")
+
+    def _db_cfg(self):
+        from datus.configuration.agent_config import DbConfig
+
+        return DbConfig(
+            type="postgresql",
+            host="127.0.0.1",
+            port="5433",
+            database="superset_examples",
+            schema="bi_public",
+            username="datus_writer",
+            password="pw",
+        )
+
+    def test_returns_serving_mapping(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
-            return _build_tool(
+            tool = _build_tool(
                 adapter=FullMockAdapter(),
-                dataset_db_uri="postgresql+psycopg2://superset:superset@localhost:5432/superset",
-                dataset_db_schema="public",
+                dataset_db_config=self._dataset_cfg(),
+                serving_db_config=self._db_cfg(),
             )
+        result = tool.get_bi_serving_target()
+        assert result.success == 1
+        payload = result.result
+        assert payload["datus_datasource"] == "serving_pg"
+        assert payload["database"] == "superset_examples"
+        assert payload["schema"] == "bi_public"
+        assert payload["bi_database_name"] == "analytics_pg"
 
-    def test_write_query_absent_from_tools_when_no_dataset_db(self):
+    def test_error_when_not_configured(self):
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock}):
             tool = _build_tool(adapter=FullMockAdapter())
-            tools = tool.available_tools()
-        tool_names = {t.name for t in tools}
-        assert "write_query" not in tool_names
+        result = tool.get_bi_serving_target()
+        assert result.success == 0
+        assert "dataset_db" in result.error

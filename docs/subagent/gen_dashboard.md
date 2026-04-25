@@ -2,7 +2,13 @@
 
 ## Overview
 
-The BI dashboard generation subagent creates, updates, and manages dashboards on Apache Superset and Grafana through an AI-powered assistant. It is invoked by the chat agent via `task(type="gen_dashboard")` and drives the full dashboard creation workflow using LLM function calling over the `BIFuncTool` layer.
+The BI dashboard generation subagent creates, updates, and manages dashboards on Apache Superset and Grafana through an AI-powered assistant. It is invoked by the chat agent via `task(type="gen_dashboard")` and builds BI assets on top of tables or SQL datasets that already exist in a BI-registered database.
+
+`gen_dashboard` does not move data with BI tools and does not dispatch data-preparation subagents. Treat dashboard creation as the second step:
+
+1. Use `gen_job` or `scheduler` separately to prepare / refresh the serving table.
+2. Invoke `gen_dashboard` with the existing table or SQL dataset.
+3. `gen_dashboard` loads the platform skill and builds dataset / chart / dashboard against the BI database identified by `bi_database_name`.
 
 ## What is the BI Dashboard Subagent?
 
@@ -10,8 +16,8 @@ The gen_dashboard subagent is a specialized node (`GenDashboardAgenticNode`) tha
 
 - Connects to a configured BI platform (Superset or Grafana) via the `datus-bi-adapters` registry
 - Exposes platform-appropriate tools dynamically based on adapter Mixin capabilities
-- Materializes source database query results into the BI platform's own database via `write_query`
-- Follows platform-specific skill workflows to build complete, publishable dashboards
+- Registers the already-materialised table as a dataset / datasource and builds charts + dashboard on top
+- Validates the published dashboard via `bi-validation`
 
 ## Quick Start
 
@@ -23,10 +29,10 @@ pip install datus-bi-superset   # For Superset
 pip install datus-bi-grafana    # For Grafana
 ```
 
-Then invoke the subagent from the chat interface:
+Then invoke `gen_dashboard` directly or let the chat agent delegate to it:
 
 ```bash
-/gen_dashboard Create a sales dashboard with revenue trends by region
+Create a Superset dashboard over bi_public.rpt_daily_major_ac_count.
 ```
 
 ## How It Works
@@ -35,31 +41,30 @@ Then invoke the subagent from the chat interface:
 
 ```mermaid
 graph LR
-    A[User natural language request] --> B[ChatAgenticNode]
-    B -->|task type=gen_dashboard| C[GenDashboardAgenticNode]
-    C --> D[_setup_bi_tools]
-    D --> E[adapter_registry.get platform]
-    E --> F[BIFuncTool.available_tools]
-    F --> G[LLM selects Skill workflow]
-    G -->|Superset| H[write_query → create_dataset → create_chart → create_dashboard → add_chart_to_dashboard]
-    G -->|Grafana| I[write_query → create_dashboard → create_chart]
-    H --> J[Return dashboard_result]
-    I --> J
+    A[User request with existing serving table] --> B[gen_dashboard]
+    B --> C[platform dashboard skill]
+    C -->|Superset| I[list_bi_databases → create_dataset → create_chart → create_dashboard → add_chart_to_dashboard]
+    C -->|Grafana| J[list_bi_databases → create_dashboard → create_chart]
+    I --> K[bi-validation]
+    J --> K
+    K --> L[dashboard_result]
 ```
 
-### Superset Workflow (5 steps)
+### Superset Workflow
 
-1. `write_query(sql, table_name)` — Execute SQL on source DB, materialize results to Superset DB
-2. `create_dataset(name, database_id)` — Register the materialized table as a Superset dataset
-3. `create_chart(type, title, dataset_id, metrics, ...)` — Create visualization chart
-4. `create_dashboard(title)` — Create the dashboard container
-5. `add_chart_to_dashboard(chart_id, dashboard_id)` — Assemble chart into dashboard
+1. `list_bi_databases()` — pick the BI database whose name matches `dataset_db.bi_database_name`
+2. `create_dataset(name, database_id)` — register the existing table as a Superset dataset
+3. `create_chart(type, title, dataset_id, metrics, ...)` — create the visualization
+4. `create_dashboard(title)` — create the dashboard container
+5. `add_chart_to_dashboard(chart_id, dashboard_id)` — assemble chart into dashboard
+6. Load `bi-validation` and run post-creation checks
 
-### Grafana Workflow (3 steps)
+### Grafana Workflow
 
-1. `write_query(sql, table_name)` — Execute SQL on source DB, materialize results to Grafana DB
-2. `create_dashboard(title)` — Create the dashboard
-3. `create_chart(type, title, sql=..., dashboard_id=...)` — Create panel with embedded SQL
+1. `list_bi_databases()` — confirm the datasource is registered
+2. `create_dashboard(title)` — create the dashboard
+3. `create_chart(type, title, sql=..., dashboard_id=...)` — create panel with embedded SQL referencing the existing table
+4. Load `bi-validation` and run post-creation checks
 
 ## Available Tools
 
@@ -83,7 +88,10 @@ Tools are exposed dynamically based on which Mixins the platform adapter impleme
 | `create_dataset` | `DatasetWriteMixin` | Register a dataset in Superset |
 | `list_bi_databases` | `DatasetWriteMixin` | List BI platform database connections |
 | `delete_dataset` | `DatasetWriteMixin` | Delete a dataset |
-| `write_query` | `dataset_db_uri` configured | Materialize query results to BI database |
+| `get_bi_serving_target` | `dataset_db` configured | Return the serving DB contract for orchestrator hand-off |
+
+`gen_dashboard` does not expose a direct materialization tool. Data movement
+belongs to a separate `gen_job` / `scheduler` step before dashboard creation.
 
 ## Configuration
 
@@ -92,6 +100,16 @@ Tools are exposed dynamically based on which Mixins the platform adapter impleme
 ```yaml
 agent:
   services:
+    datasources:
+      serving_pg:
+        type: postgresql
+        host: 127.0.0.1
+        port: 5433
+        database: superset_examples
+        schema: bi_public
+        username: "${SERVING_WRITE_USER}"
+        password: "${SERVING_WRITE_PASSWORD}"
+
     bi_platforms:
       superset:
         type: superset
@@ -99,15 +117,15 @@ agent:
         username: "${SUPERSET_USER}"
         password: "${SUPERSET_PASSWORD}"
         dataset_db:
-          uri: "${SUPERSET_DB_URI}"
-          schema: "public"
+          datasource_ref: serving_pg
+          bi_database_name: analytics_pg
       grafana:
         type: grafana
         api_base_url: "http://localhost:3000"
         api_key: "${GRAFANA_API_KEY}"
         dataset_db:
-          uri: "${GRAFANA_DB_URI}"
-          datasource_name: "PostgreSQL"
+          datasource_ref: serving_pg          # can share the same serving DB
+          bi_database_name: PostgreSQL
 
   agentic_nodes:
     gen_dashboard:
@@ -128,9 +146,8 @@ agent:
 | `services.bi_platforms.<platform>.username` | Superset | Login username | — |
 | `services.bi_platforms.<platform>.password` | Superset | Login password | — |
 | `services.bi_platforms.<platform>.api_key` | Grafana | Grafana API key | — |
-| `services.bi_platforms.<platform>.dataset_db.uri` | Yes | SQLAlchemy URI for materialization target DB | — |
-| `services.bi_platforms.<platform>.dataset_db.schema` | No | Schema for materialized tables | — |
-| `services.bi_platforms.<platform>.dataset_db.datasource_name` | Grafana | Grafana datasource name | — |
+| `services.bi_platforms.<platform>.dataset_db.datasource_ref` | Yes | Name of a `services.datasources` entry. Datus uses that datasource's connector for both schema introspection and writes. | — |
+| `services.bi_platforms.<platform>.dataset_db.bi_database_name` | Recommended | Alias under which the BI platform itself has registered the same DB | — |
 
 All sensitive values support `${ENV_VAR}` substitution.
 
@@ -143,10 +160,10 @@ All sensitive values support `${ENV_VAR}` substitution.
 | Dataset concept | Yes (physical table / virtual view) | No (SQL embedded in panel) |
 | Chart prerequisite | `dataset_id` required | `dashboard_id` required |
 | SQL location | Dataset layer | Panel (chart) layer |
-| Database connection | `database_id` + dataset | `datasource_name` auto-resolved |
+| Database connection | `database_id` from `list_bi_databases()` | Datasource auto-resolved via `bi_database_name` |
 | `update_chart` support | Yes | No — delete and recreate |
 | Authentication | Username + password | API key |
-| Workflow steps | 5 | 3 |
+| Workflow steps | 6 | 4 |
 | `DatasetWriteMixin` | Implemented | Not implemented |
 
 ## Output Format
@@ -164,10 +181,22 @@ All sensitive values support `${ENV_VAR}` substitution.
 
 ## Usage Examples
 
-### Create a new dashboard
+### Two-step flow
 
 ```bash
-/gen_dashboard Create a sales dashboard with revenue trends by region and a total GMV big number
+Use gen_job to write daily revenue for the last 90 days into serving_pg.bi_public.rpt_revenue_daily.
+```
+
+After the table is ready:
+
+```bash
+/gen_dashboard Create a Superset dashboard over bi_public.rpt_revenue_daily.
+```
+
+### Direct invocation (table already in serving DB)
+
+```bash
+/gen_dashboard Create a sales dashboard over bi_public.rpt_sales_daily in Superset
 ```
 
 ### Update an existing dashboard
@@ -183,8 +212,6 @@ All sensitive values support `${ENV_VAR}` substitution.
 ```
 
 ### Custom subagent using gen_dashboard node class
-
-You can define a custom subagent that uses the `gen_dashboard` node class in `agent.yml`:
 
 ```yaml
 agent:

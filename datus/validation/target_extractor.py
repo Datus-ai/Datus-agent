@@ -25,6 +25,7 @@ from sqlglot import expressions
 from sqlglot.errors import ParseError
 
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import parse_dialect
 from datus.validation.report import TableTarget
 
 logger = get_logger(__name__)
@@ -70,9 +71,10 @@ def extract_ddl_target(
     if not sql or not sql.strip():
         return None
 
+    normalized_dialect = parse_dialect(dialect) if dialect else ""
     try:
-        parsed = sqlglot.parse_one(sql, dialect=dialect or None, error_level=sqlglot.ErrorLevel.IGNORE)
-    except ParseError as e:
+        parsed = sqlglot.parse_one(sql, dialect=normalized_dialect or None, error_level=sqlglot.ErrorLevel.IGNORE)
+    except (ParseError, ValueError) as e:
         logger.debug("sqlglot failed to parse DDL for target extraction: %s", e)
         return None
 
@@ -100,7 +102,7 @@ def extract_ddl_target(
     if not isinstance(target_expr, expressions.Table):
         return None
 
-    return _table_to_target(target_expr, datasource, active_database, dialect=dialect)
+    return _table_to_target(target_expr, datasource, active_database, dialect=normalized_dialect)
 
 
 def extract_dml_target(
@@ -124,9 +126,10 @@ def extract_dml_target(
     if not sql or not sql.strip():
         return None
 
+    normalized_dialect = parse_dialect(dialect) if dialect else ""
     try:
-        parsed = sqlglot.parse_one(sql, dialect=dialect or None, error_level=sqlglot.ErrorLevel.IGNORE)
-    except ParseError as e:
+        parsed = sqlglot.parse_one(sql, dialect=normalized_dialect or None, error_level=sqlglot.ErrorLevel.IGNORE)
+    except (ParseError, ValueError) as e:
         logger.debug("sqlglot failed to parse DML for target extraction: %s", e)
         return None
 
@@ -147,7 +150,7 @@ def extract_dml_target(
     if not isinstance(target_expr, expressions.Table):
         return None
 
-    return _table_to_target(target_expr, datasource, active_database, dialect=dialect)
+    return _table_to_target(target_expr, datasource, active_database, dialect=normalized_dialect)
 
 
 def _dialect_has_catalog(dialect: str) -> bool:

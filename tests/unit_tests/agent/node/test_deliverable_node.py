@@ -3,7 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-Unit tests for :class:`TableDeliverableAgenticNode.execute_stream` retry loop.
+Unit tests for :class:`DeliverableAgenticNode.execute_stream` retry loop.
 
 Focus: the loop's response to ``ValidationHook.final_report`` recording a
 blocking failure. The real hook fires Layer A + Layer B at ``on_end``; here we

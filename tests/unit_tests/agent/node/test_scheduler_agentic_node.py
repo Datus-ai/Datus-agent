@@ -7,13 +7,13 @@ Unit tests for SchedulerAgenticNode.
 
 Tests cover:
 - Node creation with/without scheduler service config
-- Tools setup (scheduler tools only, no DB/BI/filesystem tools exposed)
+- Tools setup (scheduler + filesystem tools, no DB/BI tools exposed)
 - Max turns configuration
 - Node name
 - Graceful handling when no scheduler config present
 - Registration in node.py, node_type.py, sub_agent_task_tool.py
 - execute_stream happy path, error handling, ExecutionInterrupted
-- _prepare_template_context and _fallback_system_prompt
+- _prepare_template_context and _get_system_prompt
 
 Design principle: Mock SchedulerTools since datus-scheduler-core is optional.
 - Real AgentConfig (from conftest `real_agent_config`)
@@ -150,7 +150,7 @@ class TestSchedulerAgenticNodeInit:
 
 
 class TestSchedulerToolSetup:
-    """Tests for tool setup — scheduler tools only, no DB/BI/filesystem tools exposed."""
+    """Tests for tool setup — scheduler + filesystem tools, no DB/BI tools exposed."""
 
     def test_has_scheduler_tools_with_config(self, real_agent_config, mock_llm_create):
         """With scheduler service config, node should have scheduler tools."""
@@ -193,8 +193,8 @@ class TestSchedulerToolSetup:
             assert "list_dashboards" not in tool_names
             assert "create_dashboard" not in tool_names
 
-    def test_no_filesystem_tools(self, real_agent_config, mock_llm_create):
-        """Filesystem tools should NOT be in tools list."""
+    def test_has_filesystem_tools(self, real_agent_config, mock_llm_create):
+        """Filesystem tools are available so scheduler can write SQL files before submit/update."""
         _add_scheduler_config(real_agent_config)
         with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
             from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
@@ -202,8 +202,9 @@ class TestSchedulerToolSetup:
             node = SchedulerAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
             tool_names = [tool.name for tool in node.tools]
 
-            assert "read_file" not in tool_names
-            assert "write_file" not in tool_names
+            assert "read_file" in tool_names
+            assert "write_file" in tool_names
+            assert "edit_file" in tool_names
 
     def test_no_scheduler_config_no_tools(self, real_agent_config, mock_llm_create):
         """Without scheduler service config, node should have 0 scheduler tools (graceful no-op)."""
@@ -216,15 +217,18 @@ class TestSchedulerToolSetup:
 
         assert "submit_sql_job" not in tool_names
         assert "trigger_scheduler_job" not in tool_names
+        assert "write_file" in tool_names
 
     def test_import_error_yields_no_tools(self, real_agent_config, mock_llm_create):
-        """When scheduler tools import fails, node should have no scheduler tools."""
+        """When scheduler tools import fails, node should still keep filesystem tools."""
         _add_scheduler_config(real_agent_config)
         with patch(_SCHEDULER_TOOLS_PATCH, side_effect=ImportError("datus-scheduler-core not installed")):
             from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
 
             node = SchedulerAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-            assert "submit_sql_job" not in [t.name for t in node.tools]
+            tool_names = [t.name for t in node.tools]
+            assert "submit_sql_job" not in tool_names
+            assert "write_file" in tool_names
 
     def test_tool_category_map_registers_scheduler_tools(self, real_agent_config, mock_llm_create):
         """``_tool_category_map`` must place scheduler tools under ``scheduler_tools``
@@ -238,6 +242,8 @@ class TestSchedulerToolSetup:
             tool_names = {t.name for t in mapping.get("scheduler_tools", [])}
             assert "submit_sql_job" in tool_names
             assert "trigger_scheduler_job" in tool_names
+            fs_tool_names = {t.name for t in mapping.get("filesystem_tools", [])}
+            assert "write_file" in fs_tool_names
 
 
 # ---------------------------------------------------------------------------
@@ -492,7 +498,7 @@ class TestSchedulerExecuteStream:
 
 
 class TestSchedulerTemplateContext:
-    """Tests for _prepare_template_context and _fallback_system_prompt."""
+    """Tests for _prepare_template_context and _get_system_prompt."""
 
     def test_context_with_tools(self, real_agent_config, mock_llm_create):
         """With scheduler tools, native_tools should list tool names."""
@@ -505,26 +511,16 @@ class TestSchedulerTemplateContext:
             assert "submit_sql_job" in ctx["native_tools"]
             assert ctx["has_ask_user_tool"] is False  # workflow mode
 
-    def test_context_without_tools(self, real_agent_config, mock_llm_create):
-        """Without scheduler config, native_tools should be 'None'."""
+    def test_context_without_scheduler_tools(self, real_agent_config, mock_llm_create):
+        """Without scheduler config, native_tools still includes filesystem tools."""
         real_agent_config.services.schedulers = {}
         real_agent_config.init_scheduler_services({})
         from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
 
         node = SchedulerAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         ctx = node._prepare_template_context()
-        assert ctx["native_tools"] == "None"
-
-    def test_fallback_system_prompt(self, real_agent_config, mock_llm_create):
-        """Fallback prompt should mention scheduler specialist and Airflow."""
-        _add_scheduler_config(real_agent_config)
-        with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
-            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
-
-            node = SchedulerAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-            prompt = node._fallback_system_prompt({})
-            assert "scheduler" in prompt.lower()
-            assert "Airflow" in prompt
+        assert "submit_sql_job" not in ctx["native_tools"]
+        assert "write_file" in ctx["native_tools"]
 
 
 # ---------------------------------------------------------------------------

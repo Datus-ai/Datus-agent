@@ -865,12 +865,12 @@ class TestBuiltinNodeDefaultSkills:
     def test_gen_job_defaults(self):
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-        assert GenJobAgenticNode.DEFAULT_SKILLS == "gen-table, table-validation, data-migration"
+        assert GenJobAgenticNode.DEFAULT_SKILLS == "gen-table, data-migration"
 
     def test_gen_table_defaults(self):
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
 
-        assert GenTableAgenticNode.DEFAULT_SKILLS == "gen-table, table-validation"
+        assert GenTableAgenticNode.DEFAULT_SKILLS == "gen-table"
 
     def test_gen_metrics_defaults(self):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode

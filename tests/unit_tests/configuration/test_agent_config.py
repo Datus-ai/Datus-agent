@@ -19,6 +19,8 @@ import pytest
 from datus.configuration.agent_config import (
     AgentConfig,
     BenchmarkConfig,
+    DashboardConfig,
+    DatasetDbConfig,
     DbConfig,
     DocumentConfig,
     ModelConfig,
@@ -149,6 +151,91 @@ class TestDbConfigFilterKwargs:
         cfg = DbConfig.filter_kwargs(DbConfig, kwargs)
         # None values should not be added to extra
         assert cfg.extra is None or "some_none_field" not in cfg.extra
+
+
+# ---------------------------------------------------------------------------
+# DatasetDbConfig — BI serving-layer config aligned with DbConfig
+# ---------------------------------------------------------------------------
+
+
+class TestDatasetDbConfig:
+    def test_dataset_db_parses_ref_form(self):
+        """dataset_db YAML carries datasource_ref + bi_database_name only —
+        the actual DB connection lives under services.datasources.<ref>."""
+        cfg = DatasetDbConfig.from_dict({"datasource_ref": "serving_pg", "bi_database_name": "analytics_pg"})
+        assert isinstance(cfg, DatasetDbConfig)
+        assert cfg.datasource_ref == "serving_pg"
+        assert cfg.bi_database_name == "analytics_pg"
+
+    def test_bi_database_name_optional(self):
+        """bi_database_name is optional; absence yields None."""
+        cfg = DatasetDbConfig.from_dict({"datasource_ref": "serving_pg"})
+        assert cfg.datasource_ref == "serving_pg"
+        assert cfg.bi_database_name is None
+
+    def test_datasource_ref_required(self):
+        """Missing datasource_ref must raise — no silent fallback to a default."""
+        with pytest.raises(DatusException):
+            DatasetDbConfig.from_dict({"bi_database_name": "analytics_pg"})
+
+    def test_datasource_ref_must_be_string(self):
+        with pytest.raises(DatusException):
+            DatasetDbConfig.from_dict({"datasource_ref": ["serving_pg"]})
+
+    def test_inline_db_fields_rejected(self):
+        """Old inline forms (uri / host / port / database / username / schema / type)
+        must be rejected with an actionable error — not silently ignored."""
+        legacy_forms = [
+            {"uri": "postgresql+psycopg2://u:p@h:5432/d"},
+            {"datasource_ref": "serving_pg", "host": "127.0.0.1"},
+            {"datasource_ref": "serving_pg", "type": "postgresql"},
+            {"datasource_ref": "serving_pg", "database": "x"},
+            {"datasource_ref": "serving_pg", "username": "u"},
+            {"datasource_ref": "serving_pg", "schema": "public"},
+        ]
+        for raw in legacy_forms:
+            with pytest.raises(DatusException, match="datasource_ref"):
+                DatasetDbConfig.from_dict(raw)
+
+    def test_dataset_db_used_by_dashboard_config(self):
+        """DashboardConfig.dataset_db holds a DatasetDbConfig pointing at the
+        datasource_ref."""
+        dash = DashboardConfig(platform="superset")
+        dash.dataset_db = DatasetDbConfig.from_dict(
+            {"datasource_ref": "serving_pg", "bi_database_name": "analytics_pg"}
+        )
+        assert dash.dataset_db.datasource_ref == "serving_pg"
+        assert dash.dataset_db.bi_database_name == "analytics_pg"
+
+    def test_init_dashboard_validates_datasource_ref_exists(self):
+        """When init_dashboard runs, an unknown datasource_ref must surface a
+        clear error listing the configured datasources."""
+        from datus.configuration.agent_config import AgentConfig
+
+        ac = AgentConfig.__new__(AgentConfig)
+        ac.services = ServicesConfig(datasources={"serving_pg": DbConfig(type="postgresql", host="h", database="d")})
+
+        ac.init_dashboard(
+            {
+                "superset": {
+                    "type": "superset",
+                    "api_base_url": "http://x",
+                    "dataset_db": {"datasource_ref": "serving_pg"},
+                }
+            }
+        )
+        assert ac.dashboard_config["superset"].dataset_db.datasource_ref == "serving_pg"
+
+        with pytest.raises(DatusException, match="datasource_ref"):
+            ac.init_dashboard(
+                {
+                    "superset": {
+                        "type": "superset",
+                        "api_base_url": "http://x",
+                        "dataset_db": {"datasource_ref": "nonexistent_ds"},
+                    }
+                }
+            )
 
 
 # ---------------------------------------------------------------------------

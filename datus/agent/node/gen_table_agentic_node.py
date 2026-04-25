@@ -7,14 +7,14 @@ GenTableAgenticNode implementation for wide table generation.
 
 This node creates database tables via CTAS (from JOIN SQL) or CREATE TABLE
 (from natural-language descriptions). Most of the plumbing lives in the
-shared :class:`TableDeliverableAgenticNode` base; this subclass only declares
-the tool set (``execute_ddl`` on top of the read-only DB tools) and the
-permission profile category map.
+shared :class:`DeliverableAgenticNode` base; this subclass only declares the
+tool set (``execute_ddl`` on top of the read-only DB tools) and the permission
+profile category map.
 """
 
 from typing import Any, ClassVar, Dict, List, Optional
 
-from datus.agent.node.table_deliverable_node import TableDeliverableAgenticNode
+from datus.agent.node.deliverable_node import DeliverableAgenticNode
 from datus.configuration.node_type import NodeType
 from datus.tools.func_tool import DBFuncTool
 from datus.tools.func_tool.base import trans_to_function_tool
@@ -24,7 +24,7 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-class GenTableAgenticNode(TableDeliverableAgenticNode):
+class GenTableAgenticNode(DeliverableAgenticNode):
     """Wide table generation subagent.
 
     Registers the standard read-only DB tools plus :func:`execute_ddl` so the
@@ -34,12 +34,12 @@ class GenTableAgenticNode(TableDeliverableAgenticNode):
 
     NODE_NAME: ClassVar[str] = "gen_table"
     NODE_TYPE: ClassVar[str] = NodeType.TYPE_GEN_TABLE
-    DEFAULT_SKILLS: ClassVar[Optional[str]] = "gen-table, table-validation"
+    DEFAULT_SKILLS: ClassVar[Optional[str]] = "gen-table"
     PROMPT_TEMPLATE: ClassVar[str] = "gen_table_system"
     ACTION_TYPE: ClassVar[str] = "gen_table_response"
     DEFAULT_MAX_TURNS: ClassVar[int] = 20
 
-    def _setup_db_tools(self) -> None:
+    def _setup_domain_tools(self) -> None:
         """DDL-only: read tools + ``execute_ddl``. No DML / no transfer."""
         try:
             self.db_func_tool = DBFuncTool(

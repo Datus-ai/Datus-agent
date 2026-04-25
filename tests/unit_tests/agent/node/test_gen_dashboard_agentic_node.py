@@ -28,7 +28,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from datus.configuration.agent_config import DashboardConfig
+from datus.configuration.agent_config import DashboardConfig, DatasetDbConfig
 from datus.tools.skill_tools.skill_config import SkillConfig
 
 # ---- Minimal stubs for datus_bi_core (so tests run without the package) ----
@@ -323,7 +323,7 @@ class TestGenDashboardToolSetup:
             assert "create_dataset" in tool_names
 
     def test_no_db_tools_exposed(self, real_agent_config, mock_llm_create):
-        """DB tools (list_tables, describe_table, read_query) should NOT be in tools list."""
+        """DB and subagent tools should NOT be in tools list."""
         _add_dashboard_config(real_agent_config)
         with patch.dict(sys.modules, _BI_MODULES_PATCH):
             from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
@@ -335,6 +335,7 @@ class TestGenDashboardToolSetup:
             assert "describe_table" not in tool_names
             assert "read_query" not in tool_names
             assert "get_table_ddl" not in tool_names
+            assert "task" not in tool_names
 
     def test_no_filesystem_tools(self, real_agent_config, mock_llm_create):
         """Filesystem tools should NOT be in tools list."""
@@ -826,7 +827,7 @@ class TestGenDashboardExecuteStream:
 
 
 class TestGenDashboardTemplateContext:
-    """Tests for _prepare_template_context and _fallback_system_prompt."""
+    """Tests for _prepare_template_context and _get_system_prompt."""
 
     def test_context_with_full_adapter(self, real_agent_config, mock_llm_create):
         """Full adapter should set all has_*_write flags to True and report the platform."""
@@ -839,31 +840,7 @@ class TestGenDashboardTemplateContext:
             assert ctx["has_dashboard_write"] is True
             assert ctx["has_chart_write"] is True
             assert ctx["has_dataset_write"] is True
-            assert ctx["has_write_query"] is False
             assert ctx["bi_platform"] == "superset"
-
-    def test_context_marks_write_query_when_dataset_db_configured(self, real_agent_config, mock_llm_create):
-        """write_query should only be marked available when dataset_db is configured."""
-        real_agent_config.dashboard_config["superset"] = DashboardConfig(
-            platform="superset",
-            api_base_url="http://localhost:8088",
-            username="admin",
-            password="admin",
-            dataset_db={"uri": "postgresql://superset:superset@localhost:5432/superset"},
-        )
-        real_agent_config.agentic_nodes["gen_dashboard"] = {
-            "system_prompt": "gen_dashboard",
-            "bi_platform": "superset",
-            "max_turns": 25,
-        }
-        _bi_core_mock.adapter_registry.get.return_value = lambda **kwargs: FullMockAdapter()
-
-        with patch.dict(sys.modules, _BI_MODULES_PATCH):
-            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
-
-            node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-            ctx = node._prepare_template_context()
-            assert ctx["has_write_query"] is True
 
     def test_context_without_bi_tools(self, real_agent_config, mock_llm_create):
         """Without BI config, all has_*_write flags should be False."""
@@ -943,38 +920,29 @@ class TestGenDashboardTemplateContext:
             # specifically against the old mandatory wording.
             assert 'load_skill(skill_name="bi-validation")' not in prompt
 
-    def test_fallback_system_prompt(self, real_agent_config, mock_llm_create):
-        """Fallback prompt should mention the BI platform and role."""
-        _add_dashboard_config(real_agent_config)
-        with patch.dict(sys.modules, _BI_MODULES_PATCH):
-            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
-
-            node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-            prompt = node._fallback_system_prompt({"bi_platform": "superset"})
-            assert "BI dashboard specialist" in prompt
-            assert "superset" in prompt
-            assert "SQL-backed dataset" in prompt
-            assert "Use write_query" not in prompt
-
-    def test_system_prompt_does_not_require_write_query_when_tool_absent(self, real_agent_config, mock_llm_create):
-        """The rendered prompt should not tell the model to call write_query when the tool is unavailable."""
+    def test_system_prompt_omits_write_query_references(self, real_agent_config, mock_llm_create):
+        """write_query no longer exists as a tool. The prompt must not mention
+        it as either mandatory or optional."""
         _add_dashboard_config(real_agent_config)
         with patch.dict(sys.modules, _BI_MODULES_PATCH):
             from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
 
             node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
             prompt = node._get_system_prompt(template_context=node._prepare_template_context())
-            assert "Never skip `write_query`" not in prompt
-            assert "Do not assume `write_query` exists" in prompt
+            assert "write_query" not in prompt
+            assert "ad_hoc_materialization" not in prompt
 
-    def test_system_prompt_mentions_write_query_as_optional_when_available(self, real_agent_config, mock_llm_create):
-        """The rendered prompt should describe write_query as conditional, not mandatory."""
+
+class TestGenDashboardPromptBoundary:
+    """``gen_dashboard`` only builds BI assets over existing serving data."""
+
+    def test_system_prompt_advertises_existing_data_boundary(self, real_agent_config, mock_llm_create):
         real_agent_config.dashboard_config["superset"] = DashboardConfig(
             platform="superset",
             api_base_url="http://localhost:8088",
             username="admin",
             password="admin",
-            dataset_db={"uri": "postgresql://superset:superset@localhost:5432/superset"},
+            dataset_db=DatasetDbConfig(datasource_ref="california_schools"),
         )
         real_agent_config.agentic_nodes["gen_dashboard"] = {
             "system_prompt": "gen_dashboard",
@@ -982,21 +950,57 @@ class TestGenDashboardTemplateContext:
             "max_turns": 25,
         }
         _bi_core_mock.adapter_registry.get.return_value = lambda **kwargs: FullMockAdapter()
-
         with patch.dict(sys.modules, _BI_MODULES_PATCH):
             from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
 
             node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
             prompt = node._get_system_prompt(template_context=node._prepare_template_context())
-            assert "Never skip `write_query`" not in prompt
-            assert "Use `write_query` only when you need to materialize source-database results" in prompt
+
+        assert "Workflow" in prompt
+        assert "already exists in a BI-registered database" in prompt
+        assert "never dispatches data-preparation subagents" in prompt
+        assert "dashboard-build-pipeline" not in prompt
+        assert "task(gen_job" not in prompt
+
+    def test_system_prompt_keeps_bi_database_name_rule(self, real_agent_config, mock_llm_create):
+        _add_dashboard_config(real_agent_config)
+        _bi_core_mock.adapter_registry.get.return_value = lambda **kwargs: FullMockAdapter()
+        with patch.dict(sys.modules, _BI_MODULES_PATCH):
+            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+            node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+            prompt = node._get_system_prompt(template_context=node._prepare_template_context())
+
+        assert "bi_database_name" in prompt
+
+
+class TestPlatformSkillTrim:
+    """The per-platform skills (superset-dashboard, grafana-dashboard) must no
+    longer tell the model to use ``write_query`` — data movement is outside
+    ``gen_dashboard``'s scope now."""
+
+    def _skill_body(self, name):
+        import pathlib
+
+        project_root = pathlib.Path(__file__).resolve().parents[4]
+        return (project_root / "datus" / "resources" / "skills" / name / "SKILL.md").read_text()
+
+    def test_superset_dashboard_skill_has_no_write_query_step(self):
+        body = self._skill_body("superset-dashboard")
+        assert "write_query" not in body
+
+    def test_grafana_dashboard_skill_has_no_write_query_step(self):
+        body = self._skill_body("grafana-dashboard")
+        assert "write_query" not in body
 
 
 class TestGenDashboardSkillContext:
     """Tests for gen_dashboard skill exposure and prompt finalization."""
 
-    def test_superset_node_exposes_platform_and_validation_skills(self, real_agent_config, mock_llm_create):
-        """Superset nodes should expose both the platform workflow and shared validation skill."""
+    def test_superset_node_exposes_platform_skill_but_hides_validator(self, real_agent_config, mock_llm_create):
+        """Superset nodes expose the platform workflow skill in the main agent prompt,
+        but the validator (``bi-validation`` has ``kind: validator``) is hidden
+        from the main agent and consumed by ValidationHook instead."""
         _add_dashboard_config(real_agent_config)
         real_agent_config.skills_config = SkillConfig(directories=[str(_SKILLS_DIR)])
 
@@ -1005,7 +1009,7 @@ class TestGenDashboardSkillContext:
 
             node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
 
-            assert node.node_config["skills"] == "superset-dashboard, bi-validation"
+            assert node.node_config["skills"] == "superset-dashboard"
 
             prompt = node._finalize_system_prompt("base prompt")
             tool_names = [tool.name for tool in node.tools]
@@ -1013,11 +1017,18 @@ class TestGenDashboardSkillContext:
             assert "load_skill" in tool_names
             assert "<available_skills>" in prompt
             assert 'skill name="superset-dashboard"' in prompt
-            assert 'skill name="bi-validation"' in prompt
+            # Validator is hidden from the main agent (but still reachable via
+            # ``registry.get_validators`` for ValidationHook).
+            assert 'skill name="bi-validation"' not in prompt
             assert 'skill name="grafana-dashboard"' not in prompt
 
-    def test_grafana_node_exposes_platform_and_validation_skills(self, real_agent_config, mock_llm_create):
-        """Grafana nodes should switch the platform skill but keep shared validation."""
+            # Validator is discoverable for ValidationHook.
+            registry = node.skill_manager.registry
+            validator_names = [s.name for s in registry.get_validators("gen_dashboard")]
+            assert "bi-validation" in validator_names
+
+    def test_grafana_node_exposes_platform_skill_but_hides_validator(self, real_agent_config, mock_llm_create):
+        """Grafana nodes expose the platform workflow skill but filter the validator."""
         real_agent_config.dashboard_config["grafana"] = DashboardConfig(
             platform="grafana",
             api_base_url="http://localhost:3000",
@@ -1036,11 +1047,12 @@ class TestGenDashboardSkillContext:
 
             node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
 
-            assert node.node_config["skills"] == "grafana-dashboard, bi-validation"
+            assert node.node_config["skills"] == "grafana-dashboard"
 
             prompt = node._finalize_system_prompt("base prompt")
             assert 'skill name="grafana-dashboard"' in prompt
-            assert 'skill name="bi-validation"' in prompt
+            # Validator hidden from the main agent.
+            assert 'skill name="bi-validation"' not in prompt
             assert 'skill name="superset-dashboard"' not in prompt
 
     def test_existing_skill_filters_are_preserved_when_dashboard_skills_are_injected(
@@ -1056,7 +1068,7 @@ class TestGenDashboardSkillContext:
 
             node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
 
-            assert node.node_config["skills"] == "tenant-*, custom-skill, superset-dashboard, bi-validation"
+            assert node.node_config["skills"] == "tenant-*, custom-skill, superset-dashboard"
 
 
 # ---------------------------------------------------------------------------

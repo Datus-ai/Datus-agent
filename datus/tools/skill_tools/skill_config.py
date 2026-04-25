@@ -142,18 +142,14 @@ class SkillMetadata(BaseModel):
     # Validator skill extensions (ValidationHook infrastructure)
     # Skills with kind="validator" are NOT injected into the main agent's
     # prompt via SkillFuncTool — they are consumed exclusively by
-    # ValidationHook which fires them at trigger points on matching targets.
+    # ValidationHook which fires them at run end on matching targets.
     kind: Literal["skill", "validator"] = Field(
         default="skill",
         description="'skill' (default) is loaded by the main agent; 'validator' is driven by ValidationHook",
     )
-    trigger: List[Literal["on_tool_end", "on_end"]] = Field(
-        default_factory=list,
-        description="When ValidationHook should invoke this validator (only for kind='validator')",
-    )
     severity: Literal["blocking", "advisory", "off"] = Field(
         default="advisory",
-        description="Blocking raises ValidationBlockingException; advisory reports only; off disables the validator",
+        description="Blocking drives retry via on_end final_report; advisory reports only; off disables the validator",
     )
     mode: Literal["llm"] = Field(
         default="llm",
@@ -240,7 +236,6 @@ class SkillMetadata(BaseModel):
             context=frontmatter.get("context"),
             agent=frontmatter.get("agent"),
             kind=frontmatter.get("kind", "skill"),
-            trigger=frontmatter.get("trigger", []) or [],
             severity=raw_severity,
             mode=frontmatter.get("mode", "llm"),
             targets=parsed_targets,
@@ -321,7 +316,6 @@ class SkillMetadata(BaseModel):
             "context": self.context,
             "agent": self.agent,
             "kind": self.kind,
-            "trigger": self.trigger,
             "severity": self.severity,
             "mode": self.mode,
             "targets": [t.model_dump(by_alias=True, exclude_none=True) for t in self.targets],

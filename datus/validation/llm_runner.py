@@ -30,6 +30,7 @@ from datus.validation.report import (
     TableTarget,
     TransferTarget,
     ValidationReport,
+    describe_target,
 )
 
 if TYPE_CHECKING:
@@ -45,6 +46,7 @@ logger = get_logger(__name__)
 # narrow — any write tool is explicitly excluded, as is ``SubAgentTaskTool``
 # (to avoid recursive fork). See design doc §5.5.
 VALIDATOR_READONLY_TOOL_NAMES = {
+    # Database read tools
     "list_databases",
     "list_schemas",
     "list_tables",
@@ -52,6 +54,22 @@ VALIDATOR_READONLY_TOOL_NAMES = {
     "get_table_ddl",
     "search_table",
     "read_query",
+    # BI read tools (gen_dashboard validators)
+    "list_dashboards",
+    "get_dashboard",
+    "list_charts",
+    "get_chart",
+    "get_chart_data",
+    "list_datasets",
+    "get_dataset",
+    "list_bi_databases",
+    # Scheduler read tools (scheduler validators). trigger_scheduler_job is
+    # intentionally excluded — runtime firing is user-initiated, not automatic.
+    "list_scheduler_jobs",
+    "get_scheduler_job",
+    "list_job_runs",
+    "get_run_log",
+    "list_scheduler_connections",
 }
 
 
@@ -99,6 +117,8 @@ async def run_llm_validator(
     db_func_tool: Optional["DBFuncTool"],
     precheck_context: Optional[ValidationReport] = None,
     parent_session: Optional[Any] = None,
+    bi_tool: Optional[Any] = None,
+    scheduler_tool: Optional[Any] = None,
 ) -> ValidationReport:
     """Execute a single validator skill as an isolated LLM sub-agent run.
 
@@ -139,7 +159,7 @@ async def run_llm_validator(
     instructions = content + OUTPUT_CONTRACT_INSTRUCTIONS
 
     # ── tools ─────────────────────────────────────────────────────────
-    tools = _select_readonly_tools(db_func_tool)
+    tools = _select_readonly_tools(db_func_tool, bi_tool=bi_tool, scheduler_tool=scheduler_tool)
 
     # ── prompt ────────────────────────────────────────────────────────
     prompt = _build_prompt(target, precheck_context)
@@ -242,21 +262,35 @@ def _parse_validator_checks(parsed: dict, skill_name: str) -> List[CheckResult]:
     return out
 
 
-def _select_readonly_tools(db_func_tool: Optional["DBFuncTool"]) -> List[Any]:
-    """Return the subset of ``db_func_tool.available_tools()`` in the read-only whitelist.
+def _select_readonly_tools(
+    db_func_tool: Optional["DBFuncTool"],
+    bi_tool: Optional[Any] = None,
+    scheduler_tool: Optional[Any] = None,
+) -> List[Any]:
+    """Return the subset of each tool source's ``available_tools()`` matching
+    :data:`VALIDATOR_READONLY_TOOL_NAMES`.
 
-    ``DBFuncTool.available_tools()`` already excludes mutation tools
-    (``execute_ddl`` / ``execute_write`` / ``transfer_query_result`` are
-    registered separately by nodes that need them), but we still filter by
-    :data:`VALIDATOR_READONLY_TOOL_NAMES` to be safe against future additions.
+    DB / BI / scheduler ``available_tools()`` already exclude mutation tools
+    where applicable, but we still filter by the whitelist to be safe against
+    future additions. ``None`` sources are simply skipped — validators for
+    pure-table subagents only need ``db_func_tool``; BI validators only need
+    ``bi_tool``; etc.
     """
-    if db_func_tool is None:
-        return []
     allowed: List[Any] = []
-    for tool in db_func_tool.available_tools():
-        name = getattr(tool, "name", "")
-        if name in VALIDATOR_READONLY_TOOL_NAMES:
-            allowed.append(tool)
+    seen: set = set()
+    for source in (db_func_tool, bi_tool, scheduler_tool):
+        if source is None:
+            continue
+        try:
+            tools = source.available_tools()
+        except Exception as e:
+            logger.warning("available_tools() failed on %s: %s", type(source).__name__, e)
+            continue
+        for tool in tools:
+            name = getattr(tool, "name", "")
+            if name in VALIDATOR_READONLY_TOOL_NAMES and name not in seen:
+                allowed.append(tool)
+                seen.add(name)
     return allowed
 
 
@@ -294,6 +328,10 @@ def _build_prompt(target: DeliverableTarget, precheck: Optional[ValidationReport
                     f"- transfer {t.source.name} -> {prefix}{t.target.database}.{t.target.fqn} "
                     f"(src={t.source_row_count}, tgt={t.transferred_row_count})"
                 )
+            else:
+                lines.append(f"- {describe_target(t)}")
+    else:
+        lines.append(f"Validate the delivered resource: {describe_target(target)}")
 
     if precheck and precheck.checks:
         lines.append("")

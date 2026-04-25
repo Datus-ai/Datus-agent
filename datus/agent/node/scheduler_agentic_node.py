@@ -2,38 +2,40 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+"""SchedulerAgenticNode — job scheduling subagent.
+
+Most plumbing (session management, validation retry loop, prompt rendering)
+lives in :class:`DeliverableAgenticNode`. This subclass only declares the
+scheduler-specific pieces: scheduler tool registration, workflow/validation
+skill injection, and the domain result shape.
 """
-SchedulerAgenticNode implementation for job scheduling operations.
 
-This module provides a specialized implementation of AgenticNode focused on
-job scheduling management via Airflow (submit, monitor, troubleshoot).
-Only scheduler tools + ask_user are included — no DB/BI/filesystem tools exposed.
-"""
+from __future__ import annotations
 
-from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
+from typing import Any, ClassVar, Dict, List, Literal, Optional
 
-from datus.agent.node.agentic_node import AgenticNode
-from datus.cli.execution_state import ExecutionInterrupted
+from datus.agent.node.deliverable_node import DeliverableAgenticNode
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.configuration.node_type import NodeType
+from datus.schemas.action_history import ActionHistoryManager, ActionStatus
 from datus.schemas.scheduler_agentic_node_models import SchedulerNodeResult
 from datus.utils.loggings import get_logger
-from datus.utils.message_utils import MessagePart, build_structured_content
 
 logger = get_logger(__name__)
 
 
-class SchedulerAgenticNode(AgenticNode):
-    """
-    Job scheduler agentic node.
+class SchedulerAgenticNode(DeliverableAgenticNode):
+    """Job scheduler subagent (Airflow, DolphinScheduler)."""
 
-    This node provides scheduler management capabilities with:
-    - Scheduler tools for job CRUD (via SchedulerTools)
-    - Ask-user tool for interactive confirmation
-    - Session-based conversation management
-    """
-
-    NODE_NAME = "scheduler"
+    NODE_NAME: ClassVar[str] = "scheduler"
+    NODE_TYPE: ClassVar[str] = NodeType.TYPE_SCHEDULER
+    ACTION_TYPE: ClassVar[str] = "scheduler_response"
+    PROMPT_TEMPLATE: ClassVar[str] = "scheduler_system"
+    DEFAULT_MAX_TURNS: ClassVar[int] = 30
+    # Scheduler workflow + validation skills are injected dynamically based
+    # on the configured platform. Leave ``DEFAULT_SKILLS`` empty so the
+    # base-class fallback does not over-expose unrelated platforms.
+    DEFAULT_SKILLS: ClassVar[Optional[str]] = None
 
     def __init__(
         self,
@@ -44,321 +46,165 @@ class SchedulerAgenticNode(AgenticNode):
         scope: Optional[str] = None,
         is_subagent: bool = False,
     ):
-        self.execution_mode = execution_mode
-        # Support custom node_name for alias subagents (e.g. my_scheduler: {node_class: scheduler})
-        self._configured_node_name = node_name or self.NODE_NAME
-
-        self.max_turns = 30
-        config_key = self._configured_node_name
-        if agent_config and hasattr(agent_config, "agentic_nodes") and config_key in agent_config.agentic_nodes:
-            agentic_node_config = agent_config.agentic_nodes[config_key]
-            if isinstance(agentic_node_config, dict):
-                self.max_turns = agentic_node_config.get("max_turns", 30)
-
-        from datus.configuration.node_type import NodeType
-
+        # Populated by ``_setup_domain_tools`` on success. Initialized here so
+        # the attribute exists when the base ``setup_tools`` chain runs during
+        # ``super().__init__``. Exposed to :class:`ValidationHook` via the
+        # ``scheduler_func_tool`` attribute name that the hook looks for.
+        self.scheduler_tools = None
         super().__init__(
-            node_id=node_id or f"{self.NODE_NAME}_node",
-            description=f"Job scheduler node: {self.NODE_NAME}",
-            node_type=NodeType.TYPE_SCHEDULER,
-            input_data=None,
             agent_config=agent_config,
-            tools=[],
-            mcp_servers={},
+            execution_mode=execution_mode,
+            node_id=node_id,
+            node_name=node_name,
             scope=scope,
             is_subagent=is_subagent,
         )
-
-        self.scheduler_tools = None
-        self.ask_user_tool = None
+        # Scheduler service override resolved after base init so
+        # ``self.node_config`` exists.
         self.scheduler_service = self.node_config.get("scheduler_service")
-        self.setup_tools()
 
-    def get_node_name(self) -> str:
-        return self._configured_node_name
+    # ── expose scheduler_tools as the canonical attribute for ValidationHook ─
 
-    # ── Tool Setup ──────────────────────────────────────────────────────
+    @property
+    def scheduler_func_tool(self):
+        """ValidationHook reads ``scheduler_func_tool`` to dispatch Layer A
+        scheduler_job checks. Alias for :attr:`scheduler_tools`.
+        """
+        return self.scheduler_tools
+
+    # ── tool setup ────────────────────────────────────────────────────
 
     def setup_tools(self):
+        """Setup scheduler, filesystem, and optional ask_user tools."""
         if not self.agent_config:
             return
-
         self.tools = []
-        self._setup_scheduler_tools()
+        self._setup_domain_tools()
+        self._setup_filesystem_tools()
         self._setup_scheduler_skills()
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
+        logger.debug("Setup %d tools for %s", len(self.tools), self.NODE_NAME)
 
-        logger.debug(f"Setup {len(self.tools)} tools for {self.NODE_NAME}: {[tool.name for tool in self.tools]}")
+    def _setup_domain_tools(self) -> None:
+        """Register :class:`SchedulerTools` if a scheduler service is configured."""
+        if not getattr(self.agent_config, "scheduler_services", None):
+            return
+        try:
+            from datus.tools.func_tool.scheduler_tools import SchedulerTools
+
+            # Resolve service config early to fail fast on mis-configuration.
+            scheduler_service = getattr(self, "scheduler_service", None) or (
+                self.node_config.get("scheduler_service") if self.node_config else None
+            )
+            self.agent_config.get_scheduler_config(scheduler_service)
+            self.scheduler_tools = SchedulerTools(
+                self.agent_config,
+                scheduler_service=scheduler_service,
+            )
+            self.tools.extend(self.scheduler_tools.available_tools())
+            logger.info("Scheduler tools initialized")
+        except ImportError as e:
+            logger.warning("Scheduler adapter package not installed: %s", e)
+        except Exception as e:
+            logger.error("Failed to setup scheduler tools: %s", e)
 
     def _setup_scheduler_skills(self):
-        """Inject scheduler-validation skill when scheduler tools are available.
+        """Inject platform-workflow + scheduler-validation skills when tools loaded.
 
-        Only injects when scheduler tools were successfully initialized —
-        otherwise the skill would reference non-existent tools like
-        trigger_scheduler_job and list_job_runs.
-
-        Note: platform-specific workflow skills (e.g. airflow-workflow) are NOT
-        injected here because they require tools (task, read_query, write_file)
-        that only exist in the chat node. They are exposed via the chat node's
-        global skill list instead.
+        Platform-specific workflow skills (e.g. ``airflow-workflow``) assume
+        the scheduler tools are present; we only inject them when
+        ``_setup_domain_tools`` succeeded.
         """
         if not self.scheduler_tools:
             return
-
-        scheduler_config = self.agent_config.get_scheduler_config(self.scheduler_service)
+        scheduler_service = getattr(self, "scheduler_service", None) or (
+            self.node_config.get("scheduler_service") if self.node_config else None
+        )
+        scheduler_config = self.agent_config.get_scheduler_config(scheduler_service)
         platform = scheduler_config.get("type", "airflow")
 
-        skills_to_inject = [f"{platform}-workflow", "scheduler-validation"]
+        skills_to_inject = [f"{platform}-workflow"]
         self.node_config["skills"] = self._merge_skill_patterns(
             self.node_config.get("skills"),
             skills_to_inject,
         )
         self._setup_skill_func_tools()
 
-    def _setup_scheduler_tools(self):
-        """Setup scheduler tools if `agent.services.schedulers` is configured."""
-        if not getattr(self.agent_config, "scheduler_services", None):
-            return
-        try:
-            from datus.tools.func_tool.scheduler_tools import SchedulerTools
-
-            self.agent_config.get_scheduler_config(self.scheduler_service)
-            self.scheduler_tools = SchedulerTools(
-                self.agent_config,
-                scheduler_service=self.scheduler_service,
-            )
-            self.tools.extend(self.scheduler_tools.available_tools())
-            logger.info("Scheduler tools initialized")
-        except ImportError as e:
-            logger.warning(f"Scheduler adapter package not installed: {e}")
-        except Exception as e:
-            logger.error(f"Failed to setup scheduler tools: {e}")
-
     def _tool_category_map(self) -> Dict[str, List[Any]]:
         """Register scheduler tools so ``scheduler_tools.delete_job`` DENY fires."""
         mapping = super()._tool_category_map()
         if self.scheduler_tools:
             mapping["scheduler_tools"] = list(self.scheduler_tools.available_tools())
+        if getattr(self, "filesystem_func_tool", None):
+            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
         if self.ask_user_tool:
             mapping.setdefault("tools", []).extend(self.ask_user_tool.available_tools())
         return mapping
 
-    # ── System Prompt ───────────────────────────────────────────────────
+    # ── template context ──────────────────────────────────────────────
 
-    def _prepare_template_context(self) -> dict:
-        """Build template context for scheduler prompt."""
-        context: dict[str, Any] = {}
-        context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
-        context["has_ask_user_tool"] = self.ask_user_tool is not None
-        return context
+    def _prepare_template_context(self, user_input: Any = None) -> dict:
+        """Scheduler-specific template context."""
+        return {
+            "native_tools": ", ".join([tool.name for tool in self.tools]) if self.tools else "None",
+            "has_ask_user_tool": self.ask_user_tool is not None,
+        }
 
-    def _get_system_prompt(
+    # ── result construction ────────────────────────────────────────────
+
+    def _make_success_result(
         self,
-        conversation_summary: Optional[str] = None,
-        template_context: Optional[dict] = None,
-        prompt_version: Optional[str] = None,
-    ) -> str:
-        version = prompt_version or self.node_config.get("prompt_version")
-        system_prompt_name = self.node_config.get("system_prompt") or self.get_node_name()
-        template_name = f"{system_prompt_name}_system"
+        *,
+        success: bool,
+        response_content: Any,
+        tokens_used: int,
+        validation_report: Optional[dict],
+        last_successful_output: Optional[dict],
+        blocked: bool,
+    ) -> SchedulerNodeResult:
+        structured_result = None
+        if last_successful_output and isinstance(last_successful_output, dict):
+            result_data = last_successful_output.get("result")
+            if isinstance(result_data, dict):
+                structured_result = result_data
 
-        try:
-            template_vars = {
-                "agent_config": self.agent_config,
-                "conversation_summary": conversation_summary,
-            }
-            if template_context:
-                template_vars.update(template_context)
+        response_str = ""
+        if response_content:
+            response_str = response_content if isinstance(response_content, str) else str(response_content)
+        elif blocked:
+            response_str = "Validation failed"
 
-            from datus.prompts.prompt_manager import get_prompt_manager
-
-            base_prompt = get_prompt_manager(agent_config=self.agent_config).render_template(
-                template_name=template_name, version=version, **template_vars
-            )
-            return self._finalize_system_prompt(base_prompt)
-
-        except FileNotFoundError:
-            logger.warning(f"Template '{template_name}' not found, using inline fallback")
-            return self._finalize_system_prompt(self._fallback_system_prompt(template_context or {}))
-        except Exception as e:
-            logger.error(f"Template loading error for '{template_name}': {e}")
-            return self._finalize_system_prompt(self._fallback_system_prompt(template_context or {}))
-
-    def _fallback_system_prompt(self, context: dict) -> str:
-        """Inline fallback prompt when template is not found."""
-        return (
-            "You are a job scheduler specialist working with Airflow.\n\n"
-            "Available tools are listed in your tool definitions. "
-            "For managing scheduled jobs, follow these guidelines:\n"
-            "1. Use submit_sql_job or submit_sparksql_job to create new scheduled jobs\n"
-            "2. Use get_scheduler_job and list_scheduler_jobs to check job status\n"
-            "3. Use list_job_runs and get_run_log to troubleshoot failures\n"
-            "4. Use update_job to modify existing job SQL or configuration\n"
-            "5. Use pause_job / resume_job to control job scheduling\n"
-            "6. Use trigger_scheduler_job for manual test runs\n\n"
-            "Common cron expressions: '0 8 * * *' (daily 8am), '0 * * * *' (hourly), "
-            "'0 9 * * 1' (Monday 9am), '0 0 1 * *' (1st of month)."
+        return SchedulerNodeResult(
+            success=success,
+            response=response_str,
+            scheduler_result=structured_result,
+            tokens_used=tokens_used,
+            error=None if success else ("Validation blocked the run" if blocked else None),
+            validation_report=validation_report,
         )
 
-    # ── Execution ───────────────────────────────────────────────────────
-
-    async def execute_stream(
+    def _make_error_result(
         self,
-        action_history_manager: Optional[ActionHistoryManager] = None,
-    ) -> AsyncGenerator[ActionHistory, None]:
-        if not action_history_manager:
-            action_history_manager = ActionHistoryManager()
-
-        if self.input is None:
-            from datus.utils.exceptions import DatusException, ErrorCode
-
-            raise DatusException(ErrorCode.COMMON_FIELD_REQUIRED, message_args={"field_name": "input"})
-
-        user_input = self.input
-
-        action = ActionHistory.create_action(
-            role=ActionRole.USER,
-            action_type=self.get_node_name(),
-            messages=f"User: {user_input.user_message}",
-            input_data=user_input.model_dump(),
-            status=ActionStatus.PROCESSING,
+        *,
+        error: str,
+        action_history_manager: ActionHistoryManager,
+    ) -> SchedulerNodeResult:
+        partial = self._collect_submitted_jobs(action_history_manager)
+        return SchedulerNodeResult(
+            success=False,
+            error=error,
+            response="Sorry, I encountered an error while processing your request.",
+            scheduler_result=partial if partial else None,
+            tokens_used=0,
         )
-        action_history_manager.add_action(action)
-        yield action
 
-        try:
-            session = None
-            conversation_summary = None
-            if self.execution_mode == "interactive":
-                await self._auto_compact()
-                session, conversation_summary = self._get_or_create_session()
-
-            template_context = self._prepare_template_context()
-            system_instruction = self._get_system_prompt(
-                conversation_summary, template_context, prompt_version=user_input.prompt_version
-            )
-
-            enhanced_message = user_input.user_message
-            if user_input.database:
-                enhanced_message = build_structured_content(
-                    [
-                        MessagePart(type="enhanced", content=f"Context: database={user_input.database}"),
-                        MessagePart(type="user", content=user_input.user_message),
-                    ]
-                )
-
-            response_content = ""
-            last_successful_output = None
-
-            async for stream_action in self.model.generate_with_tools_stream(
-                prompt=enhanced_message,
-                tools=self.tools,
-                mcp_servers=self.mcp_servers,
-                instruction=system_instruction,
-                max_turns=self.max_turns,
-                session=session,
-                action_history_manager=action_history_manager,
-                hooks=self._compose_hooks(),
-                agent_name=self.get_node_name(),
-                interrupt_controller=self.interrupt_controller,
-            ):
-                yield stream_action
-
-                if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
-                    if isinstance(stream_action.output, dict):
-                        last_successful_output = stream_action.output
-                        raw_output = stream_action.output.get("raw_output", "")
-                        if isinstance(raw_output, dict):
-                            response_content = str(raw_output)
-                        elif raw_output:
-                            response_content = str(raw_output)
-
-            if not response_content and last_successful_output:
-                raw_output = last_successful_output.get("raw_output", "")
-                if isinstance(raw_output, dict):
-                    response_content = str(raw_output)
-                elif raw_output:
-                    response_content = str(raw_output)
-                else:
-                    response_content = str(last_successful_output)
-
-            tokens_used = 0
-            if self.execution_mode == "interactive":
-                final_actions = action_history_manager.get_actions()
-                for act in reversed(final_actions):
-                    if act.role == "assistant":
-                        if act.output and isinstance(act.output, dict):
-                            usage_info = act.output.get("usage", {})
-                            if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                                tokens_used = usage_info.get("total_tokens", 0)
-                                if tokens_used > 0:
-                                    break
-
-            # Extract structured result from tool outputs
-            structured_result = None
-            if last_successful_output and isinstance(last_successful_output, dict):
-                result_data = last_successful_output.get("result")
-                if isinstance(result_data, dict):
-                    structured_result = result_data
-
-            result = SchedulerNodeResult(
-                success=True,
-                response=response_content,
-                scheduler_result=structured_result,
-                tokens_used=int(tokens_used),
-            )
-
-            self.actions.extend(action_history_manager.get_actions())
-
-            final_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type="scheduler_response",
-                messages=f"{self.get_node_name()} interaction completed successfully",
-                input_data=user_input.model_dump(),
-                output_data=result.model_dump(),
-                status=ActionStatus.SUCCESS,
-            )
-            action_history_manager.add_action(final_action)
-            yield final_action
-
-        except ExecutionInterrupted:
-            raise
-
-        except Exception as e:
-            logger.error(f"{self.get_node_name()} execution error: {e}")
-
-            partial = self._collect_submitted_jobs(action_history_manager)
-
-            error_result = SchedulerNodeResult(
-                success=False,
-                error=str(e),
-                response="Sorry, I encountered an error while processing your request.",
-                scheduler_result=partial if partial else None,
-                tokens_used=0,
-            )
-
-            error_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type="error",
-                messages=f"{self.get_node_name()} interaction failed: {str(e)}",
-                input_data=user_input.model_dump(),
-                output_data=error_result.model_dump(),
-                status=ActionStatus.FAILED,
-            )
-            action_history_manager.add_action(error_action)
-            yield error_action
-
-    # ── Helpers ─────────────────────────────────────────────────────────
+    # ── partial-job collection (used on error) ────────────────────────
 
     @staticmethod
     def _collect_submitted_jobs(action_history_manager: ActionHistoryManager) -> dict:
-        """Scan action history for jobs submitted before a failure.
-
-        Returns a dict summarising jobs that were already created,
-        so that a retry can clean up or reuse them.
-        """
-        jobs: list[dict] = []
+        """Scan action history for jobs submitted before a failure."""
+        jobs: list = []
         job_tools = {"submit_sql_job", "submit_sparksql_job"}
 
         for action in action_history_manager.get_actions():
@@ -366,19 +212,19 @@ class SchedulerAgenticNode(AgenticNode):
                 continue
             if action.action_type not in job_tools:
                 continue
-
             output = action.output
             if not isinstance(output, dict):
                 continue
-
             result = output.get("result")
             if not isinstance(result, dict):
                 continue
-
             job_id = result.get("job_id")
             if job_id:
                 jobs.append(
-                    {"job_id": job_id, "job_name": result.get("job_name", ""), "status": result.get("status", "")}
+                    {
+                        "job_id": job_id,
+                        "job_name": result.get("job_name", ""),
+                        "status": result.get("status", ""),
+                    }
                 )
-
         return {"submitted_jobs": jobs} if jobs else {}

@@ -5,7 +5,7 @@
 """Scheduler tools for submitting and managing jobs via Datus scheduler adapters."""
 
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from agents import Tool
 from datus_scheduler_core.models import SchedulerJobPayload
@@ -117,6 +117,7 @@ class SchedulerTools(BaseTool):
                     "status": job.status.value,
                     "scheduler": job.platform,
                     "platform": job.platform,
+                    "deliverable_target": self._build_scheduler_target(job),
                 },
             )
         except Exception as exc:
@@ -186,6 +187,7 @@ class SchedulerTools(BaseTool):
                     "status": job.status.value,
                     "scheduler": job.platform,
                     "platform": job.platform,
+                    "deliverable_target": self._build_scheduler_target(job),
                 },
             )
         except Exception as exc:
@@ -525,6 +527,7 @@ class SchedulerTools(BaseTool):
                     "status": job.status.value,
                     "scheduler": job.platform,
                     "platform": job.platform,
+                    "deliverable_target": self._build_scheduler_target(job),
                 },
             )
         except Exception as exc:
@@ -664,6 +667,19 @@ class SchedulerTools(BaseTool):
             return ""
         items = ", ".join(f"'{k}' ({v})" for k, v in connections.items())
         return f"\n\nAvailable conn_id values: {items}"
+
+    def _build_scheduler_target(self, job: Any) -> dict:
+        """Build a ``SchedulerJobTarget`` dict from a scheduler-core
+        ``ScheduledJob`` return, for ValidationHook consumption. Attached by
+        mutating methods (``submit_*`` / ``update_job``).
+        """
+        from datus.validation.report import SchedulerJobTarget
+
+        return SchedulerJobTarget(
+            platform=str(getattr(job, "platform", "") or "unknown"),
+            job_id=str(getattr(job, "job_id", "") or ""),
+            job_name=getattr(job, "job_name", None),
+        ).model_dump(exclude_none=True)
 
     def available_tools(self) -> List[Tool]:
         """Return all scheduler tool functions as FunctionTool objects."""

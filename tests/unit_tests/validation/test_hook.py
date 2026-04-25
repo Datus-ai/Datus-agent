@@ -11,7 +11,7 @@ import pytest
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.skill_tools.skill_config import SkillConfig
 from datus.tools.skill_tools.skill_registry import SkillRegistry
-from datus.validation import DBRef, TableTarget, TransferTarget, ValidationBlockingException, ValidationHook
+from datus.validation import ChartTarget, DBRef, TableTarget, TransferTarget, ValidationHook
 
 
 class FakeDBFuncTool:
@@ -73,6 +73,21 @@ class TestOnToolEnd:
         )
         await hook.on_tool_end(None, None, None, FakeToolResult({"deliverable_target": tgt}))
         assert len(hook.session_targets) == 1
+
+    @pytest.mark.asyncio
+    async def test_dashboard_scoped_chart_replaces_standalone_chart_target(self):
+        hook = _make_hook(FakeDBFuncTool(exists=True, rows=3))
+        hook.reset_session()
+
+        standalone = ChartTarget(platform="superset", chart_id="5").model_dump(exclude_none=True)
+        scoped = ChartTarget(platform="superset", chart_id="5", dashboard_id="42").model_dump(exclude_none=True)
+
+        await hook.on_tool_end(None, None, None, FakeToolResult({"deliverable_target": standalone}))
+        await hook.on_tool_end(None, None, None, FakeToolResult({"deliverable_target": scoped}))
+
+        assert len(hook.session_targets) == 1
+        assert isinstance(hook.session_targets[0], ChartTarget)
+        assert hook.session_targets[0].dashboard_id == "42"
 
     @pytest.mark.asyncio
     async def test_on_tool_end_never_runs_layer_a(self):
@@ -231,7 +246,7 @@ class TestRunLayerB:
             self._skills = skills or []
             self._raise = raise_on_get
 
-        def get_validators(self, node_name=None, trigger=None, node_class=None):
+        def get_validators(self, node_name=None, node_class=None):
             if self._raise:
                 raise self._raise
             return list(self._skills)
@@ -395,58 +410,125 @@ class TestSkillValidatorToggle:
         assert queried == [], "get_validators should NOT be called when skill_validators_enabled is False"
 
 
-class TestOnToolEndEscapeHatch:
-    """Skills that explicitly declare trigger=[on_tool_end] still fire per-tool."""
+class TestLayerAForBITargets:
+    """ValidationHook must thread ``bi_tool`` through to Layer A so BI targets
+    get ``dashboard_exists`` / ``chart_exists`` / ``dataset_exists`` checks."""
 
-    @pytest.mark.asyncio
-    async def test_trigger_on_tool_end_skill_still_raises(self, monkeypatch):
-        """When a validator skill declares trigger=[on_tool_end] and is blocking,
-        on_tool_end must still raise ValidationBlockingException so the retry
-        loop can react mid-stream."""
-        from pathlib import Path
+    class FakeBITool:
+        def __init__(self, found=True):
+            self.found = found
 
-        from datus.tools.skill_tools.skill_config import SkillMetadata
-        from datus.validation import CheckResult, ValidationReport
+        def get_dashboard(self, dashboard_id):
+            if self.found:
+                return FuncToolResult(result={"id": dashboard_id})
+            return FuncToolResult(success=0, error="not found")
 
-        hook = _make_hook(FakeDBFuncTool(exists=True), skill_validators_enabled=True)
-        hook.reset_session()
+        def get_chart(self, chart_id, dashboard_id=None):
+            return FuncToolResult(result={"id": chart_id}) if self.found else FuncToolResult(success=0, error="nf")
 
-        # Stub registry.get_validators to return one escape-hatch validator
-        fake_skill = SkillMetadata(
-            name="escape-hatch-validator",
-            description="test",
-            location=Path("/tmp/escape-hatch-validator"),
-            kind="validator",
-            trigger=["on_tool_end"],
-            severity="blocking",
-            mode="llm",
-            targets=[],
-            allowed_agents=["gen_table"],
+        def get_dataset(self, dataset_id, dashboard_id=None):
+            return FuncToolResult(result={"id": dataset_id}) if self.found else FuncToolResult(success=0, error="nf")
+
+    def _make_bi_hook(self, bi_tool, skill_validators_enabled=False):
+        reg = SkillRegistry(config=SkillConfig(directories=["/nonexistent-for-test"]))
+        return ValidationHook(
+            node_name="gen_dashboard",
+            registry=reg,
+            model=None,
+            db_func_tool=None,
+            bi_tool=bi_tool,
+            skill_validators_enabled=skill_validators_enabled,
         )
 
-        def fake_get_validators(node_name, trigger, node_class=None):
-            return [fake_skill] if trigger == "on_tool_end" else []
+    @pytest.mark.asyncio
+    async def test_dashboard_target_dispatches_via_bi_tool(self):
+        from datus.validation import DashboardTarget  # noqa: F401 — discovers module
 
-        hook.registry.get_validators = fake_get_validators  # type: ignore[assignment]
+        bi = self.FakeBITool(found=True)
+        hook = self._make_bi_hook(bi)
+        hook.reset_session()
+        payload = {
+            "deliverable_target": {
+                "type": "dashboard",
+                "platform": "superset",
+                "dashboard_id": "42",
+            }
+        }
+        await hook.on_tool_end(None, None, None, FakeToolResult(payload))
+        await hook.on_end(None, None, None)
+        names = [c.name for c in hook.final_report.checks]
+        assert "dashboard_exists" in names
 
-        # Stub run_llm_validator to return a blocking check
-        async def fake_runner(**kwargs):
-            return ValidationReport(
-                target=kwargs["target"],
-                checks=[
-                    CheckResult(
-                        name="escape_hatch_blocker",
-                        passed=False,
-                        severity="blocking",
-                        source="skill:escape-hatch-validator",
-                    )
-                ],
-            )
+    @pytest.mark.asyncio
+    async def test_dashboard_missing_is_blocking(self):
+        bi = self.FakeBITool(found=False)
+        hook = self._make_bi_hook(bi)
+        hook.reset_session()
+        payload = {
+            "deliverable_target": {
+                "type": "dashboard",
+                "platform": "superset",
+                "dashboard_id": "42",
+            }
+        }
+        await hook.on_tool_end(None, None, None, FakeToolResult(payload))
+        await hook.on_end(None, None, None)
+        assert hook.final_report.has_blocking_failure()
 
-        monkeypatch.setattr("datus.validation.hook.run_llm_validator", fake_runner)
 
-        tgt = TableTarget(database="d", table="t").model_dump(by_alias=True, exclude_none=True)
-        with pytest.raises(ValidationBlockingException) as exc:
-            await hook.on_tool_end(None, None, None, FakeToolResult({"deliverable_target": tgt}))
-        assert exc.value.report.has_blocking_failure()
-        assert any(c.name == "escape_hatch_blocker" for c in exc.value.report.checks)
+class TestLayerAForSchedulerTargets:
+    """ValidationHook must thread ``scheduler_tool`` through to Layer A."""
+
+    class FakeSchedulerTool:
+        def __init__(self, found=True, status="active"):
+            self.found = found
+            self.status = status
+
+        def get_scheduler_job(self, job_id):
+            if self.found:
+                return FuncToolResult(result={"found": True, "job_id": job_id, "status": self.status})
+            return FuncToolResult(result={"found": False, "job_id": job_id})
+
+    def _make_sched_hook(self, sched_tool, skill_validators_enabled=False):
+        reg = SkillRegistry(config=SkillConfig(directories=["/nonexistent-for-test"]))
+        return ValidationHook(
+            node_name="scheduler",
+            registry=reg,
+            model=None,
+            db_func_tool=None,
+            scheduler_tool=sched_tool,
+            skill_validators_enabled=skill_validators_enabled,
+        )
+
+    @pytest.mark.asyncio
+    async def test_scheduler_job_target_dispatches(self):
+        sched = self.FakeSchedulerTool(found=True, status="active")
+        hook = self._make_sched_hook(sched)
+        hook.reset_session()
+        payload = {
+            "deliverable_target": {
+                "type": "scheduler_job",
+                "platform": "airflow",
+                "job_id": "j-1",
+            }
+        }
+        await hook.on_tool_end(None, None, None, FakeToolResult(payload))
+        await hook.on_end(None, None, None)
+        names = [c.name for c in hook.final_report.checks]
+        assert "scheduler_job_exists" in names
+
+    @pytest.mark.asyncio
+    async def test_scheduler_failed_status_is_blocking(self):
+        sched = self.FakeSchedulerTool(found=True, status="failed")
+        hook = self._make_sched_hook(sched)
+        hook.reset_session()
+        payload = {
+            "deliverable_target": {
+                "type": "scheduler_job",
+                "platform": "airflow",
+                "job_id": "j-1",
+            }
+        }
+        await hook.on_tool_end(None, None, None, FakeToolResult(payload))
+        await hook.on_end(None, None, None)
+        assert hook.final_report.has_blocking_failure()

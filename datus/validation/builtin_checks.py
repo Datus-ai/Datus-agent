@@ -5,23 +5,29 @@
 """
 Layer A built-in invariants for ValidationHook.
 
-Deterministic, LLM-free checks that run on every mutating tool call:
+Deterministic, LLM-free checks dispatched by target type:
 
-- ``table_exists`` — ``describe_table`` returns a non-empty column list
-- ``transfer_row_count_parity`` — tool-reported source and target row counts
-  agree
+- ``TableTarget`` → ``table_exists`` (describe_table returns non-empty columns)
+- ``TransferTarget`` → target ``table_exists`` + ``transfer_row_count_parity``
+- ``DashboardTarget`` / ``ChartTarget`` / ``DatasetTarget`` → existence via
+  the BI tool's ``get_dashboard`` / ``get_chart`` / ``get_dataset``
+- ``SchedulerJobTarget`` → ``scheduler_job_exists`` + ``scheduler_job_status``
 
 Always enforced, regardless of ``agent.validation.skill_validators_enabled``.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from datus.utils.loggings import get_logger
 from datus.validation.report import (
+    ChartTarget,
     CheckResult,
+    DashboardTarget,
+    DatasetTarget,
     DeliverableTarget,
+    SchedulerJobTarget,
     SessionTarget,
     TableTarget,
     TransferTarget,
@@ -38,31 +44,65 @@ logger = get_logger(__name__)
 async def run_builtin_checks(
     target: DeliverableTarget,
     db_func_tool: Optional["DBFuncTool"] = None,
+    bi_tool: Optional[Any] = None,
+    scheduler_tool: Optional[Any] = None,
 ) -> ValidationReport:
     """Run Layer A invariants for a single target.
 
     Args:
-        target: The deliverable produced by a mutating tool call
-        db_func_tool: The tool instance to dispatch ``describe_table`` /
-            ``read_query`` through. When ``None`` (tests / harness without a
-            live DB) the check list is empty.
+        target: The deliverable produced by a mutating tool call (or a
+            ``SessionTarget`` aggregating multiple targets at ``on_end``).
+        db_func_tool: DB tool instance for table / transfer checks. Skipped
+            if ``None``.
+        bi_tool: BI tool instance for dashboard / chart / dataset checks.
+            Skipped if ``None``.
+        scheduler_tool: Scheduler tool instance for scheduler_job checks.
+            Skipped if ``None``.
 
     Returns:
         :class:`ValidationReport` with one or more :class:`CheckResult`
         entries; never raises.
     """
     report = ValidationReport(target=target, checks=[])
-    if db_func_tool is None:
-        logger.info("Layer A skipped for %s: no connector available", _target_descriptor(target))
-        return report
 
     if isinstance(target, TableTarget):
+        if db_func_tool is None:
+            logger.info("Layer A skipped for %s: no DB connector available", _target_descriptor(target))
+            return report
         await _check_table(target, db_func_tool, report)
     elif isinstance(target, TransferTarget):
+        if db_func_tool is None:
+            logger.info("Layer A skipped for %s: no DB connector available", _target_descriptor(target))
+            return report
         await _check_transfer(target, db_func_tool, report)
+    elif isinstance(target, DashboardTarget):
+        if bi_tool is None:
+            logger.info("Layer A skipped for %s: no BI tool available", _target_descriptor(target))
+            return report
+        _check_dashboard(target, bi_tool, report)
+    elif isinstance(target, ChartTarget):
+        if bi_tool is None:
+            logger.info("Layer A skipped for %s: no BI tool available", _target_descriptor(target))
+            return report
+        _check_chart(target, bi_tool, report)
+    elif isinstance(target, DatasetTarget):
+        if bi_tool is None:
+            logger.info("Layer A skipped for %s: no BI tool available", _target_descriptor(target))
+            return report
+        _check_dataset(target, bi_tool, report)
+    elif isinstance(target, SchedulerJobTarget):
+        if scheduler_tool is None:
+            logger.info("Layer A skipped for %s: no scheduler tool available", _target_descriptor(target))
+            return report
+        _check_scheduler_job(target, scheduler_tool, report)
     elif isinstance(target, SessionTarget):
         for inner in target.targets:
-            nested = await run_builtin_checks(inner, db_func_tool=db_func_tool)
+            nested = await run_builtin_checks(
+                inner,
+                db_func_tool=db_func_tool,
+                bi_tool=bi_tool,
+                scheduler_tool=scheduler_tool,
+            )
             inner_tag = describe_target(inner)
             for check in nested.checks:
                 observed = dict(check.observed) if check.observed else {}
@@ -84,10 +124,10 @@ async def run_builtin_checks(
 
 
 def _target_descriptor(target: DeliverableTarget) -> str:
-    if isinstance(target, TableTarget):
-        return f"table {target.database}.{target.fqn}"
-    if isinstance(target, TransferTarget):
-        return f"transfer {target.source.name} → {target.target.database}.{target.target.fqn}"
+    if isinstance(
+        target, (TableTarget, TransferTarget, DashboardTarget, ChartTarget, DatasetTarget, SchedulerJobTarget)
+    ):
+        return describe_target(target)
     if isinstance(target, SessionTarget):
         return f"session[{len(target.targets)} target(s)]"
     return repr(target)
@@ -96,13 +136,15 @@ def _target_descriptor(target: DeliverableTarget) -> str:
 async def run_session_builtin_checks(
     session: SessionTarget,
     db_func_tool: Optional["DBFuncTool"] = None,
+    bi_tool: Optional[Any] = None,
+    scheduler_tool: Optional[Any] = None,
 ) -> ValidationReport:
     """``on_end`` entrypoint — wrap each accumulated target in its own checks.
 
     Identical to calling :func:`run_builtin_checks` with the ``SessionTarget``
     directly; kept as a named alias so ``ValidationHook.on_end`` reads cleanly.
     """
-    return await run_builtin_checks(session, db_func_tool=db_func_tool)
+    return await run_builtin_checks(session, db_func_tool=db_func_tool, bi_tool=bi_tool, scheduler_tool=scheduler_tool)
 
 
 async def _check_table(
@@ -192,4 +234,185 @@ def _run_row_count_parity(target: TransferTarget) -> Optional[CheckResult]:
         observed={"source_row_count": src, "transferred_row_count": tgt},
         expected={"source_row_count_eq_transferred_row_count": True},
         error=None if src == tgt else f"source rows {src} != transferred rows {tgt}",
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# BI / scheduler Layer A checks
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def _resource_exists_payload(result: Any) -> bool:
+    """Shared predicate: BI adapters return a dict (possibly empty) on success.
+
+    Existence is established by ``getattr(result, 'success', False)`` plus a
+    non-empty payload. Callers that need richer data pick it out of
+    ``result.result``.
+    """
+    if not getattr(result, "success", False):
+        return False
+    payload = getattr(result, "result", None) or {}
+    if isinstance(payload, dict):
+        return bool(payload)
+    return bool(payload)
+
+
+def _check_dashboard(target: DashboardTarget, bi_tool: Any, report: ValidationReport) -> None:
+    """Dashboard exists via ``get_dashboard(dashboard_id)``."""
+    try:
+        result = bi_tool.get_dashboard(dashboard_id=target.dashboard_id)
+    except Exception as e:
+        report.checks.append(
+            CheckResult(
+                name="dashboard_exists",
+                passed=False,
+                severity="blocking",
+                source="builtin",
+                error=f"get_dashboard raised: {e}",
+            )
+        )
+        return
+    exists = _resource_exists_payload(result)
+    report.checks.append(
+        CheckResult(
+            name="dashboard_exists",
+            passed=exists,
+            severity="blocking",
+            source="builtin",
+            observed={"dashboard_id": target.dashboard_id, "found": exists},
+            expected={"found": True},
+            error=None if exists else f"dashboard {target.dashboard_id} not found",
+        )
+    )
+
+
+def _check_chart(target: ChartTarget, bi_tool: Any, report: ValidationReport) -> None:
+    """Chart exists via ``get_chart(chart_id)``; advisory parity on dashboard_id."""
+    try:
+        result = bi_tool.get_chart(chart_id=target.chart_id, dashboard_id=target.dashboard_id)
+    except Exception as e:
+        report.checks.append(
+            CheckResult(
+                name="chart_exists",
+                passed=False,
+                severity="blocking",
+                source="builtin",
+                error=f"get_chart raised: {e}",
+            )
+        )
+        return
+    exists = _resource_exists_payload(result)
+    report.checks.append(
+        CheckResult(
+            name="chart_exists",
+            passed=exists,
+            severity="blocking",
+            source="builtin",
+            observed={"chart_id": target.chart_id, "found": exists},
+            expected={"found": True},
+            error=None if exists else f"chart {target.chart_id} not found",
+        )
+    )
+    # Advisory: if caller declared dashboard_id, flag a mismatch with the stored one.
+    if exists and target.dashboard_id:
+        payload = getattr(result, "result", None) or {}
+        stored_dashboard = payload.get("dashboard_id") if isinstance(payload, dict) else None
+        if stored_dashboard is not None and str(stored_dashboard) != str(target.dashboard_id):
+            report.checks.append(
+                CheckResult(
+                    name="chart_dashboard_link",
+                    passed=False,
+                    severity="advisory",
+                    source="builtin",
+                    observed={"chart_id": target.chart_id, "stored_dashboard_id": stored_dashboard},
+                    expected={"dashboard_id": target.dashboard_id},
+                    error=f"chart reports dashboard_id={stored_dashboard}, expected {target.dashboard_id}",
+                )
+            )
+
+
+def _check_dataset(target: DatasetTarget, bi_tool: Any, report: ValidationReport) -> None:
+    """Dataset exists via ``get_dataset(dataset_id)``."""
+    try:
+        result = bi_tool.get_dataset(dataset_id=target.dataset_id)
+    except Exception as e:
+        report.checks.append(
+            CheckResult(
+                name="dataset_exists",
+                passed=False,
+                severity="blocking",
+                source="builtin",
+                error=f"get_dataset raised: {e}",
+            )
+        )
+        return
+    exists = _resource_exists_payload(result)
+    report.checks.append(
+        CheckResult(
+            name="dataset_exists",
+            passed=exists,
+            severity="blocking",
+            source="builtin",
+            observed={"dataset_id": target.dataset_id, "found": exists},
+            expected={"found": True},
+            error=None if exists else f"dataset {target.dataset_id} not found",
+        )
+    )
+
+
+# Scheduler job status classification.
+# - ``failed`` / ``error`` → definitive failure (blocking)
+# - ``pending`` / ``queued`` → indeterminate (passed with advisory observed)
+# - Everything else (``active`` / ``running`` / ``paused`` / ``succeeded`` ...)
+#   → assumed healthy (passed)
+_SCHEDULER_STATUS_BAD = {"failed", "error"}
+_SCHEDULER_STATUS_INDETERMINATE = {"pending", "queued"}
+
+
+def _check_scheduler_job(target: SchedulerJobTarget, scheduler_tool: Any, report: ValidationReport) -> None:
+    """Job exists (``get_scheduler_job(job_id).found``) + status is not
+    definitively failed."""
+    try:
+        result = scheduler_tool.get_scheduler_job(job_id=target.job_id)
+    except Exception as e:
+        report.checks.append(
+            CheckResult(
+                name="scheduler_job_exists",
+                passed=False,
+                severity="blocking",
+                source="builtin",
+                error=f"get_scheduler_job raised: {e}",
+            )
+        )
+        return
+
+    payload = getattr(result, "result", None) or {}
+    found = bool(payload.get("found")) if isinstance(payload, dict) else False
+    report.checks.append(
+        CheckResult(
+            name="scheduler_job_exists",
+            passed=found,
+            severity="blocking",
+            source="builtin",
+            observed={"job_id": target.job_id, "found": found},
+            expected={"found": True},
+            error=None if found else f"scheduler job {target.job_id} not found",
+        )
+    )
+    if not found:
+        return
+
+    status = str(payload.get("status", "")).lower() if isinstance(payload, dict) else ""
+    is_bad = status in _SCHEDULER_STATUS_BAD
+    is_indeterminate = status in _SCHEDULER_STATUS_INDETERMINATE
+    report.checks.append(
+        CheckResult(
+            name="scheduler_job_status",
+            passed=not is_bad,
+            severity="blocking" if is_bad else "advisory",
+            source="builtin",
+            observed={"job_id": target.job_id, "status": status, "indeterminate": is_indeterminate},
+            expected={"status_not_in": sorted(_SCHEDULER_STATUS_BAD)},
+            error=f"scheduler job status={status}" if is_bad else None,
+        )
     )

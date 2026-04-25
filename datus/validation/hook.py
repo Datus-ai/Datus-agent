@@ -19,10 +19,11 @@ Wire-up:
     # Chain with other hooks
     self.hooks = CompositeHooks([permission_hooks, hook, generation_hooks])
 
-Blocking failures raise :class:`ValidationBlockingException`, which the owning
-node's ``execute_stream`` catches to drive the retry loop. Callers must also
-call ``hook.reset_session()`` at the start of each agent run and between
-retries so ``_session_targets`` does not leak across runs (see design doc §5.7).
+Blocking failures are recorded in :attr:`ValidationHook.final_report`; the
+owning node's ``execute_stream`` reads it after the stream ends and drives the
+retry loop. Callers must also call ``hook.reset_session()`` at the start of
+each agent run and between retries so ``_session_targets`` does not leak across
+runs (see design doc §5.7).
 """
 
 from __future__ import annotations
@@ -33,10 +34,13 @@ from agents.lifecycle import AgentHooks
 
 from datus.utils.loggings import get_logger
 from datus.validation.builtin_checks import run_session_builtin_checks
-from datus.validation.exceptions import ValidationBlockingException
 from datus.validation.llm_runner import run_llm_validator
 from datus.validation.report import (
+    ChartTarget,
+    DashboardTarget,
+    DatasetTarget,
     DeliverableTarget,
+    SchedulerJobTarget,
     SessionTarget,
     TableTarget,
     TransferTarget,
@@ -65,6 +69,8 @@ class ValidationHook(AgentHooks):
         registry: "SkillRegistry",
         model: Any,
         db_func_tool: Optional["DBFuncTool"] = None,
+        bi_tool: Optional[Any] = None,
+        scheduler_tool: Optional[Any] = None,
         skill_validators_enabled: bool = True,
         node_class: Optional[str] = None,
     ):
@@ -73,6 +79,8 @@ class ValidationHook(AgentHooks):
         self.registry = registry
         self.model = model
         self.db_func_tool = db_func_tool
+        self.bi_tool = bi_tool
+        self.scheduler_tool = scheduler_tool
         self.skill_validators_enabled = skill_validators_enabled
 
         # Per-run state — reset() must be called at run boundaries.
@@ -115,25 +123,32 @@ class ValidationHook(AgentHooks):
 
     async def on_tool_end(self, context, agent, tool, result) -> None:
         """Fires after every tool call. Appends the tool's self-reported
-        ``deliverable_target`` to the session. Layer A + default Layer B
-        validators run at ``on_end``; this method is the escape hatch for
-        validator skills that explicitly declare ``trigger: [on_tool_end]``.
+        ``deliverable_target`` to the session. All validation (Layer A + B)
+        runs at ``on_end`` against the accumulated session.
         """
         target = self._extract_target(result)
         if target is None:
             return
-        self._session_targets.append(target)
+        self._merge_session_target(target)
 
-        if self.skill_validators_enabled:
-            combined = ValidationReport(target=target, checks=[])
-            await self._run_layer_b(
-                trigger="on_tool_end",
-                target=target,
-                combined=combined,
-                precheck_context=None,
-            )
-            if combined.has_blocking_failure():
-                raise ValidationBlockingException(combined)
+    def _merge_session_target(self, target: DeliverableTarget) -> None:
+        """Add a target, replacing weaker BI chart context when available.
+
+        A chart can be created before it is attached to a dashboard. In that
+        case the first ``ChartTarget`` has no ``dashboard_id``; the later
+        ``add_chart_to_dashboard`` target should enrich that same chart instead
+        of making validation run twice for the same deliverable.
+        """
+        if isinstance(target, ChartTarget) and target.dashboard_id:
+            for index, existing in enumerate(self._session_targets):
+                if (
+                    isinstance(existing, ChartTarget)
+                    and existing.platform == target.platform
+                    and existing.chart_id == target.chart_id
+                ):
+                    self._session_targets[index] = target
+                    return
+        self._session_targets.append(target)
 
     async def on_end(self, context, agent, output) -> None:
         """Fires when the agent run completes. Runs Layer A + Layer B against
@@ -147,7 +162,12 @@ class ValidationHook(AgentHooks):
         combined = ValidationReport(target=session, checks=[])
 
         try:
-            a_report = await run_session_builtin_checks(session, db_func_tool=self.db_func_tool)
+            a_report = await run_session_builtin_checks(
+                session,
+                db_func_tool=self.db_func_tool,
+                bi_tool=self.bi_tool,
+                scheduler_tool=self.scheduler_tool,
+            )
             combined.checks.extend(a_report.checks)
             combined.warnings.extend(a_report.warnings)
         except Exception as e:
@@ -164,7 +184,6 @@ class ValidationHook(AgentHooks):
 
         if self.skill_validators_enabled:
             await self._run_layer_b(
-                trigger="on_end",
                 target=session,
                 combined=combined,
                 precheck_context=combined.model_copy(deep=True),
@@ -197,6 +216,14 @@ class ValidationHook(AgentHooks):
                 return TableTarget.model_validate(target_dict)
             if target_type == "transfer":
                 return TransferTarget.model_validate(target_dict)
+            if target_type == "dashboard":
+                return DashboardTarget.model_validate(target_dict)
+            if target_type == "chart":
+                return ChartTarget.model_validate(target_dict)
+            if target_type == "dataset":
+                return DatasetTarget.model_validate(target_dict)
+            if target_type == "scheduler_job":
+                return SchedulerJobTarget.model_validate(target_dict)
         except Exception as e:
             logger.warning("Failed to validate deliverable_target payload: %s", e)
             return None
@@ -204,7 +231,6 @@ class ValidationHook(AgentHooks):
 
     async def _run_layer_b(
         self,
-        trigger: str,
         target: DeliverableTarget,
         combined: ValidationReport,
         precheck_context: Optional[ValidationReport],
@@ -213,7 +239,6 @@ class ValidationHook(AgentHooks):
         try:
             skills = self.registry.get_validators(
                 node_name=self.node_name,
-                trigger=trigger,
                 node_class=self.node_class,
             )
         except Exception as e:
@@ -233,6 +258,8 @@ class ValidationHook(AgentHooks):
                     target=target,
                     model=self.model,
                     db_func_tool=self.db_func_tool,
+                    bi_tool=self.bi_tool,
+                    scheduler_tool=self.scheduler_tool,
                     precheck_context=precheck_context,
                     parent_session=self._parent_session,
                 )

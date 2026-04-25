@@ -1089,3 +1089,77 @@ class TestGetRunLog:
 
         assert result.success == 0
         assert "run not found" in (result.error or "")
+
+
+# ── SchedulerTools deliverable_target self-reporting ──────────────────────
+
+
+class TestSchedulerDeliverableTarget:
+    """The 3 mutating scheduler tools (submit_sql_job / submit_sparksql_job /
+    update_job) must attach a ``SchedulerJobTarget`` to ``result.result`` so
+    ValidationHook can see the delivered job."""
+
+    def _mock_adapter(self, job_id="job_x"):
+        mock_job = _make_scheduled_job(job_id)
+        mock_adapter = MagicMock()
+        mock_adapter.submit_job.return_value = mock_job
+        mock_adapter.update_job.return_value = mock_job
+        return mock_adapter
+
+    def test_submit_sql_job_emits_deliverable_target(self, tmp_path):
+        sql_file = tmp_path / "q.sql"
+        sql_file.write_text("SELECT 1")
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=self._mock_adapter("job_x")):
+            result = tools.submit_sql_job(job_name="job_x", sql_file_path=str(sql_file), conn_id="c1")
+        assert result.success == 1
+        target = result.result.get("deliverable_target")
+        assert target is not None
+        assert target["type"] == "scheduler_job"
+        assert target["platform"] == "airflow"
+        assert target["job_id"] == "job_x"
+        assert target["job_name"] == "job_x"
+
+    def test_submit_sparksql_job_emits_deliverable_target(self, tmp_path):
+        sql_file = tmp_path / "q.sql"
+        sql_file.write_text("SELECT 1")
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=self._mock_adapter("spark_x")):
+            result = tools.submit_sparksql_job(job_name="spark_x", sql_file_path=str(sql_file))
+        assert result.success == 1
+        target = result.result.get("deliverable_target")
+        assert target is not None
+        assert target["type"] == "scheduler_job"
+        assert target["job_id"] == "spark_x"
+
+    def test_update_job_emits_deliverable_target(self, tmp_path):
+        sql_file = tmp_path / "q.sql"
+        sql_file.write_text("SELECT 1")
+        mock_adapter = self._mock_adapter("job_u")
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.update_job(
+                job_id="job_u",
+                sql_file_path=str(sql_file),
+                job_name="job_u",
+                job_type="sql",
+                conn_id="c1",
+            )
+        assert result.success == 1
+        target = result.result.get("deliverable_target")
+        assert target is not None
+        assert target["type"] == "scheduler_job"
+        assert target["job_id"] == "job_u"
+
+    def test_failure_does_not_attach_target(self, tmp_path):
+        """When the adapter fails, no deliverable_target is emitted (since nothing was delivered)."""
+        sql_file = tmp_path / "q.sql"
+        sql_file.write_text("SELECT 1")
+        mock_adapter = MagicMock()
+        mock_adapter.submit_job.side_effect = Exception("boom")
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.submit_sql_job(job_name="job_x", sql_file_path=str(sql_file), conn_id="c1")
+        assert result.success == 0
+        # On failure the tool sets result=None, so there's no dict to contain a target.
+        assert result.result is None or "deliverable_target" not in (result.result or {})

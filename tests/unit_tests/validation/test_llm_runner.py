@@ -26,7 +26,17 @@ from datus.validation.llm_runner import (
     _select_readonly_tools,
     run_llm_validator,
 )
-from datus.validation.report import DBRef, SessionTarget, TableTarget, TransferTarget, ValidationReport
+from datus.validation.report import (
+    ChartTarget,
+    DashboardTarget,
+    DatasetTarget,
+    DBRef,
+    SchedulerJobTarget,
+    SessionTarget,
+    TableTarget,
+    TransferTarget,
+    ValidationReport,
+)
 
 
 class TestFilterToolEvents:
@@ -294,6 +304,65 @@ class TestSelectReadonlyTools:
         assert "execute_write" not in VALIDATOR_READONLY_TOOL_NAMES
         assert "transfer_query_result" not in VALIDATOR_READONLY_TOOL_NAMES
 
+    def test_bi_read_tools_in_whitelist(self):
+        """BI read tools (for gen_dashboard validators) must pass through."""
+        for tool_name in (
+            "list_dashboards",
+            "get_dashboard",
+            "list_charts",
+            "get_chart",
+            "get_chart_data",
+            "list_datasets",
+            "get_dataset",
+            "list_bi_databases",
+        ):
+            assert tool_name in VALIDATOR_READONLY_TOOL_NAMES
+
+    def test_scheduler_read_tools_in_whitelist(self):
+        """Scheduler read tools (for scheduler validators) must pass through."""
+        for tool_name in (
+            "list_scheduler_jobs",
+            "get_scheduler_job",
+            "list_job_runs",
+            "get_run_log",
+            "list_scheduler_connections",
+        ):
+            assert tool_name in VALIDATOR_READONLY_TOOL_NAMES
+
+    def test_trigger_scheduler_job_excluded(self):
+        """trigger_scheduler_job is NOT in the whitelist — runtime firing
+        is user-initiated, not automatic from the validator."""
+        assert "trigger_scheduler_job" not in VALIDATOR_READONLY_TOOL_NAMES
+
+    def test_bi_write_tools_excluded(self):
+        """BI mutating tools must never be exposed to a validator sub-agent."""
+        for tool_name in (
+            "create_dashboard",
+            "update_dashboard",
+            "delete_dashboard",
+            "create_chart",
+            "update_chart",
+            "delete_chart",
+            "create_dataset",
+            "delete_dataset",
+            "add_chart_to_dashboard",
+            "write_query",
+        ):
+            assert tool_name not in VALIDATOR_READONLY_TOOL_NAMES
+
+    def test_scheduler_write_tools_excluded(self):
+        """Scheduler mutating tools must never be exposed to a validator sub-agent."""
+        for tool_name in (
+            "submit_sql_job",
+            "submit_sparksql_job",
+            "update_job",
+            "trigger_scheduler_job",
+            "pause_job",
+            "resume_job",
+            "delete_job",
+        ):
+            assert tool_name not in VALIDATOR_READONLY_TOOL_NAMES
+
 
 class TestBuildPromptExtras:
     """``_build_prompt`` renders compact target descriptors + precheck context."""
@@ -325,6 +394,21 @@ class TestBuildPromptExtras:
         # The validator should see all targets in the session
         assert "d.a" in prompt
         assert "d.b" in prompt
+
+    def test_session_target_lists_bi_and_scheduler_targets(self):
+        s = SessionTarget(
+            targets=[
+                DashboardTarget(platform="superset", dashboard_id="dash-1", dashboard_name="Revenue"),
+                ChartTarget(platform="superset", chart_id="chart-1", chart_name="Trend", dashboard_id="dash-1"),
+                DatasetTarget(platform="superset", dataset_id="ds-1", dataset_name="rpt_daily"),
+                SchedulerJobTarget(platform="airflow", job_id="job-1", job_name="daily refresh"),
+            ]
+        )
+        prompt = _build_prompt(s, precheck=None)
+        assert "dashboard superset:dash-1 'Revenue'" in prompt
+        assert "chart superset:chart-1 'Trend' in dashboard dash-1" in prompt
+        assert "dataset superset:ds-1 'rpt_daily'" in prompt
+        assert "scheduler_job airflow:job-1 'daily refresh'" in prompt
 
     def test_precheck_context_rendered(self):
         from datus.validation.report import CheckResult

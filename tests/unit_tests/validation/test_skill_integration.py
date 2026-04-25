@@ -21,7 +21,6 @@ class TestSkillMetadataValidatorFields:
         m = SkillMetadata.from_frontmatter({"name": "x", "description": "y"}, Path("/tmp/x"))
         assert not m.is_validator()
         assert m.kind == "skill"
-        assert m.trigger == []
         assert m.severity == "advisory"
         assert m.mode == "llm"
         assert m.targets == []
@@ -32,7 +31,6 @@ class TestSkillMetadataValidatorFields:
                 "name": "x",
                 "description": "y",
                 "kind": "validator",
-                "trigger": ["on_tool_end"],
                 "severity": "blocking",
                 "mode": "llm",
                 "targets": [
@@ -44,12 +42,20 @@ class TestSkillMetadataValidatorFields:
             Path("/tmp/x"),
         )
         assert m.is_validator()
-        assert m.trigger == ["on_tool_end"]
         assert m.severity == "blocking"
         assert len(m.targets) == 2
         # Second filter: schema alias → db_schema
         assert m.targets[1].db_schema == "public"
         assert m.targets[1].table_pattern == "rev_*"
+
+    def test_stray_trigger_key_ignored(self):
+        """Legacy `trigger:` in frontmatter is silently dropped (no longer a SkillMetadata field)."""
+        m = SkillMetadata.from_frontmatter(
+            {"name": "x", "description": "y", "kind": "validator", "trigger": ["on_end"]},
+            Path("/tmp/x"),
+        )
+        assert m.is_validator()
+        assert not hasattr(m, "trigger")
 
     def test_yaml_off_severity_coerced(self):
         """YAML parses bare ``off`` as False — from_frontmatter coerces back."""
@@ -84,7 +90,6 @@ class TestSkillRegistryGetValidators:
 name: v1
 description: test
 kind: validator
-trigger: [on_tool_end]
 severity: blocking
 allowed_agents: [gen_table, gen_job]
 ---
@@ -97,7 +102,6 @@ body
 name: v2
 description: test
 kind: validator
-trigger: [on_end]
 severity: blocking
 allowed_agents: [gen_job]
 ---
@@ -110,7 +114,6 @@ body
 name: v-off
 description: test
 kind: validator
-trigger: [on_tool_end]
 severity: off
 allowed_agents: [gen_table]
 ---
@@ -128,20 +131,20 @@ body
             )
             yield SkillRegistry(config=SkillConfig(directories=[str(base)]))
 
-    def test_on_tool_end_filter(self, registry):
-        names = [s.name for s in registry.get_validators("gen_table", "on_tool_end")]
-        assert names == ["v1"]  # v-off excluded by severity; v2 triggers on_end only
+    def test_get_validators_returns_all_matching_validator_skills(self, registry):
+        """All kind=validator skills with matching allowed_agents and severity!=off are returned."""
+        names = sorted(s.name for s in registry.get_validators("gen_table"))
+        assert names == ["v1"]  # v-off excluded by severity; v2 disallows gen_table
 
-    def test_on_end_filter(self, registry):
-        names = [s.name for s in registry.get_validators("gen_job", "on_end")]
-        assert names == ["v2"]
+        names = sorted(s.name for s in registry.get_validators("gen_job"))
+        assert names == ["v1", "v2"]
 
     def test_allowed_agents_respected(self, registry):
-        names = [s.name for s in registry.get_validators("gen_dashboard", "on_tool_end")]
+        names = [s.name for s in registry.get_validators("gen_dashboard")]
         assert names == []
 
     def test_off_severity_excluded(self, registry):
-        names = [s.name for s in registry.get_validators("gen_table", "on_tool_end")]
+        names = [s.name for s in registry.get_validators("gen_table")]
         assert "v-off" not in names
 
 
@@ -156,7 +159,6 @@ class TestSkillManagerValidatorExclusion:
 name: v1
 description: test
 kind: validator
-trigger: [on_tool_end]
 allowed_agents: [gen_table]
 ---
 body

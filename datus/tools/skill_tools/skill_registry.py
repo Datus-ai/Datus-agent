@@ -270,18 +270,17 @@ class SkillRegistry:
         with self._lock:
             return [skill for skill in self._skills.values() if tag in skill.tags]
 
-    def get_validators(self, node_name: str, trigger: str, node_class: Optional[str] = None) -> List[SkillMetadata]:
-        """Return validator skills that should fire for (node_name, trigger).
+    def get_validators(self, node_name: str, node_class: Optional[str] = None) -> List[SkillMetadata]:
+        """Return validator skills active for a given node.
 
-        Only skills with ``kind='validator'``, a matching trigger, ``severity != 'off'``,
-        and whose ``allowed_agents`` (if any) include ``node_name`` / ``node_class``
-        are returned. Per-target filtering (``skill.targets`` vs the active
+        Only skills with ``kind='validator'``, ``severity != 'off'``, and whose
+        ``allowed_agents`` (if any) include ``node_name`` / ``node_class`` are
+        returned. Per-target filtering (``skill.targets`` vs the active
         deliverable) happens later in :class:`ValidationHook` — this accessor
         does the coarse skill-level filtering.
 
         Args:
             node_name: Agent node alias
-            trigger: "on_tool_end" or "on_end"
             node_class: Canonical class name for the node (e.g. gen_table);
                 matched against allowed_agents alongside node_name
 
@@ -299,8 +298,6 @@ class SkillRegistry:
             if skill.kind != "validator":
                 continue
             if skill.severity == "off":
-                continue
-            if trigger not in skill.trigger:
                 continue
             if not skill.is_allowed_for(node_name, node_class):
                 continue

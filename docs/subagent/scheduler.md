@@ -10,6 +10,7 @@ The scheduler subagent is a specialized node (`SchedulerAgenticNode`) that:
 
 - Connects to a configured Airflow instance via the `datus-scheduler-airflow` package
 - Provides 12 tools covering the complete job lifecycle: submit, trigger, pause, resume, update, delete, and monitor
+- Provides filesystem tools so it can write generated SQL into project files before submitting jobs
 - Supports both SQL and SparkSQL job types
 - Enables log fetching and troubleshooting for failed or running jobs
 
@@ -56,11 +57,12 @@ graph LR
 When submitting a new job:
 
 1. LLM identifies the SQL file path, connection, and schedule from the user request
-2. `list_scheduler_connections` is called to discover available Airflow connections
-3. `submit_sql_job` or `submit_sparksql_job` reads the `.sql` file and creates the Airflow DAG with the specified cron schedule
-4. The job ID and status are returned in `scheduler_result`
+2. If the SQL is generated during the conversation, `write_file` saves it under a project path such as `jobs/<job_name>.sql`
+3. `list_scheduler_connections` is called to discover available Airflow connections
+4. `submit_sql_job` or `submit_sparksql_job` reads the `.sql` file and creates the Airflow DAG with the specified cron schedule
+5. The job ID and status are returned in `scheduler_result`
 
-> **Note:** `submit_sql_job` and `submit_sparksql_job` require a `sql_file_path` pointing to an existing `.sql` file on the host. The scheduler node does not include filesystem tools (write_file, etc.), so SQL files must be prepared before invoking the scheduler subagent.
+> **Note:** `submit_sql_job` and `submit_sparksql_job` require a `sql_file_path` pointing to an existing `.sql` file on the host. The scheduler subagent can create or update that file with filesystem tools before submitting.
 
 ## Available Tools
 
@@ -78,6 +80,7 @@ When submitting a new job:
 | `list_scheduler_connections` | List available Airflow connections for job configuration |
 | `list_job_runs` | List recent run records for a specific job |
 | `get_run_log` | Fetch execution logs for a specific job run |
+| `read_file` / `write_file` / `edit_file` | Read, create, or update SQL files used by scheduled jobs |
 
 ## Configuration
 

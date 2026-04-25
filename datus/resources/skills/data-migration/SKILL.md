@@ -1,6 +1,6 @@
 ---
 name: data-migration
-description: "Activate when the gen_job agent detects that the source and target databases differ. Covers cross-database migration lifecycle - type mapping via adapter Mixin hints, DDL generation, data transfer via transfer_query_result, and mandatory reconciliation."
+description: "Activate when the gen_job agent detects that the source and target databases differ. Covers cross-database transfer lifecycle - type mapping via adapter Mixin hints, DDL generation, data transfer via transfer_query_result, and lightweight reconciliation."
 tags:
   - data-engineering
   - migration
@@ -18,7 +18,7 @@ allowed_agents:
 
 Use this skill when the `gen_job` agent is asked to move data between DIFFERENT database engines (any source → any target: e.g., DuckDB ↔ Greenplum, MySQL ↔ StarRocks, Postgres ↔ ClickHouse, Hive → Iceberg). When `source_database == target_database` the job stays inside `gen_job` but this skill does NOT apply — in that case follow the `gen-table` and `table-validation` skills for intra-database ETL instead.
 
-This skill covers the full lifecycle: source inspection, target DDL generation (using adapter Mixin hints), data transfer, and post-migration reconciliation.
+This skill covers the full lifecycle: source inspection, target DDL generation (using adapter Mixin hints), data transfer, and post-transfer reconciliation.
 
 ## When to use this skill
 
@@ -69,21 +69,19 @@ Activate when you need to:
 
 ### Phase 5: Reconcile
 
-Cross-database reconciliation (row count, null ratio, min/max, distinct
-count, duplicate key, sample diff, numeric aggregates) is normally driven
-by the `migration-reconciliation` validator skill via ValidationHook at
-the end of the agent run — **provided
+Cross-database transfer sanity checks are normally driven by the
+`transfer-reconciliation` validator skill via ValidationHook at the end
+of the agent run — **provided
 `agent.validation.skill_validators_enabled` is on** (the default). When
-the validator is enabled, focus on correct transfer execution and let
-the hook drive reconciliation; if it reports blocking failures they will
-be injected back into this conversation so you can fix the transfer and
-retry.
+the validator is enabled, focus on correct transfer execution and let the
+hook compare tool-reported row counts plus a small target-side sanity
+query; if it reports blocking failures they will be injected back into
+this conversation so you can fix the transfer and retry.
 
 **When skill validators are disabled**, the hook cannot reconcile for
-you. In that case you MUST run row-count parity and at least one
-sanity-check query (e.g. distinct-count on the join key) manually using
-`read_query(datasource=<source>)` vs `read_query(datasource=<target>)`
-before declaring the migration done.
+you. In that case you MUST compare the transfer tool's source/target row
+counts and run at least one target-side sanity query before declaring the
+transfer done.
 
 ### Phase 6: Report
 
@@ -91,7 +89,7 @@ Summarize migration results including:
 
 - Source and target table names
 - Rows transferred
-- Each reconciliation check with pass/fail status
+- Reconciliation summary with pass/fail status
 - Any issues or warnings
 
 ## Critical rules
@@ -99,14 +97,77 @@ Summarize migration results including:
 - Always specify the `database` parameter explicitly in every tool call
 - Source database is read-only: never execute DDL or write operations against it
 - Target database is write-target: all DDL and writes go here
-- Reconciliation is mandatory: never skip it after data transfer
-- Report all reconciliation results even if some checks fail
+- Reconciliation is mandatory: never skip the row-count and target sanity checks after data transfer
+- Report reconciliation results even if some checks fail
 - NEVER fall back to a different database if the target is unavailable — STOP and report the error
 - Before starting, verify both source and target show `"available": true` in `list_databases()` output
 
-## Checklist
+## Execution checklist
 
-- Migration checklist: [references/checklist.md](references/checklist.md)
+Use this checklist as the in-skill runbook. Keep the default path lightweight;
+only run expensive reconciliation when the user or project-specific validator
+rules ask for it.
+
+### Pre-transfer
+
+1. Confirm the source table exists and has the expected shape.
+2. Document source columns, types, nullability, and the source row count
+   reported or needed for the transfer.
+3. Identify key columns only when they are needed for layout, deduplication,
+   or optional reconciliation.
+4. Confirm the target database / schema exists, or create it if the target
+   connector supports schema creation and the user asked for it.
+5. Verify target connectivity and write permissions before executing DDL.
+
+### DDL generation
+
+1. Map source column types to the target dialect using adapter migration
+   capabilities when available.
+2. Handle unsupported complex types (for example LIST, STRUCT, MAP, BLOB) by
+   either reporting a blocking issue or explicitly excluding / serializing them
+   with user approval.
+3. For StarRocks or OLAP-style targets, choose a safe key and distribution
+   layout (`DUPLICATE KEY`, `DISTRIBUTED BY HASH`, buckets, partitions) using
+   `suggest_table_layout` when available.
+4. Generate the target `CREATE TABLE` DDL.
+5. Validate the DDL, execute it on the target, then verify the target schema.
+
+### Data transfer
+
+1. Execute `transfer_query_result`.
+2. Verify the tool-reported `rows_transferred` and any reported source /
+   target counts.
+3. If the transfer fails partially, report rows written and the exact error;
+   do not continue as if the migration succeeded.
+
+### Default reconciliation
+
+1. Compare the transfer tool's source/target row counts when both are
+   available.
+2. Run one small target-side sanity query only when the validator hook is
+   disabled or the transfer result is ambiguous.
+3. Treat blocking mismatches as retryable transfer failures and fix them before
+   reporting success.
+
+### Optional extended reconciliation
+
+Do not run these by default on large systems. They can be added by
+project-level validator skills or used when the user explicitly requests a
+deep audit:
+
+- null ratio comparison for nullable columns
+- min/max comparison for numeric and date columns
+- distinct count comparison for key columns
+- duplicate-key checks on the target table
+- key-based sample diff
+- numeric aggregate comparison such as `SUM` or `AVG`
+
+### Reporting
+
+1. Compile check results with pass/fail status.
+2. Flag blocking issues separately from warnings.
+3. Output the final migration summary with source, target, rows transferred,
+   and reconciliation status.
 
 ## Output expectations
 
@@ -114,5 +175,5 @@ At minimum, return:
 
 - source and target database/table names
 - rows transferred
-- reconciliation check results with pass/fail
+- reconciliation summary with pass/fail
 - blocking issues that must be addressed

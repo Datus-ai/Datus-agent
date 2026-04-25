@@ -7,19 +7,19 @@ GenJobAgenticNode implementation for ETL and cross-database migration jobs.
 
 This node builds target tables from source tables (single-database ETL) and
 migrates data across database engines (cross-database migration). Most of the
-plumbing lives in the shared :class:`TableDeliverableAgenticNode` base; this
+plumbing lives in the shared :class:`DeliverableAgenticNode` base; this
 subclass adds DML (``execute_write``), cross-DB transfer
 (``transfer_query_result``), and the three ``MigrationTargetMixin`` wrappers
 (``get_migration_capabilities`` / ``suggest_table_layout`` / ``validate_ddl``)
 to the DDL-only default set.
 
-Post-transfer reconciliation is driven by the ``migration-reconciliation``
+Post-transfer reconciliation is driven by the ``transfer-reconciliation``
 validator skill via :class:`ValidationHook`, not by this node directly.
 """
 
 from typing import Any, ClassVar, Dict, List, Optional
 
-from datus.agent.node.table_deliverable_node import TableDeliverableAgenticNode
+from datus.agent.node.deliverable_node import DeliverableAgenticNode
 from datus.configuration.node_type import NodeType
 from datus.tools.func_tool import DBFuncTool
 from datus.tools.func_tool.base import trans_to_function_tool
@@ -29,7 +29,7 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-class GenJobAgenticNode(TableDeliverableAgenticNode):
+class GenJobAgenticNode(DeliverableAgenticNode):
     """ETL / cross-DB migration subagent.
 
     In addition to the base DDL + read tools it registers:
@@ -41,12 +41,12 @@ class GenJobAgenticNode(TableDeliverableAgenticNode):
 
     NODE_NAME: ClassVar[str] = "gen_job"
     NODE_TYPE: ClassVar[str] = NodeType.TYPE_GEN_JOB
-    DEFAULT_SKILLS: ClassVar[Optional[str]] = "gen-table, table-validation, data-migration"
+    DEFAULT_SKILLS: ClassVar[Optional[str]] = "gen-table, data-migration"
     PROMPT_TEMPLATE: ClassVar[str] = "gen_job_system"
     ACTION_TYPE: ClassVar[str] = "gen_job_response"
     DEFAULT_MAX_TURNS: ClassVar[int] = 40
 
-    def _setup_db_tools(self) -> None:
+    def _setup_domain_tools(self) -> None:
         """Register read tools + DDL + DML + transfer + migration mixin wrappers."""
         try:
             self.db_func_tool = DBFuncTool(

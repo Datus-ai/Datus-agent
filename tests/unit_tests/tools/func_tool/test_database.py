@@ -560,6 +560,25 @@ class TestExecuteDDLDatabaseParam:
         assert result.success == 1
         assert "datasource" in result.result
 
+    def test_execute_ddl_postgresql_dialect_does_not_fail_after_execution(self):
+        """Config/adapter dialect is ``postgresql`` but sqlglot's dialect name
+        is ``postgres``. A successful connector DDL must not be reported as
+        failed while building the validation target."""
+        mock_connector = Mock()
+        mock_connector.dialect = "postgresql"
+        mock_connector.database = "analytics"
+        mock_connector.get_databases.return_value = []
+        ddl_result = Mock(success=True)
+        mock_connector.execute_ddl.return_value = ddl_result
+
+        tool = self._make_tool(mock_connector)
+        result = tool.execute_ddl("CREATE TABLE public.t (id INT)", datasource="superset")
+
+        assert result.success == 1
+        assert result.result["datasource"] == "superset"
+        assert result.result["deliverable_target"]["schema"] == "public"
+        assert result.result["deliverable_target"]["table"] == "t"
+
 
 class TestGetConnectorRouting:
     """Tests for _get_connector routing in single vs multi connector mode.

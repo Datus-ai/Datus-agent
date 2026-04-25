@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING, Any, List, Optional
 
 from agents import Tool
@@ -16,10 +15,8 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
-    from datus.configuration.agent_config import AgentConfig, DashboardConfig
+    from datus.configuration.agent_config import AgentConfig, DashboardConfig, DatasetDbConfig, DbConfig
 
-_VALID_TABLE_NAME = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,62}$")
-_VALID_IF_EXISTS = {"replace", "append", "fail"}
 
 logger = get_logger(__name__)
 
@@ -38,7 +35,7 @@ class BIFuncTool:
     - DashboardWriteMixin: create_dashboard, update_dashboard
     - ChartWriteMixin: create_chart, update_chart, add_chart_to_dashboard
     - DatasetWriteMixin: create_dataset, list_bi_databases
-    - dataset_db set on the service config: write_query
+    - dataset_db set on the service config: get_bi_serving_target
     """
 
     def __init__(
@@ -53,9 +50,6 @@ class BIFuncTool:
         self._adapter = adapter
         self._dash_cfg_resolved = False
         self._dash_cfg: Optional["DashboardConfig"] = None
-        self._read_connector: Any = None
-        self._read_connector_loaded = False
-        self._write_engine = None
         self._dataset_db_id = None
         self._grafana_ds_uid = None
 
@@ -149,19 +143,12 @@ class BIFuncTool:
                 message=(f"No BI adapter registered for type '{adapter_type}' (service alias: '{platform}')"),
             )
 
-        # Derive dialect from dataset_db config (explicit > inferred from URI).
+        # Derive dialect from the referenced datasource — share dialect names
+        # with ``services.datasources`` so adapters line up automatically.
         dialect = ""
-        if dash_cfg.dataset_db:
-            dialect = dash_cfg.dataset_db.get("dialect", "")
-            if not dialect:
-                ds_uri = dash_cfg.dataset_db.get("uri", "")
-                if ds_uri:
-                    try:
-                        from sqlalchemy.engine.url import make_url
-
-                        dialect = make_url(ds_uri).get_backend_name()
-                    except Exception:
-                        pass
+        serving_db = self.serving_db_config
+        if serving_db is not None:
+            dialect = (serving_db.type or "").strip()
 
         return adapter_cls(
             api_base_url=dash_cfg.api_base_url,
@@ -175,57 +162,32 @@ class BIFuncTool:
         )
 
     # ------------------------------------------------------------------ #
-    # Derived config properties (sourced from DashboardConfig.dataset_db)
+    # Serving-layer config + connector — DataDB is referenced by name into
+    # ``services.datasources``, so connector pooling and metadata flow
+    # through the shared DBManager just like any other Datus datasource.
     # ------------------------------------------------------------------ #
 
     @property
-    def dataset_db_uri(self) -> str:
+    def serving_dataset_db(self) -> Optional["DatasetDbConfig"]:
+        """The thin DatasetDbConfig record (datasource_ref + bi_database_name)."""
         dash_cfg = self._resolved_dash_cfg
-        if dash_cfg and dash_cfg.dataset_db:
-            return dash_cfg.dataset_db.get("uri", "") or ""
-        return ""
+        return dash_cfg.dataset_db if dash_cfg else None
 
     @property
-    def dataset_db_schema(self) -> str:
-        dash_cfg = self._resolved_dash_cfg
-        if dash_cfg and dash_cfg.dataset_db:
-            return dash_cfg.dataset_db.get("schema", "") or ""
-        return ""
+    def serving_db_config(self) -> Optional["DbConfig"]:
+        """Resolve ``dataset_db.datasource_ref`` against
+        ``agent_config.services.datasources`` and return the ``DbConfig``.
 
-    @property
-    def datasource_name(self) -> str:
-        dash_cfg = self._resolved_dash_cfg
-        if dash_cfg and dash_cfg.dataset_db:
-            return dash_cfg.dataset_db.get("datasource_name", "") or ""
-        return ""
-
-    @property
-    def read_connector(self) -> Any:
-        """Source DB connector for ``write_query`` (lazy).
-
-        Loaded once on first access from ``db_manager_instance``. Tests that
-        need to inject a mock can assign ``self._read_connector`` directly
-        before first access — the property short-circuits when a non-None
-        connector is already cached.
+        Returns None when ``dataset_db`` isn't configured or the referenced
+        datasource cannot be found (a startup-time validation already prevents
+        the latter — but stay defensive for tests/embedded callers).
         """
-        if self._read_connector is None and not self._read_connector_loaded:
-            self._read_connector_loaded = True
-            if self.agent_config is None:
-                return None
-            try:
-                from datus.tools.db_tools.db_manager import db_manager_instance
-
-                db_manager = db_manager_instance(self.agent_config.datasource_configs)
-                current_db = getattr(self.agent_config, "current_datasource", "") or ""
-                # Pick whichever connector the datasource carries rather than
-                # assuming ``datasource == logic_db``. In the post-services
-                # migration they happen to match, but ``first_conn_with_name``
-                # stays correct if a datasource ever bundles multiple DBs again.
-                _, self._read_connector = db_manager.first_conn_with_name(current_db)
-            except Exception as exc:
-                logger.warning(f"No source DB connector for write_query: {exc}")
-                self._read_connector = None
-        return self._read_connector
+        ds_db = self.serving_dataset_db
+        if ds_db is None or self.agent_config is None:
+            return None
+        services = getattr(self.agent_config, "services", None)
+        datasources = getattr(services, "datasources", {}) if services else {}
+        return datasources.get(ds_db.datasource_ref)
 
     # ------------------------------------------------------------------ #
     # Read operations (available on all adapters)
@@ -277,13 +239,14 @@ class BIFuncTool:
             logger.warning(f"list_charts failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
-    def get_chart(self, chart_id: str, dashboard_id: str = "") -> FuncToolResult:
+    def get_chart(self, chart_id: str, dashboard_id: Optional[str] = "") -> FuncToolResult:
         """Get detailed information about a specific chart or panel by its ID.
 
         For Grafana, pass dashboard_id because panels are scoped to a dashboard.
         """
         try:
-            dashboard_arg = dashboard_id.strip() or None
+            dashboard_arg = str(dashboard_id).strip() if dashboard_id is not None else ""
+            dashboard_arg = dashboard_arg or None
             result = self.adapter.get_chart(chart_id, dashboard_id=dashboard_arg)
             if result is None:
                 return FuncToolResult(success=0, error=f"Chart {chart_id} not found")
@@ -292,7 +255,7 @@ class BIFuncTool:
             logger.warning(f"get_chart failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
-    def get_chart_data(self, chart_id: str, dashboard_id: str = "", limit: int = 0) -> FuncToolResult:
+    def get_chart_data(self, chart_id: str, dashboard_id: Optional[str] = "", limit: int = 0) -> FuncToolResult:
         """Get backend query results for a specific chart.
 
         Supported on adapters that expose chart query execution.
@@ -304,7 +267,8 @@ class BIFuncTool:
             )
 
         try:
-            dashboard_arg = dashboard_id.strip() or None
+            dashboard_arg = str(dashboard_id).strip() if dashboard_id is not None else ""
+            dashboard_arg = dashboard_arg or None
             limit_arg = None
             if limit not in (None, "", 0, "0"):
                 limit_arg = int(limit)
@@ -377,7 +341,9 @@ class BIFuncTool:
 
             spec = DashboardSpec(title=title, description=description)
             result = self.adapter.create_dashboard(spec)
-            return FuncToolResult(result=result.model_dump())
+            payload = result.model_dump()
+            payload["deliverable_target"] = self._build_bi_target("dashboard", payload)
+            return FuncToolResult(result=payload)
         except Exception as exc:
             logger.warning(f"create_dashboard failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
@@ -395,7 +361,9 @@ class BIFuncTool:
                 description=description or (existing.description or ""),
             )
             result = self.adapter.update_dashboard(dashboard_id, spec)
-            return FuncToolResult(result=result.model_dump())
+            payload = result.model_dump()
+            payload["deliverable_target"] = self._build_bi_target("dashboard", payload)
+            return FuncToolResult(result=payload)
         except Exception as exc:
             logger.warning(f"update_dashboard failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
@@ -484,7 +452,9 @@ class BIFuncTool:
                 extra=extra,
             )
             result = self.adapter.create_chart(spec, dashboard_id=dash_id)
-            return FuncToolResult(result=result.model_dump())
+            payload = result.model_dump()
+            payload["deliverable_target"] = self._build_bi_target("chart", payload, dashboard_id=dash_id)
+            return FuncToolResult(result=payload)
         except Exception as exc:
             logger.warning(f"create_chart failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
@@ -516,7 +486,9 @@ class BIFuncTool:
                 metrics=metrics_list or getattr(existing, "metrics", None),
             )
             result = self.adapter.update_chart(chart_id, spec)
-            return FuncToolResult(result=result.model_dump())
+            payload = result.model_dump()
+            payload["deliverable_target"] = self._build_bi_target("chart", payload)
+            return FuncToolResult(result=payload)
         except Exception as exc:
             logger.warning(f"update_chart failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
@@ -525,7 +497,17 @@ class BIFuncTool:
         """Add an existing chart to a dashboard."""
         try:
             success = self.adapter.add_chart_to_dashboard(dashboard_id, chart_id)
-            return FuncToolResult(result={"success": success, "chart_id": chart_id, "dashboard_id": dashboard_id})
+            payload = {"success": success, "chart_id": chart_id, "dashboard_id": dashboard_id}
+            if success:
+                payload["deliverable_target"] = self._build_bi_target(
+                    "chart",
+                    {
+                        "id": chart_id,
+                        "dashboard_id": dashboard_id,
+                    },
+                    dashboard_id=dashboard_id,
+                )
+            return FuncToolResult(result=payload)
         except Exception as exc:
             logger.warning(f"add_chart_to_dashboard failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
@@ -566,7 +548,9 @@ class BIFuncTool:
 
             spec = DatasetSpec(name=name, sql=sql or None, database_id=int(database_id), description=description)
             result = self.adapter.create_dataset(spec)
-            return FuncToolResult(result=result.model_dump())
+            payload = result.model_dump()
+            payload["deliverable_target"] = self._build_bi_target("dataset", payload)
+            return FuncToolResult(result=payload)
         except Exception as exc:
             logger.warning(f"create_dataset failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
@@ -589,88 +573,102 @@ class BIFuncTool:
             logger.warning(f"delete_dataset failed: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
-    # ------------------------------------------------------------------ #
-    # Write query (source DB → dashboard DB)
-    # ------------------------------------------------------------------ #
+    def get_bi_serving_target(self) -> FuncToolResult:
+        """Expose the BI serving DB's identity for orchestrator hand-off.
 
-    def write_query(
-        self,
-        sql: str,
-        table_name: str,
-        if_exists: str = "replace",
-    ) -> FuncToolResult:
+        Returns ``{datus_datasource, database, schema, bi_database_name}`` so a
+        parent agent can prepare data with ``gen_job`` / ``scheduler`` and then
+        build BI assets with ``gen_dashboard`` without re-parsing agent.yml.
         """
-        Execute a SQL query on the source database (via the active connector) and write
-        the result set to the dashboard's own database as a new table.
-
-        This lets you materialise query results inside the BI platform's database so
-        that Superset/Grafana can query them directly without touching the source DB.
-
-        Args:
-            sql: SELECT statement to run on the source (datasource) database.
-            table_name: Target table name inside the dashboard database.
-            if_exists: What to do if the table already exists: "replace" (default),
-                       "append", or "fail".
-        """
-        if not self.dataset_db_uri:
+        ds_db = self.serving_dataset_db
+        db_cfg = self.serving_db_config
+        if ds_db is None or db_cfg is None:
             return FuncToolResult(success=0, error="dataset_db is not configured for this BI platform")
-        if not _VALID_TABLE_NAME.match(table_name):
-            return FuncToolResult(success=0, error="Invalid table_name: must match [a-zA-Z_][a-zA-Z0-9_]{0,62}")
-        if if_exists not in _VALID_IF_EXISTS:
-            return FuncToolResult(success=0, error=f"if_exists must be one of: {sorted(_VALID_IF_EXISTS)}")
-        sql_stripped = sql.strip()
-        sql_upper = sql_stripped.upper()
-        if not (sql_upper.startswith("SELECT") or sql_upper.startswith("WITH")):
-            return FuncToolResult(success=0, error="Only SELECT/WITH queries are allowed in write_query")
-        # Reject multi-statement SQL to prevent piggy-backed writes (e.g., "SELECT 1; DROP TABLE x")
-        if ";" in sql_stripped.rstrip(";"):
-            return FuncToolResult(success=0, error="Multi-statement SQL is not allowed in write_query")
-        try:
-            read_connector = self.read_connector
-            if read_connector is None:
-                return FuncToolResult(success=0, error="No source database connector available for write_query")
-
-            from sqlalchemy import create_engine
-
-            if self._write_engine is None:
-                self._write_engine = create_engine(self.dataset_db_uri)
-
-            result = read_connector.execute_query(sql, result_format="pandas")
-            if not result.success:
-                return FuncToolResult(success=0, error=result.error)
-
-            df = result.sql_return
-            schema = self.dataset_db_schema or None
-            df.to_sql(table_name, self._write_engine, schema=schema, if_exists=if_exists, index=False)
-            rows = len(df)
-            result_data = {
-                "table_name": table_name,
-                "rows_written": rows,
-                "schema": schema,
-                "if_exists": if_exists,
+        return FuncToolResult(
+            result={
+                "datus_datasource": ds_db.datasource_ref,
+                "database": db_cfg.database or "",
+                "schema": db_cfg.schema or "",
+                "bi_database_name": ds_db.bi_database_name or "",
             }
-            database_id = self._resolve_dataset_db_id()
-            if database_id is not None:
-                result_data["database_id"] = database_id
-            return FuncToolResult(result=result_data)
+        )
+
+    def get_dataset(self, dataset_id: str, dashboard_id: str = "") -> FuncToolResult:
+        """Fetch a single dataset's metadata. Read-only; used by ValidationHook's
+        Layer A ``dataset_exists`` check."""
+        try:
+            dash_id = dashboard_id.strip() or None
+            result = self.adapter.get_dataset(dataset_id, dashboard_id=dash_id)
+            if result is None:
+                return FuncToolResult(success=0, error=f"Dataset {dataset_id} not found")
+            return FuncToolResult(result=result.model_dump())
         except Exception as exc:
-            logger.warning(f"write_query failed: {exc}")
-            return FuncToolResult(success=0, error=f"write_query failed for table '{table_name}': {exc}")
+            logger.warning(f"get_dataset failed: {exc}")
+            return FuncToolResult(success=0, error=str(exc))
+
+    # ------------------------------------------------------------------ #
+    # DeliverableTarget self-reporting
+    # ------------------------------------------------------------------ #
+
+    def _build_bi_target(
+        self,
+        resource_type: str,
+        adapter_payload: dict,
+        dashboard_id: Optional[str] = None,
+    ) -> dict:
+        """Build a discriminated ``deliverable_target`` dict from an adapter's
+        ``.model_dump()`` payload. Attached by mutating methods so
+        ``ValidationHook`` can detect what was delivered.
+        """
+        platform = self._resolved_platform() or "unknown"
+        resource_id = str(adapter_payload.get("id", "") or "")
+        resource_name = adapter_payload.get("name") or adapter_payload.get("title")
+        if resource_type == "dashboard":
+            from datus.validation.report import DashboardTarget
+
+            return DashboardTarget(
+                platform=platform,
+                dashboard_id=resource_id,
+                dashboard_name=resource_name,
+            ).model_dump(exclude_none=True)
+        if resource_type == "chart":
+            from datus.validation.report import ChartTarget
+
+            return ChartTarget(
+                platform=platform,
+                chart_id=resource_id,
+                chart_name=resource_name,
+                dashboard_id=dashboard_id or adapter_payload.get("dashboard_id"),
+            ).model_dump(exclude_none=True)
+        if resource_type == "dataset":
+            from datus.validation.report import DatasetTarget
+
+            return DatasetTarget(
+                platform=platform,
+                dataset_id=resource_id,
+                dataset_name=resource_name,
+            ).model_dump(exclude_none=True)
+        # Unknown resource types are surfaced as an empty dict so the caller
+        # can decide to skip attaching (shouldn't happen at runtime given the
+        # closed set of mutating tools).
+        return {}
 
     def _resolve_grafana_datasource_uid(self) -> Any:
         """Look up a pre-configured datasource in the BI platform and return its UID.
 
-        Uses ``datasource_name`` (from agent.yml) to find the datasource.
-        Falls back to matching by database name from ``dataset_db_uri``.
+        Uses ``dataset_db.bi_database_name`` first (the Grafana datasource
+        name), then falls back to matching Grafana's ``jsonData.database``
+        against the serving DB's ``database`` field.
         """
         if self._grafana_ds_uid is not None:
             return self._grafana_ds_uid
         if not hasattr(self.adapter, "list_datasets"):
             return None
+        ds_db = self.serving_dataset_db
+        cfg = self.serving_db_config
         try:
             datasets = self.adapter.list_datasets("")
-            target_name = self.datasource_name
-            # Try matching by configured datasource_name first
+            target_name = (ds_db.bi_database_name if ds_db else "") or ""
             if target_name:
                 for ds in datasets:
                     name = ds.name if hasattr(ds, "name") else ""
@@ -680,20 +678,16 @@ class BIFuncTool:
                             self._grafana_ds_uid = ds_uid
                             return ds_uid
 
-            # Fallback: match by database name from dataset_db_uri
-            if self.dataset_db_uri:
-                from sqlalchemy.engine.url import make_url
-
-                db_name = make_url(self.dataset_db_uri).database or ""
-                if db_name:
-                    for ds in datasets:
-                        extra = (ds.extra or {}).get("grafana_ds", {}) if hasattr(ds, "extra") else {}
-                        json_data = extra.get("jsonData", {})
-                        if json_data.get("database") == db_name:
-                            uid = extra.get("uid")
-                            if uid:
-                                self._grafana_ds_uid = uid
-                                return uid
+            db_name = (cfg.database if cfg else "") or ""
+            if db_name:
+                for ds in datasets:
+                    extra = (ds.extra or {}).get("grafana_ds", {}) if hasattr(ds, "extra") else {}
+                    json_data = extra.get("jsonData", {})
+                    if json_data.get("database") == db_name:
+                        uid = extra.get("uid")
+                        if uid:
+                            self._grafana_ds_uid = uid
+                            return uid
         except Exception as exc:
             logger.debug(f"Could not resolve Grafana datasource: {exc}")
         return None
@@ -701,19 +695,21 @@ class BIFuncTool:
     def _resolve_dataset_db_id(self) -> Any:
         """Look up the BI platform database ID that matches dataset_db by name.
 
-        The database must be pre-registered in the BI platform (e.g. via Superset UI
-        or admin scripts). This method only performs a lookup — it does not register.
+        The database must be pre-registered in the BI platform (Superset UI,
+        Grafana datasource, ...). This method only performs a lookup —
+        it does not register. Prefers ``dataset_db.bi_database_name``
+        (user-declared BI-side alias), falling back to ``DbConfig.database``.
         """
         if self._dataset_db_id is not None:
             return self._dataset_db_id
+        ds_db = self.serving_dataset_db
+        db_cfg = self.serving_db_config
+        if ds_db is None or db_cfg is None:
+            return None
+        target_db_name = (ds_db.bi_database_name or db_cfg.database or "").strip()
+        if not target_db_name:
+            return None
         try:
-            from sqlalchemy.engine.url import make_url
-
-            target_url = make_url(self.dataset_db_uri)
-            target_db_name = target_url.database or ""
-            if not target_db_name:
-                return None
-
             databases = self.adapter.list_bi_databases()
             for db in databases:
                 name = db.get("name", "") if isinstance(db, dict) else getattr(db, "name", "")
@@ -721,7 +717,6 @@ class BIFuncTool:
                     db_id = db.get("id") if isinstance(db, dict) else getattr(db, "id", None)
                     self._dataset_db_id = db_id
                     return db_id
-
             logger.warning(
                 f"Database '{target_db_name}' not found in BI platform. Please register it in the BI platform first."
             )
@@ -774,6 +769,7 @@ class BIFuncTool:
             self.list_charts,
             self.get_chart,
             self.list_datasets,
+            self.get_dataset,
         ]
         if self._supports_chart_data():
             methods.append(self.get_chart_data)
@@ -785,7 +781,10 @@ class BIFuncTool:
         if has_dataset_write:
             methods += [self.create_dataset, self.list_bi_databases, self.delete_dataset]
 
-        if self.dataset_db_uri:
-            methods.append(self.write_query)
+        if self.serving_dataset_db is not None and self.serving_db_config is not None:
+            # Expose the serving DB contract so the agent can resolve the BI
+            # database alias (`bi_database_name`) without re-parsing agent.yml.
+            # Data movement remains outside the BI layer.
+            methods.append(self.get_bi_serving_target)
 
         return [trans_to_function_tool(m) for m in methods]

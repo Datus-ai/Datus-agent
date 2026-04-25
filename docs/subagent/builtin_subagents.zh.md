@@ -990,20 +990,30 @@ agent:
 
 ### 概览
 
-gen_dashboard subagent 在 Superset 和 Grafana 上创建、更新和管理 BI 仪表盘。它由聊天 agent 通过 `task(type="gen_dashboard")` 调用，使用 `BIFuncTool` 中的 BI 工具，通过 LLM function calling 驱动完整的仪表盘创建工作流。
+gen_dashboard subagent 在 Superset 和 Grafana 上创建、更新和管理 BI 仪表盘。它由聊天 agent 通过 `task(type="gen_dashboard")` 调用，使用 `BIFuncTool` 中的 BI 工具，基于已存在的 serving 表或 SQL dataset 创建 dashboard 资产。
 
 ### 关键特性
 
 - **多平台支持**：支持 Apache Superset 和 Grafana；平台可通过 `bi_platform` 显式指定，或从 `agent.services.bi_platforms` 自动检测
 - **动态工具暴露**：工具根据 adapter Mixin 能力动态暴露——只有平台实际支持的操作才作为 LLM 工具出现
-- **数据物化桥接**：`write_query` 将源数据库查询结果写入 BI 平台自有数据库，解耦源数据与可视化层
-- **Skill 引导工作流**：内置 `gen-dashboard` skill 为各平台提供分步工作流指导
+- **只处理已就位的 serving 数据**：数据准备由 `gen_job` / `scheduler` 单独完成；gen_dashboard 负责创建 BI dataset / chart / dashboard 资产
+- **Skill 引导**：平台 skill（`superset-dashboard`、`grafana-dashboard`）提供分步工作流；`bi-validation` 做发布后校验
 
 ### 配置
 
 ```yaml
 agent:
   services:
+    datasources:
+      serving_pg:
+        type: postgresql
+        host: 127.0.0.1
+        port: 5433
+        database: superset_examples
+        schema: bi_public
+        username: "${SERVING_WRITE_USER}"
+        password: "${SERVING_WRITE_PASSWORD}"
+
     bi_platforms:
       superset:
         type: superset
@@ -1011,8 +1021,8 @@ agent:
         username: "${SUPERSET_USER}"
         password: "${SUPERSET_PASSWORD}"
         dataset_db:
-          uri: "${SUPERSET_DB_URI}"
-          schema: "public"
+          datasource_ref: serving_pg
+          bi_database_name: analytics_pg
 
   agentic_nodes:
     gen_dashboard:
@@ -1029,13 +1039,13 @@ agent:
 
 ```mermaid
 graph LR
-    A[chat agent] -->|task type=gen_dashboard| B[GenDashboardAgenticNode]
-    B --> C[_setup_bi_tools]
-    C --> D[adapter_registry.get platform]
-    D --> E[BIFuncTool.available_tools]
-    E --> F[LLM Function Calling]
-    F -->|Superset| G[write_query → create_dataset → create_chart → create_dashboard]
-    F -->|Grafana| H[write_query → create_dashboard → create_chart]
+    A[task gen_dashboard] --> C[GenDashboardAgenticNode]
+    C --> D[BIFuncTool.available_tools]
+    D --> E[LLM Function Calling]
+    E -->|Superset| F[list_bi_databases → create_dataset → create_chart → create_dashboard → add_chart_to_dashboard]
+    E -->|Grafana| G[list_bi_databases → create_dashboard → create_chart]
+    F --> H[bi-validation]
+    G --> H
 ```
 
 ### 可用工具
@@ -1060,7 +1070,7 @@ graph LR
 | `create_dataset` | `DatasetWriteMixin` | 注册数据集 |
 | `list_bi_databases` | `DatasetWriteMixin` | 列出 BI 平台数据库连接 |
 | `delete_dataset` | `DatasetWriteMixin` | 删除数据集 |
-| `write_query` | 已配置 `dataset_db_uri` | 将查询结果物化到 BI 数据库 |
+| `get_bi_serving_target` | 已配置 `dataset_db` | 给编排层返回 serving DB 契约 |
 
 ### 输出格式
 
@@ -1106,6 +1116,7 @@ scheduler subagent 在 Apache Airflow 上提交、监控、更新和排查定时
 
 - **完整作业生命周期**：提交、触发、暂停、恢复、更新和删除 Airflow DAG 作业
 - **SQL 和 SparkSQL 支持**：支持提交 SQL 和 SparkSQL 两种作业类型
+- **SQL 文件管理**：提交前可用文件系统工具创建或更新作业 SQL 文件
 - **监控能力**：列出作业运行记录、获取运行日志、排查故障
 - **连接发现**：列出可用的 Airflow 连接，用于作业配置
 
@@ -1139,10 +1150,11 @@ agent:
 graph LR
     A[chat agent] -->|task type=scheduler| B[SchedulerAgenticNode]
     B --> C[LLM Function Calling]
-    C --> D[submit_sql_job / submit_sparksql_job]
-    C --> E[trigger_scheduler_job]
-    C --> F[pause_job / resume_job]
-    C --> G[list_job_runs / get_run_log]
+    C --> D[write_file / edit_file]
+    D --> E[submit_sql_job / submit_sparksql_job]
+    C --> F[trigger_scheduler_job]
+    C --> G[pause_job / resume_job]
+    C --> H[list_job_runs / get_run_log]
 ```
 
 ### 可用工具
@@ -1151,6 +1163,7 @@ graph LR
 |------|------|
 | `submit_sql_job` | 从 `.sql` 文件提交带 cron 表达式的定时 SQL 作业 |
 | `submit_sparksql_job` | 从 `.sql` 文件提交定时 SparkSQL 作业 |
+| `read_file` / `write_file` / `edit_file` | 读取、创建或更新定时作业使用的 SQL 文件 |
 | `trigger_scheduler_job` | 手动触发一次现有作业运行 |
 | `pause_job` | 暂停定时作业 |
 | `resume_job` | 恢复已暂停的作业 |
@@ -1208,9 +1221,9 @@ agent:
 | `gen_sql` | 生成优化 SQL | SQL 查询 / SQL 文件 | N/A | 深度 SQL 专长、自动验证、支持文件输出 |
 | `gen_report` | 灵活报告生成 | 结构化报告 | N/A | 工具可配置、可扩展、自定义报告 subagent |
 | `gen_table` | 交互式建表 | DDL + 执行结果 | 数据库 | DDL 确认、CTAS 或自然语言建表 |
-| `gen_job` | 数据管道作业（单库 ETL + 跨库迁移） | 作业 / 迁移结果 | 源库 + 目标库 | DDL/DML 执行、通过 MigrationTargetMixin 做跨方言类型映射、`transfer_query_result`、源目标不同库时强制对数校验 |
+| `gen_job` | 数据管道作业（单库 ETL + 跨库传输） | 作业 / 传输结果 | 源库 + 目标库 | DDL/DML 执行、通过 MigrationTargetMixin 做跨方言类型映射、`transfer_query_result`、源目标不同库时做轻量对账校验 |
 | `gen_skill` | 创建或优化 skill | skill 路径 | skills 目录 | 交互式编写、校验、加载现有 skill |
-| `gen_dashboard` | BI 仪表盘 CRUD（Superset、Grafana） | 仪表盘结果 | BI 平台 | 动态工具暴露、数据物化、多平台支持 |
+| `gen_dashboard` | BI 仪表盘 CRUD（Superset、Grafana） | 仪表盘结果 | BI 平台 | 动态工具暴露、基于已就位 serving 数据、多平台支持 |
 | `scheduler` | Airflow 作业生命周期管理 | 调度结果 | Airflow | 提交、监控、更新和排障 |
 
 **所有 subagent 的内置特性：**

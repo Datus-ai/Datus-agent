@@ -2,9 +2,9 @@
 
 ## 概览
 
-`gen_job` 是一个内置 subagent，同时覆盖 **单库 ETL** 和 **跨库迁移**。从一个或多个源表构建或更新目标表，在源库与目标库不同时执行数据传输，并校验结果。
+`gen_job` 是一个内置 subagent，同时覆盖 **单库 ETL** 和 **跨库传输**。从一个或多个源表构建或更新目标表，在源库与目标库不同时执行数据传输，并校验结果。
 
-agent 会根据用户的 prompt 自动判断路径：源库和目标库相同则走单库 ETL（CREATE TABLE AS SELECT / INSERT FROM SELECT）；不同则走跨库迁移（通过 `transfer_query_result`），并激活 `data-migration` skill 执行强制对数校验。
+agent 会根据用户的 prompt 自动判断路径：源库和目标库相同则走单库 ETL（CREATE TABLE AS SELECT / INSERT FROM SELECT）；不同则走跨库传输（通过 `transfer_query_result`），并激活 `data-migration` skill 执行轻量对账校验。
 
 ## 快速开始
 
@@ -14,8 +14,8 @@ agent 会根据用户的 prompt 自动判断路径：源库和目标库相同则
 # 单库 ETL
 /gen_job 从 orders 和 customers 表构建一个汇总表
 
-# 跨库迁移
-/gen_job 把 local_duckdb 里的 users 表迁移到 greenplum
+# 跨库传输
+/gen_job 把 local_duckdb 里的 users 表传输到 greenplum
 ```
 
 chat agent 检测到 ETL 或迁移任务时也会自动委派给 gen_job。
@@ -55,7 +55,7 @@ agent:
 
 每个数据库条目有一个 **逻辑名**（YAML key，如 `local_duckdb`、`greenplum`）。指定源库和目标库时使用此逻辑名。
 
-### 跨库迁移额外要求
+### 跨库传输额外要求
 
 - 源库和目标库都必须可访问
 - 源库需支持 pandas 查询执行（DuckDB、PostgreSQL 等）
@@ -88,11 +88,11 @@ agent:
 ```
 阶段 1：检查源表和目标表
 阶段 2：生成并执行 DDL / DML
-阶段 3：验证结果（行数、schema、数据质量）
+阶段 3：验证结果（内置存在性/行数检查，加上显式 schema 契约检查）
 阶段 4：输出摘要
 ```
 
-### 跨库迁移
+### 跨库传输
 
 ```
 阶段 1：发现数据库（list_databases）并检查源表
@@ -100,11 +100,11 @@ agent:
         + 对 OLAP 目标调用 suggest_table_layout()
 阶段 3：草拟目标 DDL → validate_ddl() → execute_ddl()
 阶段 4：传输数据（transfer_query_result）
-阶段 5：对数校验（7 项检查）
+阶段 5：行数对账和目标侧 sanity check
 阶段 6：输出迁移报告
 ```
 
-## 跨库迁移详解
+## 跨库传输详解
 
 ### 数据库发现
 
@@ -149,17 +149,15 @@ transfer_query_result(
 - 部分失败不支持事务回滚
 - 通过批量 INSERT 写入（非 COPY 或 stream load）
 
-### 对数校验
+### 对账校验
 
-迁移后自动执行 7 项对数检查：
+`transfer_query_result` 之后会自动执行轻量对账校验：
 
-1. **行数** — 源端与目标端总行数比较
-2. **空值率** — 各列空值数量比较
-3. **最值** — 数值/日期列的 MIN/MAX 比较
-4. **去重计数** — 关键列基数比较
-5. **重复键** — 目标表重复键检查
-6. **样本对比** — 按键排序取前 10 行比较
-7. **数值聚合** — SUM/AVG 比较
+1. **工具返回的行数一致性** — 比较 `source_row_count` 与 `transferred_row_count`。
+2. **目标侧行数** — 在目标表上执行一次 `COUNT(*)`，与 `transferred_row_count` 对比。
+3. **目标侧样本** — 可选读取少量目标表样本，确认表可查询。
+
+空值率、最值、去重计数、重复键、样本 diff、数值聚合等更重的检查应按项目需要写成项目级 validator skill。
 
 ## 可选配置
 
@@ -175,8 +173,8 @@ agent:
 ## 使用的 Skill
 
 - **gen-table** — 建表和 DDL 决策
-- **table-validation** — Schema 和数据质量检查
-- **data-migration** — 跨库迁移工作流和对数校验
+- **table-validation** — 显式 schema 契约检查
+- **data-migration** — 跨库传输工作流和轻量对账校验
 
 ## 示例
 
@@ -211,7 +209,7 @@ gen_job：
   6. execute_ddl(database="greenplum") 执行 DDL
   7. transfer_query_result(source_database="local_duckdb",
      target_database="greenplum", mode="replace")
-  8. 激活 data-migration skill，执行 7 项对数检查
+  8. 激活 data-migration skill，执行行数和目标侧 sanity check
   9. 输出迁移报告，标注各检查项 pass/fail
 ```
 
@@ -228,7 +226,7 @@ gen_job：
   3. 按建议 + type_hints 草拟 CREATE TABLE
   4. validate_ddl() 发现键列缺 NOT NULL → LLM 修正
   5. 在 starrocks 上执行 DDL
-  6. transfer_query_result + 7 项对数校验
+  6. transfer_query_result + 轻量对账校验
 ```
 
 ## 与 gen_table 的区别

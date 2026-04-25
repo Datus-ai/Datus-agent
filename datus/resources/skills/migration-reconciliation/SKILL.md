@@ -1,6 +1,6 @@
 ---
-name: migration-reconciliation
-description: Post-transfer cross-database reconciliation — row count, null ratio, min/max, distinct count, duplicate keys, sample diff, and numeric aggregate comparison between source and target.
+name: transfer-reconciliation
+description: Lightweight post-transfer reconciliation example — verify tool-reported row count parity and run a small target-side sanity check without re-scanning the source.
 tags:
   - data-engineering
   - migration
@@ -12,22 +12,21 @@ disable_model_invocation: false
 allowed_agents:
   - gen_job
 # Driven by ValidationHook at the end of the agent run. Scoped to transfer
-# targets only so intra-DB gen_job runs (no cross-DB path) skip this cleanly.
+# targets only so intra-DB gen_job runs skip this cleanly.
 kind: validator
-trigger:
-  - on_end
 severity: blocking
 mode: llm
 targets:
   - type: transfer
 ---
 
-# Migration Reconciliation
+# Transfer Reconciliation
 
-Use this skill at the end of a cross-database migration run. It compares the
-source (read-only) and target (just-written) tables across seven axes so we
-catch row-level data drift or silent column mistranslation that the transfer
-tool alone cannot detect.
+Use this skill at the end of a `transfer_query_result` run. It is intentionally
+lightweight: the built-in layer already compares tool-reported source and
+target row counts, so this skill only demonstrates a small target-side sanity
+check. Project-specific or strict source-vs-target checks should live in a
+project/user validator skill.
 
 ## When this skill fires
 
@@ -46,46 +45,36 @@ The hook hands you a `SessionTarget` containing one or more
 `TransferTarget` records. Each record carries only:
 
 - `source.name` — the source connector key (route `read_query` here for
-  source-side probes).
+  source-side probes only when a project-specific validator explicitly needs
+  them).
 - `target.datasource` / `target.database` / `target.db_schema` /
   `target.table` — the target coordinates.
 - `source_row_count`, `transferred_row_count` — tool-reported counts
   (authoritative for check 1).
 
-**You do NOT receive the original `source_sql`.** For checks 2–7 that
-need to read source data, probe the source table directly with
-`describe_table` + `read_query` on the source datasource. When the
-transfer used a derived / joined source query, the session's tool-call
-history in your context window shows the `transfer_query_result` call
-that ran — use the `source_sql` argument recorded there. If your run
-was started without a parent session (workflow / sessionless mode, or
-interactive mode with `parent_session=None`) the tool-call history is
-empty; in that case, fall back to the simple table-vs-table comparison
-and rely on `source_row_count` / `transferred_row_count` for check 1.
-Any check you cannot run should be emitted as
-`{"passed": true, "severity": "advisory", "observed": {"skipped": "<reason>"}}`
-— never silently drop it.
+Default validator behavior must avoid expensive source re-scans. Do not infer
+or search for the original source table; many transfers are derived queries,
+joins, or aggregations. Treat `source_row_count` / `transferred_row_count` as
+the source-side evidence.
 
 ## Core workflow
 
-For **every** `TransferTarget` in the session (the hook will tell you which
-tables were transferred), execute all seven checks **in this order** and then
-emit the output JSON:
+For **every** `TransferTarget` in the session, run only these example checks:
 
-1. **Row count** — total rows in source vs. target. Tool-reported
-   `source_row_count` / `transferred_row_count` are the authoritative values;
-   do **not** re-run the source query.
-2. **Null ratio** — per-column null rate should match within a small
-   tolerance. Use `read_query` on both sides with the same `COUNT(CASE WHEN
-   col IS NULL THEN 1 END) / COUNT(*)` expression.
-3. **Min / max** — for numeric and date columns, min and max should agree.
-4. **Distinct count** — cardinality of key columns should agree.
-5. **Duplicate key** — target must not have duplicates on the declared key
-   (no source check needed — we assert the invariant in the target).
-6. **Sample diff** — pick up to 10 rows ordered by the key column, compare
-   source vs. target row by row.
-7. **Numeric aggregate** — `SUM` / `AVG` of numeric columns should agree
-   within float tolerance.
+1. **Row count parity** — report whether tool-reported `source_row_count` and
+   `transferred_row_count` match. This should normally already be present in
+   the precheck context from the built-in layer; summarize it instead of
+   querying the source.
+2. **Target row count** — run one target-side `COUNT(*)` query using
+   `TransferTarget.target.datasource` and the target table coordinate. Compare
+   it with `transferred_row_count`.
+3. **Target sample** — optionally read up to 5 target rows to confirm the table
+   is queryable. This is advisory and should not become blocking unless the
+   target query itself fails.
+
+Stop after these checks. Do not run null-ratio, min/max, distinct-count,
+duplicate-key, sample-diff, or numeric-aggregate checks in the built-in skill.
+Those are examples for user-defined strict validators.
 
 ## Tools
 
@@ -106,15 +95,53 @@ write tool is explicitly excluded.
   connector, qualify it in the query (e.g. `FROM <db>.<schema>.<table>`).
   Never pass the strings `"source"`/`"target"` — those are not real
   datasource keys and `read_query` will route to the wrong connector.
-- Source database is read-only. Do **not** attempt any DDL or write.
-- Report every check even when some fail — the hook's retry logic needs to
-  see the full picture.
-- For tolerances: exact match for row counts and distinct counts; float
-  comparisons may use `1e-6` relative tolerance.
+- Source database is read-only. The default validator should not query it.
+- Report the row-count and target-query checks only. Keep failures concrete.
 
 ## Checklist
 
-Detailed per-check SQL templates: [references/checklist.md](references/checklist.md)
+Run these lightweight checks for each `TransferTarget`.
+
+### 1. Row Count Parity
+
+Compare the tool-reported counts:
+
+- `source_row_count`
+- `transferred_row_count`
+
+Fail if both are present and differ. Do not re-run the source query.
+
+### 2. Target Row Count
+
+Run one target-side count query using the concrete target datasource and table
+coordinates from the `TransferTarget`.
+
+```sql
+SELECT COUNT(*) AS row_count
+FROM {target_table};
+```
+
+Compare the result with `transferred_row_count`. This is blocking when the
+target count cannot be read or does not match the transferred count.
+
+### 3. Target Sample
+
+Optionally read a small sample to confirm the target table is queryable.
+
+```sql
+SELECT *
+FROM {target_table}
+LIMIT 5;
+```
+
+Treat this as advisory unless the query itself fails.
+
+### Out Of Scope For The Built-In Skill
+
+Do not run null-ratio, min/max, distinct-count, duplicate-key, sample-diff, or
+numeric-aggregate checks here. Those checks can be added later as
+project-specific validator skills with their own cost profile and table
+contracts.
 
 ## Output
 

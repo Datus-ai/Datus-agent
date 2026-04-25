@@ -13,11 +13,10 @@ allowed_agents:
   - gen_table
   - gen_job
 kind: validator
-trigger:
-  - on_end
 severity: blocking
 mode: llm
-targets: []
+targets:
+  - type: table
 ---
 
 # Table Validation
@@ -30,13 +29,13 @@ deliberately narrow.
 
 `ValidationHook.on_end` invokes this skill with the **whole session**, not
 a single table. The target you receive is a `SessionTarget` whose
-`.targets` is a list of `TableTarget` / `TransferTarget` records — one
-per mutating tool call in the run. When a node writes multiple tables
-(CTAS scaffolding, layered ETL), **loop over `session.targets`** and run
-the checks below independently for each `TableTarget`. Skip
-`TransferTarget` entries — they are covered by
-`migration-reconciliation`. Emit one `CheckResult` per (target, check)
-pair so the retry prompt can tell the agent which specific table failed.
+`.targets` is a list of table records matching this skill's `targets:
+[{type: table}]` filter. When a node writes multiple tables (CTAS
+scaffolding, layered ETL), **loop over `session.targets`** and run the
+checks below independently for each `TableTarget`. Transfer targets are
+covered by `transfer-reconciliation`. Emit one `CheckResult` per (target,
+check) pair so the retry prompt can tell the agent which specific table
+failed.
 
 **Explicitly out of scope**:
 
@@ -59,18 +58,52 @@ pair so the retry prompt can tell the agent which specific table failed.
 2. **Types** — each expected column's declared type matches.
 3. **Nullability** — each expected column's nullability matches.
 
+## Execution checklist
+
+Run the column-contract checks in this order. Stop on the first blocking
+failure for a given table, then continue with the next target table if the
+session contains multiple table targets.
+
+1. **Expected columns present** — when the caller supplied an expected column
+   set, every expected column must appear in `describe_table` output.
+2. **No unexpected columns** — when the caller requires exact matching, flag
+   any actual column that is not in the contract.
+3. **Types match** — compare each expected column's declared type with the
+   contract. Treat widening as acceptable only when the contract explicitly
+   allows it.
+4. **Nullability matches** — compare each expected column's nullable /
+   `NOT NULL` setting with the contract.
+
+For every executed check, report the check name, observed value, expected
+value or threshold, pass/fail decision, and a short failure reason.
+
 ## When there is no explicit column contract
 
 If the caller did not supply an expected column set / type map, there is
 **nothing for this skill to check** — emit the JSON block with
-`"checks": []` and return. The builtin layer has already confirmed existence
-and row count; duplicating that check here only produces false negatives when
-catalog/database/schema identifiers are ambiguous.
+`"checks": []` and return without calling tools. The builtin layer has
+already confirmed existence and row count; duplicating that check here only
+produces false negatives when catalog/database/schema identifiers are
+ambiguous.
 
 ## Tools
 
 Use `describe_table` and `get_table_ddl` to introspect the target. Do **not**
 run `read_query` for counting rows or sampling data — out of scope.
+
+## Project-level validation examples
+
+The following checks are intentionally not bundled here. Add them in a
+project-level validator skill under `./.datus/skills/<name>/` or
+`~/.datus/skills/<name>/` with `kind: validator` and a `targets:` filter when
+the table actually needs them:
+
+- null ratios per column
+- numeric ranges / min-max checks
+- accepted value sets / enum membership
+- regex / format validation
+- uniqueness / duplicate-key detection
+- cross-column assertions
 
 ## Output
 

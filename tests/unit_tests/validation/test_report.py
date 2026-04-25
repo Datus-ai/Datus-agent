@@ -6,9 +6,16 @@
 
 from __future__ import annotations
 
+from pydantic import TypeAdapter
+
 from datus.validation.report import (
+    ChartTarget,
     CheckResult,
+    DashboardTarget,
+    DatasetTarget,
     DBRef,
+    DeliverableTarget,
+    SchedulerJobTarget,
     SessionTarget,
     TableTarget,
     TargetFilter,
@@ -63,6 +70,76 @@ class TestTransferTarget:
             target=TableTarget(database="ch", table="f"),
         )
         assert t.database == "ch"
+
+
+class TestDashboardTarget:
+    def test_basic_construction(self):
+        t = DashboardTarget(platform="superset", dashboard_id="42", dashboard_name="Revenue")
+        assert t.type == "dashboard"
+        assert t.platform == "superset"
+        assert t.dashboard_id == "42"
+        assert t.dashboard_name == "Revenue"
+
+    def test_optional_name_defaults_to_none(self):
+        t = DashboardTarget(platform="grafana", dashboard_id="abc-123")
+        assert t.dashboard_name is None
+
+    def test_discriminated_union_roundtrip(self):
+        t = DashboardTarget(platform="superset", dashboard_id="42")
+        dumped = t.model_dump()
+        restored = TypeAdapter(DeliverableTarget).validate_python(dumped)
+        assert isinstance(restored, DashboardTarget)
+        assert restored.dashboard_id == "42"
+
+
+class TestChartTarget:
+    def test_basic_construction(self):
+        t = ChartTarget(platform="superset", chart_id="99", chart_name="Sales", dashboard_id="42")
+        assert t.type == "chart"
+        assert t.chart_id == "99"
+        assert t.dashboard_id == "42"
+
+    def test_dashboard_id_optional(self):
+        t = ChartTarget(platform="grafana", chart_id="c1")
+        assert t.dashboard_id is None
+
+    def test_discriminated_union_roundtrip(self):
+        t = ChartTarget(platform="grafana", chart_id="c1")
+        dumped = t.model_dump()
+        restored = TypeAdapter(DeliverableTarget).validate_python(dumped)
+        assert isinstance(restored, ChartTarget)
+
+
+class TestDatasetTarget:
+    def test_basic_construction(self):
+        t = DatasetTarget(platform="superset", dataset_id="d-1", dataset_name="events")
+        assert t.type == "dataset"
+        assert t.dataset_id == "d-1"
+        assert t.dataset_name == "events"
+
+    def test_discriminated_union_roundtrip(self):
+        t = DatasetTarget(platform="superset", dataset_id="d-1")
+        dumped = t.model_dump()
+        restored = TypeAdapter(DeliverableTarget).validate_python(dumped)
+        assert isinstance(restored, DatasetTarget)
+
+
+class TestSchedulerJobTarget:
+    def test_basic_construction(self):
+        t = SchedulerJobTarget(platform="airflow", job_id="dag-123", job_name="nightly-etl")
+        assert t.type == "scheduler_job"
+        assert t.platform == "airflow"
+        assert t.job_id == "dag-123"
+
+    def test_job_name_optional(self):
+        t = SchedulerJobTarget(platform="dolphinscheduler", job_id="j-1")
+        assert t.job_name is None
+
+    def test_discriminated_union_roundtrip(self):
+        t = SchedulerJobTarget(platform="airflow", job_id="dag-123")
+        dumped = t.model_dump()
+        restored = TypeAdapter(DeliverableTarget).validate_python(dumped)
+        assert isinstance(restored, SchedulerJobTarget)
 
 
 class TestValidationReport:
@@ -187,6 +264,36 @@ class TestTargetFilter:
         session = SessionTarget(targets=[TableTarget(database="d", table="t")])
         assert not skill_matches_target(filters, session)
 
+    def test_dashboard_type_filter(self):
+        filters = [TargetFilter(type="dashboard")]
+        assert skill_matches_target(filters, DashboardTarget(platform="superset", dashboard_id="42"))
+        assert not skill_matches_target(filters, TableTarget(database="d", table="t"))
+
+    def test_chart_type_filter(self):
+        filters = [TargetFilter(type="chart")]
+        assert skill_matches_target(filters, ChartTarget(platform="grafana", chart_id="c1"))
+
+    def test_dataset_type_filter(self):
+        filters = [TargetFilter(type="dataset")]
+        assert skill_matches_target(filters, DatasetTarget(platform="superset", dataset_id="d1"))
+
+    def test_scheduler_job_type_filter(self):
+        filters = [TargetFilter(type="scheduler_job")]
+        assert skill_matches_target(filters, SchedulerJobTarget(platform="airflow", job_id="j-1"))
+        assert not skill_matches_target(filters, DashboardTarget(platform="superset", dashboard_id="42"))
+
+    def test_session_with_bi_and_scheduler_targets(self):
+        """Session containing mixed BI + scheduler targets — filter by any type matches."""
+        session = SessionTarget(
+            targets=[
+                DashboardTarget(platform="superset", dashboard_id="42"),
+                SchedulerJobTarget(platform="airflow", job_id="j-1"),
+            ]
+        )
+        assert skill_matches_target([TargetFilter(type="dashboard")], session)
+        assert skill_matches_target([TargetFilter(type="scheduler_job")], session)
+        assert not skill_matches_target([TargetFilter(type="transfer")], session)
+
 
 class TestDescribeTarget:
     def test_table_no_catalog(self):
@@ -212,6 +319,31 @@ class TestDescribeTarget:
         s = SessionTarget(targets=[TableTarget(database="d", table="a"), TableTarget(database="d", table="b")])
         assert describe_target(s) == "session[2]"
 
+    def test_dashboard(self):
+        t = DashboardTarget(platform="superset", dashboard_id="42", dashboard_name="Revenue")
+        out = describe_target(t)
+        assert "dashboard" in out
+        assert "superset" in out
+        assert "42" in out
+
+    def test_chart(self):
+        t = ChartTarget(platform="grafana", chart_id="c1", chart_name="CPU", dashboard_id="42")
+        out = describe_target(t)
+        assert "chart" in out
+        assert "c1" in out
+
+    def test_dataset(self):
+        t = DatasetTarget(platform="superset", dataset_id="d1", dataset_name="events")
+        out = describe_target(t)
+        assert "dataset" in out
+        assert "d1" in out
+
+    def test_scheduler_job(self):
+        t = SchedulerJobTarget(platform="airflow", job_id="j-123", job_name="nightly")
+        out = describe_target(t)
+        assert "scheduler" in out or "job" in out
+        assert "j-123" in out
+
 
 class TestBuildRetryPrompt:
     """``build_retry_prompt`` partitions session targets by pass/fail and
@@ -228,14 +360,14 @@ class TestBuildRetryPrompt:
         report = ValidationReport.empty()
         out = build_retry_prompt(report, [])
         assert "blocked by on_end validation" in out
-        assert "DO NOT recreate" not in out  # no ok targets
+        assert "reuse these targets" not in out  # no ok targets
         assert "Failed targets" not in out  # no failed targets
 
     def test_ok_targets_listed_as_already_written(self):
         t = TableTarget(database="d", table="t")
         report = ValidationReport(target=None, checks=[])
         out = build_retry_prompt(report, [t])
-        assert "DO NOT recreate" in out
+        assert "Already written and validated" in out
         assert "table d.t" in out
 
     def test_failed_target_renders_check_detail(self):
@@ -264,7 +396,7 @@ class TestBuildRetryPrompt:
         check = self._fail_check(describe_target(bad), name="row_count_gt_zero")
         report = ValidationReport(target=None, checks=[check])
         out = build_retry_prompt(report, [ok, bad])
-        assert "Already written and correct" in out
+        assert "Already written and validated" in out
         assert "Failed targets" in out
         assert "table d.ok" in out
         assert "table d.bad" in out
@@ -298,7 +430,7 @@ class TestBuildRetryPrompt:
     def test_advisory_only_failure_keeps_target_in_already_written(self):
         """A target whose only failed checks are advisory does not block the
         run. ``build_retry_prompt``'s partition (report.py's ``has_blocking``
-        predicate) lists it under "Already written and correct" — the
+        predicate) lists it under "Already written and validated" — the
         retry prompt is for things the agent must fix, and advisory notes
         are not must-fixes."""
         t = TableTarget(database="d", table="t")
@@ -314,3 +446,21 @@ class TestBuildRetryPrompt:
         assert "Already written" in out
         # And the target is NOT duplicated into the failed section.
         assert "## Failed targets" not in out.split("---")[0]
+
+    def test_failed_dashboard_target_partitioning(self):
+        """Dashboard target with blocking failure lands in the failed section."""
+        t = DashboardTarget(platform="superset", dashboard_id="42", dashboard_name="Revenue")
+        check = self._fail_check(describe_target(t), name="dashboard_exists", observed={"found": False})
+        report = ValidationReport(target=None, checks=[check])
+        out = build_retry_prompt(report, [t])
+        assert "Failed targets" in out
+        assert "42" in out
+
+    def test_failed_scheduler_job_target_partitioning(self):
+        """SchedulerJobTarget with blocking failure lands in the failed section."""
+        t = SchedulerJobTarget(platform="airflow", job_id="dag-123", job_name="nightly")
+        check = self._fail_check(describe_target(t), name="job_status", observed={"status": "failed"})
+        report = ValidationReport(target=None, checks=[check])
+        out = build_retry_prompt(report, [t])
+        assert "Failed targets" in out
+        assert "dag-123" in out

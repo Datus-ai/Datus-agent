@@ -320,6 +320,10 @@ class TestPermissionHooks:
 
         assert "execute_sql" in str(exc_info.value)
         assert exc_info.value.tool_category == "db_tools"
+        assert "run /profile to open the profile picker" in str(exc_info.value)
+        assert "arrow keys" in str(exc_info.value)
+        assert "/profile auto" not in str(exc_info.value)
+        assert "/profile dangerous" not in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_on_tool_start_ask_with_session_approval(self, mock_broker):

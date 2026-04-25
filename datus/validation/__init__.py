@@ -14,18 +14,21 @@ at the end of an agent run. It separates validation into two layers:
 - Layer B (llm_runner): LLM-interpreted validator skills. Gated by
   ``agent.validation.skill_validators_enabled``.
 
-Blocking failures raise ``ValidationBlockingException`` which is caught in the
-owning node's ``execute_stream`` and used to drive retries with the failure
-report injected as a user message. The retry budget is configurable via
-``agent.validation.max_retries`` (default 3).
+Blocking failures are recorded in ``ValidationHook.final_report``; the owning
+node's ``execute_stream`` reads it after the stream ends and drives retries by
+injecting the failure report as a user message. The retry budget is
+configurable via ``agent.validation.max_retries`` (default 3).
 """
 
-from datus.validation.exceptions import ValidationBlockingException
 from datus.validation.hook import ValidationHook
 from datus.validation.report import (
+    ChartTarget,
     CheckResult,
+    DashboardTarget,
+    DatasetTarget,
     DBRef,
     DeliverableTarget,
+    SchedulerJobTarget,
     SessionTarget,
     TableTarget,
     TargetFilter,
@@ -34,14 +37,17 @@ from datus.validation.report import (
 )
 
 __all__ = [
+    "ChartTarget",
     "CheckResult",
+    "DashboardTarget",
+    "DatasetTarget",
     "DBRef",
     "DeliverableTarget",
+    "SchedulerJobTarget",
     "SessionTarget",
     "TableTarget",
     "TargetFilter",
     "TransferTarget",
-    "ValidationBlockingException",
     "ValidationHook",
     "ValidationReport",
 ]

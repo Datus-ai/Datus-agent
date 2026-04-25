@@ -1,19 +1,20 @@
 ---
 name: gen-dashboard
-description: Create, update, and manage BI dashboards with guided multi-step workflow. Use when user asks to create dashboards, add charts, visualize data, or manage BI platform assets.
+description: Create, update, or inspect BI dashboards by delegating to the gen_dashboard subagent. Use when the user asks to visualize data, build dashboards, add charts, or manage BI platform assets.
 tags:
   - dashboard
   - bi
   - visualization
-  - superset
-  - grafana
-version: 1.0.0
+version: 1.1.0
 user_invocable: true
 ---
 
 # BI Dashboard Management
 
-You are helping the user create, update, or inspect BI dashboards. Delegate the actual BI operations to the `gen_dashboard` subagent via `task()`.
+You are helping the user create, update, or inspect BI dashboards on the
+configured BI platform. Dashboard creation assumes the required data already
+exists in the BI platform's registered database. Data preparation is a separate
+`gen_job` / `scheduler` step.
 
 ## When to Use This Skill
 
@@ -24,51 +25,56 @@ You are helping the user create, update, or inspect BI dashboards. Delegate the 
 
 ## Workflow
 
-### Step 1: Clarify Requirements
+### Step 1 — Capture the request
 
-Before delegating, gather enough context. Use `ask_user` if needed:
+Pull together what the user wants. Use `ask_user` only for missing
+critical pieces:
 
-- **What data** should be visualized? (tables, metrics, SQL query)
-- **What chart types** are appropriate? (bar, line, pie, table, big_number)
-- **Dashboard name** and description
-- **Target platform** if multiple are configured
+- **What table or SQL dataset** to visualize in the BI-registered database
+- **Time range / granularity** (e.g. "last 90 days, daily")
+- **Chart types** if they expressed a preference; otherwise let the
+  subagent choose
+- **Dashboard title** and target platform if multiple are configured
 
-### Step 2: Delegate to gen_dashboard Subagent
+If the user only described raw source data that still needs to be prepared,
+do not delegate to `gen_dashboard` yet. Ask them to run the data-preparation
+step first or delegate that separate request to `gen_job` / `scheduler`.
 
-Use the `task` tool to delegate:
+### Step 2 — Delegate to gen_dashboard
 
 ```
-task(type="gen_dashboard", prompt="<detailed request>", description="<short summary>")
+task(type="gen_dashboard",
+     prompt="<full request: data concept, time range, chart hint, title>",
+     description="<one-line summary>")
 ```
 
-**For creating a dashboard**, include in the prompt:
-- The data source (table names or SQL query)
-- Desired charts with types and metrics
-- Dashboard title and description
+`gen_dashboard` owns the BI asset workflow:
 
-**For listing/inspecting**, keep the prompt simple:
-- "List all dashboards"
-- "Show details of dashboard ID 42"
-- "List charts in dashboard 'Sales Overview'"
+1. Resolves the BI platform database / datasource.
+2. Registers the existing table or SQL dataset.
+3. Builds chart / dashboard assets against the BI platform.
+4. Runs `bi-validation` post-creation checks.
 
-### Step 3: Report Results
+### Step 3 — Report results
 
-After the subagent completes:
-- Present the dashboard ID/URL to the user
-- Offer to make modifications (add more charts, change types)
-- For modifications, call `task(type="gen_dashboard")` again with the update request
+When the subagent returns:
 
-## Dashboard Creation Workflow (Reference)
+- Surface the dashboard ID / URL.
+- Offer to make modifications via another `task(type="gen_dashboard", ...)`
+  call.
+- For modifications (add a chart, retitle, etc.), pass the dashboard
+  identifier in the new prompt.
 
-The gen_dashboard subagent follows this multi-step workflow internally:
+## Hard rules
 
-1. **write_query** — Execute SQL on the source DB and write results to the dashboard DB (if materialization needed)
-2. **list_bi_databases** + **create_dataset** — Register the data table in the BI platform
-3. **create_chart** — Create visualizations with appropriate chart type, metrics, and dimensions
-4. **create_dashboard** — Create the dashboard container (or use an existing one)
-5. **add_chart_to_dashboard** — Assemble charts into the dashboard
+- **Never move data yourself.** It is not this skill's job. If data needs to
+  be created or refreshed, handle that as a separate `gen_job` / `scheduler`
+  request before dashboard creation.
+- **Never explore the source DB on the user's behalf** before delegating.
+  If the user has not specified the serving table or SQL dataset clearly,
+  ask them — do not run `read_query` to guess.
 
-## Chart Type Guide
+## Chart Type Hints (pass-through to subagent)
 
 | Chart Type | Best For |
 |------------|----------|
@@ -79,8 +85,5 @@ The gen_dashboard subagent follows this multi-step workflow internally:
 | `big_number` | Single KPI metrics, totals |
 | `scatter` | Correlation between two metrics |
 
-## Tips
-
-- For complex dashboards with multiple charts, describe all charts in a single prompt — the subagent handles the full workflow
-- If the user provides a SQL query, suggest using `write_query` to materialize the results first
-- Always confirm the dashboard name and chart selections before creating
+If the user did not specify, let the subagent choose based on the provided
+serving table or SQL dataset.
