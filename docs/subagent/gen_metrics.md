@@ -47,31 +47,17 @@ Start Datus CLI with `datus --database <datasource>`, and use the metrics genera
 ```
 User provides SQL and question → Agent analyzes logic → Finds semantic model → Reads measures →
 Checks for duplicates → Generates metric YAML → Appends to file → Validates →
-User confirms → Syncs to Knowledge Base
+Runs dry-run SQL → Syncs to Knowledge Base
 ```
 
-### Interactive Confirmation
+### Validation and Sync
 
-After generation, you'll see:
+Before publishing, the agent must pass both checks:
 
-```
-==========================================================
-Generated YAML: transactions.yml
-Path: /Users/you/.datus/data/semantic_models/transactions.yml
-==========================================================
-[YAML content with syntax highlighting showing the new metric]
+- `validate_semantic()` validates the semantic model and metric YAML.
+- `query_metrics(..., dry_run=True)` verifies that MetricFlow can compile SQL for the generated metric.
 
-  SYNC TO KNOWLEDGE BASE?
-
-  1. Yes - Save to Knowledge Base
-  2. No - Keep file only
-
-Please enter your choice: [1/2]
-```
-
-**Options:**
-- **Option 1**: Syncs the metric to your Knowledge Base for AI-powered semantic search
-- **Option 2**: Keeps the YAML file only without syncing to the Knowledge Base
+After those checks pass, `end_metric_generation` syncs the generated metric to the Knowledge Base automatically.
 
 ## Configuration
 
@@ -97,9 +83,9 @@ See [Semantic Layer Configuration](../configuration/semantic_layer.md) for the f
 
 **Built-in configurations** (automatically enabled):
 - **Tools**: Generation tools and filesystem tools
-- **Hooks**: User confirmation workflow in interactive mode
+- **Hooks**: Validation evidence tracking and Knowledge Base sync
 - **MCP Server**: MetricFlow validation server
-- **System Prompt**: Built-in template version 1.0
+- **System Prompt**: Built-in template; the latest available version is used unless `prompt_version` is set
 - **Workspace**: `~/.datus/data/{datasource}/semantic_models`
 
 ### Configuration Options
@@ -139,19 +125,19 @@ When subject_tree is provided, the metric will be categorized accordingly (e.g.,
 **Agent Actions**:
 1. Finds `orders.yml` semantic model
 2. Reads file to discover `order_count` measure
-3. Generates simple metric:
+3. Generates measure proxy metric:
 
 ```yaml
 ---
 metric:
   name: total_orders
-  description: Total number of orders
-  type: simple
+  description: "Total number of orders"
+  type: measure_proxy
   type_params:
     measure: order_count
   locked_metadata:
-    display_name: "Total Orders"
-    increase_is_good: true
+    tags:
+      - "subject_tree: finance/orders/core"
 ```
 
 ### Example 2: Revenue Metric
@@ -165,21 +151,27 @@ SELECT SUM(amount) as total_revenue FROM transactions WHERE status = 'completed'
 **Agent Actions**:
 1. Analyzes SQL aggregation (SUM with filter)
 2. Finds or creates `transactions.yml` semantic model
-3. Generates simple metric:
+3. Adds a filtered measure to the semantic model and generates a metric that references it:
 
 ```yaml
 ---
+data_source:
+  name: transactions
+  measures:
+    - name: completed_revenue
+      description: "Revenue from completed transactions"
+      agg: SUM
+      expr: "CASE WHEN status = 'completed' THEN amount ELSE 0 END"
+---
 metric:
   name: total_revenue
-  description: Total revenue from completed transactions
-  type: simple
+  description: "Total revenue from completed transactions"
+  type: measure_proxy
   type_params:
-    measure: total_amount
-  filter: "status = 'completed'"
+    measure: completed_revenue
   locked_metadata:
-    display_name: "Total Revenue"
-    value_format: "$,.2f"
-    increase_is_good: true
+    tags:
+      - "subject_tree: finance/revenue/transactions"
 ```
 
 ### Example 3: Count Metric
@@ -193,19 +185,19 @@ SELECT COUNT(DISTINCT customer_id) FROM orders
 **Agent Actions**:
 1. Locates `orders.yml` semantic model
 2. Identifies COUNT DISTINCT aggregation
-3. Generates simple metric:
+3. Generates measure proxy metric:
 
 ```yaml
 ---
 metric:
   name: unique_customer_count
-  description: Total number of unique customers
-  type: simple
+  description: "Total number of unique customers"
+  type: measure_proxy
   type_params:
     measure: unique_customers
   locked_metadata:
-    display_name: "Unique Customers"
-    increase_is_good: true
+    tags:
+      - "subject_tree: sales/customers/core"
 ```
 
 ## How Metrics Are Stored
@@ -238,16 +230,16 @@ data_source:
 ```yaml
 metric:
   name: total_revenue
-  description: Total revenue from all transactions
-  type: simple
+  description: "Total revenue from all transactions"
+  type: measure_proxy
   type_params:
     measure: revenue
 
 ---
 metric:
   name: total_transactions
-  description: Total number of transactions
-  type: simple
+  description: "Total number of transactions"
+  type: measure_proxy
   type_params:
     measure: transaction_count
 ```
@@ -259,7 +251,7 @@ metric:
 
 ### Knowledge Base Storage
 
-When you choose "1. Yes - Save to Knowledge Base", the metric is stored in a Vector Database with:
+After validation and dry-run SQL succeed, the metric is synced to the Knowledge Base with:
 
 1. **Metadata**: Name, description, type, domain/layer classification
 2. **LLM Text**: Natural language representation for semantic search
@@ -274,6 +266,6 @@ The metrics generation feature provides:
 ✅ **Intelligent Type Detection**: Automatically selects the right metric type
 ✅ **Duplicate Prevention**: Checks for existing metrics before generation
 ✅ **Validation**: MetricFlow validation ensures correctness
-✅ **Interactive Workflow**: Review and approve before syncing
+✅ **Publish Gate**: Syncs only after semantic validation and dry-run SQL succeed
 ✅ **Knowledge Base Integration**: Semantic search for metric discovery
 ✅ **File Management**: Organizes metrics in dedicated files separate from semantic models

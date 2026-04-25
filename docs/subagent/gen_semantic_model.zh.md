@@ -30,36 +30,17 @@
 2. 检查是否已存在语义模型
 3. 生成全面的 YAML 文件
 4. 使用 MetricFlow 验证配置
-5. 提示你保存到知识库
+5. 验证通过后同步到知识库
 
 ### 生成工作流
 
 ```text
-用户请求 → DDL 分析 → YAML 生成 → 验证 → 用户确认 → 存储
+用户请求 → DDL 分析 → YAML 生成 → 验证 → 存储
 ```
 
-### 用户确认
+### 验证和同步
 
-生成语义模型后，你会看到：
-
-```text
-=============================================================
-Generated YAML: table_name.yml
-Path: /path/to/file.yml
-=============================================================
-[带语法高亮的 YAML 内容]
-
-SYNC TO KNOWLEDGE BASE?
-
-1. Yes - Save to Knowledge Base
-2. No - Keep file only
-
-Please enter your choice: [1/2]
-```
-
-**选项**：
-- **选项 1**：将语义模型保存到你的知识库（RAG 存储）用于 AI 驱动的查询
-- **选项 2**：仅保留 YAML 文件，不同步到知识库
+发布前，agent 会调用 `validate_semantic()`。如果验证失败，会修改 YAML 并重试；验证通过后，`end_semantic_model_generation` 会自动把语义模型同步到知识库。
 
 ## 配置
 
@@ -83,9 +64,9 @@ agent:
 
 **内置配置**（自动启用）：
 - **工具**：数据库工具、生成工具和文件系统工具
-- **Hooks**：交互模式下的用户确认工作流
+- **Hooks**：验证证据记录和知识库同步
 - **MCP 服务器**：MetricFlow 验证服务器
-- **系统提示**：内置模板版本 1.0
+- **系统提示**：内置模板；未显式设置 `prompt_version` 时使用最新可用版本
 - **工作空间**：`~/.datus/data/{datasource}/semantic_models`
 
 ## 语义模型结构
@@ -136,7 +117,7 @@ data_source:
 
 - ✓ 从表 DDL 自动生成 YAML
 - ✓ 交互式验证和错误修复
-- ✓ 存储前用户确认
+- ✓ 验证通过后自动同步
 - ✓ 知识库集成
 - ✓ 防止重复
 - ✓ MetricFlow 兼容性

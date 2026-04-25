@@ -75,6 +75,7 @@ agent:
 {project_root}/subject/semantic_models/
 ```
 - `project_root` 是当前 Datus 项目的根目录。
+- 配置中的语义模型目录会被视为权威来源。即使生成的 YAML 位于项目本地或被 gitignore 忽略的目录中，也会参与 MetricFlow 验证。
 
 ### 选择规则
 
@@ -180,6 +181,7 @@ datus-agent bootstrap-kb --database my_project --components metrics \
 - 完整的 MetricFlow API 集成
 - 基于 YAML 的语义模型文件
 - 三阶段验证（lint、parse、semantic）
+- 即使无效 YAML 导致 MetricFlow client 无法完整初始化，验证也会返回具体 YAML 问题
 - SQL 生成和执行计划
 - 支持时间粒度的时间范围过滤
 

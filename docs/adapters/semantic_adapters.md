@@ -75,6 +75,7 @@ By default, Datus points MetricFlow at the current project's semantic model dire
 {project_root}/subject/semantic_models/
 ```
 - `project_root` is the active Datus project root.
+- The configured semantic model directory is treated as authoritative. Generated YAML files under project-local or gitignored directories are still included in MetricFlow validation.
 
 ### Selection Rules
 
@@ -180,6 +181,7 @@ All semantic adapters support:
 - Full MetricFlow API integration
 - YAML-based semantic model files
 - Three-stage validation (lint, parse, semantic)
+- Validation reports YAML issues even when the MetricFlow client cannot be fully initialized from invalid generated files
 - SQL generation and explain
 - Time range filtering with granularity
 

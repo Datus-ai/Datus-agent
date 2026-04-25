@@ -30,36 +30,17 @@ When you request a semantic model, the AI assistant:
 2. Checks if a semantic model already exists
 3. Generates a comprehensive YAML file
 4. Validates the configuration using MetricFlow
-5. Prompts you to save it to the Knowledge Base
+5. Syncs it to the Knowledge Base after validation passes
 
 ### Generation Workflow
 
 ```text
-User Request → DDL Analysis → YAML Generation → Validation → User Confirmation → Storage
+User Request → DDL Analysis → YAML Generation → Validation → Storage
 ```
 
-### User Confirmation
+### Validation and Sync
 
-After generating the semantic model, you'll see:
-
-```text
-=============================================================
-Generated YAML: table_name.yml
-Path: /path/to/file.yml
-=============================================================
-[YAML content with syntax highlighting]
-
-SYNC TO KNOWLEDGE BASE?
-
-1. Yes - Save to Knowledge Base
-2. No - Keep file only
-
-Please enter your choice: [1/2]
-```
-
-**Options:**
-- **Option 1**: Saves the semantic model to your Knowledge Base (RAG storage) for AI-powered queries
-- **Option 2**: Keeps the YAML file only without syncing to the Knowledge Base
+The agent calls `validate_semantic()` before publishing. If validation fails, it edits the YAML and retries. Once validation passes, `end_semantic_model_generation` publishes the semantic model to the Knowledge Base automatically.
 
 ## Configuration
 
@@ -85,9 +66,9 @@ See [Semantic Layer Configuration](../configuration/semantic_layer.md) for the f
 
 **Built-in configurations** (automatically enabled):
 - **Tools**: Database tools, generation tools, and filesystem tools
-- **Hooks**: User confirmation workflow in interactive mode
+- **Hooks**: Validation evidence tracking and Knowledge Base sync
 - **MCP Server**: MetricFlow validation server
-- **System Prompt**: Built-in template version 1.0
+- **System Prompt**: Built-in template; the latest available version is used unless `prompt_version` is set
 - **Workspace**: `~/.datus/data/{datasource}/semantic_models`
 
 ### Configuration Options
@@ -145,7 +126,7 @@ The semantic model generation feature provides:
 
 - ✓ Automated YAML generation from table DDL
 - ✓ Interactive validation and error fixing
-- ✓ User confirmation before storage
+- ✓ Automatic sync after validation passes
 - ✓ Knowledge Base integration
 - ✓ Duplicate prevention
 - ✓ MetricFlow compatibility

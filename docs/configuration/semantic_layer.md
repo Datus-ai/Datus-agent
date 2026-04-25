@@ -35,4 +35,5 @@ agent:
 
 - `config_path` is optional.
 - Datus prefers the current `services.datasources` entry and the project semantic model directory to build runtime config automatically.
+- MetricFlow validation reads YAML files from the configured project semantic model directory directly, including generated files under gitignored project paths.
 - `config_path` is only needed when you want MetricFlow to read a specific `agent.yml` file directly.

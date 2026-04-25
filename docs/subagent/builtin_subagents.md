@@ -81,9 +81,9 @@ agent:
 
 **Built-in configurations** (no setup needed):
 - **Tools**: Automatically configured based on subagent type
-- **Hooks**: User confirmation workflow in interactive mode
+- **Hooks**: Workflow-specific validation, approval, and Knowledge Base sync
 - **MCP Servers**: MetricFlow validation (for gen_semantic_model and gen_metrics)
-- **System Prompts**: Built-in templates version 1.0
+- **System Prompts**: Built-in templates; latest versions are used unless `prompt_version` is set
 - **Workspace**: `~/.datus/data/{datasource}/` with subagent-specific subdirectories
 
 ---
@@ -120,8 +120,7 @@ graph LR
     C --> D[Generates unique ID]
     D --> E[Creates YAML]
     E --> F[Saves file]
-    F --> G[User confirms]
-    G --> H[Syncs to Knowledge Base]
+    F --> G[Syncs to Knowledge Base]
 ```
 
 **Detailed Steps:**
@@ -135,27 +134,11 @@ graph LR
 5. **Classify Query**: Assigns domain, layer1, layer2, and tags following existing patterns
 6. **Generate YAML**: Creates structured summary document
 7. **Save File**: Writes YAML to workspace using `write_file()` tool
-8. **User Confirmation**: Shows the generated YAML and prompts for approval
-9. **Sync to Knowledge Base**: Stores in LanceDB for semantic search
+8. **Sync to Knowledge Base**: Stores in LanceDB for semantic search
 
-### Interactive Confirmation
+### Sync Behavior
 
-After generation, you'll see:
-
-```
-==========================================================
-Generated Reference SQL YAML
-File: /path/to/sql_summary.yml
-==========================================================
-[YAML content with syntax highlighting]
-
-  SYNC TO KNOWLEDGE BASE?
-
-  1. Yes - Save to Knowledge Base
-  2. No - Keep file only
-
-Please enter your choice: [1/2]
-```
+After the YAML file is written successfully, the generation hook syncs it to the Knowledge Base automatically.
 
 ### Subject Tree Categorization
 
@@ -245,7 +228,7 @@ When you request a semantic model, the AI assistant:
 2. Checks if a semantic model already exists
 3. Generates a comprehensive YAML file
 4. Validates the configuration using MetricFlow
-5. Prompts you to save it to the Knowledge Base
+5. Syncs it to the Knowledge Base after validation passes
 
 #### Generation Workflow
 
@@ -254,33 +237,12 @@ graph LR
     A[User Request] --> B[DDL Analysis]
     B --> C[YAML Generation]
     C --> D[Validation]
-    D --> E[User Confirmation]
-    E --> F[Storage]
+    D --> E[Storage]
 ```
 
-### Interactive Confirmation
+### Validation and Sync
 
-After generating the semantic model, you'll see:
-
-```text
-=============================================================
-Generated YAML: table_name.yml
-Path: /path/to/file.yml
-=============================================================
-[YAML content with syntax highlighting]
-
-SYNC TO KNOWLEDGE BASE?
-
-1. Yes - Save to Knowledge Base
-2. No - Keep file only
-
-Please enter your choice: [1/2]
-```
-
-**Options:**
-
-- **Option 1**: Saves the semantic model to your Knowledge Base (RAG storage) for AI-powered queries
-- **Option 2**: Keeps the YAML file only without syncing to the Knowledge Base
+The agent calls `validate_semantic()` before publishing. If validation fails, it edits the YAML and retries. Once validation passes, `end_semantic_model_generation` publishes the semantic model to the Knowledge Base automatically.
 
 ### Semantic Model Structure
 
@@ -376,7 +338,7 @@ graph LR
     E --> F[Generates metric YAML]
     F --> G[Writes metric to metrics file]
     G --> H[Validates]
-    H --> I[User confirms]
+    H --> I[Dry-run SQL]
     I --> J[Syncs to Knowledge Base]
 ```
 
@@ -399,28 +361,9 @@ FROM orders o
 JOIN customers c ON o.customer_id = c.id  -- ❌ JOIN not supported
 ```
 
-### Interactive Confirmation
+### Validation and Sync
 
-After generation, you'll see:
-
-```
-==========================================================
-Generated YAML: transactions.yml
-Path: /Users/you/.datus/data/semantic_models/transactions.yml
-==========================================================
-[YAML content with syntax highlighting showing the new metric]
-
-  SYNC TO KNOWLEDGE BASE?
-
-  1. Yes - Save to Knowledge Base
-  2. No - Keep file only
-
-Please enter your choice: [1/2]
-```
-
-**Options:**
-- **Option 1**: Syncs the metric to your Knowledge Base for AI-powered semantic search
-- **Option 2**: Keeps the YAML file only without syncing to the Knowledge Base
+Before publishing, the agent validates the YAML with `validate_semantic()` and compiles SQL with `query_metrics(..., dry_run=True)`. After both checks pass, `end_metric_generation` syncs the metric to the Knowledge Base automatically.
 
 ### Subject Tree Categorization
 
@@ -577,7 +520,7 @@ See [gen_metrics](gen_metrics.md) for full details.
 
 #### Knowledge Base Storage
 
-When you choose "1. Yes - Save to Knowledge Base", the metric is stored in a Vector Database with:
+After validation and dry-run SQL succeed, the metric is synced to the Knowledge Base with:
 
 1. **Metadata**: Name, description, type, domain/layer classification
 2. **LLM Text**: Natural language representation for semantic search
@@ -593,7 +536,7 @@ The metrics generation feature provides:
 - ✅ **Duplicate Prevention**: Checks for existing metrics before generation
 - ✅ **Subject Tree Support**: Organize by domain/layer1/layer2 with predefined or learned categories
 - ✅ **Validation**: MetricFlow validation ensures correctness
-- ✅ **Interactive Workflow**: Review and approve before syncing
+- ✅ **Publish Gate**: Syncs only after semantic validation and dry-run SQL succeed
 - ✅ **Knowledge Base Integration**: Semantic search for metric discovery
 - ✅ **File Management**: Maintains dedicated per-table metrics files under `metrics/`
 
@@ -649,8 +592,7 @@ graph LR
     D --> E[Check for duplicates]
     E --> F[Generate YAML]
     F --> G[Save file]
-    G --> H[User confirms]
-    H --> I[Sync to Knowledge Base]
+    G --> H[Sync to Knowledge Base]
 ```
 
 **Detailed Steps:**
@@ -662,31 +604,13 @@ graph LR
 5. **Check for Duplicates**: Use `search_knowledge` to verify extracted knowledge doesn't already exist
 6. **Generate YAML**: Create structured knowledge entries with unique IDs via `generate_ext_knowledge_id()`
 7. **Save File**: Write YAML using `write_file(path, content, file_type="ext_knowledge")`
-8. **User Confirmation**: Review generated YAML and approve
-9. **Sync to Knowledge Base**: Store in vector database for semantic search
+8. **Sync to Knowledge Base**: Store in vector database for semantic search
 
 > **Important**: If no knowledge gaps are found (agent's attempt matches reference SQL), no knowledge file is generated.
 
-### Interactive Confirmation
+### Sync Behavior
 
-After generation, you'll see:
-
-```
-============================================================
-Generated External Knowledge YAML
-File: /Users/liuyufei/DatusProject/bird/datus/ext_knowledge/bird_sqlite_with_knowledge/sat_school_administration_knowledge.yaml
-============================================================
-                                                                                                                         
-
-  SYNC TO KNOWLEDGE BASE?
-
-  1. Yes - Save to Knowledge Base
-  2. No - Keep file only
-
-Please enter your choice: [1/2] 1
-✓ Syncing to Knowledge Base...
-✓ Successfully synced external knowledge to Knowledge Base
-```
+After the YAML file is written successfully, the generation hook syncs it to the Knowledge Base automatically.
 
 ### Subject Path Categorization
 
@@ -1231,8 +1155,8 @@ agent:
 **Built-in Features Across All Subagents:**
 - Minimal configuration required (only `model` and `max_turns` optional)
 - Automatic tool setup, hooks, and MCP server integration
-- Built-in system prompts (version 1.0)
-- User confirmation workflow in interactive mode
+- Built-in system prompts, with the latest available version selected by default
+- Workflow-specific validation, approval, and Knowledge Base sync
 - Knowledge Base integration for semantic search
 - Automatic workspace management
 

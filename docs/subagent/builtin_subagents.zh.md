@@ -81,9 +81,9 @@ agent:
 
 **内置配置**（无需设置）：
 - **工具**：根据 subagent 类型自动配置
-- **Hooks**：交互模式下的用户确认工作流
+- **Hooks**：按工作流启用验证、审批和知识库同步
 - **MCP 服务器**：MetricFlow 验证（用于 gen_semantic_model 和 gen_metrics）
-- **系统提示**：内置模板版本 1.0
+- **系统提示**：内置模板；未设置 `prompt_version` 时使用最新可用版本
 - **工作空间**：`~/.datus/data/{datasource}/` 及 subagent 特定子目录
 
 ---
@@ -120,8 +120,7 @@ graph LR
     C --> D[生成唯一 ID]
     D --> E[创建 YAML]
     E --> F[保存文件]
-    F --> G[用户确认]
-    G --> H[同步到知识库]
+    F --> G[同步到知识库]
 ```
 
 **详细步骤**：
@@ -135,27 +134,11 @@ graph LR
 5. **分类查询**：按照现有模式分配域、layer1、layer2 和标签
 6. **生成 YAML**：创建结构化摘要文档
 7. **保存文件**：使用 `write_file()` 工具将 YAML 写入工作空间
-8. **用户确认**：显示生成的 YAML 并提示批准
-9. **同步到知识库**：存储到 LanceDB 用于语义搜索
+8. **同步到知识库**：存储到 LanceDB 用于语义搜索
 
-### 交互式确认
+### 同步行为
 
-生成后，你会看到：
-
-```
-==========================================================
-Generated Reference SQL YAML
-File: /path/to/sql_summary.yml
-==========================================================
-[带语法高亮的 YAML 内容]
-
-  SYNC TO KNOWLEDGE BASE?
-
-  1. Yes - Save to Knowledge Base
-  2. No - Keep file only
-
-Please enter your choice: [1/2]
-```
+YAML 文件写入成功后，generation hook 会自动把它同步到知识库。
 
 ### 主题树分类
 
@@ -245,7 +228,7 @@ tags: "revenue, region, aggregation"       # 逗号分隔的标签
 2. 检查是否已存在语义模型
 3. 生成全面的 YAML 文件
 4. 使用 MetricFlow 验证配置
-5. 提示你保存到知识库
+5. 验证通过后同步到知识库
 
 #### 生成工作流
 
@@ -254,33 +237,12 @@ graph LR
     A[用户请求] --> B[DDL 分析]
     B --> C[YAML 生成]
     C --> D[验证]
-    D --> E[用户确认]
-    E --> F[存储]
+    D --> E[存储]
 ```
 
-### 交互式确认
+### 验证和同步
 
-生成语义模型后，你会看到：
-
-```text
-=============================================================
-Generated YAML: table_name.yml
-Path: /path/to/file.yml
-=============================================================
-[带语法高亮的 YAML 内容]
-
-SYNC TO KNOWLEDGE BASE?
-
-1. Yes - Save to Knowledge Base
-2. No - Keep file only
-
-Please enter your choice: [1/2]
-```
-
-**选项**：
-
-- **选项 1**：将语义模型保存到你的知识库（RAG 存储）用于 AI 驱动的查询
-- **选项 2**：仅保留 YAML 文件，不同步到知识库
+发布前，agent 会调用 `validate_semantic()`。如果验证失败，会修改 YAML 并重试；验证通过后，`end_semantic_model_generation` 会自动把语义模型同步到知识库。
 
 ### 语义模型结构
 
@@ -330,7 +292,7 @@ data_source:
 
 - ✅ 从表 DDL 自动生成 YAML
 - ✅ 交互式验证和错误修复
-- ✅ 存储前用户确认
+- ✅ 验证通过后自动同步
 - ✅ 知识库集成
 - ✅ 防止重复
 - ✅ MetricFlow 兼容性
@@ -375,7 +337,7 @@ graph LR
     E --> F[生成指标 YAML]
     F --> G[写入指标文件]
     G --> H[验证]
-    H --> I[用户确认]
+    H --> I[生成 dry-run SQL]
     I --> J[同步到知识库]
 ```
 
@@ -398,28 +360,9 @@ FROM orders o
 JOIN customers c ON o.customer_id = c.id  -- ❌ 不支持 JOIN
 ```
 
-### 交互式确认
+### 验证和同步
 
-生成后，你会看到：
-
-```
-==========================================================
-Generated YAML: transactions.yml
-Path: /Users/you/.datus/data/semantic_models/transactions.yml
-==========================================================
-[带语法高亮的 YAML 内容，显示新指标]
-
-  SYNC TO KNOWLEDGE BASE?
-
-  1. Yes - Save to Knowledge Base
-  2. No - Keep file only
-
-Please enter your choice: [1/2]
-```
-
-**选项**：
-- **选项 1**：将指标同步到你的知识库，用于 AI 驱动的语义搜索
-- **选项 2**：仅保留 YAML 文件，不同步到知识库
+发布前，agent 会用 `validate_semantic()` 校验 YAML，并用 `query_metrics(..., dry_run=True)` 编译 SQL。两项检查都通过后，`end_metric_generation` 会自动把指标同步到知识库。
 
 ### 主题树分类
 
@@ -576,7 +519,7 @@ metric:
 
 #### 知识库存储
 
-当你选择 "1. Yes - Save to Knowledge Base" 时，指标会存储到向量数据库中，包含：
+验证和 dry-run SQL 通过后，指标会同步到知识库，包含：
 
 1. **元数据**：名称、描述、类型、域/层级分类
 2. **LLM 文本**：用于语义搜索的自然语言表示
@@ -592,7 +535,7 @@ metric:
 - ✅ **防止重复**：生成前检查现有指标
 - ✅ **主题树支持**：按 domain/layer1/layer2 组织，支持预定义或学习模式
 - ✅ **验证**：MetricFlow 验证确保正确性
-- ✅ **交互式工作流**：同步前审阅和批准
+- ✅ **发布门禁**：语义验证和 dry-run SQL 通过后才同步
 - ✅ **知识库集成**：语义搜索以发现指标
 - ✅ **文件管理**：在 `metrics/` 目录下维护独立的指标文件
 
@@ -647,8 +590,7 @@ graph LR
     D --> E[检查重复]
     E --> F[生成 YAML]
     F --> G[保存文件]
-    G --> H[用户确认]
-    H --> I[同步到知识库]
+    G --> H[同步到知识库]
 ```
 
 **详细步骤**：
@@ -660,31 +602,13 @@ graph LR
 5. **检查重复**：使用 `search_knowledge` 验证提取的知识是否已存在
 6. **生成 YAML**：通过 `generate_ext_knowledge_id()` 创建带有唯一 ID 的结构化知识条目
 7. **保存文件**：使用 `write_file(path, content, file_type="ext_knowledge")` 写入 YAML
-8. **用户确认**：审阅生成的 YAML 并批准
-9. **同步到知识库**：存储到向量数据库用于语义搜索
+8. **同步到知识库**：存储到向量数据库用于语义搜索
 
 > **重要**：如果未发现知识缺口（agent 的尝试与参考 SQL 匹配），则不生成知识文件。
 
-### 交互式确认
+### 同步行为
 
-生成后，你会看到：
-
-```
-============================================================
-Generated External Knowledge YAML
-File: /Users/liuyufei/DatusProject/bird/datus/ext_knowledge/bird_sqlite_with_knowledge/sat_school_administration_knowledge.yaml
-============================================================
-
-
-  SYNC TO KNOWLEDGE BASE?
-
-  1. Yes - Save to Knowledge Base
-  2. No - Keep file only
-
-Please enter your choice: [1/2] 1
-✓ Syncing to Knowledge Base...
-✓ Successfully synced external knowledge to Knowledge Base
-```
+YAML 文件写入成功后，generation hook 会自动把它同步到知识库。
 
 ### 主题路径分类
 
@@ -1229,8 +1153,8 @@ agent:
 **所有 subagent 的内置特性：**
 - 最小化配置（仅 `model` 和 `max_turns` 可选）
 - 自动工具设置、hooks 和 MCP 服务器集成
-- 内置系统提示（版本 1.0）
-- 交互模式下的用户确认工作流
+- 内置系统提示，默认选择最新可用版本
+- 按工作流启用验证、审批和知识库同步
 - 知识库集成用于语义搜索
 - 自动工作空间管理
 

@@ -34,7 +34,7 @@ Launch the SQL summary generation subagent:
 
 ```
 User provides SQL + description → Agent analyzes query → Automatically retrieves context (taxonomy + similar queries) →
-Generates unique ID → Creates YAML → Saves file → User confirms → Syncs to Knowledge Base
+Generates unique ID → Creates YAML → Saves file → Syncs to Knowledge Base
 ```
 
 ### Step-by-Step Process
@@ -48,27 +48,11 @@ Generates unique ID → Creates YAML → Saves file → User confirms → Syncs 
 5. **Classify Query**: Assigns domain, layer1, layer2, and tags following existing patterns
 6. **Generate YAML**: Creates structured summary document
 7. **Save File**: Writes YAML to workspace using `write_file()` tool
-8. **User Confirmation**: Shows the generated YAML and prompts for approval
-9. **Sync to Knowledge Base**: Stores in LanceDB for semantic search
+8. **Sync to Knowledge Base**: Stores in LanceDB for semantic search
 
-### Interactive Confirmation
+### Sync Behavior
 
-After generation, you'll see:
-
-```
-==========================================================
-Generated Reference SQL YAML
-File: /path/to/sql_summary.yml
-==========================================================
-[YAML content with syntax highlighting]
-
-  SYNC TO KNOWLEDGE BASE?
-
-  1. Yes - Save to Knowledge Base
-  2. No - Keep file only
-
-Please enter your choice: [1/2]
-```
+After the YAML is written successfully, the generation hook syncs it to the Knowledge Base automatically.
 
 ## Configuration
 
@@ -85,8 +69,8 @@ agentic_nodes:
 
 **Built-in configurations** (automatically enabled):
 - **Tools**: Filesystem tools (`read_file`, `write_file`, `edit_file`, `glob`) and `generate_sql_summary_id`
-- **Hooks**: User confirmation workflow in interactive mode
-- **System Prompt**: Built-in template version 1.0
+- **Hooks**: Knowledge Base sync
+- **System Prompt**: Built-in template; the latest available version is used unless `prompt_version` is set
 - **Workspace**: `~/.datus/data/{datasource}/reference_sql`
 - **Context Retrieval**: Automatically queries existing subject trees and similar SQLs from Knowledge Base
 
@@ -162,6 +146,6 @@ The SQL Summary feature provides:
 ✅ **Automatic Context Retrieval**: Queries existing subject trees and similar SQLs from Knowledge Base
 ✅ **Deduplication**: Automatic hash-based duplicate detection using `generate_sql_summary_id` tool
 ✅ **Semantic Search**: Vector embeddings enable intelligent query discovery
-✅ **Interactive Workflow**: Review and approve before syncing (in interactive mode)
+✅ **Automatic Sync**: Syncs generated summaries after the YAML file is written
 ✅ **Subject Tree Support**: Organize by domain/layer1/layer2 with predefined or learned categories
 ✅ **Knowledge Reuse**: Build searchable SQL query library
