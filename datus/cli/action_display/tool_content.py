@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
 from datus.schemas.action_history import ActionHistory, ActionStatus
+from datus.schemas.tool_summary import TOOL_SUMMARY_REGISTRY
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -204,6 +205,22 @@ def _strip_legacy_preview(preview: str) -> str:
         if text.startswith(prefix):
             return text[len(prefix) :].strip()
     return text
+
+
+def _summary_from_registry(action: ActionHistory, function_name: str) -> str:
+    """Return the canonical per-tool one-line summary, shared with SSE shortDesc.
+
+    Empty result / unknown shapes return ``""`` so the caller can fall through
+    to the legacy preview path. ``Empty result`` / ``OK`` are dropped because
+    ``set_error_as_result`` and the empty-state branch handle those cases.
+    """
+    if action.status != ActionStatus.SUCCESS or not action.output:
+        return ""
+    output = action.output if isinstance(action.output, dict) else {}
+    summary = TOOL_SUMMARY_REGISTRY.summarize_dict(output, function_name)
+    if not summary or summary in ("Empty result", "OK"):
+        return ""
+    return summary
 
 
 # ── Per-tool argument summary formatters ───────────────────────────
@@ -2106,7 +2123,15 @@ class ToolCallContentBuilder:
         self._registry[function_name] = fn
 
     def build(self, action: ActionHistory, verbose: bool) -> ToolCallContent:
-        """Build tool call content. Checks registry first, falls back to default."""
+        """Build tool call content. Checks registry first, falls back to default.
+
+        ``compact_result`` is filled from the shared
+        :class:`~datus.schemas.tool_summary.ToolSummaryRegistry` so the CLI
+        compact line and the SSE ``shortDesc`` payload always match. Per-tool
+        builders may still set ``compact_result`` themselves; the registry
+        only fills it when the builder left it empty, so a builder that wants
+        a richer one-liner can still win.
+        """
         function_name = action.input.get("function_name", "") if action.input else ""
 
         if function_name in self._registry:
@@ -2118,6 +2143,8 @@ class ToolCallContentBuilder:
             # Populate compact-layout fields if the per-tool builder skipped them.
             set_tool_specific_args_summary(tc, action)
             set_default_args_summary(tc, action)
+            if not tc.compact_result:
+                tc.compact_result = _summary_from_registry(action, function_name)
             if not tc.compact_result:
                 tc.compact_result = _strip_legacy_preview(tc.output_preview)
             set_error_as_result(tc, action)

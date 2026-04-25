@@ -30,6 +30,7 @@ from datus.models.litellm_adapter import LiteLLMAdapter, is_known_non_thinking_m
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
+from datus.schemas.tool_summary import TOOL_SUMMARY_REGISTRY, looks_like_failure
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
@@ -150,43 +151,9 @@ def classify_openai_compatible_error(error: Exception) -> tuple[ErrorCode, bool]
 # ----------------------------------------------------------------------
 #
 # ``short_desc`` (= ``ActionHistory.output["summary"]``) is rendered in the
-# CLI and surfaced as ``shortDesc`` in the streaming SSE payload. Keep
-# these helpers in one place so every LLM adapter (openai/claude/...) emits
-# a consistent one-line human-readable summary.
-
-
-_SUMMARY_ERROR_MAX_CHARS = 100
-_SUMMARY_TEXT_MAX_CHARS = 80
-
-
-def _pluralize(count: int, noun: str) -> str:
-    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
-
-
-def _truncate_text(text: str, limit: int = _SUMMARY_TEXT_MAX_CHARS) -> str:
-    first_line = next((line for line in text.splitlines() if line.strip()), "").strip()
-    if not first_line:
-        return "Empty result"
-    if len(first_line) <= limit:
-        return first_line
-    return first_line[:limit].rstrip() + "…"
-
-
-def _looks_like_failure(data: dict) -> bool:
-    success = data.get("success")
-    if success is False or success == 0:
-        return True
-    error = data.get("error")
-    if isinstance(error, str) and error.strip():
-        return True
-    return False
-
-
-def _format_failure(data: dict) -> str:
-    error = data.get("error")
-    if not isinstance(error, str) or not error.strip():
-        return "Failed"
-    return f"Failed: {_truncate_text(error, _SUMMARY_ERROR_MAX_CHARS)}"
+# CLI and surfaced as ``shortDesc`` in the streaming SSE payload. The
+# per-tool formatter logic now lives in ``datus.schemas.tool_summary`` so
+# CLI compact rendering and SSE share a single source of truth.
 
 
 def _detect_tool_failure(output_content: Any) -> bool:
@@ -209,122 +176,7 @@ def _detect_tool_failure(output_content: Any) -> bool:
             data = parsed
     if data is None:
         return False
-    return _looks_like_failure(data)
-
-
-def _is_empty_result(value: Any) -> bool:
-    if value is None:
-        return True
-    if isinstance(value, (list, tuple, dict, str)) and len(value) == 0:
-        return True
-    return False
-
-
-def _format_generic_result(value: Any) -> str:
-    if isinstance(value, dict):
-        # Canonical FuncToolListResult envelope (items / total / has_more).
-        if "items" in value and isinstance(value["items"], list):
-            return _format_list_envelope(value)
-        for key in ("row_count", "affected_rows", "rows_affected"):
-            if isinstance(value.get(key), int):
-                return _pluralize(value[key], "row")
-        if isinstance(value.get("count"), int):
-            return _pluralize(value["count"], "item")
-        if isinstance(value.get("rows"), int):
-            return _pluralize(value["rows"], "row")
-        return "OK"
-    if isinstance(value, list):
-        return _pluralize(len(value), "item")
-    if isinstance(value, bool):
-        return "OK" if value else "Failed"
-    if isinstance(value, int):
-        return _pluralize(value, "row")
-    if isinstance(value, str):
-        return _truncate_text(value)
-    return "OK"
-
-
-def _format_list_envelope(value: dict) -> str:
-    items_n = len(value.get("items") or [])
-    total = value.get("total")
-    has_more = value.get("has_more")
-    base = _pluralize(items_n, "item")
-    if isinstance(total, int) and total != items_n:
-        base = f"{base} of {total}"
-    if has_more:
-        base = f"{base} (+more)"
-    return base
-
-
-# --- Tool-specific formatters ------------------------------------------------
-
-
-def _fmt_read_query(result: Any) -> str:
-    if isinstance(result, dict):
-        rows = result.get("original_rows")
-        if isinstance(rows, int):
-            return _pluralize(rows, "row")
-    if isinstance(result, list):
-        return _pluralize(len(result), "row")
-    return ""
-
-
-def _fmt_execute_write(result: Any) -> str:
-    if isinstance(result, dict):
-        for key in ("row_count", "affected_rows", "rows_affected"):
-            if isinstance(result.get(key), int):
-                return f"wrote {_pluralize(result[key], 'row')}"
-    return ""
-
-
-def _fmt_execute_ddl(result: Any) -> str:
-    if isinstance(result, dict) and result.get("message"):
-        return "DDL OK"
-    return ""
-
-
-def _fmt_describe_table(result: Any) -> str:
-    if not isinstance(result, dict):
-        return ""
-    columns = result.get("columns") or result.get("schema")
-    if isinstance(columns, list):
-        return _pluralize(len(columns), "column")
-    return ""
-
-
-def _fmt_get_table_ddl(result: Any) -> str:
-    if isinstance(result, dict) and result.get("definition"):
-        identifier = result.get("identifier") or result.get("table_name") or "table"
-        return f"DDL of {identifier}"
-    return ""
-
-
-def _fmt_load_skill(result: Any) -> str:
-    if isinstance(result, dict):
-        metadata = result.get("metadata") or {}
-        name = metadata.get("name") or result.get("name")
-        if name:
-            return f"loaded '{name}'"
-    return ""
-
-
-def _fmt_ask_user(result: Any) -> str:
-    if isinstance(result, dict):
-        content = result.get("content") or result.get("answer")
-        if isinstance(content, str) and content.strip():
-            return f'"{_truncate_text(content, 40)}"'
-    return ""
-
-
-_TOOL_SUMMARY_FORMATTERS: Dict[str, Any] = {
-    "read_query": _fmt_read_query,
-    "execute_write": _fmt_execute_write,
-    "execute_ddl": _fmt_execute_ddl,
-    "describe_table": _fmt_describe_table,
-    "get_table_ddl": _fmt_get_table_ddl,
-    "load_skill": _fmt_load_skill,
-    "ask_user": _fmt_ask_user,
-}
+    return looks_like_failure(data)
 
 
 class OpenAICompatibleModel(LLMBaseModel):
@@ -1595,59 +1447,12 @@ class OpenAICompatibleModel(LLMBaseModel):
         action.output["usage"] = usage_info
 
     def _format_tool_result_from_dict(self, data: dict, tool_name: str = "") -> str:
-        """Format a short one-line summary from a FuncToolResult-shaped dict.
-
-        Priority:
-          1. Failure state (``success`` in (0, False) or non-empty ``error``)
-          2. Tool-specific formatter from ``_TOOL_SUMMARY_FORMATTERS``
-          3. Canonical ``FuncToolListResult`` envelope (``items``/``total``/``has_more``)
-          4. Common dict count fields (``row_count``/``affected_rows``/``count``)
-          5. Generic shape fallbacks (list/int/str/dict)
-        """
-        if _looks_like_failure(data):
-            return _format_failure(data)
-
-        result_value = data["result"] if "result" in data else data
-
-        if _is_empty_result(result_value):
-            return "Empty result"
-
-        formatter = _TOOL_SUMMARY_FORMATTERS.get(tool_name)
-        if formatter is not None:
-            try:
-                summary = formatter(result_value)
-                if summary:
-                    return summary
-            except Exception as fmt_err:  # pragma: no cover - defensive
-                logger.debug(f"Tool summary formatter for {tool_name} raised: {fmt_err}")
-
-        return _format_generic_result(result_value)
+        """Delegate to the shared :class:`ToolSummaryRegistry`."""
+        return TOOL_SUMMARY_REGISTRY.summarize_dict(data, tool_name)
 
     def _format_tool_result(self, content: str, tool_name: str = "") -> str:
-        """Format a short one-line summary from a tool result string.
-
-        Strings typically come from MCP tools (JSON-encoded) or legacy
-        string-returning tools. JSON decodes to dict/list are delegated to
-        :meth:`_format_tool_result_from_dict`; plain strings collapse to
-        their first non-empty line (capped at 80 chars).
-        """
-        if not content:
-            return "Empty result"
-
-        try:
-            data = json.loads(content)
-        except (TypeError, ValueError):
-            return _truncate_text(content)
-
-        if isinstance(data, dict):
-            return self._format_tool_result_from_dict(data, tool_name)
-        if isinstance(data, list):
-            return _pluralize(len(data), "item")
-        if isinstance(data, bool):
-            return "OK" if data else "Failed"
-        if isinstance(data, int):
-            return _pluralize(data, "row")
-        return _truncate_text(str(data))
+        """Delegate to the shared :class:`ToolSummaryRegistry`."""
+        return TOOL_SUMMARY_REGISTRY.summarize_content(content, tool_name)
 
     @property
     def model_specs(self) -> Dict[str, Dict[str, int]]:

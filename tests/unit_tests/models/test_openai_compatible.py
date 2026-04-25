@@ -817,16 +817,26 @@ class TestFormatToolResultFromDict:
     # --- Tool-specific formatters ------------------------------------------
 
     def test_read_query_uses_original_rows(self):
+        # When only ``original_rows`` is present the formatter falls back
+        # to the simple "N rows" wording.
+        data = {
+            "success": 1,
+            "result": {"original_rows": 42, "is_compressed": False},
+        }
+        assert self.model._format_tool_result_from_dict(data, tool_name="read_query") == "42 rows"
+
+    def test_read_query_with_columns_uses_rows_x_cols(self):
+        # When columns are inferable the formatter shows ``"rows × cols result"``
+        # to match the CLI compact display so SSE and CLI render identically.
         data = {
             "success": 1,
             "result": {
                 "original_rows": 42,
-                "original_columns": ["a", "b"],
-                "is_compressed": False,
+                "column_count": 3,
                 "compressed_data": "...",
             },
         }
-        assert self.model._format_tool_result_from_dict(data, tool_name="read_query") == "42 rows"
+        assert self.model._format_tool_result_from_dict(data, tool_name="read_query") == "42 × 3 result"
 
     def test_execute_write_uses_row_count(self):
         data = {"success": 1, "result": {"row_count": 5, "sql": "UPDATE t SET x=1"}}
@@ -848,8 +858,9 @@ class TestFormatToolResultFromDict:
         assert self.model._format_tool_result_from_dict(data, tool_name="get_table_ddl") == "DDL of public.orders"
 
     def test_load_skill_metadata_name(self):
+        # Quoting standardised on double quotes across all per-tool formatters.
         data = {"success": 1, "result": {"content": "...", "metadata": {"name": "sql-best-practices"}}}
-        assert self.model._format_tool_result_from_dict(data, tool_name="load_skill") == "loaded 'sql-best-practices'"
+        assert self.model._format_tool_result_from_dict(data, tool_name="load_skill") == 'loaded "sql-best-practices"'
 
     def test_ask_user_content_truncated(self):
         data = {"success": 1, "result": {"content": "  How many rows should we keep in the dashboard?  "}}
