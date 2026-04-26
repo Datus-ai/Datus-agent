@@ -146,7 +146,8 @@ agent:
       scheduler_service: airflow_prod
 ```
 
-Then start Datus on the workbench database:
+Then start Datus with the `lever_duckdb` datasource, which points at the
+workbench DuckDB file:
 
 ```bash
 cd "$DACOMP_HOME"
@@ -256,12 +257,14 @@ What to expect:
 
 ## Step 8: Promote the Marts Table to the Superset Serving DB
 
-The marts table above was built in `lever_duckdb`. Before dashboard generation can
-create Superset assets, copy that table into the BI-registered
-`superset_serving` Postgres datasource referenced by `dataset_db.datasource_ref`.
+The marts table above was built through the `lever_duckdb` datasource. Before
+dashboard generation can create Superset assets, copy that table into the
+BI-registered `superset_serving` Postgres datasource referenced by
+`dataset_db.datasource_ref`. These names are Datus datasource names from
+`agent.yml`, not physical database or catalog names inside DuckDB or Postgres.
 
 ```text
-Please create or replace superset_serving.public.lever__requisition_enhanced by copying lever_duckdb.marts.lever__requisition_enhanced, then verify the transferred row count.
+Please copy the source table marts.lever__requisition_enhanced from the lever_duckdb datasource into the superset_serving datasource as public.lever__requisition_enhanced, replacing the target table if it already exists. Then verify the source and target row counts.
 ```
 
 After this step, the table exists in the same database Superset knows as

@@ -183,7 +183,7 @@ All sensitive values support `${ENV_VAR}` substitution.
 ### Two-step flow
 
 ```bash
-Use gen_job to write daily revenue for the last 90 days into serving_pg.bi_public.rpt_revenue_daily.
+Use gen_job to write daily revenue for the last 90 days into the `serving_pg` datasource as `bi_public.rpt_revenue_daily`.
 ```
 
 After the table is ready:

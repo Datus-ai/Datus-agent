@@ -183,7 +183,7 @@ agent:
 ### 两步流程
 
 ```bash
-用 gen_job 把过去 90 天每日营收写入 serving_pg.bi_public.rpt_revenue_daily。
+用 gen_job 把过去 90 天每日营收写入 `serving_pg` datasource，目标表为 `bi_public.rpt_revenue_daily`。
 ```
 
 表准备好之后：

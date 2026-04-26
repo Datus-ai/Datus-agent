@@ -141,7 +141,7 @@ agent:
       scheduler_service: airflow_prod
 ```
 
-然后连接到这个 DuckDB 工作库启动 Datus：
+然后使用 `lever_duckdb` datasource 启动 Datus；它指向上面的 DuckDB 工作库：
 
 ```bash
 cd "$DACOMP_HOME"
@@ -245,11 +245,13 @@ Trigger daily_lever_requisition_enhanced once now and show me the latest run sta
 
 ## 步骤 8：把 marts 表同步到 Superset serving DB
 
-上面的 marts 表是在 `lever_duckdb` 里生成的。创建仪表盘之前，需要先把它复制到
+上面的 marts 表是通过 `lever_duckdb` datasource 生成的。创建仪表盘之前，需要先把它复制到
 `dataset_db.datasource_ref` 指向的 BI 注册数据库 `superset_serving`（Postgres）。
+这里的 `lever_duckdb` 和 `superset_serving` 都是 `agent.yml` 里的 Datus
+datasource 名称，不是 DuckDB 或 Postgres 内部真实的 database/catalog 名。
 
 ```text
-Please create or replace superset_serving.public.lever__requisition_enhanced by copying lever_duckdb.marts.lever__requisition_enhanced, then verify the transferred row count.
+Please copy the source table marts.lever__requisition_enhanced from the lever_duckdb datasource into the superset_serving datasource as public.lever__requisition_enhanced, replacing the target table if it already exists. Then verify the source and target row counts.
 ```
 
 完成后，这张表就位于 Superset 通过 `bi_database_name: examples` 识别的数据库中。
