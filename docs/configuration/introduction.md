@@ -105,13 +105,13 @@ benchmark:
     benchmark_path: benchmark/my_custom
 ```
 
-Additionally, each project directory can have a `.datus/config.yml` override for project-specific model and database selection:
+Additionally, each project directory can have a `.datus/config.yml` override for project-specific model and datasource selection:
 
 ```yaml title=".datus/config.yml"
 target:
   provider: openai
   model: gpt-4.1
-default_database: production
+default_datasource: production
 ```
 
 ## Environment Variable Support

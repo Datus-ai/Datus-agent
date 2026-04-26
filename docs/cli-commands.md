@@ -28,7 +28,7 @@ agent:
     openai:
       api_key: ${OPENAI_API_KEY}
   services:
-    databases:
+    datasources:
       my_duckdb:
         type: duckdb
         uri: ./data.duckdb

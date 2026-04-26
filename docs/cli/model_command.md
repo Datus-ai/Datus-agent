@@ -125,7 +125,7 @@ This file supports three keys only:
 | Key | Description |
 |-----|-------------|
 | `target` | Active LLM selection (provider+model or custom name) |
-| `default_database` | Default database for this project |
+| `default_datasource` | Default datasource for this project |
 | `project_name` | Override for session/data shard name |
 
 ### Provider Credentials (`agent.yml`)

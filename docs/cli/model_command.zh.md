@@ -125,7 +125,7 @@ target:
 | Key | 说明 |
 |-----|------|
 | `target` | 活跃的 LLM 选择（provider+model 或自定义名称） |
-| `default_database` | 此项目的默认数据库 |
+| `default_datasource` | 此项目的默认数据源 |
 | `project_name` | session/data 分片名称覆盖 |
 
 ### 提供商凭据 (`agent.yml`)

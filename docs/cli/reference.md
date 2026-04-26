@@ -40,13 +40,16 @@ All slash commands available in Datus-CLI, grouped by category.
 | `/agent` | Open the unified agent manager (built-in overrides / default). `/agent <name>` still sets the default directly. |
 | `/subagent` | Open the unified agent manager, seeded on the Custom tab |
 | `/datasource` | Switch the current datasource |
+| `/language` | Pin the response language for every agentic node ([Language Command](language_command.md)) |
 
 ## System
 
 | Command | Aliases | Description | Details |
 |---------|---------|-------------|---------|
 | `/model` | `/models` | Switch LLM provider/model at runtime | [Model Command](model_command.md) |
+| `/effort` | | Set reasoning effort level (off/minimal/low/medium/high) | [Effort Command](effort_command.md) |
 | `/mcp` | | Manage MCP servers (list/add/remove/check/call/filter) | [MCP Extensions](mcp_extensions.md) |
 | `/skill` | | Manage skills and marketplace | [Skill Command](skill_command.md) |
 | `/bootstrap-bi` | | Extract BI dashboard assets for sub-agent context | |
 | `/services` | | List configured service platforms and their read-only methods | |
+| `/profile` | | Switch the active CLI / agent profile | |

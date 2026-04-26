@@ -175,6 +175,39 @@ datus-gateway --daemon --pid-file /var/run/datus-gateway.pid --daemon-log-file /
 | `--pid-file` | `~/.datus/run/datus-gateway.pid` | PID file path |
 | `--daemon-log-file` | `logs/datus-gateway.log` | Daemon log file path |
 
+### Channel Configuration (`configure` subcommand)
+
+Manage IM channels (Feishu, Slack, …) interactively without hand-editing
+`agent.yml`:
+
+```bash
+datus-gateway configure
+# or with a non-default config file
+datus-gateway configure --config /path/to/agent.yml
+```
+
+The wizard opens a single-window TUI: an **Add** entry at the top, followed
+by a live list of currently configured channels. Selecting a channel opens
+a per-channel submenu that lets you:
+
+- Toggle `enabled`
+- Change `verbose` level
+- Reinstall the channel's adapter dependencies (e.g. `lark-oapi`,
+  `slack-sdk[socket_mode]`)
+- Delete the channel
+
+Adding a channel prompts for the channel name plus the adapter-specific
+secrets (Feishu App ID/Secret, Slack App/Bot tokens, …); secret values are
+redacted in display and may be supplied as `${ENV_VAR}` placeholders. Any
+save operation is written back to `agent.yml` immediately, so the next
+`datus-gateway` start picks up the new channels.
+
+Flags:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--config` | `./conf/agent.yml` | Override the agent configuration file used by this command. |
+
 ## Features
 
 ### Real-Time Streaming

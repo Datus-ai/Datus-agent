@@ -1,129 +1,116 @@
-# 技能命令
+# Skill 命令 `/skill`
 
-`datus skill` 命令提供了管理本地技能和与 Town 技能市场交互的 CLI 接口。
+## 概览
 
-## 子命令
+`/skill` 是管理本地技能（skill）以及与 **Town Skills Marketplace** 交互的统一入口。
+一个 prompt_toolkit Application 在同一事件循环里承载 Tab 切换、详情下钻、
+搜索、登录与删除二次确认；脚本场景则用对应的非交互子命令。
 
-| 子命令 | 描述 |
-|--------|------|
-| `login` | 与 Town 市场进行认证 |
-| `logout` | 清除已保存的认证令牌 |
-| `list` | 列出所有本地已安装的技能 |
-| `search <query>` | 在市场中搜索技能 |
-| `install <name> [version]` | 从市场安装技能 |
-| `publish <path>` | 将本地技能发布到市场 |
-| `info <name>` | 显示技能详情 |
-| `update` | 更新所有市场安装的技能 |
-| `remove <name>` | 移除本地已安装的技能 |
+Marketplace 安装的 skill 默认存于 `~/.datus/skills/<skill-name>/`；
+项目级 `./.datus/skills/` 优先于全局目录。
 
-## 全局选项
+---
 
-| 选项 | 描述 |
+## 基本用法
+
+### 交互式 TUI
+
+直接输入 `/skill` 打开浏览器：
+
+```text
+/skill
+```
+
+TUI 有三个 Tab，使用 **Tab / Shift+Tab** 或 **←/→** 切换：
+
+| Tab | 说明 |
+|-----|------|
+| **Installed** | 已落地到磁盘的 skill（本地与 marketplace 来源混合） |
+| **Marketplace** | Town Marketplace 上发布的 skill |
+| **Published** | 当前登录用户已发布的 skill |
+
+Tab 内按键：
+
+| 按键 | 行为 |
 |------|------|
-| `--marketplace <url>` | 覆盖 `agent.yml` 中的市场 URL |
+| **↑ / ↓** | 移动选中项 |
+| **Enter** | 打开当前 skill 详情面板 |
+| **/** | 在 Marketplace tab 中按关键字过滤 |
+| **i** | 安装当前高亮的 Marketplace skill |
+| **u** | 更新当前高亮的 marketplace 来源 skill |
+| **x** | 删除当前高亮的本地 skill（按两次确认） |
+| **l** | 打开登录表单（Marketplace tab） |
+| **Esc / q** | 关闭面板 |
 
-## 使用方法
+### 子命令快捷入口
 
-### 认证
+每个子命令要么把 TUI 跳到预置状态，要么以非交互方式直接执行（便于脚本调用）：
 
-```bash
-# 交互式登录
-datus skill login --marketplace http://datus-marketplace:9000
+| 命令 | 行为 |
+|------|------|
+| `/skill list` | 打开 TUI 并切到 Installed tab |
+| `/skill search <query>` | 打开 TUI 并切到 Marketplace tab，预填过滤词 |
+| `/skill login [url]` | 打开登录表单（提供 URL 时预填） |
+| `/skill logout` | 清除已保存的 marketplace 凭据 |
+| `/skill install <name> [version]` | 非交互安装，`version` 默认为 `latest` |
+| `/skill publish <path> [--owner <name>]` | 从含 `SKILL.md` 的目录非交互发布 |
+| `/skill info <name>` | 以表格形式打印本地 + marketplace 详情 |
+| `/skill update` | 批量升级所有 marketplace 来源 skill |
+| `/skill remove <name>` | 删除本地 skill（删除文件前会询问） |
+| `/skill help` | 打印命令参考表格 |
 
-# 非交互式登录（使用环境变量避免密码泄露到 shell 历史记录）
-DATUS_PASSWORD='***' datus skill login --marketplace http://datus-marketplace:9000 --email user@example.com --password "$DATUS_PASSWORD"
+---
 
-# 登出
-datus skill logout --marketplace http://datus-marketplace:9000
-```
+## 登录认证
 
-### 列出本地技能
+发布或 promote 操作需要登录 Town 账号：
 
-```bash
-datus skill list
-```
+1. 执行 `/skill login`（也可指定 URL：`/skill login http://my-marketplace:9000`）
+2. 在表单中输入邮箱与密码，凭据会换取 JWT 并保存到本地；密码本身不会持久化
+3. 使用 `/skill logout` 清除当前 marketplace 的 token
 
-输出：
-```
-┌──────────────────┬─────────┬─────────────┬─────────────────────────┐
-│ Name             │ Version │ Source      │ Tags                    │
-├──────────────────┼─────────┼─────────────┼─────────────────────────┤
-│ sql-optimization │ 1.0.0   │ marketplace │ sql, optimization       │
-│ report-generator │ 1.0.0   │ local       │ report, analysis        │
-└──────────────────┴─────────┴─────────────┴─────────────────────────┘
-```
+token 按 marketplace URL 维度隔离，可在同一台机器登录多个 marketplace。
 
-### 搜索市场
-
-```bash
-datus skill search sql
-datus skill search --marketplace http://localhost:9000 report
-```
-
-### 安装技能
-
-```bash
-# 安装最新版本
-datus skill install sql-optimization
-
-# 安装指定版本
-datus skill install sql-optimization 1.0.0
-```
-
-### 发布技能
-
-```bash
-# 从技能目录发布（必须包含 SKILL.md）
-datus skill publish ./skills/sql-optimization
-
-# 指定所有者发布
-datus skill publish ./skills/sql-optimization --owner "murphy"
-```
-
-### 技能详情
-
-```bash
-datus skill info sql-optimization
-```
-
-### 更新技能
-
-```bash
-datus skill update
-```
-
-### 移除技能
-
-```bash
-datus skill remove sql-optimization
-```
-
-## REPL 等效命令
-
-所有 `datus skill` 子命令在 REPL 中都可以作为 `/skill` 命令使用：
-
-```
-datus> /skill list
-datus> /skill search sql
-datus> /skill install sql-optimization
-datus> /skill publish ./skills/my-skill
-datus> /skill info sql-optimization
-datus> /skill update
-datus> /skill remove sql-optimization
-```
+---
 
 ## 配置
 
-市场设置可以在 `agent.yml` 中配置：
+Skill 搜索路径与 marketplace 地址在 `agent.yml` 中配置：
 
 ```yaml
 skills:
   directories:
-    - ~/.datus/skills
-    - ./skills
+    - ~/.datus/skills        # 全局，跨项目共享
+    - ./.datus/skills        # 项目级，优先级高于全局
   marketplace_url: "http://localhost:9000"
-  auto_sync: false
   install_dir: "~/.datus/skills"
+  auto_sync: false
 ```
 
-有关技能创建、权限和市场工作流的更多详情，请参阅 [Skills 集成](../integration/skills.md)。
+同名 skill 时，`./.datus/skills/<name>/` 会覆盖全局目录。
+
+---
+
+## 示例
+
+```bash
+# 打开 Installed tab
+/skill
+
+# 在 marketplace 中搜索 "sql"
+/skill search sql
+
+# 安装指定版本
+/skill install sql-optimization 1.0.0
+
+# 发布本地 skill
+/skill publish ./skills/sql-optimization --owner murphy
+
+# 查看详情（本地 + marketplace）
+/skill info sql-optimization
+
+# 升级所有 marketplace 来源的 skill
+/skill update
+```
+
+skill 编写、权限模型与 marketplace 流程详见 [Skills 集成](../integration/skills.md)。

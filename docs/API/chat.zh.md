@@ -18,6 +18,7 @@ Chat 相关接口驱动 Agent 的对话循环。流式接口以 Server-Sent Even
 | `message`        | string   | 必填,用户消息 |
 | `session_id`     | string?  | 复用以延续已有会话 |
 | `subagent_id`    | string?  | 内置 subagent 名(`gen_metrics`、`gen_semantic_model` 等)或自定义 id |
+| `model`          | string?  | 单次请求级 model 覆盖,格式 `provider/model_id`(如 `openai/gpt-4.1`、`custom/my-model`)。优先级高于服务端 `target` 与会话默认值。 |
 | `plan_mode`      | bool     | 是否启用 plan 模式 |
 | `catalog`/`database`/`db_schema` | string? | 数据库上下文 |
 | `table_paths`/`metric_paths`/`sql_paths`/`knowledge_paths` | string[]? | `@` 引用路径 |
@@ -59,7 +60,13 @@ Chat 相关接口驱动 Agent 的对话循环。流式接口以 Server-Sent Even
 
 ### `GET /api/v1/chat/sessions`
 
-列出当前用户的全部会话。
+列出当前用户的会话。
+
+**Query 参数**:
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `subagent_id` | string? | 按 subagent 过滤。传 `chat` 表示默认 chat agent,或传任意内置/自定义 subagent id;省略则返回该用户全部会话。 |
 
 **响应**:`Result[ChatSessionData]`,数组元素为 `{ session_id, user_query, created_at, last_updated,
 total_turns, token_count, last_sql_queries, is_active }`。

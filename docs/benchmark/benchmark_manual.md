@@ -326,7 +326,7 @@ datus-agent eval --datasource california_schools --benchmark california_schools 
 ```yaml
 agent:
   services:
-    databases:
+    datasources:
       california_schools:
         type: sqlite
         uri: sqlite:///benchmark/bird/dev_20240627/dev_databases/california_schools/california_schools.sqlite # Database file path. Use sqlite:/// for relative paths; sqlite://// for absolute paths.

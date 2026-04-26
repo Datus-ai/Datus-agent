@@ -175,6 +175,35 @@ datus-gateway --daemon --pid-file /var/run/datus-gateway.pid --daemon-log-file /
 | `--pid-file` | `~/.datus/run/datus-gateway.pid` | PID 文件路径 |
 | `--daemon-log-file` | `logs/datus-gateway.log` | 守护进程日志文件路径 |
 
+### 频道配置（`configure` 子命令）
+
+无需手工编辑 `agent.yml`,可交互式管理 IM 频道（Feishu、Slack 等）：
+
+```bash
+datus-gateway configure
+# 或指定非默认配置文件
+datus-gateway configure --config /path/to/agent.yml
+```
+
+向导打开一个单窗口 TUI:顶部为 **Add** 入口,下方实时列出当前已配置的频道。
+选中某个频道会进入子菜单,可执行:
+
+- 切换 `enabled`
+- 修改 `verbose` 级别
+- 重新安装该频道适配器的依赖（如 `lark-oapi`、`slack-sdk[socket_mode]`）
+- 删除该频道
+
+新增频道时会询问频道名称及对应适配器的密钥（Feishu 的 App ID/Secret、
+Slack 的 App/Bot Token 等）。密钥在显示时会被打码,也可使用 `${ENV_VAR}`
+占位符。任何保存操作都会立即写回 `agent.yml`,下一次启动 `datus-gateway`
+即生效。
+
+参数:
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--config` | `./conf/agent.yml` | 覆盖此命令使用的 agent 配置文件 |
+
 ## 功能特性
 
 ### 实时流式响应

@@ -78,7 +78,7 @@ agent:
       benchmark_path: benchmark/spider2/spider2-snow
 
   services:
-    databases:
+    datasources:
       local_duckdb:
         type: duckdb
         uri: ./tests/duckdb-demo.duckdb
@@ -196,7 +196,7 @@ benchmark:
 
 agent:
   services:
-    databases:
+    datasources:
       spider-snow:
         type: snowflake
         username: ${SNOWFLAKE_USER}
@@ -248,7 +248,7 @@ benchmark:
 
 agent:
   services:
-    databases:
+    datasources:
       bird_sqlite:
         type: sqlite
         path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite
@@ -324,7 +324,7 @@ Update Configuration conf/agent.yml:
 ```yaml
 agent:
   services:
-    databases:
+    datasources:
       duckdb:
         type: duckdb
         uri: ~/.metricflow/duck.db

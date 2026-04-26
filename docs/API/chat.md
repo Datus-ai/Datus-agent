@@ -18,6 +18,7 @@ Send a chat message and stream the response as Server-Sent Events.
 | `message`        | string   | Required. User message |
 | `session_id`     | string?  | Reuse to continue an existing session |
 | `subagent_id`    | string?  | Built-in name (`gen_metrics`, `gen_semantic_model`, …) or custom subagent id |
+| `model`          | string?  | Per-request model override in `provider/model_id` form (e.g. `openai/gpt-4.1`, `custom/my-model`). Highest priority over server-side `target` and any session default. |
 | `plan_mode`      | bool     | Enable plan mode |
 | `catalog`/`database`/`db_schema` | string? | Database context |
 | `table_paths`/`metric_paths`/`sql_paths`/`knowledge_paths` | string[]? | `@`-reference paths |
@@ -60,7 +61,13 @@ Summarize and compress a session's conversation history.
 
 ### `GET /api/v1/chat/sessions`
 
-List all chat sessions for the current user.
+List chat sessions for the current user.
+
+**Query parameters**:
+
+| Param | Type | Notes |
+|-------|------|-------|
+| `subagent_id` | string? | Filter by subagent. Pass `chat` for the default chat agent, or any builtin/custom subagent id. Omit to return every session for the user. |
 
 **Response**: `Result[ChatSessionData]` with an array of `{ session_id, user_query, created_at, last_updated,
 total_turns, token_count, last_sql_queries, is_active }`.

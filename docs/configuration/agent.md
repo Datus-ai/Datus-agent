@@ -377,5 +377,5 @@ And the corresponding project-level override:
 target:
   provider: openai
   model: gpt-4.1
-default_database: my_duckdb
+default_datasource: my_duckdb
 ```
