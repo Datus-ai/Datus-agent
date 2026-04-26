@@ -11,6 +11,8 @@ execute_stream flow, and integration with SubAgentTaskTool.
 NO MOCK EXCEPT LLM: The only mock is LLMBaseModel.create_model -> MockLLMModel.
 """
 
+from types import SimpleNamespace
+
 import pytest
 
 from datus.agent.node.agentic_node import AgenticNode
@@ -186,6 +188,33 @@ class TestExploreAgenticNodeTools:
         assert "db_tools" in mapping
         assert "filesystem_tools" in mapping
         assert "date_parsing_tools" in mapping
+
+    def test_context_search_prompt_only_lists_available_tools(self, real_agent_config, mock_llm_create):
+        """Explore prompt should not advertise context tools that are not exposed."""
+        from datus.agent.node.explore_agentic_node import ExploreAgenticNode
+
+        node = ExploreAgenticNode(
+            node_id="test_explore_tools_7",
+            description="Test Explore node",
+            node_type=NodeType.TYPE_EXPLORE,
+            agent_config=real_agent_config,
+            node_name="explore",
+        )
+        node.context_search_tools = SimpleNamespace(
+            available_tools=lambda: [
+                SimpleNamespace(name="list_subject_tree"),
+                SimpleNamespace(name="search_reference_sql"),
+                SimpleNamespace(name="get_reference_sql"),
+            ]
+        )
+
+        prompt = node._get_system_prompt()
+
+        assert "`list_subject_tree()`" in prompt
+        assert "`search_reference_sql" in prompt
+        assert "`get_reference_sql" in prompt
+        assert "`search_knowledge" not in prompt
+        assert "`get_knowledge" not in prompt
 
 
 @pytest.mark.nightly

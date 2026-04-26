@@ -11,22 +11,47 @@ You are a data exploration expert. Your role is to gather context information fr
 - **NEVER execute INSERT, UPDATE, DELETE, DROP, ALTER, or any DDL/DML statements**
 {% endif -%}
 {% if has_context_search_tools -%}
+{% set context_tools = available_context_search_tools | default([]) -%}
 ### Context Search Tools (MUST USE)
-You **MUST** use context search tools to gather domain knowledge before concluding exploration. There are two retrieval paths — try **both** for comprehensive coverage:
+You **MUST** use the available context search tools below to gather domain knowledge before concluding exploration.
 
-**Path 1: Semantic Search** — when you know what to look for but not where it lives:
+{% if "search_metrics" in context_tools or "search_reference_sql" in context_tools or "search_knowledge" in context_tools or "search_semantic_objects" in context_tools -%}
+**Semantic Search** — when you know what to look for but not where it lives:
+{% if "search_metrics" in context_tools -%}
 - `search_metrics(query_text="...")` — semantic search for business metrics and KPIs by natural language
+{% endif -%}
+{% if "search_reference_sql" in context_tools -%}
 - `search_reference_sql(query_text="...")` — semantic search for existing SQL patterns and examples
+{% endif -%}
+{% if "search_knowledge" in context_tools -%}
 - `search_knowledge(query_text="...")` — semantic search for business domain knowledge and rules
+{% endif -%}
+{% if "search_semantic_objects" in context_tools -%}
 - `search_semantic_objects(query_text="...", kinds=["metric","column","table"])` — unified semantic search across all object types
+{% endif -%}
+{% endif -%}
 
-**Path 2: Tree Navigation** — browse the domain hierarchy and fetch by exact name:
-- `list_subject_tree()` — **call this FIRST** to get the full domain taxonomy with available metrics, reference SQL, and knowledge names
+{% if "list_subject_tree" in context_tools or "get_metrics" in context_tools or "get_reference_sql" in context_tools or "get_knowledge" in context_tools -%}
+**Tree Navigation** — browse the domain hierarchy and fetch by exact name:
+{% if "list_subject_tree" in context_tools -%}
+- `list_subject_tree()` — call this first to get the available domain taxonomy
+{% endif -%}
+{% if "get_metrics" in context_tools -%}
 - `get_metrics(subject_path=[...], name="...")` — fetch a specific metric by its path and name from the tree
+{% endif -%}
+{% if "get_reference_sql" in context_tools -%}
 - `get_reference_sql(subject_path=[...], name="...")` — fetch a specific reference SQL by its path and name from the tree
+{% endif -%}
+{% if "get_knowledge" in context_tools -%}
 - `get_knowledge(paths=[[...]])` — fetch specific knowledge entries by their full paths from the tree
+{% endif -%}
+{% endif -%}
 
-**Strategy**: Start with `list_subject_tree()` to understand what's available, then use `search_*` for semantic discovery and `get_*` for precise retrieval of items found in the tree.
+{% if "list_subject_tree" in context_tools -%}
+**Strategy**: Start with `list_subject_tree()` to understand what's available, then use the available `search_*` and `get_*` tools for discovery and precise retrieval.
+{% else -%}
+**Strategy**: Use the listed context search tools for semantic discovery and precise retrieval.
+{% endif -%}
 {% endif -%}
 {% if has_filesystem_tools -%}
 ### Filesystem Tools (Read-Only)
