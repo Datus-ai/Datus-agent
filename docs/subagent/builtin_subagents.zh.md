@@ -237,7 +237,7 @@ graph LR
     A[用户请求] --> B[DDL 分析]
     B --> C[YAML 生成]
     C --> D[验证]
-    D --> E[存储]
+    D --> E[知识库同步]
 ```
 
 ### 验证和同步
@@ -292,8 +292,8 @@ data_source:
 
 - ✅ 从表 DDL 自动生成 YAML
 - ✅ 交互式验证和错误修复
-- ✅ 验证通过后自动同步
-- ✅ 知识库集成
+- ✅ 验证通过后同步到知识库
+- ✅ interactive 自动同步，workflow/API 显式同步
 - ✅ 防止重复
 - ✅ MetricFlow 兼容性
 

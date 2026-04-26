@@ -237,7 +237,7 @@ graph LR
     A[User Request] --> B[DDL Analysis]
     B --> C[YAML Generation]
     C --> D[Validation]
-    D --> E[Storage]
+    D --> E[Knowledge Base Sync]
 ```
 
 ### Validation and Sync
@@ -293,8 +293,8 @@ The semantic model generation feature provides:
 - ✅ Automated YAML generation from table DDL
 - ✅ Built-in tools, hooks, and MCP server integration
 - ✅ Interactive validation and error fixing
-- ✅ User confirmation before storage
-- ✅ Knowledge Base integration
+- ✅ Validation-gated Knowledge Base sync
+- ✅ Interactive auto-sync and workflow/API explicit sync
 - ✅ Duplicate prevention
 - ✅ MetricFlow compatibility
 
