@@ -117,7 +117,7 @@ agent:
         password: "${SUPERSET_PASSWORD}"
         dataset_db:
           datasource_ref: serving_pg
-          bi_database_name: analytics_pg
+          bi_database_name: examples
       grafana:
         type: grafana
         api_base_url: "http://localhost:3000"

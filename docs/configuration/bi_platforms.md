@@ -40,7 +40,7 @@ agent:
         password: ${SUPERSET_PASSWORD}
         dataset_db:
           datasource_ref: serving_pg          # ← references services.datasources.serving_pg
-          bi_database_name: analytics_pg      # ← Superset's alias for the same DB
+          bi_database_name: examples          # Superset Database connection name shown in Settings > Database Connections
 
       grafana:
         type: grafana
