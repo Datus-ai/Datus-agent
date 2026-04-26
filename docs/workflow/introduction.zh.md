@@ -42,13 +42,13 @@ Datus Agent 工作流是一个将自然语言问题转换为 SQL 并执行的智
 ### 命令行
 ```bash
 # 简单问题
-datus run --datasource your_db --task "Show me monthly sales"
+datus-agent run --datasource your_db --task_db_name analytics --task "Show me monthly sales"
 
 # 指定工作流类型
-datus run --datasource your_db --task "Show me complex revenue trends" --plan reflection
+datus-agent run --datasource your_db --task_db_name analytics --task "Show me complex revenue trends" --workflow reflection
 
 # 使用业务指标
-datus run --datasource your_db --task "Calculate customer lifetime value" --plan metric_to_sql
+datus-agent run --datasource your_db --task_db_name analytics --task "Calculate customer lifetime value" --workflow metric_to_sql
 ```
 
 ### 通过 API

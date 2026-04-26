@@ -81,7 +81,7 @@ Notes:
 Start the CLI:
 
 ```bash
-datus --database production
+datus --datasource production
 ```
 
 Then launch a subagent with `/[name]`:
@@ -96,13 +96,13 @@ Then launch a subagent with `/[name]`:
 Start the web interface:
 
 ```bash
-datus --web --database production
+datus --web --datasource production
 ```
 
 Open a specific subagent directly:
 
 ```bash
-datus --web --database production --subagent finance_report
+datus --web --datasource production --subagent finance_report
 ```
 
 Direct URLs also work:

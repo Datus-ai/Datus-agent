@@ -52,7 +52,7 @@ datus-api --daemon --pid-file /var/run/datus-api.pid --daemon-log-file /var/log/
 | Flag             | Default                  | Description |
 |------------------|--------------------------|-------------|
 | `--config`       | (auto-resolved)          | Path to `agent.yml` |
-| `--database`    | `default`                | Datasource from `agent.yml` |
+| `--datasource`    | `default`                | Datasource from `agent.yml` |
 | `--output-dir`   | `./output`               | Directory for generated artifacts |
 | `--log-level`    | `INFO`                   | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
 | `--host`         | `127.0.0.1`              | Bind address |
@@ -73,7 +73,7 @@ datus-api --daemon --pid-file /var/run/datus-api.pid --daemon-log-file /var/log/
 | Variable             | Equivalent flag | Notes |
 |----------------------|-----------------|-------|
 | `DATUS_CONFIG`       | `--config`      | Empty string triggers default lookup |
-| `DATUS_DATASOURCE`    | `--database`   | Defaults to `default` |
+| `DATUS_DATASOURCE`    | `--datasource`   | Defaults to `default` |
 | `DATUS_OUTPUT_DIR`   | `--output-dir`  | Defaults to `./output` |
 | `DATUS_LOG_LEVEL`    | `--log-level`   | Defaults to `INFO` |
 | `DATUS_CORS_ORIGINS` | —               | Comma-separated origins, default `*` |

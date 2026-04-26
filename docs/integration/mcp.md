@@ -242,7 +242,7 @@ Mode Selection (mutually exclusive, one required):
 
 Static Mode Options:
   --sub-agent, -s      Sub-agent name for scoped context
-  --database, -d       Database name override
+  --config, -c         Path to agent configuration file
   --transport, -t      Transport type: http (default), sse, stdio
 
 Dynamic Mode Options:

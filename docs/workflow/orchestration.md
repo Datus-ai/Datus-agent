@@ -265,21 +265,20 @@ Workflows can be configured with parameters:
 
 ```bash
 # Use specific workflow
-datus run --database <your_datasource> --task "your query" --plan reflection
+datus-agent run --datasource <your_datasource> --task "your query" --task_db_name <database> --workflow reflection
 
 # Use custom workflow
-datus run --database <your_datasource> --task "your query" --plan custom_analytics
+datus-agent run --datasource <your_datasource> --task "your query" --task_db_name <database> --workflow custom_analytics
 ```
 
 ### Available Parameters
 
 | Parameter | Description | Default | Options |
 |-----------|-------------|---------|---------|
-| `--plan` | Workflow type to execute | `reflection` | `reflection`, `fixed`, `metric_to_sql`, custom |
-| `--database` | Database datasource | Required | Any configured datasource |
+| `--workflow` | Workflow type to execute | `reflection` | `reflection`, `fixed`, custom |
+| `--datasource` | Database datasource | Required | Any configured datasource |
 | `--task` | Natural language query | Required | Any string |
-| `--max_iterations` | Maximum reflection rounds | `3` | Integer |
-| `--save_dir` | Directory to save workflow state | `./save` | Any valid path |
+| `--max_steps` | Maximum workflow steps | `20` | Integer |
 
 
 ## Best Practices
@@ -309,13 +308,10 @@ datus run --database <your_datasource> --task "your query" --plan custom_analyti
 
 ```bash
 # Enable debug mode for detailed logging
-datus run --database <your_datasource> --task "your query" --debug
+datus-agent --debug run --datasource <your_datasource> --task "your query" --task_db_name <database>
 
-# Save workflow state for inspection
-datus run --database <your_datasource> --task "your query" --save_dir ./debug_session
-
-# Resume from saved state
-datus resume --save_dir ./debug_session
+# Save LLM input/output traces for inspection
+datus-agent --save_llm_trace run --datasource <your_datasource> --task "your query" --task_db_name <database>
 ```
 
 ## Conclusion

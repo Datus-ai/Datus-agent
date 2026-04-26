@@ -292,7 +292,7 @@ created_at: "2025-01-15T10:00:00Z"
 启动 CLI，先用 `/subject` 浏览生成的知识条目，然后用原始问题测试：
 
 ```bash
-datus-agent --datasource california_schools
+datus-cli --datasource california_schools
 ```
 
 ```
@@ -319,7 +319,7 @@ Agent 应该：
 #### 步骤 1：启动 CLI
 
 ```bash
-datus-agent --datasource california_schools
+datus-cli --datasource california_schools
 ```
 
 #### 步骤 2：调用 Subagent

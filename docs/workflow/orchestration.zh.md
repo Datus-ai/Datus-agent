@@ -222,29 +222,26 @@ agent:
 ### 工作流参数
 ```bash
 # 使用内置工作流
-datus run --datasource <your_datasource> --task "your query" --plan reflection
+datus-agent run --datasource <your_datasource> --task "your query" --task_db_name <database> --workflow reflection
 # 使用自定义工作流
-datus run --datasource <your_datasource> --task "your query" --plan custom_analytics
+datus-agent run --datasource <your_datasource> --task "your query" --task_db_name <database> --workflow custom_analytics
 ```
 
 **可用参数**：
 
 | 参数 | 描述 | 默认 | 取值 |
 |---|---|---|---|
-| `--plan` | 执行的工作流类型 | `reflection` | `reflection`、`fixed`、`metric_to_sql` 或自定义 |
+| `--workflow` | 执行的工作流类型 | `reflection` | `reflection`、`fixed` 或自定义 |
 | `--datasource` | 数据库数据源 | 必填 | 已配置数据源 |
 | `--task` | 自然语言任务 | 必填 | 文本 |
-| `--max_iterations` | 最大反思轮数 | `3` | 整数 |
-| `--save_dir` | 保存工作流状态目录 | `./save` | 路径 |
+| `--max_steps` | 最大工作流步数 | `20` | 整数 |
 
 ## 调试与监控
 ```bash
 # 详细日志
-datus run --datasource <your_datasource> --task "your query" --debug
-# 保存工作流状态
-datus run --datasource <your_datasource> --task "your query" --save_dir ./debug_session
-# 从保存状态恢复
-datus resume --save_dir ./debug_session
+datus-agent --debug run --datasource <your_datasource> --task "your query" --task_db_name <database>
+# 保存 LLM 输入输出 trace
+datus-agent --save_llm_trace run --datasource <your_datasource> --task "your query" --task_db_name <database>
 ```
 
 ## 结语

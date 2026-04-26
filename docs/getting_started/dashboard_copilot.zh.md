@@ -121,12 +121,12 @@ kubectl port-forward -n default svc/superset-postgresql 15432:5432 > /dev/null 2
 ### 安装所需扩展
 
 ```bash
-pip install datus-postgresql datus-semantic-metricflow
+pip install datus-bi-superset datus-postgresql datus-semantic-metricflow
 ```
 
 ### 更新 agent.yml
 
-将以下配置添加到您的 `~/.datus/agent.yml`：
+将以下配置添加到您的 `~/.datus/conf/agent.yml`：
 
 ```yaml
 agent:
@@ -163,7 +163,7 @@ agent:
 ### 运行 Bootstrap 命令
 
 ```bash
-datus-agent bootstrap-bi --database superset
+datus-agent bootstrap-bi --datasource superset
 ```
 
 ### 交互流程

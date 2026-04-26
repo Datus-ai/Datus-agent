@@ -58,7 +58,7 @@ agent:
 
 | 配置段 | 用途 | 选择方式 |
 |--------|------|----------|
-| `services.datasources` | SQL 与知识库操作使用的数据库连接 | `--database` / 当前数据库 / 默认数据库 |
+| `services.datasources` | SQL 与知识库操作使用的数据库连接 | `--datasource` / 当前数据库 / 默认数据库 |
 | `services.semantic_layer` | 语义适配器配置，例如 MetricFlow | `semantic_adapter` |
 | `services.bi_platforms` | BI 平台凭据与数据集物化配置 | `bi_platform` |
 | `services.schedulers` | 调度器服务实例，例如 Airflow | `scheduler_service` |
@@ -220,11 +220,11 @@ datus-agent configure --config /path/to/agent.yml
 运行 CLI 命令时，可以显式指定要使用的数据库：
 
 ```bash
-datus-cli --database my_duckdb
-datus-agent run --database my_snowflake --task "..." --task_db_name ANALYTICS
+datus-cli --datasource my_duckdb
+datus-agent run --datasource my_snowflake --task "..." --task_db_name ANALYTICS
 ```
 
-如果没有指定 `--database`：
+如果没有指定 `--datasource`：
 
 1. 若某个数据库设置了 `default: true`，则自动使用它
 2. 若只配置了一个数据库，则自动使用该数据库

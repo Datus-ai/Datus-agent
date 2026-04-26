@@ -212,7 +212,7 @@ A semantic model is a YAML configuration that defines:
 
 ### Quick Start
 
-Start Datus CLI with `datus --database <datasource>`, and begin with a subagent command:
+Start Datus CLI with `datus --datasource <datasource>`, and begin with a subagent command:
 
 ```bash
 /gen_semantic_model generate a semantic model for table <table_name>
@@ -319,7 +319,7 @@ A **metric** is a reusable business calculation built on top of semantic models.
 
 ### Quick Start
 
-Start Datus CLI with `datus --database <datasource>`, and use the metrics generation subagent:
+Start Datus CLI with `datus --datasource <datasource>`, and use the metrics generation subagent:
 
 ```bash
 /gen_metrics Generate a metric from this SQL: SELECT SUM(amount) FROM transactions, the corresponding question is total amount of all transactions

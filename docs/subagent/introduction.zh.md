@@ -81,7 +81,7 @@ agent:
 先启动 CLI：
 
 ```bash
-datus --database production
+datus --datasource production
 ```
 
 然后使用 `/[name]` 启动 subagent：
@@ -96,13 +96,13 @@ datus --database production
 启动 Web：
 
 ```bash
-datus --web --database production
+datus --web --datasource production
 ```
 
 直接打开某个 subagent：
 
 ```bash
-datus --web --database production --subagent finance_report
+datus --web --datasource production --subagent finance_report
 ```
 
 也可以直接访问 URL：

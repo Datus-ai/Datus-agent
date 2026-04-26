@@ -10,12 +10,12 @@ The Datus Web Chatbot provides a user-friendly web interface for interacting wit
 
 **With Datasource**:
 ```bash
-datus --web --database <your_datasource>
+datus --web --datasource <your_datasource>
 ```
 
 **With Custom Configuration**:
 ```bash
-datus --web --config path/to/agent.yml --database snowflake
+datus --web --config path/to/agent.yml --datasource snowflake
 ```
 
 **Custom Port and Host**:
@@ -82,7 +82,7 @@ http://localhost:8501/?subagent=finance_report
 You can also launch the web UI directly into a subagent from the CLI:
 
 ```bash
-datus --web --database production --subagent finance_report
+datus --web --datasource production --subagent finance_report
 ```
 
 ### 3. Session Management

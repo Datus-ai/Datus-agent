@@ -212,7 +212,7 @@ tags: "revenue, region, aggregation"       # 逗号分隔的标签
 
 ### 快速开始
 
-使用 `datus --database <datasource>` 启动 Datus CLI，然后使用subagent命令：
+使用 `datus --datasource <datasource>` 启动 Datus CLI，然后使用subagent命令：
 
 ```bash
 /gen_semantic_model generate a semantic model for table <table_name>
@@ -318,7 +318,7 @@ data_source:
 
 ### 快速开始
 
-使用 `datus --database <datasource>` 启动 Datus CLI，然后使用指标生成subagent：
+使用 `datus --datasource <datasource>` 启动 Datus CLI，然后使用指标生成subagent：
 
 ```bash
 /gen_metrics Generate a metric from this SQL: SELECT SUM(amount) FROM transactions, the corresponding question is total amount of all transactions

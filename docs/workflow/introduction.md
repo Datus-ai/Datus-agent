@@ -44,13 +44,13 @@ Workflows are made up of specialized components called "[nodes](nodes.md)." Each
 
 ```bash
 # Ask a simple question
-datus run --database your_db --task "Show me monthly sales"
+datus-agent run --datasource your_db --task_db_name analytics --task "Show me monthly sales"
 
 # Use a specific workflow type
-datus run --database your_db --task "Show me complex revenue trends" --plan reflection
+datus-agent run --datasource your_db --task_db_name analytics --task "Show me complex revenue trends" --workflow reflection
 
 # Use business metrics
-datus run --database your_db --task "Calculate customer lifetime value" --plan metric_to_sql
+datus-agent run --datasource your_db --task_db_name analytics --task "Calculate customer lifetime value" --workflow metric_to_sql
 ```
 
 ### Via API

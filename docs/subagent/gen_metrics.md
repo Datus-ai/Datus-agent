@@ -36,7 +36,7 @@ JOIN customers c ON o.customer_id = c.id  -- ❌ JOIN not supported
 
 ## How It Works
 
-Start Datus CLI with `datus --database <datasource>`, and use the metrics generation subagent:
+Start Datus CLI with `datus --datasource <datasource>`, and use the metrics generation subagent:
 
 ```bash
 /gen_metrics Generate a metric from this SQL: SELECT SUM(amount) FROM transactions, the coresponding question is total amount of all transactions

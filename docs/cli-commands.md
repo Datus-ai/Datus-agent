@@ -104,22 +104,22 @@ datus service delete
 
 ## Database Selection
 
-### `--database` flag
+### `--datasource` flag
 
-Most commands require specifying which database to use:
+`datus-agent` subcommands require specifying which datasource to use. Interactive `datus-cli` can auto-select a datasource when the configuration is unambiguous.
 
 ```bash
-datus-cli --database my_duckdb
-datus run --database my_duckdb --task "show tables" --task_db_name demo
-datus check-db --database my_duckdb
-datus bootstrap-kb --database my_duckdb --components metadata
+datus-cli --datasource my_duckdb
+datus-agent run --datasource my_duckdb --task "show tables" --task_db_name demo
+datus-agent check-db --datasource my_duckdb
+datus-agent bootstrap-kb --datasource my_duckdb --components metadata
 ```
 
-**Auto-selection:** If `--database` is not specified:
+**Interactive CLI auto-selection:** If `--datasource` is not specified for `datus-cli`:
 - If a database has `default: true` in config, it's auto-selected
 - If only one database is configured, it's auto-selected
 - Otherwise, a list of available databases is shown
 
-**Legacy support:** `--database` still works as an alias for `--database`.
+The old database-selection flag is no longer accepted by the current CLI; use `--datasource`.
 
 ---

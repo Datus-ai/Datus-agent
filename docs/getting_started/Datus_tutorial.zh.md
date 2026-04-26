@@ -9,12 +9,12 @@
 4. 对它们进行基准测试以比较准确性和性能
 5. 运行多轮评估以展示[上下文数据工程](contextual_data_engineering.zh.md)的价值
 
-## 1. 前置条件：初始化 Datus Agent
+## 1. 前置条件：配置 Datus Agent
 
-运行教程之前，请先初始化您的 Datus agent：
+运行教程之前，请先配置您的模型和数据库连接：
 
 ```bash
-datus-agent init
+datus-agent configure
 ```
 
 由于本教程涉及指标生成，还需要安装语义层适配器：
@@ -36,16 +36,16 @@ datus-agent tutorial
 
 ![Datus 教程概览](../assets/datus_tutorial.png)
 
-您将看到一个结构化的 5 步工作流程。通过多轮 agent 调用，这个过程大约需要 10 分钟完成初始化。您可以在等待过程中观察 Datus 的执行过程，以了解其工作原理。
+您将看到一个结构化的 6 步工作流程。通过多轮 agent 调用，这个过程大约需要 10 分钟完成初始化。您可以在等待过程中观察 Datus 的执行过程，以了解其工作原理。
 
 
-### 步骤 [1/5] 验证数据和配置
+### 步骤 [1/6] 验证数据和配置
 
 ```text
 Welcome to Datus tutorial 🎉
 Let's start learning how to prepare for benchmarking step by step using a dataset from California schools.
 
-[1/5] Ensure data files and configuration
+[1/6] Ensure data files and configuration
 Data files are ready.
 Configuration is ready.
 ```
@@ -58,13 +58,13 @@ Configuration is ready.
 - 使用配置更新 agent.yml
 
 
-### 步骤 [2/5] 初始化元数据
+### 步骤 [2/6] 初始化元数据
 
 ```bash
-[2/5] Initialize Metadata using command:
+[2/6] Initialize Metadata using command:
 datus-agent bootstrap-kb \
   --config ~/.datus/conf/agent.yml \
-  --database california_schools \
+  --datasource california_schools \
   --components metadata \
   --kb_update_strategy overwrite
 ```
@@ -78,15 +78,29 @@ datus-agent bootstrap-kb \
 
 Datus 将连接到示例数据集，提取表结构和数据样本，然后将它们存储到带有向量索引的[知识库](../knowledge_base/introduction.zh.md)中。了解更多关于[元数据管理](../knowledge_base/metadata.zh.md)。
 
-### 步骤 [3/5] 初始化指标
+### 步骤 [3/6] 初始化语义模型
+
+语义模型生成会读取 success story 中的问题和 SQL 示例，并先创建 MetricFlow 语义模型 YAML，供后续指标生成使用。
+
+```bash
+[3/6] Initialize Semantic Model using command:
+datus-agent bootstrap-kb \
+  --config ~/.datus/conf/agent.yml \
+  --datasource california_schools \
+  --components semantic_model \
+  --kb_update_strategy overwrite \
+  --success_story ~/.datus/benchmark/california_schools/success_story.csv
+```
+
+### 步骤 [4/6] 初始化指标
 
 指标生成严重依赖于语义建模，因此推荐使用强大的 agentic 模型（推荐模型：DeepSeek / Claude）。更多详情请参见[指标文档](../knowledge_base/metrics.zh.md)。
 
 ```bash
-[3/5] Initialize Metrics using command:
+[4/6] Initialize Metrics using command:
 datus-agent bootstrap-kb \
   --config ~/.datus/conf/agent.yml \
-  --database california_schools \
+  --datasource california_schools \
   --components metrics \
   --kb_update_strategy overwrite \
   --success_story ~/.datus/benchmark/california_schools/success_story.csv \
@@ -110,14 +124,14 @@ datus-agent bootstrap-kb \
 > **注意**
 > 如果指标初始化失败，请在 [agent.yml](../configuration/agent.zh.md) 中调整 `gen_semantic_model` 和 `gen_metrics` 的模型配置。如果您在开始时没有足够的成功案例样本，可以安全地忽略这些错误。
 
-### 步骤 [4/5] 初始化参考 SQL
+### 步骤 [5/6] 初始化参考 SQL
 
 有关参考 SQL 的更多信息，请参见[参考 SQL 文档](../knowledge_base/reference_sql.zh.md)。
 
 ```bash
 datus-agent bootstrap-kb \
   --config ~/.datus/conf/agent.yml \
-  --database california_schools \
+  --datasource california_schools \
   --components reference_sql \
   --kb_update_strategy overwrite \
   --sql_dir ~/.datus/benchmark/california_schools/reference_sql \
@@ -139,18 +153,18 @@ datus-agent bootstrap-kb \
 您可以使用 [Datus-CLI](../cli/introduction.zh.md) 探索 Datus 生成的指标和参考 SQL：
 
 ```
-Datus-cli --database california_schools
+datus-cli --datasource california_schools
 /subject
 ```
 
 ![主题树结构](../assets/tutorial_subject_tree.png)
 
-### 步骤 [5/5] 构建 Subagent
+### 步骤 [6/6] 构建 Subagent
 
 教程会自动生成两个 [subagent](../subagent/introduction.zh.md)：
 
 ```
-[5/5] Building sub-agents:
+[6/6] Building sub-agents:
   ✅ Sub-agent `datus_schools` have been added. It can work using database tools.
   ✅ Sub-agent `datus_schools_context` have been added. It can work using metrics, relevant SQL and database tools.
 ```
@@ -218,13 +232,13 @@ Datus-cli --database california_schools
 ### 3.1 评估 `datus_schools`（基线）
 
 ```bash
-datus-agent benchmark   --database california_schools   --benchmark california_schools   --workflow datus_schools
+datus-agent benchmark   --datasource california_schools   --benchmark california_schools   --workflow datus_schools
 ```
 
 保存结果：
 
 ```bash
-datus-agent eval   --database california_schools   --benchmark california_schools   --output_file schools1.txt
+datus-agent eval   --datasource california_schools   --benchmark california_schools   --output_file schools1.txt
 ```
 
 ![评估结果](../assets/eval_schools.png)
@@ -232,13 +246,13 @@ datus-agent eval   --database california_schools   --benchmark california_school
 ### 3.2 评估 `datus_schools_context`（完整上下文）
 
 ```bash
-datus-agent benchmark   --database california_schools   --benchmark california_schools   --workflow datus_schools_context
+datus-agent benchmark   --datasource california_schools   --benchmark california_schools   --workflow datus_schools_context
 ```
 
 保存结果：
 
 ```bash
-datus-agent eval   --database california_schools   --benchmark california_schools   --output_file schools2.txt
+datus-agent eval   --datasource california_schools   --benchmark california_schools   --output_file schools2.txt
 ```
 
 通过比较 `schools1.txt` 和 `schools2.txt`，您可以明确地看到上下文丰富的 agent 如何提高 SQL 准确性、减少错误并生成更符合语义的查询，相比基线 agent 有显著改进。
@@ -250,7 +264,7 @@ datus-agent eval   --database california_schools   --benchmark california_school
 ```bash
 python -m datus.multi_round_benchmark \
   --config ~/.datus/conf/agent.yml \
-  --database california_schools \
+  --datasource california_schools \
   --benchmark california_schools \
   --workflow datus_schools_context \
   --max_round 4 \

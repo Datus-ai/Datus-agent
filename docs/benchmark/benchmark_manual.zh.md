@@ -309,12 +309,12 @@ datus-agent tutorial
 
 ### 进行基准测试和评估
 ```bash
-datus-agent benchmark --database california_schools --benchmark california_schools --benchmark_task_ids 0 1 2 --workflow <your workflow>
+datus-agent benchmark --datasource california_schools --benchmark california_schools --benchmark_task_ids 0 1 2 --workflow <your workflow>
 ```
 👉 详见 [第四步：运行基准测试](#第四步运行基准测试)
 
 ```bash
-datus-agent eval --database california_schools --benchmark california_schools --task_ids 0 1 2
+datus-agent eval --datasource california_schools --benchmark california_schools --task_ids 0 1 2
 ```
 👉 详见 [第五步：结果评估](#第五步结果评估)
 
@@ -379,16 +379,6 @@ agent:
 === "datus-agent 子命令"
     ```bash title="Terminal"
     datus-agent multi-round-benchmark \
-      --datasource bird_sqlite \
-      --benchmark bird_dev \
-      --workflow chat_agentic \
-      --round 4 \
-      --workers 2
-    ```
-
-=== "独立 CLI 入口"
-    ```bash title="Terminal"
-    datus-multi-benchmark \
       --datasource bird_sqlite \
       --benchmark bird_dev \
       --workflow chat_agentic \

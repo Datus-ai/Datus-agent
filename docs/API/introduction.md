@@ -22,7 +22,7 @@ default unscoped session; when present, the user id is used to isolate chat sess
 X-Datus-User-Id: alice
 ```
 
-Datasource isolation is controlled separately by the `--database` CLI flag (or `DATUS_DATASOURCE` env var) and selects
+Datasource isolation is controlled separately by the `--datasource` CLI flag (or `DATUS_DATASOURCE` env var) and selects
 which datasource from `agent.yml` is used to load databases and knowledge.
 
 ## Response envelope

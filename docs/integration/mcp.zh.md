@@ -242,7 +242,7 @@ datus-mcp --help
 
 静态模式选项：
   --sub-agent, -s      Sub-agent 名称，用于限定上下文范围
-  --database, -d       覆盖默认数据库名称
+  --config, -c         agent 配置文件路径
   --transport, -t      传输方式：http（默认）、sse、stdio
 
 动态模式选项：

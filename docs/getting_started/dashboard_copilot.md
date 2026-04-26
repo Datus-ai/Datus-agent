@@ -122,12 +122,12 @@ Configure Datus to connect to both the PostgreSQL database and Superset dashboar
 ### Install Required Extensions
 
 ```bash
-pip install datus-postgresql datus-semantic-metricflow
+pip install datus-bi-superset datus-postgresql datus-semantic-metricflow
 ```
 
 ### Update agent.yml
 
-Add the following configuration to your `~/.datus/agent.yml`:
+Add the following configuration to your `~/.datus/conf/agent.yml`:
 
 ```yaml
 agent:
@@ -167,7 +167,7 @@ Now use the `bootstrap-bi` command to automatically generate context and subagen
 ### Run Bootstrap Command
 
 ```bash
-datus-agent bootstrap-bi --database superset
+datus-agent bootstrap-bi --datasource superset
 ```
 
 ### Interactive Flow

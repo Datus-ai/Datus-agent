@@ -36,7 +36,7 @@ JOIN customers c ON o.customer_id = c.id  -- ❌ 不支持 JOIN
 
 ## 工作原理
 
-使用 `datus --database <datasource>` 启动 Datus CLI，然后使用指标生成子代理：
+使用 `datus --datasource <datasource>` 启动 Datus CLI，然后使用指标生成子代理：
 
 ```bash
 /gen_metrics Generate a metric from this SQL: SELECT SUM(amount) FROM transactions, the coresponding question is total amount of all transactions

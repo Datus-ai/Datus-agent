@@ -137,7 +137,7 @@ datus-agent init
 如需把某个已配置数据库的表结构摘要一并写入 `AGENTS.md`，可额外指定：
 
 ```bash
-datus-agent init --database duckdb-demo
+datus-agent init --datasource duckdb-demo
 ```
 
 ## 步骤 2：启动 Datus CLI
@@ -148,7 +148,7 @@ datus-agent init --database duckdb-demo
     你可以随时通过 `datus-agent configure` 继续添加模型或数据库。详见我们的[配置指南](../configuration/introduction.md)。
 
 ```bash title="Terminal"
-datus-cli --database duckdb-demo
+datus-cli --datasource duckdb-demo
 ```
 ```{ .yaml .no-copy }
 Initializing AI capabilities in background...

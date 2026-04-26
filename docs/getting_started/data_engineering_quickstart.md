@@ -49,7 +49,7 @@ The two files that drive the design are:
 - `docs/data_contract.yaml` - row-level cleanup, validation, and normalization rules
 - `config/layer_dependencies.yaml` - layer order and table dependencies
 
-Read those first so the prompts you give to `gen_table` and `gen_job` stay aligned with the intended warehouse design.
+Read those first so the prompts you give to the agent stay aligned with the intended warehouse design.
 
 ## Step 2: Start the Local Quickstart Stack
 
@@ -86,19 +86,20 @@ The Airflow compose file mounts `${DACOMP_HOME}` into the container and preloads
 Install Datus plus the adapters used in this walkthrough:
 
 ```bash
-pip install datus-bi-superset datus-postgresql datus-semantic-metricflow datus-scheduler-airflow
+pip install datus-agent datus-bi-superset datus-postgresql datus-semantic-metricflow datus-scheduler-airflow
 ```
 
 Package roles in this quickstart:
 
-- `datus-bi-superset` - Superset BI adapter used by `gen_dashboard`
+- `datus-agent` - the Datus CLI and subagent runtime
+- `datus-bi-superset` - Superset BI adapter used for dashboard generation
 - `datus-postgresql` - PostgreSQL driver support for the Superset materialization target
 - `datus-semantic-metricflow` - semantic model and metric generation
 - `datus-scheduler-airflow` - Airflow scheduler adapter; it installs `datus-scheduler-core` transitively
 
 ## Step 4: Configure `agent.yml`
 
-Add the following minimum configuration to your `~/.datus/conf/agent.yml`:
+Add the following minimum configuration to your `~/.datus/conf/agent.yml`. Replace the two absolute path placeholders with your local `DACOMP_HOME` and `DATUS_AGENT_REPO` paths; file datasource URIs should be written as expanded paths, not literal shell variables.
 
 ```yaml
 agent:
@@ -106,7 +107,7 @@ agent:
     datasources:
       lever_duckdb:
         type: duckdb
-        uri: "duckdb:///${DACOMP_HOME}/lever_workbench.duckdb"
+        uri: "duckdb:////absolute/path/to/dacomp-de-impl-001/lever_workbench.duckdb"
         default: true
       superset_serving:
         type: postgresql
@@ -136,7 +137,7 @@ agent:
         api_base_url: http://127.0.0.1:8080/api/v1
         username: admin
         password: admin
-        dags_folder: "${DATUS_AGENT_REPO}/quickstart/data_engineering/airflow/dags"
+        dags_folder: "/absolute/path/to/Datus-agent/quickstart/data_engineering/airflow/dags"
         connections:
           duckdb_dacomp_lever: DAComp Lever DuckDB
 
@@ -155,43 +156,43 @@ Then start Datus on the workbench database:
 
 ```bash
 cd "$DACOMP_HOME"
-datus-cli --database lever_duckdb
+datus-cli --datasource lever_duckdb
 ```
 
 Here `dags_folder` is the host-side directory where Datus writes generated DAG files. `quickstart/data_engineering/airflow/docker-compose.yml` mounts that directory into the Airflow container as `/opt/airflow/dags`, so newly generated DAGs are picked up automatically.
 
 ## Step 5: Create the Layered Warehouse Interactively
 
-Use `gen_table` when you want explicit DDL review before execution. The agent will show the DDL and wait for confirmation.
+Describe the table task directly in the CLI when you want explicit DDL review before execution. The agent will route the request to the table-generation workflow, show the DDL, and wait for confirmation.
 
 Create the target schemas:
 
 ```text
-/gen_table Create schemas staging, intermediate, and marts in the current DuckDB database. Keep the existing raw schema unchanged.
+Create schemas staging, intermediate, and marts in the current DuckDB database. Keep the existing raw schema unchanged.
 ```
 
 Create a representative staging table from the contract:
 
 ```text
-/gen_table Read ./docs/data_contract.yaml and create staging.stg_lever__requisition from raw.requisition. Apply the validation and normalization rules from the contract and show me the DDL before execution.
+Read ./docs/data_contract.yaml and create staging.stg_lever__requisition from raw.requisition. Apply the validation and normalization rules from the contract and show me the DDL before execution.
 ```
 
-Use the same pattern for the other staging tables you want to inspect manually. For large batches, let `gen_job` take over.
+Use the same pattern for the other staging tables you want to inspect manually. For large batches, ask the agent to generate ETL jobs from the SQL assets.
 
 ## Step 6: Generate ETL Jobs and Produce Marts Data
 
-Use `gen_job` to operationalize the SQL assets from the DAComp example inside the current DuckDB workbench.
+Ask the agent to operationalize the SQL assets from the DAComp example inside the current DuckDB workbench.
 
 Build a representative intermediate table:
 
 ```text
-/gen_job Create intermediate.int_lever__requisition_users in the current database using ./sql/intermediate/int_lever__requisition_users.sql.
+Create intermediate.int_lever__requisition_users in the current database using ./sql/intermediate/int_lever__requisition_users.sql.
 ```
 
 Then build a marts table that is ready for downstream analytics:
 
 ```text
-/gen_job Create marts.lever__recruitment_analytics_dashboard in the current database using ./sql/marts/lever__recruitment_analytics_dashboard.sql.
+Create marts.lever__recruitment_analytics_dashboard in the current database using ./sql/marts/lever__recruitment_analytics_dashboard.sql.
 ```
 
 The intended order is always:
@@ -213,31 +214,31 @@ Now turn the marts output into reusable semantic assets.
 Generate a semantic model:
 
 ```text
-/gen_semantic_model Generate a semantic model for marts.lever__recruitment_analytics_dashboard.
+Generate a semantic model for marts.lever__recruitment_analytics_dashboard.
 ```
 
 Generate metrics from a dashboard-oriented KPI prompt:
 
 ```text
-/gen_metrics Create metrics for open requisitions, applications, interviews, offers, and hires from marts.lever__recruitment_analytics_dashboard. subject_tree: recruiting/hiring/dashboard
+Create metrics for open requisitions, applications, interviews, offers, and hires from marts.lever__recruitment_analytics_dashboard. subject_tree: recruiting/hiring/dashboard
 ```
 
 These files are typically written under your project semantic-model storage and become reusable context for future analysis.
 
 ## Step 8: Submit a Daily Airflow Job
 
-Use the scheduler subagent to operationalize a daily marts refresh. The Airflow quickstart environment already exposes the `duckdb_dacomp_lever` connection.
+Ask the agent to operationalize a daily marts refresh. The Airflow quickstart environment already exposes the `duckdb_dacomp_lever` connection.
 
 Submit a daily SQL job at 8 AM:
 
 ```text
-/scheduler Submit a daily SQL job named daily_lever_recruitment_dashboard from ./sql/marts/lever__recruitment_analytics_dashboard.sql at 8am every day using the duckdb_dacomp_lever connection
+Submit a daily SQL job named daily_lever_recruitment_dashboard from ./sql/marts/lever__recruitment_analytics_dashboard.sql at 8am every day using the duckdb_dacomp_lever connection
 ```
 
 Then trigger it once for validation:
 
 ```text
-/scheduler Trigger daily_lever_recruitment_dashboard once now and show me the latest run status
+Trigger daily_lever_recruitment_dashboard once now and show me the latest run status
 ```
 
 What to expect:
@@ -249,12 +250,12 @@ What to expect:
 
 ## Step 9: Promote the Marts Table to the Superset Serving DB
 
-The marts table above was built in `lever_duckdb`. Before `gen_dashboard` can
+The marts table above was built in `lever_duckdb`. Before dashboard generation can
 create Superset assets, copy that table into the BI-registered
 `superset_serving` Postgres datasource referenced by `dataset_db.datasource_ref`.
 
 ```text
-/gen_job Copy lever_duckdb.marts.lever__recruitment_analytics_dashboard to superset_serving.public.lever__recruitment_analytics_dashboard using replace mode, then verify the transferred row count.
+Copy lever_duckdb.marts.lever__recruitment_analytics_dashboard to superset_serving.public.lever__recruitment_analytics_dashboard using replace mode, then verify the transferred row count.
 ```
 
 After this step, the table exists in the same database Superset knows as
@@ -262,10 +263,10 @@ After this step, the table exists in the same database Superset knows as
 
 ## Step 10: Create a Superset Dashboard
 
-Once the marts table exists in `superset_serving`, hand it to the BI subagent.
+Once the marts table exists in `superset_serving`, ask the agent to build the dashboard.
 
 ```text
-/gen_dashboard Create a recruiting operations dashboard in Superset from public.lever__recruitment_analytics_dashboard. Include KPI tiles for requisitions, applications, interviews, offers, and hires, plus a funnel chart and a weekly trend chart.
+Create a recruiting operations dashboard in Superset from public.lever__recruitment_analytics_dashboard. Include KPI tiles for requisitions, applications, interviews, offers, and hires, plus a funnel chart and a weekly trend chart.
 ```
 
 Under the hood, the Superset workflow is:
@@ -274,7 +275,7 @@ Under the hood, the Superset workflow is:
 list_bi_databases -> create_dataset -> create_chart -> create_dashboard -> add_chart_to_dashboard
 ```
 
-Data preparation is a separate `gen_job` / `scheduler` step. `gen_dashboard`
+Data preparation is a separate ETL / scheduler step. Dashboard generation
 expects the table or SQL dataset to already be available in the BI-registered
 database.
 
@@ -286,7 +287,7 @@ You should now have:
 - at least one marts table that queries successfully
 - generated semantic model and metric YAML
 - a daily Airflow job visible in the scheduler UI
-- a Superset dashboard URL returned by `gen_dashboard`
+- a Superset dashboard URL returned by the dashboard generation flow
 
 For deeper reference, continue with:
 

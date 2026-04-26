@@ -58,7 +58,7 @@ agent:
 
 | Section | Purpose | Selector |
 |---------|---------|----------|
-| `services.datasources` | Database connections used by SQL and KB operations | `--database` / current database / default database |
+| `services.datasources` | Database connections used by SQL and KB operations | `--datasource` / current database / default database |
 | `services.semantic_layer` | Semantic adapter configuration such as MetricFlow | `semantic_adapter` |
 | `services.bi_platforms` | BI platform credentials and dataset materialization config | `bi_platform` |
 | `services.schedulers` | Scheduler service instances such as Airflow | `scheduler_service` |
@@ -214,11 +214,11 @@ datus-agent configure --config /path/to/agent.yml
 When running CLI commands, specify which database to use:
 
 ```bash
-datus-cli --database my_duckdb
-datus-agent run --database my_snowflake --task "..." --task_db_name ANALYTICS
+datus-cli --datasource my_duckdb
+datus-agent run --datasource my_snowflake --task "..." --task_db_name ANALYTICS
 ```
 
-If `--database` is not specified:
+If `--datasource` is not specified:
 1. If a database has `default: true` → auto-selected
 2. If only one database configured → auto-selected
 3. If multiple without default → shows available list

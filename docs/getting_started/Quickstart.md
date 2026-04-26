@@ -173,10 +173,10 @@ datus-agent init
 
 This generates an `AGENTS.md` file describing your project's architecture, directory structure, services, and data assets. The LLM analyzes your directory and README to produce the content.
 
-You can also use `--database` to include database schema information:
+You can also use `--datasource` to include datasource schema information:
 
 ```bash
-datus-agent init --database demo
+datus-agent init --datasource duckdb-demo
 ```
 
 ## Step 2: Launch Datus CLI
@@ -187,7 +187,7 @@ Start the Datus CLI with your configured database:
     You can add more databases anytime with `datus-agent configure`. Use `datus-agent service list` to see all configured databases.
 
 ```bash title="Terminal"
-datus-cli --database duckdb-demo
+datus-cli --datasource duckdb-demo
 ```
 ```{ .yaml .no-copy }
 Initializing AI capabilities in background...
