@@ -251,8 +251,8 @@ class TestCreateSemanticModelsForTables:
         assert error == ""
 
     @pytest.mark.asyncio
-    async def test_failed_action_returns_false(self):
-        """Node yields a FAILED action → returns (False, message)."""
+    async def test_terminal_error_action_returns_false(self):
+        """Node yields a terminal error action → returns (False, message)."""
         from types import SimpleNamespace
         from unittest.mock import patch
 
@@ -271,7 +271,7 @@ class TestCreateSemanticModelsForTables:
                 self.input = None
 
             async def execute_stream(self, ahm):
-                action = SimpleNamespace(status=ActionStatus.FAILED, messages="Generation failed")
+                action = SimpleNamespace(status=ActionStatus.FAILED, action_type="error", messages="Generation failed")
                 yield action
 
         with (
@@ -289,8 +289,8 @@ class TestCreateSemanticModelsForTables:
         assert "Generation failed" in error
 
     @pytest.mark.asyncio
-    async def test_failed_action_no_messages_uses_default(self):
-        """FAILED action with no messages → uses default error message."""
+    async def test_terminal_error_no_messages_uses_default(self):
+        """Terminal error action with no messages → uses default error message."""
         from types import SimpleNamespace
         from unittest.mock import patch
 
@@ -309,7 +309,7 @@ class TestCreateSemanticModelsForTables:
                 self.input = None
 
             async def execute_stream(self, ahm):
-                action = SimpleNamespace(status=ActionStatus.FAILED, messages=None)
+                action = SimpleNamespace(status=ActionStatus.FAILED, action_type="error", messages=None)
                 yield action
 
         with (
@@ -325,6 +325,48 @@ class TestCreateSemanticModelsForTables:
             success, error = await create_semantic_models_for_tables(["users"], mock_config)
         assert success is False
         assert error != ""
+
+    @pytest.mark.asyncio
+    async def test_recoverable_failed_tool_action_does_not_abort(self):
+        """Failed validation/tool actions are recoverable intermediate states."""
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.storage.semantic_model.auto_create import create_semantic_models_for_tables
+
+        mock_config = MagicMock()
+        mock_db_config = MagicMock()
+        mock_db_config.catalog = ""
+        mock_db_config.database = "db"
+        mock_db_config.schema = ""
+        mock_config.current_db_config.return_value = mock_db_config
+
+        class MockNode:
+            def __init__(self, *args, **kwargs):
+                self.input = None
+
+            async def execute_stream(self, ahm):
+                yield SimpleNamespace(
+                    status=ActionStatus.FAILED,
+                    action_type="tool_call",
+                    messages="Tool call: validate_semantic('{}...')",
+                )
+                yield SimpleNamespace(status=ActionStatus.SUCCESS, action_type="semantic_response", messages="ok")
+
+        with (
+            patch(
+                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                MockNode,
+            ),
+            patch(
+                "datus.schemas.semantic_agentic_node_models.SemanticNodeInput",
+                MagicMock(return_value=MagicMock()),
+            ),
+        ):
+            success, error = await create_semantic_models_for_tables(["users"], mock_config)
+        assert success is True
+        assert error == ""
 
     @pytest.mark.asyncio
     async def test_exception_returns_false(self):

@@ -29,6 +29,7 @@ Create production-ready MetricFlow semantic model YAML for one or more database 
    - Define measures only for reusable aggregations.
    - Define dimensions for grouping/filtering fields.
    - Use `expr: "1"` for row-count measures with `agg: COUNT`.
+   - For measures, use `agg` for the aggregation type; do not add a `type` field to measure entries.
 
 3. **Write YAML**
    - Save files under the semantic model directory shown in the system prompt.

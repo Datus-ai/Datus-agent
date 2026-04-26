@@ -135,12 +135,18 @@ async def create_semantic_models_for_tables(
 
     action_history_manager = ActionHistoryManager()
     try:
+        terminal_error = None
         async for action in semantic_node.execute_stream(action_history_manager):
             if emit:
                 # Emit progress event
                 emit(action)
-            if action.status == ActionStatus.FAILED:
-                return False, action.messages or "Semantic model generation failed"
+            action_type = getattr(action, "action_type", "")
+            if action.status == ActionStatus.FAILED and action_type == "error":
+                terminal_error = action.messages or "Semantic model generation failed"
+                logger.error(terminal_error)
+                continue
+        if terminal_error:
+            return False, terminal_error
         return True, ""
     except Exception as e:
         logger.error(f"Error creating semantic models: {e}", exc_info=True)
