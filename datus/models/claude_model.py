@@ -364,6 +364,7 @@ class ClaudeModel(OpenAICompatibleModel):
         func_tools: Optional[List[Any]] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
         interrupt_controller=None,
+        session: Optional[Any] = None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Async generator: native Anthropic API with real-time tool call ActionHistory.
@@ -422,12 +423,25 @@ class ClaudeModel(OpenAICompatibleModel):
                         for t in tools:
                             t.pop("cache_control", None)
                         tools[-1]["cache_control"] = {"type": "ephemeral"}
-                messages = [
-                    {
-                        "role": "user",
-                        "content": [{"type": "text", "text": f"{instruction}\n\n{prompt}"}],
-                    }
-                ]
+                # Load prior turns from the session so multi-turn chat works.
+                # Native Anthropic loop is not driven by openai-agents Runner, so
+                # we replay session history into ``messages`` ourselves.
+                # ``instruction`` is already carried by ``_build_system_param``;
+                # do NOT re-embed it in the user message here, otherwise persisted
+                # turns would carry duplicated system text.
+                messages: List[Dict[str, Any]] = []
+                if session is not None:
+                    try:
+                        prior_items = await session.get_items()
+                        if prior_items:
+                            messages.extend(prior_items)
+                    except Exception as e:
+                        logger.warning(f"Failed to load session history; starting fresh: {e}")
+                user_turn_message = {
+                    "role": "user",
+                    "content": [{"type": "text", "text": prompt}],
+                }
+                messages.append(user_turn_message)
                 tool_call_cache = {}
                 sql_contexts = []
                 final_content = ""
@@ -656,6 +670,21 @@ class ClaudeModel(OpenAICompatibleModel):
                 )
                 if action_history_manager is not None:
                     action_history_manager.add_action(final_action)
+
+                # Persist this turn into the session so the next turn replays it
+                # via ``session.get_items()``. Mirror what openai-agents Runner
+                # would do via SQLiteSession.add_items, but driven by us since
+                # the native Anthropic loop bypasses Runner.run.
+                if session is not None:
+                    try:
+                        assistant_turn_message = {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": final_content}],
+                        }
+                        await session.add_items([user_turn_message, assistant_turn_message])
+                    except Exception as e:
+                        logger.warning(f"Failed to persist session history for native Claude turn: {e}")
+
                 yield final_action
 
         except anthropic.AuthenticationError as e:
@@ -674,6 +703,7 @@ class ClaudeModel(OpenAICompatibleModel):
         max_turns: int = 10,
         func_tools: Optional[List[Any]] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
+        session: Optional[Any] = None,
         **kwargs,
     ) -> Dict:
         """Non-streaming wrapper: consumes _generate_with_mcp_stream and returns result dict."""
@@ -686,6 +716,7 @@ class ClaudeModel(OpenAICompatibleModel):
             max_turns=max_turns,
             func_tools=func_tools,
             action_history_manager=action_history_manager,
+            session=session,
             **kwargs,
         ):
             if action.role == ActionRole.ASSISTANT and action.action_type == "final_response":
@@ -725,6 +756,7 @@ class ClaudeModel(OpenAICompatibleModel):
                 max_turns=max_turns,
                 func_tools=tools,
                 action_history_manager=action_history_manager,
+                session=session,
                 **kwargs,
             )
 
@@ -782,6 +814,7 @@ class ClaudeModel(OpenAICompatibleModel):
                 func_tools=tools,
                 action_history_manager=action_history_manager,
                 interrupt_controller=kwargs.pop("interrupt_controller", None),
+                session=session,
                 **kwargs,
             ):
                 yield action

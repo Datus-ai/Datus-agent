@@ -859,6 +859,142 @@ class TestGenerateWithMcpStream:
         assert actions[1].status == ActionStatus.FAILED
         assert actions[1].output["summary"] == "Failed"
 
+    @pytest.mark.asyncio
+    async def test_session_persists_user_and_assistant_across_turns(self):
+        """OAuth-subscription native path must persist multi-turn history through ``session``.
+
+        Regression: prior to the fix, ``_generate_with_mcp_stream`` ignored the
+        ``session`` parameter entirely, so subsequent turns started from an empty
+        history and the assistant could not see the user's prior message.
+        """
+        from datus.schemas.action_history import ActionHistoryManager
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        # Two independent invocations on the same session — turn 1 then turn 2.
+        resp1 = _make_response([_make_text_block("answer-1")])
+        resp2 = _make_response([_make_text_block("answer-2")])
+        model.anthropic_client.messages.create.side_effect = [resp1, resp2]
+
+        # Session stub mimicking AdvancedSQLiteSession's get_items / add_items contract.
+        session = MagicMock()
+        session_store: list = []
+        session.get_items = AsyncMock(side_effect=lambda: list(session_store))
+        session.add_items = AsyncMock(side_effect=lambda items: session_store.extend(items))
+
+        ahm = ActionHistoryManager()
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            # Turn 1
+            async for _ in model._generate_with_mcp_stream(
+                prompt="hello",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                action_history_manager=ahm,
+                session=session,
+            ):
+                pass
+
+            # After turn 1: session should contain user "hello" and assistant "answer-1".
+            assert session.add_items.await_count == 1
+            assert any(
+                isinstance(item, dict) and item.get("role") == "user" and "hello" in str(item.get("content"))
+                for item in session_store
+            ), f"user prompt not stored: {session_store}"
+            assert any(
+                isinstance(item, dict) and item.get("role") == "assistant" and "answer-1" in str(item.get("content"))
+                for item in session_store
+            ), f"assistant final not stored: {session_store}"
+
+            # Turn 2
+            async for _ in model._generate_with_mcp_stream(
+                prompt="follow up",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                action_history_manager=ahm,
+                session=session,
+            ):
+                pass
+
+        # Anthropic API on turn 2 must have seen the prior turn's history.
+        assert model.anthropic_client.messages.create.call_count == 2
+        turn2_messages = model.anthropic_client.messages.create.call_args_list[1].kwargs["messages"]
+        flattened = str(turn2_messages)
+        assert "hello" in flattened, f"turn2 messages missing turn1 user: {turn2_messages}"
+        assert "answer-1" in flattened, f"turn2 messages missing turn1 assistant: {turn2_messages}"
+        assert "follow up" in flattened
+
+    @pytest.mark.asyncio
+    async def test_session_get_items_failure_falls_back_to_fresh_history(self):
+        """A broken session must not abort the turn — log and start fresh instead."""
+        from datus.schemas.action_history import ActionHistoryManager
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        model.anthropic_client.messages.create.return_value = _make_response([_make_text_block("ok")])
+
+        session = MagicMock()
+        session.get_items = AsyncMock(side_effect=RuntimeError("disk error"))
+        session.add_items = AsyncMock()
+
+        ahm = ActionHistoryManager()
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            actions = []
+            async for action in model._generate_with_mcp_stream(
+                prompt="probe",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                action_history_manager=ahm,
+                session=session,
+            ):
+                actions.append(action)
+
+        # Native turn still completed despite the load failure.
+        assert any(a.action_type == "final_response" for a in actions)
+        # And we still tried to persist this turn for the next call.
+        assert session.add_items.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_session_add_items_failure_does_not_break_turn(self):
+        """If persistence fails after a successful turn, the user still gets the response."""
+        from datus.schemas.action_history import ActionHistoryManager
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        model.anthropic_client.messages.create.return_value = _make_response([_make_text_block("ok")])
+
+        session = MagicMock()
+        session.get_items = AsyncMock(return_value=[])
+        session.add_items = AsyncMock(side_effect=RuntimeError("disk full"))
+
+        ahm = ActionHistoryManager()
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            actions = []
+            async for action in model._generate_with_mcp_stream(
+                prompt="probe",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                action_history_manager=ahm,
+                session=session,
+            ):
+                actions.append(action)
+
+        # The final action is still yielded even though persistence raised.
+        assert any(a.action_type == "final_response" for a in actions)
+
 
 class TestGenerateWithMcpWrapper:
     @pytest.mark.asyncio
