@@ -1593,6 +1593,22 @@ class ChatCommands:
         return None
 
     def add_in_sql_context(self, sql: str, explanation: str, incremental_actions: List[ActionHistory]):
+        def _is_success(value) -> bool:
+            if isinstance(value, str):
+                return value.strip().lower() not in {"", "0", "false", "no"}
+            return bool(value)
+
+        def _maybe_parse_json(value):
+            if not isinstance(value, str):
+                return value
+            stripped = value.strip()
+            if not stripped or stripped[0] not in "[{":
+                return value
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError:
+                return value
+
         last_sql_action = None
         for i in range(len(incremental_actions) - 1, -1, -1):
             action = incremental_actions[i]
@@ -1613,18 +1629,32 @@ class ChatCommands:
             logger.warning(f"No SQL action found in incremental_actions. Actions: {action_types}")
             return
 
-        action_output = last_sql_action.output
-        if not action_output.get("success", "True"):
-            error = action_output.get("error", "") or action_output.get("raw_output", "")
+        action_output = _maybe_parse_json(last_sql_action.output)
+        if not isinstance(action_output, dict):
+            logger.warning("read_query action output is not a dict; storing it as SQL context error")
+            error = str(action_output or "")
+            sql_return = None
+            row_count = 0
+        elif not _is_success(action_output.get("success", True)):
+            error = action_output.get("error", "") or str(action_output.get("raw_output", ""))
             sql_return = None
             row_count = 0
         else:
-            tool_result = action_output.get("raw_output", {})
-            if tool_result.get("success", 0) == 1:
+            tool_result = _maybe_parse_json(action_output.get("raw_output", {}))
+            if not isinstance(tool_result, dict):
+                logger.warning("read_query raw_output is not a dict; storing it as SQL context error")
+                error = str(tool_result or "")
+                sql_return = ""
+                row_count = 0
+            elif tool_result.get("success", 0) == 1:
                 data_result = tool_result.get("result")
                 error = None
-                row_count = data_result.get("original_rows", 0)
-                sql_return = data_result.get("compressed_data", "")
+                if isinstance(data_result, dict):
+                    row_count = data_result.get("original_rows", 0)
+                    sql_return = data_result.get("compressed_data", "")
+                else:
+                    row_count = 0
+                    sql_return = str(data_result or "")
             else:
                 error = tool_result.get("error", "")
                 sql_return = ""

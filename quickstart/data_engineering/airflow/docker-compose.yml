@@ -51,7 +51,6 @@ services:
       - -lc
       - >
         python -m pip install --no-cache-dir
-        --constraint https://raw.githubusercontent.com/apache/airflow/constraints-2.10.4/constraints-3.12.txt
         "duckdb>=1.2.0,<2.0.0"
         "duckdb-engine>=0.17.0"
         &&

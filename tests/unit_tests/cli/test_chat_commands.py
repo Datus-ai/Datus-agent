@@ -1093,6 +1093,70 @@ class TestAddInSqlContext:
         assert last_ctx.sql_query == "SELECT * FROM secret"
         assert last_ctx.row_count == 0
 
+    def test_sql_action_raw_output_string_does_not_crash(self, real_agent_config, mock_llm_create):
+        """read_query raw_output may be a string; store it as an error instead of crashing."""
+        cmds = _make_chat_commands(real_agent_config)
+        actions = [
+            self._make_tool_action(
+                "read_query",
+                {
+                    "success": "True",
+                    "raw_output": "plain text output",
+                },
+            ),
+        ]
+
+        cmds.add_in_sql_context("SELECT * FROM users", "Query users", actions)
+
+        last_ctx = cmds.cli.cli_context.get_last_sql_context()
+        assert last_ctx is not None
+        assert last_ctx.sql_query == "SELECT * FROM users"
+        assert last_ctx.sql_error == "plain text output"
+        assert last_ctx.row_count == 0
+
+    def test_sql_action_raw_output_json_string_is_parsed(self, real_agent_config, mock_llm_create):
+        """read_query raw_output may be a JSON string from serialized tool output."""
+        cmds = _make_chat_commands(real_agent_config)
+        actions = [
+            self._make_tool_action(
+                "read_query",
+                {
+                    "success": "True",
+                    "raw_output": json.dumps(
+                        {
+                            "success": 1,
+                            "result": {
+                                "original_rows": 2,
+                                "compressed_data": "id\n1\n2",
+                            },
+                        }
+                    ),
+                },
+            ),
+        ]
+
+        cmds.add_in_sql_context("SELECT id FROM users", "Query users", actions)
+
+        last_ctx = cmds.cli.cli_context.get_last_sql_context()
+        assert last_ctx is not None
+        assert last_ctx.sql_query == "SELECT id FROM users"
+        assert last_ctx.sql_error is None
+        assert last_ctx.row_count == 2
+        assert last_ctx.sql_return == "id\n1\n2"
+
+    def test_sql_action_output_string_does_not_crash(self, real_agent_config, mock_llm_create):
+        """read_query action output itself may be malformed; keep chat rendering alive."""
+        cmds = _make_chat_commands(real_agent_config)
+        actions = [self._make_tool_action("read_query", "plain text output")]
+
+        cmds.add_in_sql_context("SELECT * FROM users", "Query users", actions)
+
+        last_ctx = cmds.cli.cli_context.get_last_sql_context()
+        assert last_ctx is not None
+        assert last_ctx.sql_query == "SELECT * FROM users"
+        assert last_ctx.sql_error == "plain text output"
+        assert last_ctx.row_count == 0
+
     def test_multiple_read_query_actions_uses_last(self, real_agent_config, mock_llm_create):
         """When multiple read_query actions exist, the last one is used."""
         cmds = _make_chat_commands(real_agent_config)

@@ -4,6 +4,8 @@
 #   docker compose logs -f superset   # wait for "Running on http://0.0.0.0:8088"
 #   docker compose down -v
 
+name: datus-data-engineering-superset
+
 services:
   postgres:
     image: postgres:15
@@ -11,7 +13,7 @@ services:
     environment:
       POSTGRES_DB: ${SUPERSET_DB_NAME:-superset_examples}
       POSTGRES_USER: ${SUPERSET_DB_USER:-superset}
-      POSTGRES_PASSWORD: ${SUPERSET_DB_PASSWORD:?Set SUPERSET_DB_PASSWORD}
+      POSTGRES_PASSWORD: ${SUPERSET_DB_PASSWORD:-superset}
     ports:
       - "5433:5432"
     healthcheck:
@@ -28,16 +30,16 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:?Set SUPERSET_SECRET_KEY}
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-datus-test-secret-key-not-for-prod}
       WTF_CSRF_ENABLED: "false"
       SUPERSET_CONFIG_PATH: /app/pythonpath/superset_config.py
       SUPERSET_DB_NAME: ${SUPERSET_DB_NAME:-superset_examples}
       SUPERSET_DB_USER: ${SUPERSET_DB_USER:-superset}
-      SUPERSET_DB_PASSWORD: ${SUPERSET_DB_PASSWORD:?Set SUPERSET_DB_PASSWORD}
-      SQLALCHEMY_EXAMPLES_URI: "postgresql+psycopg2://${SUPERSET_DB_USER:-superset}:${SUPERSET_DB_PASSWORD:?Set SUPERSET_DB_PASSWORD}@postgres:5432/${SUPERSET_DB_NAME:-superset_examples}"
+      SUPERSET_DB_PASSWORD: ${SUPERSET_DB_PASSWORD:-superset}
+      SQLALCHEMY_EXAMPLES_URI: "postgresql+psycopg2://${SUPERSET_DB_USER:-superset}:${SUPERSET_DB_PASSWORD:-superset}@postgres:5432/${SUPERSET_DB_NAME:-superset_examples}"
       SUPERSET_ADMIN_USERNAME: ${SUPERSET_ADMIN_USERNAME:-admin}
       SUPERSET_ADMIN_EMAIL: ${SUPERSET_ADMIN_EMAIL:-admin@example.com}
-      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?Set SUPERSET_ADMIN_PASSWORD}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:-admin}
     user: root
     volumes:
       - ./superset_config.py:/app/pythonpath/superset_config.py:ro
@@ -51,7 +53,7 @@ services:
         superset fab create-admin --username "$$SUPERSET_ADMIN_USERNAME" --firstname Admin --lastname User --email "$$SUPERSET_ADMIN_EMAIL" --password "$$SUPERSET_ADMIN_PASSWORD";
       fi &&
       superset init &&
-      superset load-examples &&
+      superset set-database-uri -d examples -u "$$SQLALCHEMY_EXAMPLES_URI" &&
       exec superset run -p 8088 -h 0.0.0.0 --with-threads
       '
     healthcheck:

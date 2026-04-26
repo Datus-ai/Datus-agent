@@ -2,25 +2,32 @@
 
 本指南使用开源的 DAComp 数据工程数据集，串起一条完整的 Datus 工作流：理解数仓分层设计、交互式建表、生成 ETL、产出 marts 数据、提交 Airflow 天级任务，并把结果写入 Superset 创建仪表盘。
 
-## 步骤 0：先下载 DAComp
+## 步骤 0：下载 quickstart 数据
 
-DAComp **不包含**在 `datus-agent` 仓库中，请先从 Hugging Face 下载：
+DAComp **不包含**在 `datus-agent` 仓库中。本文使用一个从 DAComp Lever
+示例整理出来的小型 quickstart 数据包，不需要下载完整 DAComp 压缩包。
 
-- <https://huggingface.co/datasets/DAComp/dacomp-de>
-
-本教程使用其中的 `dacomp-de-impl-001` 示例。
-
-如果你当前只是通过 PyPI 安装了 Datus，还需要额外 clone 一份 `Datus-agent` 仓库，因为本文会引用仓库里的本地 compose 环境：
+下载并解压 quickstart 数据包和本地 Docker stack：
 
 ```bash
-git clone https://github.com/Datus-ai/Datus-agent.git
-export DATUS_AGENT_REPO=/absolute/path/to/Datus-agent
+mkdir -p ~/datus-quickstart-data
+cd ~/datus-quickstart-data
+
+curl -L -o datus-de-lever-quickstart-v1.zip \
+  https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v1/datus-de-lever-quickstart-v1.zip
+curl -L -o datus-data-engineering-quickstart-stack-v1.zip \
+  https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v1/datus-data-engineering-quickstart-stack-v1.zip
+
+unzip datus-de-lever-quickstart-v1.zip
+unzip datus-data-engineering-quickstart-stack-v1.zip
 ```
 
-然后把 `DACOMP_HOME` 指向本地解压后的示例目录，并复制一份可写的 DuckDB 工作库：
+然后把 `DACOMP_HOME` 指向本地解压后的数据目录，把 `DATUS_QUICKSTART_STACK`
+指向本地解压后的 Docker stack，并复制一份可写的 DuckDB 工作库：
 
 ```bash
-export DACOMP_HOME=/absolute/path/to/dacomp-de-impl-001
+export DACOMP_HOME=/absolute/path/to/datus-de-lever-quickstart
+export DATUS_QUICKSTART_STACK=/absolute/path/to/datus-data-engineering-quickstart-stack
 cp "$DACOMP_HOME/lever_start.duckdb" "$DACOMP_HOME/lever_workbench.duckdb"
 cd "$DACOMP_HOME"
 ```
@@ -29,9 +36,6 @@ cd "$DACOMP_HOME"
 
 - `docs/data_contract.yaml`
 - `config/layer_dependencies.yaml`
-- `sql/staging/`
-- `sql/intermediate/`
-- `sql/marts/`
 - `lever_start.duckdb`
 
 ## 步骤 1：理解数仓分层
@@ -42,7 +46,7 @@ cd "$DACOMP_HOME"
 |---|---:|---|
 | `staging` | 24 | 清洗原始 ATS 数据，统一类型和格式 |
 | `intermediate` | 17 | 做实体关联和可复用业务逻辑 |
-| `marts` | 14 | 产出可直接分析和出图的结果层 |
+| `marts` | 14 | 产出可直接分析、报表和出图的结果层 |
 
 最关键的两个设计文件是：
 
@@ -53,22 +57,19 @@ cd "$DACOMP_HOME"
 
 ## 步骤 2：启动本地 quickstart 环境
 
-仓库中已经带了本文真正会用到的两套本地 demo 环境，目录在 `quickstart/data_engineering/`。
+下载的 stack 中已经包含本文真正会用到的两套本地 demo 环境。
 
 启动 Superset：
 
 ```bash
-cd "$DATUS_AGENT_REPO/quickstart/data_engineering/superset"
-export SUPERSET_DB_PASSWORD='superset'
-export SUPERSET_SECRET_KEY='datus-test-secret-key-not-for-prod'
-export SUPERSET_ADMIN_PASSWORD='admin'
+cd "$DATUS_QUICKSTART_STACK/superset"
 docker compose up -d
 ```
 
 启动 Airflow：
 
 ```bash
-cd "$DATUS_AGENT_REPO/quickstart/data_engineering/airflow"
+cd "$DATUS_QUICKSTART_STACK/airflow"
 docker compose up -d
 ```
 
@@ -77,29 +78,24 @@ docker compose up -d
 - Superset：`http://127.0.0.1:8088`，用户名 `admin`，密码 `admin`
 - Airflow：`http://127.0.0.1:8080`，用户名 `admin`，密码 `admin`
 
-这套 quickstart 的 Superset compose 会从环境变量读取数据库密码、管理员密码和 secret key。上面的 3 个 `export` 命令故意用了本地演示值，方便直接按文档复制运行。
+这套 quickstart 的 Superset compose 已经带了本地演示用的元数据库和管理员默认值。
 
-Airflow 的 compose 文件会挂载 `${DACOMP_HOME}`，并自动注入一个名为 `duckdb_dacomp_lever` 的连接，指向 `/workspace/lever_workbench.duckdb`。
+Airflow 的 compose 文件会挂载 `${DACOMP_HOME}`，并暴露一个名为
+`duckdb_dacomp_lever` 的连接，指向 `/workspace/lever_workbench.duckdb`。
 
 ## 步骤 3：安装本文需要的适配器
 
 安装 Datus 以及这条链路会用到的适配器：
 
 ```bash
-pip install datus-agent datus-bi-superset datus-postgresql datus-semantic-metricflow datus-scheduler-airflow
+pip install datus-agent datus-bi-superset datus-postgresql datus-scheduler-airflow
 ```
-
-这些包在本文中的作用分别是：
-
-- `datus-agent`：Datus CLI 和 subagent 运行时
-- `datus-bi-superset`：仪表盘生成使用的 Superset BI 适配器
-- `datus-postgresql`：连接 Superset 物化目标 PostgreSQL 所需的驱动支持
-- `datus-semantic-metricflow`：生成语义模型和指标
-- `datus-scheduler-airflow`：Airflow 调度适配器，会自动安装 `datus-scheduler-core`
 
 ## 步骤 4：配置 `agent.yml`
 
-把下面这段最小配置写入 `~/.datus/conf/agent.yml`。请把两个绝对路径占位符替换成你本地的 `DACOMP_HOME` 和 `DATUS_AGENT_REPO` 路径；文件型 datasource 的 URI 需要写成已经展开的路径，不要保留字面量 shell 变量。
+把下面这段 service 配置合并到 `~/.datus/conf/agent.yml` 现有的 `agent:`
+下面。保留已有的 `agent.providers` 配置；`/model` 会使用这些凭据。路径会直接使用步骤
+0 里导出的 `DACOMP_HOME` 和 `DATUS_QUICKSTART_STACK` 环境变量。
 
 ```yaml
 agent:
@@ -107,7 +103,7 @@ agent:
     datasources:
       lever_duckdb:
         type: duckdb
-        uri: "duckdb:////absolute/path/to/dacomp-de-impl-001/lever_workbench.duckdb"
+        uri: "duckdb:///${DACOMP_HOME}/lever_workbench.duckdb"
         default: true
       superset_serving:
         type: postgresql
@@ -117,9 +113,6 @@ agent:
         schema: public
         username: superset
         password: superset
-
-    semantic_layer:
-      metricflow: {}
 
     bi_platforms:
       superset:
@@ -137,15 +130,11 @@ agent:
         api_base_url: http://127.0.0.1:8080/api/v1
         username: admin
         password: admin
-        dags_folder: "/absolute/path/to/Datus-agent/quickstart/data_engineering/airflow/dags"
+        dags_folder: "${DATUS_QUICKSTART_STACK}/airflow/dags"
         connections:
           duckdb_dacomp_lever: DAComp Lever DuckDB
 
   agentic_nodes:
-    gen_semantic_model:
-      semantic_adapter: metricflow
-    gen_metrics:
-      semantic_adapter: metricflow
     gen_dashboard:
       bi_platform: superset
     scheduler:
@@ -159,40 +148,64 @@ cd "$DACOMP_HOME"
 datus-cli --datasource lever_duckdb
 ```
 
-这里的 `dags_folder` 是 Datus 在主机上写入 DAG 文件的目录。`quickstart/data_engineering/airflow/docker-compose.yml` 会把这个目录挂载到 Airflow 容器内的 `/opt/airflow/dags`，所以 Datus 生成的新 DAG 会被 Airflow 自动发现。
-
-## 步骤 5：交互式创建分层对象
-
-当你希望先看 DDL、确认后再执行时，直接在 CLI 中描述建表需求即可。agent 会把任务分发到建表流程，先展示 SQL，再等你确认。
-
-先创建目标 schema：
+如果 CLI 提示还没有配置模型，继续之前先在 CLI 内运行：
 
 ```text
-Create schemas staging, intermediate, and marts in the current DuckDB database. Keep the existing raw schema unchanged.
+/model
 ```
 
-再根据数据契约创建一个代表性的 staging 表：
+选择 provider/model，并按提示填写凭据。`/model` 会把 provider 凭据写入
+`~/.datus/conf/agent.yml` 的 `agent.providers`，并把当前项目使用的
+provider/model 写入 `./.datus/config.yml`。
+
+这里的 `dags_folder` 是 Datus 在主机上写入 DAG 文件的目录。Airflow compose 会把这个目录挂载到 Airflow 容器内的 `/opt/airflow/dags`，所以 Datus 生成的新 DAG 会被 Airflow 自动发现。
+
+## 步骤 5：创建必要的 staging 表
+
+自然语言 agent 任务不要以 `CREATE`、`COPY` 这类 SQL 动词开头；CLI 会根据这些
+开头关键字判断是否直接执行 SQL。
+
+先要求 agent 创建目标 schema：
 
 ```text
-Read ./docs/data_contract.yaml and create staging.stg_lever__requisition from raw.requisition. Apply the validation and normalization rules from the contract and show me the DDL before execution.
+Please set up the target schemas staging, intermediate, and marts in the current DuckDB database. Keep the existing raw schema unchanged.
 ```
 
-如果你想逐张表把关键 DDL 看清楚，可以继续用同样方式创建更多 staging 表；如果要批量落地，下一步直接要求 agent 基于 SQL 资产生成 ETL。
+这条教程只构建一条窄但完整的依赖链：`marts.lever__requisition_enhanced`。
+字段选择、字段重命名和业务逻辑以 `docs/data_contract.yaml` 为准。
 
-## 步骤 6：生成 ETL 并产出 marts 层数据
-
-接下来要求 agent 把 DAComp 自带的 SQL 资产真正落到当前 DuckDB 工作库中。
-
-先生成一个代表性的 intermediate 表：
+再要求 agent 根据 `lever__requisition_enhanced` 和
+`intermediate.int_lever__requisition_users` 的 `source_models` 创建必需的
+staging 表。agent 会把任务分发到建表流程：
 
 ```text
-Create intermediate.int_lever__requisition_users in the current database using ./sql/intermediate/int_lever__requisition_users.sql.
+Read ./docs/data_contract.yaml and create the staging tables needed for marts.lever__requisition_enhanced: staging.stg_lever__requisition from raw.requisition, staging.stg_lever__user from raw.user, staging.stg_lever__requisition_posting from raw.requisition_posting, and staging.stg_lever__requisition_offer from raw.requisition_offer. Use the field design and source-to-target mapping from the contract.
 ```
 
-再生成一个面向分析的 marts 表：
+这四张 staging 表就是 requisition enhanced 示例需要的最小 raw-to-staging 输入。
+
+## 步骤 6：生成 intermediate 和 marts 表
+
+先生成 intermediate 表。它应该按照 `docs/data_contract.yaml` 中
+`int_lever__requisition_users` 的定义，把 requisition 字段和 user 字段关联起来。
+
+创建 intermediate 表：
 
 ```text
-Create marts.lever__recruitment_analytics_dashboard in the current database using ./sql/marts/lever__recruitment_analytics_dashboard.sql.
+Read ./docs/data_contract.yaml and create intermediate.int_lever__requisition_users from staging.stg_lever__requisition and staging.stg_lever__user. Use the contract's field design, joins, and source-to-target mapping.
+```
+
+再生成面向分析的 marts 表。契约中定义 `marts.lever__requisition_enhanced`
+是一张按 `requisition_id` 一行的表，依赖：
+
+- `intermediate.int_lever__requisition_users`
+- `staging.stg_lever__requisition_posting`
+- `staging.stg_lever__requisition_offer`
+
+创建 marts 表：
+
+```text
+Read ./docs/data_contract.yaml and create marts.lever__requisition_enhanced from intermediate.int_lever__requisition_users, staging.stg_lever__requisition_posting, and staging.stg_lever__requisition_offer. Use the contract's business logic: keep all base requisition rows, count posting and offer links by requisition_id, fill missing counts with 0, and add has_posting and has_offer flags.
 ```
 
 这条链路的基本顺序始终是：
@@ -204,93 +217,59 @@ staging -> intermediate -> marts
 生成完成后，可以直接验证 marts 表：
 
 ```sql
-SELECT COUNT(*) FROM marts.lever__recruitment_analytics_dashboard;
+SELECT COUNT(*) FROM marts.lever__requisition_enhanced;
 ```
 
-## 步骤 7：为 marts 生成语义资产
-
-拿到 marts 结果后，就可以继续生成可复用的语义资产。
-
-先生成语义模型：
-
-```text
-Generate a semantic model for marts.lever__recruitment_analytics_dashboard.
-```
-
-再生成仪表盘会用到的业务指标：
-
-```text
-Create metrics for open requisitions, applications, interviews, offers, and hires from marts.lever__recruitment_analytics_dashboard. subject_tree: recruiting/hiring/dashboard
-```
-
-这些 YAML 文件会写入当前项目的语义模型存储目录，后续可以复用于分析、搜索和其他 agent 工作流。
-
-## 步骤 8：提交天级 Airflow 任务
+## 步骤 7：提交天级 Airflow 任务
 
 现在可以要求 agent 把 marts 刷新过程提交给 scheduler。quickstart 自带的 Airflow 已经预置好了 `duckdb_dacomp_lever` 连接。
 
-提交一个每天早上 8 点运行的 SQL 任务：
+提交一个每天早上 8 点运行的 SQL 任务，刷新同一条从契约生成的链路：
 
 ```text
-Submit a daily SQL job named daily_lever_recruitment_dashboard from ./sql/marts/lever__recruitment_analytics_dashboard.sql at 8am every day using the duckdb_dacomp_lever connection
+Submit a daily SQL job named daily_lever_requisition_enhanced that refreshes staging.stg_lever__requisition, staging.stg_lever__user, staging.stg_lever__requisition_posting, staging.stg_lever__requisition_offer, intermediate.int_lever__requisition_users, and marts.lever__requisition_enhanced at 8am every day using the duckdb_dacomp_lever connection. Use the SQL generated and validated from docs/data_contract.yaml in the previous steps.
 ```
 
 再手动触发一次做验证：
 
 ```text
-Trigger daily_lever_recruitment_dashboard once now and show me the latest run status
+Trigger daily_lever_requisition_enhanced once now and show me the latest run status
 ```
 
 你应该会看到：
 
-- `${DATUS_AGENT_REPO}/quickstart/data_engineering/airflow/dags` 下生成新的 DAG 文件
+- `${DATUS_QUICKSTART_STACK}/airflow/dags` 下生成新的 DAG 文件
 - 同一份文件会在 Airflow 容器内显示为 `/opt/airflow/dags/<dag_id>.py`
 - scheduler 返回 `job_id`
 - Airflow UI 中出现对应任务
 
-## 步骤 9：把 marts 表同步到 Superset serving DB
+## 步骤 8：把 marts 表同步到 Superset serving DB
 
 上面的 marts 表是在 `lever_duckdb` 里生成的。创建仪表盘之前，需要先把它复制到
 `dataset_db.datasource_ref` 指向的 BI 注册数据库 `superset_serving`（Postgres）。
 
 ```text
-Copy lever_duckdb.marts.lever__recruitment_analytics_dashboard to superset_serving.public.lever__recruitment_analytics_dashboard using replace mode, then verify the transferred row count.
+Please create or replace superset_serving.public.lever__requisition_enhanced by copying lever_duckdb.marts.lever__requisition_enhanced, then verify the transferred row count.
 ```
 
 完成后，这张表就位于 Superset 通过 `bi_database_name: examples` 识别的数据库中。
 
-## 步骤 10：创建 Superset Dashboard
+## 步骤 9：创建 Superset Dashboard
 
 当表已经存在于 `superset_serving`，就可以要求 agent 创建仪表盘：
 
 ```text
-Create a recruiting operations dashboard in Superset from public.lever__recruitment_analytics_dashboard. Include KPI tiles for requisitions, applications, interviews, offers, and hires, plus a funnel chart and a weekly trend chart.
-```
-
-这条 Superset 工作流内部会依次执行：
-
-```text
-list_bi_databases -> create_dataset -> create_chart -> create_dashboard -> add_chart_to_dashboard
+Please create a requisition operations dashboard in Superset from public.lever__requisition_enhanced. Include KPI tiles for total requisitions, open requisitions, requisitions with postings, requisitions with offers, and total requested headcount. Add charts by status, team, location, employment_status, count_postings, and count_offers.
 ```
 
 数据准备是单独的 ETL / scheduler 步骤。仪表盘生成流程期望目标表或
 SQL dataset 已经存在于 BI 已注册的数据库中。
 
-## 步骤 11：验证端到端结果
+## 步骤 10：验证端到端结果
 
 走完整条链路后，你应该能确认：
 
 - `lever_workbench.duckdb` 里已经有 `staging`、`intermediate`、`marts` 三层 schema
-- 至少有一张 marts 表可以正常查询
-- 已生成语义模型和指标 YAML
+- `marts.lever__requisition_enhanced` 是从 raw 数据经 staging 和 intermediate 逐层加工得到的
 - Airflow 中能看到日常调度任务
 - 仪表盘生成流程返回了 Superset dashboard URL
-
-如果你还想分别深入某一段能力，请继续阅读：
-
-- [数据库适配器](../adapters/db_adapters.md)
-- [语义层适配器](../adapters/semantic_adapters.md)
-- [Table Generation](../subagent/gen_table.md)
-- [ETL Job](../subagent/gen_job.md)
-- [Scheduler](../subagent/scheduler.md)
-- [Generate Dashboard](../subagent/gen_dashboard.md)

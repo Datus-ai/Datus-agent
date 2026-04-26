@@ -130,7 +130,7 @@ class DbConfig:
                 # Store unknown fields in extra for adapter-specific config
                 # Skip internal fields that are handled separately
                 if v is not None and v != "" and k not in internal_fields:
-                    extra_params[k] = v
+                    extra_params[k] = resolve_env(v) if isinstance(v, str) else v
                 continue
             if not v:
                 params[k] = v
@@ -478,7 +478,7 @@ DEFAULT_REFLECTION_NODES = {
 
 
 def _parse_single_file_db(db_config: Dict[str, Any], dialect: str) -> DbConfig:
-    uri = str(db_config["uri"])
+    uri = resolve_env(str(db_config["uri"]))
     if "name" in db_config:
         login_name = db_config["name"]
         db_name = file_stem_from_uri(uri)
@@ -848,7 +848,8 @@ class AgentConfig:
 
             if db_type in (DBType.SQLITE, DBType.DUCKDB):
                 if "path_pattern" in db_config_dict:
-                    self._parse_glob_pattern_flat(db_name, db_config_dict["path_pattern"], db_type)
+                    path_pattern = resolve_env(str(db_config_dict["path_pattern"]))
+                    self._parse_glob_pattern_flat(db_name, path_pattern, db_type)
                 elif "uri" in db_config_dict:
                     db_config = _parse_single_file_db(db_config_dict, db_type)
                     db_config.logic_name = db_name
@@ -1352,8 +1353,7 @@ class AgentConfig:
                 "No active LLM model configured. "
                 "Run the Datus CLI and use the /model command to set up a provider and model:\n"
                 "  1. Start CLI: datus\n"
-                "  2. Use /model to pick a provider and model\n"
-                "Or run 'datus init' for first-time setup."
+                "  2. Use /model to pick a provider and model"
             ),
         )
 

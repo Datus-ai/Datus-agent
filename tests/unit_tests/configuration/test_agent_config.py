@@ -152,6 +152,12 @@ class TestDbConfigFilterKwargs:
         # None values should not be added to extra
         assert cfg.extra is None or "some_none_field" not in cfg.extra
 
+    def test_unknown_string_fields_expand_env_vars(self, monkeypatch):
+        monkeypatch.setenv("CUSTOM_TOKEN", "token-value")
+        kwargs = {"type": "postgresql", "host": "localhost", "custom_option": "${CUSTOM_TOKEN}"}
+        cfg = DbConfig.filter_kwargs(DbConfig, kwargs)
+        assert cfg.extra["custom_option"] == "token-value"
+
 
 # ---------------------------------------------------------------------------
 # DatasetDbConfig — BI serving-layer config aligned with DbConfig
@@ -547,6 +553,68 @@ class TestAgentConfigServiceSelectors:
             },
         )
         assert cfg.default_scheduler_service() == "airflow_prod"
+
+    def test_file_datasource_uri_expands_env_vars(self, tmp_path, monkeypatch):
+        db_dir = tmp_path / "db"
+        db_dir.mkdir()
+        monkeypatch.setenv("DATUS_TEST_DB_DIR", str(db_dir))
+
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {
+                    "duck": {
+                        "type": "duckdb",
+                        "uri": "duckdb:///${DATUS_TEST_DB_DIR}/warehouse.duckdb",
+                        "default": True,
+                    }
+                }
+            },
+        )
+
+        assert cfg.services.datasources["duck"].uri == f"duckdb:///{db_dir}/warehouse.duckdb"
+
+    def test_file_datasource_path_pattern_expands_env_vars(self, tmp_path, monkeypatch):
+        db_dir = tmp_path / "db"
+        db_dir.mkdir()
+        db_file = db_dir / "sample.duckdb"
+        db_file.write_bytes(b"")
+        monkeypatch.setenv("DATUS_TEST_DB_DIR", str(db_dir))
+
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {
+                    "duck_files": {
+                        "type": "duckdb",
+                        "path_pattern": "${DATUS_TEST_DB_DIR}/*.duckdb",
+                    }
+                }
+            },
+        )
+
+        assert cfg.services.datasources["sample"].uri == f"duckdb:///{db_file}"
+
+    def test_scheduler_config_expands_env_vars(self, tmp_path, monkeypatch):
+        dag_dir = tmp_path / "dags"
+        monkeypatch.setenv("DATUS_TEST_DAGS_DIR", str(dag_dir))
+
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {},
+                "schedulers": {
+                    "airflow_prod": {
+                        "type": "airflow",
+                        "dags_folder": "${DATUS_TEST_DAGS_DIR}",
+                        "connections": {"duck": "${DATUS_TEST_CONN_ID}"},
+                    }
+                },
+            },
+        )
+
+        assert cfg.get_scheduler_config("airflow_prod")["dags_folder"] == str(dag_dir)
+        assert cfg.get_scheduler_config("airflow_prod")["connections"]["duck"] == "<MISSING:DATUS_TEST_CONN_ID>"
 
     def test_default_scheduler_service_rejects_multiple_defaults(self, tmp_path):
         with pytest.raises(DatusException, match="Multiple scheduler services are marked"):
@@ -1058,7 +1126,7 @@ class TestProviderConfigurationDispatch:
         with pytest.raises(DatusException) as exc_info:
             cfg.active_model()
         assert "/model" in exc_info.value.message
-        assert "datus init" in exc_info.value.message
+        assert "datus init" not in exc_info.value.message
 
     # ── Setters ────────────────────────────────────────────────────
 

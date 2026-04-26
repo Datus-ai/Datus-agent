@@ -11,11 +11,17 @@ Application following the same visual conventions as :class:`ModelApp`.
 from __future__ import annotations
 
 import io
+import os
+import shlex
 import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import List, Optional, Set
 
 from prompt_toolkit.application import Application
+from prompt_toolkit.application.run_in_terminal import run_in_terminal
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import ANSI
@@ -68,7 +74,8 @@ class InteractionApp:
         term_size = shutil.get_terminal_size((120, 40))
         self._max_vis: int = max(3, min(15, term_size.lines - 7))
         self._content_render_width: int = max(40, min(term_size.columns - 6, 120))
-        self._max_content_vis: int = max(4, min(12, term_size.lines - 9))
+        self._max_content_vis: int = max(6, min(40, term_size.lines - 11))
+        self._content_file_paths: List[Optional[Path]] = [None] * n
 
         self._text_buf = Buffer(name="interaction_text", on_text_changed=self._on_text_changed)
 
@@ -197,6 +204,50 @@ class InteractionApp:
         max_off = max(0, total - self._max_content_vis)
         off = self._content_offsets[self._idx]
         self._content_offsets[self._idx] = max(0, min(off + delta, max_off))
+
+    def _content_file_path(self) -> Path:
+        idx = self._idx
+        existing = self._content_file_paths[idx]
+        if existing and existing.exists():
+            return existing
+
+        ev = self._events[idx]
+        suffix = {
+            "sql": ".sql",
+            "yaml": ".yaml",
+            "python": ".py",
+            "json": ".json",
+            "markdown": ".md",
+        }.get(ev.content_type, ".txt")
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            delete=False,
+            prefix="datus-interaction-",
+            suffix=suffix,
+        ) as f:
+            f.write(ev.content or "")
+            f.write("\n")
+            path = Path(f.name)
+        self._content_file_paths[idx] = path
+        return path
+
+    def _open_full_content(self) -> None:
+        path = self._content_file_path()
+
+        def _view() -> None:
+            pager = os.environ.get("PAGER", "less -R")
+            argv = shlex.split(pager) or ["less", "-R"]
+            executable = shutil.which(argv[0])
+            if executable:
+                try:
+                    subprocess.run([executable, *argv[1:], str(path)], check=False)
+                    return
+                except Exception as exc:
+                    logger.warning("Failed to open pager for interaction content: %s", exc)
+            print(path.read_text(encoding="utf-8", errors="replace"))
+
+        run_in_terminal(_view, render_cli_done=True)
 
     def _confirm(self) -> None:
         i = self._idx
@@ -353,7 +404,7 @@ class InteractionApp:
         self._content_offsets[self._idx] = off
         end = min(off + mv, total)
         visible = "\n".join(lines[off:end])
-        indicator = f"\x1b[90m  ({off + 1}\u2013{end} of {total} lines, Shift+\u2191\u2193)\x1b[0m"
+        indicator = f"\x1b[90m  ({off + 1}\u2013{end} of {total} lines, Shift+\u2191\u2193 scroll, v view full)\x1b[0m"
         return ANSI(indicator + "\n" + visible)
 
     def _render_choices(self) -> List:
@@ -439,7 +490,7 @@ class InteractionApp:
         if self._ev.multi_select:
             parts.append("   Space toggle")
         if len(self._content_lines()) > self._max_content_vis:
-            parts.append("   Shift+\u2191\u2193 scroll")
+            parts.append("   Shift+\u2191\u2193 scroll   v view full")
         if self._is_batch:
             parts.append("   \u2190\u2192 switch")
         parts.append("   Esc cancel")
@@ -490,6 +541,10 @@ class InteractionApp:
         @kb.add("s-up", filter=on_choices & has_long_content)
         def _content_pgup(event):
             self._scroll_content(-self._max_content_vis)
+
+        @kb.add("v", filter=has_long_content)
+        def _view_full(event):
+            self._open_full_content()
 
         @kb.add("enter", filter=on_choices)
         def _enter(event):

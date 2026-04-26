@@ -90,7 +90,7 @@ Built-in code → name mapping (injected into the system prompt): `en` → Engli
 
 Chat API requests can override this per task by sending a `language` field in the request body (see [Chat API](../API/chat.md)). CLI usage inherits the yaml default.
 
-### Models Configuration (Custom Entries)
+### Models Configuration (Custom Entries) {#models-configuration}
 
 The `agent.models` section is used for self-hosted or private-deployment LLM endpoints. For standard providers (OpenAI, DeepSeek, etc.), use `agent.providers` instead.
 
