@@ -69,10 +69,21 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
             return
 
         try:
-            # Connect to DuckDB
-            self.connection = duckdb.connect(self.db_path)
+            # Align with the `custom_user_agent` that duckdb_engine auto-injects on every connect:
+            # without this, any same-process SQLAlchemy+duckdb_engine client (metricflow validator,
+            # dbt, etc.) hits DuckDB's config-consistency check and fails with
+            # "Can't open a connection to same database file with a different configuration".
+            try:
+                import sqlalchemy as _sa
+                from duckdb_engine import __version__ as _de_ver
 
-            # Configure settings
+                config = {"custom_user_agent": f"duckdb_engine/{_de_ver}(sqlalchemy/{_sa.__version__})"}
+                self.connection = duckdb.connect(self.db_path, config=config)
+            except ImportError:
+                self.connection = duckdb.connect(self.db_path)
+
+            # Per-session settings — kept as post-connect SET so they don't enter
+            # DuckDB's instance-config equality check.
             if self.memory_limit:
                 self.connection.execute(f"SET memory_limit='{self.memory_limit}'")
 
