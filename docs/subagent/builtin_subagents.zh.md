@@ -138,7 +138,7 @@ graph LR
 
 ### 同步行为
 
-YAML 文件写入成功后，generation hook 会自动把它同步到知识库。
+在 interactive 模式下，YAML 文件写入成功后，generation hook 会自动把它同步到知识库。在 workflow/API 模式下，请使用对应的显式同步步骤或工具。
 
 ### 主题树分类
 
@@ -242,7 +242,7 @@ graph LR
 
 ### 验证和同步
 
-发布前，agent 会调用 `validate_semantic()`。如果验证失败，会修改 YAML 并重试；验证通过后，`end_semantic_model_generation` 会自动把语义模型同步到知识库。
+发布前，agent 会调用 `validate_semantic()`。如果验证失败，会修改 YAML 并重试。在 interactive 模式下，验证通过后，`end_semantic_model_generation` 会触发自动知识库同步；在 workflow/API 模式下，请使用显式的语义模型同步步骤或工具。
 
 ### 语义模型结构
 
@@ -362,7 +362,7 @@ JOIN customers c ON o.customer_id = c.id  -- ❌ 不支持 JOIN
 
 ### 验证和同步
 
-发布前，agent 会用 `validate_semantic()` 校验 YAML，并用 `query_metrics(..., dry_run=True)` 编译 SQL。两项检查都通过后，`end_metric_generation` 会自动把指标同步到知识库。
+发布前，agent 会用 `validate_semantic()` 校验 YAML，并用 `query_metrics(..., dry_run=True)` 编译 SQL。在 interactive 模式下，两项检查都通过后，`end_metric_generation` 会触发自动知识库同步；在 workflow/API 模式下，请使用显式的指标同步步骤或工具。
 
 ### 主题树分类
 
@@ -608,7 +608,7 @@ graph LR
 
 ### 同步行为
 
-YAML 文件写入成功后，generation hook 会自动把它同步到知识库。
+在 interactive 模式下，YAML 文件写入成功后，generation hook 会自动把它同步到知识库。在 workflow/API 模式下，请使用显式同步步骤或工具。
 
 ### 主题路径分类
 

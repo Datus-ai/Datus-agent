@@ -138,7 +138,7 @@ graph LR
 
 ### Sync Behavior
 
-After the YAML file is written successfully, the generation hook syncs it to the Knowledge Base automatically.
+In interactive mode, after the YAML file is written successfully, the generation hook syncs it to the Knowledge Base automatically. In workflow/API mode, use the corresponding explicit sync step or tool.
 
 ### Subject Tree Categorization
 
@@ -242,7 +242,7 @@ graph LR
 
 ### Validation and Sync
 
-The agent calls `validate_semantic()` before publishing. If validation fails, it edits the YAML and retries. Once validation passes, `end_semantic_model_generation` publishes the semantic model to the Knowledge Base automatically.
+The agent calls `validate_semantic()` before publishing. If validation fails, it edits the YAML and retries. In interactive mode, once validation passes, `end_semantic_model_generation` triggers automatic Knowledge Base sync; in workflow/API mode, use the explicit semantic sync step or tool.
 
 ### Semantic Model Structure
 
@@ -363,7 +363,7 @@ JOIN customers c ON o.customer_id = c.id  -- ❌ JOIN not supported
 
 ### Validation and Sync
 
-Before publishing, the agent validates the YAML with `validate_semantic()` and compiles SQL with `query_metrics(..., dry_run=True)`. After both checks pass, `end_metric_generation` syncs the metric to the Knowledge Base automatically.
+Before publishing, the agent validates the YAML with `validate_semantic()` and compiles SQL with `query_metrics(..., dry_run=True)`. In interactive mode, after both checks pass, `end_metric_generation` triggers automatic Knowledge Base sync; in workflow/API mode, use the explicit metric sync step or tool.
 
 ### Subject Tree Categorization
 
@@ -610,7 +610,7 @@ graph LR
 
 ### Sync Behavior
 
-After the YAML file is written successfully, the generation hook syncs it to the Knowledge Base automatically.
+In interactive mode, after the YAML file is written successfully, the generation hook syncs it to the Knowledge Base automatically. In workflow/API mode, use the explicit sync step or tool.
 
 ### Subject Path Categorization
 

@@ -331,7 +331,7 @@ class GenerationTools:
                 )
 
             self.generation_evidence.mark_kb_sync("metric")
-            if abs_semantic and os.path.exists(abs_semantic):
+            if sync_result.get("semantic_synced"):
                 self.generation_evidence.mark_kb_sync("semantic")
 
             return FuncToolResult(
@@ -463,6 +463,8 @@ class GenerationTools:
                         metric_sqls=metric_sqls,
                         original_yaml_path=metric_file,
                     )
+                    if result.get("success"):
+                        result["semantic_synced"] = True
                 finally:
                     if os.path.exists(temp_file):
                         os.remove(temp_file)
@@ -476,6 +478,8 @@ class GenerationTools:
                     metric_sqls=metric_sqls,
                     original_yaml_path=metric_file,
                 )
+                if result.get("success"):
+                    result["semantic_synced"] = False
 
             if result.get("success"):
                 logger.info(f"Successfully synced metric to KB: {result.get('message')}")

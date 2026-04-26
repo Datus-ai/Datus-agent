@@ -413,6 +413,7 @@ class TestSyncMetricToDb:
             result = generation_tools._sync_metric_to_db(str(metric_file))
 
         assert result["success"] is True
+        assert result["semantic_synced"] is False
         mock_sync.assert_called_once_with(
             str(metric_file),
             generation_tools.agent_config,
@@ -434,6 +435,7 @@ class TestSyncMetricToDb:
             result = generation_tools._sync_metric_to_db(str(metric_file), str(semantic_file), {"rev": "SELECT 1"})
 
         assert result["success"] is True
+        assert result["semantic_synced"] is True
         # Should have been called twice: first for semantic objects, then for metrics
         assert mock_sync.call_count == 2
         # First call: sync semantic objects
@@ -474,6 +476,7 @@ class TestSyncMetricToDb:
             result = generation_tools._sync_metric_to_db(str(metric_file), "/nonexistent/model.yaml")
 
         assert result["success"] is True
+        assert result["semantic_synced"] is False
         # Should call with metric file directly (not combined)
         mock_sync.assert_called_once_with(
             str(metric_file),
