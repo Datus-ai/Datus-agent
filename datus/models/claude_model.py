@@ -437,9 +437,14 @@ class ClaudeModel(OpenAICompatibleModel):
                             messages.extend(prior_items)
                     except Exception as e:
                         logger.warning(f"Failed to load session history; starting fresh: {e}")
+                # Anthropic ``text`` blocks must be a single string. The signature
+                # inherits ``prompt: Union[str, List[Dict[str, str]]]`` from the
+                # base class for legacy callers; defensively normalise list-shaped
+                # inputs so a future caller can't slip an invalid block past us.
+                prompt_text = prompt if isinstance(prompt, str) else json.dumps(prompt, ensure_ascii=False)
                 user_turn_message = {
                     "role": "user",
-                    "content": [{"type": "text", "text": prompt}],
+                    "content": [{"type": "text", "text": prompt_text}],
                 }
                 messages.append(user_turn_message)
                 tool_call_cache = {}
@@ -675,7 +680,14 @@ class ClaudeModel(OpenAICompatibleModel):
                 # via ``session.get_items()``. Mirror what openai-agents Runner
                 # would do via SQLiteSession.add_items, but driven by us since
                 # the native Anthropic loop bypasses Runner.run.
-                if session is not None:
+                #
+                # When the loop exits via ``max_turns`` exhaustion while still
+                # tool-calling, ``final_content`` stays "" — Anthropic rejects
+                # empty assistant text blocks on replay
+                # (``messages.{i}.content.{j}.text: text content blocks must be
+                # non-empty``), which would poison the session. Skip persistence
+                # in that case so the next turn starts from a clean slate.
+                if session is not None and final_content:
                     try:
                         assistant_turn_message = {
                             "role": "assistant",
@@ -684,6 +696,12 @@ class ClaudeModel(OpenAICompatibleModel):
                         await session.add_items([user_turn_message, assistant_turn_message])
                     except Exception as e:
                         logger.warning(f"Failed to persist session history for native Claude turn: {e}")
+                elif session is not None:
+                    logger.warning(
+                        "Skipping native Claude session persist: turn ended without final text "
+                        "(max_turns=%s exhausted while tool-calling).",
+                        max_turns,
+                    )
 
                 yield final_action
 

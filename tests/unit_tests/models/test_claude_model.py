@@ -969,6 +969,90 @@ class TestGenerateWithMcpStream:
         assert session.add_items.await_count == 1
 
     @pytest.mark.asyncio
+    async def test_session_skip_persist_when_final_content_empty(self):
+        """When ``max_turns`` is exhausted while still tool-calling, ``final_content``
+        stays empty. Persisting an empty assistant text block would be rejected by
+        Anthropic on replay (``text content blocks must be non-empty``), so the
+        guard must skip ``add_items`` entirely.
+        """
+        from datus.schemas.action_history import ActionHistoryManager
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        # Every turn keeps tool-calling; the loop exits via max_turns with no
+        # text response. Use max_turns=2 so the test is fast.
+        tool_block = _make_tool_use_block()
+        model.anthropic_client.messages.create.return_value = _make_response([tool_block])
+
+        func_tool = MagicMock()
+        func_tool.name = "read_query"
+        func_tool.description = ""
+        func_tool.params_json_schema = {"type": "object"}
+        func_tool.on_invoke_tool = AsyncMock(return_value="result")
+
+        session = MagicMock()
+        session.get_items = AsyncMock(return_value=[])
+        session.add_items = AsyncMock()
+
+        ahm = ActionHistoryManager()
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            actions = []
+            async for action in model._generate_with_mcp_stream(
+                prompt="probe",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                max_turns=2,
+                func_tools=[func_tool],
+                action_history_manager=ahm,
+                session=session,
+            ):
+                actions.append(action)
+
+        # final_response still yielded so the caller gets a response.
+        final = next(a for a in actions if a.action_type == "final_response")
+        assert final.output["raw_output"] == ""
+        # Critically: we must NOT have persisted an empty assistant text block.
+        session.add_items.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_prompt_list_variant_is_normalized_to_string(self):
+        """The ``prompt`` parameter signature accepts ``List[Dict[str, str]]`` for
+        legacy callers; the native Anthropic ``text`` field requires a string, so
+        list inputs must be serialised rather than handed through verbatim.
+        """
+        from datus.schemas.action_history import ActionHistoryManager
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        model.anthropic_client.messages.create.return_value = _make_response([_make_text_block("ok")])
+
+        list_prompt = [{"role": "user", "content": "structured-input"}]
+        ahm = ActionHistoryManager()
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for _ in model._generate_with_mcp_stream(
+                prompt=list_prompt,
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                action_history_manager=ahm,
+            ):
+                pass
+
+        # The user message sent to Anthropic must carry a single string ``text``
+        # field; the list payload should have been json-serialised.
+        call_messages = model.anthropic_client.messages.create.call_args.kwargs["messages"]
+        user_text = call_messages[0]["content"][0]["text"]
+        assert isinstance(user_text, str)
+        assert "structured-input" in user_text
+
+    @pytest.mark.asyncio
     async def test_session_add_items_failure_does_not_break_turn(self):
         """If persistence fails after a successful turn, the user still gets the response."""
         from datus.schemas.action_history import ActionHistoryManager
