@@ -177,7 +177,7 @@ class TestClaudeModelInit:
             model = ClaudeModel(_make_model_config())
         # Verify anthropic.Anthropic constructor was called (client is not merely assigned)
         mock_anthropic_cls.assert_called_once()
-        assert model.anthropic_client is not None
+        assert model.anthropic_client is mock_anthropic_cls.return_value
 
     def test_model_specs_contains_expected_models(self):
         model = _make_claude_model()
@@ -576,8 +576,13 @@ class TestDiagnoseOAuth401:
         cfg = _make_model_config(api_key="sk-ant-regular-key", auth_type="api_key")
         model = _make_claude_model(cfg)
         original_error = Exception("401 Unauthorized")
-        # Should return without raising
-        model._diagnose_oauth_401(original_error)
+        try:
+            result = model._diagnose_oauth_401(original_error)
+        except Exception as exc:  # pragma: no cover - failure path
+            pytest.fail(f"_diagnose_oauth_401 unexpectedly raised for non-OAuth token: {exc}")
+        # Helper is fire-and-return for non-OAuth tokens; verify it did not
+        # mutate state into an exception object or substitute the input error.
+        assert result is None
 
     def test_expired_token_raises_expired_error(self, tmp_path):
         """When credentials file shows expired token, raise CLAUDE_SUBSCRIPTION_TOKEN_EXPIRED."""
