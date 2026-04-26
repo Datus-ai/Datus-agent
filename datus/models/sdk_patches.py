@@ -201,6 +201,7 @@ def _postprocess_messages_for_reasoning(
         return messages
 
     is_kimi = _is_kimi_model(model)
+    is_deepseek = _is_deepseek_model(model)
 
     # Find the last non-empty reasoning_content to reuse if needed
     last_reasoning_content = None
@@ -218,15 +219,23 @@ def _postprocess_messages_for_reasoning(
             last_reasoning_content = cached_rc
             logger.debug(f"[SDK Patch] Using cached reasoning_content as fallback, length={len(cached_rc)}")
 
-    # Ensure all assistant messages with tool_calls have reasoning_content field
-    # when the provider requires it (thinking mode enabled).
+    # Ensure assistant messages preserve reasoning_content when the provider
+    # requires it. DeepSeek V4 Pro rejects follow-up requests if the final
+    # assistant message from a tool-using turn is missing reasoning_content,
+    # even though that final message has no tool_calls. Kimi/Moonshot keeps the
+    # narrower historical behavior and only patches assistant+tool_calls turns.
     for msg in messages:
-        if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("tool_calls"):
+        if not isinstance(msg, dict) or msg.get("role") != "assistant":
+            continue
+
+        has_tool_calls = bool(msg.get("tool_calls"))
+        should_patch_message = has_tool_calls or is_deepseek
+        if should_patch_message:
             current_rc = msg.get("reasoning_content", "")
             if (not current_rc or not current_rc.strip()) and last_reasoning_content:
                 msg["reasoning_content"] = last_reasoning_content
-                logger.debug("[SDK Patch] Injected reasoning_content into assistant+tool_calls message")
-            elif "reasoning_content" not in msg and is_kimi:
+                logger.debug("[SDK Patch] Injected reasoning_content into assistant message")
+            elif has_tool_calls and "reasoning_content" not in msg and is_kimi:
                 # Moonshot historically tolerates an empty reasoning_content field when
                 # thinking is off; DeepSeek rejects both missing and empty, so we must
                 # NOT inject an empty placeholder for DeepSeek — leave the message as-is
@@ -239,7 +248,7 @@ def _postprocess_messages_for_reasoning(
 
             # Ensure content is empty string, not None (Moonshot requirement;
             # DeepSeek also accepts content="" for tool_calls-only messages).
-            if msg.get("content") is None:
+            if has_tool_calls and msg.get("content") is None:
                 msg["content"] = ""
 
     return messages

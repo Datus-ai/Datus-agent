@@ -443,6 +443,43 @@ class TestPostprocessMessagesForReasoning:
 
         _reasoning_content_cache.clear()
 
+    def test_deepseek_injects_reasoning_content_into_final_assistant_message(self):
+        """DeepSeek V4 Pro requires final assistant messages from tool turns to keep reasoning_content."""
+        _reasoning_content_cache.clear()
+        _reasoning_content_cache["deepseek/deepseek-v4-pro"] = "final answer thinking"
+
+        messages = [
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "1"}]},
+            {"role": "tool", "content": "result"},
+            {"role": "assistant", "content": "Final answer after tool."},
+            {"role": "user", "content": "next question"},
+        ]
+        result = _postprocess_messages_for_reasoning(messages, "deepseek/deepseek-v4-pro")
+
+        assert result[0]["reasoning_content"] == "final answer thinking"
+        assert result[0]["content"] == ""
+        assert result[2]["reasoning_content"] == "final answer thinking"
+        assert result[2]["content"] == "Final answer after tool."
+
+        _reasoning_content_cache.clear()
+
+    def test_kimi_does_not_inject_reasoning_content_into_final_assistant_message(self):
+        """Kimi keeps the historical narrower assistant+tool_calls patch scope."""
+        _reasoning_content_cache.clear()
+        _reasoning_content_cache["kimi-k2.5"] = "cached thinking"
+
+        messages = [
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "1"}]},
+            {"role": "tool", "content": "result"},
+            {"role": "assistant", "content": "Final answer after tool."},
+        ]
+        result = _postprocess_messages_for_reasoning(messages, "kimi-k2.5")
+
+        assert result[0]["reasoning_content"] == "cached thinking"
+        assert "reasoning_content" not in result[2]
+
+        _reasoning_content_cache.clear()
+
 
 class TestApplyAndRemoveSdkPatches:
     """Tests for apply_sdk_patches and remove_sdk_patches lifecycle."""
