@@ -962,3 +962,20 @@ class TestSkillAllowedAgentsConsistency:
             fm = self._read_skill_frontmatter(skill)
             allowed = fm.get("allowed_agents") or []
             assert node_name in allowed, f"Skill '{skill}' must list '{node_name}' in allowed_agents — got {allowed}"
+
+    def test_dashboard_router_skill_is_not_exposed_to_chat(self):
+        """Dashboard routing is handled by task(type="gen_dashboard"), not a chat-visible skill."""
+        import pathlib
+
+        project_root = pathlib.Path(__file__).resolve().parents[4]
+        skills_dir = project_root / "datus" / "resources" / "skills"
+        manager = SkillManager(config=SkillConfig(directories=[str(skills_dir)]))
+
+        chat_names = {skill.name for skill in manager.get_available_skills("chat")}
+        assert "gen-dashboard" not in chat_names
+        assert "superset-dashboard" not in chat_names
+        assert "grafana-dashboard" not in chat_names
+
+        dashboard_names = {skill.name for skill in manager.get_available_skills("gen_dashboard")}
+        assert "superset-dashboard" in dashboard_names
+        assert "grafana-dashboard" in dashboard_names
