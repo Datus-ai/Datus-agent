@@ -158,7 +158,7 @@ agent:
     - **services.bi_platforms**: Defines the BI platform credentials for dashboard access
 
 !!! tip
-    You can also add the database interactively with `datus-agent configure` instead of editing YAML manually.
+    You can add SQL datasources interactively with `datus-agent service add`; semantic layer and BI platform entries still need to be edited in YAML.
 
 ## Step 3: Bootstrap from Dashboard
 

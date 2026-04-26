@@ -156,6 +156,9 @@ agent:
     - **services.semantic_layer**：注册 metric 与 semantic model 工作流使用的语义适配器
     - **services.bi_platforms**：定义用于仪表盘访问的 BI 平台凭据
 
+!!! tip
+    你可以使用 `datus-agent service add` 交互式添加 SQL 数据源；semantic layer 和 BI platform 配置仍需要在 YAML 中编辑。
+
 ## 步骤 3：从仪表盘 Bootstrap
 
 现在使用 `bootstrap-bi` 命令从 Superset 仪表盘自动生成上下文和子代理。我们将以世界银行数据仪表盘为例。

@@ -231,8 +231,9 @@ datus-agent run --datasource <your_datasource> --task "your query" --task_db_nam
 
 | 参数 | 描述 | 默认 | 取值 |
 |---|---|---|---|
-| `--workflow` | 执行的工作流类型 | `reflection` | `reflection`、`fixed` 或自定义 |
+| `--workflow` | 执行的工作流类型 | `reflection` | `reflection`、`fixed`、`metric_to_sql` 或自定义 |
 | `--datasource` | 数据库数据源 | 必填 | 已配置数据源 |
+| `--task_db_name` | 任务使用的目标数据库名 | 必填 | 已配置数据库名 |
 | `--task` | 自然语言任务 | 必填 | 文本 |
 | `--max_steps` | 最大工作流步数 | `20` | 整数 |
 

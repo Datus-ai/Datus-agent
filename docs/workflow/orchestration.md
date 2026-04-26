@@ -275,8 +275,9 @@ datus-agent run --datasource <your_datasource> --task "your query" --task_db_nam
 
 | Parameter | Description | Default | Options |
 |-----------|-------------|---------|---------|
-| `--workflow` | Workflow type to execute | `reflection` | `reflection`, `fixed`, custom |
+| `--workflow` | Workflow type to execute | `reflection` | `reflection`, `fixed`, `metric_to_sql`, custom |
 | `--datasource` | Database datasource | Required | Any configured datasource |
+| `--task_db_name` | Target database name for the task | Required | Any configured database name |
 | `--task` | Natural language query | Required | Any string |
 | `--max_steps` | Maximum workflow steps | `20` | Integer |
 

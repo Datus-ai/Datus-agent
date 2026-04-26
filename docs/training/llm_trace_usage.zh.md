@@ -38,7 +38,7 @@ agent:
 
 ## 输出格式
 
-跟踪文件保存在 `trajectory_dir/{task_id}/` 目录中，每个节点生成一个 `{node_id}.yml` 文件。
+跟踪文件保存在 `trajectory_dir/{task_id}/` 目录中（`trajectory_dir` 是已配置的 trace 输出基础目录，通常为 `{agent.home}/trajectory/{datasource}/{timestamp}/`，其中 `--datasource` 控制 `{datasource}` 这一段），每个节点生成一个 `{node_id}.yml` 文件。
 
 ### YAML 文件结构
 

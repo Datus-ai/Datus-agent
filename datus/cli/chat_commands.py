@@ -1646,7 +1646,7 @@ class ChatCommands:
                 error = str(tool_result or "")
                 sql_return = ""
                 row_count = 0
-            elif tool_result.get("success", 0) == 1:
+            elif _is_success(tool_result.get("success", 0)):
                 data_result = tool_result.get("result")
                 error = None
                 if isinstance(data_result, dict):

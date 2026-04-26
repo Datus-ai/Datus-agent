@@ -40,7 +40,7 @@ class BenchmarkTutorial:
         if self.config_path and not Path(self.config_path).expanduser().resolve().exists():
             self.console.print(
                 f" ❌Configuration file `{self.config_path}` not found, "
-                "please check it or run `datus-agent configure` first."
+                "please check it or run `datus` and use /model and /datasource to configure Datus first."
             )
             return False
         agent_config = load_agent_config(config=self.config_path)

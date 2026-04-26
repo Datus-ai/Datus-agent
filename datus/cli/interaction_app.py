@@ -97,7 +97,18 @@ class InteractionApp:
             pass
         except Exception as exc:
             logger.error("InteractionApp crashed: %s", exc)
+        finally:
+            self._cleanup_content_files()
         return self._esc_result()
+
+    def _cleanup_content_files(self) -> None:
+        for path in self._content_file_paths:
+            if path is None:
+                continue
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.debug("Failed to remove interaction temp file %s: %s", path, exc)
 
     # ── properties ──────────────────────────────────────────────
 
@@ -542,7 +553,7 @@ class InteractionApp:
         def _content_pgup(event):
             self._scroll_content(-self._max_content_vis)
 
-        @kb.add("v", filter=has_long_content)
+        @kb.add("v", filter=on_choices & has_long_content)
         def _view_full(event):
             self._open_full_content()
 
@@ -597,7 +608,7 @@ class InteractionApp:
 
         # Single-char shortcuts (single question, single-select, on choices)
         for _c in "0123456789abcdefghijklmnopqrstuvwxyz":
-            if _c == "a":
+            if _c in {"a", "v"}:
                 continue
 
             @kb.add(_c, filter=is_single_q & on_choices)

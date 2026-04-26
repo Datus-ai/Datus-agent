@@ -166,7 +166,7 @@ datus-cli --datasource california_schools
 
 The tutorial automatically generates two [subagents](../subagent/introduction.md):
 
-```
+```text
 [6/6] Building sub-agents:
   ✅ Sub-agent `datus_schools` have been added. It can work using database tools.
   ✅ Sub-agent `datus_schools_context` have been added. It can work using metrics, relevant SQL and database tools.
