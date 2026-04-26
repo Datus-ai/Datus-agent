@@ -1056,7 +1056,7 @@ class TestProcessMetricWithSemanticModel:
             )
         finally:
             os.unlink(metric_path)
-        hooks._process_single_file.assert_awaited_once_with(metric_path, metric_sqls=None)
+        hooks._process_single_file.assert_awaited_once_with(metric_path, metric_sqls=None, yaml_type="metric")
 
     async def test_metric_missing_tries_semantic_alone(self, hooks):
         hooks._process_single_file = AsyncMock()
