@@ -10,12 +10,57 @@ Provides:
 - SkillMetadata: Parsed metadata from SKILL.md frontmatter
 """
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
 from datus.validation.report import TargetFilter
+
+logger = logging.getLogger(__name__)
+
+
+def _builtin_skills_dir() -> Optional[str]:
+    """Return the packaged ``datus/resources/skills`` directory as a string.
+
+    Resolves the path lazily via :func:`package_data_path` so it works for
+    editable installs, wheel installs, and ``uv run`` from a checkout. Returns
+    ``None`` when the resource cannot be materialised on the local filesystem
+    (e.g. running from a zipped distribution that exposes resources only as
+    a non-Path Traversable). Failures are swallowed because skill resolution
+    must never block startup.
+    """
+    try:
+        from datus.utils.resource_utils import package_data_path
+
+        path = package_data_path("resources/skills")
+        if path is None:
+            return None
+        try:
+            if not Path(str(path)).exists():
+                return None
+        except (TypeError, OSError):
+            return None
+        return str(path)
+    except Exception as exc:  # noqa: BLE001 - defensive: never break import
+        logger.debug("Built-in skills directory resolution failed: %s", exc)
+        return None
+
+
+def _default_skill_directories() -> List[str]:
+    """Default scan order: project override → user override → packaged built-ins.
+
+    The first two entries match the documented user-facing locations. The
+    packaged directory is appended last so users can always shadow a built-in
+    skill by dropping a same-named SKILL.md into ``./.datus/skills`` or
+    ``~/.datus/skills`` (first-wins semantics in :class:`SkillRegistry`).
+    """
+    dirs: List[str] = ["./.datus/skills", "~/.datus/skills"]
+    builtin = _builtin_skills_dir()
+    if builtin and builtin not in dirs:
+        dirs.append(builtin)
+    return dirs
 
 
 class SkillConfig(BaseModel):
@@ -33,15 +78,23 @@ class SkillConfig(BaseModel):
 
     Attributes:
         directories: List of directories to scan for skills. Project-level
-            directories (``./.datus/skills``) take precedence over the global
-            fallback (``~/.datus/skills``).
+            directories (``./.datus/skills``) take precedence over the user
+            override (``~/.datus/skills``), which in turn takes precedence
+            over the packaged built-ins shipped under
+            ``datus/resources/skills`` (always appended last so first-party
+            skills like ``init`` are discoverable without any deployment
+            step).
         warn_duplicates: Warn when duplicate skill names are found
         whitelist_from_compaction: Preserve skill content during session compaction
     """
 
     directories: List[str] = Field(
-        default_factory=lambda: ["./.datus/skills", "~/.datus/skills"],
-        description="Directories to scan for SKILL.md files (project-level first, global fallback)",
+        default_factory=_default_skill_directories,
+        description=(
+            "Directories scanned for SKILL.md files. The packaged "
+            "datus/resources/skills directory is appended automatically so "
+            "built-in skills are always available."
+        ),
     )
     warn_duplicates: bool = Field(default=True, description="Warn on duplicate skill names")
     whitelist_from_compaction: bool = Field(
@@ -65,8 +118,20 @@ class SkillConfig(BaseModel):
         if not data:
             return cls()
 
+        # Always append the packaged built-ins to whatever the user listed so
+        # a deployer can never accidentally drop first-party skills (e.g.
+        # ``init``) by overriding ``skills.directories`` in agent.yml.
+        directories = data.get("directories")
+        if directories is None:
+            directories = _default_skill_directories()
+        else:
+            directories = list(directories)
+            builtin = _builtin_skills_dir()
+            if builtin and builtin not in directories:
+                directories.append(builtin)
+
         return cls(
-            directories=data.get("directories", cls.model_fields["directories"].default_factory()),
+            directories=directories,
             warn_duplicates=data.get("warn_duplicates", True),
             whitelist_from_compaction=data.get("whitelist_from_compaction", True),
             marketplace_url=data.get("marketplace_url", "http://localhost:9000"),

@@ -12,21 +12,33 @@ from pathlib import Path
 
 import pytest
 
-from datus.tools.skill_tools.skill_config import SkillConfig, SkillMetadata
+from datus.tools.skill_tools.skill_config import (
+    SkillConfig,
+    SkillMetadata,
+    _builtin_skills_dir,
+    _default_skill_directories,
+)
 
 
 class TestSkillConfig:
     """Tests for SkillConfig model."""
 
     def test_skill_config_defaults(self):
-        """Test SkillConfig with default values."""
+        """Default directories include the user-facing dirs and the packaged built-ins."""
         config = SkillConfig()
-        assert config.directories == ["./.datus/skills", "~/.datus/skills"]
+        # First two entries are the documented user-facing locations.
+        assert config.directories[:2] == ["./.datus/skills", "~/.datus/skills"]
+        # Packaged built-ins ship with the wheel, so the resolver should
+        # produce a path that exists on this checkout — and it must come last
+        # so user overrides win.
+        builtin = _builtin_skills_dir()
+        assert builtin is not None, "datus/resources/skills must resolve in the test env"
+        assert config.directories[-1] == builtin
         assert config.warn_duplicates is True
         assert config.whitelist_from_compaction is True
 
     def test_skill_config_custom_directories(self):
-        """Test SkillConfig with custom directories."""
+        """Explicit constructor directories are kept verbatim (no auto-append)."""
         config = SkillConfig(directories=["/custom/skills", "./project/skills"])
         assert config.directories == ["/custom/skills", "./project/skills"]
 
@@ -36,27 +48,36 @@ class TestSkillConfig:
         assert config.warn_duplicates is False
 
     def test_skill_config_from_dict(self):
-        """Test creating SkillConfig from dictionary."""
+        """from_dict should append the packaged built-ins after user-supplied dirs."""
         config_dict = {
             "directories": ["/my/skills"],
             "warn_duplicates": False,
             "whitelist_from_compaction": False,
         }
         config = SkillConfig.from_dict(config_dict)
-        assert config.directories == ["/my/skills"]
+        builtin = _builtin_skills_dir()
+        assert config.directories[0] == "/my/skills"
+        assert config.directories[-1] == builtin
         assert config.warn_duplicates is False
         assert config.whitelist_from_compaction is False
 
+    def test_skill_config_from_dict_does_not_double_add_builtin(self):
+        """If the user already includes the packaged dir, from_dict must not duplicate it."""
+        builtin = _builtin_skills_dir()
+        assert builtin is not None
+        config = SkillConfig.from_dict({"directories": [builtin, "/other"]})
+        assert config.directories.count(builtin) == 1
+
     def test_skill_config_from_dict_empty(self):
-        """Test creating SkillConfig from empty dictionary."""
+        """Empty config dict falls back to the packaged-aware default."""
         config = SkillConfig.from_dict({})
-        assert config.directories == ["./.datus/skills", "~/.datus/skills"]
+        assert config.directories == _default_skill_directories()
         assert config.warn_duplicates is True
 
     def test_skill_config_from_dict_partial(self):
-        """Test creating SkillConfig from partial dictionary."""
+        """Partial config dict still gets the packaged-aware default for directories."""
         config = SkillConfig.from_dict({"warn_duplicates": False})
-        assert config.directories == ["./.datus/skills", "~/.datus/skills"]
+        assert config.directories == _default_skill_directories()
         assert config.warn_duplicates is False
 
     def test_skill_config_serialization(self):

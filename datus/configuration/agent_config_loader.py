@@ -142,12 +142,11 @@ def _bootstrap_agent_config(config_path: Path) -> None:
         copy_data_file(resource_path="sample_data", target_dir=sample_dir, replace=False)
     except Exception as e:
         logger.warning("Error copying sample files during bootstrap: %s", e)
-    try:
-        skills_dir = home_dir / "skills"
-        skills_dir.mkdir(parents=True, exist_ok=True)
-        copy_data_file(resource_path="resources/skills", target_dir=skills_dir, replace=False)
-    except Exception as e:
-        logger.warning("Error deploying built-in skills during bootstrap: %s", e)
+    # Built-in skills are no longer copied to ``~/.datus/skills``; the registry
+    # scans ``datus/resources/skills`` directly via the SkillConfig default.
+    # This keeps users on the latest bundled skill content as Datus upgrades,
+    # while still letting them override per-project (``./.datus/skills``) or
+    # globally (``~/.datus/skills``) without first running a bootstrap.
 
 
 def parse_config_path(config_file: str = "", create_if_missing: bool = False) -> Path:

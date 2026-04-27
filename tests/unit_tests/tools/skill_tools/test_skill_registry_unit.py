@@ -275,3 +275,42 @@ class TestSkillRegistryParseErrors:
         registry = SkillRegistry(config=config)
         registry.scan_directories()
         assert registry.get_skill_count() == 0
+
+
+class TestBuiltinSkillsResolution:
+    """Built-in skills must be discoverable without any deployment to ~/.datus/skills."""
+
+    def test_default_config_discovers_init_skill(self):
+        """With the default SkillConfig, the bundled ``init`` skill is discoverable."""
+        registry = SkillRegistry(config=SkillConfig())
+        registry.scan_directories()
+        assert registry.skill_exists("init"), (
+            "Built-in 'init' skill must resolve via the packaged "
+            "datus/resources/skills directory without any bootstrap copy"
+        )
+
+    def test_user_override_shadows_builtin(self, tmp_path):
+        """A same-named SKILL.md in a user dir takes precedence over the packaged one."""
+        override_root = tmp_path / "user-skills"
+        override_dir = override_root / "init"
+        override_dir.mkdir(parents=True)
+        (override_dir / "SKILL.md").write_text("---\nname: init\ndescription: User-shadow init\n---\nshadow body\n")
+
+        # User dir comes first; built-in is appended last via from_dict.
+        config = SkillConfig.from_dict({"directories": [str(override_root)]})
+        registry = SkillRegistry(config=config)
+        registry.scan_directories()
+
+        skill = registry.get_skill("init")
+        assert skill is not None
+        # First-wins: the description must come from the override, not the built-in.
+        assert skill.description == "User-shadow init"
+
+    def test_from_dict_does_not_duplicate_builtin(self):
+        """from_dict must be idempotent when the user already lists the packaged dir."""
+        from datus.tools.skill_tools.skill_config import _builtin_skills_dir
+
+        builtin = _builtin_skills_dir()
+        assert builtin is not None
+        config = SkillConfig.from_dict({"directories": [builtin]})
+        assert config.directories == [builtin]

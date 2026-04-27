@@ -2,36 +2,42 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""``/init`` slash command — generate ``AGENTS.md`` for the current project.
+"""``/init`` slash command — chat shortcut for the bundled ``init`` skill.
 
-The handler is a thin wrapper around :class:`datus.cli.init_workspace.InitWorkspace`.
-``InitWorkspace`` already does all the heavy lifting (directory scan, project
-type detection, optional datasource probe, LLM-driven content generation,
-template fallback). This module:
+The actual project-initialization logic lives in the ``init`` skill bundled
+at ``datus/resources/skills/init/SKILL.md`` and loaded directly from the
+package (no copy to ``~/.datus/skills`` required). Users can override it by
+dropping a same-named SKILL.md into ``./.datus/skills/init/`` (project-level)
+or ``~/.datus/skills/init/`` (user-level). The skill walks the agent through
+``ask_user`` → ``filesystem_tools.list`` → ``db_tools.list_tables`` →
+``filesystem_tools.write_file`` to produce ``AGENTS.md``.
 
-  - takes no arguments — the datasource is whichever the REPL is currently
-    pinned to (``agent_config.current_datasource`` or the launch
-    ``--datasource``); empty string means skip the schema probe.
-  - builds the ``argparse``-shaped namespace ``InitWorkspace`` expects.
-  - releases ``stdin`` from the outer TUI while ``InitWorkspace`` runs, so
-    the embedded ``rich.Prompt.ask`` (overwrite/cancel) and the LLM streaming
-    output don't fight the persistent prompt_toolkit Application.
+Rather than reimplement that flow in Python, ``/init`` injects a
+deterministic chat message that tells the active agent to load and follow
+the ``init`` skill. The standard chat streaming pipeline (action stream,
+Ctrl+O verbose, ESC interrupt, multi-turn refinement) renders the result
+for free.
 """
 
 from __future__ import annotations
 
-from contextlib import nullcontext
-from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 from datus.cli.cli_styles import print_error
-from datus.cli.init_workspace import InitWorkspace
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
     from datus.cli.repl import DatusCLI
 
 logger = get_logger(__name__)
+
+
+_INIT_PROMPT = (
+    "Initialize this project workspace by following the `init` skill. "
+    'Call `load_skill(skill_name="init")` first and execute its steps in order, '
+    "asking me for the project goal and which configured services to include. "
+    "If `AGENTS.md` already exists, confirm before overwriting it."
+)
 
 
 class InitCommands:
@@ -42,7 +48,7 @@ class InitCommands:
         self.console = cli.console
 
     def cmd_init(self, args: str) -> None:
-        """Dispatch ``/init`` — no arguments; uses the current datasource."""
+        """Dispatch ``/init`` — no arguments; delegate to the chat pipeline."""
         if (args or "").strip():
             print_error(
                 self.console,
@@ -51,15 +57,17 @@ class InitCommands:
             )
             return
 
-        cli_args = getattr(self.cli, "args", None)
-        config = getattr(cli_args, "config", "") or ""
-        debug = bool(getattr(cli_args, "debug", False))
-        datasource = (
-            getattr(self.cli.agent_config, "current_datasource", "") or getattr(cli_args, "datasource", "") or ""
-        )
-        ns = SimpleNamespace(config=config, debug=debug, datasource=datasource)
+        chat_commands = getattr(self.cli, "chat_commands", None)
+        if chat_commands is None:
+            print_error(
+                self.console,
+                "Chat is not initialized — /init relies on the chat pipeline.",
+                prefix=False,
+            )
+            return
 
-        tui_app = getattr(self.cli, "tui_app", None)
-        ctx = tui_app.suspend_input() if tui_app is not None else nullcontext()
-        with ctx:
-            InitWorkspace(ns).run()
+        chat_commands.execute_chat_command(
+            _INIT_PROMPT,
+            plan_mode=getattr(self.cli, "plan_mode_active", False),
+            subagent_name=None,
+        )
