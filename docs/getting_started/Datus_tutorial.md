@@ -12,13 +12,13 @@ This tutorial walks you through the full workflow of Datus-agent:
 
 ## 1. Prerequisites: Configure Your Datus Agent
 
-Before running the tutorial, configure your LLM and database connections:
+Before running the tutorial, configure your LLM via the CLI's `/model` slash command and ensure the global `~/.datus/conf/agent.yml` exists:
 
 ```bash
-datus-agent configure
+datus-cli           # then inside the REPL: /model
 ```
 
-This sets up your LLM provider (API key) and saves the configuration to `~/.datus/conf/agent.yml`. The tutorial will automatically configure the california_schools database for you.
+The `/model` picker writes provider credentials into `agent.yml`. You don't need to add any datasource manually — the tutorial automatically appends the `california_schools` datasource for you.
 
 Since this tutorial involves metric generation, you also need to install the semantic layer adapter:
 
@@ -218,14 +218,14 @@ Check the [`agent.yml`](../configuration/agent.md) configuration file to see the
 
 The key difference is that `datus_schools_context` has access to `context_search_tools`, enabling it to leverage the [metrics](../knowledge_base/metrics.md) and [reference SQL](../knowledge_base/reference_sql.md) you built in previous steps.
 
-You can now:
+You can now switch to either subagent inside the CLI and ask questions:
 
 ```text
-/datus_schools <your question>
-/datus_schools_context <your question>
+/agent datus_schools           # then type your question on the next line
+/agent datus_schools_context   # ditto
 ```
 
-Or use the chatbot in [Datus-Chat](../web_chatbot/introduction.md). 
+`/agent <name>` switches the default agent for subsequent natural-language turns. Type your question directly (no prefix) once the agent is active. You can also drive the same subagents from the chatbot in [Datus-Chat](../web_chatbot/introduction.md).
 
 
 ## 3. Benchmark and evaluation
@@ -267,7 +267,7 @@ By comparing `schools1.txt` and `schools2.txt`, you can explicitly see how the c
 This is the most powerful demonstration of contextual data engineering:
 
 ```bash
-python -m datus.multi_round_benchmark \
+datus-agent multi-round-benchmark \
   --config ~/.datus/conf/agent.yml \
   --datasource california_schools \
   --benchmark california_schools \

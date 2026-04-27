@@ -58,6 +58,7 @@ from datus.cli.cli_styles import (
 )
 from datus.cli.context_commands import ContextCommands
 from datus.cli.effort_commands import EffortCommands
+from datus.cli.init_commands import InitCommands
 from datus.cli.language_commands import LanguageCommands
 from datus.cli.metadata_commands import MetadataCommands
 from datus.cli.model_commands import ModelCommands
@@ -245,6 +246,7 @@ class DatusCLI:
         self.model_commands = ModelCommands(self)
         self.language_commands = LanguageCommands(self)
         self.effort_commands = EffortCommands(self)
+        self.init_commands = InitCommands(self)
         self.service_commands = ServiceCommands(self)
         from datus.cli.datasource_commands import DatasourceCommands
 
@@ -326,6 +328,7 @@ class DatusCLI:
             "bootstrap-bi": self.bi_dashboard_commands.cmd,
             "model": self.model_commands.cmd_model,
             "effort": self.effort_commands.cmd_effort,
+            "init": self.init_commands.cmd_init,
             "services": self.service_commands.cmd_services,
             "profile": self._cmd_profile,
         }
@@ -925,7 +928,7 @@ class DatusCLI:
     def _maybe_schedule_startup_sync(self) -> None:
         """Kick off a one-shot background metadata sync for the default
         datasource so the first ``@Table`` completion after launch reflects
-        any tables added since the last ``datus agent init``. Gated by
+        any tables added since the last ``datus-agent bootstrap-kb``. Gated by
         ``agent.autocomplete.background_sync_on_startup``.
         """
         bg_sync = getattr(self, "bg_sync", None)

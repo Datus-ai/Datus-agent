@@ -239,7 +239,7 @@ class ChannelConfigurator:
         except DatusException as e:
             if e.code == ErrorCode.COMMON_FILE_NOT_FOUND:
                 console.print("[red]Configuration file not found.[/red]")
-                console.print("Run 'datus-agent init' first, or pass --config <path>.")
+                console.print("Launch 'datus' and run /model and /datasource first, or pass --config <path>.")
             else:
                 console.print(f"[red]{e.message}[/red]")
             self.cm = None

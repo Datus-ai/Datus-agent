@@ -5,17 +5,25 @@ Get started with Datus Agent in just a few minutes. This guide will walk you thr
 !!! tip "Need the full warehouse workflow?"
     For an end-to-end example that covers layered warehouse design, ETL generation, Airflow scheduling, semantic assets, and Superset dashboards, see [Data Engineering Quickstart](./data_engineering_quickstart.md).
 
-## Step 1: Installation & Setup
+## Step 1: Install
 
-### Option A — One-liner (Linux / macOS, recommended)
+### Default — one-liner (Linux / macOS)
 
-Stable install from PyPI:
+Stable install from PyPI — recommended for most users:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | sh
 ```
 
-Dev install from GitHub source (unreleased changes on `main`, or any branch/tag/commit):
+The script bootstraps `uv`, creates a dedicated venv at `~/.datus/venv` (Python 3.12 is downloaded automatically if missing), and writes `datus`, `datus-cli`, `datus-api`, `datus-mcp`, `datus-agent`, `datus-gateway`, and `datus-pip` shims into `~/.local/bin`. Open a new shell (or `source ~/.zshrc`) so the new PATH takes effect.
+
+Pin a released version (the variable is passed to the receiving shell, not to `curl`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | DATUS_VERSION=0.2.6 sh
+```
+
+Dev install from GitHub source (picks up unreleased changes on `main`, or any branch / tag / commit):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install-dev.sh | sh
@@ -23,36 +31,18 @@ curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install-d
 curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install-dev.sh | DATUS_REF=feature/foo sh
 ```
 
-Both scripts bootstrap `uv`, create a dedicated venv at `~/.datus/venv` (Python 3.12 is downloaded automatically if missing), and write `datus`, `datus-cli`, `datus-api`, `datus-mcp`, `datus-agent`, `datus-gateway`, and `datus-pip` shims into `~/.local/bin`. Open a new shell (or `source ~/.zshrc`) so the new PATH takes effect.
+Other variables supported by both scripts: `DATUS_HOME`, `DATUS_BIN_DIR`, `DATUS_FORCE=1`, `DATUS_NO_MODIFY_PATH=1`. To install additional packages into the global venv later, use `datus-pip install <package>` (a shim for `~/.datus/venv/bin/pip`).
 
-To install additional Python packages into the global venv later, use:
+### Custom — managed Python environment
 
-```bash
-datus-pip install <package>
-# equivalent to ~/.datus/venv/bin/pip install <package>
-```
-
-Pin a released version with the stable installer — note the variable is passed to the receiving shell, not to `curl`:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | DATUS_VERSION=0.2.6 sh
-```
-
-Other variables supported by both scripts: `DATUS_HOME`, `DATUS_BIN_DIR`, `DATUS_FORCE=1`, `DATUS_NO_MODIFY_PATH=1`.
-
-Once the script finishes, skip the rest of this step and go straight to **Configure LLM & Database** below.
-
-### Option B — Manual install
-
-#### Install Python 3.12
-
-Datus requires a Python 3.12 environment. Choose your preferred method:
+Use this path if you maintain your own Python and prefer to install `datus-agent` into an existing virtualenv / conda env. Datus requires Python 3.12.
 
 === "Conda"
 
     ```bash
     conda create -n datus python=3.12
     conda activate datus
+    pip install datus-agent
     ```
 
 === "virtualenv"
@@ -60,6 +50,7 @@ Datus requires a Python 3.12 environment. Choose your preferred method:
     ```bash
     virtualenv datus --python=python3.12
     source datus/bin/activate
+    pip install datus-agent
     ```
 
 === "uv"
@@ -67,57 +58,49 @@ Datus requires a Python 3.12 environment. Choose your preferred method:
     ```bash
     uv venv --python 3.12
     source .venv/bin/activate
+    uv pip install datus-agent
     ```
 
-### Install Datus Agent
-
 !!! note
-    Please ensure that your pip version is compatible with Python 3.12.
+    If `pip install` complains about an old pip, upgrade it first:
 
-    To upgrade pip, you can use:
     ```bash
     python -m ensurepip --upgrade
     python -m pip install --upgrade pip setuptools wheel
     ```
 
-=== "Stable Release"
+For pre-release builds: `pip install -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ datus-agent`.
 
-    ```bash
-    pip install datus-agent
-    ```
+### Configure LLM & Datasource
 
-=== "Beta Release"
-
-    ```bash
-    pip install -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ datus-agent
-    ```
-
-### Configure LLM & Database
-
-Run the configuration command to set up your LLM provider and database connections:
+Configuration lives entirely inside the REPL. Launch Datus first:
 
 ```bash
-datus-agent configure
+datus
 ```
 
-This interactive tool lets you:
+Then use two slash commands — order doesn't matter, but `/datasource` first is convenient because the data preview reflects the active datasource:
 
-**1. Add a Model** — Select your LLM provider (OpenAI, DeepSeek, Claude, Kimi, Qwen, etc.) and enter your API key. Environment variables like `${DEEPSEEK_API_KEY}` are auto-detected.
+**1. Add or switch a datasource** — Run `/datasource`:
 
-**2. Add a Database** — Connect to your database. For a quick start, use the demo DuckDB:
+```text
+Datus> /datasource
+```
+
+`/datasource` opens a TUI that lists the datasources in `agent.yml`, plus an "Add" entry. Adding prompts for name, type (DuckDB, SQLite, Snowflake, MySQL, PostgreSQL, StarRocks, …) and connection details, tests connectivity, and writes the result to `~/.datus/conf/agent.yml`. The same TUI also handles edit / delete / set-default / plugin install. Switch at runtime with `/datasource <name>`.
 
 !!! tip "Demo Database"
-    Datus provides a pre-configured demo DuckDB database for testing.
+    Datus ships with a pre-configured demo DuckDB database at `~/.datus/sample/duckdb-demo.duckdb`. In `/datasource`, pick `duckdb` and point at this path to get a working datasource immediately.
 
-    **Connection string:** `~/.datus/sample/duckdb-demo.duckdb`
+**2. Pick an LLM** — Run `/model`:
 
-Database adapter plugins (Snowflake, MySQL, PostgreSQL, StarRocks) are auto-installed when selected.
+```text
+Datus> /model
+```
 
-Configuration is saved to `~/.datus/conf/agent.yml`. Run `datus-agent configure` again anytime to add more models or databases.
+`/model` opens a TUI picker covering the providers below. Selecting a provider prompts for the API key (auto-detecting common env vars such as `OPENAI_API_KEY`) and writes the result to `agent.yml`. Direct shortcuts like `/model openai/gpt-4.1` are also supported. See [Model Command](../cli/model_command.md) for full details.
 
-#### Built-in model providers in the configuration wizard
-
-The current wizard includes these providers out of the box:
+#### Built-in LLM providers
 
 | Provider | Typical models | Auth | Best for |
 |---|---|---|---|
@@ -137,11 +120,11 @@ There are also two special auth flows:
 | `claude_subscription` | Claude subscription token | The wizard first tries to auto-detect a local Claude subscription credential, then falls back to manual token input |
 
 !!! note
-    `codex` still appears in the provider catalog, but the current `datus-agent configure` flow is not ready to set it up end-to-end yet. Do not rely on it as a working interactive wizard option for now.
+    `codex` (ChatGPT Plus/Pro via Codex OAuth) is also exposed by `/model`; selecting it triggers a browser-based OAuth flow. See [Model Command](../cli/model_command.md#codex-chatgpt-pluspro-oauth) for caveats.
 
 #### What are Coding Plan providers
 
-The wizard also includes coding/plan-oriented providers. These use Anthropic-compatible endpoints, but from Datus's perspective they are configured just like any other model entry in `agent.models`.
+`/model` also exposes a **Plans** tab with coding/plan-oriented providers. These use Anthropic-compatible endpoints, but from Datus's perspective they are configured just like any other model entry in `agent.models`.
 
 | Provider | Default model | Best for |
 |---|---|---|
@@ -157,7 +140,7 @@ These are a good fit when:
 - You want to separate general-purpose chat models from coding/plan models and bind them to different nodes later
 
 !!! tip "Environment variables and model overrides"
-    For OpenAI, DeepSeek, Claude, Kimi, Qwen, and Gemini, the wizard can prompt with provider-specific environment variable hints.
+    For OpenAI, DeepSeek, Claude, Kimi, Qwen, and Gemini, `/model` prompts with provider-specific environment variable hints.
 
     For `minimax`, `glm`, and the `*_coding` providers, you can still enter environment-variable references directly, such as `${MINIMAX_API_KEY}`, `${GLM_API_KEY}`, `${KIMI_API_KEY}`, or `${DASHSCOPE_API_KEY}`.
 
@@ -165,147 +148,98 @@ These are a good fit when:
 
 ### Initialize Project (Optional)
 
-In your project directory, run:
+`cd` into your project directory, launch `datus`, and run `/init` inside the REPL:
 
-```bash
-datus-agent init
+```text
+Datus> /init
 ```
 
-This generates an `AGENTS.md` file describing your project's architecture, directory structure, services, and data assets. The LLM analyzes your directory and README to produce the content.
+This generates an `AGENTS.md` file describing your project's architecture, directory structure, services, and data assets. The LLM analyzes your directory and README, and (when the REPL has a datasource selected) the datasource's table list, to produce the content. To target a different datasource, switch with `/datasource <name>` first, then run `/init`.
 
-You can also use `--datasource` to include datasource schema information:
+## Step 2: Launch Datus
 
-```bash
-datus-agent init --datasource duckdb-demo
-```
-
-## Step 2: Launch Datus CLI
-
-Start the Datus CLI with your configured database:
-
-!!! tip "Multiple Databases"
-    You can add more databases anytime with `datus-agent configure`. Use `datus-agent service list` to see all configured databases.
+Start the REPL — `datus` is the canonical entry (it's a shim for `datus-cli`):
 
 ```bash title="Terminal"
-datus-cli --datasource duckdb-demo
+datus
+# or pin to a specific datasource at launch
+datus --datasource duckdb-demo
 ```
-```{ .yaml .no-copy }
-Initializing AI capabilities in background...
 
-Datus - Data engineering agent builds evolvable context for your data system
-Type '/help' for a list of commands or '/exit' to quit.
+You'll see the unified startup banner inside a Rich panel:
 
-Database duckdb-demo selected
-Connected to duckdb-demo using database duckdb-demo
-Context: Current: database: duckdb-demo
-Type SQL statements or use ! @ . commands to interact.
+```text title="Startup"
+╭─ v0.2.7 ─────────────────────────────────────────────────╮
+│                                                          │
+│  ██████╗   █████╗  ████████╗ ██╗   ██╗ ███████╗          │
+│  ██╔══██╗ ██╔══██╗ ╚══██╔══╝ ██║   ██║ ██╔════╝          │
+│  ██║  ██║ ███████║    ██║    ██║   ██║ ███████╗          │
+│  ██║  ██║ ██╔══██║    ██║    ██║   ██║ ╚════██║          │
+│  ██████╔╝ ██║  ██║    ██║    ╚██████╔╝ ███████║          │
+│  ╚═════╝  ╚═╝  ╚═╝    ╚═╝     ╚═════╝  ╚══════╝          │
+│                                                          │
+│  Data engineering agent builds evolvable context for     │
+│  your data system                                        │
+│                                                          │
+│  Datasource  duckdb-demo  (duckdb)                       │
+│                                                          │
+│  Type / for commands, /help for the full list, /exit     │
+│  to quit                                                 │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯
 Datus>
 ```
+
+The banner shows the active datasource (or `not selected` if none picked yet) and any preloaded context. Three input modes share the same prompt:
+
+- **Slash commands** — start with `/` (e.g., `/help`, `/datasource`, `/model`, `/exit`)
+- **SQL** — `SELECT …`, `DESCRIBE …`, `SHOW …` and friends are detected automatically and executed against the active datasource
+- **Natural language** — anything else goes to the agent
 
 ## Step 3: Start Using Datus
 
 !!! tip
     You can execute SQL in Datus just like in a SQL editor.
 
-List all tables:
+List all tables in the active datasource:
 
-```bash title="Terminal"
+```text title="Terminal"
 Datus> /tables
 ```
-```{ .yaml .no-copy }
-Tables in Database duckdb-demo
-+---------------------+
-| Table Name          |
-+=====================+
-| bank_failures       |
-| boxplot             |
-| calendar            |
-| candle              |
-| christmas_cost      |
-| companies           |
-| country_stats_scatter|
-| gold_vs_bitcoin     |
-| japan_births_deaths |
-| japan_population    |
-| metrics             |
-| niger_population    |
-| quotes              |
-| radar               |
-| sankey              |
-| search_trends       |
-| tree                |
-+---------------------+
-```
 
-Ask any question you like. Here is a table named `gold_vs_bitcoin`. Let's view its schema:
+The result is rendered as a Rich table headed with the datasource name, e.g. `Tables in duckdb-demo` followed by rows of `Table Name`. Type `desc <table>` (or any standard SQL the dialect understands) to inspect a single table:
 
-```bash title="Terminal"
+```text title="Terminal"
 Datus> desc gold_vs_bitcoin
 ```
-```{ .yaml .no-copy }
-+------------------+------------------+------------------+------------------+------------------+------------------+
-| column_name      | column_type      | null             | key              | default          | extra            |
-+==================+==================+==================+==================+==================+==================+
-| time             | TIMESTAMP        | YES              | None             | None             | None             |
-| gold             | DOUBLE           | YES              | None             | None             | None             |
-| bitcoin          | DOUBLE           | YES              | None             | None             | None             |
-+------------------+------------------+------------------+------------------+------------------+------------------+
-Returned 3 rows in 0.04 seconds
-```
+
+DuckDB returns the column metadata (`column_name`, `column_type`, `null`, `key`, `default`, `extra`) plus the row count and elapsed time below the table.
 
 !!! tip
-    To chat, start a line with `/` and continue in natural language.
+    To chat with the agent, just type your question in natural language — no prefix needed. Lines starting with `/` are reserved for slash commands.
 
 Suppose we want to understand the correlation between gold and Bitcoin. We can ask the Datus agent directly:
 
 ```bash title="Terminal"
-Datus> /Detailed analysis of gold–Bitcoin correlation.
+Datus> Detailed analysis of gold–Bitcoin correlation.
 ```
 
-Datus will display its thinking process to show how it approaches the task, then provide a detailed report.
+Datus streams the agent's progress live: thinking deltas, tool calls, SQL queries, and the final markdown answer all flow through the prompt area, while a pinned status row at the bottom shows the currently running tool. Concretely you will see something like:
 
-??? example "Detailed Analysis Output"
-    ```{ .yaml .no-copy }
-    Creating new chat session...
-    Processing chat request...
-    +---------------------------------------------------------------------------------------------------------------------------------------+
-    |                                                    Action Stream                                                                      |
-    +=======================================================================================================================================+
-    | 🔧 Tool call - glob('{"pattern": "*", "path": "~/.datus/workspace"}') - ✓                                                    |
-    |     No matches found (0.5s)                                                                                                          |
-    | 💬 Thinking: Let me check the directory structure to see what's available:                                                           |
-    | 🔧 Tool call - glob('{"pattern": "**/*", "path": "~/.datus/workspace"}') - ✓ (0.5s)                                          |
-    | 💬 Thinking: Now let me analyze the gold-Bitcoin correlation by examining the data and performing a comprehensive correlation        |
-    | analysis:                                                                                                                            |
-    | 🔧 Tool call - read_query('{"sql": "SELECT \n    COUNT(*) as total_records,\n...') - ✓                                               |
-    |     ✓ 1 rows (0.5s)                                                                                                                  |
-    | 💬 Thinking: Now let me calculate the correlation coefficient and perform a detailed analysis:                                       |
-    | 🔧 Tool call - read_query('{"sql": "SELECT \n    -- Correlation coefficient\n...') - ✓                                               |
-    |     ✓ 1 rows (0.5s)                                                                                                                  |
-    | 💬 Thinking: Let me get more detailed statistics and time-based analysis:                                                            |
-    | 🔧 Tool call - read_query('{"sql": "WITH daily_aggregates AS (\n    SELECT \n...') - ✓                                               |
-    |     ✓ 1 rows (0.5s)                                                                                                                  |
-    | 💬 Thinking: Let me check the distribution of the data and look for any patterns:                                                    |
-    | 🔧 Tool call - read_query('{"sql": "SELECT \n    -- Price movement analysis\n...') - ✓                                               |
-    |     ✗ Failed:(error_code=500006, e...) (0.5s)                                                                                        |
-    | 💬 Thinking: Let me fix the query to properly analyze price movement patterns:                                                       |
-    | 🔧 Tool call - read_query('{"sql": "WITH price_changes AS (\n    SELECT \n   ...') - ✓                                               |
-    |     ✓ 5 rows (0.5s)                                                                                                                  |
-    | 💬 Thinking: Now let me analyze the strength of the correlation across different time periods and price levels:                      |
-    | 🔧 Tool call - read_query('{"sql": "WITH price_quartiles AS (\n    SELECT \n ...') - ✓                                               |
-    |     ✓ 16 rows (0.5s)                                                                                                                 |
-    | 💬 Thinking: Let me also analyze the volatility and risk characteristics:                                                            |
-    | 🔧 Tool call - read_query('{"sql": "SELECT \n    -- Risk and return metrics\n...') - ✓                                               |
-    |     ✗ Failed:(error_code=500006, e...) (0.5s)                                                                                        |
-    | 💬 Thinking: Let me correct the query with the proper function names:                                                                |
-    | 🔧 Tool call - read_query('{"sql": "SELECT \n    -- Risk and return metrics\n...') - ✓                                               |
-    |     ✓ 1 rows (0.5s)                                                                                                                  |
-    | 💬 Thinking: Finally, let me examine the time series data to understand the temporal patterns:                                       |
-    | 🔧 Tool call - read_query('{"sql": "SELECT \n    DATE(time) as trading_date,\...') - ✓                                               |
-    |     ✓ 1 rows (0.5s)                                                                                                                  |
-    | 💬 Chat interaction completed successfully                                                                                           |
-    +---------------------------------------------------------------------------------------------------------------------------------------+
-    ```
+```text title="Streaming output"
+● Thinking
+  Let me check the schema of gold_vs_bitcoin and run a correlation analysis.
+
+● Tool call · describe_table({"table_name": "gold_vs_bitcoin"})  ✓ 3 columns (0.5s)
+
+● Tool call · read_query({"sql": "SELECT CORR(gold, bitcoin) ..."}) ✓ 1 row (0.5s)
+
+● Tool call · read_query({"sql": "WITH daily_aggregates AS (...)"}) ✓ 1 row (0.5s)
+
+⠋ Running read_query …                                              ← pinned row
+```
+
+When the turn finishes, the pinned row clears and the agent's full markdown report is rendered inline.
 
 **Generated SQL:**
 
@@ -432,13 +366,8 @@ FROM gold_vs_bitcoin
     strong enough for reliable hedging strategies based on this limited dataset.
     ```
 
-If you want detailed information for every step, press `y` at the end:
-
-```bash title="Terminal"
-Would you like to check the details? (y/n): y
-```
-
-Datus will then show details in a new screen.
+!!! tip "Trace details"
+    Press **Ctrl+O** at any time to open the inline trace details for the last chat turn — full tool inputs, full SQL, raw tool outputs. Press **Ctrl+O** again (or `q`) to close it. There is no `(y/n)` prompt at the end of a turn anymore.
 
 ## Step 4: Advanced Features
 
@@ -450,190 +379,21 @@ Datus will then show details in a new screen.
 If you want to add items such as a file, metric or table to the context, use `@`. Manual retrieval gives the LLM more precise context, narrows the search scope, and improves answer accuracy.
 
 ```bash title="Terminal"
-Datus> /@Table duckdb-demo.main.bank_failures
+Datus> @Table duckdb-demo.main.bank_failures
 ```
 
-Datus will automatically analyze the table and add metadata to the context.
+Datus will automatically analyze the table and add its metadata to the context, then stream the answer the same way as a regular chat turn — thinking deltas, tool calls (`describe_table`, `read_query`, …), and a markdown report. Press **Ctrl+O** to inspect the raw tool inputs / outputs for the turn.
 
-??? example "Context Analysis Output"
-    ```{ .yaml .no-copy }
-    Processing chat request...
-    +----------------------------------------------------------------------------------------------------------------------------------+
-    |                                                    Action Stream                                                                 |
-    +==================================================================================================================================+
-    | 🟡 User: @Table duckdb-demo.main.bank_failures                                                                                  |
-    | 💬 Generating response with tools...                                                                                            |
-    | 💬 Thinking: I'll provide a comprehensive analysis of the bank_failures table. Let me start by examining the data structure     |
-    | and then perform various analyses.                                                                                              |
-    | 🔧 Tool call - describe_table('{"table_name": "bank_failures"}') - ✓                                                            |
-    |     ✓ 7 columns (0.5s)                                                                                                          |
-    | 💬 Thinking: Now let me perform a comprehensive analysis of the bank failures data:                                             |
-    | 🔧 Tool call - read_query('{"sql": "-- Comprehensive Bank Failures Analysis\n...') - ✓                                          |
-    |     ✗ Failed:(error_code=500006, e...) (0.5s)                                                                                   |
-    | 💬 Thinking: Let me break this down into separate queries for a comprehensive analysis:                                         |
-    | 🔧 Tool call - read_query('{"sql": "-- 1. Basic overview statistics\nSELECT \...') - ✓                                          |
-    |     ✓ 1 rows (0.5s)                                                                                                             |
-    | 🔧 Tool call - read_query('{"sql": "-- 2. Yearly analysis of bank failures\nS...') - ✓                                          |
-    |     ✓ 14 rows (0.5s)                                                                                                            |
-    | 🔧 Tool call - read_query('{"sql": "-- 3. State-wise analysis (top 15 states)...') - ✓                                          |
-    |     ✓ 15 rows (0.5s)                                                                                                            |
-    | 🔧 Tool call - read_query('{"sql": "-- 4. Largest bank failures (top 20 by as...') - ✓                                          |
-    |     ✓ 20 rows (0.5s)                                                                                                            |
-    | 🔧 Tool call - read_query('{"sql": "-- 5. Acquisition analysis (top acquirers...') - ✓                                          |
-    |     ✓ 15 rows (0.5s)                                                                                                            |
-    | 🔧 Tool call - read_query('{"sql": "-- 6. Asset size distribution analysis\nW...') - ✓                                          |
-    |     ✓ 6 rows (0.5s)                                                                                                             |
-    | 🔧 Tool call - read_query('{"sql": "-- 7. Recent failures (2023-2024)\nSELECT...') - ✓                                          |
-    |     ✓ 8 rows (0.5s)                                                                                                             |
-    | 💬 Chat interaction completed successfully                                                                                      |
-    +----------------------------------------------------------------------------------------------------------------------------------+
-
-    +==================================================================================================================================+
-    |                                       🏦 Comprehensive Bank Failures Analysis (2008-2024)                                       |
-    +==================================================================================================================================+
-
-                                                           📊 Executive Summary
-
-    • Total Failures: 545 banks failed between 2008-2024
-    • Total Assets: $1.696 trillion in failed bank assets
-    • Time Span: 16 years (January 2008 - October 2024)
-    • Geographic Reach: 42 states, 419 cities affected
-    • Average Bank Size: $3.11 billion
-
-
-                                                        📈 Key Historical Patterns
-
-                                                           Major Crisis Periods
-
-    1 2008-2009 Financial Crisis: 166 failures, $938.1B assets
-    • Peak: 2009 (140 failures, $169.5B assets)
-    • Includes Bear Stearns ($395B) and Washington Mutual ($307B)
-    2 2010-2014 Post-Crisis Cleanup: 270 failures, $150.0B assets
-    • Peak: 2010 (157 failures - highest count)
-    • Smaller institutions, regulatory cleanup
-    3 2023 Banking Stress: 6 failures, $572.7B assets
-    • Major failures: First Republic ($229B), Silicon Valley Bank ($209B), Signature Bank ($118B)
-
-
-                                                        🗺️ Geographic Distribution
-
-                                                      Top 5 States by Failure Count
-
-    1 Georgia: 91 failures (16.7%) - $34.4B assets
-    2 Florida: 73 failures (13.4%) - $39.2B assets
-    3 Illinois: 66 failures (12.1%) - $37.7B assets
-    4 California: 43 failures (7.9%) - $559.8B assets
-    5 Minnesota: 23 failures (4.2%) - $3.2B assets
-
-                                                       Top 5 States by Assets Lost
-
-    1 California: $559.8B (33.0% of total)
-    2 New York: $513.4B (30.3% of total)*
-    3 Washington: $318.9B (18.8% of total)
-    4 Illinois: $37.7B (2.2% of total)
-    5 Florida: $39.2B (2.3% of total)
-
-    *Includes Bear Stearns and Signature Bank
-
-
-                                                          💰 Asset Size Analysis
-
-                                                            Size Distribution
-
-
-    Asset Range   Failures   % of Total   Total Assets   % of Assets   Avg Size
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    Under $100M   136        24.9%        $7.7B          0.5%          $56M
-    $100M-$500M   275        50.5%        $66.5B         3.9%          $242M
-    $500M-$1B     57         10.5%        $40.3B         2.4%          $707M
-    $1B-$5B       55         10.1%        $119.6B        7.1%          $2.2B
-    $5B-$10B      7          1.3%         $43.8B         2.6%          $6.3B
-    Over $10B     15         2.8%         $1,418.2B      83.6%         $94.5B
-
-
-    Key Insight: While 75% of failures were under $1B in assets, the 15 largest failures (>$10B) represent 83.6% of all failed assets.
-
-
-                                                         🏆 Largest Bank Failures
-
-    1 Bear Stearns (2008) - $395.0B (J.P. Morgan Chase)
-    2 Washington Mutual (2008) - $307.0B (JPMorgan Chase)
-    3 First Republic Bank (2023) - $229.0B (JPMorgan Chase)
-    4 Silicon Valley Bank (2023) - $209.0B (First Citizens)
-    5 Signature Bank (2023) - $118.4B (Flagstar Bank)
-
-
-                                                         🏛️ Acquisition Landscape
-
-                                                        Top Acquiring Institutions
-
-    1 U.S. Bank, N.A.: 13 acquisitions ($38.7B)
-    2 State Bank and Trust: 10 acquisitions ($3.5B)
-    3 Ameris Bank: 9 acquisitions ($1.9B)
-    4 Stearns Bank, N.A.: 9 acquisitions ($1.7B)
-    5 First-Citizens Bank: 7 acquisitions ($7.8B)
-
-                                                             Notable Patterns
-
-    • JPMorgan Chase: Acquired 3 institutions but captured $930B+ in assets
-    • 20 banks: Had no acquirer (insured depositors paid directly)
-    • Consolidation: Larger banks acquired most failed institutions
-
-
-                                                       📅 Recent Trends (2023-2024)
-
-                                                           2023 Major Failures
-
-    • First Republic Bank: $229B (May 2023)
-    • Silicon Valley Bank: $209B (March 2023)
-    • Signature Bank: $118B (March 2023)
-    • Silvergate Bank: $16B (March 2023)
-
-                                                              2024 Failures
-
-    • Republic First Bancorp: $6B (April 2024)
-    • First National Bank of Lindsay: $108M (October 2024)
-
-
-                                                             🎯 Key Insights
-
-                                                      1. Systemic Risk Concentration
-
-    • 15 largest failures (2.8% of total) represent 83.6% of failed assets
-    • "Too big to fail" remains a significant concern
-
-                                                       2. Geographic Vulnerability
-
-    • Southeast (GA, FL) had highest failure counts
-    • West Coast (CA, WA) had largest asset concentrations
-
-                                                          3. Temporal Clustering
-
-    • Clear crisis periods: 2008-2009, 2010-2014, 2023
-    • Regulatory changes followed each crisis period
-
-                                                             4. Size Matters
-
-    • Most failures were small banks
-    • But systemic risk comes from very large institutions
-
-                                                         5. Acquisition Patterns
-
-    • Large banks benefit from crisis acquisitions
-    • Significant industry consolidation
-
-
-                                                      ⚠️ Risk Management Implications
-
-    1 Regulatory Focus: Largest institutions require heightened supervision
-    2 Regional Monitoring: Southeast banking markets need closer oversight
-    3 Crisis Preparedness: Friday intervention patterns suggest need for rapid response capabilities
-    4 Systemic Monitoring: Asset concentration remains critical risk indicator
-
-    This analysis provides a comprehensive view of US bank failures over 16 years, highlighting patterns, risks, and regulatory
-    implications for the banking sector.
-    Would you like to check the details? (y/n): n
+??? example "Context Analysis Output (excerpt)"
+    ```text
+    ● Tool call · describe_table({"table_name": "bank_failures"})  ✓ 7 columns (0.5s)
+    ● Tool call · read_query({"sql": "-- 1. Basic overview ..."})  ✓ 1 row   (0.5s)
+    ● Tool call · read_query({"sql": "-- 2. Yearly analysis ..."}) ✓ 14 rows (0.5s)
+    ● Tool call · read_query({"sql": "-- 3. State-wise ..."})      ✓ 15 rows (0.5s)
+    ● Tool call · read_query({"sql": "-- 7. Recent 2023-2024 ..."}) ✓ 8 rows (0.5s)
     ```
+
+The agent then renders a markdown report (executive summary, geographic distribution, asset-size analysis, largest failures, recent trends, key insights). The exact shape depends on the LLM and the data; treat the example above as illustrative.
 
 !!! tip
     For more command references and options, see [CLI](../cli/introduction.md) or simply type `/help`.

@@ -22,7 +22,7 @@
 
 ```bash title="Terminal"
 pip install datus-agent
-datus-agent init
+datus           # 进入 REPL 后依次使用 /model、/datasource、/init
 ```
 
 ### 第二步：配置环境变量

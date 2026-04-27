@@ -2,7 +2,8 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Provider authentication helper flows shared by ``datus init`` and ``/model``.
+"""Provider authentication helper flows shared by ``/model`` and the
+legacy ``interactive_init`` wizard.
 
 Both call sites need to (a) pick a model name from the provider catalog,
 (b) acquire a credential (subscription token or OAuth login), and

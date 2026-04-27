@@ -123,7 +123,7 @@ class InitWorkspace:
                 )
             except Exception as e:
                 self.console.print(f"[red]Failed to load configuration: {e}[/red]")
-                self.console.print("Run 'datus init' first to set up the configuration.")
+                self.console.print("Configuration is missing. Launch 'datus' and run /model and /datasource first.")
                 return 1
 
             # Check for existing AGENTS.md

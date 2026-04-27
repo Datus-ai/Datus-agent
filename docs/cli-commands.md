@@ -2,26 +2,17 @@
 
 ## Setup Commands
 
-### `datus configure`
+Datus is configured entirely from inside the REPL. After installation, launch
+`datus` and use slash commands:
 
-Interactive wizard to configure database connections and workspace settings.
+| Command | Purpose |
+|---------|---------|
+| [`/model`](cli/model_command.md) | Pick an LLM provider, capture credentials, persist to `~/.datus/conf/agent.yml` |
+| [`/datasource`](cli/reference.md) | Add / edit / delete / switch datasources (DuckDB, SQLite, Snowflake, MySQL, PostgreSQL, StarRocks, …); writes to `~/.datus/conf/agent.yml` under `services.datasources` |
+| [`/init`](cli/init_command.md) | Generate an `AGENTS.md` for the current project (scans the directory, optionally probes a datasource, calls the active LLM) |
 
-Writes configuration to `~/.datus/conf/agent.yml` using the `services.datasources` format.
+The resulting `~/.datus/conf/agent.yml` looks like:
 
-```bash
-datus configure
-```
-
-**Steps:**
-1. **[1/2] Configure Database** — Name the database, select type (duckdb, sqlite, snowflake, etc.), enter connection details, test connectivity
-2. **[2/2] Configure Workspace** — Set workspace directory path
-
-!!! note "LLM Configuration"
-    `datus configure` focuses on database connections only. Use the [`/model`](cli/model_command.md) slash command inside the CLI to configure and switch LLM providers interactively.
-
-**Repeatable:** Yes. If `~/.datus/conf/agent.yml` already exists, you'll be asked to confirm overwrite. The existing configuration is fully replaced.
-
-**Output:** `~/.datus/conf/agent.yml` with structure:
 ```yaml
 agent:
   providers:
@@ -39,65 +30,35 @@ agent:
   project_root: ~/.datus/workspace
 ```
 
-**To add more databases later:** Use `datus service add`.
-
-**To configure LLM providers:** Use `/model` inside the CLI session.
-
----
-
-### `datus init`
-
-Initialize a project workspace by generating `AGENTS.md` in the current directory.
-
-```bash
-cd /path/to/your/project
-datus init
-```
-
-**Requires:** A configured LLM (`datus configure` must be run first).
-
-**What it does:**
-1. Loads LLM and service configuration from `~/.datus/conf/agent.yml`
-2. Scans current directory structure (up to 3 levels deep)
-3. Detects project type (Python, Node.js, Docker, dbt, etc.)
-4. Reads README.md if present
-5. Uses LLM to generate `AGENTS.md` with project-specific content
-6. Falls back to a template skeleton if LLM generation fails
-
-**If AGENTS.md already exists:** Prompts to overwrite or cancel.
-
-**Generated sections:**
-- `## Architecture` — Project architecture description with ASCII diagram
-- `## Directory Map` — Table mapping directories to purposes
-- `## Services` — Configured databases and services from agent.yml
-- `## Artifacts` — Data catalogs, semantic models, SQL files, etc.
+`datus-agent service add | list | delete` provide a non-interactive surface
+for the same datasource CRUD operations (handy in scripts or CI).
 
 ---
 
 ## Service Management
 
-### `datus service list`
+### `datus-agent service list`
 
-Show all configured databases, semantic adapters, BI platforms, and schedulers.
+Show all configured datasources, semantic adapters, BI platforms, and schedulers.
 
 ```bash
-datus service list
+datus-agent service list
 ```
 
-### `datus service add`
+### `datus-agent service add`
 
-Interactively add a new database connection.
+Interactively add a new datasource. Equivalent to running `/datasource` inside the REPL and choosing **Add**.
 
 ```bash
-datus service add
+datus-agent service add
 ```
 
-### `datus service delete`
+### `datus-agent service delete`
 
-Interactively remove a database connection.
+Interactively remove a datasource.
 
 ```bash
-datus service delete
+datus-agent service delete
 ```
 
 ---

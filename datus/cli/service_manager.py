@@ -60,7 +60,7 @@ class ServiceManager:
         except DatusException as e:
             if e.code == ErrorCode.COMMON_FILE_NOT_FOUND:
                 console.print("Configuration file not found.")
-                console.print("Please run 'datus init' first to create the configuration.")
+                console.print("Please launch 'datus' and run /model and /datasource first to create the configuration.")
                 console.print("Or specify a config file with --config <path>")
             else:
                 console.print(f"{e.message}")

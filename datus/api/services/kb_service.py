@@ -477,7 +477,7 @@ class KbService:
 
     @staticmethod
     def _build_args(request: BootstrapKbInput, project_root: str) -> types.SimpleNamespace:
-        """Create a SimpleNamespace mimicking argparse.Namespace for datus init functions."""
+        """Create a SimpleNamespace mimicking argparse.Namespace for the bootstrap-kb helpers."""
         # Resolve relative paths against the project root
         success_story = os.path.join(project_root, request.success_story) if request.success_story else None
         sql_dir = os.path.join(project_root, request.sql_dir) if request.sql_dir else None

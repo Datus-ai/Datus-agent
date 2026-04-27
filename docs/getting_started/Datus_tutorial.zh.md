@@ -11,11 +11,13 @@
 
 ## 1. 前置条件：配置 Datus Agent
 
-运行教程之前，请先配置您的模型和数据库连接：
+运行教程之前，请先在 CLI 内通过 `/model` 斜杠命令配置好 LLM，并确保全局的 `~/.datus/conf/agent.yml` 已存在：
 
 ```bash
-datus-agent configure
+datus-cli           # 进入 REPL 后输入：/model
 ```
+
+`/model` 选择器会把 provider 凭据写入 `agent.yml`。无需手动添加任何数据源——教程会自动把 `california_schools` 数据源追加进配置。
 
 由于本教程涉及指标生成，还需要安装语义层适配器：
 
@@ -215,14 +217,14 @@ datus-cli --datasource california_schools
 
 关键区别在于 `datus_schools_context` 可以访问 `context_search_tools`，使其能够利用您在之前步骤中构建的[指标](../knowledge_base/metrics.zh.md)和[参考 SQL](../knowledge_base/reference_sql.zh.md)。
 
-您现在可以：
+现在可以在 CLI 内切换到任一 subagent 提问：
 
 ```text
-/datus_schools <你的问题>
-/datus_schools_context <你的问题>
+/agent datus_schools           # 切换后,在下一行直接输入问题
+/agent datus_schools_context   # 同上
 ```
 
-或使用 [Datus-Chat](../web_chatbot/introduction.zh.md) 中的聊天机器人。
+`/agent <name>` 会把后续自然语言对话的默认 agent 切到对应 subagent。切换完成后直接输入问题（不带任何前缀）即可。也可以在 [Datus-Chat](../web_chatbot/introduction.zh.md) 中调用同样的 subagent。
 
 
 ## 3. 比较 Subagent 性能
@@ -262,7 +264,7 @@ datus-agent eval   --datasource california_schools   --benchmark california_scho
 这是上下文数据工程最强大的演示：
 
 ```bash
-python -m datus.multi_round_benchmark \
+datus-agent multi-round-benchmark \
   --config ~/.datus/conf/agent.yml \
   --datasource california_schools \
   --benchmark california_schools \

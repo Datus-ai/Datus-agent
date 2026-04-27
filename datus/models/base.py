@@ -259,7 +259,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
     async def test_connection(self, timeout: float = 10.0) -> Tuple[bool, str]:
         """Probe the model with a 1-token request; return (ok, error_message).
 
-        Used by ``/model`` and the ``datus init`` wizard to verify provider
+        Used by ``/model`` to verify provider
         credentials before persisting them. The default implementation runs
         the synchronous :meth:`generate` inside a worker thread wrapped in
         ``asyncio.wait_for`` so both blocking HTTP clients and genuinely

@@ -6,7 +6,7 @@
 
 Keeps the LanceDB schema index in ``~/.datus/data/{project}/datus_db/``
 aligned with the current datasource so ``@Table`` autocompletion reflects
-freshly added tables without a manual ``datus agent init`` rebuild. The
+freshly added tables without a manual ``datus-agent bootstrap-kb`` rebuild. The
 coordinator is intentionally a thin scheduler on top of the already-async
 ``init_local_schema_async`` helper: cancel-before-restart, coalesce
 duplicate requests, funnel failures to ``warning`` logs rather than

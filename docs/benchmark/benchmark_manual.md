@@ -22,7 +22,7 @@ Get started quickly with the built-in benchmark datasets.
 
 ```bash title="Terminal"
 pip install datus-agent
-datus-agent init
+datus           # then inside the REPL: /model, /datasource, /init
 ```
 
 ### Step 2: Configure Environment

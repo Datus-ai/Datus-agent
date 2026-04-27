@@ -52,17 +52,6 @@ def create_parser() -> argparse.ArgumentParser:
     # Create subparsers for different commands, inheriting global options
     subparsers = parser.add_subparsers(dest="action", help="Action to perform")
 
-    # init command — project workspace initialization (AGENTS.md)
-    init_parser = subparsers.add_parser(
-        "init",
-        help="Initialize project workspace (generate AGENTS.md)",
-        parents=[global_parser],
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    init_parser.add_argument(
-        "--datasource", type=str, default="", help="Datasource to probe for schema info in AGENTS.md"
-    )
-
     # service command
     service_parser = subparsers.add_parser(
         "service",
@@ -512,13 +501,6 @@ def main():
     if not args.action:
         parser.print_help()
         return 1
-
-    # init command — generate AGENTS.md workspace (requires configured LLM)
-    if args.action == "init":
-        configure_logging(args.debug, console_output=False)
-        from datus.cli.init_workspace import InitWorkspace
-
-        return InitWorkspace(args).run()
 
     if args.action == "tutorial":
         configure_logging(args.debug, console_output=False)

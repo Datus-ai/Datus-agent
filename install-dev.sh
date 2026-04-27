@@ -240,7 +240,9 @@ ${GREEN}${BOLD}Datus-Agent (dev) installed from ${DATUS_REF}.${RESET}
 
 Next steps:
   1. Open a new shell, or run ${BOLD}source ~/.zshrc${RESET} (or your rc file) to pick up PATH.
-  2. Run ${BOLD}datus-agent init${RESET} to configure your LLM provider and database.
+  2. Run ${BOLD}datus${RESET} to launch the REPL, then use ${BOLD}/model${RESET} to configure
+     an LLM and ${BOLD}/datasource${RESET} to add a datasource. Run ${BOLD}/init${RESET} inside
+     the REPL to generate AGENTS.md for the current project.
 
 To install additional Python packages into the global venv:
   ${BOLD}datus-pip install <package>${RESET}

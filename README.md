@@ -60,7 +60,7 @@ Stable install from PyPI:
 curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | sh
 ```
 
-This creates a dedicated venv at `~/.datus/venv`, installs `datus-agent` from PyPI into it, and drops `datus`, `datus-cli`, `datus-api`, `datus-mcp`, `datus-agent`, `datus-gateway`, and `datus-pip` shims into `~/.local/bin`. Open a new shell (or `source ~/.zshrc`) to pick up PATH, then run `datus-agent init`.
+This creates a dedicated venv at `~/.datus/venv`, installs `datus-agent` from PyPI into it, and drops `datus`, `datus-cli`, `datus-api`, `datus-mcp`, `datus-agent`, `datus-gateway`, and `datus-pip` shims into `~/.local/bin`. Open a new shell (or `source ~/.zshrc`) to pick up PATH, then run `datus` to launch the REPL — use `/model` to configure an LLM, `/datasource` to add a datasource, and (optionally) `/init` to generate `AGENTS.md` for the current project.
 
 To install additional Python packages into the global venv later, use `datus-pip install <package>` (it is a shim for `~/.datus/venv/bin/pip`).
 
@@ -84,10 +84,10 @@ Other variables supported by both installers: `DATUS_HOME` (default `~/.datus`),
 
 ```bash
 pip install datus-agent
-datus-agent init
+datus
 ```
 
-`datus-agent init` walks you through configuring your LLM provider, database connection, and knowledge base. For detailed guidance, see the [Quickstart Guide](https://docs.datus.ai/getting_started/Quickstart/).
+After the REPL starts, run `/model` to configure an LLM, `/datasource` to add a datasource, and (optionally) `/init` to generate `AGENTS.md` for the current project. For detailed guidance, see the [Quickstart Guide](https://docs.datus.ai/getting_started/Quickstart/).
 
 ### Four Ways to Use Datus
 
@@ -148,7 +148,7 @@ datus-agent bootstrap-kb --datasource demo --components metadata,reference_sql,e
 
 ## Configuration
 
-Datus is configured via `agent.yml`. Run `datus-agent init` to generate a starter config, or see [`conf/agent.yml.example`](conf/agent.yml.example) for all options.
+Datus is configured via `agent.yml`. Launch `datus` and use `/model` plus `/datasource` to populate it interactively, or copy [`conf/agent.yml.example`](conf/agent.yml.example) and edit it by hand.
 
 | Section | Purpose |
 |---------|---------|

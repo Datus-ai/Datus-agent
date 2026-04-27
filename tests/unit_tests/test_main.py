@@ -88,11 +88,6 @@ class TestCreateParser:
         args = parser.parse_args(["probe-llm"])
         assert args.action == "probe-llm"
 
-    def test_init_action_parsed(self):
-        parser = create_parser()
-        args = parser.parse_args(["init"])
-        assert args.action == "init"
-
     def test_tutorial_action_parsed(self):
         parser = create_parser()
         args = parser.parse_args(["tutorial"])
@@ -218,20 +213,6 @@ class TestMainNoAction:
                 with patch.object(parser, "print_help"):
                     result = main()
         assert result == 1
-
-
-class TestMainInitAction:
-    def test_init_action_runs_init_workspace(self):
-        mock_init = MagicMock()
-        mock_init.run.return_value = 0
-        with (
-            patch("datus.main.configure_logging"),
-            patch("datus.cli.init_workspace.InitWorkspace", return_value=mock_init),
-            patch.object(sys, "argv", ["datus", "init"]),
-        ):
-            result = main()
-        mock_init.run.assert_called_once()
-        assert result == 0
 
 
 class TestMainTutorialAction:
