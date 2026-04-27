@@ -584,14 +584,23 @@ class TestPasteCollapse:
         assert f"prefix {paste_text} suffix" == buffer.text
 
     def test_ctrl_e_noop_without_paste(self, tui_app: DatusApp) -> None:
+        """Every Ctrl+E binding must be filter-gated off when no paste
+        is stored — otherwise the keystroke would surprise users who
+        never bracketed-pasted into the input bar.
+
+        Collect the bindings up-front (rather than asserting inside the
+        loop and ``return``-ing on the first hit) so the contract holds
+        for ALL Ctrl+E bindings, not just whichever happens to come
+        first in the registry.
+        """
         from prompt_toolkit.keys import Keys
 
         assert tui_app._stored_paste is None
-        for binding in tui_app.key_bindings.bindings:
-            if Keys.ControlE in getattr(binding, "keys", ()):
-                assert not binding.filter()
-                return
-        pytest.fail("ControlE binding not found")
+        ctrl_e_bindings = [
+            binding for binding in tui_app.key_bindings.bindings if Keys.ControlE in getattr(binding, "keys", ())
+        ]
+        assert ctrl_e_bindings, "ControlE binding not found"
+        assert all(not binding.filter() for binding in ctrl_e_bindings)
 
     def test_placeholder_deleted_clears_state(self, tui_app: DatusApp) -> None:
         """When user deletes the placeholder text, stored paste is discarded."""

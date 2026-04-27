@@ -150,13 +150,16 @@ class TestMaybeScheduleStartupSync:
         cli.bg_sync.schedule.assert_not_called()
 
     def test_startup_sync_noop_without_bg_sync_attribute(self, cli):
-        """Early-init callers can invoke this before bg_sync is wired."""
+        """Early-init callers can invoke this before bg_sync is wired —
+        the method must short-circuit without fabricating the attribute,
+        otherwise the eventual real wiring in ``__init__`` would attach
+        to an empty placeholder instead of the real
+        :class:`BackgroundSchemaSyncManager`."""
         self._configure(cli, on_startup=True, current_ds="local_db")
-        # Ensure attribute missing
         if hasattr(cli, "bg_sync"):
             delattr(cli, "bg_sync")
-        # Must not raise
         cli._maybe_schedule_startup_sync()
+        assert not hasattr(cli, "bg_sync")
 
 
 class TestCmdExitShutsDownBgSync:
@@ -167,11 +170,21 @@ class TestCmdExitShutsDownBgSync:
         cli.bg_sync.shutdown.assert_called_once_with()
 
     def test_exit_works_without_bg_sync(self, cli):
+        """``_cmd_exit`` must still close the DB connector and return
+        ``EXIT_SENTINEL`` when bg_sync was never wired — that path runs
+        when the REPL aborts early (e.g. config load failure) before
+        ``BackgroundSchemaSyncManager`` is constructed in ``__init__``."""
+        from datus.cli.tui.app import EXIT_SENTINEL
+
         if hasattr(cli, "bg_sync"):
             delattr(cli, "bg_sync")
-        cli.db_connector = MagicMock()
-        # Must not raise even when bg_sync is absent
-        cli._cmd_exit("")
+        connector = MagicMock()
+        cli.db_connector = connector
+
+        result = cli._cmd_exit("")
+
+        assert result == EXIT_SENTINEL
+        connector.close.assert_called_once_with()
 
 
 class TestCommandType:

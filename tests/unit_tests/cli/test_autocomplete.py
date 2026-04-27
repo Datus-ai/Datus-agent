@@ -123,12 +123,15 @@ class TestSQLCompleterGetCompletions:
         assert "users" in texts
 
     def test_select_context_suggests_columns(self):
+        """In a SELECT projection context the completer should surface
+        registered column names matching the current prefix — that's the
+        whole point of feeding ``update_tables`` ahead of completion."""
         c = SQLCompleter()
         c.update_tables({"users": ["id", "name"]})
         doc = Document("SELECT n", cursor_position=8)
-        list(c.get_completions(doc))
-        # Depending on what "previous word" is, columns may be suggested
-        # At minimum it should not raise
+        completions = list(c.get_completions(doc))
+        texts = [comp.text for comp in completions]
+        assert "name" in texts
 
     def test_keyword_completion(self):
         c = SQLCompleter()
@@ -379,7 +382,6 @@ class TestDynamicAtReferenceCompleterReloadData:
         iteration.
         """
         import threading
-        import time
 
         snapshots = [
             {f"snap0_{i}": {} for i in range(50)},
@@ -419,10 +421,13 @@ class TestDynamicAtReferenceCompleterReloadData:
         w2.start()
         w1.join()
         w2.join()
-        # Give the reader one more tick to catch any final torn state
-        time.sleep(0.05)
         stop.set()
         r.join()
+        # Final read on the main thread to ensure no torn state survives
+        # past join — mirrors the reader contract without depending on
+        # wall-clock timing (the previous time.sleep(0.05) was a debug
+        # artifact that made the test flaky on busy CI hosts).
+        c.fuzzy_match("snap")
 
         assert errors == []
         # Final snapshot must be one of the valid ones (all keys share the
