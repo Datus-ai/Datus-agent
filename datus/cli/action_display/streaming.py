@@ -86,16 +86,28 @@ class InlineStreamingContext:
         sync_mode: bool = False,
         interaction_broker: Optional["InteractionBroker"] = None,
         live_state: Optional["LiveDisplayState"] = None,
-        streaming_deltas: Optional[List[ActionHistory]] = None,
+        streaming_deltas: Optional[Dict[str, List[ActionHistory]]] = None,
     ):
         self.actions = actions_list
-        # Parallel queue holding ``thinking_delta`` actions only. Populated by
-        # the caller (``chat_commands.run_chat_stream``) as deltas stream in
-        # and cleared on paired terminal response actions. The streaming
-        # context consumes from here via ``_delta_processed_index`` so
-        # ``self.actions`` stays delta-free and structural.
-        self._deltas: List[ActionHistory] = streaming_deltas if streaming_deltas is not None else []
-        self._delta_processed_index: int = 0
+        # Per-message dict of ``thinking_delta`` actions. The caller
+        # (``chat_commands.run_chat_stream``) appends each delta to a
+        # bucket keyed by ``action.action_id`` (the ``thinking_stream_id``
+        # shared across all deltas + paired terminal response in a single
+        # message). Buckets only grow; the consumer drops a bucket when
+        # it processes the matching terminal response. Keying by
+        # ``action_id`` eliminates the data race the previous shared list
+        # had — the producer no longer mutates anything but its own
+        # bucket via ``append``.
+        self._deltas: Dict[str, List[ActionHistory]] = streaming_deltas if streaming_deltas is not None else {}
+        # Per-bucket consumption cursor. ``_process_deltas`` walks each
+        # bucket forward from its cursor; ``_print_completed_action``
+        # drains and pops the bucket on the matching terminal response.
+        self._delta_cursors: Dict[str, int] = {}
+        # ``action_id`` of the bucket that currently owns the live pinned
+        # tail. Used by ``_reprint_history`` for the Ctrl+O snapshot and
+        # by ``_drain_bucket`` to insert a finalize boundary when
+        # switching from one message's deltas to another's.
+        self._active_message_id: Optional[str] = None
         self.display = display_instance
         self._history_turns: List[Tuple[str, List[ActionHistory]]] = history_turns or []
         self._current_user_message = current_user_message
@@ -315,7 +327,11 @@ class InlineStreamingContext:
 
     def __enter__(self):
         self._processed_index = 0
-        self._delta_processed_index = 0
+        # Cursors and active-bucket pointer are owned by the consumer; the
+        # ``_deltas`` dict itself is owned by the caller (``chat_commands``)
+        # so we never reset it here.
+        self._delta_cursors = {}
+        self._active_message_id = None
         self._stop_event.clear()
         self._paused = False
         # Fresh turn: forget which response we've already finalized so the
@@ -511,18 +527,20 @@ class InlineStreamingContext:
                 a for a in self.actions[: self._processed_index] if not (a.role == ActionRole.USER and a.depth == 0)
             ]
             self.display.render_action_history(current_actions, verbose=verbose, _show_partial_done=False)
-            # 3a. Render the streaming main-agent body (from deltas accumulator)
-            # so mid-run Ctrl+O doesn't drop the text the user was reading.
-            # ``_response`` / plain ``response`` only arrive after deltas end,
-            # so the deltas queue is the only source of truth for the
-            # *in-flight* message body. We pick the last delta's
-            # ``accumulated`` field because each delta carries the full
-            # running text up to that point. After printing we reset the
-            # markdown buffer and latch ``_stream_body_finalized`` so the
-            # end-of-message ``_finalize_markdown_stream`` only commits the
-            # *incremental* tail that arrives after this point — avoiding a
-            # duplicate body in the scrollback.
-            if self._deltas:
+            # 3a. Render the streaming main-agent body (from the active
+            # message's delta bucket) so mid-run Ctrl+O doesn't drop the
+            # text the user was reading. ``_response`` / plain ``response``
+            # only arrive after deltas end, so the bucket is the only
+            # source of truth for the *in-flight* message body. We pick
+            # the last delta's ``accumulated`` field because each delta
+            # carries the full running text up to that point. After
+            # printing we reset the markdown buffer and latch
+            # ``_stream_body_finalized`` so the end-of-message
+            # ``_finalize_markdown_stream`` only commits the *incremental*
+            # tail that arrives after this point — avoiding a duplicate
+            # body in the scrollback.
+            active_bucket = self._resolve_active_bucket()
+            if active_bucket:
                 if self._markdown_buffer is not None and self._markdown_buffer.has_spilled():
                     # Overflow paragraphs have already been committed to the
                     # scrollback during the stream; only the unspilled tail
@@ -535,7 +553,7 @@ class InlineStreamingContext:
                     self._stream_body_finalized = True
                 else:
                     last_accumulated = ""
-                    for delta in reversed(self._deltas):
+                    for delta in reversed(active_bucket):
                         if isinstance(delta.output, dict):
                             candidate = delta.output.get("accumulated", "")
                             if isinstance(candidate, str) and candidate:
@@ -1129,30 +1147,77 @@ class InlineStreamingContext:
     # -- thinking_delta handling --------------------------------------------
 
     def _process_deltas(self) -> None:
-        """Drain new ``thinking_delta`` actions from the streaming_deltas queue.
+        """Drain new ``thinking_delta`` actions from per-message buckets.
 
-        Called on every refresh tick in TUI mode. Handles the caller's
-        per-message reset (``streaming_deltas.clear()``): if the queue shrank
-        below our cursor we finalize the markdown stream (flushing any
-        pending tail into the scrollback) and rewind. New deltas are
-        forwarded to :meth:`_handle_thinking_delta` in order.
+        Called on every refresh tick in TUI mode. Each message owns its
+        own bucket under ``self._deltas[action_id]``; the producer only
+        appends to its own bucket, so iteration is race-free as long as
+        we re-read ``len(bucket)`` per iteration. The matching terminal
+        ``*_response`` / ``response`` action triggers the bucket pop in
+        :meth:`_print_completed_action` (see :meth:`_drop_bucket`).
         """
         if self._markdown_buffer is None:
             return
-        current_len = len(self._deltas)
-        if current_len < self._delta_processed_index:
-            # Caller cleared the list — message boundary reached. Commit
-            # whatever tail is still buffered so it lands in the scrollback
-            # and reset our cursor.
-            self._finalize_markdown_stream()
-            self._delta_processed_index = 0
-            current_len = len(self._deltas)
-        while self._delta_processed_index < current_len:
-            action = self._deltas[self._delta_processed_index]
-            self._delta_processed_index += 1
+        # Snapshot keys so a producer-side ``setdefault`` for a new
+        # message during iteration doesn't break the loop. Buckets we
+        # don't see this tick simply land on the next one.
+        for message_id in list(self._deltas):
+            self._drain_bucket(message_id)
+
+    def _drain_bucket(self, message_id: str) -> None:
+        """Forward all unread deltas in one bucket through the markdown buffer.
+
+        On a switch from one in-flight message to another we finalize the
+        previous message's tail first, mirroring the per-message boundary
+        the old shared-list flow expressed via ``streaming_deltas.clear()``.
+        """
+        if self._markdown_buffer is None:
+            return
+        bucket = self._deltas.get(message_id)
+        if bucket is None:
+            return
+        cursor = self._delta_cursors.get(message_id, 0)
+        # ``len`` is GIL-atomic and the bucket only grows, so this snapshot
+        # bounds the loop safely; any deltas appended after we read ``n``
+        # are picked up on the next tick (or by the drain inside
+        # ``_print_completed_action``).
+        n = len(bucket)
+        while cursor < n:
+            action = bucket[cursor]
+            cursor += 1
             if action.depth != 0:
                 continue
+            if self._active_message_id != message_id:
+                if self._active_message_id is not None:
+                    self._finalize_markdown_stream()
+                self._active_message_id = message_id
             self._handle_thinking_delta(action)
+        self._delta_cursors[message_id] = cursor
+
+    def _drop_bucket(self, message_id: Optional[str]) -> None:
+        """Remove a bucket once its terminal response has been processed."""
+        if not message_id:
+            return
+        self._deltas.pop(message_id, None)
+        self._delta_cursors.pop(message_id, None)
+        if self._active_message_id == message_id:
+            self._active_message_id = None
+
+    def _resolve_active_bucket(self) -> List[ActionHistory]:
+        """Return the in-flight message's delta bucket, or empty list.
+
+        Prefers ``_active_message_id`` (the bucket the consumer is
+        currently rendering into the pinned region). Falls back to the
+        most-recently inserted bucket so a Ctrl+O snapshot fired before
+        the consumer's first delta tick still surfaces the in-flight
+        body. Returns an empty list when no bucket exists.
+        """
+        bucket_id = self._active_message_id
+        if bucket_id is None or bucket_id not in self._deltas:
+            bucket_id = next(reversed(self._deltas), None) if self._deltas else None
+        if bucket_id is None:
+            return []
+        return self._deltas.get(bucket_id, [])
 
     def _handle_thinking_delta(self, action: ActionHistory) -> None:
         """Append a streaming text delta into the markdown buffer (TUI mode).
@@ -1214,10 +1279,9 @@ class InlineStreamingContext:
 
         In the accumulator-only flow this is the *only* point where the
         main-agent response lands in the Rich scrollback. Triggered by:
-        ``_process_deltas`` detecting the caller's
-        ``streaming_deltas.clear()`` (paired terminal action arrived),
-        ``_print_completed_action`` seeing the plain ``response`` action,
-        and ``__exit__`` as a safety drain.
+        ``_drain_bucket`` switching active messages, ``_print_completed_action``
+        seeing the paired terminal response, and ``__exit__`` as a safety
+        drain.
         """
         if self._markdown_buffer is None:
             return
@@ -1283,12 +1347,19 @@ class InlineStreamingContext:
             and action.status == ActionStatus.SUCCESS
             and action.depth == 0
         )
+        # Drain any trailing deltas in this message's bucket before the
+        # terminal-response branches below run. Covers the race where the
+        # producer appended the last few deltas and the terminal action
+        # between two refresh ticks — without the drain those deltas
+        # would be dropped along with the bucket.
+        if is_main_assistant_success and action.action_id and action.action_id in self._deltas:
+            self._drain_bucket(action.action_id)
         # Accumulator-only dedup. Three signals can indicate the main-agent
         # body has already been (or is being) flushed to the scrollback:
         #   * ``_markdown_stream_has_streamed`` — deltas arrived but finalize
         #     hasn't run yet (this call is the paired terminal action).
-        #   * ``_stream_body_finalized`` — ``_process_deltas`` already
-        #     detected the caller's ``streaming_deltas.clear()`` and flushed.
+        #   * ``_stream_body_finalized`` — ``_finalize_markdown_stream``
+        #     has already pushed body segments into the scrollback.
         #   * ``_turn_finalized`` — a previous wrapper action in this turn
         #     already went through the finalize path.
         # Any of them means we must not re-render via ``render_main_action``.
@@ -1300,10 +1371,17 @@ class InlineStreamingContext:
             self._markdown_active_stream_ids.clear()
             if self._markdown_stream_has_streamed:
                 self._finalize_markdown_stream()
+            self._drop_bucket(action.action_id)
             self._turn_finalized = True
             return
         if self._tui_mode and action.action_id and action.action_id in self._markdown_stream_consumed_ids:
+            self._drop_bucket(action.action_id)
             return
+        # Non-stream path: terminal response without any preceding delta
+        # (e.g. wrapper *_response with a fresh id). Drop a bucket if one
+        # somehow exists for safety, then fall through to normal render.
+        if is_main_assistant_success:
+            self._drop_bucket(action.action_id)
         renderables = self.display.renderer.render_main_action(action, self._verbose)
         if not renderables:
             return

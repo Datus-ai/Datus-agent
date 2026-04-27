@@ -330,12 +330,16 @@ class ChatCommands:
             # Initialize action history display
             action_display = ActionHistoryDisplay(self.console, live_state=getattr(self.cli, "live_state", None))
             incremental_actions = []
-            # Streaming text deltas (thinking_delta, depth=0) are routed to this
-            # separate queue so the main trace renderer never has to walk them
-            # again. The TUI streaming context pops deltas off this list as it
-            # repaints the pinned region, and drops the list on each paired
-            # terminal response so the accumulator resets per message.
-            streaming_deltas = []
+            # Streaming text deltas (thinking_delta, depth=0) are routed to a
+            # per-message bucket keyed by ``action.action_id`` (the
+            # ``thinking_stream_id`` shared across all deltas + the paired
+            # terminal response in one message). The producer only appends
+            # to its own bucket; the TUI streaming context drains buckets
+            # via per-bucket cursors and drops a bucket when it processes
+            # the matching terminal response. A dict avoids the data race
+            # the previous shared-list approach had between the producer
+            # (asyncio bg loop) and the consumer (refresh daemon thread).
+            streaming_deltas: dict[str, list[ActionHistory]] = {}
             # Will be set True after the streaming context exits if it has
             # already flushed the main-agent body to the scrollback. When True,
             # ``_render_final_response`` skips the one-shot
@@ -367,8 +371,8 @@ class ChatCommands:
                         # the main-agent accumulator; sub-agents have their own
                         # pinned-region path.
                         if action.action_type == "thinking_delta":
-                            if action.depth == 0:
-                                streaming_deltas.append(action)
+                            if action.depth == 0 and action.action_id:
+                                streaming_deltas.setdefault(action.action_id, []).append(action)
                             continue
                         # Node final actions (e.g. chat_response) — keep for
                         # final response rendering but skip streaming trace.
@@ -386,15 +390,12 @@ class ChatCommands:
                             pending_non_thinking = _drop_if_matches_final(
                                 pending_non_thinking, action, incremental_actions
                             )
-                            # Wrapper *_response closes the delta accumulator for
-                            # this message; reset so a follow-up turn doesn't see
-                            # the previous body in its replay.
-                            streaming_deltas.clear()
                             continue
                         # Plain "response" from the model layer (openai_compatible /
                         # codex) is the paired terminal action for the delta
-                        # stream. Push it to the trace list and reset the delta
-                        # accumulator at the same time.
+                        # stream. Push it to the trace list; the consumer drops
+                        # the matching delta bucket when it processes this
+                        # action via ``_print_completed_action``.
                         if (
                             action.role == ActionRole.ASSISTANT
                             and action.depth == 0
@@ -405,7 +406,6 @@ class ChatCommands:
                                 incremental_actions.append(pending_non_thinking)
                                 pending_non_thinking = None
                             incremental_actions.append(action)
-                            streaming_deltas.clear()
                             continue
                         # Defer ASSISTANT text flagged as non-thinking — it may
                         # be the tail text that duplicates the upcoming *_response.
@@ -489,8 +489,8 @@ class ChatCommands:
                                     await auto_submit_interaction(broker, action)
                             continue
                         if action.action_type == "thinking_delta":
-                            if action.depth == 0:
-                                streaming_deltas.append(action)
+                            if action.depth == 0 and action.action_id:
+                                streaming_deltas.setdefault(action.action_id, []).append(action)
                             continue
                         # Node final actions (e.g. chat_response) — keep for
                         # final response rendering but skip streaming trace.
@@ -508,7 +508,6 @@ class ChatCommands:
                             pending_non_thinking = _drop_if_matches_final(
                                 pending_non_thinking, action, incremental_actions
                             )
-                            streaming_deltas.clear()
                             continue
                         if (
                             action.role == ActionRole.ASSISTANT
@@ -520,7 +519,6 @@ class ChatCommands:
                                 incremental_actions.append(pending_non_thinking)
                                 pending_non_thinking = None
                             incremental_actions.append(action)
-                            streaming_deltas.clear()
                             continue
                         # Defer ASSISTANT text flagged as non-thinking — it may
                         # be the tail text that duplicates the upcoming *_response.

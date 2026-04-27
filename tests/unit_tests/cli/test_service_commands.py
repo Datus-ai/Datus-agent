@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from datus.cli.service_client import READ_METHODS, ServiceClient, ServiceClientRegistry
 from datus.cli.service_commands import ServiceCommands
@@ -113,18 +115,20 @@ class TestDispatchServiceListing:
         assert cmd.dispatch(".superset", "") is False
 
     def test_cmd_services_lists_all(self):
+        """The ``list`` sub-token preserves the read-only listing path."""
         cmd, cli = _make_commands_with_bi_stub()
-        cmd.cmd_services("")
+        cmd.cmd_services("list")
         # Printed a table (Table object, not a string).
         assert cli.console.print.call_count == 1
 
     def test_cmd_services_empty_prints_hint(self):
+        """``list`` on an empty config still emits the "no services" hint."""
         cli = _fake_cli()
         cli.agent_config = SimpleNamespace(
             services=SimpleNamespace(bi_platforms={}, schedulers={}, semantic_layer={}),
         )
         cmd = ServiceCommands(cli)
-        cmd.cmd_services("")
+        cmd.cmd_services("list")
         # Should have printed at least one yellow hint message.
         msg = str(cli.console.print.call_args_list[0])
         assert "No services configured" in msg
@@ -754,6 +758,618 @@ class TestQueryEnvelopeRendering:
 
         # Falls back to K/V table rendering (no unwrapping).
         assert any(isinstance(c.args[0], Table) for c in cli.console.print.call_args_list)
+
+
+class TestServiceConfigDispatch:
+    """``cmd_services`` token dispatch — the TUI path is invoked by
+    ``dashboard`` / ``scheduler`` / ``config`` tokens; bare and ``list``
+    tokens render the read-only listing instead."""
+
+    def test_bare_token_opens_menu_on_dashboard_tab(self):
+        """Bare ``/services`` lands directly in the TUI; the listing is
+        only emitted on ``/services list``."""
+        cmd, _ = _make_commands_with_bi_stub()
+        with patch.object(ServiceCommands, "_run_config_menu") as menu:
+            cmd.cmd_services("")
+        menu.assert_called_once()
+        assert menu.call_args.kwargs == {"initial_tab": "dashboard"}
+
+    def test_list_token_renders_listing(self):
+        cmd, cli = _make_commands_with_bi_stub()
+        with patch.object(ServiceCommands, "_run_config_menu") as menu:
+            cmd.cmd_services("list")
+        menu.assert_not_called()
+        assert cli.console.print.call_count >= 1
+
+    def test_dashboard_token_opens_menu_with_dashboard_tab(self):
+        cmd, _ = _make_commands_with_bi_stub()
+        with patch.object(ServiceCommands, "_run_config_menu") as menu:
+            cmd.cmd_services("dashboard")
+        menu.assert_called_once()
+        assert menu.call_args.kwargs == {"initial_tab": "dashboard"}
+
+    def test_scheduler_token_opens_menu_with_scheduler_tab(self):
+        cmd, _ = _make_commands_with_bi_stub()
+        with patch.object(ServiceCommands, "_run_config_menu") as menu:
+            cmd.cmd_services("scheduler")
+        menu.assert_called_once()
+        assert menu.call_args.kwargs == {"initial_tab": "scheduler"}
+
+    def test_unknown_token_falls_back_to_listing_with_hint(self):
+        cmd, cli = _make_commands_with_bi_stub()
+        with patch.object(ServiceCommands, "_run_config_menu") as menu:
+            cmd.cmd_services("foobar")
+        menu.assert_not_called()
+        rendered = " ".join(str(c) for c in cli.console.print.call_args_list)
+        assert "/services dashboard" in rendered or "/services scheduler" in rendered
+
+
+class TestApplySelectionPersistence:
+    """``_apply_selection`` orchestrates install → probe → persist for save,
+    and the right ``configuration_manager`` calls for delete /
+    set_default / set_project_default."""
+
+    def _commands_with_writable_cli(self):
+        cli = _fake_cli()
+        # Set ``services`` shape so the listing path doesn't crash.
+        cli.agent_config = SimpleNamespace(
+            services=SimpleNamespace(bi_platforms={"old": {}}, schedulers={}, semantic_layer={}),
+            set_active_dashboard=MagicMock(),
+            set_active_scheduler=MagicMock(),
+            active_dashboard=MagicMock(return_value=None),
+            active_scheduler=MagicMock(return_value=None),
+        )
+        return ServiceCommands(cli), cli
+
+    def test_save_runs_install_probe_and_persists(self):
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cmd, cli = self._commands_with_writable_cli()
+        sel = ServiceConfigSelection(
+            action="save",
+            section="bi_platforms",
+            name="superset",
+            payload={"type": "superset", "api_base_url": "http://x", "username": "u"},
+        )
+        mgr = MagicMock()
+        mgr.get = MagicMock(return_value={"bi_platforms": {}, "schedulers": {}, "semantic_layer": {}})
+        with (
+            patch("datus.cli.service_adapter_installer.ensure_adapter") as ensure,
+            patch("datus.cli.service_adapter_installer.hot_reload_adapter") as hot,
+            patch("datus.cli.service_commands.ServiceCommands._probe", return_value=(True, "5 dashboards")),
+            patch("datus.cli.service_commands.ServiceCommands._reload_agent_config"),
+            patch("datus.configuration.agent_config_loader.configuration_manager", return_value=mgr),
+        ):
+            ensure.return_value = SimpleNamespace(
+                ok=True, package="datus-bi-superset", import_name="datus_bi_superset", stdout="", stderr=""
+            )
+            status = cmd._apply_selection(sel)
+        ensure.assert_called_once_with("bi_platforms", "superset")
+        hot.assert_called_once_with("bi_platforms", "superset")
+        mgr.update_item.assert_called_once()
+        kwargs = mgr.update_item.call_args
+        assert kwargs.args[0] == "services"
+        assert "Saved" in (status or "")
+        assert "Connected" in (status or "")
+
+    def test_save_persists_even_when_probe_fails(self):
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cmd, _ = self._commands_with_writable_cli()
+        sel = ServiceConfigSelection(
+            action="save",
+            section="bi_platforms",
+            name="superset",
+            payload={"type": "superset", "api_base_url": "http://broken"},
+        )
+        mgr = MagicMock()
+        mgr.get = MagicMock(return_value={"bi_platforms": {}})
+        with (
+            patch("datus.cli.service_adapter_installer.ensure_adapter") as ensure,
+            patch("datus.cli.service_adapter_installer.hot_reload_adapter"),
+            patch(
+                "datus.cli.service_commands.ServiceCommands._probe",
+                return_value=(False, "Connection refused"),
+            ),
+            patch("datus.cli.service_commands.ServiceCommands._reload_agent_config"),
+            patch("datus.configuration.agent_config_loader.configuration_manager", return_value=mgr),
+        ):
+            ensure.return_value = SimpleNamespace(
+                ok=True, package="datus-bi-superset", import_name="datus_bi_superset", stdout="", stderr=""
+            )
+            status = cmd._apply_selection(sel)
+        # YAML still written — probe failure is informational, not fatal.
+        mgr.update_item.assert_called_once()
+        assert "Probe failed" in (status or "")
+
+    def test_save_skipped_on_install_failure(self):
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cmd, _ = self._commands_with_writable_cli()
+        sel = ServiceConfigSelection(
+            action="save",
+            section="bi_platforms",
+            name="ghost",
+            payload={"type": "ghost", "api_base_url": "http://x"},
+        )
+        mgr = MagicMock()
+        with (
+            patch("datus.cli.service_adapter_installer.ensure_adapter") as ensure,
+            patch("datus.configuration.agent_config_loader.configuration_manager", return_value=mgr),
+        ):
+            ensure.return_value = SimpleNamespace(
+                ok=False,
+                package="datus-bi-ghost",
+                import_name="datus_bi_ghost",
+                stdout="",
+                stderr="not found",
+                error="exit 1",
+            )
+            status = cmd._apply_selection(sel)
+        mgr.update_item.assert_not_called()
+        assert "skipped" in (status or "").lower() or "fail" in (status or "").lower()
+
+    def test_delete_persists_with_delete_old_key_true(self):
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cmd, _ = self._commands_with_writable_cli()
+        sel = ServiceConfigSelection(action="delete", section="bi_platforms", name="old")
+        mgr = MagicMock()
+        mgr.get = MagicMock(return_value={"bi_platforms": {"old": {}}, "schedulers": {}})
+        with (
+            patch("datus.cli.service_commands.ServiceCommands._reload_agent_config"),
+            patch("datus.configuration.agent_config_loader.configuration_manager", return_value=mgr),
+        ):
+            cmd._apply_selection(sel)
+        # delete_old_key=True so the YAML key is dropped, not just blanked.
+        mgr.update_item.assert_called_once()
+        assert mgr.update_item.call_args.kwargs.get("delete_old_key") is True
+
+    def test_set_global_default_clears_others(self):
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cmd, _ = self._commands_with_writable_cli()
+        sel = ServiceConfigSelection(action="set_default", section="schedulers", name="airflow_dev")
+        mgr = MagicMock()
+        mgr.get = MagicMock(
+            return_value={
+                "schedulers": {
+                    "airflow_prod": {"type": "airflow", "default": True},
+                    "airflow_dev": {"type": "airflow"},
+                },
+            }
+        )
+        with (
+            patch("datus.cli.service_commands.ServiceCommands._reload_agent_config"),
+            patch("datus.configuration.agent_config_loader.configuration_manager", return_value=mgr),
+        ):
+            cmd._apply_selection(sel)
+        mgr.update_item.assert_called_once()
+        # The committed payload should mark the new entry default and strip the old one.
+        committed = mgr.update_item.call_args.args[1]
+        schedulers = committed["schedulers"]
+        assert schedulers["airflow_dev"]["default"] is True
+        assert "default" not in schedulers["airflow_prod"]
+
+    def test_set_project_default_calls_setter(self):
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cmd, cli = self._commands_with_writable_cli()
+        sel = ServiceConfigSelection(action="set_project_default", section="bi_platforms", name="superset")
+        cmd._apply_selection(sel)
+        cli.agent_config.set_active_dashboard.assert_called_once_with("superset")
+
+    def test_set_project_default_clears_when_name_empty(self):
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cmd, cli = self._commands_with_writable_cli()
+        sel = ServiceConfigSelection(action="set_project_default", section="schedulers", name="")
+        cmd._apply_selection(sel)
+        cli.agent_config.set_active_scheduler.assert_called_once_with(None)
+
+
+class TestRunConfigMenu:
+    """``_run_config_menu`` loops the TUI; ``_run_app`` wraps stdin via
+    ``tui_app.suspend_input`` when the outer REPL is in TUI mode.
+    Direct unit coverage of these helpers because the integration path
+    (real prompt_toolkit Application) is impossible to exercise headless."""
+
+    def test_loop_exits_when_app_returns_none(self):
+        cmd, _ = _make_commands_with_bi_stub()
+        with patch.object(ServiceCommands, "_run_app", return_value=None) as run_app:
+            cmd._run_config_menu(initial_tab="dashboard")
+        assert run_app.call_count == 1
+
+    def test_loop_iterates_then_exits(self):
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cmd, _ = _make_commands_with_bi_stub()
+        scripted = [
+            ServiceConfigSelection(action="test", section="bi_platforms", name="superset"),
+            None,  # second iteration cancels
+        ]
+        with (
+            patch.object(ServiceCommands, "_run_app", side_effect=scripted) as run_app,
+            patch.object(ServiceCommands, "_apply_selection", return_value="status") as apply_sel,
+            patch.object(ServiceCommands, "_refresh_after_change") as refresh,
+        ):
+            cmd._run_config_menu(initial_tab="dashboard")
+        assert run_app.call_count == 2
+        apply_sel.assert_called_once()
+        refresh.assert_called_once()
+
+    def test_seed_tab_follows_section_of_last_selection(self):
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cmd, _ = _make_commands_with_bi_stub()
+        sequences = [
+            ServiceConfigSelection(action="test", section="schedulers", name="airflow"),
+            None,
+        ]
+        captured_tabs = []
+
+        def fake_run_app(self_inner, app):
+            # Inspect the tab the App was constructed with.
+            captured_tabs.append(app._tab.value)
+            return sequences.pop(0)
+
+        with (
+            patch.object(ServiceCommands, "_run_app", new=fake_run_app),
+            patch.object(ServiceCommands, "_apply_selection", return_value=None),
+        ):
+            cmd._run_config_menu(initial_tab="dashboard")
+        # First app starts on dashboard (initial_tab); second app re-seeded
+        # to scheduler because the prior selection.section == "schedulers".
+        assert captured_tabs == ["dashboard", "scheduler"]
+
+    def test_run_app_uses_suspend_input_when_tui_active(self):
+        cmd, cli = _make_commands_with_bi_stub()
+        # Simulate an outer TUI App with ``suspend_input`` context manager.
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=None)
+        ctx.__exit__ = MagicMock(return_value=False)
+        cli.tui_app = MagicMock()
+        cli.tui_app.suspend_input = MagicMock(return_value=ctx)
+
+        fake_app = MagicMock()
+        fake_app.run = MagicMock(return_value="ran-with-suspend")
+        result = cmd._run_app(fake_app)
+        assert result == "ran-with-suspend"
+        ctx.__enter__.assert_called_once()
+        ctx.__exit__.assert_called_once()
+
+    def test_run_app_runs_directly_without_tui(self):
+        cmd, cli = _make_commands_with_bi_stub()
+        cli.tui_app = None  # outer REPL not in TUI mode
+        fake_app = MagicMock()
+        fake_app.run = MagicMock(return_value="ran-direct")
+        assert cmd._run_app(fake_app) == "ran-direct"
+
+    def test_refresh_after_change_drops_registry_cache(self):
+        cmd, _ = _make_commands_with_bi_stub()
+        assert cmd._registry is not None  # primed by _make_commands_with_bi_stub
+        cmd._refresh_after_change()
+        assert cmd._registry is None
+
+
+class TestApplySelectionMissingType:
+    """Save with no ``type`` payload short-circuits without YAML write."""
+
+    def test_save_with_missing_type_returns_none(self):
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cli = _fake_cli()
+        cli.agent_config = SimpleNamespace(
+            services=SimpleNamespace(bi_platforms={}, schedulers={}, semantic_layer={}),
+        )
+        cmd = ServiceCommands(cli)
+        sel = ServiceConfigSelection(action="save", section="bi_platforms", name="x", payload={})
+        with patch("datus.configuration.agent_config_loader.configuration_manager") as mgr_factory:
+            result = cmd._apply_selection(sel)
+        assert result is None
+        mgr_factory.assert_not_called()
+
+    def test_unknown_action_returns_none(self):
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cmd, _ = _make_commands_with_bi_stub()
+        sel = ServiceConfigSelection(action="garbled", section="bi_platforms", name="x")
+        assert cmd._apply_selection(sel) is None
+
+
+class TestDeleteEdgeCases:
+    """``_do_delete`` covers absent entries, persistence failure, and
+    automatic clearing of a project pin that pointed at the deleted entry."""
+
+    def _fresh_cmd(self):
+        cli = _fake_cli()
+        cli.agent_config = SimpleNamespace(
+            services=SimpleNamespace(bi_platforms={"old": {}}, schedulers={}, semantic_layer={}),
+            active_dashboard=MagicMock(return_value="old"),
+            active_scheduler=MagicMock(return_value=None),
+            set_active_dashboard=MagicMock(),
+            set_active_scheduler=MagicMock(),
+        )
+        return ServiceCommands(cli), cli
+
+    def test_delete_missing_entry_warns(self):
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cmd, cli = self._fresh_cmd()
+        mgr = MagicMock()
+        mgr.get = MagicMock(return_value={"bi_platforms": {}})
+        with patch("datus.configuration.agent_config_loader.configuration_manager", return_value=mgr):
+            status = cmd._apply_selection(ServiceConfigSelection(action="delete", section="bi_platforms", name="ghost"))
+        mgr.update_item.assert_not_called()
+        assert "not found" in (status or "")
+
+    def test_delete_persistence_exception_surfaces(self):
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cmd, _ = self._fresh_cmd()
+        mgr = MagicMock()
+        mgr.get = MagicMock(return_value={"bi_platforms": {"old": {}}})
+        mgr.update_item = MagicMock(side_effect=RuntimeError("disk full"))
+        with patch("datus.configuration.agent_config_loader.configuration_manager", return_value=mgr):
+            status = cmd._apply_selection(ServiceConfigSelection(action="delete", section="bi_platforms", name="old"))
+        assert "failed" in (status or "").lower()
+
+    def test_delete_clears_project_default_when_pointing_at_removed(self):
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cmd, cli = self._fresh_cmd()
+        mgr = MagicMock()
+        mgr.get = MagicMock(return_value={"bi_platforms": {"old": {}}})
+        with (
+            patch("datus.configuration.agent_config_loader.configuration_manager", return_value=mgr),
+            patch.object(ServiceCommands, "_reload_agent_config"),
+        ):
+            cmd._apply_selection(ServiceConfigSelection(action="delete", section="bi_platforms", name="old"))
+        cli.agent_config.set_active_dashboard.assert_called_once_with(None)
+
+
+class TestTestAndDefaultEdgeCases:
+    def test_test_action_reports_ok(self):
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cmd, _ = _make_commands_with_bi_stub()
+        with patch.object(ServiceCommands, "_probe", return_value=(True, "5 dashboards")):
+            status = cmd._apply_selection(
+                ServiceConfigSelection(action="test", section="bi_platforms", name="superset")
+            )
+        assert "Probe ok" in (status or "")
+
+    def test_set_global_default_missing_entry_warns(self):
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cmd, _ = _make_commands_with_bi_stub()
+        mgr = MagicMock()
+        mgr.get = MagicMock(return_value={"schedulers": {}})
+        with patch("datus.configuration.agent_config_loader.configuration_manager", return_value=mgr):
+            status = cmd._apply_selection(
+                ServiceConfigSelection(action="set_default", section="schedulers", name="ghost")
+            )
+        mgr.update_item.assert_not_called()
+        assert "not found" in (status or "")
+
+    def test_set_global_default_persistence_exception(self):
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cmd, _ = _make_commands_with_bi_stub()
+        mgr = MagicMock()
+        mgr.get = MagicMock(return_value={"schedulers": {"airflow": {"type": "airflow"}}})
+        mgr.update_item = MagicMock(side_effect=RuntimeError("disk full"))
+        with patch("datus.configuration.agent_config_loader.configuration_manager", return_value=mgr):
+            status = cmd._apply_selection(
+                ServiceConfigSelection(action="set_default", section="schedulers", name="airflow")
+            )
+        assert "failed" in (status or "").lower()
+
+    def test_set_global_default_skips_non_dict_entries(self):
+        """Defensive: a non-dict entry under ``schedulers`` (legacy YAML
+        glitch) is left alone instead of crashing the loop."""
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cmd, _ = _make_commands_with_bi_stub()
+        mgr = MagicMock()
+        mgr.get = MagicMock(
+            return_value={
+                "schedulers": {
+                    "airflow": {"type": "airflow"},
+                    "stale_token": "not-a-dict",  # malformed entry
+                }
+            }
+        )
+        with (
+            patch("datus.configuration.agent_config_loader.configuration_manager", return_value=mgr),
+            patch.object(ServiceCommands, "_reload_agent_config"),
+        ):
+            cmd._apply_selection(ServiceConfigSelection(action="set_default", section="schedulers", name="airflow"))
+        mgr.update_item.assert_called_once()
+        committed = mgr.update_item.call_args.args[1]["schedulers"]
+        # Non-dict entry preserved verbatim; default flag flipped on the airflow entry.
+        assert committed["stale_token"] == "not-a-dict"
+        assert committed["airflow"]["default"] is True
+
+    def test_set_global_default_only_for_schedulers_section(self):
+        """Calling ``set_default`` with a ``bi_platforms`` section is a no-op."""
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cmd, _ = _make_commands_with_bi_stub()
+        with patch("datus.configuration.agent_config_loader.configuration_manager") as mgr_factory:
+            result = cmd._apply_selection(
+                ServiceConfigSelection(action="set_default", section="bi_platforms", name="x")
+            )
+        assert result is None
+        mgr_factory.assert_not_called()
+
+    def test_set_project_default_unknown_section_returns_none(self):
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cmd, _ = _make_commands_with_bi_stub()
+        result = cmd._apply_selection(
+            ServiceConfigSelection(action="set_project_default", section="semantic_layer", name="x")
+        )
+        assert result is None
+
+    def test_set_project_default_setter_missing(self):
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cli = _fake_cli()
+        # Strip the setters so the helper sees ``None``.
+        cli.agent_config = SimpleNamespace(
+            services=SimpleNamespace(bi_platforms={}, schedulers={}, semantic_layer={}),
+        )
+        cmd = ServiceCommands(cli)
+        result = cmd._apply_selection(
+            ServiceConfigSelection(action="set_project_default", section="bi_platforms", name="x")
+        )
+        # Setter unavailable → command logs an error and returns None.
+        assert result is None
+
+    def test_set_project_default_setter_raises(self):
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cli = _fake_cli()
+        cli.agent_config = SimpleNamespace(
+            services=SimpleNamespace(bi_platforms={}, schedulers={}, semantic_layer={}),
+            set_active_dashboard=MagicMock(side_effect=RuntimeError("disk full")),
+            set_active_scheduler=MagicMock(),
+        )
+        cmd = ServiceCommands(cli)
+        result = cmd._apply_selection(
+            ServiceConfigSelection(action="set_project_default", section="bi_platforms", name="x")
+        )
+        assert "failed" in (result or "").lower()
+
+
+class TestMergeServiceEntry:
+    def test_strips_blank_strings_and_empty_dicts(self):
+        cmd, _ = _make_commands_with_bi_stub()
+        mgr = MagicMock()
+        mgr.get = MagicMock(return_value={})
+        with (
+            patch("datus.configuration.agent_config_loader.configuration_manager", return_value=mgr),
+            patch.object(ServiceCommands, "_reload_agent_config"),
+        ):
+            ok = cmd._merge_service_entry(
+                "bi_platforms",
+                "superset",
+                {"type": "superset", "api_base_url": "http://x", "username": "", "extra": {}},
+            )
+        assert ok is True
+        committed = mgr.update_item.call_args.args[1]["bi_platforms"]["superset"]
+        assert "username" not in committed  # empty string stripped
+        assert "extra" not in committed  # empty dict stripped
+        assert committed["api_base_url"] == "http://x"
+
+    def test_persistence_exception_returns_false(self):
+        cmd, _ = _make_commands_with_bi_stub()
+        mgr = MagicMock()
+        mgr.get = MagicMock(return_value={})
+        mgr.update_item = MagicMock(side_effect=RuntimeError("disk full"))
+        with patch("datus.configuration.agent_config_loader.configuration_manager", return_value=mgr):
+            assert cmd._merge_service_entry("bi_platforms", "x", {"type": "superset"}) is False
+
+
+class TestProbeImplementation:
+    """``_probe`` runs a real (mocked) ``BIFuncTool`` / ``SchedulerTools``
+    call so connection errors surface as ``(False, message)``."""
+
+    def test_probe_bi_success_counts_envelope(self):
+        cmd, _ = _make_commands_with_bi_stub()
+        fake_tool = MagicMock()
+        fake_tool.list_dashboards = MagicMock(return_value={"success": 1, "result": {"items": [{"id": 1}, {"id": 2}]}})
+        with patch("datus.tools.func_tool.bi_tools.BIFuncTool", return_value=fake_tool):
+            ok, msg = cmd._probe("bi_platforms", "superset")
+        assert ok is True
+        assert "2 dashboards" in msg
+
+    def test_probe_scheduler_success(self):
+        cmd, _ = _make_commands_with_bi_stub()
+        fake_tool = MagicMock()
+        fake_tool.list_scheduler_jobs = MagicMock(return_value=[{"name": "a"}, {"name": "b"}])
+        with patch("datus.tools.func_tool.scheduler_tools.SchedulerTools", return_value=fake_tool):
+            ok, msg = cmd._probe("schedulers", "airflow")
+        assert ok is True
+        assert "2 scheduler jobs" in msg
+
+    def test_probe_exception_is_caught(self):
+        cmd, _ = _make_commands_with_bi_stub()
+        fake_tool = MagicMock()
+        fake_tool.list_dashboards = MagicMock(side_effect=RuntimeError("connection refused"))
+        with patch("datus.tools.func_tool.bi_tools.BIFuncTool", return_value=fake_tool):
+            ok, msg = cmd._probe("bi_platforms", "superset")
+        assert ok is False
+        assert "connection refused" in msg
+
+    def test_probe_unsupported_section(self):
+        cmd, _ = _make_commands_with_bi_stub()
+        ok, msg = cmd._probe("unknown_section", "x")
+        assert ok is False
+        assert "Unsupported section" in msg
+
+    def test_probe_semantic_returns_true_when_metadata_registered(self):
+        cmd, _ = _make_commands_with_bi_stub()
+        fake_registry = SimpleNamespace(get_metadata=lambda name: {"name": name})
+        with patch.dict(
+            "sys.modules",
+            {"datus.tools.semantic_tools.registry": SimpleNamespace(semantic_adapter_registry=fake_registry)},
+        ):
+            ok, msg = cmd._probe("semantic_layer", "metricflow")
+        assert ok is True
+        assert "metricflow" in msg
+        assert "registered" in msg
+
+    def test_probe_semantic_returns_false_when_metadata_missing(self):
+        cmd, _ = _make_commands_with_bi_stub()
+        fake_registry = SimpleNamespace(get_metadata=lambda name: None)
+        with patch.dict(
+            "sys.modules",
+            {"datus.tools.semantic_tools.registry": SimpleNamespace(semantic_adapter_registry=fake_registry)},
+        ):
+            ok, msg = cmd._probe("semantic_layer", "metricflow")
+        assert ok is False
+        assert "not registered" in msg
+
+
+class TestCountEnvelope:
+    @pytest.mark.parametrize(
+        "payload,expected",
+        [
+            ({"items": [1, 2, 3]}, 3),
+            ({"result": {"items": [1, 2]}}, 2),
+            ({"result": [1, 2, 3, 4]}, 4),
+            ([1, 2], 2),
+            ("scalar", 0),
+            ({}, 0),
+        ],
+    )
+    def test_count(self, payload, expected):
+        assert ServiceCommands._count_envelope(payload) == expected
+
+
+class TestReloadAgentConfig:
+    def test_swaps_cli_agent_config_on_success(self):
+        cmd, cli = _make_commands_with_bi_stub()
+        fresh = SimpleNamespace(name="fresh")
+        with patch(
+            "datus.configuration.agent_config_loader.load_agent_config",
+            return_value=fresh,
+        ):
+            cmd._reload_agent_config()
+        assert cli.agent_config is fresh
+        assert cmd._registry is None
+
+    def test_load_failure_keeps_existing_agent_config(self):
+        cmd, cli = _make_commands_with_bi_stub()
+        original = cli.agent_config
+        with patch(
+            "datus.configuration.agent_config_loader.load_agent_config",
+            side_effect=RuntimeError("boom"),
+        ):
+            cmd._reload_agent_config()
+        assert cli.agent_config is original
 
 
 class TestAsyncExecution:

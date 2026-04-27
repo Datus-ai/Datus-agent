@@ -8,30 +8,34 @@ DAComp is **not bundled** with `datus-agent`. This tutorial uses a small
 quickstart package derived from the DAComp Lever example, so you do not need to
 download the full DAComp archive.
 
-Download and unpack the quickstart data and local Docker stack:
+First create and enter the working directory:
 
 ```bash
 mkdir -p ~/datus-quickstart-data
 cd ~/datus-quickstart-data
+```
 
+Then run the bash block below — it downloads and unpacks the quickstart data
+and local Docker stack, exports `DACOMP_HOME` / `DATUS_QUICKSTART_STACK`,
+creates a writable DuckDB workbench, and finally prints the two `export`
+statements so you can paste them into another shell:
+
+```bash
 curl -L -o datus-de-lever-quickstart-v1.zip \
   https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v1/datus-de-lever-quickstart-v1.zip
 curl -L -o datus-data-engineering-quickstart-stack-v1.zip \
   https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v1/datus-data-engineering-quickstart-stack-v1.zip
 
-unzip datus-de-lever-quickstart-v1.zip
-unzip datus-data-engineering-quickstart-stack-v1.zip
-```
+unzip -o datus-de-lever-quickstart-v1.zip
+unzip -o datus-data-engineering-quickstart-stack-v1.zip
 
-Point `DACOMP_HOME` at the extracted data directory, point
-`DATUS_QUICKSTART_STACK` at the extracted Docker stack, and create a writable
-DuckDB workbench:
-
-```bash
-export DACOMP_HOME=/absolute/path/to/datus-de-lever-quickstart
-export DATUS_QUICKSTART_STACK=/absolute/path/to/datus-data-engineering-quickstart-stack
+export DACOMP_HOME="$(pwd)/datus-de-lever-quickstart"
+export DATUS_QUICKSTART_STACK="$(pwd)/datus-data-engineering-quickstart-stack"
 cp "$DACOMP_HOME/lever_start.duckdb" "$DACOMP_HOME/lever_workbench.duckdb"
 cd "$DACOMP_HOME"
+
+echo "export DACOMP_HOME=$DACOMP_HOME"
+echo "export DATUS_QUICKSTART_STACK=$DATUS_QUICKSTART_STACK"
 ```
 
 The rest of this guide assumes the example directory contains:
@@ -94,6 +98,14 @@ Install Datus plus the adapters used in this walkthrough:
 ```bash
 pip install datus-agent datus-bi-superset datus-postgresql datus-scheduler-airflow
 ```
+
+You can skip `datus-bi-superset` and `datus-scheduler-airflow` here and let
+`/services` install them on demand: when you create a Superset dashboard
+entry or an Airflow scheduler entry through `/services dashboard` /
+`/services scheduler`, Datus runs `pip install` for you and hot-reloads the
+registry without restarting the CLI. See
+[BI platforms](../configuration/bi_platforms.md#configuring-through-the-cli-services)
+and [Schedulers](../configuration/schedulers.md#configuring-through-the-cli-services).
 
 ## Step 4: Configure `agent.yml`
 

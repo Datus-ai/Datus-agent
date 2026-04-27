@@ -62,8 +62,13 @@ class BIFuncTool:
 
         Preference order:
         1. Explicit ``bi_service`` passed to the constructor.
-        2. Auto-pick when ``agent_config.dashboard_config`` has exactly one entry.
-        3. Raise ``DatusException`` when multiple are configured and no
+        2. Project-level default from ``./.datus/config.yml`` (read via
+           ``agent_config.active_dashboard()``). A stale override that
+           does not match any configured BI service is ignored so the
+           code falls through to the unique / ambiguous branches and
+           surfaces a clearer error.
+        3. Auto-pick when ``agent_config.dashboard_config`` has exactly one entry.
+        4. Raise ``DatusException`` when multiple are configured and no
            ``bi_service`` disambiguates — mirrors ``SemanticTools`` behavior.
         """
         if self.bi_service:
@@ -71,6 +76,11 @@ class BIFuncTool:
         if self.agent_config is None:
             return None
         dashboard_config = getattr(self.agent_config, "dashboard_config", {}) or {}
+        active_fn = getattr(self.agent_config, "active_dashboard", None)
+        if callable(active_fn):
+            active = active_fn()
+            if active and active in dashboard_config:
+                return active
         if len(dashboard_config) == 1:
             return next(iter(dashboard_config))
         if len(dashboard_config) > 1:

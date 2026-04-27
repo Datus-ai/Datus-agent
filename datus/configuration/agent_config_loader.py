@@ -270,6 +270,16 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
         agent_raw["language"] = override.language
     if override.reasoning_effort is not None:
         agent_raw["target_reasoning_effort"] = override.reasoning_effort
+    # ``dashboard`` / ``scheduler`` overrides reach AgentConfig through
+    # dedicated kwargs so the project-level pin is consulted between the
+    # explicit call-site argument and the global default flag at lookup
+    # time. Validation is deferred to the consumer (``BIFuncTool`` /
+    # ``get_scheduler_config``) since the named service may be added later
+    # in the same process; failing here would block CLI startup.
+    if override.dashboard is not None:
+        agent_raw["active_dashboard"] = override.dashboard
+    if override.scheduler is not None:
+        agent_raw["active_scheduler"] = override.scheduler
 
 
 def load_agent_config(reload: bool = False, create_if_missing: bool = False, **kwargs) -> AgentConfig:

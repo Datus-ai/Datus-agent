@@ -208,7 +208,15 @@ class TestSaveProjectOverride:
 class TestAllowedKeys:
     def test_whitelist_contains_expected_keys(self):
         assert ALLOWED_KEYS == frozenset(
-            {"target", "default_datasource", "project_name", "language", "reasoning_effort"}
+            {
+                "target",
+                "default_datasource",
+                "dashboard",
+                "scheduler",
+                "project_name",
+                "language",
+                "reasoning_effort",
+            }
         )
 
 
@@ -221,6 +229,8 @@ class TestProjectOverrideDataclass:
         [
             ("target", "x"),
             ("default_datasource", "y"),
+            ("dashboard", "superset"),
+            ("scheduler", "airflow"),
             ("project_name", "z"),
             ("language", "zh"),
             ("reasoning_effort", "high"),
@@ -229,3 +239,48 @@ class TestProjectOverrideDataclass:
     def test_is_not_empty_when_any_set(self, field, value):
         override = ProjectOverride(**{field: value})
         assert not override.is_empty()
+
+
+class TestServiceDefaultFields:
+    """``dashboard`` / ``scheduler`` overrides — project-level pin for BI
+    + scheduler services. Loaded by ``_apply_project_override`` and
+    surfaced via ``AgentConfig.active_dashboard()`` / ``active_scheduler()``."""
+
+    def test_load_dashboard_and_scheduler(self, tmp_path):
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({"dashboard": "superset_prod", "scheduler": "airflow"}))
+        result = load_project_override(str(tmp_path))
+        assert result.dashboard == "superset_prod"
+        assert result.scheduler == "airflow"
+        assert not result.is_empty()
+
+    def test_blank_dashboard_collapses_to_none(self, tmp_path):
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({"dashboard": "   "}))
+        result = load_project_override(str(tmp_path))
+        assert result.dashboard is None
+
+    def test_non_string_scheduler_dropped(self, tmp_path, caplog):
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({"scheduler": 42}))
+        with caplog.at_level(logging.WARNING):
+            result = load_project_override(str(tmp_path))
+        assert result.scheduler is None
+        warning_text = " ".join(r.message for r in caplog.records)
+        assert "scheduler" in warning_text
+
+    def test_save_round_trip(self, tmp_path):
+        original = ProjectOverride(dashboard="superset", scheduler="airflow")
+        save_project_override(original, cwd=str(tmp_path))
+        loaded = load_project_override(str(tmp_path))
+        assert loaded == original
+
+    def test_save_omits_none_service_fields(self, tmp_path):
+        override = ProjectOverride(dashboard="only_dash")
+        written = save_project_override(override, cwd=str(tmp_path))
+        loaded = yaml.safe_load(written.read_text())
+        assert "dashboard" in loaded
+        assert "scheduler" not in loaded

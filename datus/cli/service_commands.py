@@ -27,13 +27,14 @@ import asyncio
 import inspect
 import json
 import shlex
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from rich.table import Table
 
 from datus.cli._render_utils import build_kv_table, build_row_table
-from datus.cli.cli_styles import TABLE_HEADER_STYLE, print_error, print_info, print_warning
+from datus.cli.cli_styles import TABLE_HEADER_STYLE, print_error, print_info, print_success, print_warning
 from datus.cli.service_client import ServiceClient, ServiceClientRegistry, service_type_label
+from datus.cli.service_config_app import ServiceConfigApp, ServiceConfigSelection
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -71,14 +72,53 @@ class ServiceCommands:
     # ------------------------------------------------------------------ #
 
     def cmd_services(self, args: str = "") -> None:
-        """Handler for the ``/services`` command."""
+        """Handler for the ``/services`` command.
+
+        Token shapes:
+
+        - empty / ``config`` / ``configure`` / ``edit`` — open the
+          configuration TUI on the default Dashboard tab. Bare
+          ``/services`` lands on the menu directly so the TUI is the
+          primary entry point.
+        - ``dashboard`` / ``scheduler`` — open the TUI with the matching
+          tab pre-selected.
+        - ``list`` — render the read-only listing (kept for scripting /
+          quick inspection without entering the TUI).
+        """
+        token = (args or "").strip().lower()
+        if token in ("dashboard", "bi", "bi_platforms"):
+            self._run_config_menu(initial_tab="dashboard")
+            return
+        if token in ("scheduler", "schedulers"):
+            self._run_config_menu(initial_tab="scheduler")
+            return
+        if token in ("semantic", "semantic_layer"):
+            self._run_config_menu(initial_tab="semantic")
+            return
+        if not token or token in ("config", "configure", "edit"):
+            self._run_config_menu(initial_tab="dashboard")
+            return
+        if token == "list":
+            self._render_listing()
+            return
+        # Unknown sub-token — show the listing and a hint instead of
+        # bailing silently.
+        self._render_listing()
+        print_info(
+            self.cli.console,
+            "Use `/services dashboard`, `/services scheduler`, or `/services semantic` to open the configuration TUI.",
+        )
+
+    # ------------------------------------------------------------------ #
+    # Listing (legacy read-only behaviour)
+    # ------------------------------------------------------------------ #
+
+    def _render_listing(self) -> None:
         rows = self.registry.list_services()
         if not rows:
             print_warning(
                 self.cli.console,
-                "No services configured. Add entries under "
-                "`services.bi_platforms`, `services.schedulers`, or "
-                "`services.semantic_layer` in agent.yml.",
+                "No services configured. Run `/services dashboard` or `/services scheduler` to configure one.",
             )
             return
         table = Table(title="Configured services", show_header=True, header_style=TABLE_HEADER_STYLE)
@@ -88,6 +128,305 @@ class ServiceCommands:
         for name, section, status in rows:
             table.add_row(name, service_type_label(section), status)
         self.cli.console.print(table)
+
+    # ------------------------------------------------------------------ #
+    # TUI configuration menu
+    # ------------------------------------------------------------------ #
+
+    _MAX_CONFIG_LOOPS = 32
+
+    def _run_config_menu(self, *, initial_tab: str) -> None:
+        """Loop the configuration TUI until the user cancels.
+
+        Each round re-reads ``agent_config.dashboard_config`` /
+        ``scheduler_services`` so edits persisted in the previous round
+        are visible immediately. The loop bound is a safety net against
+        runaway re-entry, not a UX limit — typical sessions exit after
+        one or two iterations.
+        """
+        seed_tab = initial_tab
+        seed_status: Optional[str] = None
+        for _ in range(self._MAX_CONFIG_LOOPS):
+            app = ServiceConfigApp(
+                self.cli.agent_config,
+                self.cli.console,
+                initial_tab=seed_tab,
+                status_message=seed_status,
+            )
+            seed_status = None
+            selection = self._run_app(app)
+            if selection is None:
+                return
+            if selection.section == "schedulers":
+                seed_tab = "scheduler"
+            elif selection.section == "semantic_layer":
+                seed_tab = "semantic"
+            else:
+                seed_tab = "dashboard"
+            seed_status = self._apply_selection(selection)
+            # Force the registry / dashboard_config to reflect the YAML
+            # changes before the next App invocation paints its list.
+            self._refresh_after_change()
+
+    def _run_app(self, app: ServiceConfigApp) -> Optional[ServiceConfigSelection]:
+        tui_app = getattr(self.cli, "tui_app", None)
+        if tui_app is not None:
+            with tui_app.suspend_input():
+                return app.run()
+        return app.run()
+
+    def _refresh_after_change(self) -> None:
+        """Drop cached service clients so the next listing rebuilds them."""
+        self._registry = None
+
+    # ------------------------------------------------------------------ #
+    # Selection dispatch
+    # ------------------------------------------------------------------ #
+
+    def _apply_selection(self, sel: ServiceConfigSelection) -> Optional[str]:
+        """Persist ``sel`` and return a status line for the next App round."""
+        if sel.action == "save":
+            return self._do_save(sel)
+        if sel.action == "delete":
+            return self._do_delete(sel)
+        if sel.action == "test":
+            return self._do_test(sel)
+        if sel.action == "set_default":
+            return self._do_set_global_default(sel)
+        if sel.action == "set_project_default":
+            return self._do_set_project_default(sel)
+        return None
+
+    def _do_save(self, sel: ServiceConfigSelection) -> Optional[str]:
+        from datus.cli.service_adapter_installer import ensure_adapter, hot_reload_adapter
+
+        adapter_type = str(sel.payload.get("type") or "").strip().lower()
+        if not adapter_type:
+            print_error(self.cli.console, "Cannot save: missing `type` in payload.", prefix=False)
+            return None
+        # 1. Make sure the adapter package is installed in this interpreter.
+        result = ensure_adapter(sel.section, adapter_type)
+        if not result.ok:
+            print_error(
+                self.cli.console,
+                f"Adapter install failed for `{result.package or adapter_type}`: {result.error or 'unknown error'}",
+                prefix=False,
+            )
+            if result.stderr:
+                print_info(self.cli.console, result.stderr.strip().splitlines()[-1])
+            return f"Saving `{sel.name}` skipped — adapter install failed."
+        if result.package:
+            print_success(self.cli.console, f"Adapter `{result.package}` ready.", symbol=True)
+        hot_reload_adapter(sel.section, adapter_type)
+
+        # 2. Merge into the in-memory + on-disk YAML and reload AgentConfig.
+        if not self._merge_service_entry(sel.section, sel.name, sel.payload):
+            return f"Saving `{sel.name}` failed — see error above."
+
+        # 3. Probe with the freshly-loaded config; report but do not
+        #    rollback on failure.
+        probe_ok, probe_msg = self._probe(sel.section, sel.name)
+        status_bits: List[str] = [f"Saved `{sel.name}`."]
+        if probe_ok:
+            print_success(self.cli.console, f"Probe ok: {probe_msg}", symbol=True)
+            status_bits.append(f"Connected ({probe_msg}).")
+        else:
+            print_error(self.cli.console, f"Probe failed: {probe_msg}", prefix=False)
+            status_bits.append(f"Probe failed: {probe_msg}")
+        status_bits.append("Press `p` to set as project default.")
+        return " ".join(status_bits)
+
+    def _do_delete(self, sel: ServiceConfigSelection) -> Optional[str]:
+        from datus.configuration.agent_config_loader import configuration_manager
+
+        mgr = configuration_manager()
+        services = dict(mgr.get("services", {}) or {})
+        section_dict = dict(services.get(sel.section, {}) or {})
+        if sel.name not in section_dict:
+            print_warning(self.cli.console, f"`{sel.name}` not found in `services.{sel.section}`.")
+            return f"`{sel.name}` not found."
+        section_dict.pop(sel.name, None)
+        services[sel.section] = section_dict
+        try:
+            mgr.update_item("services", services, delete_old_key=True, save=True)
+        except Exception as exc:
+            print_error(self.cli.console, f"Failed to delete `{sel.name}`: {exc}", prefix=False)
+            return f"Delete `{sel.name}` failed."
+        # Clear the project-level default if it pointed at the deleted entry.
+        # Semantic layers don't yet expose a project-level default API,
+        # so skip the cleanup for that section.
+        if sel.section in ("bi_platforms", "schedulers"):
+            active_attr = "active_dashboard" if sel.section == "bi_platforms" else "active_scheduler"
+            active_fn = getattr(self.cli.agent_config, active_attr, None)
+            if callable(active_fn) and active_fn() == sel.name:
+                setter = getattr(
+                    self.cli.agent_config,
+                    "set_active_dashboard" if sel.section == "bi_platforms" else "set_active_scheduler",
+                    None,
+                )
+                if callable(setter):
+                    setter(None)
+        self._reload_agent_config()
+        print_success(self.cli.console, f"Deleted `{sel.name}` from `services.{sel.section}`.", symbol=True)
+        return f"Deleted `{sel.name}`."
+
+    def _do_test(self, sel: ServiceConfigSelection) -> Optional[str]:
+        ok, msg = self._probe(sel.section, sel.name)
+        if ok:
+            print_success(self.cli.console, f"Probe ok for `{sel.name}`: {msg}", symbol=True)
+            return f"Probe ok for `{sel.name}`."
+        print_error(self.cli.console, f"Probe failed for `{sel.name}`: {msg}", prefix=False)
+        return f"Probe failed for `{sel.name}`: {msg}"
+
+    def _do_set_global_default(self, sel: ServiceConfigSelection) -> Optional[str]:
+        from datus.configuration.agent_config_loader import configuration_manager
+
+        if sel.section != "schedulers":
+            return None
+        mgr = configuration_manager()
+        services = dict(mgr.get("services", {}) or {})
+        schedulers = dict(services.get("schedulers", {}) or {})
+        if sel.name not in schedulers:
+            print_warning(self.cli.console, f"`{sel.name}` not found in `services.schedulers`.")
+            return f"`{sel.name}` not found."
+        for name, raw in schedulers.items():
+            if not isinstance(raw, dict):
+                continue
+            if name == sel.name:
+                raw["default"] = True
+            else:
+                raw.pop("default", None)
+            schedulers[name] = raw
+        services["schedulers"] = schedulers
+        try:
+            mgr.update_item("services", services, save=True)
+        except Exception as exc:
+            print_error(self.cli.console, f"Failed to set default scheduler: {exc}", prefix=False)
+            return f"Set default `{sel.name}` failed."
+        self._reload_agent_config()
+        print_success(self.cli.console, f"`{sel.name}` is now the global default scheduler.", symbol=True)
+        return f"`{sel.name}` set as global default."
+
+    def _do_set_project_default(self, sel: ServiceConfigSelection) -> Optional[str]:
+        if sel.section == "bi_platforms":
+            setter = getattr(self.cli.agent_config, "set_active_dashboard", None)
+            label = "dashboard"
+        elif sel.section == "schedulers":
+            setter = getattr(self.cli.agent_config, "set_active_scheduler", None)
+            label = "scheduler"
+        else:
+            return None
+        if not callable(setter):
+            print_error(self.cli.console, "AgentConfig does not support project-level defaults.", prefix=False)
+            return None
+        try:
+            setter(sel.name or None)
+        except Exception as exc:
+            print_error(self.cli.console, f"Failed to update project default: {exc}", prefix=False)
+            return f"Project default update failed: {exc}"
+        if sel.name:
+            print_success(self.cli.console, f"Project {label} default → `{sel.name}`.", symbol=True)
+            return f"Project {label} default = `{sel.name}`."
+        print_success(self.cli.console, f"Cleared project {label} default.", symbol=True)
+        return f"Cleared project {label} default."
+
+    # ------------------------------------------------------------------ #
+    # Persistence + probe helpers
+    # ------------------------------------------------------------------ #
+
+    def _merge_service_entry(self, section: str, name: str, payload: Dict[str, Any]) -> bool:
+        from datus.configuration.agent_config_loader import configuration_manager
+
+        mgr = configuration_manager()
+        services = dict(mgr.get("services", {}) or {})
+        section_dict = dict(services.get(section, {}) or {})
+        # Strip empty-string credentials so the YAML stays terse and the
+        # "leave password blank to keep existing" UX matches the on-disk
+        # shape (no key vs empty key both mean "no credential" to the
+        # adapter, but no key reads cleaner).
+        cleaned: Dict[str, Any] = {}
+        for k, v in payload.items():
+            if isinstance(v, str) and v == "":
+                continue
+            if isinstance(v, dict) and not v:
+                continue
+            cleaned[k] = v
+        section_dict[name] = cleaned
+        services[section] = section_dict
+        try:
+            mgr.update_item("services", services, save=True)
+        except Exception as exc:
+            print_error(self.cli.console, f"Failed to write `services.{section}.{name}`: {exc}", prefix=False)
+            return False
+        self._reload_agent_config()
+        return True
+
+    def _probe(self, section: str, name: str) -> Tuple[bool, str]:
+        """Run a read-only adapter call as a connectivity smoke test.
+
+        Returns ``(ok, message)`` so the caller can both print and pass
+        a one-liner up to the App's status row. Any exception from the
+        adapter is caught — the goal is signal, not stack traces.
+        """
+        try:
+            if section == "bi_platforms":
+                from datus.tools.func_tool.bi_tools import BIFuncTool
+
+                tool = BIFuncTool(self.cli.agent_config, bi_service=name)
+                rows = tool.list_dashboards()
+                count = self._count_envelope(rows)
+                return True, f"{count} dashboards"
+            if section == "schedulers":
+                from datus.tools.func_tool.scheduler_tools import SchedulerTools
+
+                tool = SchedulerTools(self.cli.agent_config, scheduler_service=name)
+                rows = tool.list_scheduler_jobs()
+                count = self._count_envelope(rows)
+                return True, f"{count} scheduler jobs"
+            if section == "semantic_layer":
+                # MetricFlow's ``list_metrics`` requires a bound
+                # datasource; use the registry probe instead so we can
+                # confirm ``hot_reload_adapter`` actually wired the
+                # adapter without forcing the user to pre-bind a DB.
+                from datus.tools.semantic_tools.registry import semantic_adapter_registry
+
+                metadata = semantic_adapter_registry.get_metadata(name)
+                if metadata is not None:
+                    return True, f"adapter `{name}` registered"
+                return False, f"adapter `{name}` not registered after install"
+        except Exception as exc:
+            return False, str(exc) or exc.__class__.__name__
+        return False, f"Unsupported section `{section}`"
+
+    @staticmethod
+    def _count_envelope(payload: Any) -> int:
+        if isinstance(payload, dict):
+            inner = payload.get("result", payload)
+            if isinstance(inner, dict) and "items" in inner and isinstance(inner["items"], list):
+                return len(inner["items"])
+            if isinstance(inner, list):
+                return len(inner)
+        if isinstance(payload, list):
+            return len(payload)
+        return 0
+
+    def _reload_agent_config(self) -> None:
+        """Reload ``agent.yml`` so in-memory ``services.*`` matches disk."""
+        try:
+            from datus.configuration.agent_config_loader import load_agent_config
+        except Exception:
+            return
+        try:
+            fresh = load_agent_config(reload=True)
+        except Exception as exc:
+            logger.warning("Failed to reload agent config after services edit: %s", exc)
+            return
+        # Carry forward project-level service overrides on the new
+        # config — they're loaded by ``_apply_project_override`` so a
+        # plain reload picks them up automatically. We just swap the
+        # CLI's reference so subsequent calls see the new state.
+        self.cli.agent_config = fresh
+        self._registry = None
 
     def dispatch(self, cmd: str, args: str) -> bool:
         """Handle a ``/<service>`` or ``/<service>.<method>`` command.

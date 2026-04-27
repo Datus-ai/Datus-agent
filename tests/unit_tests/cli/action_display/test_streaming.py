@@ -1215,14 +1215,15 @@ class TestStreamingMarkdown:
         ctx._repaint_live()
         assert live_state.is_active() is False
 
-    def test_process_deltas_detects_clear_and_finalizes(self):
-        """``_process_deltas`` must finalize when the caller clears the queue.
+    def test_process_deltas_finalizes_on_terminal_response(self):
+        """Per-message bucket: terminal response triggers finalize + bucket drop.
 
-        The chat_commands pipeline calls ``streaming_deltas.clear()`` at
-        every message boundary. The streaming context — running on the
-        refresh daemon — should notice the queue shrank, flush the
-        accumulator to the scrollback, and reset its cursor so follow-up
-        deltas (next message) start fresh.
+        chat_commands routes deltas into ``streaming_deltas[action_id]``
+        and never clears the dict. The streaming context drains each
+        bucket forward via a per-bucket cursor and finalizes the body
+        when the matching terminal ``response`` action is processed by
+        :meth:`_print_completed_action`. Replaces the legacy
+        ``streaming_deltas.clear()`` boundary signal.
         """
         from datus.cli.tui.live_display_state import LiveDisplayState
 
@@ -1230,26 +1231,99 @@ class TestStreamingMarkdown:
         console = Console(file=buf, no_color=True)
         live_state = LiveDisplayState()
         display = ActionHistoryDisplay(console, live_state=live_state)
-        deltas: list[ActionHistory] = []
+        deltas: dict[str, list[ActionHistory]] = {}
         ctx = InlineStreamingContext([], display, live_state=live_state, streaming_deltas=deltas)
 
-        # Push two deltas through the public queue + run the pump.
-        deltas.append(self._make_delta("part a "))
-        deltas.append(self._make_delta("part b"))
+        stream_id = "stream-msg-1"
+        deltas.setdefault(stream_id, []).append(self._make_delta("part a ", action_id=stream_id))
+        deltas.setdefault(stream_id, []).append(self._make_delta("part b", action_id=stream_id))
         ctx._process_deltas()
-        assert ctx._delta_processed_index == 2
+
+        assert ctx._delta_cursors[stream_id] == 2
+        assert ctx._active_message_id == stream_id
         assert ctx._markdown_buffer.get_tail() == "part a part b"
         assert "part a" not in buf.getvalue()
 
-        # Caller signals message boundary by clearing the queue.
-        deltas.clear()
-        ctx._process_deltas()
+        # Terminal response arrives — drains any trailing deltas (none
+        # here), finalizes the tail, drops the bucket.
+        response_action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            action_type="response",
+            messages="",
+            output_data={"raw_output": "part a part b"},
+            action_id=stream_id,
+        )
+        ctx._print_completed_action(response_action)
 
-        # Body landed in the scrollback exactly once; cursor reset.
         assert buf.getvalue().count("part a part b") == 1
-        assert ctx._delta_processed_index == 0
+        assert stream_id not in deltas
+        assert stream_id not in ctx._delta_cursors
+        assert ctx._active_message_id is None
         assert ctx._markdown_buffer.has_tail() is False
         assert ctx.has_streamed_response is True
+
+    def test_process_deltas_handles_concurrent_buckets(self):
+        """Mid-tick race: A's deltas + terminal land while B's deltas accumulate.
+
+        Producer can append to a new bucket B before the consumer
+        processes A's terminal. The drain must pick up both buckets in
+        insertion order, finalize A's tail when switching to B, and
+        leave B intact for its own terminal-response handling.
+        """
+        from datus.cli.tui.live_display_state import LiveDisplayState
+
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        live_state = LiveDisplayState()
+        display = ActionHistoryDisplay(console, live_state=live_state)
+        deltas: dict[str, list[ActionHistory]] = {}
+        ctx = InlineStreamingContext([], display, live_state=live_state, streaming_deltas=deltas)
+
+        # Bucket A — message #1.
+        a_id = "stream-A"
+        deltas.setdefault(a_id, []).append(self._make_delta("alpha\n\n", action_id=a_id))
+        # Bucket B — message #2 starts before A's terminal is observed.
+        b_id = "stream-B"
+        deltas.setdefault(b_id, []).append(self._make_delta("beta", action_id=b_id))
+
+        ctx._process_deltas()
+
+        # Both buckets advanced their cursors; switch from A → B
+        # finalized A's tail (paragraph closed, so already in scrollback)
+        # and now active is B.
+        assert ctx._delta_cursors[a_id] == 1
+        assert ctx._delta_cursors[b_id] == 1
+        assert ctx._active_message_id == b_id
+        assert "alpha" in buf.getvalue()
+
+        # Terminal A arrives later; bucket A is already fully drained,
+        # so the dedup branch just drops the bucket. The active body
+        # the user is still watching is B's.
+        ctx._print_completed_action(
+            _make_action(
+                ActionRole.ASSISTANT,
+                ActionStatus.SUCCESS,
+                action_type="response",
+                output_data={"raw_output": "alpha"},
+                action_id=a_id,
+            )
+        )
+        assert a_id not in deltas
+        # Terminal B arrives and finalizes its own tail.
+        ctx._print_completed_action(
+            _make_action(
+                ActionRole.ASSISTANT,
+                ActionStatus.SUCCESS,
+                action_type="response",
+                output_data={"raw_output": "beta"},
+                action_id=b_id,
+            )
+        )
+        assert b_id not in deltas
+        assert "beta" in buf.getvalue()
+        assert buf.getvalue().count("alpha") == 1
+        assert buf.getvalue().count("beta") == 1
 
     def test_has_streamed_response_is_false_without_deltas(self):
         """Contexts that never painted a delta must not latch the flag.

@@ -364,6 +364,39 @@ class TestApplyProjectOverride:
             with pytest.raises(DatusException):
                 _apply_project_override(agent_raw)
 
+    def test_dashboard_override_forwarded_as_active_dashboard(self):
+        """Project-level ``dashboard:`` reaches AgentConfig via the
+        ``active_dashboard`` kwarg so ``BIFuncTool._resolved_platform`` can
+        consult it between explicit and unique-entry resolution."""
+        agent_raw = self._base_raw()
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(dashboard="superset_prod"),
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["active_dashboard"] == "superset_prod"
+        assert "active_scheduler" not in agent_raw
+
+    def test_scheduler_override_forwarded_as_active_scheduler(self):
+        agent_raw = self._base_raw()
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(scheduler="airflow_dev"),
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["active_scheduler"] == "airflow_dev"
+        assert "active_dashboard" not in agent_raw
+
+    def test_no_service_overrides_leaves_agent_raw_clean(self):
+        agent_raw = self._base_raw()
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(),
+        ):
+            _apply_project_override(agent_raw)
+        assert "active_dashboard" not in agent_raw
+        assert "active_scheduler" not in agent_raw
+
 
 class TestLoadNodeConfig:
     def test_with_model(self):

@@ -74,9 +74,33 @@ by name.
 
 - `bi_platform` selects one entry from `services.bi_platforms`.
 - The config key should match the platform name (`superset`, `grafana`, ...).
-- If `bi_platform` is omitted and only one BI platform is configured, Datus
-  auto-selects it.
-- If multiple BI platforms are configured, set `bi_platform` explicitly.
+- If `bi_platform` is omitted, Datus consults `./.datus/config.yml`'s
+  `dashboard:` field (project-level pin) before falling back to "auto-pick
+  the unique entry".
+- If multiple BI platforms are configured and no project pin is set, set
+  `bi_platform` explicitly at the call site.
+
+## Configuring through the CLI (`/services`)
+
+Run `/services` inside the Datus REPL to enter the configuration TUI
+directly (Dashboard tab by default; pass `/services scheduler` to land on
+the Scheduler tab; `/services list` keeps the legacy read-only listing).
+The two-tab TUI lets you:
+
+- Add a new dashboard with `Enter` on the trailing `+ Add new dashboard` row.
+  When you pick a `type` whose adapter package isn't installed yet
+  (`datus-bi-superset`, `datus-bi-grafana`, …), Datus runs
+  `pip install` for you and hot-reloads the registry — no restart needed.
+- Edit credentials with `e`, delete an entry with `x`, run a connectivity
+  probe with `t`.
+- Pin a project-level default with `p`. The pin is written to
+  `./.datus/config.yml` as `dashboard: <name>` and outranks the auto-pick
+  rule for the current project only. Press `p` again on the pinned row to
+  clear it.
+
+Service definitions are written to `~/.datus/conf/agent.yml`, so the same
+credentials are shared across every project. Only the active selection is
+project-local.
 
 ## Ownership
 

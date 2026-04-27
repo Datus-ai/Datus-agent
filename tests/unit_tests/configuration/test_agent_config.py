@@ -554,6 +554,124 @@ class TestAgentConfigServiceSelectors:
         )
         assert cfg.default_scheduler_service() == "airflow_prod"
 
+    def test_active_scheduler_overrides_global_default(self, tmp_path):
+        """Project-level ``active_scheduler`` outranks ``default: true``."""
+        cfg = AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            project_root=str(tmp_path / "proj"),
+            target="mock",
+            models={
+                "mock": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "m",
+                    "base_url": "http://localhost:0",
+                }
+            },
+            services={
+                "datasources": {},
+                "schedulers": {
+                    "airflow_prod": {"type": "airflow", "default": True},
+                    "airflow_dev": {"type": "airflow"},
+                },
+            },
+            active_scheduler="airflow_dev",
+            skip_init_dirs=True,
+        )
+        # Explicit name still wins over project override.
+        assert cfg.get_scheduler_config("airflow_prod")["name"] == "airflow_prod"
+        # No explicit name → project override beats the global default flag.
+        chosen = cfg.get_scheduler_config()
+        assert chosen.get("name") == "airflow_dev"
+
+    def test_active_scheduler_stale_falls_back_to_global_default(self, tmp_path, caplog):
+        cfg = AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            project_root=str(tmp_path / "proj"),
+            target="mock",
+            models={
+                "mock": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "m",
+                    "base_url": "http://localhost:0",
+                }
+            },
+            services={
+                "datasources": {},
+                "schedulers": {
+                    "airflow_prod": {"type": "airflow", "default": True},
+                },
+            },
+            active_scheduler="never_configured",
+            skip_init_dirs=True,
+        )
+        with caplog.at_level("WARNING"):
+            chosen = cfg.get_scheduler_config()
+        assert chosen.get("name") == "airflow_prod"
+        joined = " ".join(r.message for r in caplog.records)
+        assert "never_configured" in joined
+
+    def test_set_active_dashboard_persists_to_project_override(self, tmp_path):
+        cfg = AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            project_root=str(tmp_path / "proj"),
+            target="mock",
+            models={
+                "mock": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "m",
+                    "base_url": "http://localhost:0",
+                }
+            },
+            services={"datasources": {}},
+            skip_init_dirs=True,
+        )
+        cfg.set_active_dashboard("superset")
+        assert cfg.active_dashboard() == "superset"
+
+        from datus.configuration.project_config import load_project_override
+
+        loaded = load_project_override(cwd=str(tmp_path / "proj"))
+        assert loaded is not None
+        assert loaded.dashboard == "superset"
+
+        cfg.set_active_dashboard(None)
+        assert cfg.active_dashboard() is None
+        loaded = load_project_override(cwd=str(tmp_path / "proj"))
+        # Cleared field is omitted on disk.
+        assert loaded is None or loaded.dashboard is None
+
+    def test_set_active_scheduler_persists_to_project_override(self, tmp_path):
+        cfg = AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            project_root=str(tmp_path / "proj"),
+            target="mock",
+            models={
+                "mock": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "m",
+                    "base_url": "http://localhost:0",
+                }
+            },
+            services={"datasources": {}},
+            skip_init_dirs=True,
+        )
+        cfg.set_active_scheduler("airflow")
+        assert cfg.active_scheduler() == "airflow"
+
+        from datus.configuration.project_config import load_project_override
+
+        loaded = load_project_override(cwd=str(tmp_path / "proj"))
+        assert loaded is not None
+        assert loaded.scheduler == "airflow"
+
     def test_file_datasource_uri_expands_env_vars(self, tmp_path, monkeypatch):
         db_dir = tmp_path / "db"
         db_dir.mkdir()

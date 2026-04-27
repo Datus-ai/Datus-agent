@@ -366,15 +366,16 @@ class ActionHistoryDisplay:
         history_turns: Optional[List[Tuple[str, List[ActionHistory]]]] = None,
         current_user_message: str = "",
         interaction_broker: Optional["InteractionBroker"] = None,
-        streaming_deltas: Optional[List[ActionHistory]] = None,
+        streaming_deltas: Optional[Dict[str, List[ActionHistory]]] = None,
     ) -> "InlineStreamingContext":
         """Create an inline streaming display context for actions (Claude Code style).
 
-        ``streaming_deltas`` is an optional parallel queue for
-        ``thinking_delta`` actions; the caller populates it as delta events
-        arrive and clears it on each message boundary. The streaming context
-        reads from it for pinned-region live rendering and mid-run Ctrl+O
-        re-render of the main body.
+        ``streaming_deltas`` is an optional per-message dict of
+        ``thinking_delta`` actions, keyed by ``action_id`` (the
+        ``thinking_stream_id`` shared across all deltas + the paired
+        terminal response). The producer only appends to its own bucket;
+        the streaming context drains buckets via per-bucket cursors and
+        drops a bucket when it processes the matching terminal response.
         """
         from datus.cli.action_display.streaming import InlineStreamingContext
 

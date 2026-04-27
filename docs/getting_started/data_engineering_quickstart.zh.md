@@ -7,29 +7,33 @@
 DAComp **不包含**在 `datus-agent` 仓库中。本文使用一个从 DAComp Lever
 示例整理出来的小型 quickstart 数据包，不需要下载完整 DAComp 压缩包。
 
-下载并解压 quickstart 数据包和本地 Docker stack：
+先创建并进入工作目录：
 
 ```bash
 mkdir -p ~/datus-quickstart-data
 cd ~/datus-quickstart-data
+```
 
+然后直接执行下面这段 bash，会下载并解压 quickstart 数据包和本地 Docker
+stack，导出 `DACOMP_HOME` / `DATUS_QUICKSTART_STACK`，复制一份可写的 DuckDB
+工作库，最后打印两个环境变量供后续步骤使用：
+
+```bash
 curl -L -o datus-de-lever-quickstart-v1.zip \
   https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v1/datus-de-lever-quickstart-v1.zip
 curl -L -o datus-data-engineering-quickstart-stack-v1.zip \
   https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v1/datus-data-engineering-quickstart-stack-v1.zip
 
-unzip datus-de-lever-quickstart-v1.zip
-unzip datus-data-engineering-quickstart-stack-v1.zip
-```
+unzip -o datus-de-lever-quickstart-v1.zip
+unzip -o datus-data-engineering-quickstart-stack-v1.zip
 
-然后把 `DACOMP_HOME` 指向本地解压后的数据目录，把 `DATUS_QUICKSTART_STACK`
-指向本地解压后的 Docker stack，并复制一份可写的 DuckDB 工作库：
-
-```bash
-export DACOMP_HOME=/absolute/path/to/datus-de-lever-quickstart
-export DATUS_QUICKSTART_STACK=/absolute/path/to/datus-data-engineering-quickstart-stack
+export DACOMP_HOME="$(pwd)/datus-de-lever-quickstart"
+export DATUS_QUICKSTART_STACK="$(pwd)/datus-data-engineering-quickstart-stack"
 cp "$DACOMP_HOME/lever_start.duckdb" "$DACOMP_HOME/lever_workbench.duckdb"
 cd "$DACOMP_HOME"
+
+echo "export DACOMP_HOME=$DACOMP_HOME"
+echo "export DATUS_QUICKSTART_STACK=$DATUS_QUICKSTART_STACK"
 ```
 
 后续步骤默认这个目录下至少有这些文件：
@@ -90,6 +94,12 @@ Airflow 的 compose 文件会挂载 `${DACOMP_HOME}`，并暴露一个名为
 ```bash
 pip install datus-agent datus-bi-superset datus-postgresql datus-scheduler-airflow
 ```
+
+也可以跳过 `datus-bi-superset` 与 `datus-scheduler-airflow`，让 `/services`
+按需安装：通过 `/services dashboard` 或 `/services scheduler` 新建对应条目
+时，Datus 会自动 `pip install` 并热加载 registry，无需重启 CLI。详见
+[BI 平台](../configuration/bi_platforms.zh.md#通过-cli-配置-services)
+与 [调度器](../configuration/schedulers.zh.md#通过-cli-配置-services)。
 
 ## 步骤 4：配置 `agent.yml`
 

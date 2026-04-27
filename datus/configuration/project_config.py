@@ -16,6 +16,15 @@ pin a handful of values without copying the full config:
     alias for the legacy string form (selects ``agent.models.my-internal``).
 - ``default_datasource``: which datasource to connect to on startup (must
   match a key under ``agent.services.datasources``)
+- ``dashboard``: project-level default BI service (must match a key under
+  ``agent.services.bi_platforms``). Resolved by ``BIFuncTool`` /
+  ``AgentConfig.dashboard_config`` when no explicit ``bi_service`` is
+  passed at the call site.
+- ``scheduler``: project-level default scheduler service (must match a key
+  under ``agent.services.schedulers``). Resolved by ``SchedulerTools`` /
+  ``AgentConfig.get_scheduler_config`` when no explicit ``scheduler_service``
+  is passed at the call site. Takes precedence over the global
+  ``default: true`` flag in ``agent.yml``.
 - ``project_name``: shard name for ``~/.datus/sessions/{project_name}/``
   and ``~/.datus/data/{project_name}/`` (optional)
 - ``reasoning_effort``: one of ``off|minimal|low|medium|high`` — controls the
@@ -38,7 +47,17 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 PROJECT_CONFIG_REL = ".datus/config.yml"
-ALLOWED_KEYS = frozenset({"target", "default_datasource", "project_name", "language", "reasoning_effort"})
+ALLOWED_KEYS = frozenset(
+    {
+        "target",
+        "default_datasource",
+        "dashboard",
+        "scheduler",
+        "project_name",
+        "language",
+        "reasoning_effort",
+    }
+)
 REASONING_EFFORT_CHOICES = frozenset({"off", "minimal", "low", "medium", "high"})
 
 
@@ -70,6 +89,8 @@ class ProjectOverride:
 
     target: Optional[Union[str, ProjectTarget]] = None
     default_datasource: Optional[str] = None
+    dashboard: Optional[str] = None
+    scheduler: Optional[str] = None
     project_name: Optional[str] = None
     language: Optional[str] = None
     reasoning_effort: Optional[str] = None
@@ -78,6 +99,8 @@ class ProjectOverride:
         return (
             self.target is None
             and self.default_datasource is None
+            and self.dashboard is None
+            and self.scheduler is None
             and self.project_name is None
             and self.language is None
             and self.reasoning_effort is None
@@ -150,10 +173,30 @@ def load_project_override(cwd: Optional[str] = None) -> Optional[ProjectOverride
     return ProjectOverride(
         target=_parse_target(raw.get("target")),
         default_datasource=raw.get("default_datasource"),
+        dashboard=_parse_optional_string(raw.get("dashboard"), key="dashboard"),
+        scheduler=_parse_optional_string(raw.get("scheduler"), key="scheduler"),
         project_name=raw.get("project_name"),
         language=raw.get("language"),
         reasoning_effort=_parse_reasoning_effort(raw.get("reasoning_effort")),
     )
+
+
+def _parse_optional_string(raw: Any, *, key: str) -> Optional[str]:
+    """Coerce a YAML scalar into ``Optional[str]`` for ProjectOverride fields.
+
+    Empty strings collapse to ``None`` so the override behaves the same as
+    "not specified" rather than overriding the agent.yml value with an
+    empty string. Non-string values are dropped with a warning so a
+    ``dashboard: 123`` typo fails loudly instead of silently selecting
+    the integer.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        logger.warning(f"{key} must be a string, got {type(raw).__name__}. Ignoring.")
+        return None
+    value = raw.strip()
+    return value or None
 
 
 def _parse_reasoning_effort(raw: Any) -> Optional[str]:
@@ -205,6 +248,8 @@ def save_project_override(override: ProjectOverride, cwd: Optional[str] = None) 
         for k, v in {
             "target": _target_to_yaml(override.target),
             "default_datasource": override.default_datasource,
+            "dashboard": override.dashboard,
+            "scheduler": override.scheduler,
             "project_name": override.project_name,
             "language": override.language,
             "reasoning_effort": override.reasoning_effort,
