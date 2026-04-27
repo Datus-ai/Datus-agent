@@ -980,8 +980,9 @@ class TestCmdAgent:
 
     def test_cmd_agent_no_args_opens_unified_tui(self, cli):
         """'.agent' (no args) opens the unified :class:`AgentApp` seeded
-        on the Built-in tab. A ``set_default`` selection from the app
-        updates ``default_agent``."""
+        on the Custom tab — that's the only tab where ``Enter`` still
+        sets a default after Built-in became config-only. A
+        ``set_default`` selection from the app updates ``default_agent``."""
         from datus.cli.agent_app import AgentSelection
 
         cli.available_subagents = {"chat", "gen_sql"}
@@ -990,7 +991,7 @@ class TestCmdAgent:
             mock_cls.return_value.run.return_value = AgentSelection(kind="set_default", name="gen_sql")
             cli._cmd_agent("")
         mock_cls.assert_called_once()
-        assert mock_cls.call_args.kwargs["seed_tab"] == "builtin"
+        assert mock_cls.call_args.kwargs["seed_tab"] == "custom"
         assert cli.default_agent == "gen_sql"
 
     def test_cmd_subagent_opens_unified_tui_on_custom_tab(self, cli):

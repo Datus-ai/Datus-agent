@@ -62,7 +62,7 @@ class _Tab(Enum):
     CUSTOM = "custom"
 
 
-_TAB_CYCLE: Tuple[_Tab, ...] = (_Tab.BUILTIN, _Tab.CUSTOM)
+_TAB_CYCLE: Tuple[_Tab, ...] = (_Tab.CUSTOM, _Tab.BUILTIN)
 
 
 class _View(Enum):
@@ -129,7 +129,7 @@ class AgentApp:
         self._visible_custom: Set[str] = set(visible_custom_agents or [])
         self._seed_tab_arg = seed_tab
 
-        self._tab: _Tab = _Tab.BUILTIN
+        self._tab: _Tab = _Tab.CUSTOM
         self._view: _View = _View.AGENT_LIST
         self._list_cursor: int = 0
         self._list_offset: int = 0
@@ -298,8 +298,8 @@ class AgentApp:
     def _render_tab_strip(self) -> List[Tuple[str, str]]:
         parts: List[Tuple[str, str]] = [("", "  ")]
         for tab, label in (
-            (_Tab.BUILTIN, " Built-in "),
             (_Tab.CUSTOM, " Custom "),
+            (_Tab.BUILTIN, " Built-in "),
         ):
             style = "reverse bold" if tab == self._tab else ""
             parts.append((style, label))
@@ -310,10 +310,9 @@ class AgentApp:
     def _render_footer_hint(self) -> List[Tuple[str, str]]:
         if self._view == _View.AGENT_LIST:
             if self._tab == _Tab.BUILTIN:
-                hint = (
-                    "  \u2191\u2193 navigate   Enter set as current   e edit   "
-                    "Tab/\u2190\u2192 switch   Esc back   Ctrl+C cancel"
-                )
+                # Built-in agents are config-only in the TUI; ``Enter`` opens
+                # the override form (alias of ``e``) — never sets default.
+                hint = "  \u2191\u2193 navigate   Enter/e edit   Tab/\u2190\u2192 switch   Esc back   Ctrl+C cancel"
             else:
                 hint = (
                     "  \u2191\u2193 navigate   Enter set as current   e edit   a add   d delete   "
@@ -478,7 +477,15 @@ class AgentApp:
         exception: it isn't an agent, so Enter on that row launches the
         add wizard (consistent with the user's expectation that Enter
         "does the obvious thing").
+
+        Built-in rows do NOT support "set as default" via the TUI: those
+        agents are platform-internal nodes that the user only meaningfully
+        configures (``max_turns`` / ``model`` overrides). Enter therefore
+        aliases ``e`` on the Built-in tab and opens the override form.
         """
+        if self._tab == _Tab.BUILTIN:
+            self._on_list_edit()
+            return
         if self._tab == _Tab.CUSTOM and self._list_cursor == len(self._custom_names):
             self._exit_with(AgentSelection(kind="new_custom", return_to_tab="custom"))
             return

@@ -54,7 +54,7 @@ def _make_runner(**overrides):
         patch("datus.cli.print_mode.AtReferenceCompleter") as mock_completer,
     ):
         mock_cfg.return_value = MagicMock(datasource_configs={})
-        mock_completer.return_value.parse_at_context.return_value = ([], [], [])
+        mock_completer.return_value.parse_at_context.return_value = ([], [], [], None)
         from datus.cli.print_mode import PrintModeRunner
 
         return PrintModeRunner(_make_args(**overrides))
@@ -254,7 +254,7 @@ class TestResumeSessionId:
             patch("datus.cli.print_mode.AtReferenceCompleter") as mock_completer,
         ):
             mock_cfg.return_value = MagicMock(datasource_configs={})
-            mock_completer.return_value.parse_at_context.return_value = ([], [], [])
+            mock_completer.return_value.parse_at_context.return_value = ([], [], [], None)
             from datus.cli.print_mode import PrintModeRunner
 
             runner = PrintModeRunner(_make_args(resume="session_abc"))
@@ -290,7 +290,7 @@ class TestResumeSessionId:
             patch("datus.cli.print_mode.AtReferenceCompleter") as mock_completer,
         ):
             mock_cfg.return_value = MagicMock(datasource_configs={})
-            mock_completer.return_value.parse_at_context.return_value = ([], [], [])
+            mock_completer.return_value.parse_at_context.return_value = ([], [], [], None)
             from datus.cli.print_mode import PrintModeRunner
 
             runner = PrintModeRunner(_make_args(resume="no_such_session"))
@@ -324,7 +324,7 @@ class TestResumeSessionId:
             patch("datus.cli.print_mode.AtReferenceCompleter") as mock_completer,
         ):
             mock_cfg.return_value = MagicMock(datasource_configs={})
-            mock_completer.return_value.parse_at_context.return_value = ([], [], [])
+            mock_completer.return_value.parse_at_context.return_value = ([], [], [], None)
             from datus.cli.print_mode import PrintModeRunner
 
             runner = PrintModeRunner(_make_args(resume="session_uuid123", subagent="gen_sql"))
@@ -366,7 +366,7 @@ class TestRunUsesFactory:
             patch("datus.cli.print_mode.AtReferenceCompleter") as mock_completer,
         ):
             mock_cfg.return_value = MagicMock(datasource_configs={})
-            mock_completer.return_value.parse_at_context.return_value = ([], [], [])
+            mock_completer.return_value.parse_at_context.return_value = ([], [], [], None)
             from datus.cli.print_mode import PrintModeRunner
 
             runner = PrintModeRunner(_make_args())

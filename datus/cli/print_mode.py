@@ -62,7 +62,7 @@ class PrintModeRunner:
             patterns = [p.strip() for p in self.proxy_tool_patterns.split(",")]
             apply_proxy_tools(node, patterns)
 
-        at_tables, at_metrics, at_sqls = self.at_completer.parse_at_context(self.message)
+        at_tables, at_metrics, at_sqls, _at_agent = self.at_completer.parse_at_context(self.message)
         node_input = create_node_input(
             user_message=self.message,
             node=node,

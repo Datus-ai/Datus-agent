@@ -10,7 +10,7 @@ Provides SQL keyword, table name, and column name autocompletion.
 import re
 import threading
 from abc import abstractmethod
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import pyarrow
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
@@ -934,10 +934,121 @@ class _ContinuousPathCompleter(Completer):
                 yield comp
 
 
+class _AgentReferenceCompleter(Completer):
+    """``@Agent <name>`` completer.
+
+    The agent list is **not** a routing target the way Tables / Metrics are —
+    selecting one only injects a routing hint into the chat message so the
+    main chat agent delegates via its existing ``task`` tool
+    (:class:`~datus.tools.func_tool.sub_agent_task_tool.SubAgentTaskTool`).
+    The user's default agent stays put.
+
+    Visibility is delegated to a caller-supplied callable so this completer
+    stays in lock-step with ``/agent`` TUI rules (HIDDEN_SYS_SUB_AGENTS,
+    datasource scoping). The callable is re-invoked on each completion so a
+    datasource swap takes effect without rebuilding the completer.
+    """
+
+    def __init__(
+        self,
+        agent_config: AgentConfig,
+        visibility_provider: Optional[Callable[[], Set[str]]] = None,
+    ) -> None:
+        self.agent_config = agent_config
+        self._visibility_provider = visibility_provider
+        # Lazy: resolved on first lookup so importing autocomplete.py does
+        # not pull in the func_tool package eagerly (avoids circular imports
+        # in non-CLI test contexts).
+        self._builtin_descriptions: Optional[Dict[str, str]] = None
+
+    # ── description helpers ──────────────────────────────────────────
+
+    def _load_builtin_descriptions(self) -> Dict[str, str]:
+        if self._builtin_descriptions is None:
+            try:
+                from datus.tools.func_tool.sub_agent_task_tool import BUILTIN_SUBAGENT_DESCRIPTIONS
+
+                self._builtin_descriptions = dict(BUILTIN_SUBAGENT_DESCRIPTIONS)
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning("Failed to load builtin subagent descriptions: %s", e)
+                self._builtin_descriptions = {}
+        return self._builtin_descriptions
+
+    def _description_for(self, name: str) -> str:
+        """One-line description, suitable for menu rendering."""
+        builtin = self._load_builtin_descriptions().get(name)
+        if builtin:
+            text = builtin
+        else:
+            entry = (self.agent_config.agentic_nodes or {}).get(name) or {}
+            text = entry.get("agent_description") or ""
+        text = (text or "").strip().replace("\n", " ")
+        if len(text) > 80:
+            text = text[:77] + "..."
+        return text
+
+    # ── visibility ───────────────────────────────────────────────────
+
+    def visible_names(self) -> List[str]:
+        """Return sorted names eligible for ``@Agent`` mention.
+
+        Falls back to the raw ``agentic_nodes`` keys when no provider is
+        wired (non-interactive contexts / tests).
+        """
+        if self._visibility_provider is not None:
+            try:
+                names = set(self._visibility_provider() or set())
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning("Agent visibility provider failed: %s", e)
+                names = set()
+        else:
+            names = set((self.agent_config.agentic_nodes or {}).keys())
+        # ``chat`` is the pseudo-default and is not a valid task() type, so
+        # never offer it as an @Agent target.
+        names.discard("chat")
+        return sorted(names)
+
+    def is_known(self, name: str) -> bool:
+        return name in set(self.visible_names())
+
+    # ── matching ─────────────────────────────────────────────────────
+
+    def fuzzy_match(self, text: str, limit: Optional[int] = None) -> List[str]:
+        """Return agent names whose lower-cased form contains ``text``."""
+        text = text.strip().lower()
+        if not text:
+            return []
+        if limit is None:
+            limit = 10
+        result: List[str] = []
+        for name in self.visible_names():
+            if text in name.lower():
+                result.append(name)
+                if len(result) >= limit:
+                    break
+        return result
+
+    def get_completions(self, document: Document, complete_event) -> Iterable[Completion]:
+        rest = document.text
+        prefix = rest.strip().lower()
+        for name in self.visible_names():
+            if prefix and prefix not in name.lower():
+                continue
+            desc = self._description_for(name)
+            display = f"🤖 {name}" + (f"  {desc}" if desc else "")
+            yield Completion(name, display=display, start_position=-len(rest))
+
+
 class AtReferenceCompleter(Completer):
     """Router completer: dispatch to different completers based on type"""
 
-    def __init__(self, agent_config: AgentConfig, sub_agent_name: str = "", available_subagents: set = None):
+    def __init__(
+        self,
+        agent_config: AgentConfig,
+        sub_agent_name: str = "",
+        available_subagents: set = None,
+        visibility_provider: Optional[Callable[[], Set[str]]] = None,
+    ):
         # Initialize specialized completers
         self.agent_config = agent_config
         self._sub_agent_name = sub_agent_name
@@ -968,18 +1079,21 @@ class AtReferenceCompleter(Completer):
             return paths
 
         self.file_completer = _ContinuousPathCompleter(PathCompleter(get_paths=get_search_paths))
+        self.agent_completer = _AgentReferenceCompleter(agent_config, visibility_provider=visibility_provider)
 
         self.completer_dict = {
             "Table": self.table_completer,
             "Metrics": self.metric_completer,
             "Sql": self.sql_completer,
             "File": self.file_completer,
+            "Agent": self.agent_completer,
         }
         self.type_options = {
             "Table": "📊 Table",
             "Metrics": "📈 Metrics",
             "Sql": "💻 Sql",
             "File": "📁 File",
+            "Agent": "🤖 Agent",
         }
 
         self.at_parser = AtReferenceParser()
@@ -1006,13 +1120,22 @@ class AtReferenceCompleter(Completer):
         self.metric_completer.reload_data()
         self.sql_completer.reload_data()
 
-    def parse_at_context(self, user_input: str) -> Tuple[List[TableSchema], List[Metric], List[ReferenceSql]]:
+    def parse_at_context(
+        self, user_input: str
+    ) -> Tuple[List[TableSchema], List[Metric], List[ReferenceSql], Optional[str]]:
+        """Extract ``@Table`` / ``@Metrics`` / ``@Sql`` / ``@Agent`` references.
+
+        The agent slot is a single optional name (the first ``@Agent <name>``
+        occurrence); unknown names are dropped so a typo never silently
+        flips routing. Subsequent ``@Agent`` mentions are ignored on purpose
+        to keep the dispatch hint deterministic.
+        """
         self.table_completer._ensure_loaded()
         self.metric_completer._ensure_loaded()
         self.sql_completer._ensure_loaded()
         user_input = user_input.strip()
         if not user_input:
-            return ([], [], [])
+            return ([], [], [], None)
         parse_result = self.at_parser.parse_input(user_input)
         tables = []
         metrics = []
@@ -1030,7 +1153,15 @@ class AtReferenceCompleter(Completer):
             for key in parse_result["sqls"]:
                 if key in self.sql_completer.flatten_data:
                     sqls.append(ReferenceSql.from_dict(self.sql_completer.flatten_data[key]))
-        return (tables, metrics, sqls)
+
+        agent_name: Optional[str] = parse_result.get("agent")
+        if agent_name and not self.agent_completer.is_known(agent_name):
+            logger.warning(
+                "@Agent reference '%s' is not a known/visible subagent; ignoring routing hint.",
+                agent_name,
+            )
+            agent_name = None
+        return (tables, metrics, sqls, agent_name)
 
     def _detect_sub_agent_from_input(self, text: str) -> str:
         """Detect sub-agent name from input line prefix like '/sub_agent_name ...'.
@@ -1089,6 +1220,7 @@ class AtReferenceCompleter(Completer):
                 metric_matches = self.metric_completer.fuzzy_match(type_prefix, limit=fuzzy_limit)
                 sql_matches = self.sql_completer.fuzzy_match(type_prefix, limit=fuzzy_limit)
                 file_matches = get_file_fuzzy_matches(type_prefix, path=self.workspace_root, max_matches=fuzzy_limit)
+                agent_matches = self.agent_completer.fuzzy_match(type_prefix, limit=fuzzy_limit)
                 # Yield fuzzy match results first
                 for match in table_matches:
                     # Extract the actual path from the match string
@@ -1120,6 +1252,16 @@ class AtReferenceCompleter(Completer):
                         f"@File {file_path}",  # Remove @ from completion
                         start_position=-len(prefix),
                         display=f"📁 {file_path}",
+                        style="class:fuzzy",
+                    )
+
+                for agent_name in agent_matches:
+                    desc = self.agent_completer._description_for(agent_name)
+                    display = f"🤖 {agent_name}" + (f"  {desc}" if desc else "")
+                    yield Completion(
+                        f"@Agent {agent_name}",
+                        start_position=-len(prefix),
+                        display=display,
                         style="class:fuzzy",
                     )
 
@@ -1360,20 +1502,24 @@ class AtReferenceParser:
             "Table": re.compile(rf"@Table\s+({REFERENCE_PATH_REGEX})", re.IGNORECASE),
             "Metrics": re.compile(rf"@Metrics\s+({REFERENCE_PATH_REGEX})", re.IGNORECASE),
             "Sqls": re.compile(rf"@Sql\s+({REFERENCE_PATH_REGEX})", re.IGNORECASE),
+            # Agent names follow Python identifier rules; the bare name is
+            # all the dispatcher needs (no nested path), so don't reuse the
+            # broader REFERENCE_PATH_REGEX (which would happily eat trailing
+            # words from the user's prompt).
+            "Agent": re.compile(r"@Agent\s+([A-Za-z_][\w-]*)", re.IGNORECASE),
         }
 
-    def parse_input(self, text: str) -> Dict[str, List[str]]:
+    def parse_input(self, text: str) -> Dict[str, Any]:
         """
         Parse text and extract all @reference paths.
 
-        Args:
-            text: Input text containing @references
-
-        Returns:
-            Dictionary with keys 'tables', 'metrics', 'reference_sql', 'files',
-            each containing a list of extracted paths
+        Returns a dict with:
+        - ``tables`` / ``metrics`` / ``sqls``: list of reference paths
+        - ``agent``: optional first ``@Agent <name>`` mention; subsequent
+          occurrences are ignored on purpose so the dispatch hint stays
+          deterministic.
         """
-        results = {"tables": [], "metrics": [], "sqls": []}
+        results: Dict[str, Any] = {"tables": [], "metrics": [], "sqls": [], "agent": None}
 
         # Extract Table references
         for match in self.patterns["Table"].finditer(text):
@@ -1392,5 +1538,10 @@ class AtReferenceParser:
             path = normalize_reference_path(match.group(1))
             if path:
                 results["sqls"].append(path)
+
+        # Extract first Agent mention only.
+        agent_match = self.patterns["Agent"].search(text)
+        if agent_match:
+            results["agent"] = agent_match.group(1)
 
         return results

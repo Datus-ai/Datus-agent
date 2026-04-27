@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from rich.console import Console
 
-from datus.cli.agent_app import AgentApp, AgentSelection, _Tab, _View
+from datus.cli.agent_app import AgentApp, _Tab, _View
 from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
 
 pytestmark = pytest.mark.ci
@@ -102,6 +102,13 @@ class TestListing:
         assert app._tab == _Tab.BUILTIN
         assert app._builtin_names[app._list_cursor] == "chat"
 
+    def test_default_tab_is_custom_without_seed(self):
+        """Without an explicit ``seed_tab`` the app lands on Custom — the
+        only tab that supports default-agent switching after the Built-in
+        tab became config-only."""
+        app = _build()
+        assert app._tab == _Tab.CUSTOM
+
     def test_visible_custom_filter_applies(self):
         cfg_nodes = {"alpha": {}, "beta": {}, "gamma": {}}
         app = _build(agentic_nodes=cfg_nodes, visible_custom_agents={"alpha", "gamma"})
@@ -114,29 +121,35 @@ class TestListing:
 
 
 class TestSetDefault:
-    def test_enter_on_builtin_row_sets_default(self):
-        """``Enter`` on any Built-in row (including ``chat``) sets that
-        agent as the session default. The edit form is NOT opened — that
-        flow now lives behind ``e``."""
-        app = _build()
+    def test_enter_on_builtin_row_opens_edit_form(self):
+        """``Enter`` on a Built-in row no longer sets default — Built-in
+        agents are platform-internal nodes that the TUI only lets users
+        configure (``max_turns`` overrides). Enter therefore aliases ``e``
+        and opens the override form so the keystroke still does something
+        useful."""
+        app = _build(seed_tab="builtin")
+        app._apply_seed()
         gen_sql_idx = app._builtin_names.index("gen_sql")
         app._list_cursor = gen_sql_idx
-        with patch.object(app._app, "exit") as exit_mock:
+        with patch.object(app._app, "exit") as exit_mock, patch.object(app._app.layout, "focus"):
             app._on_list_enter()
-        sel = exit_mock.call_args.kwargs["result"]
-        assert isinstance(sel, AgentSelection)
-        assert sel.kind == "set_default"
-        assert sel.name == "gen_sql"
+        exit_mock.assert_not_called()
+        assert app._view == _View.BUILTIN_EDIT
+        assert app._edit_target == "gen_sql"
 
-    def test_enter_on_chat_row_resets_default(self):
-        app = _build()
+    def test_enter_on_chat_row_in_builtin_tab_does_not_exit(self):
+        """``chat`` has no overridable fields and Built-in Enter no longer
+        sets default — the keystroke surfaces the same "no overrides"
+        error path that ``e`` produces, without exiting the app."""
+        app = _build(seed_tab="builtin")
+        app._apply_seed()
         chat_idx = app._builtin_names.index("chat")
         app._list_cursor = chat_idx
         with patch.object(app._app, "exit") as exit_mock:
             app._on_list_enter()
-        sel = exit_mock.call_args.kwargs["result"]
-        assert sel.kind == "set_default"
-        assert sel.name == "chat"
+        exit_mock.assert_not_called()
+        assert app._view == _View.AGENT_LIST
+        assert "chat" in (app._error_message or "")
 
     def test_enter_on_custom_agent_sets_default(self):
         app = _build(agentic_nodes={"alpha": {}, "beta": {}}, seed_tab="custom")
@@ -206,7 +219,8 @@ class TestCustomTabActions:
 
 class TestBuiltinEdit:
     def test_edit_key_on_builtin_opens_single_field_form(self):
-        app = _build()
+        app = _build(seed_tab="builtin")
+        app._apply_seed()
         # Pick a real built-in (not 'chat').
         gen_sql_idx = app._builtin_names.index("gen_sql")
         app._list_cursor = gen_sql_idx
@@ -218,7 +232,8 @@ class TestBuiltinEdit:
 
     def test_edit_key_on_builtin_preselects_existing_max_turns(self):
         cfg_nodes = {"gen_sql": {"system_prompt": "gen_sql", "max_turns": 42}}
-        app = _build(agentic_nodes=cfg_nodes)
+        app = _build(agentic_nodes=cfg_nodes, seed_tab="builtin")
+        app._apply_seed()
         gen_sql_idx = app._builtin_names.index("gen_sql")
         app._list_cursor = gen_sql_idx
         with patch.object(app._app.layout, "focus"):
@@ -230,7 +245,8 @@ class TestBuiltinEdit:
         ``model=None`` (cleared) when there is no pre-existing override
         on disk, regardless of what other fields the form might be
         showing."""
-        app = _build()
+        app = _build(seed_tab="builtin")
+        app._apply_seed()
         gen_sql_idx = app._builtin_names.index("gen_sql")
         app._list_cursor = gen_sql_idx
         with patch.object(app._app.layout, "focus"):
@@ -245,7 +261,8 @@ class TestBuiltinEdit:
         hand outside the UI), submitting the max_turns form must not
         silently drop it."""
         cfg_nodes = {"gen_sql": {"system_prompt": "gen_sql", "model": "my-internal", "max_turns": 10}}
-        app = _build(agentic_nodes=cfg_nodes)
+        app = _build(agentic_nodes=cfg_nodes, seed_tab="builtin")
+        app._apply_seed()
         gen_sql_idx = app._builtin_names.index("gen_sql")
         app._list_cursor = gen_sql_idx
         with patch.object(app._app.layout, "focus"):
@@ -255,7 +272,8 @@ class TestBuiltinEdit:
         app._cfg.set_agentic_node_override.assert_called_once_with("gen_sql", model="my-internal", max_turns=42)
 
     def test_submit_clears_max_turns_when_empty(self):
-        app = _build()
+        app = _build(seed_tab="builtin")
+        app._apply_seed()
         gen_sql_idx = app._builtin_names.index("gen_sql")
         app._list_cursor = gen_sql_idx
         with patch.object(app._app.layout, "focus"):
@@ -265,7 +283,8 @@ class TestBuiltinEdit:
         app._cfg.set_agentic_node_override.assert_called_once_with("gen_sql", model=None, max_turns=None)
 
     def test_submit_rejects_non_integer_max_turns(self):
-        app = _build()
+        app = _build(seed_tab="builtin")
+        app._apply_seed()
         gen_sql_idx = app._builtin_names.index("gen_sql")
         app._list_cursor = gen_sql_idx
         with patch.object(app._app.layout, "focus"):
@@ -277,7 +296,8 @@ class TestBuiltinEdit:
         assert "integer" in (app._error_message or "")
 
     def test_submit_rejects_non_positive_max_turns(self):
-        app = _build()
+        app = _build(seed_tab="builtin")
+        app._apply_seed()
         gen_sql_idx = app._builtin_names.index("gen_sql")
         app._list_cursor = gen_sql_idx
         with patch.object(app._app.layout, "focus"):
@@ -290,7 +310,8 @@ class TestBuiltinEdit:
     def test_edit_key_on_chat_row_is_rejected(self):
         """``chat`` has no overridable fields — pressing ``e`` on that
         row surfaces an error instead of opening a half-populated form."""
-        app = _build()
+        app = _build(seed_tab="builtin")
+        app._apply_seed()
         chat_idx = app._builtin_names.index("chat")
         app._list_cursor = chat_idx
         app._on_list_edit()
@@ -304,16 +325,18 @@ class TestBuiltinEdit:
 
 
 class TestTabCycle:
-    def test_cycle_tab_forward_goes_builtin_to_custom(self):
+    def test_cycle_tab_forward_goes_custom_to_builtin(self):
+        """Custom is the actionable tab and lives first; Tab cycles
+        forward to the config-only Built-in tab and wraps back."""
         app = _build(agentic_nodes={"alpha": {}})
-        assert app._tab == _Tab.BUILTIN
-        app._cycle_tab(+1)
         assert app._tab == _Tab.CUSTOM
         app._cycle_tab(+1)
         assert app._tab == _Tab.BUILTIN
+        app._cycle_tab(+1)
+        assert app._tab == _Tab.CUSTOM
 
     def test_cycle_tab_backward(self):
         app = _build(agentic_nodes={"alpha": {}})
-        assert app._tab == _Tab.BUILTIN
-        app._cycle_tab(-1)
         assert app._tab == _Tab.CUSTOM
+        app._cycle_tab(-1)
+        assert app._tab == _Tab.BUILTIN

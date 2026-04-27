@@ -204,6 +204,24 @@ class ChatCommands:
         )
         return node_input, current_node.type
 
+    @staticmethod
+    def _render_agent_dispatch_hint(message: str, agent_name: str) -> str:
+        """Append a routing hint that nudges the chat agent to delegate.
+
+        The chat agent already exposes a ``task`` FunctionTool wired to
+        :class:`SubAgentTaskTool`; ``@Agent <name>`` is therefore a soft
+        routing instruction rather than a node switch. Keeping the user's
+        original text intact (and only appending an ``[Agent dispatch]``
+        annotation) preserves the visible transcript while making the
+        delegation deterministic when the model reads the prompt.
+        """
+        annotation = (
+            f"[Agent dispatch] The user invoked @Agent {agent_name}. "
+            f'Use the task tool with type="{agent_name}" to delegate this request '
+            f"to that subagent rather than handling it directly."
+        )
+        return f"{message.rstrip()}\n\n{annotation}"
+
     def execute_chat_command(
         self,
         message: str,
@@ -262,7 +280,14 @@ class ChatCommands:
             return
 
         try:
-            at_tables, at_metrics, at_sqls = self.cli.at_completer.parse_at_context(message)
+            at_tables, at_metrics, at_sqls, at_agent = self.cli.at_completer.parse_at_context(message)
+            # ``@Agent <name>`` is a per-turn routing hint, not a default-agent
+            # override: ``current_subagent_name`` and the active node remain
+            # unchanged. The hint is appended to the message so the chat
+            # agent's existing ``task`` tool fires deterministically rather
+            # than relying on the LLM to spot the bare ``@Agent`` token.
+            if at_agent:
+                message = self._render_agent_dispatch_hint(message, at_agent)
 
             if interactive:
                 # Decision logic: determine if we need to create a new node

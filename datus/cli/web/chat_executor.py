@@ -35,8 +35,11 @@ class ChatExecutor:
             return
 
         try:
-            # Get node and input using chat_commands logic
-            at_tables, at_metrics, at_sqls = cli.at_completer.parse_at_context(user_message)
+            # Get node and input using chat_commands logic. The Web path
+            # consumes only the data-reference slots; the @Agent routing
+            # hint is CLI-only for now (see plan: Web does not honour
+            # @Agent yet).
+            at_tables, at_metrics, at_sqls, _at_agent = cli.at_completer.parse_at_context(user_message)
 
             # Reuse chat_commands node management
             need_new_node = cli.chat_commands._should_create_new_node(current_subagent)

@@ -216,7 +216,11 @@ class DatusCLI:
             else:
                 self._init_prompt_session()
         else:
-            self.at_completer = AtReferenceCompleter(self.agent_config, available_subagents=self.available_subagents)
+            self.at_completer = AtReferenceCompleter(
+                self.agent_config,
+                available_subagents=self.available_subagents,
+                visibility_provider=self._visible_subagents_for_default,
+            )
 
         # Last executed SQL and result
         self.last_sql = None
@@ -651,8 +655,10 @@ class DatusCLI:
         sql_completer = SQLCompleter()
         self.service_completer = ServiceCommandCompleter(self)
         self.at_completer = AtReferenceCompleter(
-            self.agent_config, available_subagents=self.available_subagents
-        )  # Router for @Table / @Metrics / @Sql inline references
+            self.agent_config,
+            available_subagents=self.available_subagents,
+            visibility_provider=self._visible_subagents_for_default,
+        )  # Router for @Table / @Metrics / @Sql / @Agent inline references
         self.slash_completer = SlashCommandCompleter()
 
         # Use merge_completers to combine completers
@@ -1077,18 +1083,21 @@ class DatusCLI:
         return visible
 
     def _cmd_agent(self, args: str):
-        """Open the unified agent management TUI (Built-in tab seed).
+        """Open the unified agent management TUI (Custom tab seed).
 
-        ``/agent`` with no args lands on the Built-in tab so users can
-        tweak ``model`` / ``max_turns`` overrides for system subagents.
-        ``/agent <name>`` keeps the legacy direct-setter shortcut for
-        scripting — no TUI is launched.
+        ``/agent`` with no args lands on the Custom tab — that's the
+        actionable surface for switching the default agent. The Built-in
+        tab is config-only in the TUI (``max_turns`` overrides), so
+        seeding it would land users on a tab where ``Enter`` no longer
+        sets a default. ``/agent <name>`` keeps the legacy direct-setter
+        shortcut for scripting — no TUI is launched, and built-in names
+        remain accepted for backward compatibility.
         """
         name = args.strip()
         if name:
             self._set_default_agent_by_name(name)
             return
-        self._open_agent_app(seed_tab="builtin")
+        self._open_agent_app(seed_tab="custom")
 
     def _cmd_subagent(self, args: str):
         """Open the unified agent management TUI (Custom tab seed).

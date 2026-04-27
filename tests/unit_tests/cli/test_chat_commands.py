@@ -49,8 +49,8 @@ class MinimalAtCompleter:
     """Minimal at-completer that returns empty context."""
 
     def parse_at_context(self, user_input):
-        """Return empty lists for tables, metrics, sqls."""
-        return ([], [], [])
+        """Return empty lists for tables, metrics, sqls and no agent hint."""
+        return ([], [], [], None)
 
 
 class MinimalCLI:
@@ -185,6 +185,38 @@ class TestChatCommandsInit:
         assert cmds.current_subagent_name is None
         assert cmds.chat_history == []
         assert cmds.last_actions == []
+
+
+# ===========================================================================
+# TestAgentDispatchHint
+# ===========================================================================
+
+
+class TestAgentDispatchHint:
+    """``@Agent <name>`` is wired as a *soft* routing hint, not a default-agent
+    switch. The chat agent's existing ``task`` FunctionTool fires when it
+    sees the hint annotation appended to the user message; the active node
+    and ``current_subagent_name`` must remain unchanged so the next turn
+    picks up where the user left off.
+    """
+
+    def test_hint_preserves_user_message_and_appends_annotation(self):
+        original = "@Agent gen_sql write me a query for sales by region"
+        rendered = ChatCommands._render_agent_dispatch_hint(original, "gen_sql")
+        assert rendered.startswith(original.rstrip())
+        # Annotation block must mention the agent name and the task tool
+        # so an LLM scan trivially routes the prompt.
+        assert "gen_sql" in rendered
+        assert "task tool" in rendered
+        assert 'type="gen_sql"' in rendered
+
+    def test_hint_strips_only_trailing_whitespace(self):
+        """Trailing whitespace from the user input shouldn't be propagated
+        into the annotation block, but the message content stays intact."""
+        rendered = ChatCommands._render_agent_dispatch_hint("hello world   \n  ", "gen_report")
+        # The trailing whitespace block is removed, then the annotation is
+        # appended after a single blank-line separator.
+        assert rendered.startswith("hello world\n\n[Agent dispatch]")
 
 
 # ===========================================================================
