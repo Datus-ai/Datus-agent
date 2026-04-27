@@ -104,13 +104,16 @@ When using `gh pr create --body`, copy `.github/PULL_REQUEST_TEMPLATE.md` as the
 
 ## Commit Workflow
 
-1. **Pre-format**: `uv run ruff format . && uv run ruff check --fix .` before staging
-2. **Coverage gate** — both must pass:
+Every gate below also runs in CI on the PR — running them locally first avoids round-trip failures. Do **not** push until each one passes.
+
+1. **Pre-format**: `uv run ruff format . && uv run ruff check --fix .` before staging.
+2. **Coverage gate** — both dimensions must pass:
    - Overall: `uv run pytest tests/unit_tests/ -m "not nightly" --cov=datus --cov-report=xml:coverage.xml --cov-fail-under=80`
-   - Diff: `uv run diff-cover coverage.xml --compare-branch=upstream/main --fail-under=80` (add `--show-uncovered` to find uncovered new lines)
-3. **Pre-commit hooks**: never use `--no-verify`; auto-fix and retry until they pass
-4. **Push**: only to `origin`, never to `upstream`
-5. **PR body**: see **PR Conventions → Body** above
+   - Diff: `uv run diff-cover coverage.xml --compare-branch=upstream/main --fail-under=80` (add `--show-uncovered` to locate uncovered new lines).
+3. **Test-quality audit** (`ci/audit_tests.py`): `uv run python ci/audit_tests.py --diff-only upstream/main` — must report **`P0=0`**. P0 hard-fails CI (conditional asserts, tautologies, zero-assert tests, debug leftovers, hardcoded pre-built DBs, etc.); P1 is warn-only but should be addressed. Use `--all` for a full scan when you've touched many test files. Honor noqa with `# audit-noqa: <rule>` only when justified.
+4. **Pre-commit hooks**: never use `--no-verify`; auto-fix and retry until they pass.
+5. **Push**: only to `origin`, never to `upstream`.
+6. **PR body**: see **PR Conventions → Body** above.
 
 ## Testing Rules
 
