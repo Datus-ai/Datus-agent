@@ -1080,8 +1080,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                         # Handle tool call start
                         if item_type == "tool_call_item":
                             tool_call_seen = True
-                            if not tool_output_seen:
-                                final_assistant_yielded = False
+                            final_assistant_yielded = False
                             raw_item = getattr(event.item, "raw_item", None)
                             if raw_item:
                                 tool_name = getattr(raw_item, "name", None)

@@ -658,6 +658,26 @@ class TestRawEventEarlyCapture:
         assert assistant_actions[0].output["raw_output"] == "There is 1 table: orders."
 
     @pytest.mark.asyncio
+    async def test_final_output_fallback_resets_for_each_tool_round(self):
+        """Visible text after an earlier tool must not suppress final_output after a later tool."""
+        events = [
+            _make_tool_call_event(call_id="call_first", tool_name="list_tables"),
+            _make_tool_output_event(call_id="call_first"),
+            _make_message_event("First tool is done."),
+            _make_tool_call_event(call_id="call_second", tool_name="describe_table"),
+            _make_tool_output_event(call_id="call_second"),
+        ]
+
+        actions = await _collect_actions(events, final_output="Final answer after the second tool.")
+
+        assistant_actions = [a for a in actions if a.role == ActionRole.ASSISTANT and a.action_type == "response"]
+        assert [a.output["raw_output"] for a in assistant_actions] == [
+            "First tool is done.",
+            "Final answer after the second tool.",
+        ]
+        assert assistant_actions[-1].output["is_thinking"] is False
+
+    @pytest.mark.asyncio
     async def test_thinking_delta_stream_id_shared(self):
         """All thinking_delta actions in one stream share the same action_id."""
         events = [

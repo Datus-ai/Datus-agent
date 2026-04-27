@@ -117,6 +117,23 @@ def _remember_assistant_message(event: SSEEvent, seen_fingerprints: set[str]) ->
         seen_fingerprints.add(fingerprint)
 
 
+def _should_include_final_response(action, assistant_response_sent: bool) -> bool:
+    """Return True for top-level wrapper responses that should be rendered.
+
+    Sub-agent actions are forwarded with ``depth > 0``. Their own
+    ``*_response`` wrappers must stay inside the tool/sub-agent transcript and
+    must not become the top-level assistant bubble.
+    """
+    return (
+        action.role == ActionRole.ASSISTANT
+        and action.status == ActionStatus.SUCCESS
+        and getattr(action, "depth", 0) == 0
+        and bool(action.action_type)
+        and action.action_type.endswith("_response")
+        and not assistant_response_sent
+    )
+
+
 def _is_visible_assistant_response(action, event: SSEEvent, *, tool_result_seen: bool) -> bool:
     """Return True when an action already emitted user-visible assistant text.
 
@@ -529,13 +546,7 @@ class ChatTaskManager:
                     stream_thinking=effective_stream,
                     is_first_delta=is_first_delta,
                     is_update=bool(is_update),
-                    include_final_response=(
-                        action.role == ActionRole.ASSISTANT
-                        and action.status == ActionStatus.SUCCESS
-                        and bool(action.action_type)
-                        and action.action_type.endswith("_response")
-                        and not assistant_response_sent
-                    ),
+                    include_final_response=_should_include_final_response(action, assistant_response_sent),
                 )
                 if sse:
                     if _should_skip_duplicate_assistant_message(

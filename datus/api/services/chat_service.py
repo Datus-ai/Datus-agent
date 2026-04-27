@@ -28,6 +28,7 @@ from datus.api.services.action_sse_converter import action_to_sse_event
 from datus.api.services.chat_task_manager import (
     _is_visible_assistant_response,
     _remember_assistant_message,
+    _should_include_final_response,
     _should_skip_duplicate_assistant_message,
 )
 from datus.configuration.agent_config import AgentConfig
@@ -249,13 +250,7 @@ class ChatService:
                         tool_result_seen = False
                         seen_assistant_message_fingerprints: set[str] = set()
                         for action in messages:
-                            include_final_response = (
-                                action.role == ActionRole.ASSISTANT
-                                and action.status == ActionStatus.SUCCESS
-                                and bool(action.action_type)
-                                and action.action_type.endswith("_response")
-                                and not assistant_response_seen
-                            )
+                            include_final_response = _should_include_final_response(action, assistant_response_seen)
                             sse_event = action_to_sse_event(
                                 action,
                                 event_id,

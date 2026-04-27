@@ -20,6 +20,7 @@ from datus.api.services.chat_task_manager import (
     _coalesce_deltas,
     _fill_database_context,
     _is_thinking_delta,
+    _should_include_final_response,
 )
 
 
@@ -223,6 +224,72 @@ class TestChatTaskManagerBehavior:
         content = message_events[0].data.payload.content[0]
         assert content.type == "markdown"
         assert content.payload["content"] == "1 table: orders"
+
+    def test_include_final_response_rejects_nested_subagent_response(self):
+        """Depth>0 sub-agent wrappers must not render as top-level answers."""
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+        action = ActionHistory(
+            action_id="nested",
+            role=ActionRole.ASSISTANT,
+            action_type="gen_sql_response",
+            messages="nested done",
+            input={},
+            output={"response": "internal sub-agent answer"},
+            status=ActionStatus.SUCCESS,
+            depth=1,
+        )
+
+        assert _should_include_final_response(action, assistant_response_sent=False) is False
+
+    @pytest.mark.asyncio
+    async def test_run_loop_ignores_nested_response_and_emits_parent_response(self, real_agent_config):
+        """A forwarded sub-agent *_response must not hide the parent chat_response."""
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+        class FakeNode:
+            session_id = "s-nested-response"
+
+            async def execute_stream_with_interactions(self, action_history_manager):
+                yield ActionHistory(
+                    action_id="nested",
+                    role=ActionRole.ASSISTANT,
+                    action_type="gen_sql_response",
+                    messages="nested done",
+                    input={},
+                    output={"response": "internal sub-agent answer"},
+                    status=ActionStatus.SUCCESS,
+                    depth=1,
+                )
+                yield ActionHistory(
+                    action_id="parent",
+                    role=ActionRole.ASSISTANT,
+                    action_type="chat_response",
+                    messages="parent done",
+                    input={},
+                    output={"response": "top-level parent answer"},
+                    status=ActionStatus.SUCCESS,
+                    depth=0,
+                )
+
+            async def get_last_turn_usage(self):
+                return None
+
+        manager = ChatTaskManager()
+        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        task = ChatTask(session_id="s-nested-response", asyncio_task=MagicMock())
+
+        await manager._run_loop(
+            task,
+            real_agent_config,
+            StreamChatInput(message="delegate", session_id="s-nested-response"),
+        )
+
+        message_events = [event for event in task.events if event.event == "message"]
+        assert len(message_events) == 1
+        content = message_events[0].data.payload.content[0]
+        assert content.payload["content"] == "top-level parent answer"
 
     @pytest.mark.asyncio
     async def test_run_loop_skips_final_response_after_plain_assistant_response(self, real_agent_config):
