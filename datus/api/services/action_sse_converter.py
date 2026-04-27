@@ -187,6 +187,16 @@ def _build_response_content(action: ActionHistory) -> List[IMessageContent]:
     return contents
 
 
+def _is_plain_assistant_response(action: ActionHistory) -> bool:
+    """Return True for completed assistant text that should render as markdown."""
+    if action.role != ActionRole.ASSISTANT or action.status != ActionStatus.SUCCESS:
+        return False
+    if action.action_type != "response":
+        return False
+    output = action.output if isinstance(action.output, dict) else {}
+    return output.get("is_thinking") is False
+
+
 def _build_thinking_content(action: ActionHistory) -> Optional[List[IMessageContent]]:
     """Extract text content from action for markdown display."""
     from datus.utils.text_utils import strip_litellm_placeholder
@@ -385,6 +395,10 @@ def action_to_sse_event(
         ):
             if not include_final_response:
                 return None  # ignore parsed final response
+            contents = _build_response_content(action)
+            if not contents:
+                return None
+        elif _is_plain_assistant_response(action):
             contents = _build_response_content(action)
             if not contents:
                 return None

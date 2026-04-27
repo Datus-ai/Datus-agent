@@ -53,6 +53,8 @@ Using a manifest is the fastest way to create a correctly configured Slack App. 
         "mpim:history",
         "mpim:read",
         "mpim:write",
+        "reactions:read",
+        "reactions:write",
         "users:read"
       ]
     }
@@ -65,7 +67,9 @@ Using a manifest is the fastest way to create a correctly configured Slack App. 
         "message.channels",
         "message.groups",
         "message.im",
-        "message.mpim"
+        "message.mpim",
+        "reaction_added",
+        "reaction_removed"
       ]
     }
   }
@@ -75,7 +79,7 @@ Using a manifest is the fastest way to create a correctly configured Slack App. 
 5. Review the summary and click **Create**.
 
 !!! tip "Customize the manifest"
-    You can change `display_information.name` to any name you prefer. Add extra scopes (e.g., `reactions:write`, `files:write`) if needed for your use case.
+    You can change `display_information.name` to any name you prefer. Add extra scopes (e.g., `files:write`) if needed for your use case.
 
 ## Step 3: Generate Tokens
 
@@ -102,13 +106,14 @@ After the app is created, you need two tokens:
 
 ## Step 4: Invite the Bot to Channels
 
-In Slack, invite the bot to each channel where you want it to respond:
+In Slack, add the app to each channel where you want it to respond:
 
-```bash
-/invite @YourBotName
-```
+1. Open the target channel.
+2. Click the channel name at the top.
+3. Go to **Integrations** → **Add apps**.
+4. Select your Datus Agent app and click **Add**.
 
-The bot will only receive messages from channels it has been invited to.
+The bot will only receive channel messages from channels where the app has been added.
 
 ## Step 5: Configure Datus Agent
 
@@ -174,6 +179,8 @@ If you created the app from the manifest above, all scopes and events are alread
 | `mpim:history` | Read group direct messages |
 | `mpim:read` | View group DM info |
 | `mpim:write` | Start group DMs |
+| `reactions:read` | Receive user reaction feedback events |
+| `reactions:write` | Add/remove processing and completion reactions |
 | `users:read` | View user info |
 | `app_mentions:read` | Receive @mention events |
 
@@ -186,6 +193,8 @@ If you created the app from the manifest above, all scopes and events are alread
 | `message.im` | Direct message sent to the bot |
 | `message.mpim` | Message in a group DM |
 | `app_mention` | Bot is @mentioned |
+| `reaction_added` | User adds feedback reaction to a bot reply |
+| `reaction_removed` | User removes feedback reaction from a bot reply |
 
 ??? info "Manual setup (without manifest)"
     If you prefer to configure the app manually instead of using the manifest:
@@ -205,14 +214,15 @@ If you created the app from the manifest above, all scopes and events are alread
 
 ### Bot connects but doesn't receive messages
 
-- Ensure the bot is invited to the channel (`/invite @BotName`).
-- Verify event subscriptions are enabled and the four `message.*` events are added.
+- Ensure the Datus Agent app has been added to the channel via **Channel details → Integrations → Add apps**.
+- Verify event subscriptions are enabled and the `message.*` events are added.
 - Check that Socket Mode is enabled.
 
 ### "missing_scope" error
 
 - Go to **OAuth & Permissions → Bot Token Scopes** and add the missing scope.
 - Reinstall the app after adding new scopes.
+- If the missing scope is `reactions:write`, status reactions will fail until the app is reinstalled with that scope.
 
 ### Messages from bot trigger loops
 

@@ -53,6 +53,8 @@ pip install "slack-sdk[socket_mode]"
         "mpim:history",
         "mpim:read",
         "mpim:write",
+        "reactions:read",
+        "reactions:write",
         "users:read"
       ]
     }
@@ -65,7 +67,9 @@ pip install "slack-sdk[socket_mode]"
         "message.channels",
         "message.groups",
         "message.im",
-        "message.mpim"
+        "message.mpim",
+        "reaction_added",
+        "reaction_removed"
       ]
     }
   }
@@ -75,7 +79,7 @@ pip install "slack-sdk[socket_mode]"
 5. 检查配置摘要，点击 **Create**。
 
 !!! tip "自定义 Manifest"
-    你可以将 `display_information.name` 修改为任意名称。如需额外功能，可添加更多权限范围（如 `reactions:write`、`files:write`）。
+    你可以将 `display_information.name` 修改为任意名称。如需额外功能，可添加更多权限范围（如 `files:write`）。
 
 ## 步骤 3：生成令牌
 
@@ -100,15 +104,16 @@ pip install "slack-sdk[socket_mode]"
 
     如果你的令牌以 `xoxp-` 开头，说明误复制了 User OAuth Token。
 
-## 步骤 4：邀请机器人到频道
+## 步骤 4：将机器人添加到频道
 
-在 Slack 中，将机器人邀请到你希望它响应消息的频道：
+在 Slack 中，将应用添加到你希望它响应消息的频道：
 
-```bash
-/invite @YourBotName
-```
+1. 打开目标频道。
+2. 点击顶部的频道名称。
+3. 进入 **Integrations** → **Add apps**。
+4. 选择你的 Datus Agent 应用并点击 **Add**。
 
-机器人只会接收到它已被邀请的频道中的消息。
+机器人只会接收到已添加该应用的频道中的消息。
 
 ## 步骤 5：配置 Datus Agent
 
@@ -174,6 +179,8 @@ Slack adapter 'slack-main' started.
 | `mpim:history` | 读取群组私聊消息 |
 | `mpim:read` | 查看群组私聊信息 |
 | `mpim:write` | 发起群组私聊 |
+| `reactions:read` | 接收用户反馈表情事件 |
+| `reactions:write` | 添加/移除处理中和完成状态表情 |
 | `users:read` | 查看用户信息 |
 | `app_mentions:read` | 接收 @提及 事件 |
 
@@ -186,6 +193,8 @@ Slack adapter 'slack-main' started.
 | `message.im` | 机器人收到私聊消息 |
 | `message.mpim` | 群组私聊中有新消息 |
 | `app_mention` | 机器人被 @提及 |
+| `reaction_added` | 用户对 bot 回复添加反馈表情 |
+| `reaction_removed` | 用户移除 bot 回复上的反馈表情 |
 
 ??? info "手动配置（不使用 Manifest）"
     如果你更倾向于手动配置应用：
@@ -205,14 +214,15 @@ Slack adapter 'slack-main' started.
 
 ### 机器人连接成功但收不到消息
 
-- 确保机器人已被邀请到频道（`/invite @BotName`）。
-- 确认事件订阅已启用，且已添加四个 `message.*` 事件。
+- 确保已通过 **频道详情 → Integrations → Add apps** 将 Datus Agent 应用添加到频道。
+- 确认事件订阅已启用，且已添加 `message.*` 事件。
 - 检查 Socket Mode 是否已启用。
 
 ### "missing_scope" 错误
 
 - 前往 **OAuth & Permissions → Bot Token Scopes** 添加缺少的权限范围。
 - 添加新权限后需要重新安装应用。
+- 如果缺少的是 `reactions:write`，在重新安装带该权限的应用前，状态表情会添加/移除失败。
 
 ### 机器人消息触发循环
 

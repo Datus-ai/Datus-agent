@@ -706,6 +706,47 @@ class TestAgentConfigApiSection:
         assert cfg.api_config == api
 
 
+class TestAgentConfigChannels:
+    def _make(self, tmp_path, channels=None):
+        kwargs = dict(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={
+                "mock": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "m",
+                    "base_url": "http://localhost:0",
+                }
+            },
+            skip_init_dirs=True,
+        )
+        if channels is not None:
+            kwargs["channels"] = channels
+        return AgentConfig(**kwargs)
+
+    def test_channel_config_resolves_nested_env_values(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SLACK_APP_TOKEN", "xapp-test")
+        monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
+        cfg = self._make(
+            tmp_path,
+            channels={
+                "slack-main": {
+                    "adapter": "slack",
+                    "extra": {
+                        "app_token": "${SLACK_APP_TOKEN}",
+                        "bot_token": "${SLACK_BOT_TOKEN}",
+                    },
+                }
+            },
+        )
+
+        extra = cfg.channels_config["slack-main"]["extra"]
+        assert extra["app_token"] == "xapp-test"
+        assert extra["bot_token"] == "xoxb-test"
+
+
 class TestNormalizeProjectName:
     """Tests for the _normalize_project_name helper."""
 

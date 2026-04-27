@@ -723,8 +723,10 @@ class AgentConfig:
         # value at node build time and do not hot-reload.
         self.validation_config = ValidationConfig.from_dict(kwargs.get("validation", {}))
 
-        # Initialize channels configuration for Datus Gateway IM gateway
-        self.channels_config: Dict[str, Any] = kwargs.get("channels", {})
+        # Initialize channels configuration for Datus Gateway IM gateway.
+        # Keep this aligned with other config sections: channel credentials may
+        # use ${ENV_VAR} placeholders inside nested adapter-specific fields.
+        self.channels_config: Dict[str, Any] = _resolve_nested_value(kwargs.get("channels", {}))
 
         # Platform documentation fetch configs (datasource-independent)
         document_raw = kwargs.get("document", {}) or {}

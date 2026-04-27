@@ -733,6 +733,20 @@ class TestActionToSSEEvent:
         assert event.data.payload.content[0].type == "markdown"
         assert event.data.payload.content[0].payload == {"content": "1 table: orders"}
 
+    def test_plain_assistant_response_renders_as_markdown(self):
+        """Completed model response actions must not be mislabeled as thinking."""
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            action_type="response",
+            output={"raw_output": "Hello from the model", "is_thinking": False},
+        )
+        event = action_to_sse_event(action, event_id=6, message_id="msg-6")
+        assert event is not None
+        content = event.data.payload.content[0]
+        assert content.type == "markdown"
+        assert content.payload == {"content": "Hello from the model"}
+
     def test_empty_assistant_response_action_still_skipped_when_requested(self):
         """Empty wrapper responses do not create blank assistant bubbles."""
         action = _make_action(
