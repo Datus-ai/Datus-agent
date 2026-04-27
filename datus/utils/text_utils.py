@@ -20,8 +20,15 @@ def redact_uri(uri: str) -> str:
     if parts.password is None:
         return uri
     username = parts.username or ""
-    host = parts.hostname or ""
-    port = f":{parts.port}" if parts.port else ""
+    hostname = parts.hostname or ""
+    # urlsplit strips IPv6 brackets from .hostname; restore them so the
+    # reconstructed netloc remains parseable (e.g. "[::1]:5432").
+    host = f"[{hostname}]" if ":" in hostname else hostname
+    try:
+        port_num = parts.port
+    except ValueError:
+        port_num = None
+    port = f":{port_num}" if port_num is not None else ""
     netloc = f"{username}:***@{host}{port}" if username else f"***@{host}{port}"
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 

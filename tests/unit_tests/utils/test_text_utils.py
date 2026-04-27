@@ -221,7 +221,18 @@ class TestRedactUri:
             "postgresql://u:***@host:5432/db?sslmode=require#frag"
         )
 
-    def test_invalid_uri_returned_as_is(self):
-        # Bracketed IPv6 with bad port triggers ValueError in urlsplit
+    def test_invalid_uri_without_password_returned_as_is(self):
+        # No password → early return, never touches the malformed port.
         weird = "http://[::1]:bad/path"
         assert redact_uri(weird) == weird
+
+    def test_ipv6_host_brackets_preserved(self):
+        assert redact_uri("postgresql://u:p@[::1]:5432/db") == "postgresql://u:***@[::1]:5432/db"
+
+    def test_ipv6_host_without_port_brackets_preserved(self):
+        assert redact_uri("postgresql://u:p@[::1]/db") == "postgresql://u:***@[::1]/db"
+
+    def test_malformed_port_with_password_omits_port(self):
+        # parts.port raises ValueError; we must not propagate, and the port
+        # is dropped from the redacted netloc rather than crashing.
+        assert redact_uri("http://u:p@example.com:bad/path") == "http://u:***@example.com/path"
