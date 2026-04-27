@@ -41,15 +41,11 @@ Get your Datus Agent up and running in minutes.
 !!! tip "Start Here"
     [:material-rocket-launch: **Quickstart Guide**](getting_started/Quickstart.md){ .md-button .md-button--primary }
 
-Follow a complete hands-on tutorial to build your first context-aware data agent
+Discover how Datus leverages contextual data engineering from your data assets to continuously learn and improve, then walk through the bundled California Schools tutorial in the same page.
 
-!!! example "Try the Tutorial"
-    [:material-school: **Complete Tutorial**](getting_started/Datus_tutorial.md){ .md-button }
-
-Discover how Datus leverages contextual data engineering from your data assets to continuously learn and improve
-
-!!! info "Learn Key Concepts"
+!!! info "Learn Key Concepts & Try the Tutorial"
     [:material-book-open-variant: **Contextual Data Engineering**](getting_started/contextual_data_engineering.md){ .md-button }
+    [:material-school: **Hands-on Tutorial**](getting_started/contextual_data_engineering.md#part-2--hands-on-tutorial-california-schools){ .md-button }
 
 
 ## Important Topics

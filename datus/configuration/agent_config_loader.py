@@ -120,28 +120,78 @@ def configuration_manager(
 
 
 def _bootstrap_agent_config(config_path: Path) -> None:
-    """Create a minimal agent.yml and copy template resources."""
+    """Create a minimal agent.yml and copy template + sample resources.
+
+    Also pre-registers the bundled ``california_schools`` datasource and
+    benchmark so a fresh install can run the tutorial without any manual
+    setup.
+    """
+    home_dir = config_path.parent.parent
+    sample_dir = home_dir / "sample"
+    benchmark_dir = home_dir / "benchmark"
+    # Datasource URI points at the benchmark copy (replace=False), so user
+    # edits to the SQLite file survive future package upgrades.
+    schools_db = benchmark_dir / "california_schools" / "california_schools.sqlite"
+
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    minimal_config = {"agent": {"services": {"datasources": {}}}}
+    minimal_config = {
+        "agent": {
+            "services": {
+                "datasources": {
+                    "california_schools": {
+                        "type": "sqlite",
+                        "name": "california_schools",
+                        "uri": str(schools_db),
+                    }
+                }
+            },
+            "benchmark": {
+                "california_schools": {
+                    "question_file": "california_schools.csv",
+                    "question_id_key": "task_id",
+                    "question_key": "question",
+                    "ext_knowledge_key": "evidence",
+                    "gold_sql_path": "california_schools.csv",
+                    "gold_sql_key": "gold_sql",
+                    "gold_result_path": "california_schools.csv",
+                }
+            },
+        }
+    }
     with open(config_path, "w", encoding="utf-8") as f:
         yaml.dump(minimal_config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
     logger.info("Created minimal agent config at %s", config_path)
 
-    home_dir = config_path.parent.parent
     from datus.utils.resource_utils import copy_data_file
 
     try:
         template_dir = home_dir / "template"
         template_dir.mkdir(parents=True, exist_ok=True)
-        copy_data_file(resource_path="prompts", target_dir=template_dir, replace=True)
+        # Only copy the rendered Jinja templates, not the surrounding Python
+        # modules that share the ``datus/prompts/`` package.
+        copy_data_file(resource_path="prompts/prompt_templates", target_dir=template_dir, replace=True)
     except Exception as e:
         logger.warning("Error copying template files during bootstrap: %s", e)
     try:
-        sample_dir = home_dir / "sample"
         sample_dir.mkdir(parents=True, exist_ok=True)
-        copy_data_file(resource_path="sample_data", target_dir=sample_dir, replace=False)
+        # Overwrite on every bootstrap so users always have the latest bundled
+        # sample data after upgrading the package.
+        copy_data_file(resource_path="sample_data", target_dir=sample_dir, replace=True)
     except Exception as e:
         logger.warning("Error copying sample files during bootstrap: %s", e)
+    try:
+        # Mirror the california_schools sample into the benchmark dir so the
+        # bundled tutorial can run `datus-agent benchmark` without a manual
+        # cp; preserve user edits with replace=False.
+        target = benchmark_dir / "california_schools"
+        target.mkdir(parents=True, exist_ok=True)
+        copy_data_file(
+            resource_path="sample_data/california_schools",
+            target_dir=target,
+            replace=False,
+        )
+    except Exception as e:
+        logger.warning("Error seeding california_schools benchmark dir: %s", e)
     # Built-in skills are no longer copied to ``~/.datus/skills``; the registry
     # scans ``datus/resources/skills`` directly via the SkillConfig default.
     # This keeps users on the latest bundled skill content as Datus upgrades,

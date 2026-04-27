@@ -141,6 +141,34 @@ class TestRenderSubagentHeader:
         text = _plain(result)
         assert "gen_sql" in text
 
+    def test_outer_task_action_uses_input_type_as_label(self):
+        """Outer ``task`` PROCESSING action: header label comes from
+        ``input["type"]``, not the literal ``"task"`` action_type.
+
+        Regression: previously the bootstrap subagent group rendered the
+        header as ``⏺ task(...)`` because the renderer used
+        ``action.action_type`` verbatim. With the outer task action
+        becoming the group's ``first_action`` (Fix B in streaming.py),
+        the label must surface the real subagent type.
+        """
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            depth=0,
+            action_type="task",
+            messages="task(gen_sql_summary, orders.sql)",
+            input_data={
+                "type": "gen_sql_summary",
+                "_task_description": "orders.sql",
+                "function_name": "task",
+            },
+        )
+        text = _plain(_renderer().render_subagent_header(action, verbose=False))
+        assert "gen_sql_summary" in text
+        assert "orders.sql" in text
+        # The literal "task" must NOT replace the real subagent name.
+        assert "⏺ task(" not in text
+
 
 # ── render_subagent_action ─────────────────────────────────────────
 

@@ -181,6 +181,70 @@ class TestSyncModeSubagentGroups:
         assert "Done" in output
         assert "2 tool uses" in output
 
+    def test_sync_outer_task_processing_starts_subagent_group(self):
+        """Outer ``task`` PROCESSING action seeds the subagent group with
+        the correct ``input["type"]`` label, so depth=1 inner actions
+        slot under it and the rendered header is ``gen_sql_summary``,
+        not the literal ``task``.
+
+        Regression guard: before the streaming fix, sync replay simply
+        skipped TOOL PROCESSING entries (incl. the outer task) and the
+        first depth=1 inner action created the group with whatever
+        action_type it carried — losing the user-meaningful label.
+        """
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        call_id = "call-task-1"
+
+        actions = [
+            # 1. outer task PROCESSING — should seed the group
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.PROCESSING,
+                action_id=call_id,
+                action_type="task",
+                messages="task(gen_sql_summary, orders.sql)",
+                input_data={
+                    "type": "gen_sql_summary",
+                    "function_name": "task",
+                    "_task_description": "orders.sql",
+                },
+            ),
+            # 2. first inner depth=1 action parents itself to call_id
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type="read_query",
+                messages="read_query",
+                input_data={"function_name": "read_query"},
+                parent_action_id=call_id,
+            ),
+            # 3. subagent_complete closes the group
+            _make_action(
+                ActionRole.SYSTEM,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+                messages="complete",
+                output_data={"subagent_type": "gen_sql_summary", "tool_count": 1},
+                parent_action_id=call_id,
+            ),
+        ]
+
+        ctx = InlineStreamingContext(actions, display, sync_mode=True)
+        ctx.run_sync()
+
+        output = buf.getvalue()
+        # Header label comes from input["type"], NOT the literal "task".
+        assert "gen_sql_summary" in output
+        assert "orders.sql" in output
+        # No bare "○ 🔧 task" / standalone "task(" line — the outer became
+        # the group header instead of a flat PROCESSING tool line.
+        assert "Done" in output
+        assert "1 tool uses" in output
+
     def test_sync_skips_processing_in_subagent(self):
         """Sync mode skips PROCESSING tools inside subagent groups."""
         buf = StringIO()

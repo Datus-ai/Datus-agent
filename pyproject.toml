@@ -100,7 +100,15 @@ exclude = ["benchmark*", "docs*"]
 
 [tool.setuptools.package-data]
 "*" = ["*.yml", "*.yaml", "*.json", "*.md", "*.txt", "*.j2"]
-"datus" = ["*.yml", "*.yaml", "*.json", "*.md", "*.txt"]
+"datus" = [
+    "*.yml", "*.yaml", "*.json", "*.md", "*.txt",
+    "sample_data/*.duckdb",
+    "sample_data/california_schools/*.csv",
+    "sample_data/california_schools/*.sqlite",
+    "sample_data/california_schools/reference_sql/*.sql",
+    "sample_data/california_schools/reference_template/*",
+    "sample_data/superset/*",
+]
 "datus.prompts" = ["*.txt", "*.md", "*.j2"]
 "datus.prompts.prompt_templates" = ["*.j2"]
 
@@ -109,18 +117,6 @@ exclude = ["benchmark*", "docs*"]
 
 [tool.setuptools.data-files]
 "datus/conf" = ["conf/*.yml", "conf/*.yml.*"]
-"datus/sample_data" = ["sample_data/duckdb-demo.duckdb"]
-"datus/sample_data/california_schools" = [
-    "sample_data/california_schools/california_schools.csv",
-    "sample_data/california_schools/success_story.csv",
-    "sample_data/california_schools/california_schools.sqlite"
-]
-"datus/sample_data/california_schools/reference_sql" = [
-    "sample_data/california_schools/reference_sql/*.sql",
-]
-"datus/sample_data/superset" = [
-    "sample_data/superset/*.*",
-]
 
 # Ruff: replaces black + isort + flake8
 [tool.ruff]
@@ -188,6 +184,7 @@ dev = [
     "langsmith>=0.7.0",
     "langsmith-fetch>=0.1.0",
     "pytest-cov>=7.0.0",
+    "diff-cover>=10.2.0",
 ]
 
 [tool.coverage.run]
@@ -196,7 +193,6 @@ omit = [
     "datus/prompts/prompt_templates/*",
     "datus/cli/screen/*",
     "datus/cli/sub_agent_wizard.py",
-    "datus/cli/bi_dashboard.py",
     "datus/cli/profile_picker_app.py",
 ]
 

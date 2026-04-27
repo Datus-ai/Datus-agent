@@ -112,7 +112,7 @@ agent:
       max_turns: 40
       system_prompt: gen_semantic_model
     gen_metrics:
-      max_turns: 30
+      max_turns: 50
       system_prompt: gen_metrics
     gen_ext_knowledge:
       max_turns: 30
@@ -191,7 +191,7 @@ agent:
       local_duckdb:
         type: duckdb
         name: ssb
-        uri: sample_data/duckdb-demo.duckdb
+        uri: datus/sample_data/duckdb-demo.duckdb
       ssb_sqlite:
         type: sqlite
         name: SSB

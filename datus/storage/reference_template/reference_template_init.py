@@ -7,11 +7,11 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistoryManager, ActionStatus
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionStatus
 from datus.schemas.batch_events import BatchEventEmitter, BatchEventHelper
 from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput
 from datus.storage.reference_template.init_utils import exists_reference_templates, gen_reference_template_id
@@ -191,6 +191,8 @@ async def process_template_item(
     event_helper: Optional[BatchEventHelper] = None,
     template_id: Optional[str] = None,
     extra_instructions: Optional[str] = None,
+    *,
+    action_callback: Optional[Callable[["ActionHistory"], None]] = None,
 ) -> Optional[str]:
     """Process a single template item using SqlSummaryAgenticNode in workflow mode.
 
@@ -241,6 +243,11 @@ async def process_template_item(
 
         node.input = sql_input
         async for action in node.execute_stream(action_history_manager):
+            if action_callback is not None:
+                try:
+                    action_callback(action)
+                except Exception as cb_exc:  # pragma: no cover - defensive
+                    logger.debug("reference_template action_callback raised: %s", cb_exc)
             if event_helper:
                 event_helper.item_processing(
                     item_id=template_id,
@@ -340,6 +347,8 @@ async def init_reference_template_async(
     subject_tree: Optional[list] = None,
     emit: Optional[BatchEventEmitter] = None,
     extra_instructions: Optional[str] = None,
+    *,
+    action_callback: Optional[Callable[["ActionHistory"], None]] = None,
 ) -> Dict[str, Any]:
     """Async version: Initialize reference templates from template files directory.
 
@@ -419,6 +428,13 @@ async def init_reference_template_async(
             "total_stored_entries": storage.get_reference_template_size(),
             "validation_errors": "\n".join(validate_errors),
         }
+
+    if build_mode == "overwrite":
+        logger.info(
+            "[overwrite] Wiping reference_template store for project '%s' before re-population",
+            global_config.project_name,
+        )
+        storage.truncate()
 
     # Filter out existing items in incremental mode
     if build_mode == "incremental":
@@ -505,6 +521,7 @@ async def init_reference_template_async(
                         event_helper=event_helper,
                         template_id=tpl_id,
                         extra_instructions=extra_instructions,
+                        action_callback=action_callback,
                     )
                 except Exception as exc:
                     error = exc

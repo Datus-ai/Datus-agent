@@ -1400,6 +1400,75 @@ class TestProbeImplementation:
         assert "not registered" in msg
 
 
+class TestProbeTimeout:
+    """Verify that ``_probe`` enforces ``_PROBE_TIMEOUT_SECS`` for the
+    network-bound branches (bi_platforms, schedulers) so a hung adapter
+    cannot freeze the REPL.
+    """
+
+    def test_probe_bi_times_out_and_returns_error(self):
+        import threading as _threading
+
+        cmd, _ = _make_commands_with_bi_stub()
+        cmd._PROBE_TIMEOUT_SECS = 0.05
+        release = _threading.Event()
+        try:
+            fake_tool = MagicMock()
+            fake_tool.list_dashboards = MagicMock(side_effect=lambda: release.wait(2.0) or {"items": []})
+            with patch("datus.tools.func_tool.bi_tools.BIFuncTool", return_value=fake_tool):
+                ok, msg = cmd._probe("bi_platforms", "superset")
+            assert ok is False
+            assert "timeout" in msg.lower()
+            assert "unreachable" in msg.lower()
+        finally:
+            release.set()
+
+    def test_probe_scheduler_times_out_and_returns_error(self):
+        import threading as _threading
+
+        cmd, _ = _make_commands_with_bi_stub()
+        cmd._PROBE_TIMEOUT_SECS = 0.05
+        release = _threading.Event()
+        try:
+            fake_tool = MagicMock()
+            fake_tool.list_scheduler_jobs = MagicMock(side_effect=lambda: release.wait(2.0) or [])
+            with patch("datus.tools.func_tool.scheduler_tools.SchedulerTools", return_value=fake_tool):
+                ok, msg = cmd._probe("schedulers", "airflow")
+            assert ok is False
+            assert "timeout" in msg.lower()
+        finally:
+            release.set()
+
+    def test_probe_bi_returns_quickly_when_adapter_responds(self):
+        """Sanity check: a fast adapter response under the timeout still
+        returns the success envelope, so the timeout path doesn't
+        accidentally short-circuit the success path.
+        """
+        cmd, _ = _make_commands_with_bi_stub()
+        cmd._PROBE_TIMEOUT_SECS = 2.0
+        fake_tool = MagicMock()
+        fake_tool.list_dashboards = MagicMock(return_value={"result": {"items": [{"id": 1}]}})
+        with patch("datus.tools.func_tool.bi_tools.BIFuncTool", return_value=fake_tool):
+            ok, msg = cmd._probe("bi_platforms", "superset")
+        assert ok is True
+        assert "1 dashboards" in msg
+
+    def test_probe_semantic_layer_skips_threading_path(self):
+        """Semantic-layer probe must run on the calling thread (no
+        timeout) because it's a pure in-memory registry lookup.
+        """
+        cmd, _ = _make_commands_with_bi_stub()
+        cmd._PROBE_TIMEOUT_SECS = 0.0  # would trip immediately if threaded
+        fake_registry = SimpleNamespace(get_metadata=lambda name: {"name": name})
+        with patch.dict(
+            "sys.modules",
+            {"datus.tools.semantic_tools.registry": SimpleNamespace(semantic_adapter_registry=fake_registry)},
+        ):
+            ok, msg = cmd._probe("semantic_layer", "metricflow")
+        assert ok is True
+        assert "registered" in msg
+
+
 class TestCountEnvelope:
     @pytest.mark.parametrize(
         "payload,expected",

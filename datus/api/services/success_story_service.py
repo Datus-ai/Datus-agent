@@ -1,8 +1,8 @@
 """Service for persisting success stories to the benchmark CSV.
 
 The CSV layout is ``{benchmark_dir}/{subagent_name}/success_story.csv`` —
-unchanged from the legacy chatbot so that ``datus.cli.tutorial`` and
-``init_success_story_*`` consumers keep working.
+unchanged from the legacy chatbot so that ``init_success_story_*``
+consumers keep working.
 """
 
 import csv

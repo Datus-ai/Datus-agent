@@ -692,6 +692,172 @@ class TestFilesystemZoneBranch:
             await hooks.on_tool_start(ctx, MagicMock(), tool)
 
 
+class TestNonInteractiveMode:
+    """``non_interactive=True`` short-circuits ASK / EXTERNAL fs branches.
+
+    Used by ``execution_mode="workflow"`` flows (``/bootstrap``, scheduler
+    subagents, ``auto_create``) where there is no human in the loop. ASK or
+    EXTERNAL hits indicate the tool is outside the active profile's scope and
+    must surface as ``PermissionDeniedException`` instead of awaiting a broker
+    that nobody will respond to.
+    """
+
+    def _build_with_rule(self, broker, *, rule, non_interactive):
+        registry = ToolRegistry()
+        tool_mock = MagicMock()
+        tool_mock.name = "execute_sql"
+        registry.register_tools("db_tools", [tool_mock])
+        config = PermissionConfig(default_permission=PermissionLevel.ALLOW, rules=[rule])
+        manager = PermissionManager(global_config=config, active_profile="auto")
+        hooks = PermissionHooks(
+            broker=broker,
+            permission_manager=manager,
+            node_name="bootstrap",
+            tool_registry=registry,
+            non_interactive=non_interactive,
+        )
+        return hooks, manager
+
+    def test_default_non_interactive_is_false(self, mock_broker):
+        """Field defaults to False so existing callers keep prompting."""
+        hooks = PermissionHooks(
+            broker=mock_broker,
+            permission_manager=PermissionManager(),
+            node_name="chat",
+            tool_registry=ToolRegistry(),
+        )
+        assert hooks.non_interactive is False
+
+    @pytest.mark.asyncio
+    async def test_ask_raises_without_prompting_in_non_interactive(self, mock_broker):
+        """ASK + non_interactive must raise immediately. Broker is never touched."""
+        hooks, _ = self._build_with_rule(
+            mock_broker,
+            rule=PermissionRule(tool="db_tools", pattern="*", permission=PermissionLevel.ASK),
+            non_interactive=True,
+        )
+        ctx = MagicMock()
+        ctx.tool_arguments = "{}"
+        tool = MagicMock()
+        tool.name = "execute_sql"
+        with pytest.raises(PermissionDeniedException) as exc_info:
+            await hooks.on_tool_start(ctx, MagicMock(), tool)
+        # Active profile name is surfaced so the agent message points the user
+        # at the right knob (``auto`` is the workflow-mode default).
+        assert "auto" in str(exc_info.value)
+        assert "non-interactive" in str(exc_info.value).lower()
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ask_session_cache_not_consulted_in_non_interactive(self, mock_broker):
+        """The non_interactive short-circuit must run BEFORE the session
+        approval cache lookup. Otherwise a stray ``approve_for_session`` call
+        from a prior interactive turn would silently allow tools that the
+        workflow-mode profile would otherwise reject."""
+        hooks, manager = self._build_with_rule(
+            mock_broker,
+            rule=PermissionRule(tool="db_tools", pattern="*", permission=PermissionLevel.ASK),
+            non_interactive=True,
+        )
+        manager.approve_for_session("db_tools", "execute_sql")
+        ctx = MagicMock()
+        ctx.tool_arguments = "{}"
+        tool = MagicMock()
+        tool.name = "execute_sql"
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(ctx, MagicMock(), tool)
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_deny_still_raises_in_non_interactive(self, mock_broker):
+        """DENY rules continue to raise — non_interactive must not weaken DENY."""
+        hooks, _ = self._build_with_rule(
+            mock_broker,
+            rule=PermissionRule(tool="db_tools", pattern="*", permission=PermissionLevel.DENY),
+            non_interactive=True,
+        )
+        ctx = MagicMock()
+        ctx.tool_arguments = "{}"
+        tool = MagicMock()
+        tool.name = "execute_sql"
+        with pytest.raises(PermissionDeniedException) as exc_info:
+            await hooks.on_tool_start(ctx, MagicMock(), tool)
+        # DENY error message stays unchanged (mentions /profile, etc.)
+        assert "STOP retrying this tool" in str(exc_info.value)
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_allow_still_passes_silently_in_non_interactive(self, mock_broker):
+        """ALLOW rules are unaffected — workflow-mode flows must still run the
+        operations the active profile permits."""
+        hooks, _ = self._build_with_rule(
+            mock_broker,
+            rule=PermissionRule(tool="db_tools", pattern="*", permission=PermissionLevel.ALLOW),
+            non_interactive=True,
+        )
+        ctx = MagicMock()
+        ctx.tool_arguments = "{}"
+        tool = MagicMock()
+        tool.name = "execute_sql"
+        await hooks.on_tool_start(ctx, MagicMock(), tool)
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_interactive_ask_still_prompts_when_flag_unset(self, mock_broker):
+        """Sanity check: with non_interactive=False, ASK still goes through the
+        broker — so this change cannot regress chat behavior."""
+        hooks, _ = self._build_with_rule(
+            mock_broker,
+            rule=PermissionRule(tool="db_tools", pattern="*", permission=PermissionLevel.ASK),
+            non_interactive=False,
+        )
+        # Approve via broker so we can confirm the prompt was actually issued.
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+        ctx = MagicMock()
+        ctx.tool_arguments = "{}"
+        tool = MagicMock()
+        tool.name = "execute_sql"
+        await hooks.on_tool_start(ctx, MagicMock(), tool)
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_external_fs_raises_without_prompting_in_non_interactive(self, mock_broker, tmp_path):
+        """EXTERNAL filesystem zone in non_interactive mode raises immediately
+        and never asks the broker — covers the ``_handle_filesystem_zone``
+        short-circuit added alongside the ASK gate."""
+        registry = ToolRegistry()
+        fs_tool = MagicMock()
+        fs_tool.name = "read_file"
+        registry.register_tools("filesystem_tools", [fs_tool])
+        manager = PermissionManager(
+            global_config=PermissionConfig(default_permission=PermissionLevel.ALLOW, rules=[]),
+            active_profile="auto",
+        )
+        project = tmp_path / "proj"
+        project.mkdir()
+        external = tmp_path / "elsewhere.md"
+        external.write_text("x")
+        hooks = PermissionHooks(
+            broker=mock_broker,
+            permission_manager=manager,
+            node_name="bootstrap",
+            tool_registry=registry,
+            fs_policy=FilesystemPolicy(root_path=project, current_node="bootstrap"),
+            non_interactive=True,
+        )
+        ctx = MagicMock()
+        ctx.tool_arguments = f'{{"path": "{external}"}}'
+        tool = MagicMock()
+        tool.name = "read_file"
+        with pytest.raises(PermissionDeniedException) as exc_info:
+            await hooks.on_tool_start(ctx, MagicMock(), tool)
+        assert "outside the project root" in str(exc_info.value)
+        assert "auto" in str(exc_info.value)
+        mock_broker.request.assert_not_called()
+        # Approval cache must not be polluted by a non_interactive denial.
+        assert not manager._session_approvals
+
+
 class TestPermissionPromptLockPerLoop:
     """Regression guard: the prompt lock must not bleed across event loops.
 

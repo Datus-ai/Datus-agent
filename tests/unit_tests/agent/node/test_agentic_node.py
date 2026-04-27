@@ -387,6 +387,80 @@ class TestSetPermissionCallback:
 
 
 # ---------------------------------------------------------------------------
+# TestSetupPermissionManager
+# ---------------------------------------------------------------------------
+
+
+class TestSetupPermissionManager:
+    """``execution_mode="workflow"`` forces a fresh ``dangerous`` profile.
+
+    Bootstrap, scheduler subagents, and other non-interactive flows must run
+    against a known-good baseline regardless of the user's chosen profile —
+    otherwise a ``normal`` user gets blocked on every write and a
+    ``dangerous`` user silently elevates the workflow.
+    """
+
+    def _setup_node(self, *, execution_mode):
+        from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
+
+        # User-side config: a deliberately weird custom profile so we can
+        # verify workflow mode ignores it. Default DENY everything; one rule
+        # explicitly ALLOWs ``custom_marker_tool``. ``dangerous`` profile would
+        # never produce this shape.
+        user_config = PermissionConfig(
+            default_permission=PermissionLevel.DENY,
+            rules=[
+                PermissionRule(tool="custom_marker_tool", pattern="*", permission=PermissionLevel.ALLOW),
+            ],
+        )
+        agent_config = MagicMock()
+        agent_config.permissions_config = user_config
+        agent_config.active_profile_name = "normal"
+
+        node = _make_node(agent_config=agent_config)
+        node.execution_mode = execution_mode
+        return node, user_config
+
+    def test_workflow_mode_loads_dangerous_profile_ignoring_user_config(self):
+        from datus.tools.permission.permission_config import PermissionLevel
+
+        node, user_config = self._setup_node(execution_mode="workflow")
+        node._setup_permission_manager()
+
+        assert node.permission_manager is not None
+        assert node.permission_manager.active_profile == "dangerous"
+        # The custom user rule must NOT leak into workflow-mode managers.
+        assert not any(rule.tool == "custom_marker_tool" for rule in node.permission_manager.global_config.rules), (
+            "User profile rules must be ignored when workflow mode forces 'dangerous'"
+        )
+        # ``dangerous`` profile is default=ALLOW with no rules — the workflow
+        # manager must reflect that posture and must NOT carry forward the
+        # user's DENY default.
+        assert node.permission_manager.global_config.default_permission == PermissionLevel.ALLOW
+
+    def test_interactive_mode_keeps_user_config(self):
+        node, user_config = self._setup_node(execution_mode="interactive")
+        node._setup_permission_manager()
+
+        assert node.permission_manager is not None
+        # ``normal`` is the user's configured profile, NOT clobbered by the
+        # workflow override path.
+        assert node.permission_manager.active_profile == "normal"
+        # User custom rule is preserved in interactive mode.
+        assert any(rule.tool == "custom_marker_tool" for rule in node.permission_manager.global_config.rules)
+
+    def test_no_execution_mode_attr_falls_back_to_user_config(self):
+        """Nodes without ``execution_mode`` (legacy / non-agentic) must keep
+        the existing behavior — read the user's profile."""
+        node, user_config = self._setup_node(execution_mode="interactive")
+        # Strip the attribute to simulate a node that never declares execution_mode.
+        del node.execution_mode
+        node._setup_permission_manager()
+
+        assert node.permission_manager.active_profile == "normal"
+
+
+# ---------------------------------------------------------------------------
 # TestGetAvailableSkillsContext
 # ---------------------------------------------------------------------------
 

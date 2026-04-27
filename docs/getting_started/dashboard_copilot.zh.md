@@ -13,7 +13,7 @@
 
 只需一条命令，Datus 就能从现有仪表盘中提取所有上下文——SQL 查询、表关系、指标定义和业务逻辑——并创建像您的仪表盘一样理解数据的 AI 子代理。
 
-Bootstrap 过程会自动生成两个专门的子代理：一个是通过 SQL 工具实现自助取数的 **GenSQL 子代理**，另一个是通过指标工具提供分析、下钻和归因报告的 **GenReport 子代理**。
+Bootstrap 过程会自动生成两个专门的子代理：一个**主子代理**用于在仪表盘语义范围内自助取数与生成 SQL，另一个**归因子代理**用于指标对比、维度归因和根因分析。
 
 ![Dashboard to Agent 架构](../assets/dashboard_to_agent.png)
 
@@ -118,12 +118,6 @@ kubectl port-forward -n default svc/superset-postgresql 15432:5432 > /dev/null 2
 
 配置 Datus 以连接 PostgreSQL 数据库和 Superset 仪表盘。
 
-### 安装所需扩展
-
-```bash
-pip install datus-bi-superset datus-postgresql datus-semantic-metricflow
-```
-
 ### 更新 agent.yml
 
 将以下配置添加到您的 `~/.datus/conf/agent.yml`：
@@ -140,7 +134,8 @@ agent:
         password: superset
         database: examples
     semantic_layer:
-      metricflow: {}
+      metricflow:
+        type: metricflow
     bi_platforms:
       superset:
         type: superset
@@ -157,89 +152,390 @@ agent:
     - **services.bi_platforms**：定义用于仪表盘访问的 BI 平台凭据
 
 !!! tip
-    你可以使用 `datus-agent service add` 交互式添加 SQL 数据源；semantic layer 和 BI platform 配置仍需要在 YAML 中编辑。
+    也可以在 REPL 内通过斜杠命令交互式添加：`/datasource` 添加 SQL 数据源，`/services` 添加 semantic layer、BI platform 与 scheduler。
 
 ## 步骤 3：从仪表盘 Bootstrap
 
-现在使用 `bootstrap-bi` 命令从 Superset 仪表盘自动生成上下文和子代理。我们将以世界银行数据仪表盘为例。
+在 Datus REPL 内使用 `/bootstrap-bi` 斜杠命令，从 Superset 仪表盘自动生成上下文和子代理。我们将以世界银行数据仪表盘为例。
 
-### 运行 Bootstrap 命令
+### 启动 REPL
 
 ```bash
-datus-agent bootstrap-bi --datasource superset
+datus
+```
+
+### 设置模型
+
+`/bootstrap-bi` 会调用 LLM 生成 SQL Summary、语义模型与指标。开始之前先用 `/model` 选定要使用的模型，详见 [模型命令](../cli/model_command.md)。
+
+```text
+> /model
+```
+
+### 运行 `/bootstrap-bi`
+
+```text
+> /bootstrap-bi
 ```
 
 ### 交互流程
 
-该命令将引导您完成交互式流程：
+以测试集中的 `World Bank's Data` 看板为例进行初始化。
 
-```{ .yaml .no-copy }
-Select BI platform (superset): superset
-Dashboard URL: http://localhost:8088/superset/dashboard/world_health/?native_filters_key=4X5gjZkIbnU
-API base URL (e.g. https://host) (http://localhost:8088): http://localhost:8088
+**1. 选择 BI platform**
+
+```text
+─────────────────────────────── Bootstrap BI ───────────────────────────────
+────────────────────────────────────────────────────────────────────────────
+  Pick a configured BI platform:
+  → superset               superset     http://localhost:8088
+
+
+
+────────────────────────────────────────────────────────────────────────────
+  ↑↓ navigate   ↵ select   Esc cancel
 ```
 
-系统将显示仪表盘信息和提取的图表：
+**2. 选择看板**
 
-![从仪表盘图表提取 SQL](../assets/worldbank_boostrapbi_extract_sql.png)
+```text
+─────────────────────────────── Bootstrap BI ───────────────────────────────
+────────────────────────────────────────────────────────────────────────────
+filter:
+────────────────────────────────────────────────────────────────────────────
+    16       Slack Dashboard
+    15       COVID Vaccine Dashboard
+    14       Unicode Test
+    13       FCC New Coder Survey 2018
+    12       Featured Charts
+    11       Video Game Sales
+    10       Sales Dashboard
+    8        deck.gl Demo
+    7        Misc Charts
+    6        USA Births Names
+  → 5        World Bank's Data
+    9        [ untitled dashboard ]
 
-选择要包含的图表和表。Bootstrap 过程将自动执行：
+────────────────────────────────────────────────────────────────────────────
+  type to filter   ↑↓ navigate   ↵ select   m manual URL   Esc back
+```
 
-**1. 构建元数据和参考 SQL**
+**3. 选择用于参考 SQL 的图表**
 
-系统分析每个图表的 SQL 查询并生成完整文档：
+每个选中图表的 SQL 会作为主子代理的 reference SQL。
 
-![参考 SQL 生成](../assets/worldbank_bootstrapbi_reference_sql.png)
+```text
+─────────────────────────────── Bootstrap BI ───────────────────────────────
+────────────────────────────────────────────────────────────────────────────
+  Select charts for reference SQL (9/9 selected):
+  → [x] 281    Treemap (agg)
+    [x] 276    % Rural (agg)
+    [x] 277    Life Expectancy VS Rural % (agg)
+    [x] 274    Most Populated Countries (agg)
+    [x] 280    Box plot (agg)
+    [x] 278    Rural Breakdown (agg)
+    [x] 273    World's Population (agg)
+    [x] 279    World's Pop Growth (agg)
+    [x] 275    Growth Rate (agg)
+────────────────────────────────────────────────────────────────────────────
+  ↑↓ navigate   Space toggle   a all   n none   ↵ next   Esc back
+```
 
-**2. 生成语义模型**
+**4. 选择用于指标提取的图表**
 
-Datus 创建包含度量、维度和关系的语义模型：
+这些图表中的聚合表达式会被挖掘成指标定义。默认仅勾选带聚合（`(agg)` 标记）的图表。
 
-![语义模型生成](../assets/worldbank_bootstrapbi_semantic_model.png)
+```text
+─────────────────────────────── Bootstrap BI ───────────────────────────────
+────────────────────────────────────────────────────────────────────────────
+  Select charts for metrics (9/9 selected):
+  → [x] 281    Treemap (agg)
+    [x] 276    % Rural (agg)
+    [x] 277    Life Expectancy VS Rural % (agg)
+    [x] 274    Most Populated Countries (agg)
+    [x] 280    Box plot (agg)
+    [x] 278    Rural Breakdown (agg)
+    [x] 273    World's Population (agg)
+    [x] 279    World's Pop Growth (agg)
+    [x] 275    Growth Rate (agg)
 
-**3. 提取指标**
+────────────────────────────────────────────────────────────────────────────
+  ↑↓ navigate   Space toggle   a all   n none   ↵ next   Esc back
+```
 
-系统从仪表盘查询中识别并验证指标：
+**5. 选择关联的表**
 
-![指标提取](../assets/worldbank_bootstrapbi_metrics.png)
+```text
+─────────────────────────────── Bootstrap BI ───────────────────────────────
+────────────────────────────────────────────────────────────────────────────
+  Review tables to scope (1/1 selected):
+  → [x] public.wb_health_population
+
+
+
+────────────────────────────────────────────────────────────────────────────
+  ↑↓ navigate   Space toggle   a all   n none   ↵ next   Esc back
+```
+
+**6. 选择并发数**
+
+后续构建会并行调用 LLM，可根据网络与配额选择线程池大小（默认 1，可加大以加速）。
+
+```text
+─────────────────────────────── Bootstrap BI ───────────────────────────────
+────────────────────────────────────────────────────────────────────────────
+  Pick a thread-pool size for parallel LLM calls:
+  → 1 threads
+    2 threads
+    4 threads
+    8 threads
+────────────────────────────────────────────────────────────────────────────
+  ↑↓ navigate   ↵ select   Esc back
+```
+
+### 自动化构建
+
+确认上述选择后，Datus 进入自动化构建流程，依次完成元数据爬取、参考 SQL 生成、语义模型构建和指标提取。
+
+**1. 元数据爬取**
+
+爬取并索引所选表的 schema 信息：
+
+```text
+⏺ 💬 Dashboard: World Bank's Data (id=5)
+
+⏺ 💬 Selected 9/9 chart(s); 1 table(s); pool_size=1
+
+⏺ 💬 Crawling metadata for 1 table(s)…
+
+⏺ 🔧 schema_crawl()
+  └─ ✓
+
+⏺ 💬 Metadata crawl finished.
+
+
+```
+
+**2. 生成参考 SQL**
+
+针对每个选中的图表，系统生成结构化的 SQL Summary（用途、表、维度、指标、业务意义），写入 `subject/sql_summaries/`，作为后续 SQL 生成的参考样例：
+
+```text
+⏺ 💬 Wrote 9 chart SQL(s) to /Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql.
+
+⏺ 💬 Discovering SQL files under /Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql (mode=incremental)…
+
+⏺ 💬 Processing 9 SQL item(s) with concurrency=1.
+
+⏺ gen_sql_summary(/Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql)
+  ⎿  Done (2 tool uses · 20.0s)
+⏺ 💬 gen_sql_summary (/Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql):
+
+
+SQL Summary: Population by Region and Country
+
+📋 Overview
+
+This SQL query is sourced from the World Bank's Data Superset dashboard and powers a Treemap chart. It aggregates total population figures grouped by region and country code.
+
+────────────────────────────────────────────────────────────────────────────
+🔍 Query Breakdown
+
+
+  Element         Details
+ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Table           public.wb_health_population
+  Metric          SUM('SP_POP_TOTL') — Total population indicator
+  Dimensions      region, country_code
+  Time Filter     From 1960-01-01 up to 2026-04-28 (full historical range)
+  Result Limit    50,000 rows
+  Visualization   Treemap chart
+
+
+────────────────────────────────────────────────────────────────────────────
+📊 Business Purpose
+
+This query supports a World Bank population distribution analysis, visualizing how total population is distributed across different world regions and countries over time. The
+Treemap layout makes it easy to compare relative population sizes at a glance.
+
+────────────────────────────────────────────────────────────────────────────
+💾 Saved File
+
+ • Path: subject/sql_summaries/population_by_region_country_07f5c7b14f0355b0b64183b0993bc45e.yaml
+ • Subject Tree: superset/world_bank_s
+ • ID: 07f5c7b14f0355b0b64183b0993bc45e
+
+⏺ 💬 Indexed 9 reference SQL item(s).
+
+⏺ 💬 Collected 9 reference SQL identifier(s).
+```
+
+**3. 生成语义模型**
+
+Datus 综合所有图表 SQL，构建包含度量、维度和关系的语义模型并校验：
+
+```text
+⏺ gen_semantic_model(World Bank's Data)
+ ⎿  Done (13 tool uses · 96.4s)
+⏺ 💬 gen_semantic_model (World Bank's Data):
+
+
+Semantic Model Generation Summary
+
+Analysis
+
+ • SQL Queries Analyzed: 9 queries from the World Bank's Data dashboard
+ • Tables Identified: 1 — public.wb_health_population
+ • Column Usage Patterns: Analyzed 4 actively-filtered columns (year, region, country_name, country_code)
+```
+
+**4. 提取指标**
+
+基于校验通过的语义模型，对图表中的聚合表达式做去重和归并，得到一组核心指标：
+
+```text
+⏺ gen_metrics(World Bank's Data)
+  ⎿  Done (18 tool uses · 64.0s)
+⏺ 💬 gen_metrics (World Bank's Data):
+
+Metric Generation Summary
+
+Analyzed: 9 SQL queries from the World Bank's Data dashboard (public.wb_health_population)
+
+Deduplication Result: 9 queries → 4 unique aggregation patterns → 4 core metrics
+```
 
 ### 输出
 
 Bootstrap 完成后，您将获得可直接使用的子代理：
 
-```{ .yaml .no-copy }
-Subagent `superset_world_bank_s` saved.
-Subagent `superset_world_bank_s` bootstrapped.
-Attribution Sub-Agent `superset_world_bank_s_attribution` saved.
+```text
+⏺ save_subagents(superset_world_bank_s)
+  ⎿  Done (2 tool uses · 0.0s)
+⏺ 💬 Sub-Agent build successful.
+> /agent
+───────────────────────────── Agent Management ─────────────────────────────
+   Custom   Built-in    (Tab or ←/→ to switch)
+────────────────────────────────────────────────────────────────────────────
+    superset_world_bank_s
+    superset_world_bank_s_attribution
+    + Add agent…
+
+────────────────────────────────────────────────────────────────────────────
+  ↑↓ navigate   Enter set as current   e edit   a add   d delete   Tab/←→ switch   Esc back   Ctrl+C cancel
 ```
 
-## 步骤 4：使用归因分析
+## 步骤 4：使用生成的子代理
 
-Bootstrap 生成的归因子代理提供强大的指标分析能力。
+Bootstrap 一次生成两个子代理：用于自助取数的**主子代理**，以及面向指标分析的**归因子代理**。两者均可作为斜杠命令直接调用，也可在 `/agent` 中切换为当前默认 agent。
 
-### 示例查询
+### SQL 取数 — 主子代理
+
+主子代理基于仪表盘的表与参考 SQL 生成查询并取数，适合临时分析、明细取数等场景。
 
 ```bash
-Datus> /superset_world_bank_s_attribution compare 2014 and 2004, find the reason of population growth
+> @Agent superset_world_bank_s show top 10 countries by life expectancy in 2020
 ```
 
-代理使用仪表盘中的指标和维度执行多步分析：
+```text
+⏴ superset_world_bank_s(Top 10 countries by life expectancy in 2020 using World Bank data)
+  ⎿  Done ✓ (7 tool uses · 42.9s)
 
-![归因分析过程](../assets/worldbank_population_attribution1.png)
 
-### 归因分析能力
+🌍 Top 10 Countries by Life Expectancy
 
-归因子代理提供：
+▌ ⚠️ Note: The dataset only contains data up to 2013. Year 2020 is not available — results below are for the most recent available year: 2013.
 
-- **自动维度重要性排序** - 识别哪些维度对指标变化影响最大
-- **增量贡献计算** - 量化每个因素对整体变化的贡献
-- **根因识别** - 精确定位驱动指标变动的具体值
+────────────────────────────────────────────────────────────────────────────
+🏆 Top 10 Countries by Life Expectancy at Birth (2013)
 
-### 示例输出
+
+  Rank   Country                   Region                       Life Expectancy
+ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🥇 1   🇭🇰 Hong Kong SAR, China   East Asia & Pacific          83.83 yrs
+  🥈 2   🇯🇵 Japan                  East Asia & Pacific          83.33 yrs
+  🥉 3   🇮🇸 Iceland                Europe & Central Asia        83.12 yrs
+  4      🇨🇭 Switzerland            Europe & Central Asia        82.75 yrs
+  5      🇪🇸 Spain                  Europe & Central Asia        82.43 yrs
+  6      🇱🇮 Liechtenstein          Europe & Central Asia        82.38 yrs
+  7      🇸🇬 Singapore              East Asia & Pacific          82.35 yrs
+  8      🇮🇹 Italy                  Europe & Central Asia        82.29 yrs
+  9      🇦🇺 Australia              East Asia & Pacific          82.20 yrs
+  10     🇮🇱 Israel                 Middle East & North Africa   82.06 yrs
+
+────────────────────────────────────────────────────────────────────────────
+📌 Key Insights
+
+ • 🥇 Hong Kong SAR, China leads globally at 83.83 years
+ • 🌏 East Asia & Pacific dominates with 4 out of 10 top countries (Hong Kong, Japan, Singapore, Australia)
+ • 🌍 Europe & Central Asia is strongly represented with 5 entries (Iceland, Switzerland, Spain, Liechtenstein, Italy)
+ • All top 10 countries exceed 82 years of life expectancy at birth
+ • 🇮🇱 Israel is the sole representative from the Middle East & North Africa region
+```
+
+### 归因分析 — 归因子代理
+
+归因子代理面向指标和语义模型工作，专注于指标对比、维度重要性排序与增量贡献归因，适合回答「为什么」类问题。其能力包括：
+
+- **自动维度重要性排序** —— 识别哪些维度对指标变化影响最大
+- **增量贡献计算** —— 量化每个因素对整体变化的贡献
+- **根因识别** —— 精确定位驱动指标变动的具体值
+
+```bash
+> @Agent superset_world_bank_s_attribution compare 2014 and 2004, find the reason of population growth
+```
 
 分析生成包含关键发现的完整报告：
 
-![归因分析结果](../assets/worldbank_population_attribution2.png)
+```text
+⏴ superset_world_bank_s_attribution(Attribution analysis for population growth between 2004 and 2014 using World Bank data)
+  ⎿  Done ✓ (15 tool uses · 71.3s)
+
+
+🌍 World Population Growth: 2004 vs 2014 — Attribution Analysis
+
+Global population grew from ~6.41 billion (2004) to ~7.24 billion (2014), an increase of +825 million people (+12.7%). Here's what drove it:
+
+────────────────────────────────────────────────────────────────────────────
+
+📊 Population by Region
+
+
+  Region                       2004    2014    Δ Growth   Δ %
+ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  East Asia & Pacific          2.09B   2.24B   +148.6M    +7.1%
+  South Asia                   1.49B   1.72B   +234.4M    +15.8%
+  Europe & Central Asia        870M    903M    +32.9M     +3.8%
+  Sub-Saharan Africa           742M    974M    +231.9M    +31.2% 🔴
+  Latin America & Caribbean    556M    626M    +70.8M     +12.7%
+  Middle East & North Africa   340M    417M    +77.5M     +22.8%
+  North America                325M    354M    +29.6M     +9.1%
+
+
+────────────────────────────────────────────────────────────────────────────
+
+🔍 Root Cause Attribution
+
+1. 🍼 Fertility Rate — Top Driver (Score: 8.77)
+
+The single most powerful factor. Sub-Saharan Africa (~5.0+ births/woman) and South Asia (~2.8) sustained large birth cohorts. Even with modest fertility declines, the sheer base
+population size translated into massive absolute additions.
+
+2. 👶 Infant Mortality Rate Decline — Driver #2 (Score: 1.65)
+
+More children survived to adulthood, compounding population growth:
+
+ • South Asia: 57.8 → ~39.3 deaths/1,000 births (−32%)
+ • Sub-Saharan Africa: Still high (~71.5), but declining — more children surviving
+
+3. 🌾 Rural Population Growth Rate — Driver #3 (Score: 1.65)
+
+High rural growth (especially Sub-Saharan Africa and South Asia) correlates with higher fertility norms and limited access to family planning services.
+
+4. 🔄 Net Migration — Minor Factor (Score: 1.0)
+
+Redistributes population globally but has minimal impact on total world population.
+```
 
 报告包括：
 
@@ -248,35 +544,16 @@ Datus> /superset_world_bank_s_attribution compare 2014 and 2004, find the reason
 - **主要国家贡献者** - 各国对变化的贡献
 - **结论** - 解释指标变动的关键洞察摘要
 
-## 生成的子代理说明
+## 子代理对比
 
-`bootstrap-bi` 命令创建两种类型的子代理：
+`/bootstrap-bi` 一次生成两个子代理，分工互补：
 
-### GenSQL 子代理
+| 子代理 | 命名约定 | 适用场景 | 工作上下文 |
+|---|---|---|---|
+| **主子代理** | `{platform}_{dashboard}` | 自助取数、临时查询、明细分析 | 仪表盘的表 + 参考 SQL + 语义模型 |
+| **归因子代理** | `{platform}_{dashboard}_attribution` | 指标对比、根因分析、增量贡献归因 | 仪表盘的指标 + 语义模型 |
 
-主子代理（如 `superset_world_bank_s`）提供：
-
-- 在仪表盘语义范围内生成 SQL
-- 使用提取的元数据进行上下文感知查询
-- 来自仪表盘图表的参考 SQL 模式
-
-**使用示例：**
-```bash
-/superset_world_bank_s show top 10 countries by life expectancy in 2020
-```
-
-### GenReport 子代理（归因）
-
-归因子代理（如 `superset_world_bank_s_attribution`）提供：
-
-- 指标对比和趋势分析
-- 指标变化的根因分析
-- 维度级别的归因报告
-
-**使用示例：**
-```bash
-/superset_world_bank_s_attribution why did healthcare spending increase between 2010 and 2020?
-```
+需要写 SQL 的问题交给主子代理；需要回答「为什么变化」「哪个维度影响最大」类问题，交给归因子代理。
 
 ## 下一步
 

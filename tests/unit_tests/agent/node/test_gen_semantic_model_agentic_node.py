@@ -487,6 +487,39 @@ class TestExecutionModeGenSemanticModel:
         assert node.execution_mode == "interactive"
         # hooks may or may not be set depending on whether setup_hooks succeeded
 
+    def test_workflow_mode_compose_hooks_is_non_interactive(self, real_agent_config, mock_llm_create):
+        """Workflow mode → PermissionHooks must run with non_interactive=True
+        so ASK / EXTERNAL fs hits raise PermissionDeniedException instead of
+        awaiting a broker that nobody will answer (``/bootstrap`` flow)."""
+        from datus.tools.permission.permission_hooks import PermissionHooks
+
+        node = _make_node(real_agent_config, mock_llm_create, execution_mode="workflow")
+        hooks = node._compose_hooks()
+        assert isinstance(hooks, PermissionHooks)
+        assert hooks.non_interactive is True
+        # Permission manager must be loaded with the dangerous profile, not the
+        # user's profile, so workflow flows always operate against a known
+        # baseline.
+        assert node.permission_manager.active_profile == "dangerous"
+
+    def test_interactive_mode_compose_hooks_is_interactive(self, real_agent_config, mock_llm_create):
+        """Interactive mode keeps the broker prompts (``non_interactive=False``)
+        and the user's permission profile."""
+        from datus.tools.permission.permission_hooks import PermissionHooks
+
+        node = _make_node(real_agent_config, mock_llm_create, execution_mode="interactive")
+        hooks = node._compose_hooks()
+        # ``hooks`` may be CompositeHooks(generation_hooks, permission_hooks).
+        # Find the PermissionHooks layer regardless of composition shape.
+        if isinstance(hooks, PermissionHooks):
+            permission_layer = hooks
+        else:
+            from datus.tools.permission.permission_hooks import CompositeHooks
+
+            assert isinstance(hooks, CompositeHooks)
+            permission_layer = next(h for h in hooks.hooks_list if isinstance(h, PermissionHooks))
+        assert permission_layer.non_interactive is False
+
 
 # ---------------------------------------------------------------------------
 # TestExecuteStreamError

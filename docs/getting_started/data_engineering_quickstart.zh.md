@@ -87,21 +87,7 @@ docker compose up -d
 Airflow 的 compose 文件会挂载 `${DACOMP_HOME}`，并暴露一个名为
 `duckdb_dacomp_lever` 的连接，指向 `/workspace/lever_workbench.duckdb`。
 
-## 步骤 3：安装本文需要的适配器
-
-安装 Datus 以及这条链路会用到的适配器：
-
-```bash
-pip install datus-agent datus-bi-superset datus-postgresql datus-scheduler-airflow
-```
-
-也可以跳过 `datus-bi-superset` 与 `datus-scheduler-airflow`，让 `/services`
-按需安装：通过 `/services dashboard` 或 `/services scheduler` 新建对应条目
-时，Datus 会自动 `pip install` 并热加载 registry，无需重启 CLI。详见
-[BI 平台](../configuration/bi_platforms.zh.md#通过-cli-配置-services)
-与 [调度器](../configuration/schedulers.zh.md#通过-cli-配置-services)。
-
-## 步骤 4：配置 `agent.yml`
+## 步骤 3：配置 `agent.yml`
 
 把下面这段 service 配置合并到 `~/.datus/conf/agent.yml` 现有的 `agent:`
 下面。保留已有的 `agent.providers` 配置；`/model` 会使用这些凭据。路径会直接使用步骤
@@ -144,6 +130,10 @@ agent:
         connections:
           duckdb_dacomp_lever: DAComp Lever DuckDB
 
+    semantic_layer:
+      metricflow:
+        type: metricflow
+
   agentic_nodes:
     gen_dashboard:
       bi_platform: superset
@@ -170,7 +160,7 @@ provider/model 写入 `./.datus/config.yml`。
 
 这里的 `dags_folder` 是 Datus 在主机上写入 DAG 文件的目录。Airflow compose 会把这个目录挂载到 Airflow 容器内的 `/opt/airflow/dags`，所以 Datus 生成的新 DAG 会被 Airflow 自动发现。
 
-## 步骤 5：创建必要的 staging 表
+## 步骤 4：创建必要的 staging 表
 
 自然语言 agent 任务不要以 `CREATE`、`COPY` 这类 SQL 动词开头；CLI 会根据这些
 开头关键字判断是否直接执行 SQL。
@@ -194,7 +184,7 @@ Read ./docs/data_contract.yaml and create the staging tables needed for marts.le
 
 这四张 staging 表就是 requisition enhanced 示例需要的最小 raw-to-staging 输入。
 
-## 步骤 6：生成 intermediate 和 marts 表
+## 步骤 5：生成 intermediate 和 marts 表
 
 先生成 intermediate 表。它应该按照 `docs/data_contract.yaml` 中
 `int_lever__requisition_users` 的定义，把 requisition 字段和 user 字段关联起来。
@@ -230,7 +220,7 @@ staging -> intermediate -> marts
 SELECT COUNT(*) FROM marts.lever__requisition_enhanced;
 ```
 
-## 步骤 7：提交天级 Airflow 任务
+## 步骤 6：提交天级 Airflow 任务
 
 现在可以要求 agent 把 marts 刷新过程提交给 scheduler。quickstart 自带的 Airflow 已经预置好了 `duckdb_dacomp_lever` 连接。
 
@@ -253,7 +243,7 @@ Trigger daily_lever_requisition_enhanced once now and show me the latest run sta
 - scheduler 返回 `job_id`
 - Airflow UI 中出现对应任务
 
-## 步骤 8：把 marts 表同步到 Superset serving DB
+## 步骤 7：把 marts 表同步到 Superset serving DB
 
 上面的 marts 表是通过 `lever_duckdb` datasource 生成的。创建仪表盘之前，需要先把它复制到
 `dataset_db.datasource_ref` 指向的 BI 注册数据库 `superset_serving`（Postgres）。
@@ -266,7 +256,7 @@ Please copy the source table marts.lever__requisition_enhanced from the lever_du
 
 完成后，这张表就位于 Superset 通过 `bi_database_name: examples` 识别的数据库中。
 
-## 步骤 9：创建 Superset Dashboard
+## 步骤 8：创建 Superset Dashboard
 
 当表已经存在于 `superset_serving`，就可以要求 agent 创建仪表盘：
 
@@ -277,7 +267,7 @@ Please create a requisition operations dashboard in Superset from public.lever__
 数据准备是单独的 ETL / scheduler 步骤。仪表盘生成流程期望目标表或
 SQL dataset 已经存在于 BI 已注册的数据库中。
 
-## 步骤 10：验证端到端结果
+## 步骤 9：验证端到端结果
 
 走完整条链路后，你应该能确认：
 

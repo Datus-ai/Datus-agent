@@ -20,6 +20,24 @@ def existing_semantic_metrics(semantic_rag: SemanticModelRAG, metric_rag: Metric
     return all_semantic_models, all_metrics
 
 
+def exists_metrics(rag: MetricRAG, build_mode: str = "overwrite") -> Set[str]:
+    """Return existing metric IDs, gated by ``build_mode``.
+
+    Mirrors :func:`datus.storage.reference_sql.init_utils.exists_reference_sql`:
+    empty set in ``overwrite`` mode (caller should regenerate everything),
+    populated set in ``incremental`` mode (caller should skip when non-empty).
+    """
+    existing: Set[str] = set()
+    if build_mode == "overwrite":
+        return existing
+    if build_mode == "incremental":
+        for row in rag.search_all_metrics(select_fields=["id"]):
+            mid = row.get("id") or row.get("name")
+            if mid:
+                existing.add(str(mid))
+    return existing
+
+
 def gen_semantic_model_id(
     catalog_name: str,
     database_name: str,

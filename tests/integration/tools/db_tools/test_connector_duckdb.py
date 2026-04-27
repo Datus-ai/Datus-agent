@@ -1,11 +1,11 @@
 """Integration tests for DuckdbConnector against a pre-built sample DuckDB file.
 
 These tests exercise `get_tables_with_ddl`, `get_schemas`, and query execution
-against the shipped `sample_data/duckdb-demo.duckdb` fixture. The in-memory
+against the shipped `datus/sample_data/duckdb-demo.duckdb` fixture. The in-memory
 round-trip tests (insert/update/delete) below do NOT need the sample file and
 run hermetically.
 
-`sample_data/duckdb-demo.duckdb` is produced by `build_scripts/build_test_data.sh`;
+`datus/sample_data/duckdb-demo.duckdb` is produced by `build_scripts/build_test_data.sh`;
 tests that depend on it auto-skip when the file is absent.
 """
 
@@ -22,7 +22,7 @@ from datus.utils.exceptions import DatusException, ErrorCode
 # the fixture skip reflects genuine absence of the file (IDE runners and the
 # unit-test harness chdir tests into per-test tmp dirs, which breaks CWD-
 # relative paths).
-_SAMPLE_DB = Path(__file__).resolve().parents[4] / "sample_data" / "duckdb-demo.duckdb"
+_SAMPLE_DB = Path(__file__).resolve().parents[4] / "datus" / "sample_data" / "duckdb-demo.duckdb"
 
 
 @pytest.fixture

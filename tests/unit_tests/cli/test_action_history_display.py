@@ -391,8 +391,15 @@ class TestNoSubAgentNormalFlow:
         assert len(printed) > 0
 
     def test_processing_tool_pins_frame_and_advances(self):
-        """depth=0 PROCESSING TOOL pins a blinking frame and advances the index
-        so the paired SUCCESS action can be consumed on arrival."""
+        """depth=0 PROCESSING TOOL advances the index so the paired SUCCESS action
+        can be consumed on arrival.
+
+        Non-TUI callers no longer spawn a background ``rich.Live`` for the blink
+        animation — that path was removed because it fought DatusApp's own
+        pinned region (``LiveError: Only one live display may be active at
+        once``). The PROCESSING action still advances the index so the
+        terminal SUCCESS / FAILED entry is processed when it arrives.
+        """
         actions = []
         display = ActionHistoryDisplay()
         ctx = InlineStreamingContext(actions, display)
@@ -414,10 +421,9 @@ class TestNoSubAgentNormalFlow:
             with patch("datus.cli.action_display.streaming.Live") as MockLive:
                 ctx._process_actions()
 
-        # Index advances past PROCESSING; the blink keeps repainting via Rich Live.
         assert ctx._processed_index == 1
-        # Non-TUI path instantiates Rich Live with the PROCESSING renderable.
-        assert MockLive.called
+        # Non-TUI path no longer spawns Rich Live for the PROCESSING blink.
+        assert not MockLive.called
 
 
 @pytest.mark.ci

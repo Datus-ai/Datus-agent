@@ -902,3 +902,61 @@ class TestInitLocalSchema:
             init_local_schema(mock_store, agent_config, db_manager)
 
         mock_store.after_init.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# init_local_schema_async — overwrite truncate semantics
+# ---------------------------------------------------------------------------
+
+
+class TestInitLocalSchemaAsyncOverwriteTruncate:
+    """Verify build_mode='overwrite' wipes the schema metadata store before population."""
+
+    @pytest.mark.asyncio
+    async def test_overwrite_calls_truncate_before_inner_init(self):
+        """build_mode='overwrite' must call store.truncate() before delegating to init_local_schema."""
+        from datus.storage.schema_metadata.local_init import init_local_schema_async
+
+        mock_store = MagicMock()
+        mock_config = MagicMock()
+        mock_config.project_name = "unit-test-project"
+        mock_db_manager = MagicMock()
+
+        with patch("datus.storage.schema_metadata.local_init.init_local_schema") as mock_inner:
+            await init_local_schema_async(
+                table_lineage_store=mock_store,
+                agent_config=mock_config,
+                db_manager=mock_db_manager,
+                build_mode="overwrite",
+            )
+
+        mock_store.truncate.assert_called_once_with()
+        mock_inner.assert_called_once()
+        # Order check: truncate must precede the dispatched init_local_schema call.
+        # The mock_store has only the truncate method tracked; we verify call_args_list
+        # by checking that truncate was called before any read methods (which would
+        # have been routed via the inner init_local_schema patch — so on the store
+        # itself, only truncate appears in method_calls).
+        method_names = [c[0] for c in mock_store.method_calls]
+        assert method_names == ["truncate"]
+
+    @pytest.mark.asyncio
+    async def test_incremental_does_not_call_truncate(self):
+        """build_mode='incremental' must NOT call truncate."""
+        from datus.storage.schema_metadata.local_init import init_local_schema_async
+
+        mock_store = MagicMock()
+        mock_config = MagicMock()
+        mock_config.project_name = "unit-test-project"
+        mock_db_manager = MagicMock()
+
+        with patch("datus.storage.schema_metadata.local_init.init_local_schema") as mock_inner:
+            await init_local_schema_async(
+                table_lineage_store=mock_store,
+                agent_config=mock_config,
+                db_manager=mock_db_manager,
+                build_mode="incremental",
+            )
+
+        mock_store.truncate.assert_not_called()
+        mock_inner.assert_called_once()

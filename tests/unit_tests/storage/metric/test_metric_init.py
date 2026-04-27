@@ -191,6 +191,7 @@ class TestInitSuccessStoryMetricsAsync:
         import pandas as pd
 
         with (
+            patch("datus.storage.metric.store.MetricRAG", MagicMock()),
             patch("datus.storage.metric.metric_init.extract_tables_from_sql_list", return_value=[]),
             patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_prompt_manager),
             patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", return_value=mock_node),
@@ -241,6 +242,7 @@ class TestInitSuccessStoryMetricsAsync:
         import pandas as pd
 
         with (
+            patch("datus.storage.metric.store.MetricRAG", MagicMock()),
             patch("datus.storage.metric.metric_init.extract_tables_from_sql_list", return_value=[]),
             patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_prompt_manager),
             patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", return_value=mock_node),
@@ -291,6 +293,7 @@ class TestInitSuccessStoryMetricsAsync:
         import pandas as pd
 
         with (
+            patch("datus.storage.metric.store.MetricRAG", MagicMock()),
             patch("datus.storage.metric.metric_init.extract_tables_from_sql_list", return_value=[]),
             patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_prompt_manager),
             patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", return_value=mock_node),
@@ -390,3 +393,119 @@ class TestInitSuccessStoryMetricsSync:
         assert isinstance(result, tuple)
         assert len(result) == 3
         assert result[0] is True, f"Expected success, got {result[0]}"
+
+
+# ---------------------------------------------------------------------------
+# init_success_story_metrics_async — overwrite truncate semantics
+# ---------------------------------------------------------------------------
+
+
+class TestInitSuccessStoryMetricsAsyncOverwriteTruncate:
+    """Verify build_mode='overwrite' wipes the metrics store before LLM regeneration."""
+
+    @pytest.mark.asyncio
+    async def test_overwrite_calls_truncate_and_skips_existing_probe(self):
+        """build_mode='overwrite' calls MetricRAG(...).truncate() once and never consults exists_metrics."""
+        from unittest.mock import patch
+
+        import pandas as pd
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.storage.metric.metric_init import init_success_story_metrics_async
+
+        fake_rag_instance = MagicMock()
+        rag_factory = MagicMock(return_value=fake_rag_instance)
+
+        mock_node = MagicMock()
+
+        async def fake_execute_stream(_action_manager):
+            action = MagicMock()
+            action.status = ActionStatus.SUCCESS
+            action.action_type = "metrics_response"
+            action.output = {"response": "done"}
+            action.messages = "ok"
+            yield action
+
+        mock_node.execute_stream = fake_execute_stream
+
+        mock_config = MagicMock()
+        mock_config.project_name = "unit-test-project"
+        mock_config.current_db_config.return_value = MagicMock(catalog="", database="db", schema="")
+        mock_prompt_manager = MagicMock()
+        mock_prompt_manager.get_latest_version.return_value = "1.0"
+
+        with (
+            patch("datus.storage.metric.store.MetricRAG", rag_factory),
+            patch(
+                "datus.storage.metric.init_utils.exists_metrics",
+                MagicMock(return_value=set()),
+            ) as mock_exists,
+            patch("datus.storage.metric.metric_init.extract_tables_from_sql_list", return_value=[]),
+            patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_prompt_manager),
+            patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", return_value=mock_node),
+            patch("datus.storage.metric.metric_init.pd.read_csv") as mock_read_csv,
+        ):
+            mock_read_csv.return_value = pd.DataFrame([{"question": "Revenue?", "sql": "SELECT SUM(a) FROM t"}])
+            success, error, _ = await init_success_story_metrics_async(
+                agent_config=mock_config,
+                success_story="dummy.csv",
+                build_mode="overwrite",
+            )
+
+        assert success is True
+        rag_factory.assert_called_once_with(mock_config)
+        fake_rag_instance.truncate.assert_called_once_with()
+        mock_exists.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_incremental_does_not_call_truncate(self):
+        """build_mode='incremental' must not call truncate; it consults exists_metrics instead."""
+        from unittest.mock import patch
+
+        import pandas as pd
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.storage.metric.metric_init import init_success_story_metrics_async
+
+        fake_rag_instance = MagicMock()
+        rag_factory = MagicMock(return_value=fake_rag_instance)
+
+        mock_node = MagicMock()
+
+        async def fake_execute_stream(_action_manager):
+            action = MagicMock()
+            action.status = ActionStatus.SUCCESS
+            action.action_type = "metrics_response"
+            action.output = {"response": "done"}
+            action.messages = "ok"
+            yield action
+
+        mock_node.execute_stream = fake_execute_stream
+
+        mock_config = MagicMock()
+        mock_config.project_name = "unit-test-project"
+        mock_config.current_db_config.return_value = MagicMock(catalog="", database="db", schema="")
+        mock_prompt_manager = MagicMock()
+        mock_prompt_manager.get_latest_version.return_value = "1.0"
+
+        with (
+            patch("datus.storage.metric.store.MetricRAG", rag_factory),
+            patch(
+                "datus.storage.metric.init_utils.exists_metrics",
+                MagicMock(return_value=set()),
+            ) as mock_exists,
+            patch("datus.storage.metric.metric_init.extract_tables_from_sql_list", return_value=[]),
+            patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_prompt_manager),
+            patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", return_value=mock_node),
+            patch("datus.storage.metric.metric_init.pd.read_csv") as mock_read_csv,
+        ):
+            mock_read_csv.return_value = pd.DataFrame([{"question": "Revenue?", "sql": "SELECT SUM(a) FROM t"}])
+            success, _error, _ = await init_success_story_metrics_async(
+                agent_config=mock_config,
+                success_story="dummy.csv",
+                build_mode="incremental",
+            )
+
+        assert success is True
+        fake_rag_instance.truncate.assert_not_called()
+        mock_exists.assert_called_once()

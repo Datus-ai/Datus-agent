@@ -294,18 +294,12 @@ datus-agent eval \
 使用预置的 California Schools 数据集快速体验基准测试与评估流程，无需额外下载。
 
 ### 第一步：初始化数据集
-```bash
-datus-agent tutorial
-```
 
-![tutorial](../assets/tutorial.png)
+参照[手把手教程](../getting_started/contextual_data_engineering.zh.md#第二部分手把手教程california-schools)：
 
-该步骤做了以下工作：
-
-1. 增加 California Schools 的数据库配置和基准测试配置到 agent.yml
-2. 初始化 California Schools 的表的元数据信息
-3. 使用 `benchmark/california_schools/success_story.csv` 构建指标信息
-4. 使用 `benchmark/california_schools/reference_sql` 的 SQL 文件构建参考 SQL
+1. 把内置的 California Schools 样本数据复制到 `~/.datus/benchmark/california_schools/`
+2. 在 `agent.yml` 中注册数据源与基准测试配置
+3. 在 `datus-cli` 内使用 `/bootstrap` 完成元数据、语义模型、指标与 Reference SQL 的初始化
 
 ### 进行基准测试和评估
 ```bash

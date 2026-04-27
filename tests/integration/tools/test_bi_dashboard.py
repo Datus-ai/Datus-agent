@@ -17,7 +17,9 @@ import yaml
 from datus_bi_core import AuthParam
 from rich.console import Console
 
-from datus.cli.bi_dashboard import BiDashboardCommands, DashboardCliOptions
+from datus.cli.bootstrap_bi_commands import BootstrapBiCommands
+from datus.cli.bootstrap_bi_picker import BootstrapBiPicker, BootstrapBiPlan, DashboardCliOptions
+from datus.cli.bootstrap_bi_subagents import build_sub_agent_name
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.tools.bi_tools.dashboard_assembler import ChartSelection, DashboardAssembler
@@ -134,10 +136,17 @@ def agent_config(tmp_path_factory) -> AgentConfig:
 
 
 @pytest.fixture
-def bi_commands(agent_config) -> BiDashboardCommands:
-    """Create BiDashboardCommands for tests."""
+def bi_picker(agent_config) -> BootstrapBiPicker:
+    """Create a BootstrapBiPicker for tests (used for adapter / chart hydration)."""
     console = Console(log_path=False, force_terminal=False)
-    return BiDashboardCommands(agent_config, console, force=True)
+    return BootstrapBiPicker(agent_config, console)
+
+
+@pytest.fixture
+def bi_commands(agent_config) -> BootstrapBiCommands:
+    """Create BootstrapBiCommands for tests (used to drive _run_plan)."""
+    console = Console(log_path=False, force_terminal=False)
+    return BootstrapBiCommands(agent_config, console)
 
 
 @pytest.fixture(scope="module")
@@ -160,14 +169,14 @@ def input_data() -> List[Dict[str, Any]]:
 # ============================================================================
 
 
-def _create_adapter(bi_commands, agent_config, dashboard_item):
+def _create_adapter(bi_picker, agent_config, dashboard_item):
     """Create a BI adapter from dashboard_item config."""
     platform = dashboard_item["platform"]
     dashboard_config = agent_config.dashboard_config.get(platform)
     if not dashboard_config:
         pytest.skip(f"Dashboard config for platform '{platform}' not found")
 
-    return bi_commands._create_adapter(
+    return bi_picker._create_adapter(
         DashboardCliOptions(
             platform=platform,
             dashboard_url=dashboard_item["dashboard_url"],
@@ -184,7 +193,7 @@ def _create_adapter(bi_commands, agent_config, dashboard_item):
 
 
 def _extract_and_select_charts(
-    bi_commands,
+    bi_picker,
     bi_adapter,
     dashboard_item,
 ) -> Tuple[Any, List[ChartSelection], List[Any], List[Any]]:
@@ -203,7 +212,7 @@ def _extract_and_select_charts(
     chart_metas = bi_adapter.list_charts(dashboard_id)
     assert len(chart_metas) > 0, "Dashboard should have charts"
 
-    charts = bi_commands._hydrate_charts(bi_adapter, dashboard_id, chart_metas)
+    charts = bi_picker._hydrate_charts(bi_adapter, dashboard_id, chart_metas)
     charts_with_sql = [c for c in charts if c.query and c.query.sql]
     assert len(charts_with_sql) > 0, "Should have charts with SQL"
 
@@ -268,88 +277,93 @@ class TestPartialIntegration:
     @pytest.mark.nightly
     def test_workflow_without_llm(
         self,
-        bi_commands: BiDashboardCommands,
+        bi_picker: BootstrapBiPicker,
+        bi_commands: BootstrapBiCommands,
         agent_config: AgentConfig,
         input_data: List[Dict[str, Any]],
         tmp_path,
     ):
-        """Integration test: real Superset extraction + mocked LLM generation.
+        """Integration test: real BI extraction + mocked LLM generation.
 
-        Uses real tmp YAML files for the fake metrics so that `_gen_metrics`
-        can read them naturally with its own `open()` + `yaml.safe_load_all`
-        calls — no need to patch builtins.open (which would pollute every
-        open() call in the with-block, including pytest capture and logger).
+        We swap the real ``stream_bi_*`` async generators for stubs that
+        populate the shared ``BiBuildState`` directly — this exercises
+        :meth:`BootstrapBiCommands._run_plan` orchestration (semantic-ok
+        gating, ScopedContext assembly, sub-agent persistence) without
+        burning LLM tokens.
         """
+        import asyncio
         from unittest.mock import patch
 
         for dashboard_item in input_data:
             platform = dashboard_item["platform"]
             dialect = dashboard_item.get("dialect", "postgresql")
-            bi_adapter = _create_adapter(bi_commands, agent_config, dashboard_item)
+            bi_adapter = _create_adapter(bi_picker, agent_config, dashboard_item)
 
             try:
                 dashboard, chart_selections, charts, datasets = _extract_and_select_charts(
-                    bi_commands, bi_adapter, dashboard_item
+                    bi_picker, bi_adapter, dashboard_item
                 )
                 result = _assemble(bi_adapter, dashboard, chart_selections, datasets, dialect)
 
-                # Write REAL YAML files so the code under test can parse them
-                # with its own open()+yaml.safe_load_all — no global open() patching.
-                fake_metric_dir = tmp_path / f"fake_metrics_{platform}"
-                fake_metric_dir.mkdir(exist_ok=True)
-                fake_metric_files: List[str] = []
-                for i in range(len(result.metric_sqls)):
-                    fp = fake_metric_dir / f"fake_metric_{i}.yaml"
-                    fp.write_text(
-                        yaml.safe_dump(
-                            {
-                                "metric": {
-                                    "name": f"metric_{i}",
-                                    "locked_metadata": {"tags": [f"subject_tree:{platform}/test/layer{i}"]},
-                                }
-                            }
-                        )
-                    )
-                    fake_metric_files.append(str(fp))
+                # Pre-built plan replaces what BootstrapBiPicker.run() would have produced.
+                plan = BootstrapBiPlan(
+                    options=DashboardCliOptions(
+                        platform=platform,
+                        dashboard_url=dashboard_item["dashboard_url"],
+                        api_base_url=dashboard_item["api_base_url"],
+                        auth_params=None,
+                        dialect=dialect,
+                    ),
+                    adapter=bi_adapter,
+                    dashboard=dashboard,
+                    dashboard_id=bi_adapter.parse_dashboard_id(dashboard_item["dashboard_url"]),
+                    chart_selections_ref=chart_selections,
+                    chart_selections_metrics=chart_selections,
+                    assembled=result,
+                    pool_size=2,
+                )
 
-                # Mock ONLY the LLM calls and slow initialization.
+                async def _meta_stub(_cfg, *, table_names, pool_size, _state=None):
+                    if False:
+                        yield  # pragma: no cover
+
+                async def _ref_stub(_cfg, *, reference_sqls, platform, dashboard_name, pool_size, state):
+                    state.ref_sqls.extend(f"{platform}/test/metric.metric_{i}" for i in range(len(reference_sqls)))
+                    if False:
+                        yield  # pragma: no cover
+
+                async def _sem_stub(_cfg, *, sqls, platform, dashboard_name, state):
+                    state.semantic_ok = True
+                    if False:
+                        yield  # pragma: no cover
+
+                async def _metrics_stub(_cfg, *, sqls, platform, dashboard_name, state):
+                    state.metrics.extend(f"{platform}/test/layer{i}.metric_{i}" for i in range(len(sqls)))
+                    if False:
+                        yield  # pragma: no cover
+
+                async def _save_stub(_cfg, **_kwargs):
+                    if False:
+                        yield  # pragma: no cover
+
+                actions: list = []
                 with (
-                    patch("datus.cli.bi_dashboard.init_reference_sql") as mock_ref_sql,
-                    patch("datus.cli.bi_dashboard.init_semantic_model") as mock_semantic,
-                    patch("datus.cli.bi_dashboard.init_metrics") as mock_metrics,
-                    patch.object(bi_commands, "_validate_semantic_model", return_value=True) as _,
+                    patch("datus.cli.bootstrap_bi_commands.stream_bi_metadata", side_effect=_meta_stub),
+                    patch("datus.cli.bootstrap_bi_commands.stream_bi_reference_sql", side_effect=_ref_stub),
+                    patch("datus.cli.bootstrap_bi_commands.stream_bi_semantic_model", side_effect=_sem_stub),
+                    patch("datus.cli.bootstrap_bi_commands.stream_bi_metrics", side_effect=_metrics_stub),
+                    patch("datus.cli.bootstrap_bi_commands.stream_bi_save_subagents", side_effect=_save_stub),
+                    patch("datus.cli.bootstrap_bi_commands.SubAgentManager"),
+                    patch("datus.cli.bootstrap_bi_commands.configuration_manager"),
+                    patch("datus.cli.bootstrap_bi_commands.qualify_table_names", return_value=list(result.tables)),
                 ):
-                    mock_ref_sql.return_value = {
-                        "status": "success",
-                        "valid_entries": len(result.reference_sqls),
-                        "invalid_entries": 0,
-                        "processed_entries": len(result.reference_sqls),
-                        "processed_items": [
-                            {"subject_tree": f"{platform}/test/metric", "name": f"metric_{i}"}
-                            for i in range(len(result.reference_sqls))
-                        ],
-                    }
-                    mock_semantic.return_value = (True, {"semantic_model_count": len(result.metric_sqls)})
-                    mock_metrics.return_value = (
-                        True,
-                        {
-                            "semantic_models": fake_metric_files,
-                            "success": True,
-                            "response": "Metrics generated successfully",
-                            "tokens_used": 1000,
-                        },
-                    )
+                    asyncio.run(bi_commands._run_plan(plan, actions))
 
-                    ref_sqls = bi_commands._gen_reference_sqls(result.reference_sqls, platform, dashboard)
-                    semantic_result = bi_commands._gen_semantic_model(result.metric_sqls, platform, dashboard)
-                    metrics = bi_commands._gen_metrics(result.metric_sqls, platform, dashboard)
-
-                    assert len(ref_sqls) > 0
-                    assert semantic_result is True
-                    assert len(metrics) > 0
-                    assert mock_ref_sql.called
-                    assert mock_semantic.called
-                    assert mock_metrics.called
+                # Verify the orchestrator gated correctly: metrics ran (semantic_ok was True),
+                # so we expect both ref_sqls and metric identifiers in the resulting actions.
+                assert any("Sub-Agent build successful" in (a.messages or "") for a in actions), (
+                    f"Sub-agent build did not complete; got actions: {[a.messages for a in actions]}"
+                )
 
                 logger.info(
                     "Partial integration test passed for %s — real Superset extraction: %d charts, "
@@ -382,7 +396,8 @@ class TestE2EIntegration:
     @pytest.mark.timeout(600)
     def test_complete_workflow(
         self,
-        bi_commands: BiDashboardCommands,
+        bi_picker: BootstrapBiPicker,
+        bi_commands: BootstrapBiCommands,
         agent_config: AgentConfig,
         input_data: List[Dict[str, Any]],
     ):
@@ -392,12 +407,14 @@ class TestE2EIntegration:
         (home: redirected to tmp_path_factory), so no cleanup is needed here —
         the storage starts empty for every test module run.
         """
+        import asyncio
+
         test_results = []
 
         for dashboard_item in input_data:
             platform = dashboard_item["platform"]
             dialect = dashboard_item.get("dialect", "postgresql")
-            bi_adapter = _create_adapter(bi_commands, agent_config, dashboard_item)
+            bi_adapter = _create_adapter(bi_picker, agent_config, dashboard_item)
 
             test_result = {
                 "platform": platform,
@@ -415,20 +432,33 @@ class TestE2EIntegration:
 
             try:
                 dashboard, chart_selections, charts, datasets = _extract_and_select_charts(
-                    bi_commands, bi_adapter, dashboard_item
+                    bi_picker, bi_adapter, dashboard_item
                 )
 
-                sub_agent_name = bi_commands._build_sub_agent_name(platform, dashboard.name or "")
+                sub_agent_name = build_sub_agent_name(platform, dashboard.name or "")
                 attr_name = f"{sub_agent_name}_attribution"
-
-                # Sub-agent directories are no longer maintained under data/;
-                # agentic_nodes is tracked purely in config, so nothing to clean up here.
-                _ = [sub_agent_name, attr_name]
 
                 result = _assemble(bi_adapter, dashboard, chart_selections, datasets, dialect)
 
-                # Save sub-agent (complete flow: gen + save + bootstrap)
-                bi_commands._save_sub_agent(platform, dashboard, result)
+                # Drive the full streaming pipeline end-to-end.
+                plan = BootstrapBiPlan(
+                    options=DashboardCliOptions(
+                        platform=platform,
+                        dashboard_url=dashboard_item["dashboard_url"],
+                        api_base_url=dashboard_item["api_base_url"],
+                        auth_params=None,
+                        dialect=dialect,
+                    ),
+                    adapter=bi_adapter,
+                    dashboard=dashboard,
+                    dashboard_id=bi_adapter.parse_dashboard_id(dashboard_item["dashboard_url"]),
+                    chart_selections_ref=chart_selections,
+                    chart_selections_metrics=chart_selections,
+                    assembled=result,
+                    pool_size=2,
+                )
+                actions: list = []
+                asyncio.run(bi_commands._run_plan(plan, actions))
 
                 # Verify 2 sub-agents created
                 assert sub_agent_name in agent_config.agentic_nodes, (

@@ -126,6 +126,7 @@ CALIFORNIA_SCHOOLS_DB = os.path.join(
     os.path.dirname(__file__),
     "..",
     "..",
+    "datus",
     "sample_data",
     "california_schools",
     "california_schools.sqlite",

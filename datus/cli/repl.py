@@ -46,7 +46,7 @@ from datus.cli.autocomplete import (
     ServiceCommandCompleter,
     SlashCommandCompleter,
 )
-from datus.cli.bi_dashboard import BiDashboardCommands
+from datus.cli.bootstrap_bi_commands import BootstrapBiCommands
 from datus.cli.chat_commands import ChatCommands
 from datus.cli.cli_styles import (
     PASTE_COLLAPSE_THRESHOLD,
@@ -246,7 +246,10 @@ class DatusCLI:
         self.chat_commands = ChatCommands(self)
         self.context_commands = ContextCommands(self)
         self.metadata_commands = MetadataCommands(self)
-        self.bi_dashboard_commands = BiDashboardCommands(self)
+        self.bootstrap_bi_commands = BootstrapBiCommands(self)
+        from datus.cli.bootstrap_commands import BootstrapCommands
+
+        self.bootstrap_commands = BootstrapCommands(self)
         self.model_commands = ModelCommands(self)
         self.language_commands = LanguageCommands(self)
         self.effort_commands = EffortCommands(self)
@@ -329,7 +332,8 @@ class DatusCLI:
             # system
             "mcp": self._cmd_mcp,
             "skill": self._cmd_skill,
-            "bootstrap-bi": self.bi_dashboard_commands.cmd,
+            "bootstrap": self.bootstrap_commands.cmd,
+            "bootstrap-bi": self.bootstrap_bi_commands.cmd,
             "model": self.model_commands.cmd_model,
             "effort": self.effort_commands.cmd_effort,
             "init": self.init_commands.cmd_init,

@@ -19,7 +19,7 @@ from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
-SAMPLE_TEMPLATE_DIR = str(PROJECT_ROOT / "sample_data" / "california_schools" / "reference_template")
+SAMPLE_TEMPLATE_DIR = str(PROJECT_ROOT / "datus" / "sample_data" / "california_schools" / "reference_template")
 
 # ============================================================================
 # Nightly: Full bootstrap → tools pipeline

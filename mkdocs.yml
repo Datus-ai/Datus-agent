@@ -9,7 +9,6 @@ nav:
       - Quickstart: getting_started/Quickstart.md
       - Data Engineering Quickstart: getting_started/data_engineering_quickstart.md
       - Contextual Data Engineering: getting_started/contextual_data_engineering.md
-      - Tutorial: getting_started/Datus_tutorial.md
       - Dashboard Copilot: getting_started/dashboard_copilot.md
     - CLI:
       - Introduction: cli/introduction.md
@@ -108,7 +107,6 @@ plugins:
             Quickstart: 快速开始
             Data Engineering Quickstart: 数据工程快速开始
             Contextual Data Engineering: 上下文数据工程
-            Tutorial: 教程
             Dashboard Copilot: Dashboard Copilot
             CLI: 命令行
             Introduction: 介绍

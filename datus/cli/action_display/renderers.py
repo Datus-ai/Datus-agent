@@ -420,6 +420,12 @@ class ActionRenderer:
     def render_subagent_header(self, action: ActionHistory, verbose: bool) -> List[Text]:
         """Render sub-agent group header (type + prompt/description)."""
         subagent_type = action.action_type or "subagent"
+        # When the group's ``first_action`` is the outer task tool itself
+        # (action_type=="task"), the user-meaningful subagent name lives
+        # in ``input["type"]`` (e.g. ``"gen_sql_summary"``). Falling back
+        # to a literal "task" label here would lose that information.
+        if subagent_type == "task" and isinstance(action.input, dict):
+            subagent_type = action.input.get("type") or "task"
         prompt = action.messages or ""
         if prompt.startswith("User: "):
             prompt = prompt[6:]
@@ -492,6 +498,8 @@ class ActionRenderer:
     ) -> List[Text]:
         """Render a completed subagent group as collapsed: header + Done summary."""
         subagent_type = first_action.action_type or "subagent"
+        if subagent_type == "task" and isinstance(first_action.input, dict):
+            subagent_type = first_action.input.get("type") or "task"
         prompt = first_action.messages or ""
         if prompt.startswith("User: "):
             prompt = prompt[6:]

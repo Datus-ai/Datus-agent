@@ -295,18 +295,12 @@ datus-agent eval \
 Try out benchmarking and evaluation with the pre-packaged California Schools dataset — no extra downloads needed.
 
 ### Step 1: Initialize the Dataset
-```bash
-datus-agent tutorial
-```
 
-![tutorial](../assets/tutorial.png)
+Follow the [hands-on tutorial](../getting_started/contextual_data_engineering.md#part-2--hands-on-tutorial-california-schools) to:
 
-This step does the following:
-
-1. Add database configuration and benchmark configuration for California Schools to agent.yml
-2. Initialize the metadata information of the tables for California Schools
-3. Use `benchmark/california_schools/success_story.csv` to build metric information
-4. Build reference SQL using the SQL files in `benchmark/california_schools/reference_sql`
+1. Copy the bundled California Schools sample data into `~/.datus/benchmark/california_schools/`
+2. Register the datasource and benchmark configuration in `agent.yml`
+3. Use `/bootstrap` inside `datus-cli` to initialize metadata, semantic models, metrics, and reference SQL
 
 ### Benchmarking and evaluation
 ```bash

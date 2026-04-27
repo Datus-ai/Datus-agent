@@ -91,23 +91,7 @@ The Airflow compose file mounts `${DACOMP_HOME}` into the container and exposes
 an Airflow connection named `duckdb_dacomp_lever`, which points to
 `/workspace/lever_workbench.duckdb`.
 
-## Step 3: Install the Required Packages
-
-Install Datus plus the adapters used in this walkthrough:
-
-```bash
-pip install datus-agent datus-bi-superset datus-postgresql datus-scheduler-airflow
-```
-
-You can skip `datus-bi-superset` and `datus-scheduler-airflow` here and let
-`/services` install them on demand: when you create a Superset dashboard
-entry or an Airflow scheduler entry through `/services dashboard` /
-`/services scheduler`, Datus runs `pip install` for you and hot-reloads the
-registry without restarting the CLI. See
-[BI platforms](../configuration/bi_platforms.md#configuring-through-the-cli-services)
-and [Schedulers](../configuration/schedulers.md#configuring-through-the-cli-services).
-
-## Step 4: Configure `agent.yml`
+## Step 3: Configure `agent.yml`
 
 Merge the following service configuration into the existing `agent:` section in
 `~/.datus/conf/agent.yml`. Keep any existing `agent.providers` settings; the
@@ -151,6 +135,10 @@ agent:
         connections:
           duckdb_dacomp_lever: DAComp Lever DuckDB
 
+    semantic_layer:
+      metricflow:
+        type: metricflow
+
   agentic_nodes:
     gen_dashboard:
       bi_platform: superset
@@ -178,7 +166,7 @@ writes the active provider/model for this project to `./.datus/config.yml`.
 
 Here `dags_folder` is the host-side directory where Datus writes generated DAG files. The Airflow compose file mounts that directory into the Airflow container as `/opt/airflow/dags`, so newly generated DAGs are picked up automatically.
 
-## Step 5: Create the Required Staging Tables
+## Step 4: Create the Required Staging Tables
 
 For natural-language agent tasks, avoid starting the message with a raw SQL verb
 such as `CREATE` or `COPY`; the CLI uses those leading keywords to detect direct
@@ -206,7 +194,7 @@ Read ./docs/data_contract.yaml and create the staging tables needed for marts.le
 These four staging tables are the minimum raw-to-staging inputs for the
 requisition-enhancement example.
 
-## Step 6: Build the Intermediate and Marts Tables
+## Step 5: Build the Intermediate and Marts Tables
 
 Build the intermediate model first. It should combine requisition fields with
 user fields according to the `int_lever__requisition_users` entry in
@@ -244,7 +232,7 @@ After the marts table is built, validate it directly:
 SELECT COUNT(*) FROM marts.lever__requisition_enhanced;
 ```
 
-## Step 7: Submit a Daily Airflow Job
+## Step 6: Submit a Daily Airflow Job
 
 Ask the agent to operationalize a daily marts refresh. The Airflow quickstart environment already exposes the `duckdb_dacomp_lever` connection.
 
@@ -267,7 +255,7 @@ What to expect:
 - Airflow returns a `job_id`
 - the job becomes visible in the Airflow UI
 
-## Step 8: Promote the Marts Table to the Superset Serving DB
+## Step 7: Promote the Marts Table to the Superset Serving DB
 
 The marts table above was built through the `lever_duckdb` datasource. Before
 dashboard generation can create Superset assets, copy that table into the
@@ -282,7 +270,7 @@ Please copy the source table marts.lever__requisition_enhanced from the lever_du
 After this step, the table exists in the same database Superset knows as
 `bi_database_name: examples`.
 
-## Step 9: Create a Superset Dashboard
+## Step 8: Create a Superset Dashboard
 
 Once the marts table exists in `superset_serving`, ask the agent to build the dashboard.
 
@@ -294,7 +282,7 @@ Data preparation is a separate ETL / scheduler step. Dashboard generation
 expects the table or SQL dataset to already be available in the BI-registered
 database.
 
-## Step 10: Verify the End-to-End Result
+## Step 9: Verify the End-to-End Result
 
 You should now have:
 

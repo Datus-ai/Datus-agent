@@ -6,13 +6,17 @@ import asyncio
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
-from typing import Dict, List, Optional, Set
+from typing import Callable, Dict, List, Optional, Set
 
 import pandas as pd
 
 from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistoryManager, ActionStatus
+from datus.schemas.action_history import (
+    ActionHistory,  # noqa: F401  (forward-ref for action_callback)
+    ActionHistoryManager,
+    ActionStatus,
+)
 from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput
 from datus.storage.ext_knowledge.init_utils import exists_ext_knowledge, gen_ext_knowledge_id
 from datus.storage.ext_knowledge.store import ExtKnowledgeStore
@@ -42,6 +46,10 @@ def init_ext_knowledge(
     if not os.path.exists(ext_knowledge_csv):
         logger.error(f"External knowledge CSV file not found: {ext_knowledge_csv}")
         return
+
+    if build_mode == "overwrite":
+        logger.info("[overwrite] Wiping ext_knowledge store before re-population")
+        storage.truncate_scoped()
 
     existing_knowledge = exists_ext_knowledge(storage, build_mode)
     existing_knowledge_lock = Lock()
@@ -157,6 +165,9 @@ async def init_success_story_knowledge_async(
     agent_config: AgentConfig,
     success_story: str,
     subject_tree: Optional[list] = None,
+    *,
+    build_mode: str = "overwrite",
+    action_callback: Optional[Callable[["ActionHistory"], None]] = None,
 ) -> tuple[bool, str]:
     """
     Async version: Initialize external knowledge from success story CSV file using
@@ -166,6 +177,9 @@ async def init_success_story_knowledge_async(
         agent_config: Agent configuration
         success_story: Path to success story CSV file
         subject_tree: Optional predefined subject tree categories
+        build_mode: ``"overwrite"`` (default) regenerates unconditionally;
+            ``"incremental"`` skips the LLM call when the external
+            knowledge store already contains entries.
 
     Returns:
         tuple[bool, str]: (whether successful, error message)
@@ -174,6 +188,29 @@ async def init_success_story_knowledge_async(
         error_msg = f"Success story CSV file not found: {success_story}"
         logger.error(error_msg)
         return False, error_msg
+
+    if build_mode == "overwrite":
+        from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
+
+        logger.info(
+            "[overwrite] Wiping ext_knowledge store for project '%s' before re-population",
+            agent_config.project_name,
+        )
+        ExtKnowledgeRAG(agent_config).truncate()
+    elif build_mode == "incremental":
+        from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
+
+        try:
+            existing_count = ExtKnowledgeRAG(agent_config).get_knowledge_size()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("ext_knowledge incremental probe failed: %s", exc)
+            existing_count = 0
+        if existing_count:
+            logger.info(
+                "ext_knowledge incremental skip: %d existing entries found, no LLM call.",
+                existing_count,
+            )
+            return True, ""
 
     try:
         df = pd.read_csv(success_story)
@@ -187,7 +224,9 @@ async def init_success_story_knowledge_async(
         row_idx = idx + 1
         logger.info(f"Processing row {row_idx}/{len(df)}")
         try:
-            result = await process_knowledge_line(row.to_dict(), agent_config, subject_tree)
+            result = await process_knowledge_line(
+                row.to_dict(), agent_config, subject_tree, action_callback=action_callback
+            )
             if not result.get("successful"):
                 errors.append(f"Error processing row {row_idx}: {result.get('error')}")
         except Exception as e:
@@ -203,6 +242,8 @@ def init_success_story_knowledge(
     agent_config: AgentConfig,
     success_story: str,
     subject_tree: Optional[list] = None,
+    *,
+    build_mode: str = "overwrite",
 ) -> tuple[bool, str]:
     """
     Sync wrapper: Initialize external knowledge from success story CSV file.
@@ -211,17 +252,22 @@ def init_success_story_knowledge(
         agent_config: Agent configuration
         success_story: Path to success story CSV file
         subject_tree: Optional predefined subject tree categories
+        build_mode: Forwarded to :func:`init_success_story_knowledge_async`.
 
     Returns:
         tuple[bool, str]: (whether successful, error message)
     """
-    return asyncio.run(init_success_story_knowledge_async(agent_config, success_story, subject_tree))
+    return asyncio.run(
+        init_success_story_knowledge_async(agent_config, success_story, subject_tree, build_mode=build_mode)
+    )
 
 
 async def process_knowledge_line(
     row: dict,
     agent_config: AgentConfig,
     subject_tree: Optional[list] = None,
+    *,
+    action_callback: Optional[Callable[["ActionHistory"], None]] = None,
 ) -> Dict[str, any]:
     """
     Process a single line from the CSV using GenExtKnowledgeAgenticNode in workflow mode.
@@ -265,6 +311,11 @@ async def process_knowledge_line(
     try:
         ext_knowledge_node.input = ext_knowledge_input
         async for action in ext_knowledge_node.execute_stream(action_history_manager):
+            if action_callback is not None:
+                try:
+                    action_callback(action)
+                except Exception as cb_exc:  # pragma: no cover - defensive
+                    logger.debug("ext_knowledge action_callback raised: %s", cb_exc)
             if action.status == ActionStatus.SUCCESS and action.output:
                 logger.debug(f"Knowledge generation action: {action.messages}")
 

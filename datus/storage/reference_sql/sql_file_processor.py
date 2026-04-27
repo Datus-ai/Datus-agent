@@ -268,13 +268,13 @@ def process_sql_items(items: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]]
 
 
 def process_sql_files(sql_dir: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    if not os.path.exists(sql_dir):
-        raise ValueError(f"SQL directory not found: {sql_dir}")
     sql_dir_path = Path(sql_dir).expanduser().resolve()
+    if not sql_dir_path.exists():
+        raise ValueError(f"SQL directory not found: {sql_dir}")
     if sql_dir_path.is_dir():
-        sql_files = glob.glob(os.path.join(sql_dir, "*.sql"))
+        sql_files = glob.glob(os.path.join(str(sql_dir_path), "*.sql"))
     elif sql_dir_path.is_file() and sql_dir_path.suffix.lower() == ".sql":
-        sql_files = [sql_dir]
+        sql_files = [str(sql_dir_path)]
     else:
         sql_files = []
     if not sql_files:

@@ -9,7 +9,6 @@ import os
 import sys
 from datetime import datetime
 
-from datus.cli.tutorial import BenchmarkTutorial
 from datus.multi_round_benchmark import multi_benchmark, setup_base_parser_args
 from datus.utils.async_utils import setup_windows_policy
 
@@ -78,106 +77,6 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     check_db_parser.add_argument("--datasource", type=str, required=True, help="Datasource name to check")
-
-    # bootstrap-kb command
-    bootstrap_parser = subparsers.add_parser(
-        "bootstrap-kb",
-        help="Initialize knowledge base",
-        parents=[global_parser],
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    bootstrap_parser.add_argument(
-        "--kb_update_strategy",
-        type=str,
-        choices=["check", "overwrite", "incremental"],
-        default="check",
-        help="Knowledge base update strategy: check (verify paths and data), overwrite (careful!), or incremental",
-    )
-    bootstrap_parser.add_argument(
-        "--components",
-        type=str,
-        nargs="+",
-        choices=[
-            "metrics",
-            "metadata",
-            "semantic_model",
-            "table_lineage",
-            "ext_knowledge",
-            "reference_sql",
-            "reference_template",
-        ],
-        default=["metadata"],
-        help="Knowledge base components to initialize",
-    )
-    bootstrap_parser.add_argument("--storage_path", type=str, help="Parent directory for all storage components")
-    bootstrap_parser.add_argument(
-        "--benchmark", type=str, choices=["spider2", "bird_dev", "bird_critic"], help="Benchmark dataset to use"
-    )
-    bootstrap_parser.add_argument("--datasource", type=str, required=True, help="Datasource name")
-    bootstrap_parser.add_argument(
-        "--schema_linking_type",
-        type=str,
-        choices=["table", "view", "mv", "full"],
-        default="full",
-        help="Schema linking type for the task, (mv for materialized view, full for all types)",
-    )
-    bootstrap_parser.add_argument(
-        "--database_name",
-        type=str,
-        default="",
-        help="Database name to be initialized: It represents duckdb, schema_name in Snowflake; "
-        "database names in MySQL, StarRocks, PostgreSQL, etc.; SQLite is not supported.",
-    )
-    bootstrap_parser.add_argument(
-        "--pool_size",
-        type=int,
-        default=4,
-        help="Number of threads to initialize bootstrap-kb, default is 4",
-    )
-    bootstrap_parser.add_argument(
-        "--success_story",
-        type=str,
-        default="benchmark/semantic_layer/success_story.csv",
-        help="Path to success story file",
-    )
-    bootstrap_parser.add_argument(
-        "--semantic_yaml",
-        type=str,
-        help="Path to semantic model YAML file",
-    )
-    bootstrap_parser.add_argument(
-        "--from_adapter",
-        type=str,
-        help="Pull semantic models and metrics from semantic adapter (e.g., metricflow, dbt, cube)",
-    )
-    bootstrap_parser.add_argument("--catalog", type=str, help="Catalog of the success story")
-
-    bootstrap_parser.add_argument("--subject_path", type=str, help="Subject path of the success story")
-    bootstrap_parser.add_argument("--ext_knowledge", type=str, help="Path to external knowledge CSV file")
-    bootstrap_parser.add_argument(
-        "--sql_dir", type=str, help="Directory containing SQL files for reference_sql component"
-    )
-    bootstrap_parser.add_argument(
-        "--template_dir", type=str, help="Directory containing J2 template files for reference_template component"
-    )
-    bootstrap_parser.add_argument(
-        "--validate-only",
-        action="store_true",
-        help="Only process and validate SQL files, then exit (for reference_sql component)",
-    )
-    bootstrap_parser.add_argument(
-        "--subject_tree",
-        type=str,
-        help='Comma-separated subject tree categories (e.g., "Sales/Reporting/Daily,Sales/Analytics/Trends"). '
-        "If provided, only these predefined categories can be used. "
-        "If not provided, existing categories will be reused or new ones created.",
-    )
-    bootstrap_parser.add_argument(
-        "-y",
-        "--yes",
-        action="store_true",
-        help="Skip confirmation prompts and automatically confirm deletions (useful for CI/CD)",
-    )
 
     # platform-doc command
     platform_doc_parser = subparsers.add_parser(
@@ -270,6 +169,108 @@ def create_parser() -> argparse.ArgumentParser:
         nargs="+",
         default=None,
         help="File/URL patterns to exclude (e.g., 'CHANGELOG.md' for local, regex for website)",
+    )
+
+    # bootstrap-kb command
+    bootstrap_parser = subparsers.add_parser(
+        "bootstrap-kb",
+        help="Initialize knowledge base",
+        parents=[global_parser],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    bootstrap_parser.add_argument(
+        "--kb_update_strategy",
+        type=str,
+        choices=["check", "overwrite", "incremental"],
+        default="check",
+        help="Knowledge base update strategy: check (verify paths and data), overwrite (careful!), or incremental",
+    )
+    bootstrap_parser.add_argument(
+        "--components",
+        type=str,
+        nargs="+",
+        choices=[
+            "metrics",
+            "metadata",
+            "semantic_model",
+            "table_lineage",
+            "ext_knowledge",
+            "reference_sql",
+            "reference_template",
+        ],
+        default=["metadata"],
+        help="Knowledge base components to initialize",
+    )
+    bootstrap_parser.add_argument("--storage_path", type=str, help="Parent directory for all storage components")
+    bootstrap_parser.add_argument(
+        "--benchmark",
+        type=str,
+        choices=["spider2", "bird_dev", "bird_critic"],
+        help="Benchmark dataset to use",
+    )
+    bootstrap_parser.add_argument("--datasource", type=str, required=True, help="Datasource name")
+    bootstrap_parser.add_argument(
+        "--schema_linking_type",
+        type=str,
+        choices=["table", "view", "mv", "full"],
+        default="full",
+        help="Schema linking type for the task, (mv for materialized view, full for all types)",
+    )
+    bootstrap_parser.add_argument(
+        "--database_name",
+        type=str,
+        default="",
+        help="Database name to be initialized: It represents duckdb, schema_name in Snowflake; "
+        "database names in MySQL, StarRocks, PostgreSQL, etc.; SQLite is not supported.",
+    )
+    bootstrap_parser.add_argument(
+        "--pool_size",
+        type=int,
+        default=4,
+        help="Number of threads to initialize bootstrap-kb, default is 4",
+    )
+    bootstrap_parser.add_argument(
+        "--success_story",
+        type=str,
+        default="benchmark/semantic_layer/success_story.csv",
+        help="Path to success story file",
+    )
+    bootstrap_parser.add_argument(
+        "--semantic_yaml",
+        type=str,
+        help="Path to semantic model YAML file",
+    )
+    bootstrap_parser.add_argument(
+        "--from_adapter",
+        type=str,
+        help="Pull semantic models and metrics from semantic adapter (e.g., metricflow, dbt, cube)",
+    )
+    bootstrap_parser.add_argument("--catalog", type=str, help="Catalog of the success story")
+    bootstrap_parser.add_argument("--subject_path", type=str, help="Subject path of the success story")
+    bootstrap_parser.add_argument("--ext_knowledge", type=str, help="Path to external knowledge CSV file")
+    bootstrap_parser.add_argument(
+        "--sql_dir", type=str, help="Directory containing SQL files for reference_sql component"
+    )
+    bootstrap_parser.add_argument(
+        "--template_dir", type=str, help="Directory containing J2 template files for reference_template component"
+    )
+    bootstrap_parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Only process and validate SQL files, then exit (for reference_sql component)",
+    )
+    bootstrap_parser.add_argument(
+        "--subject_tree",
+        type=str,
+        help='Comma-separated subject tree categories (e.g., "Sales/Reporting/Daily,Sales/Analytics/Trends"). '
+        "If provided, only these predefined categories can be used. "
+        "If not provided, existing categories will be reused or new ones created.",
+    )
+    bootstrap_parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Skip confirmation prompts and automatically confirm deletions (useful for CI/CD)",
     )
 
     # benchmark command
@@ -414,14 +415,6 @@ def create_parser() -> argparse.ArgumentParser:
         help="Path to summary report file. Reports will be appended to this file.",
     )
 
-    bi_subparser = subparsers.add_parser(
-        "bootstrap-bi",
-        help="Build subagent by bi dashboard url",
-        parents=[global_parser],
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    bi_subparser.add_argument("--datasource", type=str, required=True, help="Datasource name")
-
     multi_benchmark_parser = subparsers.add_parser(
         "multi-round-benchmark", parents=[global_parser], help="Multi-round benchmarking"
     )
@@ -444,14 +437,6 @@ def create_parser() -> argparse.ArgumentParser:
     skill_parser.add_argument("--marketplace", type=str, default="", help="Marketplace URL override")
     skill_parser.add_argument("--email", type=str, default=None, help="Email for marketplace login")
     skill_parser.add_argument("--password", type=str, default=None, help="Password for marketplace login")
-
-    # tutorial command
-    subparsers.add_parser(
-        "tutorial",
-        help="Benchmarking tutorial using a dataset from California schools",
-        parents=[global_parser],
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
 
     # Node configuration group (available for run and benchmark)
     for p in [run_parser, benchmark_parser]:
@@ -502,11 +487,6 @@ def main():
         parser.print_help()
         return 1
 
-    if args.action == "tutorial":
-        configure_logging(args.debug, console_output=False)
-        tutorial = BenchmarkTutorial(args.config)
-        return tutorial.run()
-
     if args.action == "service":
         configure_logging(args.debug, console_output=False)
         from datus.cli.service_manager import ServiceManager
@@ -528,12 +508,6 @@ def main():
 
     # Load agent configuration
     agent_config = load_agent_config(**vars(args))
-    if args.action == "bootstrap-bi":
-        configure_logging(args.debug, console_output=False)
-        from datus.cli.bi_dashboard import BiDashboardCommands
-
-        return BiDashboardCommands(agent_config).cmd()
-
     if args.action == "platform-doc":
         # platform-doc is datasource-independent; handled before Agent init
         from datus.agent.agent import bootstrap_platform_doc
@@ -549,8 +523,6 @@ def main():
         result = agent.check_db()
     elif args.action == "probe-llm":
         result = agent.probe_llm()
-    elif args.action == "bootstrap-kb":
-        result = agent.bootstrap_kb()
     elif args.action == "run":
         if args.load_cp:
             result = agent.run(check_storage=True)  # load task from checkpoint
@@ -574,6 +546,8 @@ def main():
                 ),
                 True,
             )
+    elif args.action == "bootstrap-kb":
+        result = agent.bootstrap_kb()
     elif args.action == "benchmark":
         result = agent.benchmark()
     elif args.action == "generate-dataset":

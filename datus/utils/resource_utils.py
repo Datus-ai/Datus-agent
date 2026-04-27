@@ -10,19 +10,31 @@ from datus.utils.exceptions import DatusException, ErrorCode
 
 
 def package_data_path(resource_path: str, package: str = "datus") -> Optional[Path]:
+    # Prefer importlib.resources so editable installs and proper wheels both
+    # resolve to real files. Falling back to sys.prefix used to misfire when a
+    # legacy ``data-files`` deployment left empty directory skeletons under
+    # ``sys.prefix/<package>/...``.
+    from importlib import resources
+
+    package_path = resources.files(package)
+    if package_path:
+        candidate = package_path / resource_path
+        try:
+            if candidate.is_file() or candidate.is_dir():
+                return Path(str(candidate))
+        except (OSError, NotADirectoryError):
+            pass
+
     path = Path(sys.prefix) / package / resource_path
     if path.exists():
         return path
     path = Path(sys.exec_prefix) / package / resource_path
     if path.exists():
         return path
-    from importlib import resources
 
-    package_path = resources.files(package)
-    if not package_path:
-        return None
-
-    return package_path / resource_path
+    if package_path:
+        return Path(str(package_path / resource_path))
+    return None
 
 
 def read_data_file(resource_path: str, package: str = "datus") -> bytes:

@@ -32,7 +32,7 @@ agent:
     datasources:
       local_duckdb:
         type: duckdb
-        uri: duckdb:///./sample_data/duckdb-demo.duckdb
+        uri: duckdb:///./datus/sample_data/duckdb-demo.duckdb
         name: demo
       greenplum:
         type: greenplum

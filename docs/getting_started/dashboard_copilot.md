@@ -13,7 +13,7 @@ Traditional BI dashboards are static - they show predefined charts and metrics, 
 
 With one command, Datus extracts all the context from your existing dashboard - the SQL queries, table relationships, metrics definitions, and business logic - and creates AI subagents that understand your data as well as your dashboard does.
 
-The bootstrap process automatically generates two specialized subagents: a **GenSQL subagent** that enables self-service data retrieval through SQL tools, and a **GenReport subagent** that provides analysis, drill-down, and attribution reports through metric tools.
+The bootstrap process automatically generates two specialized subagents: a **main subagent** for self-service SQL generation within the dashboard's semantic scope, and an **attribution subagent** for metric comparison, dimension-level attribution, and root-cause analysis.
 
 ![Dashboard to Agent Architecture](../assets/dashboard_to_agent.png)
 
@@ -119,12 +119,6 @@ You can now access Superset at [http://localhost:8088](http://localhost:8088) wi
 
 Configure Datus to connect to both the PostgreSQL database and Superset dashboard.
 
-### Install Required Extensions
-
-```bash
-pip install datus-bi-superset datus-postgresql datus-semantic-metricflow
-```
-
 ### Update agent.yml
 
 Add the following configuration to your `~/.datus/conf/agent.yml`:
@@ -141,7 +135,8 @@ agent:
         password: superset
         database: examples
     semantic_layer:
-      metricflow: {}
+      metricflow:
+        type: metricflow
     bi_platforms:
       superset:
         type: superset
@@ -158,126 +153,408 @@ agent:
     - **services.bi_platforms**: Defines the BI platform credentials for dashboard access
 
 !!! tip
-    You can add SQL datasources interactively with `datus-agent service add`; semantic layer and BI platform entries still need to be edited in YAML.
+    You can also add entries interactively from inside the REPL via slash commands: `/datasource` for SQL datasources, and `/services` for semantic layer, BI platform, and scheduler entries.
 
 ## Step 3: Bootstrap from Dashboard
 
-Now use the `bootstrap-bi` command to automatically generate context and subagents from your Superset dashboard. We'll use the World Bank's Data dashboard as an example.
+Now use the in-REPL `/bootstrap-bi` slash command to automatically generate context and subagents from your Superset dashboard. We'll use the World Bank's Data dashboard as an example.
 
-### Run Bootstrap Command
+### Launch the REPL
 
 ```bash
-datus-agent bootstrap-bi --datasource superset
+datus
+```
+
+### Set the Model
+
+`/bootstrap-bi` calls the LLM to produce SQL summaries, the semantic model, and metrics. Pick the model first via `/model` — see [Model Command](../cli/model_command.md) for the full provider list.
+
+```text
+> /model
+```
+
+### Run `/bootstrap-bi`
+
+```text
+> /bootstrap-bi
 ```
 
 ### Interactive Flow
 
-The command will guide you through an interactive process:
+We'll walk through bootstrap using the **World Bank's Data** dashboard from the Superset example set.
 
-```{ .yaml .no-copy }
-Select BI platform (superset): superset
-Dashboard URL: http://localhost:8088/superset/dashboard/world_health/?native_filters_key=4X5gjZkIbnU
-API base URL (e.g. https://host) (http://localhost:8088): http://localhost:8088
+**1. Pick a BI platform**
+
+```text
+─────────────────────────────── Bootstrap BI ───────────────────────────────
+────────────────────────────────────────────────────────────────────────────
+  Pick a configured BI platform:
+  → superset               superset     http://localhost:8088
+
+
+
+────────────────────────────────────────────────────────────────────────────
+  ↑↓ navigate   ↵ select   Esc cancel
 ```
 
-The system will display the dashboard information and extracted charts:
+**2. Pick a dashboard**
 
-![Extracted SQL from Dashboard Charts](../assets/worldbank_boostrapbi_extract_sql.png)
+```text
+─────────────────────────────── Bootstrap BI ───────────────────────────────
+────────────────────────────────────────────────────────────────────────────
+filter:
+────────────────────────────────────────────────────────────────────────────
+    16       Slack Dashboard
+    15       COVID Vaccine Dashboard
+    14       Unicode Test
+    13       FCC New Coder Survey 2018
+    12       Featured Charts
+    11       Video Game Sales
+    10       Sales Dashboard
+    8        deck.gl Demo
+    7        Misc Charts
+    6        USA Births Names
+  → 5        World Bank's Data
+    9        [ untitled dashboard ]
 
-Select the charts and tables you want to include. The bootstrap process will then automatically:
+────────────────────────────────────────────────────────────────────────────
+  type to filter   ↑↓ navigate   ↵ select   m manual URL   Esc back
+```
 
-**1. Build Metadata and Reference SQL**
+**3. Pick charts for reference SQL**
 
-The system analyzes each chart's SQL query and generates comprehensive documentation:
+The SQL behind each selected chart will be saved as a reference example for the main subagent.
 
-![Reference SQL Generation](../assets/worldbank_bootstrapbi_reference_sql.png)
+```text
+─────────────────────────────── Bootstrap BI ───────────────────────────────
+────────────────────────────────────────────────────────────────────────────
+  Select charts for reference SQL (9/9 selected):
+  → [x] 281    Treemap (agg)
+    [x] 276    % Rural (agg)
+    [x] 277    Life Expectancy VS Rural % (agg)
+    [x] 274    Most Populated Countries (agg)
+    [x] 280    Box plot (agg)
+    [x] 278    Rural Breakdown (agg)
+    [x] 273    World's Population (agg)
+    [x] 279    World's Pop Growth (agg)
+    [x] 275    Growth Rate (agg)
+────────────────────────────────────────────────────────────────────────────
+  ↑↓ navigate   Space toggle   a all   n none   ↵ next   Esc back
+```
 
-**2. Generate Semantic Model**
+**4. Pick charts for metrics**
 
-Datus creates a semantic model with measures, dimensions, and relationships:
+The aggregations in these charts will be mined for metric definitions. By default only charts with aggregations are pre-selected.
 
-![Semantic Model Generation](../assets/worldbank_bootstrapbi_semantic_model.png)
+```text
+─────────────────────────────── Bootstrap BI ───────────────────────────────
+────────────────────────────────────────────────────────────────────────────
+  Select charts for metrics (9/9 selected):
+  → [x] 281    Treemap (agg)
+    [x] 276    % Rural (agg)
+    [x] 277    Life Expectancy VS Rural % (agg)
+    [x] 274    Most Populated Countries (agg)
+    [x] 280    Box plot (agg)
+    [x] 278    Rural Breakdown (agg)
+    [x] 273    World's Population (agg)
+    [x] 279    World's Pop Growth (agg)
+    [x] 275    Growth Rate (agg)
 
-**3. Extract Metrics**
+────────────────────────────────────────────────────────────────────────────
+  ↑↓ navigate   Space toggle   a all   n none   ↵ next   Esc back
+```
 
-The system identifies and validates metrics from the dashboard queries:
+**5. Review tables in scope**
 
-![Metrics Extraction](../assets/worldbank_bootstrapbi_metrics.png)
+```text
+─────────────────────────────── Bootstrap BI ───────────────────────────────
+────────────────────────────────────────────────────────────────────────────
+  Review tables to scope (1/1 selected):
+  → [x] public.wb_health_population
+
+
+
+────────────────────────────────────────────────────────────────────────────
+  ↑↓ navigate   Space toggle   a all   n none   ↵ next   Esc back
+```
+
+**6. Pick a thread-pool size**
+
+The build phase issues parallel LLM calls. Increase the pool size to speed things up if your provider quota allows.
+
+```text
+─────────────────────────────── Bootstrap BI ───────────────────────────────
+────────────────────────────────────────────────────────────────────────────
+  Pick a thread-pool size for parallel LLM calls:
+  → 1 threads
+    2 threads
+    4 threads
+    8 threads
+────────────────────────────────────────────────────────────────────────────
+  ↑↓ navigate   ↵ select   Esc back
+```
+
+### Automated Build
+
+After the picker confirms, Datus runs an automated build pipeline — metadata crawl, reference SQL, semantic model, and metrics extraction.
+
+**1. Metadata crawl**
+
+Crawls and indexes the schema of the in-scope tables:
+
+```text
+⏺ 💬 Dashboard: World Bank's Data (id=5)
+
+⏺ 💬 Selected 9/9 chart(s); 1 table(s); pool_size=1
+
+⏺ 💬 Crawling metadata for 1 table(s)…
+
+⏺ 🔧 schema_crawl()
+  └─ ✓
+
+⏺ 💬 Metadata crawl finished.
+
+
+```
+
+**2. Reference SQL**
+
+For each selected chart, Datus generates a structured SQL Summary (purpose, table, dimensions, metrics, business intent) and writes it under `subject/sql_summaries/` so the main subagent can use them as few-shot references:
+
+```text
+⏺ 💬 Wrote 9 chart SQL(s) to /Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql.
+
+⏺ 💬 Discovering SQL files under /Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql (mode=incremental)…
+
+⏺ 💬 Processing 9 SQL item(s) with concurrency=1.
+
+⏺ gen_sql_summary(/Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql)
+  ⎿  Done (2 tool uses · 20.0s)
+⏺ 💬 gen_sql_summary (/Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql):
+
+
+SQL Summary: Population by Region and Country
+
+📋 Overview
+
+This SQL query is sourced from the World Bank's Data Superset dashboard and powers a Treemap chart. It aggregates total population figures grouped by region and country code.
+
+────────────────────────────────────────────────────────────────────────────
+🔍 Query Breakdown
+
+
+  Element         Details
+ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Table           public.wb_health_population
+  Metric          SUM('SP_POP_TOTL') — Total population indicator
+  Dimensions      region, country_code
+  Time Filter     From 1960-01-01 up to 2026-04-28 (full historical range)
+  Result Limit    50,000 rows
+  Visualization   Treemap chart
+
+
+────────────────────────────────────────────────────────────────────────────
+📊 Business Purpose
+
+This query supports a World Bank population distribution analysis, visualizing how total population is distributed across different world regions and countries over time. The
+Treemap layout makes it easy to compare relative population sizes at a glance.
+
+────────────────────────────────────────────────────────────────────────────
+💾 Saved File
+
+ • Path: subject/sql_summaries/population_by_region_country_07f5c7b14f0355b0b64183b0993bc45e.yaml
+ • Subject Tree: superset/world_bank_s
+ • ID: 07f5c7b14f0355b0b64183b0993bc45e
+
+⏺ 💬 Indexed 9 reference SQL item(s).
+
+⏺ 💬 Collected 9 reference SQL identifier(s).
+```
+
+**3. Semantic model**
+
+Datus consolidates all chart SQLs into a semantic model with measures, dimensions, and relationships, and validates it:
+
+```text
+⏺ gen_semantic_model(World Bank's Data)
+ ⎿  Done (13 tool uses · 96.4s)
+⏺ 💬 gen_semantic_model (World Bank's Data):
+
+
+Semantic Model Generation Summary
+
+Analysis
+
+ • SQL Queries Analyzed: 9 queries from the World Bank's Data dashboard
+ • Tables Identified: 1 — public.wb_health_population
+ • Column Usage Patterns: Analyzed 4 actively-filtered columns (year, region, country_name, country_code)
+```
+
+**4. Metric extraction**
+
+Based on the validated semantic model, the chart aggregations are deduped and merged into a small set of core metrics:
+
+```text
+⏺ gen_metrics(World Bank's Data)
+  ⎿  Done (18 tool uses · 64.0s)
+⏺ 💬 gen_metrics (World Bank's Data):
+
+Metric Generation Summary
+
+Analyzed: 9 SQL queries from the World Bank's Data dashboard (public.wb_health_population)
+
+Deduplication Result: 9 queries → 4 unique aggregation patterns → 4 core metrics
+```
 
 ### Output
 
-After the bootstrap completes, you'll have ready-to-use subagents:
+When bootstrap finishes, both subagents are saved and registered as slash commands:
 
-```{ .yaml .no-copy }
-Subagent `superset_world_bank_s` saved.
-Subagent `superset_world_bank_s` bootstrapped.
-Attribution Sub-Agent `superset_world_bank_s_attribution` saved.
+```text
+⏺ save_subagents(superset_world_bank_s)
+  ⎿  Done (2 tool uses · 0.0s)
+⏺ 💬 Sub-Agent build successful.
+> /agent
+───────────────────────────── Agent Management ─────────────────────────────
+   Custom   Built-in    (Tab or ←/→ to switch)
+────────────────────────────────────────────────────────────────────────────
+    superset_world_bank_s
+    superset_world_bank_s_attribution
+    + Add agent…
+
+────────────────────────────────────────────────────────────────────────────
+  ↑↓ navigate   Enter set as current   e edit   a add   d delete   Tab/←→ switch   Esc back   Ctrl+C cancel
 ```
 
-## Step 4: Use Attribution Analysis
+## Step 4: Use the Generated Subagents
 
-The bootstrapped attribution subagent enables powerful metric analysis capabilities.
+`/bootstrap-bi` produces two subagents at once: a **main subagent** for self-service SQL, and an **attribution subagent** for metric-level analysis. Both are immediately invocable as slash commands; you can also switch the default agent through `/agent`.
 
-### Example Query
+### Self-service SQL — main subagent
+
+The main subagent generates and runs SQL grounded in the dashboard's tables and reference SQL — ideal for ad-hoc queries and detail lookups.
 
 ```bash
-Datus> /superset_world_bank_s_attribution compare 2014 and 2004, find the reason of population growth
+> @Agent superset_world_bank_s show top 10 countries by life expectancy in 2020
 ```
 
-The agent performs multi-step analysis using the metrics and dimensions from your dashboard:
+```text
+⏴ superset_world_bank_s(Top 10 countries by life expectancy in 2020 using World Bank data)
+  ⎿  Done ✓ (7 tool uses · 42.9s)
 
-![Attribution Analysis Process](../assets/worldbank_population_attribution1.png)
 
-### Attribution Analysis Capabilities
+🌍 Top 10 Countries by Life Expectancy
 
-The attribution subagent provides:
+▌ ⚠️ Note: The dataset only contains data up to 2013. Year 2020 is not available — results below are for the most recent available year: 2013.
 
-- **Automatic Dimension Importance Ranking** - Identifies which dimensions most influence metric changes
-- **Delta Contribution Calculation** - Quantifies each factor's contribution to the overall change
-- **Root Cause Identification** - Pinpoints specific values driving metric movement
+────────────────────────────────────────────────────────────────────────────
+🏆 Top 10 Countries by Life Expectancy at Birth (2013)
 
-### Sample Output
 
-The analysis generates a comprehensive report with key findings:
+  Rank   Country                   Region                       Life Expectancy
+ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🥇 1   🇭🇰 Hong Kong SAR, China   East Asia & Pacific          83.83 yrs
+  🥈 2   🇯🇵 Japan                  East Asia & Pacific          83.33 yrs
+  🥉 3   🇮🇸 Iceland                Europe & Central Asia        83.12 yrs
+  4      🇨🇭 Switzerland            Europe & Central Asia        82.75 yrs
+  5      🇪🇸 Spain                  Europe & Central Asia        82.43 yrs
+  6      🇱🇮 Liechtenstein          Europe & Central Asia        82.38 yrs
+  7      🇸🇬 Singapore              East Asia & Pacific          82.35 yrs
+  8      🇮🇹 Italy                  Europe & Central Asia        82.29 yrs
+  9      🇦🇺 Australia              East Asia & Pacific          82.20 yrs
+  10     🇮🇱 Israel                 Middle East & North Africa   82.06 yrs
 
-![Attribution Analysis Result](../assets/worldbank_population_attribution2.png)
+────────────────────────────────────────────────────────────────────────────
+📌 Key Insights
+
+ • 🥇 Hong Kong SAR, China leads globally at 83.83 years
+ • 🌏 East Asia & Pacific dominates with 4 out of 10 top countries (Hong Kong, Japan, Singapore, Australia)
+ • 🌍 Europe & Central Asia is strongly represented with 5 entries (Iceland, Switzerland, Spain, Liechtenstein, Italy)
+ • All top 10 countries exceed 82 years of life expectancy at birth
+ • 🇮🇱 Israel is the sole representative from the Middle East & North Africa region
+```
+
+### Attribution analysis — attribution subagent
+
+The attribution subagent works against metrics and the semantic model — ideal for "why did this change?" questions. It provides:
+
+- **Automatic dimension importance ranking** — identifies which dimensions most influence metric changes
+- **Delta contribution calculation** — quantifies each factor's contribution to the overall change
+- **Root cause identification** — pinpoints specific values driving metric movement
+
+```bash
+> @Agent superset_world_bank_s_attribution compare 2014 and 2004, find the reason of population growth
+```
+
+The analysis produces a structured Markdown report:
+
+```text
+⏴ superset_world_bank_s_attribution(Attribution analysis for population growth between 2004 and 2014 using World Bank data)
+  ⎿  Done ✓ (15 tool uses · 71.3s)
+
+
+🌍 World Population Growth: 2004 vs 2014 — Attribution Analysis
+
+Global population grew from ~6.41 billion (2004) to ~7.24 billion (2014), an increase of +825 million people (+12.7%). Here's what drove it:
+
+────────────────────────────────────────────────────────────────────────────
+
+📊 Population by Region
+
+
+  Region                       2004    2014    Δ Growth   Δ %
+ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  East Asia & Pacific          2.09B   2.24B   +148.6M    +7.1%
+  South Asia                   1.49B   1.72B   +234.4M    +15.8%
+  Europe & Central Asia        870M    903M    +32.9M     +3.8%
+  Sub-Saharan Africa           742M    974M    +231.9M    +31.2% 🔴
+  Latin America & Caribbean    556M    626M    +70.8M     +12.7%
+  Middle East & North Africa   340M    417M    +77.5M     +22.8%
+  North America                325M    354M    +29.6M     +9.1%
+
+
+────────────────────────────────────────────────────────────────────────────
+
+🔍 Root Cause Attribution
+
+1. 🍼 Fertility Rate — Top Driver (Score: 8.77)
+
+The single most powerful factor. Sub-Saharan Africa (~5.0+ births/woman) and South Asia (~2.8) sustained large birth cohorts. Even with modest fertility declines, the sheer base
+population size translated into massive absolute additions.
+
+2. 👶 Infant Mortality Rate Decline — Driver #2 (Score: 1.65)
+
+More children survived to adulthood, compounding population growth:
+
+ • South Asia: 57.8 → ~39.3 deaths/1,000 births (−32%)
+ • Sub-Saharan Africa: Still high (~71.5), but declining — more children surviving
+
+3. 🌾 Rural Population Growth Rate — Driver #3 (Score: 1.65)
+
+High rural growth (especially Sub-Saharan Africa and South Asia) correlates with higher fertility norms and limited access to family planning services.
+
+4. 🔄 Net Migration — Minor Factor (Score: 1.0)
+
+Redistributes population globally but has minimal impact on total world population.
+```
 
 The report includes:
 
-- **Overall Growth Metrics** - Comparison of total population, growth rate, and rural population percentage
-- **Top Regional Contributors** - Which regions drove the most population increase
-- **Top Country Contributors** - Individual country contributions to the change
-- **Conclusion** - Summary of key insights explaining the metric movement
+- **Overall growth metrics** — comparison of total population, growth rate, and rural population percentage
+- **Top regional contributors** — which regions drove the most population increase
+- **Top country contributors** — individual country contributions
+- **Conclusion** — key insights explaining the metric movement
 
-## Generated Subagents Explained
+## Subagent comparison
 
-The `bootstrap-bi` command creates two types of subagents:
+`/bootstrap-bi` produces two complementary subagents:
 
-### GenSQL Subagent
+| Subagent | Naming | When to use | Working context |
+|---|---|---|---|
+| **Main** | `{platform}_{dashboard}` | Ad-hoc queries, detail lookups, self-service SQL | Dashboard tables + reference SQL + semantic model |
+| **Attribution** | `{platform}_{dashboard}_attribution` | Metric comparison, root-cause analysis, delta-contribution attribution | Dashboard metrics + semantic model |
 
-The primary subagent (e.g., `superset_world_bank_s`) provides:
-
-- SQL generation within the dashboard's semantic scope
-- Context-aware queries using extracted metadata
-- Reference SQL patterns from dashboard charts
-
-**Example usage:**
-```bash
-/superset_world_bank_s show top 10 countries by life expectancy in 2020
-```
-
-### GenReport Subagent (Attribution)
-
-The attribution subagent (e.g., `superset_world_bank_s_attribution`) provides:
-
-- Metric comparison and trend analysis
-- Root cause analysis for metric changes
-- Dimension-level attribution reports
-
-**Example usage:**
-```bash
-/superset_world_bank_s_attribution why did healthcare spending increase between 2010 and 2020?
-```
+Send "what is X?" / "show me Y" questions to the main subagent; send "why did Z change?" / "which dimension drove the move?" questions to the attribution subagent.
 
 ## Next Steps
 

@@ -48,6 +48,7 @@ _NORMAL_RULES = [
     _rule("db_tools", "search_*", PermissionLevel.ALLOW),
     _rule("db_tools", "describe_*", PermissionLevel.ALLOW),
     _rule("db_tools", "get_*", PermissionLevel.ALLOW),
+    _rule("db_tools", "search_*", PermissionLevel.ALLOW),
     # bi read + destructive deny
     _rule("bi_tools", "list_*", PermissionLevel.ALLOW),
     _rule("bi_tools", "get_*", PermissionLevel.ALLOW),

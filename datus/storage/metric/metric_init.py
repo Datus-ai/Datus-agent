@@ -4,14 +4,18 @@
 
 import asyncio
 import os
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import pandas as pd
 
 from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 from datus.configuration.agent_config import AgentConfig
 from datus.prompts.prompt_manager import get_prompt_manager
-from datus.schemas.action_history import ActionHistoryManager, ActionStatus
+from datus.schemas.action_history import (
+    ActionHistory,  # noqa: F401  (forward-ref for action_callback)
+    ActionHistoryManager,
+    ActionStatus,
+)
 from datus.schemas.batch_events import BatchEventEmitter, BatchEventHelper
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 from datus.storage.semantic_model.auto_create import ensure_semantic_models_exist, extract_tables_from_sql_list
@@ -36,6 +40,9 @@ async def init_success_story_metrics_async(
     subject_tree: Optional[list] = None,
     emit: Optional[BatchEventEmitter] = None,
     extra_instructions: Optional[str] = None,
+    *,
+    build_mode: str = "overwrite",
+    action_callback: Optional[Callable[["ActionHistory"], None]] = None,
 ) -> tuple[bool, str, Optional[dict[str, Any]]]:
     """
     Async version: Initialize metrics from success story CSV by batch processing.
@@ -49,8 +56,37 @@ async def init_success_story_metrics_async(
         subject_tree: Optional predefined subject tree categories
         emit: Optional callback to stream BatchEvent progress events
         extra_instructions: Optional extra instructions for the LLM
+        build_mode: ``"overwrite"`` (default) regenerates unconditionally;
+            ``"incremental"`` skips the LLM call when the metric store
+            already contains entries.
     """
     event_helper = BatchEventHelper(BIZ_NAME, emit)
+
+    if build_mode == "overwrite":
+        from datus.storage.metric.store import MetricRAG
+
+        logger.info(
+            "[overwrite] Wiping metrics store for project '%s' before re-population",
+            agent_config.project_name,
+        )
+        MetricRAG(agent_config).truncate()
+    elif build_mode == "incremental":
+        from datus.storage.metric.init_utils import exists_metrics
+        from datus.storage.metric.store import MetricRAG
+
+        existing = exists_metrics(MetricRAG(agent_config), build_mode)
+        if existing:
+            logger.info(
+                "Metrics incremental skip: %d existing metric(s) found, no LLM call.",
+                len(existing),
+            )
+            event_helper.task_completed(
+                total_items=len(existing),
+                completed_items=len(existing),
+                failed_items=0,
+            )
+            return True, "", {"skipped": True, "existing": len(existing)}
+
     df = pd.read_csv(success_story)
 
     # Emit task started
@@ -118,6 +154,11 @@ async def init_success_story_metrics_async(
         final_result = None
         terminal_error = None
         async for action in metrics_node.execute_stream(action_history_manager):
+            if action_callback is not None:
+                try:
+                    action_callback(action)
+                except Exception as cb_exc:  # pragma: no cover - defensive
+                    logger.debug("metric action_callback raised: %s", cb_exc)
             if event_helper:
                 event_helper.item_processing(
                     item_id="batch",
@@ -162,6 +203,8 @@ def init_success_story_metrics(
     subject_tree: Optional[list] = None,
     emit: Optional[BatchEventEmitter] = None,
     extra_instructions: Optional[str] = None,
+    *,
+    build_mode: str = "overwrite",
 ) -> tuple[bool, str, Optional[dict[str, Any]]]:
     """
     Sync wrapper: Initialize metrics from success story CSV by batch processing.
@@ -172,10 +215,18 @@ def init_success_story_metrics(
         subject_tree: Optional predefined subject tree categories
         emit: Optional callback to stream BatchEvent progress events
         extra_instructions: Optional extra instructions for the LLM
+        build_mode: Forwarded to :func:`init_success_story_metrics_async`.
     """
     with suppress_keyboard_input():
         return asyncio.run(
-            init_success_story_metrics_async(agent_config, success_story, subject_tree, emit, extra_instructions)
+            init_success_story_metrics_async(
+                agent_config,
+                success_story,
+                subject_tree,
+                emit,
+                extra_instructions,
+                build_mode=build_mode,
+            )
         )
 
 

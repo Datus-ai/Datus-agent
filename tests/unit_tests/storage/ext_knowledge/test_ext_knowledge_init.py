@@ -451,6 +451,119 @@ class TestInitSuccessStoryKnowledgeAsync:
 # ============================================================
 
 
+# ============================================================
+# Overwrite mode: truncate semantics
+# ============================================================
+
+
+class TestInitExtKnowledgeOverwriteTruncate:
+    """Verify that build_mode='overwrite' wipes the store before re-population."""
+
+    def test_overwrite_calls_truncate_scoped_on_storage(self, ext_store, csv_file, monkeypatch):
+        """init_ext_knowledge with build_mode='overwrite' must call storage.truncate_scoped exactly once."""
+        from unittest.mock import MagicMock
+
+        spy = MagicMock(wraps=ext_store.truncate_scoped)
+        monkeypatch.setattr(ext_store, "truncate_scoped", spy)
+        init_ext_knowledge(ext_store, csv_file, build_mode="overwrite", pool_size=1)
+        spy.assert_called_once_with()
+
+    def test_incremental_does_not_call_truncate_scoped(self, ext_store, csv_file, monkeypatch):
+        """init_ext_knowledge with build_mode='incremental' must NOT call storage.truncate_scoped."""
+        from unittest.mock import MagicMock
+
+        spy = MagicMock(wraps=ext_store.truncate_scoped)
+        monkeypatch.setattr(ext_store, "truncate_scoped", spy)
+        init_ext_knowledge(ext_store, csv_file, build_mode="incremental", pool_size=1)
+        spy.assert_not_called()
+
+    def test_overwrite_wipes_existing_entries_before_repopulating(self, ext_store, csv_file):
+        """After overwrite, store contents reflect ONLY the new CSV — no leftover from prior populations."""
+        # Pre-populate with a DIFFERENT entry that won't appear in csv_file
+        ext_store.upsert_knowledge(["Legacy", "Old"], "OldName", "Old search text", "old explanation")
+        prior = ext_store.search_all_knowledge(subject_path=["Legacy", "Old"])
+        assert len(prior) == 1
+
+        init_ext_knowledge(ext_store, csv_file, build_mode="overwrite", pool_size=1)
+
+        # The legacy entry must be gone
+        leftover = ext_store.search_all_knowledge(subject_path=["Legacy", "Old"])
+        assert leftover == []
+        # New entries from csv_file must be present (3 rows)
+        assert len(ext_store.search_all_knowledge()) == 3
+
+
+class TestInitSuccessStoryKnowledgeAsyncOverwrite:
+    """Verify build_mode='overwrite' truncates RAG before LLM run in the async helper."""
+
+    @pytest.mark.asyncio
+    async def test_overwrite_calls_truncate_on_ext_knowledge_rag(self, tmp_path, monkeypatch):
+        """When build_mode='overwrite', ExtKnowledgeRAG(agent_config).truncate() is invoked once."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        csv_path = str(tmp_path / "stories.csv")
+        with open(csv_path, "w") as f:
+            f.write("question,sql,subject_path\n")
+            f.write("What is X?,SELECT 1,Education\n")
+
+        fake_rag_instance = MagicMock()
+        rag_factory = MagicMock(return_value=fake_rag_instance)
+        monkeypatch.setattr("datus.storage.ext_knowledge.store.ExtKnowledgeRAG", rag_factory)
+
+        async def fake_process_line(*_args, **_kwargs):
+            return {"successful": True, "error": ""}
+
+        monkeypatch.setattr(
+            "datus.storage.ext_knowledge.ext_knowledge_init.process_knowledge_line",
+            AsyncMock(side_effect=fake_process_line),
+        )
+
+        mock_config = MagicMock()
+        mock_config.project_name = "unit-test-project"
+
+        success, error = await init_success_story_knowledge_async(mock_config, csv_path, build_mode="overwrite")
+
+        assert success is True
+        assert error == ""
+        rag_factory.assert_called_once_with(mock_config)
+        fake_rag_instance.truncate.assert_called_once_with()
+        # Must NOT consult the incremental probe under overwrite
+        fake_rag_instance.get_knowledge_size.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_incremental_does_not_call_truncate_uses_existing_probe(self, tmp_path, monkeypatch):
+        """When build_mode='incremental' and store empty, get_knowledge_size called but truncate is not."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        csv_path = str(tmp_path / "stories.csv")
+        with open(csv_path, "w") as f:
+            f.write("question,sql,subject_path\n")
+            f.write("What is X?,SELECT 1,Education\n")
+
+        fake_rag_instance = MagicMock()
+        fake_rag_instance.get_knowledge_size.return_value = 0
+        rag_factory = MagicMock(return_value=fake_rag_instance)
+        monkeypatch.setattr("datus.storage.ext_knowledge.store.ExtKnowledgeRAG", rag_factory)
+
+        async def fake_process_line(*_args, **_kwargs):
+            return {"successful": True, "error": ""}
+
+        monkeypatch.setattr(
+            "datus.storage.ext_knowledge.ext_knowledge_init.process_knowledge_line",
+            AsyncMock(side_effect=fake_process_line),
+        )
+
+        mock_config = MagicMock()
+        mock_config.project_name = "unit-test-project"
+
+        success, error = await init_success_story_knowledge_async(mock_config, csv_path, build_mode="incremental")
+
+        assert success is True
+        assert error == ""
+        fake_rag_instance.truncate.assert_not_called()
+        fake_rag_instance.get_knowledge_size.assert_called_once_with()
+
+
 @pytest.mark.ci
 class TestInitExtKnowledgeEdgeCases:
     """Additional edge-case tests for init_ext_knowledge with the new string parameter."""

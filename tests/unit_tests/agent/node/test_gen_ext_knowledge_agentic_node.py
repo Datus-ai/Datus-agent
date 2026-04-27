@@ -687,3 +687,20 @@ class TestGenExtKnowledgeToolCategoryMap:
         node.ask_user_tool.available_tools = MagicMock(return_value=[ask_tool])
 
         assert node._tool_category_map()["tools"] == [ask_tool]
+
+
+class TestGenExtKnowledgeNonInteractiveBridge:
+    """Workflow mode → ``PermissionHooks.non_interactive=True``.
+
+    ``/bootstrap`` Knowledge tab fans out across multiple knowledge lines via
+    a worker pool. Any ASK / EXTERNAL fs prompt would freeze the whole pool.
+    """
+
+    def test_workflow_mode_compose_hooks_is_non_interactive(self, real_agent_config, mock_llm_create):
+        from datus.tools.permission.permission_hooks import PermissionHooks
+
+        node = _create_node(real_agent_config, execution_mode="workflow")
+        hooks = node._compose_hooks()
+        assert isinstance(hooks, PermissionHooks)
+        assert hooks.non_interactive is True
+        assert node.permission_manager.active_profile == "dangerous"

@@ -168,6 +168,7 @@ class PermissionHooks(AgentHooks):
         tool_registry: ToolRegistry,
         *,
         fs_policy: Optional[FilesystemPolicy] = None,
+        non_interactive: bool = False,
     ):
         """Initialize the permission hooks.
 
@@ -183,12 +184,20 @@ class PermissionHooks(AgentHooks):
                 through silently (the tool itself returns ``File not found``).
                 Leaving this ``None`` preserves the old tool/category-level
                 behavior for tests and legacy callers.
+            non_interactive: When ``True``, ``ASK`` permissions and EXTERNAL
+                filesystem zones raise :class:`PermissionDeniedException`
+                immediately instead of prompting the broker. Used by
+                ``execution_mode="workflow"`` flows (``/bootstrap``, scheduler
+                subagents, etc.) where there is no human in the loop and any
+                ASK/EXTERNAL hit means the tool is outside the active profile's
+                scope. ``DENY`` continues to raise as before.
         """
         self.broker = broker
         self.permission_manager = permission_manager
         self.node_name = node_name
         self.tool_registry = tool_registry
         self.fs_policy = fs_policy
+        self.non_interactive = non_interactive
 
     async def on_tool_start(self, context, agent, tool) -> None:
         """Intercept ALL tool calls for permission checking.
@@ -245,6 +254,27 @@ class PermissionHooks(AgentHooks):
             )
 
         if permission == PermissionLevel.ASK:
+            if self.non_interactive:
+                profile = getattr(self.permission_manager, "active_profile", None) or "auto"
+                logger.warning(
+                    "Non-interactive mode: tool '%s' (%s) requires ASK confirmation under "
+                    "profile '%s'; raising PermissionDeniedException instead of prompting.",
+                    tool_name,
+                    category,
+                    profile,
+                )
+                raise PermissionDeniedException(
+                    (
+                        f"PERMISSION_DENIED: Tool '{tool_name}' ({category}) requires user "
+                        f"confirmation but this flow runs non-interactively under the "
+                        f"'{profile}' profile. The tool is outside that profile's scope. "
+                        f"STOP retrying — different parameters will not change the outcome. "
+                        f"Surface the failure to the caller."
+                    ),
+                    tool_category=category,
+                    tool_name=pattern_name,
+                )
+
             # Check multiple cache keys (tool_name and pattern_name might differ)
             cache_keys = [
                 f"{category}.{pattern_name}",
@@ -343,6 +373,25 @@ class PermissionHooks(AgentHooks):
             return True
 
         # EXTERNAL: force ASK, keyed by absolute path to prevent broad auto-approval.
+        if self.non_interactive:
+            profile = getattr(self.permission_manager, "active_profile", None) or "auto"
+            logger.warning(
+                "Non-interactive mode: external filesystem path %s requires confirmation under "
+                "profile '%s'; raising PermissionDeniedException instead of prompting.",
+                resolved.resolved,
+                profile,
+            )
+            raise PermissionDeniedException(
+                (
+                    f"PERMISSION_DENIED: filesystem path '{resolved.resolved}' is outside the "
+                    f"project root and requires user confirmation, but this flow runs "
+                    f"non-interactively under the '{profile}' profile. STOP retrying — "
+                    f"choose a path inside the project root or surface the failure."
+                ),
+                tool_category="filesystem_tools",
+                tool_name=pattern_name,
+            )
+
         cache_key = f"filesystem_tools.external::{resolved.resolved}"
         if self.permission_manager._session_approvals.get(cache_key):
             logger.debug("External path %s already approved for session", resolved.resolved)

@@ -11,7 +11,7 @@ import pandas as pd
 from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistoryManager, ActionStatus
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionStatus
 from datus.schemas.batch_events import BatchEvent, BatchStage
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 from datus.utils.loggings import get_logger
@@ -24,6 +24,9 @@ async def init_success_story_semantic_model_async(
     agent_config: AgentConfig,
     success_story: str,
     emit: Optional[Callable[[BatchEvent], None]] = None,
+    *,
+    build_mode: str = "overwrite",
+    action_callback: Optional[Callable[["ActionHistory"], None]] = None,
 ) -> tuple[bool, str]:
     """
     Async version: Initialize ONLY semantic model from success story CSV using ALL SQL queries.
@@ -38,6 +41,10 @@ async def init_success_story_semantic_model_async(
         agent_config: Agent configuration
         success_story: Path to success story CSV file
         emit: Optional callback to stream BatchEvent progress events
+        build_mode: ``"overwrite"`` (default) wipes the semantic model store
+            for the current project before regenerating. ``"incremental"``
+            does not wipe; the LLM still runs and new entries are upserted
+            on top of existing ones (no row-level dedup).
     """
     # Load and validate CSV file
     csv_path = success_story
@@ -85,6 +92,15 @@ async def init_success_story_semantic_model_async(
         logger.error(error_msg)
         return False, error_msg
 
+    if build_mode == "overwrite":
+        from datus.storage.semantic_model.store import SemanticModelRAG
+
+        logger.info(
+            "[overwrite] Wiping semantic_model store for project '%s' before re-population",
+            agent_config.project_name,
+        )
+        SemanticModelRAG(agent_config).truncate()
+
     # Build comprehensive context from all rows
     context_message = "Generate semantic models for the following SQL queries:\n\n"
     for idx, (sql, question) in enumerate(zip(all_sqls, all_questions), 1):
@@ -118,6 +134,11 @@ async def init_success_story_semantic_model_async(
         generated_files = []
         terminal_error = None
         async for action in semantic_node.execute_stream(action_history_manager):
+            if action_callback is not None:
+                try:
+                    action_callback(action)
+                except Exception as cb_exc:  # pragma: no cover - defensive
+                    logger.debug("semantic_model action_callback raised: %s", cb_exc)
             # Emit streaming messages
             if emit and action.messages:
                 emit(
@@ -172,6 +193,8 @@ def init_success_story_semantic_model(
     agent_config: AgentConfig,
     success_story: str,
     emit: Optional[Callable[[BatchEvent], None]] = None,
+    *,
+    build_mode: str = "overwrite",
 ) -> tuple[bool, str]:
     """
     Sync wrapper: Initialize ONLY semantic model from success story CSV using ALL SQL queries.
@@ -180,9 +203,12 @@ def init_success_story_semantic_model(
         agent_config: Agent configuration
         success_story: Path to success story CSV file
         emit: Optional callback to stream BatchEvent progress events
+        build_mode: Forwarded to :func:`init_success_story_semantic_model_async`.
     """
     with suppress_keyboard_input():
-        return asyncio.run(init_success_story_semantic_model_async(agent_config, success_story, emit))
+        return asyncio.run(
+            init_success_story_semantic_model_async(agent_config, success_story, emit, build_mode=build_mode)
+        )
 
 
 def init_semantic_yaml_semantic_model(

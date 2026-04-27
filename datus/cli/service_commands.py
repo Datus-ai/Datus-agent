@@ -27,6 +27,7 @@ import asyncio
 import inspect
 import json
 import shlex
+import threading
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from rich.table import Table
@@ -134,6 +135,11 @@ class ServiceCommands:
     # ------------------------------------------------------------------ #
 
     _MAX_CONFIG_LOOPS = 32
+    # Hard timeout for the connectivity probe. BI / scheduler adapters hit
+    # external HTTP endpoints whose socket timeout we cannot rely on; a hung
+    # TCP connect must not freeze the prompt_toolkit Application driving
+    # ``/service``.
+    _PROBE_TIMEOUT_SECS: float = 10.0
 
     def _run_config_menu(self, *, initial_tab: str) -> None:
         """Loop the configuration TUI until the user cancels.
@@ -372,36 +378,60 @@ class ServiceCommands:
         Returns ``(ok, message)`` so the caller can both print and pass
         a one-liner up to the App's status row. Any exception from the
         adapter is caught — the goal is signal, not stack traces.
+
+        The semantic-layer branch is a pure in-memory registry lookup so
+        it runs on the calling thread; bi_platforms / schedulers reach
+        external HTTP endpoints and are isolated in a daemon thread with
+        ``_PROBE_TIMEOUT_SECS`` so a stuck TCP connect cannot freeze the
+        REPL.
         """
-        try:
-            if section == "bi_platforms":
-                from datus.tools.func_tool.bi_tools import BIFuncTool
-
-                tool = BIFuncTool(self.cli.agent_config, bi_service=name)
-                rows = tool.list_dashboards()
-                count = self._count_envelope(rows)
-                return True, f"{count} dashboards"
-            if section == "schedulers":
-                from datus.tools.func_tool.scheduler_tools import SchedulerTools
-
-                tool = SchedulerTools(self.cli.agent_config, scheduler_service=name)
-                rows = tool.list_scheduler_jobs()
-                count = self._count_envelope(rows)
-                return True, f"{count} scheduler jobs"
-            if section == "semantic_layer":
-                # MetricFlow's ``list_metrics`` requires a bound
-                # datasource; use the registry probe instead so we can
-                # confirm ``hot_reload_adapter`` actually wired the
-                # adapter without forcing the user to pre-bind a DB.
+        if section == "semantic_layer":
+            # MetricFlow's ``list_metrics`` requires a bound datasource;
+            # use the registry probe instead so we can confirm
+            # ``hot_reload_adapter`` actually wired the adapter without
+            # forcing the user to pre-bind a DB.
+            try:
                 from datus.tools.semantic_tools.registry import semantic_adapter_registry
 
                 metadata = semantic_adapter_registry.get_metadata(name)
                 if metadata is not None:
                     return True, f"adapter `{name}` registered"
                 return False, f"adapter `{name}` not registered after install"
-        except Exception as exc:
-            return False, str(exc) or exc.__class__.__name__
-        return False, f"Unsupported section `{section}`"
+            except Exception as exc:
+                return False, str(exc) or exc.__class__.__name__
+
+        holder: List[Tuple[bool, str]] = []
+
+        def _runner() -> None:
+            try:
+                if section == "bi_platforms":
+                    from datus.tools.func_tool.bi_tools import BIFuncTool
+
+                    tool = BIFuncTool(self.cli.agent_config, bi_service=name)
+                    rows = tool.list_dashboards()
+                    count = self._count_envelope(rows)
+                    holder.append((True, f"{count} dashboards"))
+                elif section == "schedulers":
+                    from datus.tools.func_tool.scheduler_tools import SchedulerTools
+
+                    tool = SchedulerTools(self.cli.agent_config, scheduler_service=name)
+                    rows = tool.list_scheduler_jobs()
+                    count = self._count_envelope(rows)
+                    holder.append((True, f"{count} scheduler jobs"))
+                else:
+                    holder.append((False, f"Unsupported section `{section}`"))
+            except BaseException as exc:
+                holder.append((False, str(exc) or exc.__class__.__name__))
+
+        worker = threading.Thread(target=_runner, daemon=True)
+        worker.start()
+        worker.join(timeout=self._PROBE_TIMEOUT_SECS)
+        if worker.is_alive():
+            # Thread is daemonised so it won't block process exit; we
+            # leave it to finish (or get killed at REPL shutdown) while
+            # surfacing a clear timeout to the user.
+            return False, f"probe timeout (>{int(self._PROBE_TIMEOUT_SECS)}s) — service unreachable?"
+        return holder[0] if holder else (False, "probe failed: no result")
 
     @staticmethod
     def _count_envelope(payload: Any) -> int:

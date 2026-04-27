@@ -60,17 +60,6 @@ class TestCreateParser:
         assert args.action == "benchmark"
         assert args.benchmark == "bird_dev"
 
-    def test_bootstrap_kb_action_parsed(self):
-        parser = create_parser()
-        args = parser.parse_args(
-            [
-                "bootstrap-kb",
-                "--datasource",
-                "myns",
-            ]
-        )
-        assert args.action == "bootstrap-kb"
-
     def test_check_db_action_parsed(self):
         parser = create_parser()
         args = parser.parse_args(
@@ -87,11 +76,6 @@ class TestCreateParser:
         parser = create_parser()
         args = parser.parse_args(["probe-llm"])
         assert args.action == "probe-llm"
-
-    def test_tutorial_action_parsed(self):
-        parser = create_parser()
-        args = parser.parse_args(["tutorial"])
-        assert args.action == "tutorial"
 
     def test_service_action_parsed(self):
         parser = create_parser()
@@ -166,32 +150,94 @@ class TestCreateParser:
         )
         assert args.max_steps == 20
 
-    def test_kb_update_strategy_default(self):
-        parser = create_parser()
-        args = parser.parse_args(
-            [
-                "bootstrap-kb",
-                "--datasource",
-                "ns",
-            ]
-        )
-        assert args.kb_update_strategy == "check"
-
     def test_platform_doc_action_parsed(self):
         parser = create_parser()
         args = parser.parse_args(["platform-doc"])
         assert args.action == "platform-doc"
 
-    def test_bootstrap_bi_action_parsed(self):
+    def test_bootstrap_kb_action_parsed(self):
         parser = create_parser()
         args = parser.parse_args(
             [
-                "bootstrap-bi",
+                "bootstrap-kb",
                 "--datasource",
-                "myns",
+                "bird_school",
+                "--components",
+                "metadata",
+                "reference_sql",
+                "--kb_update_strategy",
+                "overwrite",
+                "--sql_dir",
+                "/tmp/sql",
+                "--subject_tree",
+                "a/b,c/d",
+                "--yes",
             ]
         )
-        assert args.action == "bootstrap-bi"
+        assert args.action == "bootstrap-kb"
+        assert args.datasource == "bird_school"
+        assert args.components == ["metadata", "reference_sql"]
+        assert args.kb_update_strategy == "overwrite"
+        assert args.sql_dir == "/tmp/sql"
+        assert args.subject_tree == "a/b,c/d"
+        assert args.yes is True
+        assert args.pool_size == 4
+
+    def test_bootstrap_kb_requires_datasource(self):
+        import pytest
+
+        parser = create_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["bootstrap-kb", "--components", "metadata"])
+
+    def test_bootstrap_kb_accepts_table_lineage_component(self):
+        parser = create_parser()
+        args = parser.parse_args(["bootstrap-kb", "--datasource", "ds", "--components", "table_lineage"])
+        assert args.components == ["table_lineage"]
+
+    def test_bootstrap_kb_accepts_check_strategy(self):
+        parser = create_parser()
+        args = parser.parse_args(["bootstrap-kb", "--datasource", "ds", "--kb_update_strategy", "check"])
+        assert args.kb_update_strategy == "check"
+
+    def test_bootstrap_kb_default_components_and_strategy(self):
+        parser = create_parser()
+        args = parser.parse_args(["bootstrap-kb", "--datasource", "ds"])
+        assert args.components == ["metadata"]
+        assert args.kb_update_strategy == "check"
+
+    def test_bootstrap_kb_extended_flags_parsed(self):
+        parser = create_parser()
+        args = parser.parse_args(
+            [
+                "bootstrap-kb",
+                "--datasource",
+                "ds",
+                "--benchmark",
+                "spider2",
+                "--from_adapter",
+                "metricflow",
+                "--semantic_yaml",
+                "/tmp/s.yaml",
+                "--ext_knowledge",
+                "/tmp/ek.csv",
+                "--validate-only",
+                "--catalog",
+                "main",
+                "--database_name",
+                "demo",
+                "--schema_linking_type",
+                "view",
+            ]
+        )
+        assert args.benchmark == "spider2"
+        assert args.from_adapter == "metricflow"
+        assert args.semantic_yaml == "/tmp/s.yaml"
+        assert args.ext_knowledge == "/tmp/ek.csv"
+        assert args.validate_only is True
+        assert args.catalog == "main"
+        assert args.database_name == "demo"
+        assert args.schema_linking_type == "view"
 
 
 # ---------------------------------------------------------------------------
@@ -213,20 +259,6 @@ class TestMainNoAction:
                 with patch.object(parser, "print_help"):
                     result = main()
         assert result == 1
-
-
-class TestMainTutorialAction:
-    def test_tutorial_action_runs_tutorial(self):
-        mock_tutorial = MagicMock()
-        mock_tutorial.run.return_value = 0
-        with (
-            patch("datus.main.configure_logging"),
-            patch("datus.main.BenchmarkTutorial", return_value=mock_tutorial),
-            patch.object(sys, "argv", ["datus", "tutorial"]),
-        ):
-            result = main()
-        mock_tutorial.run.assert_called_once()
-        assert result == 0
 
 
 class TestMainServiceAction:
@@ -430,6 +462,29 @@ class TestMainPlatformDocAction:
                     del _agent_mod.bootstrap_platform_doc
 
         mock_bootstrap.assert_called_once()
+        assert result == 0
+
+
+class TestMainBootstrapKbAction:
+    def test_bootstrap_kb_action_calls_agent_bootstrap_kb(self):
+        mock_agent = MagicMock()
+        mock_agent.bootstrap_kb.return_value = {"status": "success", "message": "ok"}
+        mock_config = MagicMock()
+
+        with (
+            patch("datus.main.configure_logging"),
+            patch("datus.main.setup_exception_handler"),
+            patch("datus.main.load_agent_config", return_value=mock_config),
+            patch("datus.main.Agent", return_value=mock_agent),
+            patch.object(
+                sys,
+                "argv",
+                ["datus", "bootstrap-kb", "--datasource", "ds", "--components", "metadata"],
+            ),
+        ):
+            result = main()
+
+        mock_agent.bootstrap_kb.assert_called_once()
         assert result == 0
 
 

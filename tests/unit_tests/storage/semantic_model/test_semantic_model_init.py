@@ -741,3 +741,106 @@ class TestInitSuccessStorySemanticModelAsyncLLMPath:
 
         # No files generated → failure
         assert success is False
+
+
+# ---------------------------------------------------------------------------
+# init_success_story_semantic_model_async — overwrite truncate semantics
+# ---------------------------------------------------------------------------
+
+
+class TestInitSuccessStorySemanticModelAsyncOverwriteTruncate:
+    """Verify build_mode='overwrite' wipes the semantic model store before LLM regeneration."""
+
+    @pytest.mark.asyncio
+    async def test_overwrite_calls_truncate_on_semantic_model_rag(self, tmp_path, monkeypatch):
+        """build_mode='overwrite' must call SemanticModelRAG(...).truncate() exactly once."""
+        from types import SimpleNamespace
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        csv_path = tmp_path / "story.csv"
+        csv_path.write_text("sql,question\nSELECT 1,Q?\n")
+
+        mock_config = MagicMock()
+        mock_config.project_name = "unit-test-project"
+        mock_db_config = MagicMock()
+        mock_db_config.catalog = ""
+        mock_db_config.database = "db"
+        mock_db_config.schema = ""
+        mock_config.current_db_config.return_value = mock_db_config
+
+        fake_rag_instance = MagicMock()
+        rag_factory = MagicMock(return_value=fake_rag_instance)
+        monkeypatch.setattr("datus.storage.semantic_model.store.SemanticModelRAG", rag_factory)
+
+        class MockSemanticNode:
+            def __init__(self, *args, **kwargs):
+                self.input = None
+
+            async def execute_stream(self, action_history_manager):
+                yield SimpleNamespace(
+                    status=ActionStatus.SUCCESS,
+                    action_type="semantic_response",
+                    output={"semantic_models": ["m.yaml"]},
+                    messages="ok",
+                )
+
+        monkeypatch.setattr(
+            "datus.storage.semantic_model.semantic_model_init.GenSemanticModelAgenticNode",
+            MockSemanticNode,
+        )
+
+        success, _error = await init_success_story_semantic_model_async(
+            mock_config, str(csv_path), build_mode="overwrite"
+        )
+
+        assert success is True
+        rag_factory.assert_called_once_with(mock_config)
+        fake_rag_instance.truncate.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_incremental_does_not_call_truncate(self, tmp_path, monkeypatch):
+        """build_mode='incremental' must NOT call truncate (no SemanticModelRAG instantiation)."""
+        from types import SimpleNamespace
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        csv_path = tmp_path / "story.csv"
+        csv_path.write_text("sql,question\nSELECT 1,Q?\n")
+
+        mock_config = MagicMock()
+        mock_config.project_name = "unit-test-project"
+        mock_db_config = MagicMock()
+        mock_db_config.catalog = ""
+        mock_db_config.database = "db"
+        mock_db_config.schema = ""
+        mock_config.current_db_config.return_value = mock_db_config
+
+        rag_factory = MagicMock()
+        monkeypatch.setattr("datus.storage.semantic_model.store.SemanticModelRAG", rag_factory)
+
+        class MockSemanticNode:
+            def __init__(self, *args, **kwargs):
+                self.input = None
+
+            async def execute_stream(self, action_history_manager):
+                yield SimpleNamespace(
+                    status=ActionStatus.SUCCESS,
+                    action_type="semantic_response",
+                    output={"semantic_models": ["m.yaml"]},
+                    messages="ok",
+                )
+
+        monkeypatch.setattr(
+            "datus.storage.semantic_model.semantic_model_init.GenSemanticModelAgenticNode",
+            MockSemanticNode,
+        )
+
+        success, _error = await init_success_story_semantic_model_async(
+            mock_config, str(csv_path), build_mode="incremental"
+        )
+
+        assert success is True
+        rag_factory.assert_not_called()

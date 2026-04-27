@@ -229,7 +229,7 @@ datus-cli --datasource demo
 
 **Iterate** — Analyst feedback loops back: engineers fix SQL, add rules, refine semantic models, and extend with Skills or MCP tools. The agent gets more accurate over time.
 
-→ [End-to-end tutorial](https://docs.datus.ai/getting_started/Datus_tutorial/) · [CLI docs](https://docs.datus.ai/cli/introduction/) · [Knowledge Base docs](https://docs.datus.ai/knowledge_base/introduction/) · [Subagent docs](https://docs.datus.ai/subagent/introduction/)
+→ [End-to-end tutorial](https://docs.datus.ai/getting_started/contextual_data_engineering/#part-2--hands-on-tutorial-california-schools) · [CLI docs](https://docs.datus.ai/cli/introduction/) · [Knowledge Base docs](https://docs.datus.ai/knowledge_base/introduction/) · [Subagent docs](https://docs.datus.ai/subagent/introduction/)
 
 ## Development
 

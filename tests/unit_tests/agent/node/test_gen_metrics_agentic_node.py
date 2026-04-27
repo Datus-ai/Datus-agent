@@ -763,3 +763,21 @@ class TestGenMetricsFilesystemRootPath:
 
         assert node.filesystem_func_tool is not None
         assert node.filesystem_func_tool.root_path == expected
+
+
+class TestGenMetricsNonInteractiveBridge:
+    """Workflow mode → ``PermissionHooks.non_interactive=True``.
+
+    Ensures ``/bootstrap`` Metrics tab and other workflow-mode callers cannot
+    be paused by ASK / EXTERNAL fs broker prompts.
+    """
+
+    def test_workflow_mode_compose_hooks_is_non_interactive(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.tools.permission.permission_hooks import PermissionHooks
+
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        hooks = node._compose_hooks()
+        assert isinstance(hooks, PermissionHooks)
+        assert hooks.non_interactive is True
+        assert node.permission_manager.active_profile == "dangerous"

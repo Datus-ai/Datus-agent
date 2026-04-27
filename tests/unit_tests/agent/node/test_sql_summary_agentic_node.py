@@ -467,3 +467,21 @@ class TestSqlSummaryFilesystemRootPath:
 
         assert node.filesystem_func_tool is not None
         assert node.filesystem_func_tool.root_path == expected
+
+
+class TestSqlSummaryNonInteractiveBridge:
+    """Workflow mode → ``PermissionHooks.non_interactive=True``.
+
+    SqlSummaryAgenticNode is invoked from ``/bootstrap`` SQL and Template tabs
+    via parallel pools. Each per-item node must run non-interactively or the
+    pool deadlocks on the first ASK prompt.
+    """
+
+    def test_workflow_mode_compose_hooks_is_non_interactive(self, real_agent_config, mock_llm_create):
+        from datus.tools.permission.permission_hooks import PermissionHooks
+
+        node = _create_node(real_agent_config, execution_mode="workflow")
+        hooks = node._compose_hooks()
+        assert isinstance(hooks, PermissionHooks)
+        assert hooks.non_interactive is True
+        assert node.permission_manager.active_profile == "dangerous"

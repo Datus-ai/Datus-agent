@@ -243,6 +243,27 @@ class InlineStreamingContext:
                 self._processed_index += 1
                 continue
 
+            # Task tool PROCESSING (depth=0): start the subagent group
+            # with the outer action as ``first_action``. The matching
+            # inner depth=1 actions (parent_action_id == this action_id)
+            # then drop into the same group on subsequent iterations.
+            # Without this branch, the sync replay would skip PROCESSING
+            # entirely and the header label would be derived from the
+            # first inner action's ``action_type`` instead of the outer
+            # task's ``input["type"]``.
+            if (
+                action.role == ActionRole.TOOL
+                and action.status == ActionStatus.PROCESSING
+                and action.action_type == "task"
+                and isinstance(action.input, dict)
+                and action.input.get("type")
+            ):
+                group_key = action.action_id
+                if group_key not in self._subagent_groups:
+                    self._start_subagent_group_sync(action, group_key)
+                self._processed_index += 1
+                continue
+
             # Skip PROCESSING tool entries — SUCCESS/FAILED version follows
             if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
                 self._processed_index += 1
@@ -671,6 +692,29 @@ class InlineStreamingContext:
                 self._end_subagent_group_by_key(None, action)
                 continue
 
+            # Task tool PROCESSING (depth=0): start the subagent group
+            # right away using the outer action as ``first_action`` so
+            # the rendered header reflects ``input["type"]`` (the real
+            # subagent type, e.g. ``gen_sql_summary``) and is visible
+            # during the AgenticNode's pre-roll instead of leaving a
+            # generic "○ 🔧 task..." frame stuck on screen until the
+            # first depth=1 inner action arrives. Inner actions parent
+            # themselves to ``action.action_id`` (matches ``group_key``)
+            # so they slot into the same group naturally.
+            if (
+                action.role == ActionRole.TOOL
+                and action.status == ActionStatus.PROCESSING
+                and action.action_type == "task"
+                and isinstance(action.input, dict)
+                and action.input.get("type")
+            ):
+                group_key = action.action_id
+                if group_key not in self._subagent_groups:
+                    self._stop_processing_live()
+                    self._start_subagent_group(action, group_key)
+                self._processed_index += 1
+                continue
+
             # TOOL with PROCESSING -> pin blinking frame. Advance the index
             # so the loop can consume the paired SUCCESS/FAILED action
             # (PROCESSING and SUCCESS are *separate* ActionHistory entries
@@ -693,6 +737,22 @@ class InlineStreamingContext:
 
             # INTERACTION actions: skip in flush (only shown during live interaction)
             if action.role == ActionRole.INTERACTION:
+                self._processed_index += 1
+                continue
+
+            # Task tool PROCESSING (depth=0) — start the subagent group
+            # using the outer action so the eventual ``Done`` summary in
+            # the close-out block below has the correct ``first_action``.
+            if (
+                action.role == ActionRole.TOOL
+                and action.status == ActionStatus.PROCESSING
+                and action.action_type == "task"
+                and isinstance(action.input, dict)
+                and action.input.get("type")
+            ):
+                group_key = action.action_id
+                if group_key not in self._subagent_groups:
+                    self._start_subagent_group(action, group_key)
                 self._processed_index += 1
                 continue
 
@@ -906,54 +966,36 @@ class InlineStreamingContext:
     # -- subagent Live display ------------------------------------------------
 
     def _update_subagent_groups_live(self) -> None:
-        """Start or update the subagent rolling-window display.
+        """Push the subagent rolling-window into the shared pinned region.
 
-        In TUI mode (``self._tui_mode``), the rolling window is one input
-        to the shared pinned-region painter :meth:`_repaint_live`; the
-        painter resolves priority against processing-tool blink and
-        streaming markdown tail. Outside TUI, the legacy Rich ``Live``
-        path renders directly.
+        Rendering is handled exclusively through ``self._live_state``
+        (DatusApp's painter). Background ``rich.Live`` is **never**
+        spawned — that path used to fight DatusApp's own Live and
+        produced ``LiveError: Only one live display may be active at
+        once`` when callers forgot to forward ``live_state``.
         """
         if self._tui_mode:
             self._repaint_live()
             return
-        renderable = self._build_subagent_groups_renderable()
-        if self._subagent_live is None:
-            # ``redirect_stdout`` / ``redirect_stderr`` are set to ``False`` so
-            # Rich does not install its own stdout wrapper. When the REPL runs
-            # under the TUI, stdout is already patched by prompt_toolkit's
-            # ``patch_stdout(raw=True)`` — double-patching would fight the
-            # pinned status-bar + input. Outside the TUI the behavior is
-            # unchanged: Rich writes ANSI directly to the real stdout.
-            self._subagent_live = Live(
-                renderable,
-                console=self.display.console,
-                refresh_per_second=4,
-                transient=True,
-                redirect_stdout=False,
-                redirect_stderr=False,
-                screen=False,
-            )
-            self._subagent_live.start()
-        else:
-            self._subagent_live.update(renderable)
+        # Non-TUI callers: silently no-op. Subagent groups are still
+        # printed permanently to scrollback when ``subagent_complete``
+        # arrives via :meth:`_end_subagent_group_sync` /
+        # :meth:`_render_deferred_group`, so the user does not lose
+        # information — only the rolling animation is omitted.
 
     def _stop_subagent_live(self) -> None:
-        """Stop the subagent rolling-window display."""
+        """Drop the subagent rolling-window from the pinned region.
+
+        With background ``rich.Live`` removed, this only repaints the
+        TUI's shared pinned region; non-TUI callers have nothing to
+        stop.
+        """
         if self._tui_mode:
             # The subagent groups dict is the source of truth — callers have
             # already popped completed groups before invoking this. Ask the
             # painter to repick the pinned content so processing frames or
             # markdown tails can reclaim the region.
             self._repaint_live()
-            return
-        with self._print_lock:
-            if self._subagent_live is not None:
-                try:
-                    self._subagent_live.stop()
-                except Exception as e:
-                    logger.debug(f"Error stopping subagent live display: {e}")
-                self._subagent_live = None
 
     def _build_subagent_groups_renderable(self) -> Group:
         """Build a Group renderable showing all active subagent groups with actions grouped."""
@@ -1032,6 +1074,10 @@ class InlineStreamingContext:
         re-parsing Rich markup back into prompt_toolkit styles.
         """
         subagent_type = first_action.action_type or "subagent"
+        # Outer task tool gets its label from ``input["type"]``; see
+        # ``ActionRenderer.render_subagent_header`` for rationale.
+        if subagent_type == "task" and isinstance(first_action.input, dict):
+            subagent_type = first_action.input.get("type") or "task"
         prompt = first_action.messages or ""
         if prompt.startswith("User: "):
             prompt = prompt[6:]
@@ -1408,52 +1454,30 @@ class InlineStreamingContext:
     # -- blinking Live for PROCESSING tools --------------------------------
 
     def _update_processing_live(self, action: ActionHistory) -> None:
-        """Render the blinking frame for a PROCESSING tool.
+        """Update the blinking PROCESSING frame in the pinned region.
 
-        In TUI mode the frame is just state (``_processing_action``) that
-        :meth:`_repaint_live` turns into a pinned line every tick, so the
-        blink animation follows the shared 4 Hz refresh loop. Outside TUI
-        the legacy Rich ``Live`` is still used.
+        TUI mode pushes the frame into ``self._live_state`` for
+        DatusApp's painter to draw. Non-TUI callers silently no-op —
+        the dedicated background ``rich.Live`` path was removed because
+        it could only ever conflict with DatusApp's own Live (raising
+        ``LiveError`` when the caller forgot ``live_state``).
         """
         if self._tui_mode:
             self._processing_action = action
             self._repaint_live()
             return
-
-        frame = _PROCESSING_SYMBOL
-        renderable = self.display.renderer.render_processing(action, frame)
-
-        with self._print_lock:
-            if self._live is None:
-                # See the comment in ``_update_subagent_groups_live``: Live
-                # must not install its own stdout wrapper when the TUI is
-                # active, and the flags are safe for non-TUI callers too.
-                self._live = Live(
-                    renderable,
-                    console=self.display.console,
-                    refresh_per_second=4,
-                    transient=True,
-                    redirect_stdout=False,
-                    redirect_stderr=False,
-                    screen=False,
-                )
-                self._live.start()
-            else:
-                self._live.update(renderable)
+        # Non-TUI: skip. Completed TOOL actions are still printed
+        # permanently to scrollback by :meth:`_print_completed_action`.
 
     def _stop_processing_live(self) -> None:
-        """Stop the current processing-tool display."""
+        """Drop the PROCESSING frame from the pinned region.
+
+        With background ``rich.Live`` removed, only the TUI pinned
+        region needs clearing; non-TUI callers have nothing to stop.
+        """
         if self._tui_mode:
             # Drop the processing-frame state; :meth:`_repaint_live` then
             # falls through to subagent rolling lines / markdown tail /
             # clear depending on what else is active.
             self._processing_action = None
             self._repaint_live()
-            return
-        with self._print_lock:
-            if self._live is not None:
-                try:
-                    self._live.stop()
-                except Exception:
-                    pass
-                self._live = None

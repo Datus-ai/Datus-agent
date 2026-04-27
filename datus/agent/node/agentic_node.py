@@ -808,16 +808,33 @@ class AgenticNode(Node):
 
         The permission manager uses global config from agent.yml and node-specific
         overrides to control access to tools/MCP/skills with allow/deny/ask levels.
+
+        ``execution_mode="workflow"`` nodes (``/bootstrap``, scheduler subagents,
+        ``auto_create``, etc.) ignore the user's profile and run under a fresh
+        ``dangerous`` profile. Combined with the non-interactive ``PermissionHooks``
+        gate (see :meth:`_ensure_permission_hooks`), this means workflow flows
+        execute exactly the operations ``dangerous`` allows and fail loudly on
+        anything else — no broker prompts, no auto-approval, no drift when the
+        user happens to be on ``normal`` or ``auto``.
         """
         if not self.agent_config or not hasattr(self.agent_config, "permissions_config"):
             return
 
-        permissions_config = self.agent_config.permissions_config
-        if not permissions_config:
-            return
-
         try:
             from datus.tools.permission.permission_manager import PermissionManager
+
+            is_workflow = getattr(self, "execution_mode", None) == "workflow"
+            if is_workflow:
+                from datus.tools.permission.profiles import get_profile
+
+                permissions_config = get_profile("dangerous")
+                active_profile = "dangerous"
+            else:
+                permissions_config = self.agent_config.permissions_config
+                active_profile = getattr(self.agent_config, "active_profile_name", None) or "normal"
+
+            if not permissions_config:
+                return
 
             # Get node-specific permission overrides from node_config
             node_permissions = self.node_config.get("permissions", {})
@@ -825,12 +842,15 @@ class AgenticNode(Node):
             self.permission_manager = PermissionManager(
                 global_config=permissions_config,
                 node_overrides={self.get_node_name(): node_permissions} if node_permissions else {},
-                active_profile=getattr(self.agent_config, "active_profile_name", None) or "normal",
+                active_profile=active_profile,
             )
             # Forward existing callback to permission manager
             if self._permission_callback:
                 self.permission_manager.set_permission_callback(self._permission_callback)
-            logger.debug(f"Permission manager initialized for node '{self.get_node_name()}'")
+            logger.debug(
+                f"Permission manager initialized for node '{self.get_node_name()}' "
+                f"(profile={active_profile}, workflow={is_workflow})"
+            )
 
         except Exception as e:
             logger.exception("Failed to setup permission manager")
@@ -1575,6 +1595,11 @@ class AgenticNode(Node):
                     self.tool_registry.register_tools(category, tools)
             from datus.tools.permission.permission_hooks import PermissionHooks
 
+            # ``execution_mode="workflow"`` flows have no human in the loop, so
+            # ASK / EXTERNAL fs hits short-circuit to ``PermissionDeniedException``
+            # inside the hook rather than awaiting the broker indefinitely.
+            non_interactive = getattr(self, "execution_mode", None) == "workflow"
+
             # Never call ``_get_or_create_broker`` here — it resets the queue
             # and orphans any parent CLI listener when running as a sub-agent.
             self.permission_hooks = PermissionHooks(
@@ -1583,6 +1608,7 @@ class AgenticNode(Node):
                 node_name=self.get_node_name(),
                 tool_registry=self.tool_registry,
                 fs_policy=self._make_filesystem_policy(),
+                non_interactive=non_interactive,
             )
             logger.debug(
                 f"PermissionHooks attached to node '{self.get_node_name()}' "
