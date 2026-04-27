@@ -129,6 +129,7 @@ class TestBuildToolResultContent:
         assert contents[0].payload["duration"] == 3.5
         assert contents[0].payload["callToolId"] == "tool-123"
         assert contents[0].payload["shortDesc"] == "Found 10 rows"
+        assert contents[0].payload["result"] == {"success": 1, "result": "data..."}
 
     def test_zero_duration_when_end_time_missing(self):
         """Duration is 0 when end_time is None."""
@@ -152,6 +153,7 @@ class TestBuildToolResultContent:
         contents = _build_tool_result_content(action)
         assert contents[0].type == "call-tool-result"
         assert contents[0].payload["error"] == "boom"
+        assert contents[0].payload["result"] == {"success": 0, "result": None, "error": "boom"}
 
     def test_failed_tool_falls_back_to_messages(self):
         """Failed tool with no output.error uses action.messages as the error field."""
@@ -164,6 +166,7 @@ class TestBuildToolResultContent:
         )
         contents = _build_tool_result_content(action)
         assert contents[0].payload["error"] == "kaboom"
+        assert contents[0].payload["result"] == {"success": 0, "result": {}, "error": "kaboom"}
 
     def test_successful_tool_omits_error_field(self):
         """Successful tool actions never carry an error field."""
@@ -175,6 +178,69 @@ class TestBuildToolResultContent:
         )
         contents = _build_tool_result_content(action)
         assert "error" not in contents[0].payload
+        assert contents[0].payload["result"] == {"success": 1, "result": "data"}
+
+    def test_successful_func_tool_envelope_is_normalized(self):
+        """Successful FuncToolResult-shaped output keeps the frontend success envelope."""
+        tables = [{"type": "table", "name": "orders"}]
+        action = _make_action(
+            action_id="complete_tool-90",
+            status=ActionStatus.SUCCESS,
+            input={"function_name": "list_tables"},
+            output={
+                "summary": "1 table: orders",
+                "raw_output": {"success": 1, "error": None, "result": tables},
+            },
+        )
+
+        contents = _build_tool_result_content(action)
+
+        assert contents[0].payload["result"] == {"success": 1, "result": tables}
+        assert "error" not in contents[0].payload
+
+    def test_non_envelope_result_key_is_preserved(self):
+        """Ordinary tool output with a result key is wrapped, not destructively unwrapped."""
+        raw_output = {"result": [{"name": "orders"}], "metadata": {"source": "catalog"}}
+        action = _make_action(
+            action_id="complete_tool-93",
+            status=ActionStatus.SUCCESS,
+            input={"function_name": "inspect_catalog"},
+            output={"raw_output": raw_output},
+        )
+
+        contents = _build_tool_result_content(action)
+
+        assert contents[0].payload["result"] == {"success": 1, "result": raw_output}
+
+    def test_successful_json_func_tool_envelope_is_normalized(self):
+        """JSON-string FuncToolResult output is parsed before sending to the web UI."""
+        action = _make_action(
+            action_id="complete_tool-91",
+            status=ActionStatus.SUCCESS,
+            input={"function_name": "list_tables"},
+            output={"raw_output": '{"success": 1, "error": null, "result": [{"name": "orders"}]}'},
+        )
+
+        contents = _build_tool_result_content(action)
+
+        assert contents[0].payload["result"] == {"success": 1, "result": [{"name": "orders"}]}
+
+    def test_failed_func_tool_envelope_uses_nested_error(self):
+        """Failed FuncToolResult-shaped output exposes the nested error to the card."""
+        action = _make_action(
+            action_id="complete_tool-92",
+            status=ActionStatus.FAILED,
+            input={"function_name": "read_query"},
+            output={
+                "summary": "Failed",
+                "raw_output": {"success": 0, "error": "syntax error", "result": None},
+            },
+        )
+
+        contents = _build_tool_result_content(action)
+
+        assert contents[0].payload["error"] == "syntax error"
+        assert contents[0].payload["result"] == {"success": 0, "result": None, "error": "syntax error"}
 
 
 class TestBuildSubagentCompleteContent:
@@ -627,7 +693,7 @@ class TestActionToSSEEvent:
         assert event is not None
         content = event.data.payload.content[0]
         assert content.type == "call-tool-result"
-        assert content.payload["result"] == "plain string result"
+        assert content.payload["result"] == {"success": 1, "result": "plain string result"}
         assert content.payload["shortDesc"] == ""
 
     def test_user_role_excluded_by_default(self):
@@ -652,6 +718,30 @@ class TestActionToSSEEvent:
             action_type="gen_sql_response",
         )
         event = action_to_sse_event(action, event_id=6, message_id="msg-6")
+        assert event is None
+
+    def test_assistant_response_action_included_when_requested(self):
+        """Wrapper final response can be emitted when no plain assistant response was streamed."""
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            action_type="chat_response",
+            output={"response": "1 table: orders"},
+        )
+        event = action_to_sse_event(action, event_id=6, message_id="msg-6", include_final_response=True)
+        assert event is not None
+        assert event.data.payload.content[0].type == "markdown"
+        assert event.data.payload.content[0].payload == {"content": "1 table: orders"}
+
+    def test_empty_assistant_response_action_still_skipped_when_requested(self):
+        """Empty wrapper responses do not create blank assistant bubbles."""
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            action_type="chat_response",
+            output={"response": ""},
+        )
+        event = action_to_sse_event(action, event_id=6, message_id="msg-6", include_final_response=True)
         assert event is None
 
     def test_interaction_processing_produces_user_interaction(self):

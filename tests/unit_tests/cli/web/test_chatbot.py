@@ -31,7 +31,7 @@ class TestBuildAgentArgs:
 
         assert result.datasource == "myns"
         assert result.config == "conf/agent.yml"
-        assert result.source == "web"
+        assert result.source is None
         assert result.interactive is True
         assert result.workflow == "chat_agentic"
         assert result.log_level == "INFO"

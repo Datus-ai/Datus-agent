@@ -694,6 +694,8 @@ class ChatAgenticNode(AgenticNode):
             response_content = ""
             tokens_used = 0
             last_successful_output = None
+            last_successful_tool_summary = ""
+            tool_result_seen = False
 
             execution_mode = "plan" if is_plan_mode and self.plan_hooks else "normal"
 
@@ -706,9 +708,17 @@ class ChatAgenticNode(AgenticNode):
             ):
                 yield stream_action
 
-                # Collect response content from successful actions
-                if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
+                # Collect response content only from assistant text actions.
+                # Tool results are displayed as tool cards and must not become
+                # the final chat response.
+                if (
+                    stream_action.role == ActionRole.ASSISTANT
+                    and stream_action.status == ActionStatus.SUCCESS
+                    and stream_action.output
+                ):
                     if isinstance(stream_action.output, dict):
+                        if stream_action.output.get("is_thinking") is True and not tool_result_seen:
+                            continue
                         last_successful_output = stream_action.output
                         raw_output_value = ""
                         if stream_action.action_type == "message" and "raw_output" in stream_action.output:
@@ -724,6 +734,14 @@ class ChatAgenticNode(AgenticNode):
                             response_content = candidate
                         elif candidate and not isinstance(candidate, str):
                             response_content = str(candidate)
+                elif stream_action.role == ActionRole.TOOL:
+                    if stream_action.status == ActionStatus.SUCCESS:
+                        output = stream_action.output if isinstance(stream_action.output, dict) else {}
+                        summary = output.get("summary") or output.get("status_message") or ""
+                        if isinstance(summary, str) and summary.strip():
+                            last_successful_tool_summary = summary.strip()
+                    if stream_action.status != ActionStatus.PROCESSING:
+                        tool_result_seen = True
 
             # Fallback: extract from last successful output
             if not response_content and last_successful_output:
@@ -738,6 +756,9 @@ class ChatAgenticNode(AgenticNode):
                     response_content = candidate
                 elif candidate and not isinstance(candidate, str):
                     response_content = str(candidate)
+
+            if not response_content and last_successful_tool_summary:
+                response_content = last_successful_tool_summary
 
             # Check summary_report actions for content if still empty
             if not response_content:

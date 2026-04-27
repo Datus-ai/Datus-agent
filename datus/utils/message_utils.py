@@ -12,9 +12,13 @@ first element whose ``type`` is ``"user"``.
 
 import json
 import logging
-from typing import List, Optional, TypedDict
+from typing import Any, List, Optional, TypedDict
 
 logger = logging.getLogger(__name__)
+
+# Anthropic / OpenAI content-block ``type`` values that carry plain text
+# inside ``text`` (Anthropic) or ``text``/``content`` (OpenAI) fields.
+_TEXT_BLOCK_TYPES = ("text", "output_text", "input_text")
 
 
 class MessagePart(TypedDict):
@@ -57,15 +61,43 @@ def is_structured_content(content: str) -> bool:
     return False
 
 
-def extract_user_input(content: str) -> str:
+def extract_user_input(content: Any) -> str:
     """Extract the original user input from *content*.
 
-    If the content is in the structured format, returns the **first**
-    ``"user"`` part.  Otherwise returns *content* unchanged (backward-
-    compatible with legacy flat-text messages).
+    Supports three input shapes:
+
+    - **List of provider content blocks** (Anthropic ``[{"type":"text","text":"..."}]``
+      or OpenAI ``output_text``/``input_text`` blocks). Persisted by
+      ``ClaudeModel._generate_with_mcp_stream`` for OAuth multi-turn sessions.
+      Concatenates the text fields with newlines.
+    - **JSON-encoded Datus structured string** ``[{"type":"user","content":"..."}]``.
+      Returns the first ``"user"`` part's ``content``.
+    - **Plain string** (legacy flat-text messages). Returned unchanged.
+
+    Always returns a ``str`` so downstream pydantic models / display layers
+    never receive a list.
     """
+    # Anthropic-style content blocks (list of dicts) — produced by the native
+    # Claude OAuth path. Keep the legacy str-only branches below intact.
+    if isinstance(content, list):
+        texts: List[str] = []
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            block_type = part.get("type")
+            if block_type in _TEXT_BLOCK_TYPES:
+                text = part.get("text") or part.get("content")
+                if isinstance(text, str):
+                    texts.append(extract_user_input(text) if is_structured_content(text) else text)
+            elif block_type == "user":
+                # Datus structured part stored unencoded as a list element.
+                user_text = part.get("content")
+                if isinstance(user_text, str):
+                    return user_text
+        return "\n".join(texts)
+
     if not is_structured_content(content):
-        return content
+        return content if isinstance(content, str) else ("" if content is None else str(content))
     try:
         parsed = json.loads(content)
         for part in parsed:

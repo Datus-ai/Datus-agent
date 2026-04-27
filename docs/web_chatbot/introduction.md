@@ -15,7 +15,7 @@ datus --web --datasource <your_datasource>
 
 **With Custom Configuration**:
 ```bash
-datus --web --config path/to/agent.yml --datasource snowflake
+datus --web --config path/to/agent.yml --datasource <your_datasource>
 ```
 
 **Custom Port and Host**:

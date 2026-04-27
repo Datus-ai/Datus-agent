@@ -190,6 +190,195 @@ class TestChatTaskManagerBehavior:
         assert task.events[0] is event
 
     @pytest.mark.asyncio
+    async def test_run_loop_emits_final_response_when_no_plain_assistant_response(self, real_agent_config):
+        """The web stream must surface chat_response when the model only produced tool cards."""
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+        class FakeNode:
+            session_id = "s-final"
+
+            async def execute_stream_with_interactions(self, action_history_manager):
+                yield ActionHistory(
+                    action_id="final",
+                    role=ActionRole.ASSISTANT,
+                    action_type="chat_response",
+                    messages="done",
+                    input={},
+                    output={"response": "1 table: orders"},
+                    status=ActionStatus.SUCCESS,
+                )
+
+            async def get_last_turn_usage(self):
+                return None
+
+        manager = ChatTaskManager()
+        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        task = ChatTask(session_id="s-final", asyncio_task=MagicMock())
+
+        await manager._run_loop(task, real_agent_config, StreamChatInput(message="tables", session_id="s-final"))
+
+        message_events = [event for event in task.events if event.event == "message"]
+        assert len(message_events) == 1
+        content = message_events[0].data.payload.content[0]
+        assert content.type == "markdown"
+        assert content.payload["content"] == "1 table: orders"
+
+    @pytest.mark.asyncio
+    async def test_run_loop_skips_final_response_after_plain_assistant_response(self, real_agent_config):
+        """chat_response is a wrapper and must not duplicate a streamed assistant response."""
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+        class FakeNode:
+            session_id = "s-dedupe"
+
+            async def execute_stream_with_interactions(self, action_history_manager):
+                yield ActionHistory(
+                    action_id="plain",
+                    role=ActionRole.ASSISTANT,
+                    action_type="response",
+                    messages="answer",
+                    input={},
+                    output={"raw_output": "1 table: orders", "is_thinking": False},
+                    status=ActionStatus.SUCCESS,
+                )
+                yield ActionHistory(
+                    action_id="final",
+                    role=ActionRole.ASSISTANT,
+                    action_type="chat_response",
+                    messages="done",
+                    input={},
+                    output={"response": "1 table: orders"},
+                    status=ActionStatus.SUCCESS,
+                )
+
+            async def get_last_turn_usage(self):
+                return None
+
+        manager = ChatTaskManager()
+        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        task = ChatTask(session_id="s-dedupe", asyncio_task=MagicMock())
+
+        await manager._run_loop(task, real_agent_config, StreamChatInput(message="tables", session_id="s-dedupe"))
+
+        message_events = [event for event in task.events if event.event == "message"]
+        assert len(message_events) == 1
+        content = message_events[0].data.payload.content[0]
+        assert content.payload["content"] == "1 table: orders"
+
+    @pytest.mark.asyncio
+    async def test_run_loop_skips_wrapper_after_post_tool_thinking_text(self, real_agent_config):
+        """Post-tool visible assistant text suppresses chat_response even if marked as thinking."""
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+        class FakeNode:
+            session_id = "s-post-tool-thinking"
+
+            async def execute_stream_with_interactions(self, action_history_manager):
+                yield ActionHistory(
+                    action_id="complete_tool",
+                    role=ActionRole.TOOL,
+                    action_type="list_tables",
+                    messages="Tool call: list_tables",
+                    input={"function_name": "list_tables"},
+                    output={"summary": "3 tables: orders, customers, invoices"},
+                    status=ActionStatus.SUCCESS,
+                )
+                yield ActionHistory(
+                    action_id="assistant_text",
+                    role=ActionRole.ASSISTANT,
+                    action_type="message",
+                    messages="answer",
+                    input={},
+                    output={"raw_output": "3 tables: orders, customers, invoices", "is_thinking": True},
+                    status=ActionStatus.SUCCESS,
+                )
+                yield ActionHistory(
+                    action_id="final",
+                    role=ActionRole.ASSISTANT,
+                    action_type="chat_response",
+                    messages="done",
+                    input={},
+                    output={"response": "3 tables: orders, customers, invoices"},
+                    status=ActionStatus.SUCCESS,
+                )
+
+            async def get_last_turn_usage(self):
+                return None
+
+        manager = ChatTaskManager()
+        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        task = ChatTask(session_id="s-post-tool-thinking", asyncio_task=MagicMock())
+
+        await manager._run_loop(
+            task,
+            real_agent_config,
+            StreamChatInput(message="tables", session_id="s-post-tool-thinking"),
+        )
+
+        assistant_messages = [
+            event
+            for event in task.events
+            if event.event == "message"
+            and isinstance(event.data, SSEMessageData)
+            and any(item.type in ("markdown", "thinking") for item in event.data.payload.content)
+        ]
+        assert len(assistant_messages) == 1
+        assistant_text_events = [
+            event
+            for event in assistant_messages
+            if any(
+                item.payload.get("content") == "3 tables: orders, customers, invoices"
+                for item in event.data.payload.content
+            )
+        ]
+        assert len(assistant_text_events) == 1
+
+    @pytest.mark.asyncio
+    async def test_run_loop_dedupes_duplicate_plain_assistant_messages(self, real_agent_config):
+        """Identical visible assistant messages in one turn are emitted once."""
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+        class FakeNode:
+            session_id = "s-plain-dedupe"
+
+            async def execute_stream_with_interactions(self, action_history_manager):
+                for action_id, action_type in (("assistant_1", "message"), ("assistant_2", "response")):
+                    yield ActionHistory(
+                        action_id=action_id,
+                        role=ActionRole.ASSISTANT,
+                        action_type=action_type,
+                        messages="answer",
+                        input={},
+                        output={"raw_output": "3 tables: orders, customers, invoices", "is_thinking": False},
+                        status=ActionStatus.SUCCESS,
+                    )
+
+            async def get_last_turn_usage(self):
+                return None
+
+        manager = ChatTaskManager()
+        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        task = ChatTask(session_id="s-plain-dedupe", asyncio_task=MagicMock())
+
+        await manager._run_loop(task, real_agent_config, StreamChatInput(message="tables", session_id="s-plain-dedupe"))
+
+        assistant_text_events = [
+            event
+            for event in task.events
+            if event.event == "message"
+            and isinstance(event.data, SSEMessageData)
+            and any(
+                item.payload.get("content") == "3 tables: orders, customers, invoices"
+                for item in event.data.payload.content
+            )
+        ]
+        assert len(assistant_text_events) == 1
+
+    @pytest.mark.asyncio
     async def test_stop_task_with_no_node_cancels_asyncio_task(self):
         """stop_task cancels asyncio task when node is not set."""
         manager = ChatTaskManager()

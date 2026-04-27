@@ -29,7 +29,7 @@ from datus.api.models.cli_models import (
 from datus.api.services.action_sse_converter import action_to_sse_event
 from datus.cli.autocomplete import AtReferenceCompleter
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistoryManager
+from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.proxy.proxy_tool import apply_proxy_tools
 from datus.utils.loggings import get_logger
@@ -70,6 +70,69 @@ def _delta_message_id(event: SSEEvent) -> str:
     if isinstance(data, SSEMessageData):
         return data.payload.message_id
     return ""
+
+
+def _has_visible_content(event: SSEEvent) -> bool:
+    if event.event != "message" or not isinstance(event.data, SSEMessageData):
+        return False
+    return any(bool(getattr(item, "payload", {}).get("content")) for item in event.data.payload.content)
+
+
+def _assistant_content_fingerprint(event: SSEEvent) -> str:
+    if event.event != "message" or not isinstance(event.data, SSEMessageData):
+        return ""
+    if event.data.payload.role != "assistant":
+        return ""
+    parts = []
+    for item in event.data.payload.content:
+        if item.type not in {"markdown", "thinking", "code"}:
+            continue
+        payload = getattr(item, "payload", {}) or {}
+        content = payload.get("content")
+        if content:
+            parts.append(str(content).strip())
+    return "\n".join(part for part in parts if part)
+
+
+def _should_skip_duplicate_assistant_message(
+    action,
+    event: SSEEvent,
+    seen_fingerprints: set[str],
+) -> bool:
+    if action.role != ActionRole.ASSISTANT or action.status != ActionStatus.SUCCESS:
+        return False
+    if action.action_type == "thinking_delta":
+        return False
+    if event.event != "message" or not isinstance(event.data, SSEMessageData):
+        return False
+    if event.data.type != SSEDataType.CREATE_MESSAGE:
+        return False
+    fingerprint = _assistant_content_fingerprint(event)
+    return bool(fingerprint and fingerprint in seen_fingerprints)
+
+
+def _remember_assistant_message(event: SSEEvent, seen_fingerprints: set[str]) -> None:
+    fingerprint = _assistant_content_fingerprint(event)
+    if fingerprint:
+        seen_fingerprints.add(fingerprint)
+
+
+def _is_visible_assistant_response(action, event: SSEEvent, *, tool_result_seen: bool) -> bool:
+    """Return True when an action already emitted user-visible assistant text.
+
+    Model providers do not agree on whether final text appears as ``response``,
+    ``message`` or a completed thinking chunk. For web de-duping we care about
+    the observable SSE message: after a tool result, any visible assistant text
+    means the wrapper ``chat_response`` would duplicate it.
+    """
+    if action.role != ActionRole.ASSISTANT or action.status != ActionStatus.SUCCESS:
+        return False
+    if not action.action_type or action.action_type == "thinking_delta" or action.action_type.endswith("_response"):
+        return False
+    if not _has_visible_content(event):
+        return False
+    output = action.output if isinstance(action.output, dict) else {}
+    return tool_result_seen or output.get("is_thinking") is not True
 
 
 def _coalesce_deltas(events: list[SSEEvent]) -> list[SSEEvent]:
@@ -434,6 +497,9 @@ class ChatTaskManager:
             action_history = ActionHistoryManager()
             action_count = 0
             seen_delta_action_ids: set[str] = set()
+            assistant_response_sent = False
+            tool_result_seen = False
+            seen_assistant_message_fingerprints: set[str] = set()
 
             async for action in node.execute_stream_with_interactions(action_history):
                 action_count += 1
@@ -463,10 +529,28 @@ class ChatTaskManager:
                     stream_thinking=effective_stream,
                     is_first_delta=is_first_delta,
                     is_update=bool(is_update),
+                    include_final_response=(
+                        action.role == ActionRole.ASSISTANT
+                        and action.status == ActionStatus.SUCCESS
+                        and bool(action.action_type)
+                        and action.action_type.endswith("_response")
+                        and not assistant_response_sent
+                    ),
                 )
                 if sse:
+                    if _should_skip_duplicate_assistant_message(
+                        action,
+                        sse,
+                        seen_assistant_message_fingerprints,
+                    ):
+                        continue
                     await self._push_event(task, sse)
                     event_id += 1
+                    _remember_assistant_message(sse, seen_assistant_message_fingerprints)
+                    if _is_visible_assistant_response(action, sse, tool_result_seen=tool_result_seen):
+                        assistant_response_sent = True
+                    if action.role == ActionRole.TOOL and action.status != ActionStatus.PROCESSING:
+                        tool_result_seen = True
 
             # 7. End event
             token_kwargs: dict = {}

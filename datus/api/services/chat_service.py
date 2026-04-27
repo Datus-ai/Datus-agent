@@ -25,8 +25,14 @@ from datus.api.models.cli_models import (
     StreamChatInput,
 )
 from datus.api.services.action_sse_converter import action_to_sse_event
+from datus.api.services.chat_task_manager import (
+    _is_visible_assistant_response,
+    _remember_assistant_message,
+    _should_skip_duplicate_assistant_message,
+)
 from datus.configuration.agent_config import AgentConfig
 from datus.models.session_manager import SessionManager, session_matches_agent
+from datus.schemas.action_history import ActionRole, ActionStatus
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -239,13 +245,38 @@ class ChatService:
                 elif role == "assistant":
                     if "actions" in msg:
                         messages = msg["actions"]
+                        assistant_response_seen = False
+                        tool_result_seen = False
+                        seen_assistant_message_fingerprints: set[str] = set()
                         for action in messages:
-                            sse_event = action_to_sse_event(
-                                action, event_id, str(uuid.uuid4()), include_user_message=True
+                            include_final_response = (
+                                action.role == ActionRole.ASSISTANT
+                                and action.status == ActionStatus.SUCCESS
+                                and bool(action.action_type)
+                                and action.action_type.endswith("_response")
+                                and not assistant_response_seen
                             )
-                            event_id += 1
+                            sse_event = action_to_sse_event(
+                                action,
+                                event_id,
+                                str(uuid.uuid4()),
+                                include_user_message=True,
+                                include_final_response=include_final_response,
+                            )
                             if sse_event:
+                                if _should_skip_duplicate_assistant_message(
+                                    action,
+                                    sse_event,
+                                    seen_assistant_message_fingerprints,
+                                ):
+                                    continue
                                 sse_messages.append(sse_event.data.payload)
+                                event_id += 1
+                                _remember_assistant_message(sse_event, seen_assistant_message_fingerprints)
+                                if _is_visible_assistant_response(action, sse_event, tool_result_seen=tool_result_seen):
+                                    assistant_response_seen = True
+                                if action.role == ActionRole.TOOL and action.status != ActionStatus.PROCESSING:
+                                    tool_result_seen = True
                     elif msg.get("content"):
                         sse_messages.append(
                             SSEMessagePayload(

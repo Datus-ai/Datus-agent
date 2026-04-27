@@ -5,7 +5,7 @@
 """Scheduler tools for submitting and managing jobs via Datus scheduler adapters."""
 
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 
 from agents import Tool
 from datus_scheduler_core.models import SchedulerJobPayload
@@ -14,6 +14,7 @@ from datus_scheduler_core.registry import SchedulerAdapterRegistry
 from datus.configuration.agent_config import AgentConfig
 from datus.tools import BaseTool
 from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, trans_to_function_tool
+from datus.tools.func_tool.fs_path_policy import PathZone, classify_path
 from datus.utils.exceptions import DatusException
 from datus.utils.loggings import get_logger
 
@@ -26,10 +27,78 @@ class SchedulerTools(BaseTool):
     tool_name = "scheduler_tools"
     tool_description = "Tools for submitting and managing scheduled jobs via Airflow"
 
-    def __init__(self, agent_config: AgentConfig, scheduler_service: Optional[str] = None, **kwargs):
+    def __init__(
+        self,
+        agent_config: AgentConfig,
+        scheduler_service: Optional[str] = None,
+        *,
+        strict: Optional[bool] = None,
+        **kwargs,
+    ):
+        """
+        Args:
+            strict: When ``True``, SQL file paths outside the project root are
+                rejected with the same fail-closed semantics ``FilesystemFuncTool``
+                uses on EXTERNAL paths. Used by API / gateway surfaces that have
+                no interactive broker. When ``None`` (the default), falls back to
+                ``agent_config.filesystem_strict`` — the process-wide flag that
+                ``ChatTaskManager`` / ``gateway/main.py`` set to ``True`` so every
+                file-touching tool fails closed in server mode without callers
+                having to thread the flag through manually. CLI keeps the
+                permissive default because ``PermissionHooks`` brokers EXTERNAL
+                access interactively. Pass ``True``/``False`` explicitly to
+                override the agent_config default.
+        """
         super().__init__(**kwargs)
         self.agent_config = agent_config
         self.scheduler_service = scheduler_service
+        if strict is None:
+            strict = bool(getattr(agent_config, "filesystem_strict", False))
+        self._strict = strict
+
+    # ── SQL file resolution ───────────────────────────────────────────────
+
+    def _load_sql_content(self, sql_file_path: str) -> Tuple[Optional[str], Optional[FuncToolResult]]:
+        """Resolve and read a SQL file using the same path policy as ``FilesystemFuncTool``.
+
+        Anchors relative paths to ``agent_config.project_root`` so a SQL file
+        produced by ``write_file`` is read back from the same location regardless
+        of process CWD. HIDDEN paths get the same "not found" response
+        ``FilesystemFuncTool`` uses (so ``.datus/sessions/...`` stays invisible).
+        EXTERNAL paths are rejected only in ``strict`` mode.
+
+        Returns:
+            ``(sql_content, None)`` on success, or ``(None, error_result)`` on failure.
+        """
+        try:
+            resolved = classify_path(
+                sql_file_path,
+                root_path=Path(self.agent_config.project_root),
+                current_node=None,
+                datus_home=None,
+            )
+        except Exception as exc:
+            return None, FuncToolResult(success=0, error=f"Failed to resolve SQL file path '{sql_file_path}': {exc}")
+
+        if resolved.zone == PathZone.HIDDEN:
+            return None, FuncToolResult(success=0, error=f"SQL file not found: {resolved.display}")
+        if self._strict and resolved.zone == PathZone.EXTERNAL:
+            return None, FuncToolResult(
+                success=0,
+                error=f"Path outside workspace is not allowed in strict mode: {resolved.display}",
+            )
+
+        sql_path = resolved.resolved
+        try:
+            if not sql_path.exists():
+                return None, FuncToolResult(success=0, error=f"SQL file not found: {resolved.display}")
+            sql_content = sql_path.read_text(encoding="utf-8").strip()
+        except Exception as exc:
+            return None, FuncToolResult(success=0, error=f"Failed to read SQL file '{resolved.display}': {exc}")
+
+        if not sql_content:
+            return None, FuncToolResult(success=0, error=f"SQL file is empty: {resolved.display}")
+        return sql_content, None
 
     def _selected_scheduler_config(self) -> dict:
         return dict(self.agent_config.get_scheduler_config(self.scheduler_service))
@@ -83,16 +152,9 @@ class SchedulerTools(BaseTool):
         Returns:
             FuncToolResult with result containing job_id and status.
         """
-        # Read SQL file
-        try:
-            sql_path = Path(sql_file_path).expanduser()
-            if not sql_path.exists():
-                return FuncToolResult(success=0, error=f"SQL file not found: {sql_file_path}")
-            sql_content = sql_path.read_text(encoding="utf-8").strip()
-            if not sql_content:
-                return FuncToolResult(success=0, error=f"SQL file is empty: {sql_file_path}")
-        except Exception as exc:
-            return FuncToolResult(success=0, error=f"Failed to read SQL file '{sql_file_path}': {exc}")
+        sql_content, err = self._load_sql_content(sql_file_path)
+        if err is not None:
+            return err
 
         # Submit
         try:
@@ -152,15 +214,9 @@ class SchedulerTools(BaseTool):
         Returns:
             FuncToolResult with result containing job_id and status.
         """
-        try:
-            sql_path = Path(sql_file_path).expanduser()
-            if not sql_path.exists():
-                return FuncToolResult(success=0, error=f"SQL file not found: {sql_file_path}")
-            sql_content = sql_path.read_text(encoding="utf-8").strip()
-            if not sql_content:
-                return FuncToolResult(success=0, error=f"SQL file is empty: {sql_file_path}")
-        except Exception as exc:
-            return FuncToolResult(success=0, error=f"Failed to read SQL file '{sql_file_path}': {exc}")
+        sql_content, err = self._load_sql_content(sql_file_path)
+        if err is not None:
+            return err
 
         try:
             adapter = self._get_adapter()
@@ -474,16 +530,9 @@ class SchedulerTools(BaseTool):
         if job_type not in ("sql", "sparksql"):
             return FuncToolResult(success=0, error=f"Unsupported job_type '{job_type}'. Use 'sql' or 'sparksql'.")
 
-        # Read SQL file
-        try:
-            sql_path = Path(sql_file_path).expanduser()
-            if not sql_path.exists():
-                return FuncToolResult(success=0, error=f"SQL file not found: {sql_file_path}")
-            sql_content = sql_path.read_text(encoding="utf-8").strip()
-            if not sql_content:
-                return FuncToolResult(success=0, error=f"SQL file is empty: {sql_file_path}")
-        except Exception as exc:
-            return FuncToolResult(success=0, error=f"Failed to read SQL file '{sql_file_path}': {exc}")
+        sql_content, err = self._load_sql_content(sql_file_path)
+        if err is not None:
+            return err
 
         # Validate conn_id for sql jobs
         if job_type == "sql" and not conn_id:

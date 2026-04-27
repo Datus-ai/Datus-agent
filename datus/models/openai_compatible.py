@@ -953,11 +953,21 @@ class OpenAICompatibleModel(LLMBaseModel):
                 # Track tool calls and results for immediate feedback
                 temp_tool_calls = {}  # {call_id: ActionHistory}
                 early_assistant_yielded = False  # Flag to skip duplicate message_output_item
+                tool_call_seen = False
+                tool_output_seen = False
+                final_assistant_yielded = False
+                last_assistant_text = ""
 
                 # Streaming thinking state: accumulate text deltas for real-time output
                 thinking_stream_id: Optional[str] = None
                 thinking_accumulated = ""
                 placeholder_filter = LitellmPlaceholderStreamFilter()
+
+                def mark_assistant_response(text: str, is_thinking: bool) -> None:
+                    nonlocal final_assistant_yielded, last_assistant_text
+                    last_assistant_text = text
+                    if not is_thinking and (not tool_call_seen or tool_output_seen):
+                        final_assistant_yielded = True
 
                 while not result.is_complete:
                     if interrupt_controller and interrupt_controller.is_interrupted:
@@ -1020,6 +1030,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     )
                                     action_history_manager.add_action(thinking_action)
                                     yield thinking_action
+                                    mark_assistant_response(full_text, is_thinking)
                                     early_assistant_yielded = True
                                 # Reset stream state for next content part
                                 thinking_stream_id = None
@@ -1054,6 +1065,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                                             )
                                             action_history_manager.add_action(thinking_action)
                                             yield thinking_action
+                                            mark_assistant_response(full_text, is_thinking)
                                             early_assistant_yielded = True
                             continue
 
@@ -1067,6 +1079,9 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                         # Handle tool call start
                         if item_type == "tool_call_item":
+                            tool_call_seen = True
+                            if not tool_output_seen:
+                                final_assistant_yielded = False
                             raw_item = getattr(event.item, "raw_item", None)
                             if raw_item:
                                 tool_name = getattr(raw_item, "name", None)
@@ -1113,6 +1128,7 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                         # Handle tool call completion
                         elif item_type == "tool_call_output_item":
+                            tool_output_seen = True
                             raw_item = getattr(event.item, "raw_item", None)
                             output_content = getattr(event.item, "output", "")
 
@@ -1236,6 +1252,26 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     )
                                     action_history_manager.add_action(thinking_action)
                                     yield thinking_action
+                                    mark_assistant_response(text_content, is_thinking)
+
+                final_output = getattr(result, "final_output", "") or ""
+                if not isinstance(final_output, str):
+                    final_output = str(final_output)
+                final_output = strip_litellm_placeholder(final_output.strip())
+                if final_output and not final_assistant_yielded and final_output != last_assistant_text:
+                    final_output_preview = final_output if len(final_output) <= 200 else f"{final_output[:200]}..."
+                    final_action = ActionHistory(
+                        action_id=f"assistant_{uuid.uuid4().hex[:8]}",
+                        role=ActionRole.ASSISTANT,
+                        messages=f"Thinking: {final_output_preview}",
+                        action_type="response",
+                        input={},
+                        output={"raw_output": final_output, "is_thinking": False},
+                        status=ActionStatus.SUCCESS,
+                    )
+                    action_history_manager.add_action(final_action)
+                    yield final_action
+                    mark_assistant_response(final_output, False)
 
                 # Save LLM trace if method exists
                 if hasattr(self, "_save_llm_trace"):

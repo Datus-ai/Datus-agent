@@ -11,6 +11,8 @@ back on every assistant-with-tool_calls turn.
 
 Current patches:
 - Kimi/Moonshot reasoning_content support in Converter.items_to_messages()
+- Chat-style ``text`` block normalization for session replay through Chat
+  Completions providers such as DeepSeek.
 - Kimi/Moonshot + DeepSeek reasoning_content preservation in
   litellm.(a)completion() via a streaming cache fallback.
 
@@ -99,6 +101,49 @@ def _normalize_provider_data(item: Any) -> Any:
     return item_copy
 
 
+def _normalize_text_content_blocks(item: Any) -> Any:
+    """Normalize OpenAI Chat ``text`` blocks to Agents SDK input/output blocks.
+
+    The Agents SDK Chat Completions converter accepts ``input_text`` for input
+    messages and ``output_text`` for response output messages. Session replay can
+    contain OpenAI Chat-style ``{"type": "text", "text": ...}`` blocks, which
+    otherwise raise ``UserError("Unknown content: ...")`` before the model is
+    called.
+    """
+    if not isinstance(item, dict):
+        return item
+
+    replacement_type = (
+        "output_text" if item.get("type") == "message" and item.get("role") == "assistant" else "input_text"
+    )
+    changed = False
+    normalized_item = item
+
+    for key in ("content", "output"):
+        value = item.get(key)
+        if not isinstance(value, list):
+            continue
+
+        normalized_value = []
+        value_changed = False
+        for block in value:
+            if isinstance(block, dict) and block.get("type") == "text" and "text" in block:
+                normalized_block = dict(block)
+                normalized_block["type"] = replacement_type
+                normalized_value.append(normalized_block)
+                value_changed = True
+            else:
+                normalized_value.append(block)
+
+        if value_changed:
+            if not changed:
+                normalized_item = copy.deepcopy(item)
+                changed = True
+            normalized_item[key] = normalized_value
+
+    return normalized_item
+
+
 def _preprocess_items_for_reasoning(
     items: str | Iterable[Any],
     model: str | None,
@@ -119,7 +164,7 @@ def _preprocess_items_for_reasoning(
     if isinstance(items, str):
         return items, normalized_model
 
-    normalized_items = [_normalize_provider_data(item) for item in items]
+    normalized_items = [_normalize_text_content_blocks(_normalize_provider_data(item)) for item in items]
     return normalized_items, normalized_model
 
 
@@ -299,9 +344,7 @@ def apply_sdk_patches() -> None:
         _original_items_to_messages = Converter.items_to_messages.__func__  # type: ignore
 
     Converter.items_to_messages = classmethod(_patched_items_to_messages)  # type: ignore
-    logger.info(
-        "Applied SDK patch: Converter.items_to_messages (Kimi/Moonshot reasoning_content + DeepSeek fallback injection)"
-    )
+    logger.info("Applied SDK patch: Converter.items_to_messages (content-block normalization + reasoning_content)")
 
     # Patch 2: litellm.acompletion wrapper (safety net)
     # Re-applies reasoning_content preservation right before API calls,

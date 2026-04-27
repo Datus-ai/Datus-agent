@@ -25,6 +25,7 @@ from datus.models.sdk_patches import (
     _is_kimi_model,
     _needs_reasoning_injection,
     _normalize_provider_data,
+    _normalize_text_content_blocks,
     _postprocess_messages_for_reasoning,
     _preprocess_items_for_reasoning,
     _reasoning_content_cache,
@@ -216,6 +217,54 @@ class TestPreprocessItemsForReasoning:
         """None model is handled gracefully."""
         result_items, result_model = _preprocess_items_for_reasoning([], None)
         assert result_model is None
+
+    def test_text_blocks_are_normalized_for_chat_completions_converter(self):
+        """Session replay may contain Chat-style text blocks; SDK input expects input_text."""
+        items = [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "hello"}],
+            }
+        ]
+
+        result_items, _ = _preprocess_items_for_reasoning(items, "deepseek/deepseek-v4-flash")
+
+        assert result_items[0]["content"] == [{"type": "input_text", "text": "hello"}]
+        assert items[0]["content"] == [{"type": "text", "text": "hello"}]
+
+    def test_assistant_response_message_text_blocks_are_normalized_to_output_text(self):
+        """Response output messages expect output_text, not input_text."""
+        items = [
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "final answer"}],
+            }
+        ]
+
+        result_items, _ = _preprocess_items_for_reasoning(items, "deepseek/deepseek-v4-flash")
+
+        assert result_items[0]["content"] == [{"type": "output_text", "text": "final answer"}]
+
+
+class TestNormalizeTextContentBlocks:
+    """Tests for _normalize_text_content_blocks."""
+
+    def test_non_dict_item_is_returned_unchanged(self):
+        item = object()
+        assert _normalize_text_content_blocks(item) is item
+
+    def test_item_without_text_blocks_is_returned_unchanged(self):
+        item = {"role": "user", "content": [{"type": "input_text", "text": "hello"}]}
+        assert _normalize_text_content_blocks(item) is item
+
+    def test_tool_output_text_blocks_are_normalized(self):
+        item = {"type": "function_call_output", "output": [{"type": "text", "text": "tool result"}]}
+
+        result = _normalize_text_content_blocks(item)
+
+        assert result["output"] == [{"type": "input_text", "text": "tool result"}]
+        assert item["output"] == [{"type": "text", "text": "tool result"}]
 
 
 class TestReasoningContentStreamWrapper:
@@ -503,6 +552,20 @@ class TestApplyAndRemoveSdkPatches:
         _reasoning_content_cache["test-model"] = "test content"
         remove_sdk_patches()
         assert len(_reasoning_content_cache) == 0
+
+    def test_patched_converter_accepts_session_text_blocks_for_deepseek(self):
+        """Regression for DeepSeek session replay: Chat-style text blocks must not raise Unknown content."""
+        from agents.models.chatcmpl_converter import Converter
+
+        apply_sdk_patches()
+        try:
+            messages = Converter.items_to_messages(
+                [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
+                model="deepseek/deepseek-v4-flash",
+            )
+            assert messages == [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]
+        finally:
+            remove_sdk_patches()
 
     def test_apply_patches_idempotent(self):
         """Calling apply_sdk_patches twice must not re-capture the already-patched

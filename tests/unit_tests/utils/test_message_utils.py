@@ -224,6 +224,134 @@ def test_extract_user_input_type_error_returns_fallback():
 
 
 # ---------------------------------------------------------------------------
+# extract_user_input — provider content-block list shape
+# (Anthropic / OpenAI Responses style, persisted by ClaudeModel OAuth path)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_user_input_anthropic_text_blocks_returns_concatenated_text():
+    """A list of Anthropic ``text`` blocks must collapse to a single str."""
+    blocks = [
+        {"type": "text", "text": "未来两年的趋势是什么？"},
+    ]
+    result = extract_user_input(blocks)
+
+    assert result == "未来两年的趋势是什么？"
+    assert isinstance(result, str)
+
+
+def test_extract_user_input_anthropic_multiple_text_blocks_joined_with_newline():
+    """Multiple ``text`` blocks join with newline so no information is lost."""
+    blocks = [
+        {"type": "text", "text": "first line"},
+        {"type": "text", "text": "second line"},
+    ]
+    result = extract_user_input(blocks)
+
+    assert result == "first line\nsecond line"
+    assert isinstance(result, str)
+
+
+def test_extract_user_input_openai_output_text_block_returns_text():
+    """OpenAI Responses-API ``output_text``/``input_text`` blocks are honoured."""
+    blocks = [
+        {"type": "input_text", "text": "user typed this"},
+        {"type": "output_text", "text": "assistant said this"},
+    ]
+    result = extract_user_input(blocks)
+
+    assert result == "user typed this\nassistant said this"
+    assert isinstance(result, str)
+
+
+def test_extract_user_input_text_block_with_structured_json_extracts_user_part():
+    """Provider text blocks may wrap Datus structured content; titles must show the user text."""
+    structured = build_structured_content(
+        [
+            {"type": "enhanced", "content": "Database Context: mysql"},
+            {"type": "user", "content": "现在有哪些表"},
+        ]
+    )
+    blocks = [{"type": "input_text", "text": structured}]
+
+    result = extract_user_input(blocks)
+
+    assert result == "现在有哪些表"
+    assert "Database Context" not in result
+
+
+def test_extract_user_input_block_list_with_non_text_blocks_skips_them():
+    """Tool-call / tool-result / unrelated blocks are ignored, text is preserved."""
+    blocks = [
+        {"type": "text", "text": "explain"},
+        {"type": "tool_use", "id": "t1", "name": "x", "input": {}},
+        {"type": "tool_result", "tool_use_id": "t1", "content": "ignored"},
+    ]
+    result = extract_user_input(blocks)
+
+    assert result == "explain"
+    assert isinstance(result, str)
+
+
+def test_extract_user_input_block_list_unencoded_user_part_takes_precedence():
+    """A datus ``user`` part stored as a list element returns its content directly."""
+    blocks = [
+        {"type": "text", "text": "noise"},
+        {"type": "user", "content": "原始问题"},
+    ]
+    result = extract_user_input(blocks)
+
+    assert result == "原始问题"
+    assert isinstance(result, str)
+
+
+def test_extract_user_input_empty_list_returns_empty_string():
+    """An empty content list must not raise and must return ``""`` (not the list)."""
+    result = extract_user_input([])
+
+    assert result == ""
+    assert isinstance(result, str)
+
+
+def test_extract_user_input_block_list_with_non_dict_items_is_ignored():
+    """Non-dict items (e.g. raw strings) are skipped without raising."""
+    blocks = [
+        "raw string slipped in",
+        {"type": "text", "text": "real content"},
+        42,
+    ]
+    result = extract_user_input(blocks)
+
+    assert result == "real content"
+    assert isinstance(result, str)
+
+
+def test_extract_user_input_block_list_text_field_non_string_is_skipped():
+    """A block whose ``text`` field is not a string is skipped, not coerced."""
+    blocks = [
+        {"type": "text", "text": ["not", "a", "string"]},
+        {"type": "text", "text": "real text"},
+    ]
+    result = extract_user_input(blocks)
+
+    assert result == "real text"
+    assert isinstance(result, str)
+
+
+def test_extract_user_input_pydantic_compatible_for_chat_session_item_info():
+    """Regression for the warning seen in chat_service.list_sessions:
+
+    ``ChatSessionItemInfo(user_query=extract_user_input(list_content))`` must
+    produce a str, otherwise pydantic raises ``string_type`` validation error.
+    """
+    blocks = [{"type": "text", "text": "anything"}]
+    result = extract_user_input(blocks)
+
+    # Mirror what ChatSessionItemInfo's user_query: Optional[str] enforces.
+    assert isinstance(result, str), f"expected str, got {type(result).__name__}: {result!r}"
+
+
+# ---------------------------------------------------------------------------
 # extract_enhanced_context  (covers lines 86, 92-94)
 # ---------------------------------------------------------------------------
 

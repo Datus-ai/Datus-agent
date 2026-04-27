@@ -53,7 +53,11 @@ def _build_agent_args(args: argparse.Namespace) -> argparse.Namespace:
         max_steps=20,
         workflow="chat_agentic",
         load_cp=None,
-        source="web",
+        # Standalone ``datus --web`` is served by the local backend and is not
+        # hosted inside Datus Studio. Leave source unset so filesystem writes
+        # execute through the backend instead of being proxied to a missing
+        # Studio context.
+        source=None,
         interactive=True,
         output_dir=getattr(args, "output_dir", "./output"),
         log_level="DEBUG" if getattr(args, "debug", False) else "INFO",

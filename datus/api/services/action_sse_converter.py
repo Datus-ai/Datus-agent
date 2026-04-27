@@ -7,7 +7,7 @@ chat-history retrieval can share the same conversion logic.
 
 import json
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from datus.api.models.cli_models import (
     IMessageContent,
@@ -77,22 +77,90 @@ def _build_tool_result_content(action: ActionHistory) -> List[IMessageContent]:
     output_dict = output if isinstance(output, dict) else None
     short_desc = output_dict.get("summary", "") if output_dict else ""
     function_name, _ = _extract_function(action)
+    result_payload = _normalize_tool_result_payload(
+        output=output,
+        status=action.status,
+        fallback_error=action.messages,
+    )
 
     payload_data = {
         "callToolId": action.action_id.removeprefix("complete_"),
         "toolName": function_name,
         "duration": duration,
         "shortDesc": short_desc,
-        "result": output_dict.get("raw_output", output) if output_dict else output,
+        "result": result_payload,
     }
 
-    error_message = output_dict.get("error") if output_dict else None
-    if not error_message and action.status == ActionStatus.FAILED:
-        error_message = action.messages or "Unknown error"
+    error_message = result_payload.get("error")
     if error_message:
         payload_data["error"] = error_message
 
     return [IMessageContent(type="call-tool-result", payload=payload_data)]
+
+
+def _normalize_tool_result_payload(
+    *,
+    output: Any,
+    status: ActionStatus,
+    fallback_error: str = "",
+) -> dict[str, Any]:
+    """Normalize backend tool output to the web-chatbot tool-result contract."""
+    raw_output = output.get("raw_output", output) if isinstance(output, dict) else output
+    raw_result = _parse_json_object(raw_output)
+
+    success = status != ActionStatus.FAILED
+    error = _extract_error(raw_result)
+    direct_error = _extract_error(output)
+    result = raw_result
+
+    if _is_tool_result_envelope(raw_result):
+        result = raw_result.get("result")
+        raw_success = raw_result.get("success")
+        if raw_success in (0, False) or error:
+            success = False
+        elif raw_success in (1, True):
+            success = True
+
+    if direct_error:
+        success = False
+        error = direct_error
+
+    if status == ActionStatus.FAILED:
+        success = False
+        error = error or fallback_error or "Unknown error"
+
+    payload: dict[str, Any] = {
+        "success": 1 if success else 0,
+        "result": result,
+    }
+    if error:
+        payload["error"] = error
+    return payload
+
+
+def _parse_json_object(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return value
+    return parsed if isinstance(parsed, dict) else value
+
+
+def _is_tool_result_envelope(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    if "success" in value or "error" in value:
+        return True
+    return set(value) <= {"result"} and "result" in value
+
+
+def _extract_error(value: Any) -> Optional[str]:
+    if not isinstance(value, dict):
+        return None
+    error = value.get("error")
+    return error.strip() if isinstance(error, str) and error.strip() else None
 
 
 def _build_user_content(action: ActionHistory) -> List[IMessageContent]:
@@ -106,14 +174,16 @@ def _build_user_content(action: ActionHistory) -> List[IMessageContent]:
 def _build_response_content(action: ActionHistory) -> List[IMessageContent]:
     """Build content for final response event."""
     contents = []
-    action_output = action.output
+    action_output = action.output if isinstance(action.output, dict) else {}
     if "sql" in action_output and action_output["sql"]:
         sql = action_output.get("sql")
         sql_payload = {"codeType": "sql", "content": sql}
         contents.append(IMessageContent(type="code", payload=sql_payload))
 
-    resp_payload = {"content": action_output.get("response", "")}
-    contents.append(IMessageContent(type="markdown", payload=resp_payload))
+    response = action_output.get("response") or action_output.get("content") or action_output.get("raw_output") or ""
+    if response:
+        resp_payload = {"content": str(response)}
+        contents.append(IMessageContent(type="markdown", payload=resp_payload))
     return contents
 
 
@@ -245,6 +315,7 @@ def action_to_sse_event(
     stream_thinking: bool = False,
     is_first_delta: bool = True,
     is_update: bool = False,
+    include_final_response: bool = False,
 ) -> Optional[SSEEvent]:
     """Convert an ActionHistory object to an SSEEvent.
 
@@ -268,6 +339,10 @@ def action_to_sse_event(
     is_update : bool
         If True, the event uses UPDATE_MESSAGE to overwrite previously streamed
         deltas with the complete thinking response.
+    include_final_response : bool
+        If True, convert node wrapper actions such as chat_response to markdown.
+        Streaming callers should only set this when no plain assistant response
+        has already been emitted for the turn.
     """
     try:
         role = action.role
@@ -308,7 +383,11 @@ def action_to_sse_event(
         elif (
             role == ActionRole.ASSISTANT and status == ActionStatus.SUCCESS and action.action_type.endswith("_response")
         ):
-            return None  # ignore parsed final response
+            if not include_final_response:
+                return None  # ignore parsed final response
+            contents = _build_response_content(action)
+            if not contents:
+                return None
         elif status == ActionStatus.FAILED:
             contents = _build_error_content(action)
         else:

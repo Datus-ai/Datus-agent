@@ -146,13 +146,14 @@ def _make_raw_other_event():
 # ---------------------------------------------------------------------------
 
 
-def _build_fake_result(events_list):
+def _build_fake_result(events_list, final_output=""):
     """Build a fake Runner.run_streamed result that yields events then marks complete."""
 
     class FakeResult:
         def __init__(self):
             self._events = list(events_list)
             self._consumed = False
+            self.final_output = final_output
 
         @property
         def is_complete(self):
@@ -172,7 +173,7 @@ def _build_fake_result(events_list):
     return FakeResult()
 
 
-async def _collect_actions(events_list) -> List[ActionHistory]:
+async def _collect_actions(events_list, final_output="") -> List[ActionHistory]:
     """Run the streaming method with fake events and collect yielded actions."""
     from datus.models.openai_compatible import OpenAICompatibleModel
 
@@ -192,7 +193,7 @@ async def _collect_actions(events_list) -> List[ActionHistory]:
     model.default_headers = None
     model.base_url = None
 
-    fake_result = _build_fake_result(events_list)
+    fake_result = _build_fake_result(events_list, final_output=final_output)
 
     action_history_manager = ActionHistoryManager()
 
@@ -622,6 +623,39 @@ class TestRawEventEarlyCapture:
 
         assistant_actions = [a for a in actions if a.role == ActionRole.ASSISTANT and a.action_type == "response"]
         assert len(assistant_actions) == 1  # Only one from content_part.done
+
+    @pytest.mark.asyncio
+    async def test_final_output_is_yielded_after_tool_when_not_streamed(self):
+        """If the SDK only exposes post-tool text as final_output, emit it once."""
+        events = [
+            _make_tool_call_event(call_id="call_final", tool_name="list_tables"),
+            _make_tool_output_event(
+                call_id="call_final",
+                output={"success": 1, "error": None, "result": [{"name": "orders"}]},
+            ),
+        ]
+
+        actions = await _collect_actions(events, final_output="There is 1 table: orders.")
+
+        assistant_actions = [a for a in actions if a.role == ActionRole.ASSISTANT and a.action_type == "response"]
+        assert len(assistant_actions) == 1
+        assert assistant_actions[0].output["raw_output"] == "There is 1 table: orders."
+        assert assistant_actions[0].output["is_thinking"] is False
+
+    @pytest.mark.asyncio
+    async def test_final_output_not_duplicated_when_post_tool_message_streamed(self):
+        """A streamed post-tool assistant message suppresses the final_output fallback."""
+        events = [
+            _make_tool_call_event(call_id="call_final", tool_name="list_tables"),
+            _make_tool_output_event(call_id="call_final"),
+            _make_message_event("There is 1 table: orders."),
+        ]
+
+        actions = await _collect_actions(events, final_output="There is 1 table: orders.")
+
+        assistant_actions = [a for a in actions if a.role == ActionRole.ASSISTANT and a.action_type == "response"]
+        assert len(assistant_actions) == 1
+        assert assistant_actions[0].output["raw_output"] == "There is 1 table: orders."
 
     @pytest.mark.asyncio
     async def test_thinking_delta_stream_id_shared(self):
