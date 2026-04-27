@@ -61,7 +61,11 @@ def _build_tool_call_content(action: ActionHistory) -> List[IMessageContent]:
 
 
 def _build_tool_result_content(action: ActionHistory) -> List[IMessageContent]:
-    """Build content for tool call completed event."""
+    """Build content for tool call completed event.
+
+    When the tool failed, the payload includes an `error` field so the frontend
+    can render the matching call-tool card in a failure state.
+    """
     output = action.output
 
     start_time = action.start_time
@@ -81,6 +85,13 @@ def _build_tool_result_content(action: ActionHistory) -> List[IMessageContent]:
         "shortDesc": short_desc,
         "result": output_dict.get("raw_output", output) if output_dict else output,
     }
+
+    error_message = output_dict.get("error") if output_dict else None
+    if not error_message and action.status == ActionStatus.FAILED:
+        error_message = action.messages or "Unknown error"
+    if error_message:
+        payload_data["error"] = error_message
+
     return [IMessageContent(type="call-tool-result", payload=payload_data)]
 
 
@@ -189,7 +200,11 @@ def _build_interaction_content(action: ActionHistory) -> List[IMessageContent]:
 
 
 def _build_subagent_complete_content(action: ActionHistory) -> List[IMessageContent]:
-    """Build content for sub-agent completion summary event."""
+    """Build content for sub-agent completion summary event.
+
+    When the sub-agent failed, the payload includes an `error` field so the
+    frontend can render the matching subagent card in a failure state.
+    """
     output = action.output if isinstance(action.output, dict) else {}
     duration = (action.end_time - action.start_time).total_seconds() if action.start_time and action.end_time else 0.0
     payload_data = {
@@ -197,6 +212,13 @@ def _build_subagent_complete_content(action: ActionHistory) -> List[IMessageCont
         "toolCount": output.get("tool_count", 0),
         "duration": duration,
     }
+
+    error_message = output.get("error")
+    if not error_message and action.status == ActionStatus.FAILED:
+        error_message = action.messages or "Unknown error"
+    if error_message:
+        payload_data["error"] = error_message
+
     return [IMessageContent(type="subagent-complete", payload=payload_data)]
 
 
@@ -265,8 +287,6 @@ def action_to_sse_event(
             if not is_first_delta:
                 sse_type = SSEDataType.APPEND_MESSAGE
             contents = [IMessageContent(type="thinking", payload={"content": delta_text})]
-        elif status == ActionStatus.FAILED:
-            contents = _build_error_content(action)
         elif action.action_type == SUBAGENT_COMPLETE_ACTION_TYPE:
             contents = _build_subagent_complete_content(action)
         elif role == ActionRole.TOOL and status == ActionStatus.PROCESSING:
@@ -289,6 +309,8 @@ def action_to_sse_event(
             role == ActionRole.ASSISTANT and status == ActionStatus.SUCCESS and action.action_type.endswith("_response")
         ):
             return None  # ignore parsed final response
+        elif status == ActionStatus.FAILED:
+            contents = _build_error_content(action)
         else:
             contents = _build_thinking_content(action)
             if contents is None:
