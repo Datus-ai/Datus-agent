@@ -634,6 +634,64 @@ class TestPasteCollapse:
         assert dim.preferred == 3
         assert dim.max == 15
 
+    def test_dynamic_height_includes_wrapped_lines(self, tui_app: DatusApp, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Visual rows count wrapped segments, not just hard newlines."""
+        from prompt_toolkit.document import Document
+
+        # Pin a narrow terminal so wrap math is deterministic.
+        monkeypatch.setattr(tui_app, "_terminal_columns", lambda: 20)
+        # Prompt "> " is 2 cells -> first line usable = 18; others = 20.
+
+        # Single hard line of 50 chars: first segment ceil(50/18)=3 rows.
+        tui_app.input_buffer.document = Document("a" * 50)
+        dim = tui_app._get_input_height()
+        assert dim.preferred == 3
+
+        # Mixed: long first line + short second + long third line.
+        # Line 1: 40 chars, usable 18 -> ceil(40/18)=3.
+        # Line 2: "ok" -> 1.
+        # Line 3: 25 chars, usable 20 -> ceil(25/20)=2.
+        tui_app.input_buffer.document = Document(("a" * 40) + "\nok\n" + ("b" * 25))
+        dim = tui_app._get_input_height()
+        assert dim.preferred == 6
+
+        # Wide / CJK characters take 2 cells each.
+        # 12 CJK chars = 24 cells; usable 18 -> ceil(24/18)=2.
+        tui_app.input_buffer.document = Document("中" * 12)
+        dim = tui_app._get_input_height()
+        assert dim.preferred == 2
+
+        # Cap stays at 15 even with very long input.
+        tui_app.input_buffer.document = Document("a" * 10000)
+        dim = tui_app._get_input_height()
+        assert dim.preferred == 15
+        assert dim.max == 15
+
+    def test_visual_line_count_handles_empty_buffer(self, tui_app: DatusApp) -> None:
+        """Empty input still occupies one visual row."""
+        assert tui_app._input_visual_line_count() == 1
+
+    def test_input_prompt_display_width_counts_wide_chars(self, tui_app: DatusApp) -> None:
+        """Prompt width must use cwidth so CJK prompts are not undercounted."""
+        # Default prompt is "> " -> 2 cells.
+        assert tui_app._input_prompt_display_width() == 2
+
+        tui_app._input_prompt_fn = lambda: "中> "
+        # "中" = 2 cells, "> " = 2 cells.
+        assert tui_app._input_prompt_display_width() == 4
+
+    def test_terminal_columns_falls_back_to_shutil(self, tui_app: DatusApp, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When the Application output reports zero columns, use shutil."""
+        from prompt_toolkit.data_structures import Size
+
+        # Force the primary path (Application.output) to report a useless size
+        # so the shutil fallback runs.
+        monkeypatch.setattr(tui_app._app.output, "get_size", lambda: Size(rows=24, columns=0))
+        import shutil
+
+        monkeypatch.setattr(shutil, "get_terminal_size", lambda fallback=(80, 24): Size(rows=fallback[1], columns=42))
+        assert tui_app._terminal_columns() == 42
+
     def test_clear_paste_state_method(self, tui_app: DatusApp) -> None:
         tui_app._stored_paste = "some text"
         tui_app._paste_collapsed = True

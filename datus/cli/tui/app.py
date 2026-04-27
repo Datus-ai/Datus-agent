@@ -54,6 +54,7 @@ from prompt_toolkit.layout.menus import CompletionsMenuControl
 from prompt_toolkit.lexers import Lexer
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
+from prompt_toolkit.utils import get_cwidth
 from prompt_toolkit.widgets import TextArea
 
 from datus.cli.cli_styles import PASTE_COLLAPSE_THRESHOLD
@@ -272,6 +273,75 @@ class DatusApp:
         """Current row ceiling for the pinned region (terminal-aware)."""
         return compute_pinned_max_rows(self._terminal_rows())
 
+    def _terminal_columns(self) -> int:
+        """Best-effort current terminal column count.
+
+        Mirrors :meth:`_terminal_rows`: prefer the live ``Application.output``
+        (resize-aware), fall back to ``shutil.get_terminal_size`` and finally
+        a sane default. Used by :meth:`_input_visual_line_count` so the input
+        bar grows when long text wraps onto extra visual rows.
+        """
+        app = getattr(self, "_app", None)
+        if app is not None:
+            try:
+                size = app.output.get_size()
+                if size and size.columns > 0:
+                    return int(size.columns)
+            except Exception:  # pragma: no cover - defensive
+                pass
+        try:
+            import shutil
+
+            size = shutil.get_terminal_size(fallback=(80, 24))
+            return int(size.columns)
+        except Exception:  # pragma: no cover - defensive
+            return 80
+
+    def _input_prompt_display_width(self) -> int:
+        """Display width (in cells) of the rendered input prompt.
+
+        Walks the FormattedText fragments returned by :meth:`_get_input_prompt`
+        and sums :func:`get_cwidth` per character so wide / CJK glyphs are
+        accounted for. Used to subtract the prompt cells from the first visual
+        line's available width when computing wrap counts.
+        """
+        try:
+            fragments = self._get_input_prompt()
+        except Exception:  # pragma: no cover - defensive
+            return 0
+        width = 0
+        for fragment in fragments:
+            try:
+                _, text = fragment[0], fragment[1]
+            except (IndexError, TypeError):  # pragma: no cover - defensive
+                continue
+            for ch in text:
+                width += get_cwidth(ch)
+        return width
+
+    def _input_visual_line_count(self) -> int:
+        """Rows the input would occupy after wrapping at the current width.
+
+        Splits the buffer text on hard newlines and, for each segment,
+        ceil-divides its display width by the available column count
+        (full terminal width minus the prompt width on the first segment).
+        Empty hard lines still count as one row, matching prompt_toolkit's
+        own renderer.
+        """
+        try:
+            text = self._input_area.buffer.text
+        except AttributeError:  # pragma: no cover - defensive
+            return 1
+        columns = max(self._terminal_columns(), 1)
+        prompt_width = self._input_prompt_display_width()
+        total = 0
+        for idx, line in enumerate(text.split("\n")):
+            usable = columns - (prompt_width if idx == 0 else 0)
+            usable = max(usable, 1)
+            line_width = sum(get_cwidth(ch) for ch in line)
+            total += max(1, -(-line_width // usable))
+        return max(total, 1)
+
     def _pinned_height_dimension(self) -> Dimension:
         """Height dimension callback for the pinned Window.
 
@@ -317,11 +387,8 @@ class DatusApp:
     # -- public API --------------------------------------------------------
 
     def _get_input_height(self) -> Dimension:
-        try:
-            line_count = self._input_area.buffer.document.line_count
-        except AttributeError:
-            line_count = 1
-        preferred = min(line_count, 15)
+        visual_lines = self._input_visual_line_count()
+        preferred = min(visual_lines, 15)
         return Dimension(min=1, preferred=max(preferred, 1), max=15)
 
     @staticmethod
