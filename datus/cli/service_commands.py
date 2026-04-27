@@ -253,17 +253,16 @@ class ServiceCommands:
             print_error(self.cli.console, f"Failed to delete `{sel.name}`: {exc}", prefix=False)
             return f"Delete `{sel.name}` failed."
         # Clear the project-level default if it pointed at the deleted entry.
-        # Semantic layers don't yet expose a project-level default API,
-        # so skip the cleanup for that section.
-        if sel.section in ("bi_platforms", "schedulers"):
-            active_attr = "active_dashboard" if sel.section == "bi_platforms" else "active_scheduler"
-            active_fn = getattr(self.cli.agent_config, active_attr, None)
+        active_map = {
+            "bi_platforms": ("active_dashboard", "set_active_dashboard"),
+            "schedulers": ("active_scheduler", "set_active_scheduler"),
+            "semantic_layer": ("active_semantic", "set_active_semantic"),
+        }
+        if sel.section in active_map:
+            getter_name, setter_name = active_map[sel.section]
+            active_fn = getattr(self.cli.agent_config, getter_name, None)
             if callable(active_fn) and active_fn() == sel.name:
-                setter = getattr(
-                    self.cli.agent_config,
-                    "set_active_dashboard" if sel.section == "bi_platforms" else "set_active_scheduler",
-                    None,
-                )
+                setter = getattr(self.cli.agent_config, setter_name, None)
                 if callable(setter):
                     setter(None)
         self._reload_agent_config()
@@ -278,34 +277,37 @@ class ServiceCommands:
         print_error(self.cli.console, f"Probe failed for `{sel.name}`: {msg}", prefix=False)
         return f"Probe failed for `{sel.name}`: {msg}"
 
+    _SET_DEFAULT_SECTIONS = ("bi_platforms", "schedulers", "semantic_layer")
+
     def _do_set_global_default(self, sel: ServiceConfigSelection) -> Optional[str]:
         from datus.configuration.agent_config_loader import configuration_manager
 
-        if sel.section != "schedulers":
+        if sel.section not in self._SET_DEFAULT_SECTIONS:
             return None
+        label = service_type_label(sel.section)
         mgr = configuration_manager()
         services = dict(mgr.get("services", {}) or {})
-        schedulers = dict(services.get("schedulers", {}) or {})
-        if sel.name not in schedulers:
-            print_warning(self.cli.console, f"`{sel.name}` not found in `services.schedulers`.")
+        section_dict = dict(services.get(sel.section, {}) or {})
+        if sel.name not in section_dict:
+            print_warning(self.cli.console, f"`{sel.name}` not found in `services.{sel.section}`.")
             return f"`{sel.name}` not found."
-        for name, raw in schedulers.items():
+        for name, raw in section_dict.items():
             if not isinstance(raw, dict):
                 continue
             if name == sel.name:
                 raw["default"] = True
             else:
                 raw.pop("default", None)
-            schedulers[name] = raw
-        services["schedulers"] = schedulers
+            section_dict[name] = raw
+        services[sel.section] = section_dict
         try:
             mgr.update_item("services", services, save=True)
         except Exception as exc:
-            print_error(self.cli.console, f"Failed to set default scheduler: {exc}", prefix=False)
+            print_error(self.cli.console, f"Failed to set default {label}: {exc}", prefix=False)
             return f"Set default `{sel.name}` failed."
         self._reload_agent_config()
-        print_success(self.cli.console, f"`{sel.name}` is now the global default scheduler.", symbol=True)
-        return f"`{sel.name}` set as global default."
+        print_success(self.cli.console, f"`{sel.name}` is now the global default {label}.", symbol=True)
+        return f"`{sel.name}` set as global default {label}."
 
     def _do_set_project_default(self, sel: ServiceConfigSelection) -> Optional[str]:
         if sel.section == "bi_platforms":
@@ -314,6 +316,9 @@ class ServiceCommands:
         elif sel.section == "schedulers":
             setter = getattr(self.cli.agent_config, "set_active_scheduler", None)
             label = "scheduler"
+        elif sel.section == "semantic_layer":
+            setter = getattr(self.cli.agent_config, "set_active_semantic", None)
+            label = "semantic layer"
         else:
             return None
         if not callable(setter):

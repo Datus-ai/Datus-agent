@@ -68,11 +68,25 @@ agent:
 
 ## 选择规则
 
-- `bi_platform` 决定使用 `services.bi_platforms` 中的哪一条。
-- 配置 key 应与平台名一致（`superset`、`grafana`、…）。
-- 若 `bi_platform` 留空，Datus 会先读 `./.datus/config.yml` 的 `dashboard:`
-  字段（项目级别 pin），再退回到「唯一条目自动选」规则。
-- 若配置了多个 BI 平台、且没有项目级 pin，调用处必须显式传 `bi_platform`。
+`BIFuncTool._resolved_platform` 解析活动 BI 服务的顺序与 Scheduler / Semantic 完全一致:
+
+1. 调用处显式传入的 `bi_service`(或 agentic node 上的 `bi_platform`)。
+2. `./.datus/config.yml` 中的项目级 pin —— `dashboard:` 字段。
+3. YAML 中的全局 `default: true` 标志:整个 `services.bi_platforms` 中至多一条可标 default,多于一条会在配置加载阶段直接报错,以避免静默选错。
+4. 单条快捷:仅有一条 BI 服务时,自动使用它。
+5. 否则抛 `Multiple BI platforms configured`,提示设置默认值。
+
+YAML 中标记全局默认:
+
+```yaml
+agent:
+  services:
+    bi_platforms:
+      superset:
+        type: superset
+        default: true     # 全局默认:在没有项目级 pin 时被选用
+        ...
+```
 
 ## 通过 CLI 配置（`/services`）
 
@@ -84,9 +98,12 @@ tab；`/services scheduler` 直接落到 Scheduler tab；`/services list` 退回
   时若对应 adapter 包（`datus-bi-superset` / `datus-bi-grafana` …）尚未安
   装，Datus 会自动 `pip install` 并热加载 registry，**无需重启**。
 - `e` 编辑凭据，`x` 删除条目，`t` 触发一次连通性 probe。
-- `p` 把当前光标项设为项目级 default。pin 会写到 `./.datus/config.yml` 的
-  `dashboard: <name>` 字段，仅对当前项目生效，优先级高于「自动唯一项」规则。
+- `d` 把当前光标项设为**全局** `default: true` 并清空其他条目的 default,确保不会出现两个默认。
+- `p` 把当前光标项设为**项目级** default。pin 会写到 `./.datus/config.yml` 的
+  `dashboard: <name>` 字段，仅对当前项目生效，优先级高于全局 default。
   在已 pin 的行上再按一次 `p` 清除。
+
+首次进入交互式 REPL 时,Datus 会对每个 section 自动跑一遍 bootstrap:若该 section 还没有项目级 pin,而 YAML 中能解析出明确的默认值(单条快捷或唯一标 `default: true` 的条目),Datus 会自动写入项目级 pin,把隐式选择固化为显式选择。如果配置了多条但都未标 default,启动时会弹出一个轻量选择器让你当场选择。
 
 service 定义会写入 `~/.datus/conf/agent.yml`，跨项目共享凭据；只有 active
 选择属于项目级。

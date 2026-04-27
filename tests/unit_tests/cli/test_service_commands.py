@@ -1191,24 +1191,91 @@ class TestTestAndDefaultEdgeCases:
         assert committed["stale_token"] == "not-a-dict"
         assert committed["airflow"]["default"] is True
 
-    def test_set_global_default_only_for_schedulers_section(self):
-        """Calling ``set_default`` with a ``bi_platforms`` section is a no-op."""
+    def test_set_global_default_works_for_bi_platforms(self):
+        """``set_default`` is now generic across BI / Scheduler / Semantic.
+        For bi_platforms, the YAML ``default`` flag flips on the chosen
+        entry and clears from the others, mirroring the scheduler test
+        above."""
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cmd, _ = _make_commands_with_bi_stub()
+        mgr = MagicMock()
+        mgr.get = MagicMock(
+            return_value={
+                "bi_platforms": {
+                    "superset": {"type": "superset", "default": True},
+                    "grafana": {"type": "grafana"},
+                }
+            }
+        )
+        with (
+            patch("datus.configuration.agent_config_loader.configuration_manager", return_value=mgr),
+            patch.object(ServiceCommands, "_reload_agent_config"),
+        ):
+            cmd._apply_selection(ServiceConfigSelection(action="set_default", section="bi_platforms", name="grafana"))
+        mgr.update_item.assert_called_once()
+        committed = mgr.update_item.call_args.args[1]["bi_platforms"]
+        assert committed["grafana"]["default"] is True
+        assert "default" not in committed["superset"]
+
+    def test_set_global_default_works_for_semantic_layer(self):
+        """Same generic pathway for semantic_layer."""
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cmd, _ = _make_commands_with_bi_stub()
+        mgr = MagicMock()
+        mgr.get = MagicMock(
+            return_value={
+                "semantic_layer": {
+                    "metricflow": {"type": "metricflow", "default": True},
+                    "dbt": {"type": "dbt"},
+                }
+            }
+        )
+        with (
+            patch("datus.configuration.agent_config_loader.configuration_manager", return_value=mgr),
+            patch.object(ServiceCommands, "_reload_agent_config"),
+        ):
+            cmd._apply_selection(ServiceConfigSelection(action="set_default", section="semantic_layer", name="dbt"))
+        mgr.update_item.assert_called_once()
+        committed = mgr.update_item.call_args.args[1]["semantic_layer"]
+        assert committed["dbt"]["default"] is True
+        assert "default" not in committed["metricflow"]
+
+    def test_set_global_default_unknown_section_returns_none(self):
         from datus.cli.service_config_app import ServiceConfigSelection
 
         cmd, _ = _make_commands_with_bi_stub()
         with patch("datus.configuration.agent_config_loader.configuration_manager") as mgr_factory:
-            result = cmd._apply_selection(
-                ServiceConfigSelection(action="set_default", section="bi_platforms", name="x")
-            )
+            result = cmd._apply_selection(ServiceConfigSelection(action="set_default", section="datasources", name="x"))
         assert result is None
         mgr_factory.assert_not_called()
+
+    def test_set_project_default_for_semantic_layer(self):
+        """semantic_layer is now wired into ``_do_set_project_default``;
+        the section's ``set_active_semantic`` setter must be invoked with
+        the chosen name."""
+        from datus.cli.service_config_app import ServiceConfigSelection
+
+        cli = _fake_cli()
+        setter = MagicMock()
+        cli.agent_config = SimpleNamespace(
+            services=SimpleNamespace(bi_platforms={}, schedulers={}, semantic_layer={}),
+            set_active_semantic=setter,
+        )
+        cmd = ServiceCommands(cli)
+        result = cmd._apply_selection(
+            ServiceConfigSelection(action="set_project_default", section="semantic_layer", name="metricflow")
+        )
+        setter.assert_called_once_with("metricflow")
+        assert result and "metricflow" in result
 
     def test_set_project_default_unknown_section_returns_none(self):
         from datus.cli.service_config_app import ServiceConfigSelection
 
         cmd, _ = _make_commands_with_bi_stub()
         result = cmd._apply_selection(
-            ServiceConfigSelection(action="set_project_default", section="semantic_layer", name="x")
+            ServiceConfigSelection(action="set_project_default", section="datasources", name="x")
         )
         assert result is None
 

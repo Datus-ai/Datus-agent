@@ -247,7 +247,10 @@ class ServiceConfigApp:
                 _Entry(
                     name=name,
                     adapter_type=adapter_type,
-                    is_default=(len(dashboards) == 1),
+                    # ``is_default`` reflects the explicit YAML flag — the
+                    # single-entry shortcut is an implicit fallback handled
+                    # by the resolver, not a label we want to surface.
+                    is_default=bool(getattr(cfg, "default", False)),
                     is_project_default=(name == active),
                     raw=raw,
                 )
@@ -279,6 +282,8 @@ class ServiceConfigApp:
         # safe — every entry maps a YAML key (e.g. ``metricflow``) to a
         # dict whose ``type`` field equals that key.
         services = getattr(self._cfg, "semantic_layer_configs", {}) or {}
+        active_fn = getattr(self._cfg, "active_semantic", None)
+        active = active_fn() if callable(active_fn) else None
         out: List[_Entry] = []
         for name in sorted(services.keys()):
             cfg = dict(services[name])
@@ -287,8 +292,8 @@ class ServiceConfigApp:
                 _Entry(
                     name=name,
                     adapter_type=adapter_type,
-                    is_default=(len(services) == 1),
-                    is_project_default=False,
+                    is_default=bool(cfg.get("default")),
+                    is_project_default=(name == active),
                     raw=cfg,
                 )
             )
@@ -416,15 +421,18 @@ class ServiceConfigApp:
     def _render_footer_hint(self) -> List[Tuple[str, str]]:
         if self._view == _View.LIST:
             if self._tab == _Tab.SEMANTIC:
-                # No `e edit` / `p project default` — metricflow has no
-                # editable parameters and semantic layers don't yet
-                # support project-level defaults.
-                base = "  \u2191\u2193 navigate   \u21b5 open   x delete   t test   Tab switch   Esc cancel"
+                # ``e edit`` is hidden on this tab — metricflow has no
+                # editable fields. ``d`` / ``p`` work the same as on the
+                # other tabs.
+                base = (
+                    "  \u2191\u2193 navigate   \u21b5 open   x delete   t test   "
+                    "d global default   p project default   Tab switch   Esc cancel"
+                )
             else:
-                base = "  \u2191\u2193 navigate   \u21b5 open   e edit   x delete   t test   p project default"
-                if self._tab == _Tab.SCHEDULER:
-                    base += "   d global default"
-                base += "   Tab switch   Esc cancel"
+                base = (
+                    "  \u2191\u2193 navigate   \u21b5 open   e edit   x delete   t test   "
+                    "d global default   p project default   Tab switch   Esc cancel"
+                )
         elif self._view == _View.TYPE_PICKER:
             base = "  \u2191\u2193 navigate   \u21b5 select   Esc back"
         else:
@@ -444,7 +452,7 @@ class ServiceConfigApp:
             if i < len(entries):
                 entry = entries[i]
                 marker = "*" if entry.is_project_default else " "
-                default_tag = " [default]" if entry.is_default and self._tab == _Tab.SCHEDULER else ""
+                default_tag = " [default]" if entry.is_default else ""
                 label = f"{marker} {entry.name:<22} {entry.adapter_type:<14}{default_tag}"
                 style = CLR_CURRENT if entry.is_project_default else ""
             else:
@@ -760,12 +768,14 @@ class ServiceConfigApp:
             self._app.exit(result=self._result)
 
     def _on_set_default(self) -> None:
-        if self._tab != _Tab.SCHEDULER:
-            return
         entries = self._entries_for(self._tab)
         if 0 <= self._list_cursor < len(entries):
             entry = entries[self._list_cursor]
-            self._result = ServiceConfigSelection(action="set_default", section="schedulers", name=entry.name)
+            self._result = ServiceConfigSelection(
+                action="set_default",
+                section=self._tab_section(),
+                name=entry.name,
+            )
             self._app.exit(result=self._result)
 
     def _on_set_project_default(self) -> None:
@@ -776,11 +786,6 @@ class ServiceConfigApp:
         is *already* the project default exits with the same action and
         an empty ``name`` so :class:`ServiceCommands` clears the override.
         """
-        # Semantic layers don't yet have a project-level default API on
-        # ``AgentConfig`` — silently ignore ``p`` on this tab so users
-        # don't get a misleading "saved" status.
-        if self._tab == _Tab.SEMANTIC:
-            return
         entries = self._entries_for(self._tab)
         if not (0 <= self._list_cursor < len(entries)):
             return
@@ -807,7 +812,6 @@ class ServiceConfigApp:
         is_list = Condition(lambda: self._view == _View.LIST)
         is_type = Condition(lambda: self._view == _View.TYPE_PICKER)
         is_form = Condition(lambda: self._view == _View.FORM)
-        is_scheduler_list = Condition(lambda: self._view == _View.LIST and self._tab == _Tab.SCHEDULER)
 
         @kb.add("up", filter=is_list)
         def _(event):
@@ -846,7 +850,7 @@ class ServiceConfigApp:
         def _(event):
             self._on_test()
 
-        @kb.add("d", filter=is_scheduler_list)
+        @kb.add("d", filter=is_list)
         def _(event):
             self._on_set_default()
 

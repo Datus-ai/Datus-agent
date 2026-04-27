@@ -67,6 +67,12 @@ two-tab TUI lets you:
 Service definitions are written to `~/.datus/conf/agent.yml` (shared across
 projects); only the active selection is project-local.
 
+On the first interactive launch, if no project pin exists, Datus
+auto-pins the only entry (or the one flagged `default: true`) to
+`./.datus/config.yml` so subsequent runs are explicit. When multiple
+entries are configured without a default, the launch prompts for a quick
+choice. Set `DATUS_DISABLE_SERVICE_BOOTSTRAP=1` to opt out (CI / Docker).
+
 ## Notes
 
 - `services.schedulers` is now the only runtime source for scheduler config.

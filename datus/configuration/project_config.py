@@ -25,6 +25,10 @@ pin a handful of values without copying the full config:
   ``AgentConfig.get_scheduler_config`` when no explicit ``scheduler_service``
   is passed at the call site. Takes precedence over the global
   ``default: true`` flag in ``agent.yml``.
+- ``semantic``: project-level default semantic adapter (must match a key
+  under ``agent.services.semantic_layer``). Resolved by
+  ``AgentConfig.resolve_semantic_adapter`` between the explicit
+  ``adapter_type`` argument and the global ``default: true`` flag.
 - ``project_name``: shard name for ``~/.datus/sessions/{project_name}/``
   and ``~/.datus/data/{project_name}/`` (optional)
 - ``reasoning_effort``: one of ``off|minimal|low|medium|high`` — controls the
@@ -53,6 +57,7 @@ ALLOWED_KEYS = frozenset(
         "default_datasource",
         "dashboard",
         "scheduler",
+        "semantic",
         "project_name",
         "language",
         "reasoning_effort",
@@ -91,6 +96,7 @@ class ProjectOverride:
     default_datasource: Optional[str] = None
     dashboard: Optional[str] = None
     scheduler: Optional[str] = None
+    semantic: Optional[str] = None
     project_name: Optional[str] = None
     language: Optional[str] = None
     reasoning_effort: Optional[str] = None
@@ -101,6 +107,7 @@ class ProjectOverride:
             and self.default_datasource is None
             and self.dashboard is None
             and self.scheduler is None
+            and self.semantic is None
             and self.project_name is None
             and self.language is None
             and self.reasoning_effort is None
@@ -175,6 +182,7 @@ def load_project_override(cwd: Optional[str] = None) -> Optional[ProjectOverride
         default_datasource=raw.get("default_datasource"),
         dashboard=_parse_optional_string(raw.get("dashboard"), key="dashboard"),
         scheduler=_parse_optional_string(raw.get("scheduler"), key="scheduler"),
+        semantic=_parse_optional_string(raw.get("semantic"), key="semantic"),
         project_name=raw.get("project_name"),
         language=raw.get("language"),
         reasoning_effort=_parse_reasoning_effort(raw.get("reasoning_effort")),
@@ -250,6 +258,7 @@ def save_project_override(override: ProjectOverride, cwd: Optional[str] = None) 
             "default_datasource": override.default_datasource,
             "dashboard": override.dashboard,
             "scheduler": override.scheduler,
+            "semantic": override.semantic,
             "project_name": override.project_name,
             "language": override.language,
             "reasoning_effort": override.reasoning_effort,

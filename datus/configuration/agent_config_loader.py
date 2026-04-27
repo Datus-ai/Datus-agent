@@ -280,6 +280,8 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
         agent_raw["active_dashboard"] = override.dashboard
     if override.scheduler is not None:
         agent_raw["active_scheduler"] = override.scheduler
+    if override.semantic is not None:
+        agent_raw["active_semantic"] = override.semantic
 
 
 def load_agent_config(reload: bool = False, create_if_missing: bool = False, **kwargs) -> AgentConfig:

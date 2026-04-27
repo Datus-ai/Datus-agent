@@ -180,14 +180,21 @@ agent:
         username: ${STARROCKS_USER}
         password: ${STARROCKS_PASSWORD}
         database: ${STARROCKS_DATABASE}
+    # Default selection across BI / Scheduler / Semantic follows one rule:
+    # explicit call-site arg → ``./.datus/config.yml`` project pin → YAML
+    # ``default: true`` flag → single-entry shortcut → raise on ambiguity.
+    # Mark at most one entry per section with ``default: true``.
     semantic_layer:
       metricflow: {}
+      # metricflow:                 # alternative: pin as global default
+      #   default: true
     bi_platforms:
       superset:
         type: superset
         api_base_url: http://localhost:8088
         username: admin
         password: admin
+        # default: true             # uncomment to make this the global default BI
         extra: # Special configurations for different platforms
           provider: db
     schedulers:
@@ -197,6 +204,7 @@ agent:
         api_base_url: http://localhost:8080/api/v1
         username: ${AIRFLOW_USERNAME}
         password: ${AIRFLOW_PASSWORD}
+        # default: true             # uncomment to make this the global default scheduler
         dags_folder: /path/to/airflow/dags
         dag_discovery_timeout: 60
         dag_discovery_poll_interval: 5

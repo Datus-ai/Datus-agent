@@ -60,6 +60,8 @@ tab（裸 `/services` 落在 Dashboard tab；`/services list` 退回只读列表
 service 定义会写入 `~/.datus/conf/agent.yml`，跨项目共享；只有 active 选择
 属于项目级。
 
+首次进入交互式 REPL 时,Datus 会对该 section 跑一遍 bootstrap:若尚无项目级 pin,而能从 YAML 中解析出明确的默认值(单条快捷或唯一标 `default: true` 的条目),Datus 会自动写入项目级 pin。若配置了多条但都未标 default,启动时会弹出一个轻量选择器。CI / Docker 等无人值守环境可设置 `DATUS_DISABLE_SERVICE_BOOTSTRAP=1` 关闭。
+
 ## 注意
 
 - `services.schedulers` 是 scheduler 配置唯一的运行时来源。

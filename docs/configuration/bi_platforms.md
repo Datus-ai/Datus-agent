@@ -72,13 +72,31 @@ by name.
 
 ## Selection rules
 
-- `bi_platform` selects one entry from `services.bi_platforms`.
-- The config key should match the platform name (`superset`, `grafana`, ...).
-- If `bi_platform` is omitted, Datus consults `./.datus/config.yml`'s
-  `dashboard:` field (project-level pin) before falling back to "auto-pick
-  the unique entry".
-- If multiple BI platforms are configured and no project pin is set, set
-  `bi_platform` explicitly at the call site.
+`BIFuncTool._resolved_platform` resolves the active BI service in this
+order — identical to Scheduler and Semantic resolution:
+
+1. Explicit `bi_service` argument at the call site (or `bi_platform` on
+   the agentic node).
+2. Project-level pin in `./.datus/config.yml`'s `dashboard:` field.
+3. Global `default: true` flag — at most one entry under
+   `services.bi_platforms` may carry it; multiple defaults are rejected
+   at config load time so the user fixes the YAML rather than us silently
+   picking one.
+4. Single-entry shortcut when only one BI service is configured.
+5. Otherwise raise `Multiple BI platforms configured` so the operator
+   sets a default explicitly.
+
+Set the global default in YAML:
+
+```yaml
+agent:
+  services:
+    bi_platforms:
+      superset:
+        type: superset
+        default: true     # global default — picked when no project pin set
+        ...
+```
 
 ## Configuring through the CLI (`/services`)
 
@@ -93,10 +111,19 @@ The two-tab TUI lets you:
   `pip install` for you and hot-reloads the registry — no restart needed.
 - Edit credentials with `e`, delete an entry with `x`, run a connectivity
   probe with `t`.
-- Pin a project-level default with `p`. The pin is written to
-  `./.datus/config.yml` as `dashboard: <name>` and outranks the auto-pick
-  rule for the current project only. Press `p` again on the pinned row to
+- Set the **global** `default: true` flag with `d`. Pressing `d` on a row
+  marks it as the workspace-wide default and clears the flag from every
+  other entry, so you cannot end up with two defaults.
+- Pin a **project-level** default with `p`. The pin is written to
+  `./.datus/config.yml` as `dashboard: <name>` and outranks the global
+  flag for the current project only. Press `p` again on the pinned row to
   clear it.
+
+On the first interactive launch, if a section is configured but has no
+project pin, Datus auto-pins the only entry (or the one flagged
+`default: true`) to `./.datus/config.yml` so subsequent runs are
+explicit. When multiple entries are configured without a default, the
+launch prompts for a quick choice.
 
 Service definitions are written to `~/.datus/conf/agent.yml`, so the same
 credentials are shared across every project. Only the active selection is

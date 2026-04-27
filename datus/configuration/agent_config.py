@@ -451,6 +451,11 @@ class DashboardConfig:
     # to enable multi-instance deployments where the alias differs from the
     # adapter type (``platform=superset_prod``, ``adapter_type=superset``).
     adapter_type: str = ""
+    # YAML ``default: true`` flag. When set, this service is the global
+    # default returned by :meth:`AgentConfig.default_dashboard_service`.
+    # At most one entry under ``services.bi_platforms`` may carry this
+    # flag; multiple defaults are rejected at config load time.
+    default: bool = False
 
 
 logger = get_logger(__name__)
@@ -606,6 +611,7 @@ class AgentConfig:
         # does not block ``AgentConfig`` construction itself.
         self._active_dashboard: Optional[str] = kwargs.get("active_dashboard") or None
         self._active_scheduler: Optional[str] = kwargs.get("active_scheduler") or None
+        self._active_semantic: Optional[str] = kwargs.get("active_semantic") or None
         # Shared lazily-loaded ``conf/providers.yml`` catalog (metadata only:
         # default_model, base_url, api_key_env, type, model_overrides). Kept
         # as ``None`` until first access so tests that stub load paths can
@@ -1074,13 +1080,38 @@ class AgentConfig:
             ),
         )
 
+    def default_dashboard_service(self) -> Optional[str]:
+        """Return the dashboard service marked as the global default, or ``None``.
+
+        Mirrors :meth:`default_scheduler_service`: at most one entry under
+        ``services.bi_platforms`` may carry ``default: true`` (multiple
+        defaults are an explicit error so the user fixes the config rather
+        than us silently picking one). When no entry is flagged, fall
+        through to the single-entry shortcut so simple deployments still
+        Just Work without writing the flag.
+        """
+        defaults = [name for name, cfg in self.dashboard_config.items() if getattr(cfg, "default", False)]
+        if len(defaults) > 1:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=(
+                    "Multiple BI services are marked with `default: true` in "
+                    "`agent.services.bi_platforms`. Keep at most one default dashboard."
+                ),
+            )
+        if defaults:
+            return defaults[0]
+        if len(self.dashboard_config) == 1:
+            return next(iter(self.dashboard_config))
+        return None
+
     def active_dashboard(self) -> Optional[str]:
         """Return the project-level default BI service, or ``None``.
 
         Read by :class:`BIFuncTool._resolved_platform` between the explicit
-        ``bi_service`` argument and the unique-entry shortcut. ``None``
-        means "no project override — fall back to the unique-entry
-        shortcut or raise on ambiguity".
+        ``bi_service`` argument and the global ``default: true`` flag.
+        ``None`` means "no project override — fall back to
+        ``default_dashboard_service`` or raise on ambiguity".
         """
         return self._active_dashboard
 
@@ -1091,6 +1122,14 @@ class AgentConfig:
         ``service_name`` argument and the global ``default: true`` flag.
         """
         return self._active_scheduler
+
+    def active_semantic(self) -> Optional[str]:
+        """Return the project-level default semantic adapter, or ``None``.
+
+        Read by :meth:`resolve_semantic_adapter` between the explicit
+        ``adapter_type`` argument and the global ``default: true`` flag.
+        """
+        return self._active_semantic
 
     def set_active_dashboard(self, name: Optional[str], persist: bool = True) -> None:
         """Pin (or clear) the project-level default BI service.
@@ -1117,6 +1156,16 @@ class AgentConfig:
         if persist:
             self._persist_project_field("scheduler", cleaned)
 
+    def set_active_semantic(self, name: Optional[str], persist: bool = True) -> None:
+        """Pin (or clear) the project-level default semantic adapter.
+
+        Mirrors :meth:`set_active_dashboard` for the semantic_layer section.
+        """
+        cleaned = (name or "").strip() or None
+        self._active_semantic = cleaned
+        if persist:
+            self._persist_project_field("semantic", cleaned)
+
     def _persist_project_field(self, field_name: str, value: Optional[str]) -> None:
         """Update a single top-level field in ``./.datus/config.yml``.
 
@@ -1136,18 +1185,42 @@ class AgentConfig:
         save_project_override(current, cwd=str(self._project_root))
 
     def default_semantic_adapter(self) -> Optional[str]:
+        """Return the semantic adapter marked as the global default, or ``None``.
+
+        Mirrors :meth:`default_scheduler_service` /
+        :meth:`default_dashboard_service`: at most one entry under
+        ``services.semantic_layer`` may carry ``default: true``; multiple
+        defaults are rejected here so the user fixes the YAML rather than
+        having us silently pick one. Falls back to the single-entry
+        shortcut when no entry is flagged.
+        """
+        defaults = [name for name, cfg in self.semantic_layer_configs.items() if cfg.get("default")]
+        if len(defaults) > 1:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=(
+                    "Multiple semantic layers are marked with `default: true` in "
+                    "`agent.services.semantic_layer`. Keep at most one default semantic adapter."
+                ),
+            )
+        if defaults:
+            return defaults[0]
         if len(self.semantic_layer_configs) == 1:
             return next(iter(self.semantic_layer_configs))
-        if not self.semantic_layer_configs:
-            # MetricFlow is currently the built-in default semantic adapter.
-            return "metricflow"
         return None
 
     def resolve_semantic_adapter(self, adapter_type: Optional[str] = None) -> Optional[str]:
+        """Resolve the active semantic adapter name.
+
+        Order: explicit ``adapter_type`` argument -> project-level pin
+        (``./.datus/config.yml`` ``semantic:``) -> global ``default: true``
+        flag / single-entry shortcut. Raises when no semantic layer is
+        configured at all, or when multiple are configured without a clear
+        default — this matches the Dashboard / Scheduler resolution
+        contract so all three sections behave identically.
+        """
         normalized = str(adapter_type or "").lower().strip()
         if normalized:
-            if not self.semantic_layer_configs:
-                return normalized
             if normalized in self.semantic_layer_configs:
                 return normalized
             raise DatusException(
@@ -1158,6 +1231,25 @@ class AgentConfig:
                 ),
             )
 
+        if not self.semantic_layer_configs:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=(
+                    "No semantic layer configured under `agent.services.semantic_layer`. "
+                    "Add an entry (e.g. `metricflow: {}`) or run `/services semantic` to configure one."
+                ),
+            )
+
+        active_override = self._active_semantic
+        if active_override:
+            if active_override in self.semantic_layer_configs:
+                return active_override
+            logger.warning(
+                "Project override active_semantic=`%s` is not configured under "
+                "`agent.services.semantic_layer`; falling back to global default.",
+                active_override,
+            )
+
         default_adapter = self.default_semantic_adapter()
         if default_adapter:
             return default_adapter
@@ -1165,7 +1257,7 @@ class AgentConfig:
             ErrorCode.COMMON_CONFIG_ERROR,
             message=(
                 "Multiple semantic layers are configured in `agent.services.semantic_layer`, "
-                "set `semantic_adapter` on the semantic node."
+                "set `semantic_adapter` on the semantic node or mark one entry with `default: true`."
             ),
         )
 
@@ -1854,6 +1946,7 @@ class AgentConfig:
                 extra=_resolve_nested_value(auth_params.get("extra", {})),
                 dataset_db=dataset_db,
                 adapter_type=adapter_type,
+                default=bool(auth_params.get("default", False)),
             )
 
     def init_scheduler_services(self, param: Dict[str, Any]):

@@ -763,6 +763,7 @@ class DatusCLI:
         self._print_welcome()
         self._warn_no_model()
         self._warn_no_datasource()
+        self._bootstrap_services()
 
         while True:
             try:
@@ -818,6 +819,7 @@ class DatusCLI:
         self._print_welcome()
         self._warn_no_model()
         self._warn_no_datasource()
+        self._bootstrap_services()
 
         # Prefill support mirrors the PromptSession path: ``.rewind`` stores
         # the replayed user message in ``_prefill_input`` and expects the
@@ -1890,6 +1892,21 @@ class DatusCLI:
         """Print a one-time hint when no datasource is configured."""
         if not self.agent_config.services.datasources:
             self.console.print("[yellow]No datasources configured. Use /datasource to add one.[/]")
+
+    def _bootstrap_services(self) -> None:
+        """Pin project defaults and kick off background adapter installs.
+
+        Skipped silently in non-interactive sessions (CI, ``echo |
+        datus-cli``, MCP / API hosts) — see ``service_bootstrap._is_interactive``
+        for the exact guard. Failures inside the bootstrap never abort
+        startup.
+        """
+        try:
+            from datus.cli import service_bootstrap
+
+            service_bootstrap.run(self)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"service bootstrap failed: {exc}")
 
     def prompt_input(self, message: str, default: str = "", choices: list = None, multiline: bool = False):
         """

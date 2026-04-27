@@ -504,28 +504,29 @@ class TestAgentConfigServiceSelectors:
         )
         assert cfg.resolve_semantic_adapter() == "metricflow"
 
-    def test_resolve_semantic_adapter_defaults_to_metricflow_without_service_config(self, tmp_path):
+    def test_resolve_semantic_adapter_raises_when_no_service_configured(self, tmp_path):
+        """The implicit metricflow fallback was removed: callers must
+        explicitly configure at least one entry under
+        ``services.semantic_layer``. The error message points the user at
+        the YAML or the ``/services semantic`` TUI."""
         cfg = self._make(
             tmp_path,
             services={
                 "datasources": {},
             },
         )
-        assert cfg.resolve_semantic_adapter() == "metricflow"
+        with pytest.raises(DatusException, match="No semantic layer configured"):
+            cfg.resolve_semantic_adapter()
 
-    def test_build_semantic_adapter_config_defaults_to_metricflow_without_service_config(self, tmp_path):
+    def test_build_semantic_adapter_config_raises_when_no_service_configured(self, tmp_path):
         cfg = self._make(
             tmp_path,
             services={
                 "datasources": {},
             },
         )
-
-        config = cfg.build_semantic_adapter_config()
-
-        assert config["type"] == "metricflow"
-        assert config["agent_home"] == str(tmp_path / "h")
-        assert config["semantic_models_path"].endswith("subject/semantic_models")
+        with pytest.raises(DatusException, match="No semantic layer configured"):
+            cfg.build_semantic_adapter_config()
 
     def test_resolve_semantic_adapter_requires_explicit_choice_for_multiple_entries(self, tmp_path):
         cfg = self._make(
@@ -785,6 +786,147 @@ class TestAgentConfigServiceSelectors:
                     },
                 },
             )
+
+    # ── default_dashboard_service ─────────────────────────────────────
+
+    def test_default_dashboard_service_returns_none_for_empty_section(self, tmp_path):
+        cfg = self._make(tmp_path, services={"datasources": {}})
+        assert cfg.default_dashboard_service() is None
+
+    def test_default_dashboard_service_uses_unique_entry(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {},
+                "bi_platforms": {
+                    "superset": {"type": "superset", "api_base_url": "http://x"},
+                },
+            },
+        )
+        assert cfg.default_dashboard_service() == "superset"
+
+    def test_default_dashboard_service_picks_default_flag(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {},
+                "bi_platforms": {
+                    "superset": {"type": "superset", "api_base_url": "http://prod"},
+                    "grafana": {"type": "grafana", "api_base_url": "http://dev", "default": True},
+                },
+            },
+        )
+        assert cfg.default_dashboard_service() == "grafana"
+
+    def test_default_dashboard_service_rejects_multiple_defaults(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {},
+                "bi_platforms": {
+                    "superset": {"type": "superset", "default": True, "api_base_url": "http://a"},
+                    "grafana": {"type": "grafana", "default": True, "api_base_url": "http://b"},
+                },
+            },
+        )
+        with pytest.raises(DatusException, match="Multiple BI services are marked"):
+            cfg.default_dashboard_service()
+
+    def test_default_dashboard_service_returns_none_when_multiple_no_default(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {},
+                "bi_platforms": {
+                    "superset": {"type": "superset", "api_base_url": "http://a"},
+                    "grafana": {"type": "grafana", "api_base_url": "http://b"},
+                },
+            },
+        )
+        assert cfg.default_dashboard_service() is None
+
+    # ── default_semantic_adapter ───────────────────────────────────────
+
+    def test_default_semantic_adapter_returns_none_for_empty_section(self, tmp_path):
+        """Empty section now means "nothing configured" — callers must
+        explicitly add an entry. Returning ``None`` here lets the resolver
+        own the user-facing error."""
+        cfg = self._make(tmp_path, services={"datasources": {}})
+        assert cfg.default_semantic_adapter() is None
+
+    def test_default_semantic_adapter_uses_unique_entry(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {},
+                "semantic_layer": {"metricflow": {}},
+            },
+        )
+        assert cfg.default_semantic_adapter() == "metricflow"
+
+    def test_default_semantic_adapter_picks_default_flag(self, tmp_path):
+        """When multiple semantic adapters are configured, ``default: true``
+        wins over the unique-entry shortcut (which doesn't apply here)."""
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {},
+                "semantic_layer": {
+                    "metricflow": {"default": True},
+                    # Hypothetical second adapter — registry validation is
+                    # deferred so the test can exercise the selection
+                    # logic without registering a real adapter.
+                    "dbt": {},
+                },
+            },
+        )
+        assert cfg.default_semantic_adapter() == "metricflow"
+
+    def test_default_semantic_adapter_rejects_multiple_defaults(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {},
+                "semantic_layer": {
+                    "metricflow": {"default": True},
+                    "dbt": {"default": True},
+                },
+            },
+        )
+        with pytest.raises(DatusException, match="Multiple semantic layers are marked"):
+            cfg.default_semantic_adapter()
+
+    # ── active_semantic / set_active_semantic / resolver pin ────────────
+
+    def test_active_semantic_pin_outranks_global_default(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {},
+                "semantic_layer": {
+                    "metricflow": {"default": True},
+                    "dbt": {},
+                },
+            },
+        )
+        cfg.set_active_semantic("dbt", persist=False)
+        assert cfg.resolve_semantic_adapter() == "dbt"
+
+    def test_stale_active_semantic_falls_through_to_default(self, tmp_path, caplog):
+        """A pin pointing at a deleted adapter is ignored (with warning);
+        resolution falls through to the global default."""
+        import logging
+
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {},
+                "semantic_layer": {"metricflow": {}},
+            },
+        )
+        cfg.set_active_semantic("never_configured", persist=False)
+        with caplog.at_level(logging.WARNING):
+            assert cfg.resolve_semantic_adapter() == "metricflow"
 
 
 # ---------------------------------------------------------------------------

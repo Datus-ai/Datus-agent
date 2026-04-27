@@ -1,8 +1,8 @@
 # 语义层配置（Semantic Layer）
 
-语义适配器统一配置在 `agent.services.semantic_layer` 下。
+语义适配器统一配置在 `agent.services.semantic_layer` 下。**至少要配置一条**——空 section 不再静默 fallback 到 metricflow,而是 raise `No semantic layer configured`。
 
-如果你使用的是 MetricFlow 的默认配置，整个 `semantic_layer` 段可以省略；Datus 会默认使用 `metricflow`。
+> **迁移说明**:旧版本会在 section 缺失时隐式注入 metricflow 默认值,新版要求显式写入 yaml 条目。`conf/agent.yml.example` 已经默认带上 `metricflow: {}`,新装用户开箱仍能用。
 
 ## 配置结构
 
@@ -13,6 +13,7 @@ agent:
       metricflow:
         timeout: 300
         config_path: ./conf/agent.yml   # 可选的高级覆盖项
+        default: true                   # 全局默认:无 project pin 时被选用
 
   agentic_nodes:
     gen_semantic_model:
@@ -24,12 +25,17 @@ agent:
 
 ## 选择规则
 
-- `services.semantic_layer` 下的 key **必须等于 adapter type**（例如 `metricflow`）。如果同时写了 `type:` 字段，其值必须与 key 一致，否则 Datus 会在启动时抛出配置错误。比较时会先对 key 与 `type` 做 lowercase + trim 处理，因此 `MetricFlow` 或 ` metricflow ` 也会被视为与 `metricflow` 匹配。
-- 语义相关节点通过 `semantic_adapter` 选择适配器。
-- 语义适配器不支持 `default: true`。
-- 如果 `services.semantic_layer` 和 `semantic_adapter` 都省略，Datus 会默认使用 `metricflow`。
-- 如果只配置了一个 semantic layer，省略 `semantic_adapter` 时会自动使用它。
-- 如果配置了多个 semantic layer，则必须显式填写 `semantic_adapter`。
+`AgentConfig.resolve_semantic_adapter` 解析活动语义适配器的顺序与 BI Dashboard / Scheduler 完全一致:
+
+1. 调用处显式传入的 `adapter_type`(或 agentic node 上的 `semantic_adapter`)。
+2. `./.datus/config.yml` 中的项目级 pin —— `semantic:` 字段。
+3. YAML 全局 `default: true` 标志:`services.semantic_layer` 中至多一条可标 default,多于一条会在加载阶段直接报错。
+4. 单条快捷:仅有一条 semantic adapter 时,自动使用它。
+5. 否则抛错:
+   - section 为空 → `No semantic layer configured ...`
+   - 多条无 default → `Multiple semantic layers are configured ...`
+
+`services.semantic_layer` 下的 key **必须等于 adapter type**(例如 `metricflow`)。如果同时写了 `type:` 字段,其值必须与 key 一致,否则 Datus 会在启动时抛出配置错误。比较时会先 lowercase + trim,因此 `MetricFlow`、` metricflow ` 都会被视为与 `metricflow` 匹配。
 
 ## MetricFlow 说明
 
@@ -44,6 +50,10 @@ agent:
 
 - 在尾部的 `+ Add new semantic` 行按 `Enter` 新增一个语义层。目前仅支持 `metricflow`（`datus-semantic-metricflow`），并且**无需任何参数** —— 在 type picker 中选中它即可。如果适配器包尚未安装，Datus 会自动执行 `pip install datus-semantic-metricflow` 并热加载注册表，无需重启进程。
 - 用 `x` 删除条目；用 `t` 触发一次注册探测。
-- 此 tab 不显示 `e edit` 与 `p project default`：metricflow 当前没有可编辑字段，语义层也尚未提供 project-level default 的 API。
+- `d` 切换**全局** `default: true`:按 `d` 把光标项设为默认,并自动清掉其他条目的 default。
+- `p` 设置**项目级** default:值写入 `./.datus/config.yml` 的 `semantic: <name>`,只对当前项目生效,优先级高于全局标记。在已 pin 的行上再按一次 `p` 清除。
+- 此 tab 不显示 `e edit`:metricflow 当前没有可编辑字段。
 
 新建条目会写入 `~/.datus/conf/agent.yml`，形态为 `services.semantic_layer.<type>: {type: <type>}`。
+
+首次进入交互式 REPL 时,Datus 会跑一遍 bootstrap:若尚无项目级 pin,而 YAML 中能解析出明确的默认值(单条快捷或唯一标 `default: true`),Datus 会自动写入项目级 pin。若多条都未标 default,启动时会弹出一个轻量选择器。CI / Docker 等无人值守环境可设置 `DATUS_DISABLE_SERVICE_BOOTSTRAP=1` 关闭。

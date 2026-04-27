@@ -255,13 +255,17 @@ class TestDeleteAndTest:
 
 
 class TestSetGlobalDefault:
-    def test_d_only_active_on_scheduler_tab(self):
-        app = _build_app(dashboards={"superset": _dash_cfg()})
-        app._list_cursor = 0
+    def test_d_emits_set_default_on_dashboard_tab(self):
+        """``d`` is now active on every tab — Dashboard included."""
+        app = _build_app(dashboards={"superset": _dash_cfg(), "grafana": _dash_cfg("grafana")})
+        app._tab = _Tab.DASHBOARD
+        app._list_cursor = 0  # grafana sorts before superset alphabetically
         with patch.object(app._app, "exit") as mock_exit:
             app._on_set_default()
-        # Dashboard tab → no exit.
-        mock_exit.assert_not_called()
+        result = mock_exit.call_args.kwargs["result"]
+        assert result.action == "set_default"
+        assert result.section == "bi_platforms"
+        assert result.name == "grafana"
 
     def test_d_emits_set_default_on_scheduler_tab(self):
         app = _build_app(schedulers={"airflow_prod": {"type": "airflow"}, "airflow_dev": {"type": "airflow"}})
@@ -272,6 +276,22 @@ class TestSetGlobalDefault:
         result = mock_exit.call_args.kwargs["result"]
         assert result.action == "set_default"
         assert result.section == "schedulers"
+
+    def test_d_emits_set_default_on_semantic_tab(self):
+        app = _build_app(
+            semantic={
+                "metricflow": {"type": "metricflow"},
+                "dbt": {"type": "dbt"},
+            }
+        )
+        app._tab = _Tab.SEMANTIC
+        app._list_cursor = 0  # dbt sorts before metricflow
+        with patch.object(app._app, "exit") as mock_exit:
+            app._on_set_default()
+        result = mock_exit.call_args.kwargs["result"]
+        assert result.action == "set_default"
+        assert result.section == "semantic_layer"
+        assert result.name == "dbt"
 
 
 class TestSetProjectDefault:
@@ -380,14 +400,22 @@ def test_semantic_layer_currently_only_metricflow():
 
 class TestSemanticTab:
     def test_build_semantic_entries_from_configs(self):
+        """``is_default`` reflects only the explicit YAML ``default: true``
+        flag — the single-entry shortcut is an implicit fallback handled
+        by the resolver, not a label we display."""
         app = _build_app(semantic={"metricflow": {"type": "metricflow"}})
         entries = app._entries_for(_Tab.SEMANTIC)
         assert len(entries) == 1
         entry = entries[0]
         assert entry.name == "metricflow"
         assert entry.adapter_type == "metricflow"
-        assert entry.is_default is True  # single entry → default
+        assert entry.is_default is False  # no ``default: true`` in YAML
         assert entry.is_project_default is False
+
+    def test_build_semantic_entries_marks_yaml_default_flag(self):
+        app = _build_app(semantic={"metricflow": {"type": "metricflow", "default": True}})
+        entry = app._entries_for(_Tab.SEMANTIC)[0]
+        assert entry.is_default is True
 
     def test_render_list_shows_add_new_semantic_row(self):
         app = _build_app()
@@ -437,13 +465,18 @@ class TestSemanticTab:
         assert app._view == _View.LIST
         mock_exit.assert_not_called()
 
-    def test_p_key_ignored_on_semantic_tab(self):
+    def test_p_emits_set_project_default_for_semantic(self):
+        """Semantic now supports project-level pinning (``set_active_semantic``)
+        on par with Dashboard / Scheduler."""
         app = _build_app(semantic={"metricflow": {"type": "metricflow"}})
         app._tab = _Tab.SEMANTIC
         app._list_cursor = 0
         with patch.object(app._app, "exit") as mock_exit:
             app._on_set_project_default()
-        mock_exit.assert_not_called()
+        result = mock_exit.call_args.kwargs["result"]
+        assert result.action == "set_project_default"
+        assert result.section == "semantic_layer"
+        assert result.name == "metricflow"
 
     def test_x_emits_delete_for_semantic(self):
         app = _build_app(semantic={"metricflow": {"type": "metricflow"}})
@@ -466,14 +499,16 @@ class TestSemanticTab:
         assert result.action == "test"
         assert result.section == "semantic_layer"
 
-    def test_footer_hint_omits_edit_and_default_keys(self):
+    def test_footer_hint_includes_default_keys_but_omits_edit(self):
+        """``e edit`` is hidden because metricflow has no editable fields,
+        but ``d global default`` and ``p project default`` are now shown
+        on every tab — Semantic included."""
         app = _build_app(semantic={"metricflow": {"type": "metricflow"}})
         app._tab = _Tab.SEMANTIC
         rendered = app._render_footer_hint()
         flat = "".join(text for _, text in rendered)
         assert "edit" not in flat
-        assert "project default" not in flat
-        assert "global default" not in flat
-        # Allowed keys still present.
+        assert "global default" in flat
+        assert "project default" in flat
         assert "delete" in flat
         assert "test" in flat
