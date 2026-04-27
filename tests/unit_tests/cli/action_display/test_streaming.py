@@ -662,6 +662,237 @@ class TestTuiPath:
         assert live_state.is_active() is True
 
 
+# ── Tool PROCESSING lifecycle (async path) ──────────────────────────
+
+
+@pytest.mark.ci
+class TestToolProcessingLifecycle:
+    """Cover the async ``_process_actions`` path for TOOL PROCESSING entries,
+    both at depth=0 (top-level) and depth>0 (inside subagent groups)."""
+
+    def test_top_level_processing_pins_frame_and_clears_on_success(self):
+        """A depth=0 TOOL PROCESSING pins a frame; the paired SUCCESS clears it."""
+        from datus.cli.tui.live_display_state import LiveDisplayState
+
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        live_state = LiveDisplayState()
+        display = ActionHistoryDisplay(console, live_state=live_state)
+
+        call_id = "tool-call-xyz"
+        actions = [
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.PROCESSING,
+                action_id=call_id,
+                messages="db_describe",
+                input_data={"function_name": "db_describe", "arguments": {"table": "orders"}},
+            ),
+        ]
+        ctx = InlineStreamingContext(actions, display, live_state=live_state)
+
+        # First pass: PROCESSING entry -> pinned frame; index advances so the
+        # paired SUCCESS action (same action_id) can be consumed on arrival.
+        ctx._process_actions()
+        assert ctx._processing_action is actions[0]
+        assert live_state.is_active() is True
+        assert ctx._processed_index == 1
+
+        # SUCCESS arrives with the same action_id; streaming advances and clears pinned.
+        actions.append(
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                action_id=call_id,
+                messages="db_describe",
+                input_data={"function_name": "db_describe", "arguments": {"table": "orders"}},
+                output_data={"raw_output": {"rows": []}},
+                end_time=datetime.now() + timedelta(seconds=1),
+            )
+        )
+        ctx._process_actions()
+        assert ctx._processing_action is None
+        assert live_state.is_active() is False
+        assert ctx._processed_index == 2
+
+    def test_subagent_processing_sets_group_slot_and_paints_blink_row(self):
+        """A depth>0 TOOL PROCESSING sets ``processing_action`` on its group
+        and is rendered as an extra blinking row at the tail of the group."""
+        from datus.cli.tui.live_display_state import LiveDisplayState
+
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        live_state = LiveDisplayState()
+        display = ActionHistoryDisplay(console, live_state=live_state)
+        parent_id = "parent-proc"
+
+        # Existing subagent group already open with one completed tool.
+        ctx = InlineStreamingContext([], display, live_state=live_state)
+        seed = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            depth=1,
+            action_type="gen_metrics",
+            messages="task",
+            input_data={"function_name": "db_sample"},
+            parent_action_id=parent_id,
+            end_time=datetime.now(),
+        )
+        ctx._start_subagent_group(seed, group_key=parent_id)
+        ctx._update_subagent_display(seed, group_key=parent_id)
+
+        # A new tool is now running inside the same subagent.
+        call_id = "inner-call"
+        processing = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            depth=1,
+            action_type="gen_metrics",
+            action_id=call_id,
+            messages="db_describe",
+            input_data={"function_name": "db_describe", "arguments": {"table": "orders"}},
+            parent_action_id=parent_id,
+        )
+        ctx.actions.append(processing)
+        ctx._process_actions()
+
+        assert ctx._subagent_groups[parent_id]["processing_action"] is processing
+        assert ctx._processing_action is None  # Top-level pinned must not be hijacked.
+
+        lines = ctx._build_subagent_live_lines()
+        plain = [" ".join(seg for _, seg in line.segments) for line in lines]
+        joined = " | ".join(plain)
+        assert "db_describe" in joined
+        # Explicitly assert the blink row uses the processing-live style.
+        styles = {style for line in lines for style, _ in line.segments}
+        assert "class:processing-live" in styles
+
+        # Paired SUCCESS arrives -> pending slot clears, completed tool joins the list.
+        success = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            depth=1,
+            action_type="gen_metrics",
+            action_id=call_id,
+            messages="db_describe",
+            input_data={"function_name": "db_describe", "arguments": {"table": "orders"}},
+            output_data={"raw_output": {"rows": 10}},
+            parent_action_id=parent_id,
+            end_time=datetime.now() + timedelta(seconds=1),
+        )
+        ctx.actions.append(success)
+        ctx._process_actions()
+
+        group = ctx._subagent_groups[parent_id]
+        assert group["processing_action"] is None
+        assert any(a.action_id == call_id and a.status == ActionStatus.SUCCESS for a in group["actions"])
+        lines_after = ctx._build_subagent_live_lines()
+        styles_after = {style for line in lines_after for style, _ in line.segments}
+        assert "class:processing-live" not in styles_after
+
+    def test_subagent_block_height_stays_two_when_processing_active(self):
+        """With N completed tools + running row, the block is exactly
+        ``1 header + TOOL_LINES_PER_GROUP`` rows (running row occupies a slot)."""
+        from datus.cli.tui.live_display_state import TOOL_LINES_PER_GROUP, LiveDisplayState
+
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        live_state = LiveDisplayState()
+        display = ActionHistoryDisplay(console, live_state=live_state)
+        ctx = InlineStreamingContext([], display, live_state=live_state)
+
+        parent_id = "parent-height"
+        first = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            depth=1,
+            action_type="gen_metrics",
+            parent_action_id=parent_id,
+        )
+        ctx._start_subagent_group(first, group_key=parent_id)
+        for i in range(4):
+            ctx._update_subagent_display(
+                _make_action(
+                    ActionRole.TOOL,
+                    ActionStatus.SUCCESS,
+                    depth=1,
+                    action_type="gen_metrics",
+                    input_data={"function_name": f"tool_{i}"},
+                    parent_action_id=parent_id,
+                    end_time=datetime.now(),
+                ),
+                group_key=parent_id,
+            )
+        ctx._subagent_groups[parent_id]["processing_action"] = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            depth=1,
+            action_type="gen_metrics",
+            input_data={"function_name": "db_describe", "arguments": {"table": "orders"}},
+            parent_action_id=parent_id,
+        )
+
+        lines = ctx._build_subagent_live_lines()
+        assert len(lines) == 1 + TOOL_LINES_PER_GROUP  # header + exactly 2 content rows
+        # Last content row is the running indicator (processing-live style).
+        assert any(style == "class:processing-live" for style, _ in lines[-1].segments)
+        # Previous content row is the most recent completed tool.
+        prev_text = "".join(seg for _, seg in lines[-2].segments)
+        assert "tool_3" in prev_text
+
+    def test_top_level_event_appends_blank_line_separator(self):
+        """Each independent depth=0 action prints a trailing blank line so
+        adjacent events are visually separated in the scrollback."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=120)
+        display = ActionHistoryDisplay(console)
+        ctx = InlineStreamingContext([], display)
+
+        success = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            depth=0,
+            input_data={"function_name": "list_tables"},
+            end_time=datetime.now() + timedelta(milliseconds=200),
+        )
+        ctx._print_completed_action(success)
+        output = buf.getvalue()
+        # The tool row renders as `<status-dot> 🔧 ... \n  └─ …\n` and we now
+        # append an extra blank line at the end.
+        assert output.endswith("\n\n")
+
+    def test_subagent_renderable_includes_processing_row(self):
+        """Non-TUI Rich ``Live`` path also appends the blinking row per group."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        ctx = InlineStreamingContext([], display)
+
+        parent_id = "parent-rich"
+        first = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            depth=1,
+            action_type="gen_metrics",
+            input_data={"function_name": "list_tables"},
+            parent_action_id=parent_id,
+            end_time=datetime.now(),
+        )
+        ctx._start_subagent_group(first, group_key=parent_id)
+        ctx._update_subagent_display(first, group_key=parent_id)
+        ctx._subagent_groups[parent_id]["processing_action"] = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            depth=1,
+            action_type="gen_metrics",
+            input_data={"function_name": "db_describe", "arguments": {"table": "orders"}},
+            parent_action_id=parent_id,
+        )
+        group = ctx._build_subagent_groups_renderable()
+        rendered = " | ".join(str(r) for r in getattr(group, "renderables", []))
+        assert "db_describe" in rendered
+
+
 # ── Streaming markdown (thinking_delta in TUI mode) ─────────────────
 
 
@@ -830,7 +1061,7 @@ class TestStreamingMarkdown:
         proc_snap = live_state.snapshot()
         # One pinned line for the blinking processing tool.
         assert len(proc_snap) == 1
-        assert any(style == "class:processing-live" for style, _ in proc_snap[0].segments)
+        assert any(style == "class:processing-live-top" for style, _ in proc_snap[0].segments)
 
         # Stop processing → markdown tail reclaims the region.
         ctx._stop_processing_live()

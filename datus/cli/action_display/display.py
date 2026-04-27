@@ -5,7 +5,7 @@
 """Public interface: ActionHistoryDisplay."""
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Set, Tuple
 
 from rich.console import Console
 
@@ -146,23 +146,92 @@ class ActionHistoryDisplay:
         pending_task_tool_skips = 0
         deferred_groups: List[Tuple[dict, ActionHistory]] = []
 
-        for action in actions:
+        # Pre-scan to identify which top-level ``task`` tool calls wrap a
+        # sub-agent. ``subagent_complete.parent_action_id`` carries the
+        # bare ``call_id`` of the wrapping task tool, so any task tool
+        # whose normalised id (after stripping the ``complete_`` prefix
+        # that ``openai_compatible``/``claude_model``/``codex_model``
+        # apply to the SUCCESS action — see e.g. ``openai_compatible.py``
+        # ``action_id="complete_" + call_id``) appears here is a sub-agent
+        # invocation and must never be rendered as a standalone task —
+        # regardless of arrival order. The ActionBus may yield the outer
+        # ``task`` SUCCESS before the queued ``subagent_complete`` (see
+        # ``ActionBus.merge`` FIRST_COMPLETED race), and the end-of-turn
+        # full-screen reprint replays whatever order it received, so
+        # without this set the iterator below would render the task as
+        # a standalone block AND also render the collapsed/expanded
+        # sub-agent group, producing a duplicate such as
+        # ``⏺ explore(...)`` followed by ``⏴ explore(...) Done``.
+        subagent_complete_call_ids: Set[Optional[str]] = {
+            a.parent_action_id for a in actions if a.action_type == SUBAGENT_COMPLETE_ACTION_TYPE and a.parent_action_id
+        }
+
+        def _normalize_call_id(action_id: Optional[str]) -> Optional[str]:
+            """Strip the ``complete_`` prefix used by tool SUCCESS actions."""
+            if action_id and action_id.startswith("complete_"):
+                return action_id[len("complete_") :]
+            return action_id
+
+        # Verbose mode renders the sub-agent response after the Done line
+        # using the ``task`` tool action's output. Indexing by the bare
+        # ``call_id`` keeps the response paired with the right group even
+        # when the SUCCESS action carries the ``complete_`` prefix or
+        # arrives in a reversed order.
+        task_actions_by_call_id: Dict[Optional[str], ActionHistory] = {}
+        for a in actions:
+            if a.role != ActionRole.TOOL or not a.action_id:
+                continue
+            normalized = _normalize_call_id(a.action_id)
+            if normalized not in subagent_complete_call_ids:
+                continue
+            fn = a.input.get("function_name", "") if a.input else ""
+            if fn == "task":
+                task_actions_by_call_id[normalized] = a
+
+        # Locate the trailing plain ``response`` action (depth=0). Its body is
+        # the same text the wrapping ``*_response`` carries, and the wrapper's
+        # body is painted externally (``_render_final_response`` for redraw;
+        # ``_display_markdown_response(content)`` for resume), so rendering
+        # this one too would duplicate the final answer. Mid-turn ``response``
+        # actions — those emitted alongside tool calls, e.g. brief commentary
+        # the model writes before invoking a tool — must NOT be filtered here:
+        # the end-of-turn full-screen reprint clears scrollback, and skipping
+        # them is what makes that text disappear after the redraw.
+        last_plain_response_idx: Optional[int] = None
+        for i in range(len(actions) - 1, -1, -1):
+            a = actions[i]
+            if (
+                a.role == ActionRole.ASSISTANT
+                and a.depth == 0
+                and a.action_type == "response"
+                and a.status == ActionStatus.SUCCESS
+            ):
+                last_plain_response_idx = i
+                break
+
+        for idx, action in enumerate(actions):
             # INTERACTION actions: only shown during live interaction, skip in history replay
             if action.role == ActionRole.INTERACTION:
                 continue
             # Skip PROCESSING TOOL entries (only render SUCCESS/FAILED)
             if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
                 continue
-            # Skip assistant terminal response actions — they are rendered by
-            # the per-turn callback (``_render_turn_response``) or by the
-            # external ``_render_final_response`` pipeline. Walking them here
-            # would paint the main body twice (once from plain ``response``,
-            # once from the wrapping ``*_response``).
+            # Terminal wrapper (``chat_response`` etc.): body is painted by
+            # the per-turn callback / ``_render_final_response`` pipeline.
             if (
                 action.role == ActionRole.ASSISTANT
                 and action.action_type
-                and (action.action_type == "response" or action.action_type.endswith("_response"))
+                and action.action_type.endswith("_response")
                 and action.depth == 0
+            ):
+                continue
+            # Trailing plain ``response``: duplicates the wrapping
+            # ``*_response`` rendered externally — skip to avoid double paint.
+            if (
+                action.role == ActionRole.ASSISTANT
+                and action.action_type == "response"
+                and action.depth == 0
+                and idx == last_plain_response_idx
             ):
                 continue
 
@@ -176,9 +245,32 @@ class ActionHistoryDisplay:
                             group["first_action"], group["tool_count"], group["start_time"], action
                         )
                     else:
-                        deferred_groups.append((group, action))
+                        # Render the expanded group together with its task
+                        # tool response immediately when the task action is
+                        # already known. Falling back to the deferred queue
+                        # only happens for partial slices that do not yet
+                        # contain the outer task SUCCESS.
+                        task_action = task_actions_by_call_id.get(group_key)
+                        if task_action is not None:
+                            self._render_deferred_group(group, action, task_action, verbose)
+                        else:
+                            deferred_groups.append((group, action))
                     pending_task_tool_skips += 1
                 continue
+
+            # Order-independent skip: any task tool that wraps a sub-agent
+            # (its normalised id appears as a ``subagent_complete.parent_action_id``)
+            # is represented by the subagent group rendering above and must
+            # not also be rendered as a standalone main-agent action. The
+            # SUCCESS action carries an ``action_id`` of ``"complete_" +
+            # call_id`` (set by the model layer), while the PROCESSING
+            # action uses the bare ``call_id``; both must be skipped.
+            if action.role == ActionRole.TOOL and action.action_id:
+                normalized = _normalize_call_id(action.action_id)
+                if normalized in subagent_complete_call_ids:
+                    fn = action.input.get("function_name", "") if action.input else ""
+                    if fn == "task":
+                        continue
 
             # -- sub-agent group handling --
             if action.depth > 0:

@@ -337,9 +337,6 @@ class ChatCommands:
                         # Skip USER actions (depth=0) — already printed by _echo_user_input
                         if action.role == ActionRole.USER and action.depth == 0:
                             continue
-                        # Skip TOOL PROCESSING entries — SUCCESS version follows
-                        if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
-                            continue
                         # Streaming text deltas go to their own queue. Sub-agent
                         # deltas (depth > 0) are ignored here — they'd pollute
                         # the main-agent accumulator; sub-agents have their own
@@ -466,8 +463,6 @@ class ChatCommands:
                                 if broker:
                                     await auto_submit_interaction(broker, action)
                             continue
-                        if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
-                            continue
                         if action.action_type == "thinking_delta":
                             if action.depth == 0:
                                 streaming_deltas.append(action)
@@ -582,15 +577,6 @@ class ChatCommands:
                         self.last_actions = all_actions
                         self.all_turn_actions.append((message, all_actions))
                         self._trace_verbose = False  # reset toggle for new chat round
-
-                    # End-of-turn full-screen reprint — mirrors the Ctrl+O
-                    # toggle so the viewport ends up with a clean, fully
-                    # re-rendered transcript. Rich gets to lay out the final
-                    # body in one pass (no incremental artefacts on tables /
-                    # code blocks). Interactive mode only; non-interactive
-                    # runs (``/print``, pipes) must not rewrite stdout.
-                    if interactive:
-                        self._full_screen_reprint(verbose=self._trace_verbose)
 
                 if interactive:
                     self.cli.console.print("[bold bright_black]Press Ctrl+O to toggle trace details.[/]")

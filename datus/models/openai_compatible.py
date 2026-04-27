@@ -233,7 +233,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         """Choose a safe default prompt cache retention policy for OpenAI."""
         if not self._is_official_openai_api():
             return None
-        if self.model_name.startswith("gpt-5.4"):
+        if self.model_name.startswith("gpt-5"):
             return "24h"
         return "in_memory"
 

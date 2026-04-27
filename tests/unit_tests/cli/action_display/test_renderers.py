@@ -432,6 +432,75 @@ class TestRenderProcessing:
         result = _renderer().render_processing(action, "\u25cb")
         assert isinstance(result, Text)
         assert "list_tables" in result.plain
+        assert result.plain.startswith("\u25cb ")
+
+    def test_processing_includes_first_argument(self):
+        """PROCESSING frame includes the first argument as `(key: value)` summary."""
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            input_data={
+                "function_name": "db_describe",
+                "arguments": {"table": "orders", "schema": "public"},
+            },
+        )
+        result = _renderer().render_processing(action, "\u25cf")
+        assert "db_describe" in result.plain
+        assert "(table: orders)" in result.plain
+
+    def test_processing_without_arguments_falls_back_to_ellipsis(self):
+        """PROCESSING frame falls back to `...` suffix when no arguments are present."""
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            messages="list_tables",
+            input_data={"function_name": "list_tables"},
+        )
+        result = _renderer().render_processing(action, "\u25cb")
+        assert result.plain.endswith("list_tables...")
+
+    def test_processing_truncates_long_argument_value(self):
+        """Long argument values get middle-truncated at 80 chars."""
+        long_sql = "SELECT " + "col, " * 50 + "last FROM t"
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            input_data={
+                "function_name": "execute_sql",
+                "arguments": {"sql": long_sql},
+            },
+        )
+        result = _renderer().render_processing(action, "\u25cb")
+        # Truncation helper inserts " ... " separator in the middle.
+        assert " ... " in result.plain
+        # Key label remains visible.
+        assert "sql:" in result.plain
+
+    def test_processing_indents_inside_subagent(self):
+        """PROCESSING row inside a subagent (depth>0) gets the `  ⎿  ` prefix."""
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            depth=1,
+            input_data={
+                "function_name": "db_describe",
+                "arguments": {"table": "orders"},
+            },
+        )
+        result = _renderer().render_processing(action, "\u25cb")
+        assert result.plain.startswith("  \u23bf  ")
+        assert "db_describe" in result.plain
+
+    def test_processing_no_indent_at_top_level(self):
+        """PROCESSING row at depth=0 is not indented."""
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            depth=0,
+            input_data={"function_name": "list_tables"},
+        )
+        result = _renderer().render_processing(action, "\u25cb")
+        assert not result.plain.startswith("  \u23bf")
 
 
 # ── render_user_header / render_separator ──────────────────────────

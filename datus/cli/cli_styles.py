@@ -132,6 +132,10 @@ STATUS_BAR_STYLE: dict[str, str] = {
     # Pinned subagent/tool rolling-window lines match scrollback [dim].
     "subagent-live": LIVE_SECONDARY,
     "processing-live": LIVE_SECONDARY,
+    # Top-level running tool: default foreground (same colour as a completed
+    # main-agent tool header) — keeps the PROCESSING row visually in-line
+    # with the row that eventually replaces it.
+    "processing-live-top": "",
     # Pinned subagent header: plain cyan prefix, default colour goal.
     "subagent-header-live": "ansicyan",
     "subagent-header-goal-live": "",

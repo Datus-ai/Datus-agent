@@ -790,10 +790,25 @@ class ActionRenderer:
     # -- processing animation -----------------------------------------------
 
     def render_processing(self, action: ActionHistory, frame: str) -> Text:
-        """Render blinking animation frame for a PROCESSING tool."""
+        """Render the static running indicator for a PROCESSING tool.
+
+        Output: ``{frame} 🔧 {function_name}({first_arg_summary})`` at depth=0
+        (no dim — matches the completed top-level tool header colour), and
+        ``  ⎿  {frame} 🔧 …`` inside a subagent group (depth>0) with
+        ``[dim]`` so it aligns with the other ``⎿`` tool rows under the
+        ``⏺`` header. Falls back to ``{frame} 🔧 {label}...`` when no
+        arguments were sent.
+        """
+        from datus.cli.action_display.tool_content import extract_args
+
         function_name = action.input.get("function_name", "") if action.input else ""
-        text = f"{frame} \U0001f527 {function_name or action.messages}..."
-        return Text.from_markup(f"[white]{text}[/white]")
+        label = function_name or action.messages or ""
+        args_lines = extract_args(action)
+        suffix = f"({_truncate_middle(args_lines[0], max_len=80)})" if args_lines else "..."
+        body = f"{frame} \U0001f527 {rich_escape(label)}{rich_escape(suffix)}"
+        if action.depth > 0:
+            return Text.from_markup(f"[dim]  \u23bf  {body}[/dim]")
+        return Text.from_markup(body)
 
     # -- utility renderables ------------------------------------------------
 

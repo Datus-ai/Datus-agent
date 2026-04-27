@@ -28,8 +28,9 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# Blinking dot animation frames for PROCESSING status
-_BLINK_FRAMES = ["○", "●"]
+# Static PROCESSING symbol: hollow circle (○). No blink — the refresh loop
+# is still driven by ``_tick`` but the glyph is constant.
+_PROCESSING_SYMBOL = "\u25cb"
 
 # In compact mode, only show the last N subagent actions in the Live overlay
 _SUBAGENT_ROLLING_WINDOW_SIZE = 2
@@ -270,6 +271,7 @@ class InlineStreamingContext:
             "subagent_type": subagent_type,
             "first_action": first_action,
             "actions": [],
+            "processing_action": None,
         }
 
     def _update_subagent_display_sync(self, action: ActionHistory, group_key: Optional[str] = None) -> None:
@@ -279,6 +281,9 @@ class InlineStreamingContext:
             return
         if action.role == ActionRole.TOOL:
             group["tool_count"] += 1
+            pending = group.get("processing_action")
+            if pending is not None and pending.action_id == action.action_id:
+                group["processing_action"] = None
         if action.role == ActionRole.USER:
             return
         group["actions"].append(action)
@@ -615,12 +620,22 @@ class InlineStreamingContext:
 
             # -- Sub-agent action (depth > 0) --
             if action.depth > 0:
-                # Skip PROCESSING tools first — ensures the subagent group header
-                # is created from the same action as render_action_history uses.
+                group_key = action.parent_action_id
+                # PROCESSING tool inside subagent: record as the group's
+                # current blinking row without adding it to the completed
+                # tool list (the paired SUCCESS/FAILED follows with the
+                # same action_id and clears the slot).
                 if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
+                    if group_key not in self._subagent_groups:
+                        self._stop_processing_live()
+                        self._start_subagent_group(action, group_key)
+                    group = self._subagent_groups.get(group_key)
+                    if group is not None:
+                        group["processing_action"] = action
+                        with self._print_lock:
+                            self._update_subagent_groups_live()
                     self._processed_index += 1
                     continue
-                group_key = action.parent_action_id
                 if group_key not in self._subagent_groups:
                     # New sub-agent group: stop current Live, print header
                     self._stop_processing_live()
@@ -638,11 +653,15 @@ class InlineStreamingContext:
                 self._end_subagent_group_by_key(None, action)
                 continue
 
-            # TOOL with PROCESSING -> show blinking Live
+            # TOOL with PROCESSING -> pin blinking frame. Advance the index
+            # so the loop can consume the paired SUCCESS/FAILED action
+            # (PROCESSING and SUCCESS are *separate* ActionHistory entries
+            # sharing the same ``action_id``; the blink keeps repainting from
+            # ``_processing_action`` state on every refresh tick).
             if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
                 self._update_processing_live(action)
-                # Don't advance index yet; wait for status change
-                return
+                self._processed_index += 1
+                continue
 
             # Completed action (non-PROCESSING) -> print permanently
             self._stop_processing_live()
@@ -767,6 +786,7 @@ class InlineStreamingContext:
                 "subagent_type": subagent_type,
                 "first_action": first_action,
                 "actions": [],
+                "processing_action": None,
             }
             self._update_subagent_groups_live()
 
@@ -777,6 +797,9 @@ class InlineStreamingContext:
             return
         if action.role == ActionRole.TOOL:
             group["tool_count"] += 1
+            pending = group.get("processing_action")
+            if pending is not None and pending.action_id == action.action_id:
+                group["processing_action"] = None
         if action.role == ActionRole.USER:
             # Prompt already shown in header, skip
             return
@@ -922,15 +945,23 @@ class InlineStreamingContext:
             if first_action:
                 items.extend(self.display.renderer.render_subagent_header(first_action, self._verbose))
             actions_list = group.get("actions", [])
+            processing = group.get("processing_action")
             if self._verbose:
                 display_actions = actions_list
             else:
-                display_actions = actions_list[-_SUBAGENT_ROLLING_WINDOW_SIZE:]
+                # When a tool is mid-flight, the running row takes one of the
+                # ``_SUBAGENT_ROLLING_WINDOW_SIZE`` slots so the pinned block
+                # stays exactly ``_SUBAGENT_ROLLING_WINDOW_SIZE`` rows tall.
+                budget = _SUBAGENT_ROLLING_WINDOW_SIZE - (1 if processing is not None else 0)
+                budget = max(budget, 0)
+                display_actions = actions_list[-budget:] if budget else []
                 hidden = len(actions_list) - len(display_actions)
                 if hidden > 0:
                     items.append(Text.from_markup(f"[dim]  \u23bf  ... {hidden} earlier action(s) ...[/dim]"))
             for action in display_actions:
                 items.extend(self.display.renderer.render_subagent_action(action, self._verbose))
+            if processing is not None:
+                items.append(self.display.renderer.render_processing(processing, _PROCESSING_SYMBOL))
         return Group(*items) if items else Group(Text(""))
 
     def _build_subagent_live_lines(self) -> List["LiveDisplayLine"]:
@@ -957,9 +988,20 @@ class InlineStreamingContext:
             for action in group.get("actions", []):
                 tool_texts.extend(self.display.renderer.render_subagent_action(action, verbose=False))
             tool_texts = [t for t in tool_texts if (t.plain or "").strip()]
-            tail = tool_texts[-TOOL_LINES_PER_GROUP:]
+            processing = group.get("processing_action")
+            # Running row occupies one of the ``TOOL_LINES_PER_GROUP`` slots
+            # so the block below the ``⏺`` header is exactly
+            # ``TOOL_LINES_PER_GROUP`` rows tall whenever the subagent is
+            # in-flight.
+            tail_budget = TOOL_LINES_PER_GROUP - (1 if processing is not None else 0)
+            tail_budget = max(tail_budget, 0)
+            tail = tool_texts[-tail_budget:] if tail_budget else []
             for text in tail:
                 result.append(LiveDisplayLine(segments=[("class:subagent-live", text.plain)]))
+            if processing is not None:
+                text = self.display.renderer.render_processing(processing, _PROCESSING_SYMBOL)
+                if text.plain.strip():
+                    result.append(LiveDisplayLine(segments=[("class:processing-live", text.plain)]))
         return result
 
     @staticmethod
@@ -1012,9 +1054,12 @@ class InlineStreamingContext:
         from datus.cli.tui.live_display_state import LiveDisplayLine
 
         if self._processing_action is not None:
-            frame = _BLINK_FRAMES[self._tick % len(_BLINK_FRAMES)]
+            frame = _PROCESSING_SYMBOL
             renderable = self.display.renderer.render_processing(self._processing_action, frame)
-            self._live_state.set_lines([LiveDisplayLine(segments=[("class:processing-live", renderable.plain)])])
+            # Top-level PROCESSING uses ``processing-live-top`` (default fg)
+            # instead of the grey ``processing-live`` used for subagent
+            # internal rows.
+            self._live_state.set_lines([LiveDisplayLine(segments=[("class:processing-live-top", renderable.plain)])])
             return
         if self._subagent_groups:
             self._live_state.set_lines(self._build_subagent_live_lines())
@@ -1262,6 +1307,12 @@ class InlineStreamingContext:
         renderables = self.display.renderer.render_main_action(action, self._verbose)
         if not renderables:
             return
+        # Separate independent depth=0 events with a trailing blank line.
+        # Verbose tool rendering already appends ``Text("")`` — skip in that
+        # case to avoid doubling the gap.
+        last = renderables[-1]
+        if not (isinstance(last, Text) and last.plain == ""):
+            renderables = list(renderables) + [Text("")]
         if self._tui_mode:
             from datus.cli.tui.console_bridge import run_in_terminal_sync
 
@@ -1291,7 +1342,7 @@ class InlineStreamingContext:
             self._repaint_live()
             return
 
-        frame = _BLINK_FRAMES[self._tick % len(_BLINK_FRAMES)]
+        frame = _PROCESSING_SYMBOL
         renderable = self.display.renderer.render_processing(action, frame)
 
         with self._print_lock:
