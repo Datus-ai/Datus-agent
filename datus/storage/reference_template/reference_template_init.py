@@ -4,7 +4,9 @@
 
 import asyncio
 import json
+import os
 import re
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
@@ -55,6 +57,29 @@ TEMPLATE_EXTRA_INSTRUCTIONS = (
     '    description: "Maximum number of rows to return"\n'
     "```"
 )
+
+
+def _resolve_generated_summary_file_path(
+    agent_config: AgentConfig,
+    node: SqlSummaryAgenticNode,
+    sql_summary_file: str,
+) -> Optional[Path]:
+    """Resolve a generated SQL summary path reported by the workflow node.
+
+    Workflow-mode generation accepts several model-reported path shapes:
+    bare filenames, ``sql_summaries/...``, ``subject/sql_summaries/...``,
+    and absolute paths inside the SQL-summary sandbox. Use the same resolver
+    as ``SqlSummaryAgenticNode._save_to_db`` so reference-template bootstrap
+    does not accidentally duplicate path prefixes when it reads the YAML back.
+    """
+    knowledge_base_dir = getattr(node, "knowledge_base_dir", None)
+    if isinstance(knowledge_base_dir, (str, os.PathLike)) and not hasattr(knowledge_base_dir, "mock_calls"):
+        from datus.cli.generation_hooks import resolve_kb_sandbox_path
+
+        resolved = resolve_kb_sandbox_path(sql_summary_file, "sql_summary", str(knowledge_base_dir))
+        return Path(resolved) if resolved else None
+
+    return Path(agent_config.path_manager.sql_summary_path()) / sql_summary_file
 
 
 def _enrich_dimension_sample_values(params: list, agent_config: AgentConfig) -> None:
@@ -239,7 +264,10 @@ async def process_template_item(
 
         logger.info(f"Generated template summary: {sql_summary_file}")
 
-        file_path = agent_config.path_manager.sql_summary_path() / sql_summary_file
+        file_path = _resolve_generated_summary_file_path(agent_config, node, sql_summary_file)
+        if file_path is None:
+            logger.warning(f"SQL summary file rejected by sandbox check: {sql_summary_file!r}")
+            return None
         import yaml
 
         try:

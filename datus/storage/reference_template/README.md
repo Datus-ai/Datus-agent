@@ -5,11 +5,11 @@ This module handles the storage, processing, and analysis of parameterized Jinja
 ## Data Flow
 
 ```text
-Template Files → File Processor → Parameter Analysis → LLM Analysis → Storage
-      ↓                ↓                ↓                   ↓            ↓
-  Split blocks     Validation      Type inference        Metadata     Vector DB
-  Extract params   + Cleaning     + column resolution   Extraction    + Search
-                                  + sample values
+Template Files → File Processor → LLM Analysis → Parameter Analysis → Storage
+      ↓                ↓              ↓                  ↓             ↓
+  Split blocks     Validation     Metadata          Type inference   Vector DB
+  Extract params   + Cleaning     Extraction        + descriptions   + Search
+                                   via SQL summary   + sample values
 ```
 
 ### Processing Pipeline
@@ -17,9 +17,9 @@ Template Files → File Processor → Parameter Analysis → LLM Analysis → St
 1. **File Processing**: Extract template blocks from `.j2`/`.jinja2` files (split by `;`)
 2. **Parameter Extraction**: Use `jinja2.meta.find_undeclared_variables()` to discover parameters
 3. **Validation**: Validate Jinja2 syntax for each template block
-4. **Parameter Analysis**: Static SQL AST analysis to determine parameter types, resolve column references, and query sample values from the database
-5. **LLM Analysis**: Extract business metadata (name, summary, search_text, tags, subject_tree) using SqlSummaryAgenticNode
-6. **Merge**: Combine statically-analyzed parameter types with LLM-generated descriptions
+4. **LLM Analysis**: Extract business metadata (name, summary, search_text, tags, subject_tree) using SqlSummaryAgenticNode in workflow mode with `storage_type="reference_template"`
+5. **Parameter Analysis**: Static SQL AST analysis to determine parameter types, resolve column references, and query sample values from the database
+6. **Merge**: Combine statically-analyzed parameter types with LLM-generated descriptions and keyword allowed values
 7. **Storage**: Store enriched data in vector store for semantic search
 8. **Indexing**: Create search indices for efficient retrieval
 
@@ -94,13 +94,14 @@ The alias `T1` is resolved to `satscores`, producing `column_ref: "satscores.Cou
 
 ## Agent Tools
 
-Three tools are available for LLM agents to interact with reference templates:
+Reference template tools are available only when the reference template store contains entries. The full tool set is:
 
 | Tool | Purpose |
 |------|---------|
-| `search_reference_template` | Semantic search by natural language intent. Returns name, parameters, summary, tags (no template body). |
+| `search_reference_template` | Semantic search by natural language intent. Returns name, raw template body, parameters, summary, and tags. |
 | `get_reference_template` | Exact lookup by subject_path + name. Returns full template, parameters with sample_values, summary. |
-| `execute_reference_template` | Render template with parameters AND execute the SQL, returning query results in one step. |
+| `render_reference_template` | Render a template with parameters and return the SQL without executing it. |
+| `execute_reference_template` | Render template with parameters AND execute the SQL, returning query results in one step. Exposed only when the tool instance has a database function tool. |
 
 ### Dedicated System Prompt: `ref_tpl`
 
@@ -130,9 +131,9 @@ agentic_nodes:
 
 ### Performance Tuning
 
-- **`pool_size`**: Number of concurrent async tasks for LLM analysis (default: 1)
+- **`pool_size`**: Number of concurrent async tasks for LLM analysis. CLI default is `4`; the storage initializer default is `1`.
 - **Parallel processing**: Items are processed asynchronously with semaphore-controlled concurrency
-- Requires `--subject_tree` for parallel mode; without it, falls back to serial (pool_size=1)
+- Requires `--subject_tree` for parallel mode; without it, learning mode falls back to serial (`pool_size=1`) to avoid subject tree race conditions.
 
 ## Data Schema
 
@@ -150,6 +151,7 @@ agentic_nodes:
 - Templates are validated for Jinja2 syntax correctness
 - Parameters are automatically extracted from `{{ variable }}` expressions
 - A single file can contain multiple templates separated by `;`
+- Put each template delimiter at the end of a statement line; multiple templates on the same physical line are not reliably split.
 
 ### Output Format (after bootstrap)
 ```python

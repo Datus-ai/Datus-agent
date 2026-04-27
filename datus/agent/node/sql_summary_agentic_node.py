@@ -10,6 +10,7 @@ SQL query summarization and classification with support for filesystem tools,
 generation tools, and hooks.
 """
 
+import re
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
@@ -591,35 +592,98 @@ class SqlSummaryAgenticNode(AgenticNode):
             content = output.get("content", "")
             logger.info(f"extract_sql_summary_and_output_from_final_resp: {content} (type: {type(content)})")
 
+            def _extract_from_parsed(parsed: object) -> tuple[Optional[str], Optional[str]]:
+                if isinstance(parsed, dict):
+                    sql_summary_file = parsed.get("sql_summary_file")
+                    output_text = parsed.get("output")
+                    if sql_summary_file or output_text:
+                        return sql_summary_file, output_text
+                    logger.warning(f"Parsed JSON but missing expected keys: {parsed.keys()}")
+                return None, None
+
+            def _parse_json_payload(payload: str) -> tuple[Optional[str], Optional[str]]:
+                if not payload:
+                    return None, None
+                try:
+                    import json_repair
+
+                    parsed = json_repair.loads(payload)
+                    return _extract_from_parsed(parsed)
+                except Exception as e:
+                    logger.warning(f"Failed to parse JSON payload: {e}. Content: {payload[:200]}")
+                    return None, None
+
+            def _looks_relevant_json(payload: str) -> bool:
+                return "sql_summary_file" in payload or '"output"' in payload or "'output'" in payload
+
+            def _iter_json_object_candidates(text: str):
+                for start in [i for i, char in enumerate(text) if char == "{"]:
+                    in_string = False
+                    escape = False
+                    quote_char = ""
+                    depth = 0
+                    for pos in range(start, len(text)):
+                        char = text[pos]
+                        if in_string:
+                            if escape:
+                                escape = False
+                            elif char == "\\":
+                                escape = True
+                            elif char == quote_char:
+                                in_string = False
+                            continue
+                        if char in ('"', "'"):
+                            in_string = True
+                            quote_char = char
+                        elif char == "{":
+                            depth += 1
+                        elif char == "}":
+                            depth -= 1
+                            if depth == 0:
+                                candidate = text[start : pos + 1]
+                                if _looks_relevant_json(candidate):
+                                    yield candidate
+                                break
+
+            def _iter_json_payload_candidates(text: str):
+                # Prefer fenced blocks when present, but accept any fence label.
+                for match in re.finditer(r"```[^\n`]*\n?(.*?)```", text, flags=re.DOTALL | re.IGNORECASE):
+                    block = match.group(1).strip()
+                    if _looks_relevant_json(block):
+                        yield block
+
+                stripped = text.strip()
+                if stripped.startswith("{"):
+                    yield stripped
+
+                yield from _iter_json_object_candidates(text)
+
+                cleaned_json = strip_json_str(text)
+                if cleaned_json and cleaned_json != text:
+                    yield cleaned_json
+
             # Case 1: content is already a dict (most common)
             if isinstance(content, dict):
-                sql_summary_file = content.get("sql_summary_file")
-                output_text = content.get("output")
+                sql_summary_file, output_text = _extract_from_parsed(content)
                 if sql_summary_file or output_text:
                     logger.debug(f"Extracted from dict: sql_summary_file={sql_summary_file}")
                     return sql_summary_file, output_text
-                else:
-                    logger.warning(f"Dict format but missing expected keys: {content.keys()}")
 
             # Case 2: content is a JSON string (possibly wrapped in markdown code blocks)
             elif isinstance(content, str) and content.strip():
-                # Use strip_json_str to handle markdown code blocks and extract JSON
-                cleaned_json = strip_json_str(content)
-                if cleaned_json:
-                    try:
-                        import json_repair
+                # Free-form explanations can contain Jinja/SQL braces before the
+                # final JSON. Try all plausible JSON payloads instead of assuming
+                # the first "{" starts the response object.
+                for candidate in _iter_json_payload_candidates(content):
+                    sql_summary_file, output_text = _parse_json_payload(candidate)
+                    if sql_summary_file or output_text:
+                        logger.debug(f"Extracted from response JSON candidate: sql_summary_file={sql_summary_file}")
+                        return sql_summary_file, output_text
 
-                        parsed = json_repair.loads(cleaned_json)
-                        if isinstance(parsed, dict):
-                            sql_summary_file = parsed.get("sql_summary_file")
-                            output_text = parsed.get("output")
-                            if sql_summary_file or output_text:
-                                logger.debug(f"Extracted from JSON string: sql_summary_file={sql_summary_file}")
-                                return sql_summary_file, output_text
-                            else:
-                                logger.warning(f"Parsed JSON but missing expected keys: {parsed.keys()}")
-                    except Exception as e:
-                        logger.warning(f"Failed to parse cleaned JSON: {e}. Cleaned content: {cleaned_json[:200]}")
+                match = re.search(r'"sql_summary_file"\s*:\s*"([^"]+)"', content)
+                if match:
+                    logger.debug(f"Extracted sql_summary_file via regex: {match.group(1)}")
+                    return match.group(1), None
 
             logger.warning(f"Could not extract sql_summary_file from response. Content type: {type(content)}")
             return None, None

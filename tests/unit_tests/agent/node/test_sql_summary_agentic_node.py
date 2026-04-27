@@ -312,6 +312,112 @@ class TestSqlSummaryExtractMethods:
         assert file_name == "summary.yaml"
         assert output == "Generated"
 
+    def test_extract_sql_summary_from_fenced_json_after_jinja_text(self, real_agent_config, mock_llm_create):
+        """Jinja placeholders before final JSON should not confuse extraction."""
+        node = _create_node(real_agent_config)
+
+        content = """
+SQL summary file has been created.
+
+The template contains `{{period_start_date}}` and `{{period_end_date}}`.
+
+```json
+{
+  "sql_summary_file": "subject/sql_summaries/summary.yaml",
+  "output": "Generated"
+}
+```
+"""
+
+        file_name, output = node._extract_sql_summary_and_output_from_response({"content": content})
+        assert file_name == "subject/sql_summaries/summary.yaml"
+        assert output == "Generated"
+
+    def test_extract_sql_summary_from_unfenced_json_after_jinja_text(self, real_agent_config, mock_llm_create):
+        """Free-form text may include Jinja braces before an unfenced final JSON object."""
+        node = _create_node(real_agent_config)
+
+        content = """
+Generated a summary for:
+{% if product_tag_id %}
+SELECT * FROM campaign WHERE FIND_IN_SET('{{ product_tag_id }}', ac_tags);
+{% endif %}
+
+Result:
+{"sql_summary_file": "sql_summaries/template_summary.yaml", "output": "Generated"}
+"""
+
+        file_name, output = node._extract_sql_summary_and_output_from_response({"content": content})
+        assert file_name == "sql_summaries/template_summary.yaml"
+        assert output == "Generated"
+
+    def test_extract_sql_summary_from_generic_fenced_block(self, real_agent_config, mock_llm_create):
+        """The parser should not require the markdown fence language to be exactly json."""
+        node = _create_node(real_agent_config)
+
+        content = """
+Done.
+
+```text
+{
+  "sql_summary_file": "summary_from_text_fence.yaml",
+  "output": "Generated"
+}
+```
+"""
+
+        file_name, output = node._extract_sql_summary_and_output_from_response({"content": content})
+        assert file_name == "summary_from_text_fence.yaml"
+        assert output == "Generated"
+
+    def test_extract_sql_summary_from_escaped_json_object(self, real_agent_config, mock_llm_create):
+        """JSON scanning should handle escaped quotes before closing the object."""
+        node = _create_node(real_agent_config)
+
+        content = (
+            'Done: {"note": "template mentions \\"quoted\\" text and C:\\\\tmp", '
+            '"sql_summary_file": "escaped_summary.yaml", "output": "Generated"}'
+        )
+
+        file_name, output = node._extract_sql_summary_and_output_from_response({"content": content})
+        assert file_name == "escaped_summary.yaml"
+        assert output == "Generated"
+
+    def test_extract_sql_summary_reports_missing_keys(self, real_agent_config, mock_llm_create):
+        """Relevant-looking JSON without expected keys should not produce a fabricated path."""
+        node = _create_node(real_agent_config)
+
+        file_name, output = node._extract_sql_summary_and_output_from_response(
+            {"content": '{"output_file": "wrong.yaml"}'}
+        )
+
+        assert file_name is None
+        assert output is None
+
+    def test_extract_sql_summary_handles_json_parse_failure(self, real_agent_config, mock_llm_create):
+        """A malformed relevant payload should fall through cleanly when JSON parsing fails."""
+        from unittest.mock import patch
+
+        node = _create_node(real_agent_config)
+
+        with patch("json_repair.loads", side_effect=ValueError("bad json")):
+            file_name, output = node._extract_sql_summary_and_output_from_response(
+                {"content": "```text\n{'output': 'Generated'}\n```"}
+            )
+
+        assert file_name is None
+        assert output is None
+
+    def test_extract_sql_summary_uses_regex_fallback(self, real_agent_config, mock_llm_create):
+        """If no valid JSON object exists, the legacy sql_summary_file fallback still works."""
+        node = _create_node(real_agent_config)
+
+        content = 'Summary saved. "sql_summary_file": "regex_fallback.yaml"'
+
+        file_name, output = node._extract_sql_summary_and_output_from_response({"content": content})
+        assert file_name == "regex_fallback.yaml"
+        assert output is None
+
     def test_extract_sql_summary_from_empty(self, real_agent_config, mock_llm_create):
         """_extract_sql_summary_and_output_from_response with empty content returns None."""
         node = _create_node(real_agent_config)

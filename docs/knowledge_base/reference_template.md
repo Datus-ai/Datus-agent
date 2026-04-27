@@ -36,14 +36,14 @@ datus-agent bootstrap-kb \
 
 ### Key Parameters
 
-| Parameter | Required | Description | Example |
-|-----------|----------|-------------|---------|
+| Parameter | Required for reference_template | Description | Example |
+|-----------|---------------------------------|-------------|---------|
 | `--datasource` | Yes | Database datasource | `analytics_db` |
-| `--components` | Yes | Components to initialize | `reference_template` |
-| `--template_dir` | Yes | Directory containing J2 template files | `/templates/queries` |
-| `--kb_update_strategy` | Yes | Update strategy | `overwrite`/`incremental` |
+| `--components` | Yes | Components to initialize. Set this to `reference_template`; otherwise the reference template component is not initialized. | `reference_template` |
+| `--template_dir` | Yes | Directory or single file containing J2 template files. If omitted, the reference template store is initialized empty and no template entries are loaded. | `/templates/queries` |
+| `--kb_update_strategy` | No | Update strategy. Defaults to `check`; use `overwrite` or `incremental` when loading templates intentionally. | `overwrite`/`incremental` |
 | `--validate-only` | No | Only validate, don't store | |
-| `--pool_size` | No | Concurrent processing threads (default: 1) | `8` |
+| `--pool_size` | No | Concurrent processing threads. CLI default is `4`; learning mode without `--subject_tree` forces effective concurrency to `1`. | `8` |
 | `--subject_tree` | No | Predefined subject tree categories | `Analytics/User/Activity,Reporting/Sales/Monthly` |
 
 ### Subject Tree Categorization
@@ -113,7 +113,7 @@ Semicolons inside Jinja2 block structures (`{% if %}`, `{% for %}`, etc.) are no
 
 ### Format Requirements
 
-1. **Semicolon Delimiter**: Templates in a multi-template file must be separated by `;`
+1. **Semicolon Delimiter**: Templates in a multi-template file must be separated by `;`. Put each template delimiter at the end of a statement line; multiple templates on the same physical line are not reliably split.
 2. **Valid Jinja2**: Templates must pass Jinja2 syntax validation
 3. **SQL Content**: Templates should produce valid SQL when rendered
 
@@ -175,15 +175,15 @@ The bootstrap process produces:
 ]
 ```
 
-This allows the LLM to know exactly what values are valid for each parameter when calling `execute_reference_template`.
+When a parameter's SQL context can be resolved, this gives the LLM concrete candidate values or allowed keywords to use when calling `execute_reference_template`. Parameters whose context cannot be inferred are still stored, but may not include sample values.
 
 ## Tools
 
-After bootstrapping, four tools are available to agents:
+After bootstrapping, template tools are available only when the reference template store contains entries. The complete tool set is:
 
 ### `search_reference_template`
 
-Search templates by natural language query. Returns matching templates with parameter metadata (name, type, summary, tags). Does not return the template body to save tokens.
+Search templates by natural language query. Returns matching templates with name, raw template body, parameter metadata, summary, and tags.
 
 ### `get_reference_template`
 
@@ -197,7 +197,7 @@ Render a template with provided parameter values using Jinja2. Returns the final
 
 Render a template and immediately execute the resulting SQL (read-only). Combines `render_reference_template` + `read_query` in a single step. Returns both the rendered SQL and the query result rows.
 
-Note: `execute_reference_template` creates an internal database connection automatically — you do not need to configure `db_tools` separately when using template tools.
+Note: `execute_reference_template` is exposed only when the tool instance has a database function tool. Chat and GenSQL nodes create or reuse a DB tool when wiring reference template tools, so they normally expose `execute_reference_template` when templates exist. Direct `ReferenceTemplateTools` instances without `db_func_tool` expose only search/get/render.
 
 ## Template-Only Mode
 
@@ -222,11 +222,11 @@ In this mode, the agent:
 ## Data Flow
 
 ```text
-Template Files (.j2)  →  File Processor  →  Parameter Analysis  →  LLM Analysis  →  Storage  →  Tools
-       |                       |                   |                    |               |           |
-   Parse blocks          Validate J2          Infer types           Generate        Vector DB   search/
-   Extract params        Extract params      Resolve aliases        summary &       + Indices  get/execute
-   Split by ;            Filter invalid      Query sample values    search_text
+Template Files (.j2)  →  File Processor  →  LLM Analysis  →  Parameter Analysis  →  Storage  →  Tools
+       |                       |                  |                    |                |           |
+   Parse blocks          Validate J2         Generate summary,   Infer types,       Vector DB   search/
+   Extract params        Extract params      search_text,        merge descriptions + Indices  get/render/
+   Split by ;            Filter invalid      subject_tree        query sample values            execute
 ```
 
 ### Processing Pipeline
@@ -235,9 +235,9 @@ Template Files (.j2)  →  File Processor  →  Parameter Analysis  →  LLM Ana
 2. **Block Splitting**: Split multi-template files by semicolons (respecting Jinja2 blocks)
 3. **Validation**: Validate Jinja2 syntax for each template block
 4. **Parameter Extraction**: Extract undeclared variables via `jinja2.meta.find_undeclared_variables()`
-5. **Parameter Analysis**: Infer parameter types, resolve table aliases to real table names, and query sample values from the database
-6. **LLM Analysis**: Generate business summary, search text, and parameter descriptions using SqlSummaryAgenticNode
-7. **Merge**: Combine statically-analyzed parameter types with LLM-generated descriptions
+5. **LLM Analysis**: Generate business summary, search text, subject tree, tags, and parameter descriptions using `SqlSummaryAgenticNode` in workflow mode with `storage_type="reference_template"`
+6. **Parameter Analysis**: Infer parameter types, resolve table aliases to real table names, and query sample values from the database
+7. **Merge**: Combine statically-analyzed parameter types with LLM-generated descriptions and keyword allowed values
 8. **Storage**: Store enriched template data in vector store
 9. **Indexing**: Create search indices for efficient retrieval
 

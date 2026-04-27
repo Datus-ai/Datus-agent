@@ -36,14 +36,14 @@ datus-agent bootstrap-kb \
 
 ### 关键参数
 
-| 参数 | 必需 | 描述 | 示例 |
-|------|------|------|------|
+| 参数 | 使用 reference_template 时必需 | 描述 | 示例 |
+|------|-------------------------------|------|------|
 | `--datasource` | 是 | 数据库数据源 | `analytics_db` |
-| `--components` | 是 | 要初始化的组件 | `reference_template` |
-| `--template_dir` | 是 | 包含 J2 模板文件的目录 | `/templates/queries` |
-| `--kb_update_strategy` | 是 | 更新策略 | `overwrite`/`incremental` |
+| `--components` | 是 | 要初始化的组件。需要设置为 `reference_template`；否则不会初始化 reference template 组件。 | `reference_template` |
+| `--template_dir` | 是 | 包含 J2 模板文件的目录或单个文件。省略时只会初始化空的 reference template 存储，不会加载模板条目。 | `/templates/queries` |
+| `--kb_update_strategy` | 否 | 更新策略。默认是 `check`；明确加载模板时通常使用 `overwrite` 或 `incremental`。 | `overwrite`/`incremental` |
 | `--validate-only` | 否 | 仅验证，不存储 | |
-| `--pool_size` | 否 | 并发处理线程数（默认：1） | `8` |
+| `--pool_size` | 否 | 并发处理线程数。CLI 默认值是 `4`；不传 `--subject_tree` 的学习模式会把实际并发强制降为 `1`。 | `8` |
 | `--subject_tree` | 否 | 预定义主题树分类 | `Analytics/User/Activity,Reporting/Sales/Monthly` |
 
 ### 主题树分类
@@ -114,7 +114,7 @@ Jinja2 块结构（`{% if %}`、`{% for %}` 等）内部的分号不会被视为
 
 ### 格式要求
 
-1. **分号分隔符**：多模板文件中的模板必须用 `;` 分隔
+1. **分号分隔符**：多模板文件中的模板必须用 `;` 分隔。建议将每个模板的分隔分号放在语句行末；同一物理行上放多个模板时不会被可靠拆分。
 2. **合法 Jinja2**：模板必须通过 Jinja2 语法验证
 3. **SQL 内容**：模板渲染后应产生合法的 SQL
 
@@ -176,15 +176,15 @@ Bootstrap 过程会生成：
 ]
 ```
 
-这使得 LLM 在调用 `execute_reference_template` 时能够准确知道每个参数应该填什么值。
+当参数的 SQL 上下文可以被解析时，这些元数据会为 LLM 提供候选值或合法关键字，便于调用 `execute_reference_template`。无法推断上下文的参数仍会被存储，但可能不会包含候选值。
 
 ## 工具
 
-Bootstrap 完成后，Agent 可使用四个工具：
+Bootstrap 完成后，只有当 reference template 存储中存在模板条目时，Agent 才会暴露模板工具。完整工具集包括：
 
 ### `search_reference_template`
 
-通过自然语言查询搜索模板。返回匹配的模板元数据（名称、类型、摘要、标签），不返回模板正文以节省 token。
+通过自然语言查询搜索模板。返回匹配模板的名称、原始模板正文、参数元数据、摘要和标签。
 
 ### `get_reference_template`
 
@@ -198,7 +198,7 @@ Bootstrap 完成后，Agent 可使用四个工具：
 
 渲染模板并立即执行生成的 SQL（只读）。将 `render_reference_template` + `read_query` 合并为一步操作。返回渲染后的 SQL 和查询结果行。
 
-注意：`execute_reference_template` 会自动创建内部数据库连接 — 使用模板工具时不需要单独配置 `db_tools`。
+注意：只有当工具实例持有数据库函数工具时，`execute_reference_template` 才会暴露。Chat 和 GenSQL 节点在挂载 reference template tools 时会创建或复用 DB tool，因此模板存在时通常会暴露 `execute_reference_template`。直接创建且未传入 `db_func_tool` 的 `ReferenceTemplateTools` 实例只会暴露 search/get/render。
 
 ## 纯模板模式
 
@@ -223,11 +223,11 @@ agentic_nodes:
 ## 数据流
 
 ```text
-模板文件 (.j2)  →  文件处理器  →  参数分析  →  LLM 分析  →  存储  →  工具
+模板文件 (.j2)  →  文件处理器  →  LLM 分析  →  参数分析  →  存储  →  工具
      |                |             |             |          |         |
-  解析模板块      验证 J2 语法   推断类型       生成摘要   向量数据库  search/
-  提取参数        过滤无效模板   解析别名      和搜索文本   + 索引     get/execute
-  分号分割                     查询候选值
+  解析模板块      验证 J2 语法   生成摘要、    推断类型、  向量数据库  search/
+  提取参数        过滤无效模板   搜索文本、    合并描述    + 索引     get/render/
+  分号分割                       主题树       查询候选值             execute
 ```
 
 ### 处理流程
@@ -236,9 +236,9 @@ agentic_nodes:
 2. **模板分割**：按分号分割多模板文件（尊重 Jinja2 块结构）
 3. **语法验证**：验证每个模板块的 Jinja2 语法
 4. **参数提取**：通过 `jinja2.meta.find_undeclared_variables()` 提取未声明变量
-5. **参数分析**：推断参数类型，将表别名解析为真实表名，从数据库查询候选值
-6. **LLM 分析**：使用 SqlSummaryAgenticNode 生成业务摘要、搜索文本和参数描述
-7. **合并**：将静态分析的参数类型与 LLM 生成的描述合并
+5. **LLM 分析**：使用 `SqlSummaryAgenticNode` 的 workflow 模式生成业务摘要、搜索文本、主题树、标签和参数描述，并设置 `storage_type="reference_template"`
+6. **参数分析**：推断参数类型，将表别名解析为真实表名，从数据库查询候选值
+7. **合并**：将静态分析的参数类型与 LLM 生成的描述、关键字合法取值合并
 8. **存储入库**：将增强后的模板数据存入向量数据库
 9. **索引构建**：创建搜索索引以支持高效检索
 
