@@ -78,6 +78,7 @@ class TestEnsureAdapter:
 
     def test_runs_pip_when_missing_and_succeeds(self, monkeypatch):
         monkeypatch.setattr(sai, "is_adapter_installed", lambda *_: False)
+        monkeypatch.setattr(sai.shutil, "which", lambda name: None)
         captured = {}
 
         def fake_run(cmd, capture_output, text, check):
@@ -93,8 +94,52 @@ class TestEnsureAdapter:
         assert captured["cmd"][:3] == [sai.sys.executable, "-m", "pip"]
         assert "datus-scheduler-airflow" in captured["cmd"]
 
+    def test_uses_uv_when_uv_on_path(self, monkeypatch):
+        """When ``uv`` is discoverable, we must shell out to
+        ``uv pip install --python <sys.executable> <pkg>`` instead of
+        ``python -m pip install``. ``uv tool install`` / bare
+        ``uv venv`` envs do not seed pip, so the legacy path exits 1
+        there — this branch is the whole reason the function exists."""
+        monkeypatch.setattr(sai, "is_adapter_installed", lambda *_: False)
+        monkeypatch.setattr(sai.shutil, "which", lambda name: "/usr/local/bin/uv" if name == "uv" else None)
+        captured = {}
+
+        def fake_run(cmd, capture_output, text, check):
+            captured["cmd"] = cmd
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(sai.subprocess, "run", fake_run)
+        monkeypatch.setattr(sai.importlib, "invalidate_caches", lambda: None)
+
+        result = sai.ensure_adapter("bi_platforms", "superset")
+        assert result.ok is True
+        assert captured["cmd"] == [
+            "/usr/local/bin/uv",
+            "pip",
+            "install",
+            "--python",
+            sai.sys.executable,
+            "datus-bi-superset",
+        ]
+
+    def test_uv_failure_error_message_names_uv(self, monkeypatch):
+        """Failure messages must match the tool we actually invoked so
+        the user can copy-paste the equivalent command. With uv on PATH
+        the prefix is ``uv pip install`` — not ``pip install``."""
+        monkeypatch.setattr(sai, "is_adapter_installed", lambda *_: False)
+        monkeypatch.setattr(sai.shutil, "which", lambda name: "/usr/local/bin/uv" if name == "uv" else None)
+        monkeypatch.setattr(
+            sai.subprocess,
+            "run",
+            lambda *a, **k: SimpleNamespace(returncode=1, stdout="", stderr="resolve failed"),
+        )
+        result = sai.ensure_adapter("bi_platforms", "ghost")
+        assert result.ok is False
+        assert result.error == "uv pip install exited with code 1"
+
     def test_pip_failure_surfaces_error(self, monkeypatch):
         monkeypatch.setattr(sai, "is_adapter_installed", lambda *_: False)
+        monkeypatch.setattr(sai.shutil, "which", lambda name: None)
         monkeypatch.setattr(
             sai.subprocess,
             "run",
@@ -102,7 +147,7 @@ class TestEnsureAdapter:
         )
         result = sai.ensure_adapter("bi_platforms", "ghost")
         assert result.ok is False
-        assert "exited with code 1" in (result.error or "")
+        assert result.error == "pip install exited with code 1"
         assert "ERROR" in result.stderr
 
     def test_unknown_section_returns_error(self):
@@ -115,6 +160,7 @@ class TestEnsureAdapter:
         ``pip install datus-semantic-metricflow`` when the package isn't
         already importable — this is the entire point of the new tab."""
         monkeypatch.setattr(sai, "is_adapter_installed", lambda *_: False)
+        monkeypatch.setattr(sai.shutil, "which", lambda name: None)
         captured = {}
 
         def fake_run(cmd, capture_output, text, check):
@@ -131,6 +177,7 @@ class TestEnsureAdapter:
 
     def test_line_callback_receives_pip_output(self, monkeypatch):
         monkeypatch.setattr(sai, "is_adapter_installed", lambda *_: False)
+        monkeypatch.setattr(sai.shutil, "which", lambda name: None)
         monkeypatch.setattr(
             sai.subprocess,
             "run",

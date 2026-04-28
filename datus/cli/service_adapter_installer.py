@@ -11,26 +11,30 @@ installed yet. The TUI calls into this module to:
 
 1. Detect whether the adapter is already importable
    (:func:`is_adapter_installed`).
-2. Run ``pip install`` for the missing package
-   (:func:`ensure_adapter`) — the install runs through
-   ``sys.executable -m pip`` so it targets the same interpreter that
-   loaded ``datus-cli`` (works for venv / pipx / uv-installed CLIs).
+2. Install the missing package (:func:`ensure_adapter`). When ``uv`` is
+   on ``PATH`` we shell out to ``uv pip install --python <sys.executable>
+   <pkg>`` so it works inside ``uv tool install`` / bare ``uv venv``
+   environments where ``pip`` is not seeded. Otherwise we fall back to
+   ``sys.executable -m pip install <pkg>``. Either way the package
+   lands in the interpreter that loaded ``datus-cli`` (venv / pipx /
+   uv-installed CLIs).
 3. Import the adapter module and refresh the BI / scheduler registries
    without restarting the process (:func:`hot_reload_adapter`).
 
 Pure Python on purpose — the module has no prompt_toolkit dependency so
-it can be unit-tested by monkey-patching ``subprocess.run`` and
-``importlib.util.find_spec``.
+it can be unit-tested by monkey-patching ``subprocess.run``,
+``shutil.which`` and ``importlib.util.find_spec``.
 """
 
 from __future__ import annotations
 
 import importlib
 import importlib.util
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Callable, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from datus.utils.loggings import get_logger
 
@@ -115,18 +119,37 @@ def is_adapter_installed(section: str, adapter_type: str) -> bool:
         return False
 
 
+def _install_command(pkg: str) -> Tuple[List[str], str]:
+    """Pick the install command, preferring ``uv pip`` when available.
+
+    Mirrors ``datus.cli.datasource_commands._install_plugin``: ``uv tool
+    install`` and bare ``uv venv`` environments do not seed ``pip``, so
+    a plain ``python -m pip install`` exits with code 1 there. Routing
+    through ``uv pip install --python <sys.executable>`` reuses the
+    active interpreter without requiring ``pip`` to be present.
+
+    Returns ``(argv, label)`` where ``label`` names the underlying tool
+    (``"uv pip install"`` / ``"pip install"``) so callers can build
+    error messages that match the command actually executed.
+    """
+    uv_path = shutil.which("uv")
+    if uv_path:
+        return [uv_path, "pip", "install", "--python", sys.executable, pkg], "uv pip install"
+    return [sys.executable, "-m", "pip", "install", pkg], "pip install"
+
+
 def ensure_adapter(
     section: str,
     adapter_type: str,
     *,
     line_callback: Optional[Callable[[str], None]] = None,
 ) -> InstallResult:
-    """Install the adapter package via ``sys.executable -m pip`` if missing.
+    """Install the adapter package (via ``uv pip`` or ``pip``) if missing.
 
-    ``line_callback`` (when provided) receives one line of pip
+    ``line_callback`` (when provided) receives one line of installer
     stdout/stderr at a time so the TUI can display a live tail. The
-    function blocks until pip exits — the caller is expected to run it
-    on a worker thread when the UI must stay responsive.
+    function blocks until the installer exits — the caller is expected
+    to run it on a worker thread when the UI must stay responsive.
     """
     try:
         pkg, import_name = package_for(section, adapter_type)
@@ -136,7 +159,7 @@ def ensure_adapter(
     if is_adapter_installed(section, adapter_type):
         return InstallResult(ok=True, package=pkg, import_name=import_name)
 
-    cmd = [sys.executable, "-m", "pip", "install", pkg]
+    cmd, label = _install_command(pkg)
     logger.info("Installing adapter package: %s", " ".join(cmd))
     try:
         proc = subprocess.run(
@@ -162,7 +185,7 @@ def ensure_adapter(
             import_name=import_name,
             stdout=stdout,
             stderr=stderr,
-            error=f"pip install exited with code {proc.returncode}",
+            error=f"{label} exited with code {proc.returncode}",
         )
 
     importlib.invalidate_caches()
