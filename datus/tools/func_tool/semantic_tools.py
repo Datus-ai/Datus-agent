@@ -53,6 +53,29 @@ def _normalize_dimension_rows(raw) -> list:
     return normalized
 
 
+def _normalize_name_list(value) -> List[str]:
+    """Normalize LLM-provided string/list arguments into a clean list of names."""
+    value = normalize_null(value)
+    if value is None:
+        return []
+    if isinstance(value, str):
+        candidates = [value]
+    elif isinstance(value, (list, tuple, set)):
+        candidates = list(value)
+    else:
+        candidates = [value]
+
+    names = []
+    for candidate in candidates:
+        candidate = normalize_null(candidate)
+        if candidate is None:
+            continue
+        text = str(candidate).strip()
+        if text:
+            names.append(text)
+    return names
+
+
 def _run_async(coro):
     """
     Run async coroutine safely, handling both sync and async contexts.
@@ -468,6 +491,20 @@ class SemanticTools:
         Returns:
             FuncToolResult with query results or explain plan
         """
+        metrics = _normalize_name_list(metrics)
+        dimensions = _normalize_name_list(dimensions)
+        path = _normalize_name_list(path)
+        order_by = _normalize_name_list(order_by)
+
+        if not metrics:
+            return FuncToolResult(
+                success=0,
+                error=(
+                    "query_metrics requires at least one metric name. "
+                    "Call list_metrics first and pass one or more metric names exactly as returned."
+                ),
+            )
+
         if not self.adapter:
             return FuncToolResult(
                 success=0,
@@ -477,6 +514,8 @@ class SemanticTools:
         # Sanitize time parameters: LLM may pass string "null"/"None" instead of omitting
         time_start = normalize_null(time_start)
         time_end = normalize_null(time_end)
+        time_granularity = normalize_null(time_granularity)
+        where = normalize_null(where)
         logger.info(
             f"query_metrics called: metrics={metrics}, dimensions={dimensions}, path={path}, "
             f"time=[{time_start},{time_end}], granularity={time_granularity}, where={where}, "
@@ -488,14 +527,14 @@ class SemanticTools:
             result = _run_async(
                 self.adapter.query_metrics(
                     metrics=metrics,
-                    dimensions=dimensions or [],
-                    path=path,
+                    dimensions=dimensions,
+                    path=path or None,
                     time_start=time_start,
                     time_end=time_end,
                     time_granularity=time_granularity,
                     where=where,
                     limit=limit,
-                    order_by=order_by,
+                    order_by=order_by or None,
                     dry_run=dry_run,
                 )
             )

@@ -211,6 +211,41 @@ class TestQueryMetricsCompression:
         assert result.success == 0
         assert "adapter" in result.error.lower()
 
+    @pytest.mark.parametrize("metrics", [[], ["null", "", None], ""])
+    def test_query_metrics_rejects_empty_metrics_before_adapter_call(self, semantic_tools, mock_adapter, metrics):
+        """MetricFlow otherwise raises a cryptic ComputeMetricsNode assertion."""
+        result = semantic_tools.query_metrics(metrics=metrics)
+
+        assert result.success == 0
+        assert "at least one metric name" in result.error
+        mock_adapter.query_metrics.assert_not_called()
+
+    def test_query_metrics_normalizes_string_arguments(self, semantic_tools, mock_adapter):
+        """LLM tool calls may send a single string even when the schema says list."""
+        query_result = QueryResult(columns=["revenue"], data=[{"revenue": 10}], metadata={})
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+            result = semantic_tools.query_metrics(
+                metrics="revenue",
+                dimensions="metric_time__day",
+                path="Finance",
+                order_by="-revenue",
+            )
+
+        assert result.success == 1
+        mock_adapter.query_metrics.assert_called_once_with(
+            metrics=["revenue"],
+            dimensions=["metric_time__day"],
+            path=["Finance"],
+            time_start=None,
+            time_end=None,
+            time_granularity=None,
+            where=None,
+            limit=None,
+            order_by=["-revenue"],
+            dry_run=False,
+        )
+
     def test_query_metrics_adapter_exception(self, semantic_tools):
         """Test query_metrics handles adapter exceptions gracefully."""
         with patch(
