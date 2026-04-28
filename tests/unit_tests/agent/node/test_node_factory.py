@@ -176,6 +176,35 @@ class TestCreateInteractiveNode:
         create_interactive_node("feedback", config)
         mock_init.assert_called_once_with(agent_config=config, execution_mode="interactive", scope=None)
 
+    @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
+    def test_execution_mode_workflow_propagates(self, mock_init):
+        """API workflow callers pass execution_mode="workflow"; factory must forward it."""
+        config = _mock_agent_config()
+        create_interactive_node("my_custom_sql", config, execution_mode="workflow")
+        mock_init.assert_called_once()
+        assert mock_init.call_args[1]["execution_mode"] == "workflow"
+
+    @patch("datus.agent.node.feedback_agentic_node.FeedbackAgenticNode.__init__", return_value=None)
+    def test_execution_mode_workflow_for_feedback(self, mock_init):
+        """Workflow flag also propagates to nodes that take agent_config-only signatures."""
+        config = _mock_agent_config()
+        create_interactive_node("feedback", config, execution_mode="workflow")
+        mock_init.assert_called_once_with(agent_config=config, execution_mode="workflow", scope=None)
+
+    @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
+    def test_node_id_override(self, mock_init):
+        """node_id kwarg must take precedence over the auto-generated suffix."""
+        config = _mock_agent_config()
+        create_interactive_node("my_custom_sql", config, node_id_suffix="_cli", node_id="api-session-42")
+        assert mock_init.call_args[1]["node_id"] == "api-session-42"
+
+    @patch("datus.agent.node.chat_agentic_node.ChatAgenticNode.__init__", return_value=None)
+    def test_node_id_override_for_chat(self, mock_init):
+        """Default chat node honours the node_id override (used by the API path)."""
+        config = _mock_agent_config()
+        create_interactive_node(None, config, node_id="api-session-7")
+        assert mock_init.call_args[1]["node_id"] == "api-session-7"
+
 
 # ---------------------------------------------------------------------------
 # Tests: create_node_input

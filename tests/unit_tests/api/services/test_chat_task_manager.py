@@ -695,6 +695,95 @@ class TestCreateNode:
         node = manager._create_node(real_agent_config, "gen_ext_knowledge", "test-session")
         assert isinstance(node, GenExtKnowledgeAgenticNode)
 
+    def test_create_gen_report_node(self, real_agent_config, mock_llm_create):
+        """gen_report must land on GenReportAgenticNode (regression: previously fell back to GenSQL)."""
+        from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        manager = ChatTaskManager()
+        node = manager._create_node(real_agent_config, "gen_report", "test-session")
+        assert isinstance(node, GenReportAgenticNode)
+        assert not isinstance(node, GenSQLAgenticNode)
+
+    def test_create_gen_table_node(self, real_agent_config, mock_llm_create):
+        """gen_table must land on GenTableAgenticNode (regression: previously fell back to GenSQL)."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+        from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
+
+        manager = ChatTaskManager()
+        node = manager._create_node(real_agent_config, "gen_table", "test-session")
+        assert isinstance(node, GenTableAgenticNode)
+        assert not isinstance(node, GenSQLAgenticNode)
+
+    def test_create_explore_node(self, real_agent_config, mock_llm_create):
+        """explore must land on ExploreAgenticNode (regression: previously fell back to GenSQL)."""
+        from datus.agent.node.explore_agentic_node import ExploreAgenticNode
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        manager = ChatTaskManager()
+        node = manager._create_node(real_agent_config, "explore", "test-session")
+        assert isinstance(node, ExploreAgenticNode)
+        assert not isinstance(node, GenSQLAgenticNode)
+
+    def test_create_feedback_node(self, real_agent_config, mock_llm_create):
+        """feedback continues to land on FeedbackAgenticNode through the shared factory."""
+        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+
+        manager = ChatTaskManager()
+        node = manager._create_node(real_agent_config, "feedback", "test-session")
+        assert isinstance(node, FeedbackAgenticNode)
+
+    def test_custom_agent_node_class_gen_report(self, real_agent_config, mock_llm_create):
+        """A custom sub_agent with node_class=gen_report must instantiate GenReportAgenticNode."""
+        from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        real_agent_config.agentic_nodes["my_report_agent"] = {
+            "system_prompt": "my_report_agent",
+            "node_class": "gen_report",
+            "tools": "db_tools.*",
+            "max_turns": 5,
+        }
+
+        manager = ChatTaskManager()
+        node = manager._create_node(real_agent_config, "my_report_agent", "test-session")
+        assert isinstance(node, GenReportAgenticNode)
+        assert not isinstance(node, GenSQLAgenticNode)
+
+    def test_custom_agent_no_node_class_falls_back_to_gen_sql(self, real_agent_config, mock_llm_create):
+        """A custom sub_agent without node_class must default to GenSQLAgenticNode."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        real_agent_config.agentic_nodes["plain_custom_agent"] = {
+            "system_prompt": "plain_custom_agent",
+            "tools": "db_tools.*",
+            "max_turns": 5,
+        }
+
+        manager = ChatTaskManager()
+        node = manager._create_node(real_agent_config, "plain_custom_agent", "test-session")
+        assert isinstance(node, GenSQLAgenticNode)
+
+    def test_custom_agent_uuid_resolved_to_node_class(self, real_agent_config, mock_llm_create):
+        """API passes the UUID under "id"; factory must look up the name and honour node_class."""
+        from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
+
+        real_agent_config.agentic_nodes["my_report_agent"] = {
+            "id": "11111111-2222-3333-4444-555555555555",
+            "system_prompt": "my_report_agent",
+            "node_class": "gen_report",
+            "tools": "db_tools.*",
+            "max_turns": 5,
+        }
+
+        manager = ChatTaskManager()
+        node = manager._create_node(
+            real_agent_config,
+            "11111111-2222-3333-4444-555555555555",
+            "test-session",
+        )
+        assert isinstance(node, GenReportAgenticNode)
+
 
 class TestCreateNodeInput:
     """Tests for _create_node_input — input model factory."""
@@ -1110,7 +1199,7 @@ class TestCreateNodeCustomSubAgent:
     def test_custom_subagent_resolves_sanitized_key(self, monkeypatch):
         """Custom sub_agent UUID resolves to sanitized node_name via agentic_nodes."""
         monkeypatch.setattr(
-            "datus.api.services.chat_task_manager.GenSQLAgenticNode",
+            "datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode",
             _StubGenSQLNode,
         )
         agent_config = MagicMock()
@@ -1124,7 +1213,7 @@ class TestCreateNodeCustomSubAgent:
     def test_custom_subagent_unknown_falls_back_to_id(self, monkeypatch):
         """Unknown subagent_id is used as-is when no matching entry exists."""
         monkeypatch.setattr(
-            "datus.api.services.chat_task_manager.GenSQLAgenticNode",
+            "datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode",
             _StubGenSQLNode,
         )
         agent_config = MagicMock()

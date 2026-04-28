@@ -14,8 +14,6 @@ from datetime import datetime
 from typing import AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
-from datus.agent.node.chat_agentic_node import ChatAgenticNode
-from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 from datus.api.models.cli_models import (
     SSEDataType,
     SSEEndData,
@@ -661,90 +659,39 @@ class ChatTaskManager:
     ) -> AgenticNode:
         """Create a fresh AgenticNode based on subagent_id (builtin name or custom DB ID).
 
+        Delegates dispatch to :func:`datus.agent.node.node_factory.create_interactive_node`
+        so the API path matches the CLI exactly: every built-in sub_agent is wired to
+        its dedicated AgenticNode subclass, and custom sub_agents honour their
+        ``node_class`` field (``gen_report`` / ``gen_table`` / ``gen_dashboard`` /
+        ``scheduler`` / ``gen_skill`` / ``explore``) instead of always falling back
+        to ``GenSQLAgenticNode``.
+
         ``user_id`` is propagated as the node ``scope`` so that session files
         are isolated per user under ``{session_dir}/{user_id}/``.
         """
+        from datus.agent.node.node_factory import create_interactive_node
+
         execution_mode: Literal["interactive", "workflow"] = "interactive" if interactive else "workflow"
+
+        # ``agentic_nodes`` is keyed by sanitized node_name; the API receives the
+        # custom sub_agent's UUID under the "id" field. Translate UUID -> name so
+        # the factory's ``_resolve_node_class_type`` can look up node_class and
+        # downstream tools can resolve scoped_context via sub_agent_config().
+        node_name = subagent_id
         if subagent_id:
-            if subagent_id == "gen_semantic_model":
-                from datus.agent.node.gen_semantic_model_agentic_node import (
-                    GenSemanticModelAgenticNode,
-                )
+            for key, entry in (agent_config.agentic_nodes or {}).items():
+                entry_id = entry.get("id") if isinstance(entry, dict) else getattr(entry, "id", None)
+                if entry_id == subagent_id:
+                    node_name = key
+                    break
 
-                return GenSemanticModelAgenticNode(
-                    agent_config=agent_config,
-                    execution_mode=execution_mode,
-                    scope=user_id,
-                )
-            elif subagent_id == "gen_metrics":
-                from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-
-                return GenMetricsAgenticNode(
-                    agent_config=agent_config,
-                    execution_mode=execution_mode,
-                    scope=user_id,
-                )
-            elif subagent_id == "gen_sql_summary":
-                from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
-
-                return SqlSummaryAgenticNode(
-                    node_name=subagent_id,
-                    agent_config=agent_config,
-                    execution_mode=execution_mode,
-                    scope=user_id,
-                )
-            elif subagent_id == "gen_ext_knowledge":
-                from datus.agent.node.gen_ext_knowledge_agentic_node import (
-                    GenExtKnowledgeAgenticNode,
-                )
-
-                return GenExtKnowledgeAgenticNode(
-                    node_name=subagent_id,
-                    agent_config=agent_config,
-                    execution_mode=execution_mode,
-                    scope=user_id,
-                )
-            elif subagent_id == "feedback":
-                from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
-
-                return FeedbackAgenticNode(
-                    agent_config=agent_config,
-                    execution_mode=execution_mode,
-                    scope=user_id,
-                )
-            else:
-                # Custom sub_agent: agentic_nodes is keyed by sanitized node_name
-                # (not the UUID subagent_id). Each entry carries its original
-                # sub_agent id under the "id" field — use it to resolve the key
-                # so downstream tools can look up scoped_context via
-                # sub_agent_config().
-                node_name = subagent_id
-                for key, entry in (agent_config.agentic_nodes or {}).items():
-                    if isinstance(entry, dict) and entry.get("id") == subagent_id:
-                        node_name = key
-                        break
-                return GenSQLAgenticNode(
-                    node_id=session_id,
-                    description=f"SQL generation node for {node_name}",
-                    node_type="gensql",
-                    input_data=None,
-                    agent_config=agent_config,
-                    tools=None,
-                    node_name=node_name,
-                    scope=user_id,
-                    execution_mode=execution_mode,
-                )
-        else:
-            return ChatAgenticNode(
-                node_id=session_id,
-                description="Chat node for backend API",
-                node_type="chat",
-                input_data=None,
-                agent_config=agent_config,
-                tools=None,
-                scope=user_id,
-                execution_mode=execution_mode,
-            )
+        return create_interactive_node(
+            subagent_name=node_name,
+            agent_config=agent_config,
+            scope=user_id,
+            execution_mode=execution_mode,
+            node_id=session_id,
+        )
 
     # ------------------------------------------------------------------
     # Node input factory
@@ -763,77 +710,29 @@ class ChatTaskManager:
         plan_mode: bool = False,
         source_session_id: Optional[str] = None,
     ):
-        """Create node input based on node type."""
-        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
-        from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
-        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
-        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
-        from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
+        """Create node input based on node type.
 
-        if isinstance(current_node, FeedbackAgenticNode):
-            from datus.schemas.feedback_agentic_node_models import FeedbackNodeInput
+        Delegates to :func:`datus.agent.node.node_factory.create_node_input` so
+        the API path covers every AgenticNode subclass the CLI knows about
+        (GenReport / Explore / SkillCreator / GenTable / GenJob in addition to
+        the legacy GenSQL / Semantic / SqlSummary / ExtKnowledge / Feedback /
+        Chat branches).
+        """
+        from datus.agent.node.node_factory import create_node_input
 
-            return FeedbackNodeInput(
-                user_message=user_message,
-                database=database,
-                source_session_id=source_session_id,
-            )
-
-        if isinstance(current_node, (GenSemanticModelAgenticNode, GenMetricsAgenticNode)):
-            from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
-
-            return SemanticNodeInput(
-                user_message=user_message,
-                catalog=catalog,
-                database=database,
-                db_schema=db_schema,
-                prompt_language="en",
-            )
-        elif isinstance(current_node, SqlSummaryAgenticNode):
-            from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput
-
-            return SqlSummaryNodeInput(
-                user_message=user_message,
-                catalog=catalog,
-                database=database,
-                db_schema=db_schema,
-                prompt_language="en",
-            )
-        elif isinstance(current_node, GenExtKnowledgeAgenticNode):
-            from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput
-
-            return ExtKnowledgeNodeInput(
-                user_message=user_message,
-                prompt_language="en",
-            )
-        elif isinstance(current_node, GenSQLAgenticNode):
-            from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
-
-            return GenSQLNodeInput(
-                user_message=user_message,
-                catalog=catalog,
-                database=database,
-                db_schema=db_schema,
-                schemas=at_tables,
-                metrics=at_metrics,
-                reference_sql=at_sqls,
-                prompt_language="en",
-                plan_mode=plan_mode,
-            )
-        else:
-            from datus.schemas.chat_agentic_node_models import ChatNodeInput
-
-            return ChatNodeInput(
-                user_message=user_message,
-                catalog=catalog,
-                database=database,
-                db_schema=db_schema,
-                schemas=at_tables,
-                metrics=at_metrics,
-                reference_sql=at_sqls,
-                plan_mode=plan_mode,
-            )
+        return create_node_input(
+            user_message=user_message,
+            node=current_node,
+            catalog=catalog,
+            database=database,
+            db_schema=db_schema,
+            at_tables=at_tables,
+            at_metrics=at_metrics,
+            at_sqls=at_sqls,
+            prompt_language="en",
+            plan_mode=plan_mode,
+            source_session_id=source_session_id,
+        )
 
     # ------------------------------------------------------------------
     # @ reference resolution
