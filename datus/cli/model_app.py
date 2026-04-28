@@ -48,9 +48,9 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-_CODING_PLAN_PROVIDERS = frozenset({"alibaba_coding", "glm_coding", "minimax_coding", "kimi_coding"})
+_CODING_PLAN_PROVIDERS = frozenset({"alibaba_coding", "bigmodel_coding", "zai_coding", "minimax_coding", "kimi_coding"})
 # Providers that live on a separate "Plans" tab: everything that isn't a
-# straightforward api_key endpoint — Chinese coding plans (all use
+# straightforward api_key endpoint — coding plans (all use
 # Anthropic-compatible gateways), the Claude Code subscription path, and the
 # Codex OAuth path. Keeping them out of the main Providers tab reduces noise
 # and groups the "bring-your-own-plan" options together.
@@ -77,6 +77,18 @@ def _display_name(provider: str) -> str:
     if provider in _DISPLAY_NAME_OVERRIDES:
         return _DISPLAY_NAME_OVERRIDES[provider]
     return provider.replace("_", " ")
+
+
+def _validate_single_line_value(label: str, value: str, *, ascii_only: bool = False) -> Optional[str]:
+    """Return an error when a single-line form field received invalid text."""
+    if "\n" in value or "\r" in value:
+        return f"{label} must be a single line"
+    if ascii_only:
+        try:
+            value.encode("ascii")
+        except UnicodeEncodeError:
+            return f"{label} must contain only ASCII characters"
+    return None
 
 
 class _Tab(Enum):
@@ -792,6 +804,14 @@ class ModelApp:
     def _submit_cred_form(self) -> None:
         provider = self._active_provider or ""
         raw_key = self._cred_api_key.text.strip()
+        error = _validate_single_line_value("API key", raw_key, ascii_only=raw_key != _MASKED_KEY_PLACEHOLDER)
+        if error:
+            self._error_message = error
+            return
+        error = _validate_single_line_value("Base URL", self._cred_base_url.text, ascii_only=True)
+        if error:
+            self._error_message = error
+            return
         api_key: str | None = None if raw_key == _MASKED_KEY_PLACEHOLDER else raw_key
         base_url = self._cred_base_url.text.strip()
         try:
@@ -814,6 +834,10 @@ class ModelApp:
 
     def _submit_token_form(self) -> None:
         provider = self._active_provider or ""
+        error = _validate_single_line_value("Token", self._token_input.text, ascii_only=True)
+        if error:
+            self._error_message = error
+            return
         token = self._token_input.text.strip()
         if not token:
             self._error_message = "Token cannot be empty"
@@ -833,6 +857,20 @@ class ModelApp:
         self._enter_provider_models(provider)
 
     def _submit_add_model_form(self) -> None:
+        for label, area in (
+            ("name", self._add_name),
+            ("type", self._add_type),
+            ("model", self._add_model),
+        ):
+            error = _validate_single_line_value(label, area.text)
+            if error:
+                self._error_message = error
+                return
+        for label, area in (("base_url", self._add_base_url), ("api_key", self._add_api_key)):
+            error = _validate_single_line_value(label, area.text, ascii_only=True)
+            if error:
+                self._error_message = error
+                return
         name = self._add_name.text.strip()
         type_ = self._add_type.text.strip()
         model_name = self._add_model.text.strip()

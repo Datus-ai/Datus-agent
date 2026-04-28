@@ -80,14 +80,16 @@ providers:
   glm:
     type: glm
     base_url: https://open.bigmodel.cn/api/paas/v4
+    api_key_env: GLM_API_KEY
     default_model: glm-5
     models:
+      - glm-5.1
       - glm-5
       - glm-4.7
       - glm-4.5-air
       - glm-4.5-flash
 
-  # Coding Plan providers (Chinese vendor Anthropic-compatible endpoints)
+  # Coding Plan providers (vendor Anthropic-compatible endpoints)
   alibaba_coding:
     type: claude
     base_url: https://coding-intl.dashscope.aliyuncs.com/apps/anthropic
@@ -100,12 +102,24 @@ providers:
       - kimi-k2.5
       - MiniMax-M2.5
 
-  glm_coding:
+  bigmodel_coding:
     type: claude
     base_url: https://open.bigmodel.cn/api/anthropic
-    default_model: glm-5
+    api_key_env: GLM_API_KEY
+    default_model: glm-5.1
     models_from: glm
     models:
+      - glm-5.1
+      - glm-5
+
+  zai_coding:
+    type: claude
+    base_url: https://api.z.ai/api/anthropic
+    api_key_env: ZAI_API_KEY
+    default_model: glm-5.1
+    models_from: glm
+    models:
+      - glm-5.1
       - glm-5
 
   minimax_coding:

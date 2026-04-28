@@ -26,7 +26,7 @@ agent:
   #   that provider without rewriting YAML. Supported providers (keys) are
   #   shipped in ``conf/providers.yml``: openai, claude, claude_subscription,
   #   codex, deepseek, kimi, qwen, gemini, glm, minimax, alibaba_coding,
-  #   glm_coding, minimax_coding, kimi_coding.
+  #   bigmodel_coding, zai_coding, minimax_coding, kimi_coding.
   #
   # - ``agent.models.<name>`` (legacy / custom)
   #   Retained for self-hosted or private-deployment models — hand-edit this

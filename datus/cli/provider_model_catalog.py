@@ -64,7 +64,8 @@ OPENROUTER_VENDOR_MAP: Dict[str, str] = {
 PROTECTED_PROVIDERS = frozenset(
     {
         "alibaba_coding",
-        "glm_coding",
+        "bigmodel_coding",
+        "zai_coding",
         "minimax_coding",
         "kimi_coding",
         "claude_subscription",

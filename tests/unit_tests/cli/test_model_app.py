@@ -84,6 +84,29 @@ class TestProviderList:
         plans = app._providers_for_tab(_Tab.PLANS)
         assert set(plans) == {"claude_subscription", "codex"}
 
+    def test_plans_tab_contains_bigmodel_and_zai_coding_entries(self):
+        cfg = _stub_agent_config()
+        cfg.provider_catalog["providers"].update(
+            {
+                "bigmodel_coding": {
+                    "type": "claude",
+                    "base_url": "https://open.bigmodel.cn/api/anthropic",
+                    "default_model": "glm-5.1",
+                    "models": ["glm-5.1", "glm-5"],
+                },
+                "zai_coding": {
+                    "type": "claude",
+                    "base_url": "https://api.z.ai/api/anthropic",
+                    "default_model": "glm-5.1",
+                    "models": ["glm-5.1", "glm-5"],
+                },
+            }
+        )
+        app = ModelApp(cfg, Console(file=io.StringIO(), no_color=True))
+        plans = app._providers_for_tab(_Tab.PLANS)
+        assert "bigmodel_coding" in plans
+        assert "zai_coding" in plans
+
     def test_availability_is_cached(self):
         cfg = _stub_agent_config()
         ModelApp(cfg, Console(file=io.StringIO(), no_color=True))
@@ -385,6 +408,30 @@ class TestCredentialForm:
             auth_type="api_key",
         )
 
+    def test_multiline_api_key_is_rejected_before_save(self):
+        cfg = _stub_agent_config()
+        app = ModelApp(cfg, Console(file=io.StringIO(), no_color=True))
+        app._active_provider = "openai"
+        app._cred_api_key.text = "sk-test\nnext"
+        app._cred_base_url.text = "https://custom.example"
+
+        app._submit_cred_form()
+
+        cfg.set_provider_config.assert_not_called()
+        assert app._error_message == "API key must be a single line"
+
+    def test_non_ascii_api_key_is_rejected_before_save(self):
+        cfg = _stub_agent_config()
+        app = ModelApp(cfg, Console(file=io.StringIO(), no_color=True))
+        app._active_provider = "openai"
+        app._cred_api_key.text = "sk-test-\u7ffb\u8bd1"
+        app._cred_base_url.text = "https://custom.example"
+
+        app._submit_cred_form()
+
+        cfg.set_provider_config.assert_not_called()
+        assert app._error_message == "API key must contain only ASCII characters"
+
     def test_no_saved_key_leaves_field_empty(self):
         cfg = _stub_agent_config()
         cfg.providers = {}
@@ -413,6 +460,26 @@ class TestTokenForm:
         app._submit_token_form()
         assert app._view == _View.PROVIDER_MODELS
         app._cfg.set_provider_config.assert_called_once()
+
+    def test_multiline_token_is_rejected_before_save(self):
+        app = _build()
+        app._active_provider = "claude_subscription"
+        app._token_input.text = "sk-ant-oat01-xyz\nnext"
+
+        app._submit_token_form()
+
+        assert app._cfg.set_provider_config.call_count == 0
+        assert app._error_message == "Token must be a single line"
+
+    def test_non_ascii_token_is_rejected_before_save(self):
+        app = _build()
+        app._active_provider = "claude_subscription"
+        app._token_input.text = "sk-ant-oat01-\u7ffb\u8bd1"
+
+        app._submit_token_form()
+
+        assert app._cfg.set_provider_config.call_count == 0
+        assert app._error_message == "Token must contain only ASCII characters"
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -461,6 +528,20 @@ class TestAddModelForm:
         with patch.object(app._app, "exit") as mock_exit:
             app._submit_add_model_form()
         mock_exit.assert_not_called()
+
+    def test_multiline_custom_api_key_is_rejected(self):
+        app = self._prepare(name="x", type="openai", model="gpt-4o", api_key="sk\nnext")
+        with patch.object(app._app, "exit") as mock_exit:
+            app._submit_add_model_form()
+        mock_exit.assert_not_called()
+        assert app._error_message == "api_key must be a single line"
+
+    def test_non_ascii_custom_api_key_is_rejected(self):
+        app = self._prepare(name="x", type="openai", model="gpt-4o", api_key="sk-\u7ffb\u8bd1")
+        with patch.object(app._app, "exit") as mock_exit:
+            app._submit_add_model_form()
+        mock_exit.assert_not_called()
+        assert app._error_message == "api_key must contain only ASCII characters"
 
 
 # ─────────────────────────────────────────────────────────────────────

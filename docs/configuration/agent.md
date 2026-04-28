@@ -158,7 +158,8 @@ These providers target coding/planning-oriented endpoints. Even though their nam
 | Provider | Default model | Interface Type | Notes |
 |----------|---------------|----------------|-------|
 | `alibaba_coding` | `qwen3-coder-plus` | `claude` | DashScope Anthropic-compatible coding endpoint |
-| `glm_coding` | `glm-5` | `claude` | GLM Anthropic-compatible coding endpoint |
+| `bigmodel_coding` | `glm-5.1` | `claude` | BigModel Anthropic-compatible coding endpoint |
+| `zai_coding` | `glm-5.1` | `claude` | Z.AI Anthropic-compatible coding endpoint |
 | `minimax_coding` | `MiniMax-M2.7` | `claude` | MiniMax Anthropic-compatible coding endpoint |
 | `kimi_coding` | `kimi-for-coding` | `claude` | Kimi coding endpoint |
 

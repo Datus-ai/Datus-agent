@@ -601,7 +601,7 @@ class TestResolveProviderModels:
         assert merged["model_specs"]["gpt-4.1"]["context_length"] == 400000
 
     def test_protected_providers_keep_local_models(self, fake_datus_home: Path) -> None:
-        """codex / claude_subscription must NOT be touched even if remote has matching vendor."""
+        """plan/auth providers must NOT be touched directly by remote overlay."""
 
         def handler(_req: httpx.Request) -> httpx.Response:
             # Remote returns a model under anthropic/, which would normally overlay `claude`.
@@ -610,11 +610,44 @@ class TestResolveProviderModels:
             return httpx.Response(200, json=_payload("anthropic/claude-opus-4-6"))
 
         local = _local_catalog()
+        local["providers"]["glm"] = {"type": "glm", "models": ["glm-local"], "default_model": "glm-local"}
+        local["providers"]["bigmodel_coding"] = {"models": ["bigmodel-local"], "models_from": "missing"}
+        local["providers"]["zai_coding"] = {"models": ["zai-local"], "models_from": "missing"}
         with _install_mock_transport(handler):
             merged = pmc.resolve_provider_models(local)
 
         assert merged["providers"]["codex"]["models"] == ["codex-mini-latest"]
         assert merged["providers"]["claude_subscription"]["models"] == ["claude-sonnet-4-6"]
+        assert merged["providers"]["bigmodel_coding"]["models"] == ["bigmodel-local"]
+        assert merged["providers"]["zai_coding"]["models"] == ["zai-local"]
+
+    def test_bigmodel_and_zai_coding_inherit_glm_models_after_overlay(self, fake_datus_home: Path) -> None:
+        def handler(_req: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=_payload("z-ai/glm-5.1", "z-ai/glm-5", "zhipuai/glm-4.7"))
+
+        local = {
+            "providers": {
+                "glm": {"type": "glm", "models": ["glm-local"], "default_model": "glm-5"},
+                "bigmodel_coding": {
+                    "type": "claude",
+                    "models_from": "glm",
+                    "default_model": "glm-5.1",
+                    "models": ["glm-5.1", "glm-5"],
+                },
+                "zai_coding": {
+                    "type": "claude",
+                    "models_from": "glm",
+                    "default_model": "glm-5.1",
+                    "models": ["glm-5.1", "glm-5"],
+                },
+            },
+        }
+        with _install_mock_transport(handler):
+            merged = pmc.resolve_provider_models(local)
+
+        assert merged["providers"]["glm"]["models"] == ["glm-5.1", "glm-5", "glm-4.7"]
+        assert merged["providers"]["bigmodel_coding"]["models"] == ["glm-5.1", "glm-5", "glm-4.7"]
+        assert merged["providers"]["zai_coding"]["models"] == ["glm-5.1", "glm-5", "glm-4.7"]
 
     def test_cache_written_is_v2_with_metadata(self, fake_datus_home: Path) -> None:
         """The freshly-written cache must carry pricing/context_length for billing."""

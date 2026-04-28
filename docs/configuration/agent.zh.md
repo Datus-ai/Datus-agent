@@ -91,7 +91,8 @@ agent:
 | 提供方 | 默认模型 | 接口类型 | 说明 |
 |---|---|---|---|
 | `alibaba_coding` | `qwen3-coder-plus` | `claude` | 阿里云 DashScope 的 Anthropic-compatible coding endpoint |
-| `glm_coding` | `glm-5` | `claude` | GLM 的 Anthropic-compatible coding endpoint |
+| `bigmodel_coding` | `glm-5.1` | `claude` | 智谱 BigModel 的 Anthropic-compatible coding endpoint |
+| `zai_coding` | `glm-5.1` | `claude` | Z.AI 国际版的 Anthropic-compatible coding endpoint |
 | `minimax_coding` | `MiniMax-M2.7` | `claude` | MiniMax 的 Anthropic-compatible coding endpoint |
 | `kimi_coding` | `kimi-for-coding` | `claude` | Kimi 的 coding endpoint |
 
