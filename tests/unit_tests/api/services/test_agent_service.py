@@ -96,6 +96,12 @@ class TestConstants:
         """filesystem_tools contains read_file."""
         assert "read_file" in VALID_TOOL_METHODS["filesystem_tools"]
 
+    def test_valid_tool_methods_semantic_tools_has_methods(self):
+        """semantic_tools category is registered with its core methods."""
+        assert "semantic_tools" in VALID_TOOL_METHODS
+        assert "list_metrics" in VALID_TOOL_METHODS["semantic_tools"]
+        assert "get_dimensions" in VALID_TOOL_METHODS["semantic_tools"]
+
 
 class TestAgentServiceInit:
     """Tests for AgentService construction."""

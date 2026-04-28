@@ -23,6 +23,7 @@ from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
+from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.tools.mcp_tools import MCPServer
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
@@ -97,6 +98,7 @@ class GenSQLAgenticNode(AgenticNode):
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self._platform_doc_tool: Optional[PlatformDocSearchTool] = None
         self.reference_template_tools: Optional[ReferenceTemplateTools] = None
+        self.semantic_tools: Optional[SemanticTools] = None
         # PlanTool instance when `plan_tools` is declared in the sub-agent's
         # `tools:` list. Distinct from `plan_hooks` below, which is only
         # active in full plan_mode workflows.
@@ -227,6 +229,8 @@ class GenSQLAgenticNode(AgenticNode):
             self.tools.extend(self.db_func_tool.available_tools())
         if self.context_search_tools:
             self.tools.extend(self.context_search_tools.available_tools())
+        if self.semantic_tools:
+            self.tools.extend(self.semantic_tools.available_tools())
         if self.reference_template_tools:
             self.tools.extend(self.reference_template_tools.available_tools())
         if self.date_parsing_tools:
@@ -241,7 +245,7 @@ class GenSQLAgenticNode(AgenticNode):
             self.tools.extend(self.sub_agent_task_tool.available_tools())
 
     # Default tools when not configured in agent.yml
-    DEFAULT_TOOLS = "db_tools.*, filesystem_tools.*"
+    DEFAULT_TOOLS = "db_tools.*, semantic_tools.*, context_search_tools.*"
 
     def setup_tools(self):
         """Setup tools based on configuration, falling back to DEFAULT_TOOLS."""
@@ -298,6 +302,19 @@ class GenSQLAgenticNode(AgenticNode):
             self.tools.extend(self.context_search_tools.available_tools())
         except Exception as e:
             logger.error(f"Failed to setup context search tools: {e}")
+
+    def _setup_semantic_tools(self):
+        """Setup semantic tools for metric/dimension exploration."""
+        try:
+            adapter_type = self.node_config.get("adapter_type", "metricflow")
+            self.semantic_tools = SemanticTools(
+                agent_config=self.agent_config,
+                sub_agent_name=self.node_config.get("system_prompt"),
+                adapter_type=adapter_type,
+            )
+            self.tools.extend(self.semantic_tools.available_tools())
+        except Exception as e:
+            logger.error(f"Failed to setup semantic tools: {e}")
 
     def _setup_reference_template_tools(self):
         """Setup reference template tools.
@@ -369,6 +386,8 @@ class GenSQLAgenticNode(AgenticNode):
                     self._setup_db_tools()
                 elif base_type == "context_search_tools":
                     self._setup_context_search_tools()
+                elif base_type == "semantic_tools":
+                    self._setup_semantic_tools()
                 elif base_type == "reference_template_tools":
                     self._setup_reference_template_tools()
                 elif base_type == "date_parsing_tools":
@@ -387,6 +406,8 @@ class GenSQLAgenticNode(AgenticNode):
                 self._setup_db_tools()
             elif pattern == "context_search_tools":
                 self._setup_context_search_tools()
+            elif pattern == "semantic_tools":
+                self._setup_semantic_tools()
             elif pattern == "reference_template_tools":
                 self._setup_reference_template_tools()
             elif pattern == "date_parsing_tools":
@@ -416,6 +437,15 @@ class GenSQLAgenticNode(AgenticNode):
                 if not self.context_search_tools:
                     self.context_search_tools = ContextSearchTools(self.agent_config, self.node_config["system_prompt"])
                 tool_instance = self.context_search_tools
+            elif tool_type == "semantic_tools":
+                if not self.semantic_tools:
+                    adapter_type = self.node_config.get("adapter_type", "metricflow")
+                    self.semantic_tools = SemanticTools(
+                        agent_config=self.agent_config,
+                        sub_agent_name=self.node_config.get("system_prompt"),
+                        adapter_type=adapter_type,
+                    )
+                tool_instance = self.semantic_tools
             elif tool_type == "db_tools":
                 if not self.db_func_tool:
                     self.db_func_tool = DBFuncTool(

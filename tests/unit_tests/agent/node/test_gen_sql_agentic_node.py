@@ -2229,6 +2229,12 @@ class TestSetupToolPatternGenSQL:
             node._setup_tool_pattern("context_search_tools.*")
         mock_setup.assert_called_once()
 
+    def test_wildcard_semantic_tools(self, real_agent_config, mock_llm_create):
+        node = _make_node_extra2(real_agent_config, mock_llm_create)
+        with patch.object(node, "_setup_semantic_tools") as mock_setup:
+            node._setup_tool_pattern("semantic_tools.*")
+        mock_setup.assert_called_once()
+
     def test_wildcard_date_parsing_tools(self, real_agent_config, mock_llm_create):
         node = _make_node_extra2(real_agent_config, mock_llm_create)
         with patch.object(node, "_setup_date_parsing_tools") as mock_setup:
@@ -2264,6 +2270,17 @@ class TestSetupToolPatternGenSQL:
         with patch.object(node, "_setup_context_search_tools") as mock_setup:
             node._setup_tool_pattern("context_search_tools")
         mock_setup.assert_called_once()
+
+    def test_exact_semantic_tools(self, real_agent_config, mock_llm_create):
+        node = _make_node_extra2(real_agent_config, mock_llm_create)
+        with patch.object(node, "_setup_semantic_tools") as mock_setup:
+            node._setup_tool_pattern("semantic_tools")
+        mock_setup.assert_called_once()
+
+    def test_default_tools_includes_db_semantic_context(self):
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        assert GenSQLAgenticNode.DEFAULT_TOOLS == "db_tools.*, semantic_tools.*, context_search_tools.*"
 
     def test_exact_date_parsing_tools(self, real_agent_config, mock_llm_create):
         node = _make_node_extra2(real_agent_config, mock_llm_create)

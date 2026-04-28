@@ -16,6 +16,7 @@ from datus.prompts.prompt_manager import PromptManager
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.func_tool.platform_doc_search import PlatformDocSearchTool
+from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.tools.func_tool.sub_agent_task_tool import BUILTIN_SUBAGENT_DESCRIPTIONS
 from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
 from datus.utils.loggings import get_logger
@@ -28,6 +29,7 @@ logger = get_logger(__name__)
 VALID_TOOL_METHODS: dict[str, set[str]] = {
     "db_tools": set(DBFuncTool.all_tools_name()),
     "context_search_tools": set(ContextSearchTools.all_tools_name()),
+    "semantic_tools": set(SemanticTools.all_tools_name()),
     "date_parsing_tools": {"parse_temporal_expressions"},
     "filesystem_tools": {
         "read_file",
