@@ -792,6 +792,8 @@ class TestDeleteJob:
         with patch.object(tools, "_get_adapter", return_value=mock_adapter):
             result = tools.delete_job("old_dag")
 
+        mock_adapter.delete_job.assert_called_once_with("old_dag")
+        mock_adapter.get_job.assert_called_once_with("old_dag")
         assert result.success == 0
         assert "still exists" in (result.error or "")
 
@@ -806,6 +808,8 @@ class TestDeleteJob:
         with patch.object(tools, "_get_adapter", return_value=mock_adapter):
             result = tools.delete_job("old_dag")
 
+        mock_adapter.delete_job.assert_called_once_with("old_dag")
+        mock_adapter.get_job.assert_called_once_with("old_dag")
         assert result.success == 1
         assert result.result["status"] == "deleted_inactive"
         assert result.result["metadata_cleanup"] == "pending"

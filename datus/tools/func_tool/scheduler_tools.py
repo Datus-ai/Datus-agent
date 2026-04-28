@@ -488,7 +488,8 @@ class SchedulerTools(BaseTool):
             remaining = adapter.get_job(job_id)
             if remaining is not None:
                 status = getattr(remaining.status, "value", remaining.status)
-                is_active = remaining.extra.get("is_active", True)
+                extra = remaining.extra or {}
+                is_active = extra.get("is_active", True)
                 if status == "deleted" or is_active is False:
                     return FuncToolResult(
                         success=1,

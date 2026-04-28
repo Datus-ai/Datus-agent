@@ -24,6 +24,7 @@ logger = get_logger(__name__)
 
 SCHEDULER_RUNTIME_TIMEOUT_SECONDS = 300
 SCHEDULER_RUNTIME_POLL_INTERVAL_SECONDS = 5
+SCHEDULER_RUNTIME_MIN_POLL_INTERVAL_SECONDS = 0.1
 _SCHEDULER_RUN_SUCCESS = {"success", "succeeded"}
 _SCHEDULER_RUN_FAILED = {"failed", "error", "killed", "upstream_failed"}
 
@@ -121,14 +122,14 @@ def _trigger_and_poll_job(
         _attach_run_log(target, scheduler_tool, run_id, observed)
         return _runtime_check(passed=False, observed=observed)
 
-    deadline = time.monotonic() + timeout_seconds
+    deadline = time.monotonic() + max(timeout_seconds, 0)
+    effective_poll_interval = max(poll_interval_seconds, SCHEDULER_RUNTIME_MIN_POLL_INTERVAL_SECONDS)
     final_status = initial_status
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
-        if poll_interval_seconds > 0:
-            time.sleep(min(poll_interval_seconds, remaining))
+        time.sleep(min(effective_poll_interval, remaining))
         observed["polls"] += 1
 
         try:

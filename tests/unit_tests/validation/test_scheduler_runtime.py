@@ -111,3 +111,21 @@ async def test_missing_scheduler_tool_skips():
     report = await run_scheduler_runtime_validation(_session(), None, timeout_seconds=1, poll_interval_seconds=0)
 
     assert report.checks == []
+
+
+@pytest.mark.asyncio
+async def test_tool_missing_required_apis_blocks():
+    class IncompleteTool:
+        pass
+
+    report = await run_scheduler_runtime_validation(
+        _session(),
+        IncompleteTool(),
+        timeout_seconds=1,
+        poll_interval_seconds=0,
+    )
+
+    check = report.checks[0]
+    assert check.passed is False
+    assert check.severity == "blocking"
+    assert "does not expose trigger/list run APIs" in (check.error or "")

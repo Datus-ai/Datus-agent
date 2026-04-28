@@ -621,6 +621,8 @@ class TestApplyAndRemoveSdkPatches:
                 dumped = usage.model_dump()
 
             assert dumped["server_tool_use"]["web_search_requests"] == 0
+            assert "tool_search_requests" in dumped["server_tool_use"]
+            assert dumped["server_tool_use"]["tool_search_requests"] is None
             assert not [warning for warning in caught if "Pydantic serializer warnings" in str(warning.message)]
         finally:
             remove_sdk_patches()
