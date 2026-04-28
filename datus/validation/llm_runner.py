@@ -64,7 +64,9 @@ VALIDATOR_READONLY_TOOL_NAMES = {
     "get_dataset",
     "list_bi_databases",
     # Scheduler read tools (scheduler validators). trigger_scheduler_job is
-    # intentionally excluded — runtime firing is user-initiated, not automatic.
+    # intentionally excluded from LLM validators — deterministic runtime
+    # firing, when enabled by profile/tool availability, is owned by
+    # ValidationHook.
     "list_scheduler_jobs",
     "get_scheduler_job",
     "list_job_runs",

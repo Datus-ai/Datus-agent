@@ -17,6 +17,7 @@ NO MOCK EXCEPT LLM. All objects are real.
 """
 
 import copy
+import warnings
 
 import pytest
 
@@ -602,6 +603,27 @@ class TestApplyAndRemoveSdkPatches:
         # After removal, litellm.completion is restored to the true original.
         assert litellm.completion is true_original_completion
         assert litellm.acompletion is true_original_acompletion
+
+    def test_litellm_usage_server_tool_use_dict_serializes_without_warning(self):
+        """Regression for GLM/Z.AI coding plan: LiteLLM usage dicts must not print Pydantic warnings."""
+        from litellm.types.utils import Usage
+
+        apply_sdk_patches()
+        try:
+            usage = Usage(
+                prompt_tokens=1,
+                completion_tokens=2,
+                total_tokens=3,
+                server_tool_use={"web_search_requests": 0, "tool_search_requests": None},
+            )
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                dumped = usage.model_dump()
+
+            assert dumped["server_tool_use"]["web_search_requests"] == 0
+            assert not [warning for warning in caught if "Pydantic serializer warnings" in str(warning.message)]
+        finally:
+            remove_sdk_patches()
 
 
 class TestPatchedCompletionSync:

@@ -47,6 +47,7 @@ from datus.validation.report import (
     ValidationReport,
     skill_matches_target,
 )
+from datus.validation.scheduler_runtime import run_scheduler_runtime_validation
 
 if TYPE_CHECKING:
     from datus.tools.func_tool.database import DBFuncTool
@@ -183,6 +184,21 @@ class ValidationHook(AgentHooks):
             # (the agent has already decided it's done). execute_stream reads
             # self.final_report after the run and acts on blocking failures
             # there.
+            self._final_report = combined
+            return
+
+        try:
+            runtime_report = await run_scheduler_runtime_validation(
+                session,
+                scheduler_tool=self.scheduler_tool,
+            )
+            combined.checks.extend(runtime_report.checks)
+            combined.warnings.extend(runtime_report.warnings)
+        except Exception as e:
+            logger.exception("Scheduler runtime validation raised")
+            combined.add_warning({"type": "scheduler_runtime_validation_error", "error": str(e)})
+
+        if combined.has_blocking_failure():
             self._final_report = combined
             return
 

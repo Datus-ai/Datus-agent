@@ -1,6 +1,6 @@
 ---
 name: scheduler-validation
-description: Scheduler validator driven by ValidationHook — read-only static verification of scheduled jobs (schedule correctness, configuration, most recent run outcome). Does not trigger test runs.
+description: Scheduler validator driven by ValidationHook — read-only static verification of scheduled jobs (schedule correctness, configuration, runtime context already collected by deterministic hook). Does not trigger test runs.
 tags:
   - scheduler
   - orchestration
@@ -30,14 +30,17 @@ You receive `SessionTarget.targets` — loop over `SchedulerJobTarget` entries.
 Each carries `platform` + `job_id` + optional `job_name`.
 
 Layer A (the builtin hook) has already confirmed each job **exists** and
-**is not in a failed status**. Your job is to verify schedule correctness and
-recent runtime outcome when run history is available.
+**is not in a failed status**. When the scheduler profile exposes runtime
+tools, ValidationHook has also deterministically triggered the job once,
+polled `list_job_runs`, and attached a `scheduler_job_trigger_run` precheck
+before this skill runs. Your job is to verify schedule correctness,
+configuration, and any runtime context already present.
 
 ## Core workflow
 
-Read-only static verification. Never trigger a test run — scheduled jobs may
-be expensive / long-running / have downstream side effects. Runtime
-verification is the user's call.
+Read-only static verification. Never trigger a test run from this LLM
+validator. Runtime triggering is deterministic ValidationHook code, not a
+model decision.
 
 For every `SchedulerJobTarget` in the session:
 

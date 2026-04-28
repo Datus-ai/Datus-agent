@@ -11,7 +11,7 @@ import pytest
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.skill_tools.skill_config import SkillConfig
 from datus.tools.skill_tools.skill_registry import SkillRegistry
-from datus.validation import ChartTarget, DBRef, TableTarget, TransferTarget, ValidationHook
+from datus.validation import ChartTarget, DBRef, SchedulerJobTarget, TableTarget, TransferTarget, ValidationHook
 
 
 class FakeDBFuncTool:
@@ -545,4 +545,99 @@ class TestLayerAForSchedulerTargets:
         }
         await hook.on_tool_end(None, None, None, FakeToolResult(payload))
         await hook.on_end(None, None, None)
+        assert hook.final_report.has_blocking_failure()
+
+
+class TestSchedulerRuntimeValidation:
+    class FakeSchedulerTool:
+        def get_scheduler_job(self, job_id):
+            return FuncToolResult(result={"found": True, "job_id": job_id, "status": "active"})
+
+    class _SchedulerSkillEntry(TestRunLayerB._FakeSkillEntry):
+        def __init__(self):
+            from datus.validation.report import TargetFilter
+
+            super().__init__(name="scheduler-validation", targets=[TargetFilter(type="scheduler_job")])
+
+    def _make_hook(self, registry=None, skill_validators_enabled=True):
+        reg = registry or TestRunLayerB._FakeRegistry(skills=[])
+        return ValidationHook(
+            node_name="scheduler",
+            registry=reg,
+            model=None,
+            scheduler_tool=self.FakeSchedulerTool(),
+            skill_validators_enabled=skill_validators_enabled,
+        )
+
+    @pytest.mark.asyncio
+    async def test_runtime_report_merges_before_layer_b(self, monkeypatch):
+        from datus.validation.report import CheckResult, ValidationReport
+
+        order = []
+
+        async def fake_runtime(session, scheduler_tool=None, **kwargs):
+            order.append("runtime")
+            return ValidationReport(
+                target=session,
+                checks=[
+                    CheckResult(
+                        name="scheduler_job_trigger_run",
+                        passed=True,
+                        severity="blocking",
+                        source="builtin",
+                        observed={"job_id": "j-1"},
+                    )
+                ],
+            )
+
+        async def fake_runner(**kwargs):
+            order.append("layer_b")
+            precheck = kwargs["precheck_context"]
+            assert any(c.name == "scheduler_job_trigger_run" for c in precheck.checks)
+            return ValidationReport(target=kwargs["target"], checks=[])
+
+        monkeypatch.setattr("datus.validation.hook.run_scheduler_runtime_validation", fake_runtime)
+        monkeypatch.setattr("datus.validation.hook.run_llm_validator", fake_runner)
+
+        registry = TestRunLayerB._FakeRegistry(skills=[self._SchedulerSkillEntry()])
+        hook = self._make_hook(registry=registry)
+        hook.reset_session()
+        hook._session_targets.append(SchedulerJobTarget(platform="airflow", job_id="j-1"))
+
+        await hook.on_end(None, None, None)
+
+        assert order == ["runtime", "layer_b"]
+        assert any(c.name == "scheduler_job_trigger_run" for c in hook.final_report.checks)
+
+    @pytest.mark.asyncio
+    async def test_runtime_blocking_failure_skips_layer_b(self, monkeypatch):
+        from datus.validation.report import CheckResult, ValidationReport
+
+        async def fake_runtime(session, scheduler_tool=None, **kwargs):
+            return ValidationReport(
+                target=session,
+                checks=[
+                    CheckResult(
+                        name="scheduler_job_trigger_run",
+                        passed=False,
+                        severity="blocking",
+                        source="builtin",
+                        error="run failed",
+                    )
+                ],
+            )
+
+        async def fail_if_called(**kwargs):
+            raise AssertionError("Layer B should not run after runtime failure")
+
+        monkeypatch.setattr("datus.validation.hook.run_scheduler_runtime_validation", fake_runtime)
+        monkeypatch.setattr("datus.validation.hook.run_llm_validator", fail_if_called)
+
+        registry = TestRunLayerB._FakeRegistry(skills=[self._SchedulerSkillEntry()])
+        hook = self._make_hook(registry=registry)
+        hook.reset_session()
+        hook._session_targets.append(SchedulerJobTarget(platform="airflow", job_id="j-1"))
+
+        await hook.on_end(None, None, None)
+
         assert hook.final_report.has_blocking_failure()

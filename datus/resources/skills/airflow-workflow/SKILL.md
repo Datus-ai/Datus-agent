@@ -37,7 +37,31 @@ Execution guide for the scheduler subagent working with Airflow.
 3. **Write SQL** — use `write_file` or `edit_file` to save the new SQL under
    `jobs/<job_name>.sql`
 4. **Update** — `update_job(job_id, sql_file_path=..., job_name=..., conn_id=...)`
-5. **Resume and verify** — `resume_job(job_id)`, then `trigger_scheduler_job(job_id)` to test
+5. **Resume** — `resume_job(job_id)` to re-enable scheduling
+6. **Do not manually trigger** after a normal create/update unless the user
+   explicitly asks for an immediate run. Deterministic validation triggers and
+   polls deliverable scheduler jobs after the agent returns the target.
+
+## Delete an Existing Job
+
+1. **Confirm with the user** — deletion is destructive.
+2. **Delete** — call `delete_job(job_id)`.
+3. **Honor the tool result** — if `delete_job` returns `success=0`, report the
+   deletion as failed or incomplete. Do not claim completion or success.
+4. **Verify only with direct lookup** — use `get_scheduler_job(job_id)` if you
+   need a follow-up check. For Airflow, scheduling deletion is complete when
+   the job is not found or is inactive/deleted.
+5. **Do not rely on list output** — `list_scheduler_jobs` may omit an Airflow DAG
+   after its file is removed even while Airflow metadata still exists and blocks
+   re-creation with the same job id.
+6. **Use precise wording for partial cleanup** — if metadata still exists but
+   the DAG is inactive/deleted, say scheduling has been removed and metadata
+   cleanup is pending. The same `dag_id` may not be immediately reusable via
+   submit; use update or retry cleanup if needed.
+7. **Use explicit file deletion only** — `delete_job` owns Airflow DAG file
+   removal. For other files, use a dedicated delete-file tool if one is
+   available; otherwise report that file deletion is unavailable. Do not
+   overwrite or empty files as a substitute for deletion.
 
 ## DB Connection (`conn_id`)
 
@@ -74,7 +98,7 @@ when filesystem tools are available.
 | Submit SparkSQL job | `submit_sparksql_job(job_name, sql_file_path)` |
 | Check job status | `get_scheduler_job(job_id)` |
 | List all jobs | `list_scheduler_jobs(limit=20)` |
-| Trigger manual run | `trigger_scheduler_job(job_id)` |
+| Trigger manual run | `trigger_scheduler_job(job_id)` only when explicitly requested or troubleshooting |
 | View run history | `list_job_runs(job_id)` |
 | View run log | `get_run_log(job_id, run_id)` |
 | Pause / Resume | `pause_job(job_id)` / `resume_job(job_id)` |

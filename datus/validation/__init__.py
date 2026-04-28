@@ -14,6 +14,9 @@ at the end of an agent run. It separates validation into two layers:
 - Layer A (builtin_checks): code-level invariants (table exists, row count,
   cross-DB row count parity, BI resources exist, scheduler job exists/status).
   Always enforced.
+- Scheduler runtime validation: deterministic trigger/poll/log collection for
+  delivered scheduler jobs, run after Layer A and before scheduler validator
+  skills when scheduler tools are available.
 - Layer B (llm_runner): LLM-interpreted validator skills. Gated by
   ``agent.validation.skill_validators_enabled``.
 

@@ -101,6 +101,7 @@ def _make_scheduled_job(job_id="spark_pi_test"):
     job.schedule = "0 8 * * *"
     job.description = "test"
     job.platform = "airflow"
+    job.extra = {}
     return job
 
 
@@ -259,7 +260,7 @@ class TestAdapterCloseError:
             ),
             ("pause_job", ("dag_1",), {}, None),
             ("resume_job", ("dag_1",), {}, None),
-            ("delete_job", ("dag_1",), {}, None),
+            ("delete_job", ("dag_1",), {}, lambda a: setattr(a, "get_job", MagicMock(return_value=None))),
             (
                 "list_job_runs",
                 ("dag_1",),
@@ -772,6 +773,7 @@ class TestResumeJob:
 class TestDeleteJob:
     def test_delete_success(self):
         mock_adapter = MagicMock()
+        mock_adapter.get_job.return_value = None
         tools = SchedulerTools(_make_agent_config())
 
         with patch.object(tools, "_get_adapter", return_value=mock_adapter):
@@ -780,6 +782,33 @@ class TestDeleteJob:
         assert result.success == 1
         assert result.result["status"] == "deleted"
         mock_adapter.delete_job.assert_called_once_with("old_dag")
+        mock_adapter.get_job.assert_called_once_with("old_dag")
+
+    def test_delete_fails_when_job_still_exists_after_adapter_delete(self):
+        mock_adapter = MagicMock()
+        mock_adapter.get_job.return_value = _make_scheduled_job("old_dag")
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.delete_job("old_dag")
+
+        assert result.success == 0
+        assert "still exists" in (result.error or "")
+
+    def test_delete_succeeds_when_remaining_job_is_inactive_metadata(self):
+        mock_adapter = MagicMock()
+        remaining = _make_scheduled_job("old_dag")
+        remaining.status.value = "deleted"
+        remaining.extra = {"is_active": False}
+        mock_adapter.get_job.return_value = remaining
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.delete_job("old_dag")
+
+        assert result.success == 1
+        assert result.result["status"] == "deleted_inactive"
+        assert result.result["metadata_cleanup"] == "pending"
 
     def test_delete_adapter_exception(self):
         mock_adapter = MagicMock()

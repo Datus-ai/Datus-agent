@@ -330,8 +330,7 @@ class TestSelectReadonlyTools:
             assert tool_name in VALIDATOR_READONLY_TOOL_NAMES
 
     def test_trigger_scheduler_job_excluded(self):
-        """trigger_scheduler_job is NOT in the whitelist — runtime firing
-        is user-initiated, not automatic from the validator."""
+        """trigger_scheduler_job is NOT in the LLM validator whitelist."""
         assert "trigger_scheduler_job" not in VALIDATOR_READONLY_TOOL_NAMES
 
     def test_bi_write_tools_excluded(self):

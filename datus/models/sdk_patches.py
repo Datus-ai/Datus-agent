@@ -15,6 +15,8 @@ Current patches:
   Completions providers such as DeepSeek.
 - Kimi/Moonshot + DeepSeek reasoning_content preservation in
   litellm.(a)completion() via a streaming cache fallback.
+- LiteLLM ``Usage`` serialization warning suppression for provider-specific
+  ``server_tool_use`` dict payloads.
 
 Reference: https://github.com/openai/openai-agents-python/pull/2328
 The SDK already supports DeepSeek reasoning_content when the streamed
@@ -172,6 +174,8 @@ def _preprocess_items_for_reasoning(
 _original_items_to_messages = None
 _original_acompletion = None
 _original_completion = None
+_original_usage_model_dump = None
+_original_usage_model_dump_json = None
 
 # Cache reasoning_content from API responses, keyed by model name.
 # This provides a fallback when the SDK converter fails to extract
@@ -323,6 +327,41 @@ def _patched_items_to_messages(
     return _postprocess_messages_for_reasoning(messages, model)
 
 
+def _patch_litellm_usage_serialization() -> None:
+    """Make LiteLLM usage serialization quiet for provider-specific tool usage.
+
+    Some providers populate ``Usage.server_tool_use`` as a plain dict instead of
+    LiteLLM's ``ServerToolUse`` model. Pydantic accepts the value but warns every
+    time ``Usage.model_dump()`` serializes it. The warning is harmless, but it
+    leaks into the CLI output on normal tool-calling turns.
+    """
+    global _original_usage_model_dump, _original_usage_model_dump_json
+
+    from functools import wraps
+
+    from litellm.types.utils import Usage
+
+    if _original_usage_model_dump is None:
+        _original_usage_model_dump = Usage.model_dump
+
+        @wraps(_original_usage_model_dump)
+        def _patched_usage_model_dump(self, *args, **kwargs):
+            kwargs.setdefault("warnings", False)
+            return _original_usage_model_dump(self, *args, **kwargs)
+
+        Usage.model_dump = _patched_usage_model_dump
+
+    if _original_usage_model_dump_json is None:
+        _original_usage_model_dump_json = Usage.model_dump_json
+
+        @wraps(_original_usage_model_dump_json)
+        def _patched_usage_model_dump_json(self, *args, **kwargs):
+            kwargs.setdefault("warnings", False)
+            return _original_usage_model_dump_json(self, *args, **kwargs)
+
+        Usage.model_dump_json = _patched_usage_model_dump_json
+
+
 def apply_sdk_patches() -> None:
     """
     Apply all SDK patches.
@@ -338,6 +377,8 @@ def apply_sdk_patches() -> None:
 
     # Import agents SDK here to avoid circular dependencies
     from agents.models.chatcmpl_converter import Converter
+
+    _patch_litellm_usage_serialization()
 
     # Patch 1: Converter.items_to_messages for Kimi/Moonshot reasoning_content
     if _original_items_to_messages is None:
@@ -444,6 +485,7 @@ def remove_sdk_patches() -> None:
     Useful for testing or when patches are no longer needed.
     """
     global _original_items_to_messages, _original_acompletion, _original_completion
+    global _original_usage_model_dump, _original_usage_model_dump_json
 
     import litellm
     from agents.models.chatcmpl_converter import Converter
@@ -462,5 +504,19 @@ def remove_sdk_patches() -> None:
         litellm.completion = _original_completion
         _original_completion = None
         logger.info("Removed SDK patch: litellm.completion")
+
+    try:
+        from litellm.types.utils import Usage
+
+        if _original_usage_model_dump is not None:
+            Usage.model_dump = _original_usage_model_dump
+            _original_usage_model_dump = None
+            logger.info("Removed SDK patch: LiteLLM Usage.model_dump")
+        if _original_usage_model_dump_json is not None:
+            Usage.model_dump_json = _original_usage_model_dump_json
+            _original_usage_model_dump_json = None
+            logger.info("Removed SDK patch: LiteLLM Usage.model_dump_json")
+    except Exception as e:
+        logger.debug(f"Failed to remove LiteLLM Usage serialization patch: {e}")
 
     _reasoning_content_cache.clear()

@@ -485,6 +485,29 @@ class SchedulerTools(BaseTool):
 
         try:
             adapter.delete_job(job_id)
+            remaining = adapter.get_job(job_id)
+            if remaining is not None:
+                status = getattr(remaining.status, "value", remaining.status)
+                is_active = remaining.extra.get("is_active", True)
+                if status == "deleted" or is_active is False:
+                    return FuncToolResult(
+                        success=1,
+                        result={
+                            "job_id": job_id,
+                            "status": "deleted_inactive",
+                            "metadata_cleanup": "pending",
+                            "message": (
+                                "Job is removed from active scheduling, but platform metadata/history still exists."
+                            ),
+                        },
+                    )
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        f"Job '{job_id}' still exists after delete_job returned successfully. "
+                        "The platform still returns it as an active scheduler job."
+                    ),
+                )
             return FuncToolResult(success=1, result={"job_id": job_id, "status": "deleted"})
         except Exception as exc:
             logger.error("delete_job failed: %s", exc)
