@@ -89,11 +89,20 @@ def mock_agent_config():
 
 @pytest.fixture
 def build_tools(mock_agent_config):
-    def _builder(metric_cfg=None, sql_cfg=None, knowledge_cfg=None, semantic_cfg=None):
+    def _builder(
+        metric_cfg=None,
+        sql_cfg=None,
+        knowledge_cfg=None,
+        semantic_cfg=None,
+        template_cfg=None,
+        sub_agent_name=None,
+        sub_agent_tools=None,
+    ):
         metric_cfg = metric_cfg or {}
         sql_cfg = sql_cfg or {}
         knowledge_cfg = knowledge_cfg or {}
         semantic_cfg = semantic_cfg or {}
+        template_cfg = template_cfg or {}
 
         metric_rag = Mock()
         metric_entries = metric_cfg.get("entries", [])
@@ -136,7 +145,14 @@ def build_tools(mock_agent_config):
             ext_knowledge_rag.query_knowledge.side_effect = knowledge_cfg["query_side_effect"]
 
         reference_template_rag = Mock()
-        reference_template_rag.get_reference_template_size.return_value = 0
+        template_entries = template_cfg.get("entries", [])
+        reference_template_rag.search_all_reference_templates.return_value = template_entries
+        reference_template_rag.get_reference_template_size.return_value = template_cfg.get(
+            "size", len(template_entries)
+        )
+
+        if sub_agent_name is not None:
+            mock_agent_config.sub_agent_config.return_value = {"tools": sub_agent_tools or ""}
 
         with (
             patch("datus.tools.func_tool.context_search.MetricRAG", return_value=metric_rag),
@@ -151,7 +167,7 @@ def build_tools(mock_agent_config):
         ):
             from datus.tools.func_tool.context_search import ContextSearchTools
 
-            tools = ContextSearchTools(mock_agent_config)
+            tools = ContextSearchTools(mock_agent_config, sub_agent_name=sub_agent_name)
         return tools, metric_rag, sql_rag, ext_knowledge_rag, semantic_rag
 
     return _builder
@@ -393,6 +409,81 @@ class TestListSubjectTreeWithKnowledge:
         result = tools.list_subject_tree()
         assert result.success == 1
         assert result.result == {}
+
+
+class TestListSubjectTreeSubAgentScoping:
+    """Regression: collectors must run on raw `has_*` flags, not literal `_show_*`
+    membership in `tool_list`. Wildcard tool patterns ('context_search_tools.*')
+    are stored verbatim by SubAgentConfig.tool_list, so a literal `in` check
+    used to short-circuit every collector and return {}. Scope filtering still
+    happens at the storage layer via _sub_agent_conditions().
+    """
+
+    def test_wildcard_tool_list_returns_populated_tree(self, build_tools):
+        metric_entries = [{"subject_path": ["Finance"], "name": "revenue"}]
+        sql_entries = [{"subject_path": ["Finance"], "name": "rev_sql"}]
+        knowledge_entries = [{"subject_path": ["Business"], "name": "GMV"}]
+        template_entries = [{"subject_path": ["Ops"], "name": "tpl_a"}]
+        tools, _, _, _, _ = build_tools(
+            metric_cfg={"entries": metric_entries},
+            sql_cfg={"entries": sql_entries},
+            knowledge_cfg={"entries": knowledge_entries},
+            template_cfg={"entries": template_entries},
+            sub_agent_name="agent_a",
+            sub_agent_tools="context_search_tools.*,date_parsing_tools.*",
+        )
+
+        result = tools.list_subject_tree()
+
+        assert result.success == 1
+        assert result.result["Finance"]["metrics"] == ["revenue"]
+        assert result.result["Finance"]["reference_sql"] == ["rev_sql"]
+        assert result.result["Business"]["knowledge"] == ["GMV"]
+        assert result.result["Ops"]["reference_template"] == ["tpl_a"]
+
+    def test_literal_tool_list_returns_populated_tree(self, build_tools):
+        metric_entries = [{"subject_path": ["Finance"], "name": "revenue"}]
+        sql_entries = [{"subject_path": ["Finance"], "name": "rev_sql"}]
+        tools, _, _, _, _ = build_tools(
+            metric_cfg={"entries": metric_entries},
+            sql_cfg={"entries": sql_entries},
+            sub_agent_name="agent_b",
+            sub_agent_tools=("context_search_tools.list_subject_tree,context_search_tools.search_metrics"),
+        )
+
+        result = tools.list_subject_tree()
+
+        assert result.success == 1
+        assert result.result["Finance"]["metrics"] == ["revenue"]
+        assert result.result["Finance"]["reference_sql"] == ["rev_sql"]
+
+    def test_empty_stores_with_wildcard_returns_empty_tree(self, build_tools):
+        tools, _, _, _, _ = build_tools(
+            sub_agent_name="agent_c",
+            sub_agent_tools="context_search_tools.*",
+        )
+
+        result = tools.list_subject_tree()
+
+        assert result.success == 1
+        assert result.result == {}
+
+    def test_empty_tool_list_still_returns_data(self, build_tools):
+        # With sub_agent_config present but empty tools, the storage-layer
+        # _sub_agent_conditions() owns scope filtering. The collectors should
+        # still surface populated subject paths rather than silently returning
+        # {} based on the legacy literal `_show_*` membership check.
+        metric_entries = [{"subject_path": ["Finance"], "name": "revenue"}]
+        tools, _, _, _, _ = build_tools(
+            metric_cfg={"entries": metric_entries},
+            sub_agent_name="agent_d",
+            sub_agent_tools="",
+        )
+
+        result = tools.list_subject_tree()
+
+        assert result.success == 1
+        assert result.result["Finance"]["metrics"] == ["revenue"]
 
 
 class TestAllToolsName:

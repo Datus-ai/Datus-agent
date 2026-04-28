@@ -236,7 +236,7 @@ class ContextSearchTools:
             return FuncToolResult(success=0, error=str(exc))
 
     def _collect_metrics_entries(self) -> List[Dict[str, Any]]:
-        if not self._show_metrics():
+        if not self.has_metrics:
             return []
         try:
             return self.metric_rag.search_all_metrics(select_fields=["name"])
@@ -245,7 +245,7 @@ class ContextSearchTools:
             return []
 
     def _collect_sql_entries(self) -> List[Dict[str, Any]]:
-        if not self._show_sql():
+        if not self.has_reference_sql:
             return []
         try:
             return self.reference_sql_store.search_all_reference_sql(select_fields=["name"])
@@ -254,7 +254,7 @@ class ContextSearchTools:
             return []
 
     def _collect_knowledge_entries(self) -> List[Dict[str, Any]]:
-        if not self._show_knowledge():
+        if not self.has_knowledge:
             return []
         try:
             knowledge = self.ext_knowledge_rag.store.search_all_knowledge()
@@ -264,7 +264,7 @@ class ContextSearchTools:
             return []
 
     def _collect_template_entries(self) -> List[Dict[str, Any]]:
-        if not self._show_template():
+        if not self.has_reference_templates:
             return []
         try:
             return self.reference_template_store.search_all_reference_templates(select_fields=["name"])
