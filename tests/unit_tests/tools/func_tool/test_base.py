@@ -4,6 +4,7 @@ Focuses on trans_to_function_tool parameter filtering for LLM-hallucinated argum
 """
 
 import json
+import logging
 
 import pytest
 
@@ -71,7 +72,7 @@ class TestTransToFunctionTool:
 
     @pytest.mark.asyncio
     async def test_invalid_json_returns_error(self):
-        """Invalid JSON should return an error result."""
+        """Truly unrepairable JSON should return an error result."""
 
         class FakeTool:
             def some_method(self, x: str) -> FuncToolResult:
@@ -80,9 +81,44 @@ class TestTransToFunctionTool:
         fake = FakeTool()
         tool = self._make_tool_from_method(fake.some_method)
 
-        result = await tool.on_invoke_tool(None, "not-valid-json{")
+        result = await tool.on_invoke_tool(None, "totally broken garbage @@!!")
         assert result["success"] == 0
         assert "Invalid JSON" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_malformed_json_repaired_by_json_repair(self):
+        """GLM-style malformed JSON (unquoted string values) should be repaired."""
+
+        class FakeTool:
+            def search_document(self, keywords: str, platform: str = "") -> FuncToolResult:
+                return FuncToolResult(result={"keywords": keywords, "platform": platform})
+
+        fake = FakeTool()
+        tool = self._make_tool_from_method(fake.search_document)
+
+        malformed = '{"keywords": PERCENTILE function, "platform": "starrocks"}'
+        result = await tool.on_invoke_tool(None, malformed)
+
+        assert result["success"] == 1
+        assert result["result"]["platform"] == "starrocks"
+
+    @pytest.mark.asyncio
+    async def test_malformed_json_repair_logs_warning(self, caplog):
+        """json_repair fallback should log a warning when repairing."""
+
+        class FakeTool:
+            def search_document(self, keywords: str, platform: str = "") -> FuncToolResult:
+                return FuncToolResult(result={"keywords": keywords, "platform": platform})
+
+        fake = FakeTool()
+        tool = self._make_tool_from_method(fake.search_document)
+
+        malformed = '{"keywords": PERCENTILE function, "platform": "starrocks"}'
+        with caplog.at_level(logging.WARNING, logger="datus.tools.func_tool.base"):
+            result = await tool.on_invoke_tool(None, malformed)
+
+        assert result["success"] == 1
+        assert any("Repaired malformed JSON" in msg for msg in caplog.messages)
 
     @pytest.mark.asyncio
     async def test_multiple_extra_params_all_filtered(self):

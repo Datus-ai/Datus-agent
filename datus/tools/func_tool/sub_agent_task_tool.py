@@ -19,6 +19,7 @@ from contextlib import nullcontext
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
+import json_repair
 from agents import FunctionTool, Tool
 
 from datus.configuration.agent_config import AgentConfig
@@ -295,8 +296,19 @@ class SubAgentTaskTool:
         async def _invoke(_tool_ctx, args_str) -> dict:
             try:
                 args = json.loads(args_str) if isinstance(args_str, str) else dict(args_str or {})
-            except (TypeError, json.JSONDecodeError):
-                return FuncToolResult(success=0, error="Invalid JSON arguments for task tool").model_dump()
+            except (TypeError, json.JSONDecodeError) as e:
+                if isinstance(args_str, str) and args_str.strip():
+                    try:
+                        args = json_repair.loads(args_str)
+                        if not isinstance(args, dict):
+                            raise ValueError("Repaired result is not a dict")
+                        logger.warning(f"Repaired malformed JSON arguments for task tool: {e}")
+                    except Exception:
+                        return FuncToolResult(
+                            success=0, error=f"Invalid JSON arguments for task tool ({e})"
+                        ).model_dump()
+                else:
+                    return FuncToolResult(success=0, error=f"Invalid JSON arguments for task tool ({e})").model_dump()
             # Resolve parent call_id from SDK ToolContext for action linking
             call_id = getattr(_tool_ctx, "tool_call_id", None) if _tool_ctx else None
             result = await self.task(call_id=call_id, **args)

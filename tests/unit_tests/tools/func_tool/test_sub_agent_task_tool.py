@@ -12,6 +12,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
 from datus.schemas.agent_models import ScopedContext
+from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.sub_agent_task_tool import (
     BUILTIN_SUBAGENT_DESCRIPTIONS,
     NODE_CLASS_MAP,
@@ -2523,3 +2524,38 @@ class TestSessionPersistence:
         desc = schema["properties"]["session_id"]["description"]
         assert "continue" in desc.lower()
         assert "type" in desc.lower()  # callout that types must match
+
+
+@pytest.mark.ci
+class TestTaskToolJsonRepair:
+    """Tests for JSON argument repair in the task tool's _invoke handler."""
+
+    @pytest.mark.asyncio
+    async def test_malformed_json_repaired(self, task_tool):
+        """Malformed JSON args should be repaired by json_repair and tool call should succeed."""
+        tools = task_tool.available_tools()
+        task_tool_fn = tools[0]
+
+        captured_args = {}
+
+        async def mock_task(**kwargs):
+            captured_args.update(kwargs)
+            return FuncToolResult(result={"response": "ok", "tokens_used": 0})
+
+        with patch.object(task_tool, "task", side_effect=mock_task):
+            args_str = '{"type": gen_sql, "prompt": "Show users", "description": "test"}'
+            result = await task_tool_fn.on_invoke_tool(None, args_str)
+
+        assert result["success"] == 1
+        assert captured_args.get("type") == "gen_sql"
+        assert captured_args.get("prompt") == "Show users"
+
+    @pytest.mark.asyncio
+    async def test_invalid_json_still_returns_error(self, task_tool):
+        """Truly unrepairable JSON should still return error."""
+        tools = task_tool.available_tools()
+        task_tool_fn = tools[0]
+
+        result = await task_tool_fn.on_invoke_tool(None, "totally broken garbage @@!!")
+        assert result["success"] == 0
+        assert "Invalid JSON" in result["error"]

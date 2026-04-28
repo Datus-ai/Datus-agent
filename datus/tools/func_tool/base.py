@@ -7,6 +7,7 @@ import inspect
 import json
 from typing import Any, Callable, Dict, List, Optional
 
+import json_repair
 from agents import FunctionTool, function_tool
 from pydantic import BaseModel, Field
 
@@ -127,18 +128,29 @@ def trans_to_function_tool(bound_method: Callable, *, strict_mode: bool = True) 
                 else:
                     args_dict = {}
             except (TypeError, json.JSONDecodeError) as e:
-                args_len = len(args_str) if isinstance(args_str, str) else 0
-                truncated_hint = ""
-                if isinstance(args_str, str) and args_len > 0:
-                    # Check if it looks like truncated output (no closing brace)
-                    stripped = args_str.rstrip()
-                    if not stripped.endswith("}") and not stripped.endswith("]"):
-                        truncated_hint = " Output appears truncated — likely hit model max_output_tokens limit."
-                return {
-                    "success": 0,
-                    "error": f"Invalid JSON arguments ({e}). Args length: {args_len} chars.{truncated_hint}",
-                    "result": None,
-                }
+                if isinstance(args_str, str) and args_str.strip():
+                    try:
+                        args_dict = json_repair.loads(args_str)
+                        if not isinstance(args_dict, dict):
+                            raise ValueError("Repaired result is not a dict")
+                        logger.warning(f"Repaired malformed JSON arguments for tool '{method_to_call.__name__}': {e}")
+                    except Exception:
+                        args_len = len(args_str)
+                        truncated_hint = ""
+                        stripped = args_str.rstrip()
+                        if not stripped.endswith("}") and not stripped.endswith("]"):
+                            truncated_hint = " Output appears truncated — likely hit model max_output_tokens limit."
+                        return {
+                            "success": 0,
+                            "error": f"Invalid JSON arguments ({e}). Args length: {args_len} chars.{truncated_hint}",
+                            "result": None,
+                        }
+                else:
+                    return {
+                        "success": 0,
+                        "error": f"Invalid JSON arguments ({e})",
+                        "result": None,
+                    }
 
             # Call sync or async bound methods transparently
             if inspect.ismethod(method_to_call):
