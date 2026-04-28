@@ -176,14 +176,40 @@ def _normalize_status(value: Any) -> str:
 
 
 def _find_run(result_payload: Any, run_id: str) -> Optional[dict[str, Any]]:
-    if not isinstance(result_payload, dict):
+    payload = _as_mapping(result_payload)
+    if payload is None:
         return None
-    items = result_payload.get("items")
+
+    nested_payload = _as_mapping(payload.get("result")) if "result" in payload else None
+    if nested_payload is not None:
+        payload = nested_payload
+
+    items = payload.get("items")
     if not isinstance(items, list):
         return None
     for item in items:
-        if isinstance(item, dict) and item.get("run_id") == run_id:
-            return item
+        item_payload = _as_mapping(item)
+        if item_payload is not None and item_payload.get("run_id") == run_id:
+            return item_payload
+    return None
+
+
+def _as_mapping(value: Any) -> Optional[dict[str, Any]]:
+    if isinstance(value, dict):
+        return value
+
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        try:
+            dumped = model_dump()
+        except Exception:
+            return None
+        return dumped if isinstance(dumped, dict) else None
+
+    items = getattr(value, "items", None)
+    if isinstance(items, list):
+        return {"items": items}
+
     return None
 
 

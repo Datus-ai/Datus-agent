@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult
 from datus.validation.report import SchedulerJobTarget, SessionTarget
 from datus.validation.scheduler_runtime import run_scheduler_runtime_validation
 
@@ -50,6 +50,34 @@ class FakeSchedulerTool:
         return FuncToolResult(result={"job_id": job_id, "run_id": run_id, "log": "task failed\nstack"})
 
 
+class ListResultSchedulerTool(FakeSchedulerTool):
+    def list_job_runs(self, job_id, limit=10):
+        self.calls.append(("list_job_runs", job_id, limit))
+        status = self.poll_statuses.pop(0) if self.poll_statuses else "running"
+        return FuncToolResult(
+            result=FuncToolListResult(
+                items=[{"job_id": job_id, "run_id": self.run_id, "status": status}],
+                total=1,
+                has_more=False,
+            )
+        )
+
+
+class NestedResultSchedulerTool(FakeSchedulerTool):
+    def list_job_runs(self, job_id, limit=10):
+        self.calls.append(("list_job_runs", job_id, limit))
+        status = self.poll_statuses.pop(0) if self.poll_statuses else "running"
+        return FuncToolResult(
+            result={
+                "result": {
+                    "items": [{"job_id": job_id, "run_id": self.run_id, "status": status}],
+                    "total": 1,
+                    "has_more": False,
+                }
+            }
+        )
+
+
 def _session() -> SessionTarget:
     return SessionTarget(targets=[SchedulerJobTarget(platform="airflow", job_id="j-1")])
 
@@ -66,6 +94,28 @@ async def test_triggered_run_success_passes():
     assert check.observed["final_status"] == "success"
     assert check.observed["_target"] == "scheduler_job airflow:j-1"
     assert ("trigger_scheduler_job", "j-1") in tool.calls
+
+
+@pytest.mark.asyncio
+async def test_triggered_run_success_accepts_list_result_model():
+    tool = ListResultSchedulerTool(trigger_status="queued", poll_statuses=["success"])
+
+    report = await run_scheduler_runtime_validation(_session(), tool, timeout_seconds=1, poll_interval_seconds=0)
+
+    check = report.checks[0]
+    assert check.passed is True
+    assert check.observed["final_status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_triggered_run_success_accepts_nested_result_envelope():
+    tool = NestedResultSchedulerTool(trigger_status="queued", poll_statuses=["success"])
+
+    report = await run_scheduler_runtime_validation(_session(), tool, timeout_seconds=1, poll_interval_seconds=0)
+
+    check = report.checks[0]
+    assert check.passed is True
+    assert check.observed["final_status"] == "success"
 
 
 @pytest.mark.asyncio
