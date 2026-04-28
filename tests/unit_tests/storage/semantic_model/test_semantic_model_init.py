@@ -323,6 +323,18 @@ class TestInitSuccessStorySemanticModelSync:
 class TestInitSuccessStorySemanticModelAsyncLLMPath:
     """Tests for the async LLM execution path inside init_success_story_semantic_model_async."""
 
+    @pytest.fixture(autouse=True)
+    def _stub_semantic_rag(self, monkeypatch):
+        """Stub the build_mode='overwrite' truncate path so it never reaches the Lance backend.
+
+        These tests exercise the LLM execution flow only; the truncate behavior is
+        covered separately by ``TestInitSuccessStorySemanticModelAsyncOverwriteTruncate``.
+        """
+        monkeypatch.setattr(
+            "datus.storage.semantic_model.store.SemanticModelRAG",
+            MagicMock(return_value=MagicMock()),
+        )
+
     @pytest.mark.asyncio
     async def test_success_path_with_semantic_models_list(self, tmp_path, monkeypatch):
         """Success path: agentic node yields action with semantic_models list → returns (True, '')."""
