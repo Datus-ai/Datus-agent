@@ -760,7 +760,7 @@ class TestFormatToolResultFromDict:
 
     def test_func_tool_list_envelope(self):
         data = {"success": 1, "result": {"items": [{}, {}, {}], "total": 12, "has_more": True}}
-        assert self.model._format_tool_result_from_dict(data) == "3 items of 12 (+more)"
+        assert self.model._format_tool_result_from_dict(data) == "3/12 items+"
 
     def test_func_tool_list_envelope_no_total(self):
         data = {"success": 1, "result": {"items": [{}, {}], "total": None, "has_more": False}}
@@ -787,8 +787,9 @@ class TestFormatToolResultFromDict:
     # --- Failure prioritisation --------------------------------------------
 
     def test_failure_with_success_flag_zero(self):
+        # Error is clipped to SUMMARY_ERROR_MAX_CHARS (19) chars after "Failed: ".
         data = {"success": 0, "error": "syntax error near SELECT", "result": None}
-        assert self.model._format_tool_result_from_dict(data) == "Failed: syntax error near SELECT"
+        assert self.model._format_tool_result_from_dict(data) == "Failed: syntax err…"
 
     def test_failure_without_error_message(self):
         assert self.model._format_tool_result_from_dict({"success": 0, "result": None}) == "Failed"
@@ -797,8 +798,8 @@ class TestFormatToolResultFromDict:
         long_error = "detail: " + ("x" * 300)
         summary = self.model._format_tool_result_from_dict({"success": 0, "error": long_error})
         assert summary.startswith("Failed: ")
-        # Error body capped at 100 chars plus the ellipsis marker.
-        assert len(summary) <= len("Failed: ") + 101
+        # Error body capped at SUMMARY_ERROR_MAX_CHARS (19) plus the ellipsis marker.
+        assert len(summary) <= len("Failed: ") + 20
 
     def test_failure_takes_priority_over_result_items(self):
         # Even if a "result" with items exists, success=0 forces the failure branch.
@@ -826,7 +827,7 @@ class TestFormatToolResultFromDict:
         assert self.model._format_tool_result_from_dict(data, tool_name="read_query") == "42 rows"
 
     def test_read_query_with_columns_uses_rows_x_cols(self):
-        # When columns are inferable the formatter shows ``"rows × cols result"``
+        # When columns are inferable the formatter shows ``"rows×cols rows"``
         # to match the CLI compact display so SSE and CLI render identically.
         data = {
             "success": 1,
@@ -836,11 +837,11 @@ class TestFormatToolResultFromDict:
                 "compressed_data": "...",
             },
         }
-        assert self.model._format_tool_result_from_dict(data, tool_name="read_query") == "42 × 3 result"
+        assert self.model._format_tool_result_from_dict(data, tool_name="read_query") == "42×3 rows"
 
     def test_execute_write_uses_row_count(self):
         data = {"success": 1, "result": {"row_count": 5, "sql": "UPDATE t SET x=1"}}
-        assert self.model._format_tool_result_from_dict(data, tool_name="execute_write") == "wrote 5 rows"
+        assert self.model._format_tool_result_from_dict(data, tool_name="execute_write") == "+5 rows"
 
     def test_execute_ddl_success_message(self):
         data = {"success": 1, "result": {"message": "DDL executed successfully", "sql": "CREATE TABLE t(x INT)"}}
@@ -848,25 +849,27 @@ class TestFormatToolResultFromDict:
 
     def test_describe_table_columns(self):
         data = {"success": 1, "result": {"columns": [{"name": "c"}] * 8}}
-        assert self.model._format_tool_result_from_dict(data, tool_name="describe_table") == "8 columns"
+        assert self.model._format_tool_result_from_dict(data, tool_name="describe_table") == "8 cols"
 
     def test_get_table_ddl_identifier(self):
         data = {
             "success": 1,
             "result": {"identifier": "public.orders", "table_name": "orders", "definition": "CREATE TABLE ..."},
         }
-        assert self.model._format_tool_result_from_dict(data, tool_name="get_table_ddl") == "DDL of public.orders"
+        assert self.model._format_tool_result_from_dict(data, tool_name="get_table_ddl") == "DDL: public.orders"
 
     def test_load_skill_metadata_name(self):
-        # Quoting standardised on double quotes across all per-tool formatters.
+        # Compact format: "+<skill_name>" clipped to SUMMARY_TEXT_MAX_CHARS.
         data = {"success": 1, "result": {"content": "...", "metadata": {"name": "sql-best-practices"}}}
-        assert self.model._format_tool_result_from_dict(data, tool_name="load_skill") == 'loaded "sql-best-practices"'
+        assert self.model._format_tool_result_from_dict(data, tool_name="load_skill") == "+sql-best-practices"
 
     def test_ask_user_content_truncated(self):
+        # ask_user wraps the answer in quotes; long content gets clipped at the
+        # registry exit, dropping the closing quote.
         data = {"success": 1, "result": {"content": "  How many rows should we keep in the dashboard?  "}}
         summary = self.model._format_tool_result_from_dict(data, tool_name="ask_user")
         assert summary.startswith('"')
-        assert summary.endswith('"')
+        assert len(summary) <= 19
 
     def test_tool_specific_formatter_falls_back_on_missing_fields(self):
         # read_query without original_rows should degrade gracefully instead of crashing.

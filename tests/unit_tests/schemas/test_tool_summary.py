@@ -7,6 +7,10 @@
 These tests pin the wording produced by every registered formatter so a
 future formatter regression is caught before it reaches the CLI compact
 line or the SSE ``shortDesc`` payload.
+
+Contract: every non-filesystem summary must be ≤ ``SUMMARY_TEXT_MAX_CHARS``
+(19) characters; filesystem tools (``read_file``, ``write_file``,
+``edit_file``, ``glob``, ``grep``) bypass the clip and return verbatim.
 """
 
 from __future__ import annotations
@@ -17,6 +21,8 @@ from typing import Any
 import pytest
 
 from datus.schemas.tool_summary import (
+    FS_TOOLS_NO_CLIP,
+    SUMMARY_TEXT_MAX_CHARS,
     TOOL_SUMMARY_REGISTRY,
     ToolSummaryRegistry,
     format_failure,
@@ -44,7 +50,13 @@ class TestPublicHelpers:
         long = "x" * 90
         out = truncate_text(long, limit=80)
         assert out.endswith("…")
-        assert len(out) <= 81
+        assert len(out) <= 80
+
+    def test_truncate_text_default_limit_clips_to_19(self):
+        long = "x" * 50
+        out = truncate_text(long)
+        assert len(out) == SUMMARY_TEXT_MAX_CHARS == 19
+        assert out.endswith("…")
 
     def test_truncate_text_empty_returns_sentinel(self):
         assert truncate_text("\n  \n") == "Empty result"
@@ -62,7 +74,14 @@ class TestPublicHelpers:
         assert looks_like_failure({}) is False
 
     def test_format_failure_with_message(self):
+        # Error text is clipped to SUMMARY_ERROR_MAX_CHARS (19).
         assert format_failure({"error": "table missing"}) == "Failed: table missing"
+
+    def test_format_failure_clips_long_error(self):
+        out = format_failure({"error": "x" * 200})
+        assert out.startswith("Failed: ")
+        # `Failed: ` (8) + truncate_text("xxx...", 19) → ≤27 chars total.
+        assert len(out) <= 8 + SUMMARY_TEXT_MAX_CHARS
 
     def test_format_failure_without_message(self):
         assert format_failure({"success": 0}) == "Failed"
@@ -76,20 +95,21 @@ class TestPublicHelpers:
         assert is_empty_result(0) is False
 
     def test_format_list_envelope(self):
+        # Compact format: "N noun" / "N/total noun" / "N noun+".
         assert format_list_envelope({"items": [1, 2, 3]}) == "3 items"
-        assert format_list_envelope({"items": [1], "total": 10}) == "1 item of 10"
-        assert format_list_envelope({"items": [1, 2], "has_more": True}) == "2 items (+more)"
+        assert format_list_envelope({"items": [1], "total": 10}) == "1/10 item"
+        assert format_list_envelope({"items": [1, 2], "has_more": True}) == "2 items+"
 
-    def test_format_generic_result_dict_envelope(self):
+    def test_format_generic_result_dict_with_items(self):
         assert format_generic_result({"items": [1, 2]}) == "2 items"
 
-    def test_format_generic_result_dict_count_keys(self):
+    def test_format_generic_result_count_keys(self):
         assert format_generic_result({"row_count": 7}) == "7 rows"
         assert format_generic_result({"affected_rows": 1}) == "1 row"
         assert format_generic_result({"count": 4}) == "4 items"
         assert format_generic_result({"rows": 2}) == "2 rows"
 
-    def test_format_generic_result_misc_types(self):
+    def test_format_generic_result_primitive_shapes(self):
         assert format_generic_result([1, 2]) == "2 items"
         assert format_generic_result(True) == "OK"
         assert format_generic_result(False) == "Failed"
@@ -103,7 +123,6 @@ class TestPublicHelpers:
 
 class TestRegistryRouting:
     def test_failure_short_circuits_per_tool_formatter(self):
-        # Even with a registered tool name, failure path skips the formatter.
         out = TOOL_SUMMARY_REGISTRY.summarize_dict(
             {"success": 0, "error": "missing", "result": {"original_rows": 99}},
             "read_query",
@@ -118,20 +137,17 @@ class TestRegistryRouting:
         assert out == "2 items"
 
     def test_empty_envelope_passes_through_to_formatter(self):
-        # The list-envelope shape ``{"items": [], "total": 0}`` is *not*
-        # the same as a missing payload — the formatter still has the
-        # noun, so we get a meaningful "0 metrics" rather than the
-        # generic "Empty result" sentinel.
+        # ``{"items": [], "total": 0}`` is *not* the same as a missing
+        # payload — the formatter still has the noun, so we get a
+        # meaningful "0 metrics" rather than the generic sentinel.
         out = TOOL_SUMMARY_REGISTRY.summarize_dict({"success": 1, "result": {"items": []}}, "list_metrics")
         assert out == "0 metrics"
 
     def test_truly_empty_result_returns_sentinel(self):
-        # No payload at all → sentinel.
         out = TOOL_SUMMARY_REGISTRY.summarize_dict({"success": 1, "result": {}}, "list_metrics")
         assert out == "Empty result"
 
     def test_formatter_returning_empty_falls_back(self):
-        # Register a formatter that always returns ""; routing must fall back.
         local = ToolSummaryRegistry()
         local.register("dummy", lambda _r: "")
         out = local.summarize_dict({"success": 1, "result": {"row_count": 4}}, "dummy")
@@ -162,8 +178,6 @@ class TestRegistryRouting:
 
     def test_singleton_covers_all_planned_tools(self):
         names = set(TOOL_SUMMARY_REGISTRY.names())
-        # Pin a representative slice across all categories so a missing
-        # registration breaks loudly. The exact count may grow over time.
         must_have = {
             # database
             "read_query",
@@ -222,21 +236,20 @@ class TestDatabaseFormatters:
             "read_query",
             {"success": 1, "result": {"original_rows": 7, "column_count": 5}},
         )
-        assert out == "7 × 5 result"
+        assert out == "7×5 rows"
 
     def test_read_query_columns_inferred_from_compressed(self):
         out = _summarize(
             "read_query",
             {"success": 1, "result": {"original_rows": 2, "compressed_data": "a,b,c\n1,2,3\n4,5,6"}},
         )
-        assert out == "2 × 3 result"
+        assert out == "2×3 rows"
 
     def test_query_alias_routes_to_read_query(self):
-        # 'query' is a registered alias of read_query.
         assert _summarize("query", {"success": 1, "result": {"original_rows": 1}}) == "1 row"
 
     def test_execute_write(self):
-        assert _summarize("execute_write", {"success": 1, "result": {"row_count": 5}}) == "wrote 5 rows"
+        assert _summarize("execute_write", {"success": 1, "result": {"row_count": 5}}) == "+5 rows"
 
     def test_execute_ddl(self):
         out = _summarize("execute_ddl", {"success": 1, "result": {"message": "DDL executed"}})
@@ -244,35 +257,34 @@ class TestDatabaseFormatters:
 
     def test_describe_table(self):
         cols = [{"name": "id"}, {"name": "name"}, {"name": "email"}]
-        assert _summarize("describe_table", {"success": 1, "result": {"columns": cols}}) == "3 columns"
+        assert _summarize("describe_table", {"success": 1, "result": {"columns": cols}}) == "3 cols"
 
     def test_get_table_ddl(self):
         out = _summarize(
             "get_table_ddl",
             {"success": 1, "result": {"identifier": "public.orders", "definition": "CREATE TABLE..."}},
         )
-        assert out == "DDL of public.orders"
+        assert out == "DDL: public.orders"
 
-    def test_list_tables_with_preview(self):
+    def test_list_tables_no_preview(self):
         out = _summarize(
             "list_tables",
             {"success": 1, "result": [{"name": "orders"}, {"name": "customers"}, {"name": "products"}]},
         )
-        assert out == "3 tables: orders, customers, products"
+        assert out == "3 tables"
 
-    def test_list_tables_truncated_preview(self):
+    def test_list_tables_count_only_when_many(self):
         out = _summarize(
             "list_tables",
             {"success": 1, "result": [{"name": str(i)} for i in range(5)]},
         )
-        # Shows first 3 names + "..." marker when more remain.
-        assert out == "5 tables: 0, 1, 2, ..."
+        assert out == "5 tables"
 
     def test_list_databases(self):
-        assert _summarize("list_databases", {"success": 1, "result": ["a", "b"]}) == "2 databases: a, b"
+        assert _summarize("list_databases", {"success": 1, "result": ["a", "b"]}) == "2 dbs"
 
     def test_list_schemas_singular(self):
-        assert _summarize("list_schemas", {"success": 1, "result": ["public"]}) == "1 schema: public"
+        assert _summarize("list_schemas", {"success": 1, "result": ["public"]}) == "1 schema"
 
     def test_search_table_with_samples(self):
         out = _summarize(
@@ -285,22 +297,22 @@ class TestDatabaseFormatters:
                 },
             },
         )
-        assert out == "2 tables and 5 sample rows"
+        assert out == "2 tbls, 5 rows"
 
     def test_search_table_no_samples(self):
         out = _summarize(
             "search_table",
             {"success": 1, "result": {"metadata": [{"name": "t"}], "sample_data": []}},
         )
-        assert out == "1 table"
+        assert out == "1 tbl"
 
     def test_search_table_empty(self):
         out = _summarize("search_table", {"success": 1, "result": {"metadata": [], "sample_data": []}})
-        assert out == "no tables matched"
+        assert out == "no matches"
 
 
 class TestBIFormatters:
-    def test_list_dashboards_with_preview(self):
+    def test_list_dashboards_no_preview(self):
         out = _summarize(
             "list_dashboards",
             {
@@ -308,53 +320,55 @@ class TestBIFormatters:
                 "result": {"items": [{"title": "Sales"}, {"title": "Ops"}], "total": 2, "has_more": False},
             },
         )
-        assert out == "2 dashboards: Sales, Ops"
+        assert out == "2 dashboards"
 
     def test_get_dashboard(self):
         out = _summarize(
             "get_dashboard",
             {"success": 1, "result": {"title": "Sales", "charts": [1, 2, 3]}},
         )
-        assert out == 'dashboard "Sales" (3 charts)'
+        assert out == "dash: Sales (3)"
 
     def test_get_chart(self):
+        # `chart: Revenue trend` is 20 chars → registry exit clips to 19.
         out = _summarize(
             "get_chart",
             {"success": 1, "result": {"name": "Revenue trend", "chart_type": "line"}},
         )
-        assert out == 'chart "Revenue trend" (line)'
+        assert out == "chart: Revenue tre…"
+        assert len(out) == SUMMARY_TEXT_MAX_CHARS
 
     def test_get_chart_data_with_columns(self):
         out = _summarize(
             "get_chart_data",
             {"success": 1, "result": {"row_count": 30, "column_names": ["d", "v"]}},
         )
-        assert out == "30 rows × 2 cols"
+        assert out == "30r × 2c"
 
     def test_create_dashboard(self):
         out = _summarize("create_dashboard", {"success": 1, "result": {"title": "Q1", "dashboard_id": "42"}})
-        assert out == 'created dashboard "Q1" (42)'
+        assert out == "created: Q1"
 
     def test_delete_dashboard(self):
         out = _summarize(
             "delete_dashboard",
             {"success": 1, "result": {"deleted": True, "dashboard_id": "42"}},
         )
-        assert out == "deleted dashboard 42"
+        assert out == "deleted: 42"
 
     def test_create_chart_with_dashboard(self):
         out = _summarize(
             "create_chart",
             {"success": 1, "result": {"name": "Trend", "dashboard_id": "42", "chart_id": "c1"}},
         )
-        assert out == 'created chart "Trend" → dashboard 42'
+        assert out == "created: Trend"
 
     def test_write_query(self):
         out = _summarize(
             "write_query",
             {"success": 1, "result": {"table_name": "facts.sales", "rows_written": 100}},
         )
-        assert out == "wrote 100 rows → facts.sales"
+        assert out == "+100→facts.sales"
 
 
 class TestSemanticFormatters:
@@ -366,21 +380,21 @@ class TestSemanticFormatters:
                 "result": {"items": [{"name": "revenue"}, {"name": "gmv"}], "total": 5, "has_more": True},
             },
         )
-        assert out == "2 metrics of 5 (+more): revenue, gmv"
+        assert out == "2/5 metrics+"
 
     def test_get_dimensions(self):
         out = _summarize(
             "get_dimensions",
             {"success": 1, "result": {"items": [{"name": "region"}], "total": 1, "has_more": False}},
         )
-        assert out == "1 dimension: region"
+        assert out == "1 dimension"
 
     def test_query_metrics_rows_and_cols(self):
         out = _summarize(
             "query_metrics",
             {"success": 1, "result": {"columns": ["a", "b", "c"], "data": {"original_rows": 12}}},
         )
-        assert out == "12 rows × 3 cols"
+        assert out == "12r × 3c"
 
     def test_validate_semantic_valid(self):
         out = _summarize("validate_semantic", {"success": 1, "result": {"valid": True, "issues": []}})
@@ -398,7 +412,7 @@ class TestSemanticFormatters:
             "attribution_analyze",
             {"success": 1, "result": {"dimension_ranking": list(range(8)), "selected_dimensions": list(range(3))}},
         )
-        assert out == "selected 3 of 8 dimensions"
+        assert out == "sel 3/8 dims"
 
 
 class TestGenerationFormatters:
@@ -421,25 +435,28 @@ class TestGenerationFormatters:
             "end_semantic_model_generation",
             {"success": 1, "result": {"semantic_model_files": ["a.yml", "b.yml"]}},
         )
-        assert out == "validated 2 semantic files"
+        assert out == "2 semantic files"
 
     def test_end_metric_generation(self):
         out = _summarize(
             "end_metric_generation",
             {"success": 1, "result": {"metric_file": "m.yml", "sync": {"success": True}}},
         )
-        assert out == "metric generated and synced"
+        assert out == "metric synced"
 
     def test_generate_sql_summary_id(self):
         out = _summarize("generate_sql_summary_id", {"success": 1, "result": "abc12345"})
         assert out == "id: abc12345"
 
-    def test_analyze_table_relationships_uses_inline_summary(self):
+    def test_analyze_table_relationships_falls_back_to_summary_when_no_count(self):
+        # ``relationships=[]`` is empty, so the formatter falls back to
+        # the inline ``summary`` field, which is then clipped at exit.
         out = _summarize(
             "analyze_table_relationships",
             {"success": 1, "result": {"relationships": [], "summary": "Found 4 relationships across 3 tables"}},
         )
-        assert out == "Found 4 relationships across 3 tables"
+        assert out == "Found 4 relationsh…"
+        assert len(out) == SUMMARY_TEXT_MAX_CHARS
 
     def test_get_multiple_tables_ddl(self):
         out = _summarize(
@@ -455,42 +472,42 @@ class TestSchedulerFormatters:
             "submit_sql_job",
             {"success": 1, "result": {"job_id": "dag_42", "job_name": "daily_etl", "status": "submitted"}},
         )
-        assert out == 'submitted "daily_etl" (dag_42)'
+        assert out == "+job dag_42"
 
     def test_submit_sparksql_job(self):
         out = _summarize(
             "submit_sparksql_job",
             {"success": 1, "result": {"job_id": "spark_1", "job_name": "agg"}},
         )
-        assert out == 'submitted spark "agg" (spark_1)'
+        assert out == "+spark spark_1"
 
     def test_trigger_scheduler_job(self):
         out = _summarize(
             "trigger_scheduler_job",
             {"success": 1, "result": {"run_id": "r99", "job_id": "dag_42", "status": "running"}},
         )
-        assert out == "triggered dag_42 → run r99"
+        assert out == "dag_42→r99"
 
     def test_get_scheduler_job_found(self):
         out = _summarize(
             "get_scheduler_job",
             {"success": 1, "result": {"found": True, "job_id": "j", "job_name": "daily", "status": "active"}},
         )
-        assert out == 'job "daily" (active)'
+        assert out == "daily: active"
 
     def test_get_scheduler_job_not_found(self):
         out = _summarize(
             "get_scheduler_job",
             {"success": 1, "result": {"found": False, "job_id": "ghost"}},
         )
-        assert out == "job ghost not found"
+        assert out == "ghost not found"
 
     def test_list_scheduler_jobs(self):
         out = _summarize(
             "list_scheduler_jobs",
             {"success": 1, "result": {"items": [{"job_name": "a"}, {"job_name": "b"}], "total": 2, "has_more": False}},
         )
-        assert out == "2 jobs: a, b"
+        assert out == "2 jobs"
 
     def test_pause_resume_delete_update(self):
         for tool in ("pause_job", "resume_job", "delete_job", "update_job"):
@@ -499,18 +516,18 @@ class TestSchedulerFormatters:
     def test_get_run_log_with_lines(self):
         log = "line1\nline2\nline3"
         out = _summarize("get_run_log", {"success": 1, "result": {"run_id": "r1", "log": log}})
-        assert out == "log of run r1 (3 lines)"
+        assert out == "r1: 3 lines"
 
     def test_list_scheduler_connections(self):
         out = _summarize(
             "list_scheduler_connections",
             {"success": 1, "result": {"total": 4, "connections": []}},
         )
-        assert out == "4 scheduler connections"
+        assert out == "4 connections"
 
 
 class TestContextSearchFormatters:
-    def test_list_subject_tree_aggregates_counts(self):
+    def test_list_subject_tree_aggregates_total_count(self):
         tree = {
             "Finance": {
                 "Revenue": {"metrics": ["revenue", "gmv"], "reference_sql": ["q1"]},
@@ -519,10 +536,9 @@ class TestContextSearchFormatters:
             "Marketing": {"knowledge": ["k1", "k2"]},
         }
         out = _summarize("list_subject_tree", {"success": 1, "result": tree})
-        assert out == "3 metrics, 1 SQLs, 2 knowledge"
+        assert out == "6 items"
 
     def test_list_subject_tree_empty(self):
-        # Empty result short-circuits to sentinel.
         out = _summarize("list_subject_tree", {"success": 1, "result": {}})
         assert out == "Empty result"
 
@@ -532,11 +548,11 @@ class TestContextSearchFormatters:
 
     def test_get_reference_sql_single(self):
         out = _summarize("get_reference_sql", {"success": 1, "result": {"name": "top_users"}})
-        assert out == 'reference SQL "top_users"'
+        assert out == "SQL: top_users"
 
     def test_get_knowledge_list(self):
         out = _summarize("get_knowledge", {"success": 1, "result": [{"name": "a"}, {"name": "b"}]})
-        assert out == "2 knowledge entries"
+        assert out == "2 knowledge"
 
 
 class TestReferenceTemplateFormatters:
@@ -569,10 +585,12 @@ class TestReferenceTemplateFormatters:
                 },
             },
         )
-        assert out == '9 rows from "x"'
+        assert out == "9 rows: x"
 
 
 class TestFilesystemFormatters:
+    """Filesystem formatters are exempt from the ≤19 clip."""
+
     def test_read_file_string_lines(self):
         out = _summarize("read_file", {"success": 1, "result": "line1\nline2\nline3\n"})
         assert out == "read 3 lines"
@@ -592,12 +610,14 @@ class TestFilesystemFormatters:
         )
         assert out == "3 files"
 
-    def test_glob_truncated(self):
+    def test_glob_truncated_exceeds_clip_limit(self):
+        # 21 chars — survives because fs tools bypass the clip.
         out = _summarize(
             "glob",
             {"success": 1, "result": {"files": ["a"] * 200, "truncated": True}},
         )
         assert out == "200 files (truncated)"
+        assert len(out) > SUMMARY_TEXT_MAX_CHARS
 
     def test_grep(self):
         out = _summarize(
@@ -628,12 +648,14 @@ class TestPlanFormatters:
         )
         assert out == "3 todos"
 
-    def test_todo_update(self):
+    def test_todo_update_clipped(self):
+        # `Run report: completed` is 21 chars → clipped at registry exit.
         out = _summarize(
             "todo_update",
             {"success": 1, "result": {"updated_item": {"content": "Run report", "status": "completed"}}},
         )
-        assert out == '"Run report" → completed'
+        assert out == "Run report: comple…"
+        assert len(out) <= SUMMARY_TEXT_MAX_CHARS
 
 
 class TestDateAndSessionFormatters:
@@ -642,7 +664,7 @@ class TestDateAndSessionFormatters:
             "parse_temporal_expressions",
             {"success": 1, "result": {"extracted_dates": [1, 2]}},
         )
-        assert out == "parsed 2 expressions"
+        assert out == "parsed 2 dates"
 
     def test_get_current_date(self):
         out = _summarize("get_current_date", {"success": 1, "result": {"current_date": "2026-04-25"}})
@@ -653,7 +675,7 @@ class TestDateAndSessionFormatters:
             "search_skill_usage",
             {"success": 1, "result": {"matches": [{"session_id": "s1"}, {"session_id": "s2"}]}},
         )
-        assert out == "2 session matches"
+        assert out == "2 sessions"
 
 
 class TestSkillAskUserAndTask:
@@ -662,7 +684,7 @@ class TestSkillAskUserAndTask:
             "load_skill",
             {"success": 1, "result": {"metadata": {"name": "sql-optimization"}}},
         )
-        assert out == 'loaded "sql-optimization"'
+        assert out == "+sql-optimization"
 
     def test_validate_skill_clean(self):
         out = _summarize(
@@ -676,9 +698,9 @@ class TestSkillAskUserAndTask:
             "validate_skill",
             {"success": 1, "result": {"skill_name": "x", "warnings": 2}},
         )
-        assert out == "x valid (2 warnings)"
+        assert out == "x valid (2 warns)"
 
-    def test_ask_user_json_array(self):
+    def test_ask_user_json_array_single(self):
         payload = json.dumps([{"question": "DB?", "answer": "PostgreSQL"}])
         out = _summarize("ask_user", {"success": 1, "result": payload})
         assert out == '"PostgreSQL"'
@@ -691,7 +713,7 @@ class TestSkillAskUserAndTask:
             ]
         )
         out = _summarize("ask_user", {"success": 1, "result": payload})
-        assert out == '"PostgreSQL" (+1 more)'
+        assert out == "PostgreSQL +1"
 
     def test_task_with_sql(self):
         out = _summarize("task", {"success": 1, "result": {"sql": "SELECT 1", "response": "done"}})
@@ -752,98 +774,92 @@ def test_failure_path_uniform(tool: str):
 
 
 # ── Per-tool fallback / branch coverage ─────────────────────────────────
-#
-# Each formatter has multiple "graceful degradation" branches that fire
-# when the expected fields are missing. Exercising them keeps the
-# formatters resilient against minor schema drift in the underlying
-# tools without introducing a thicket of one-off test methods.
 
 
 @pytest.mark.parametrize(
     "tool, payload, expected",
     [
-        # BI: get_dashboard / get_chart / create_* / update_* — fall through
-        # to id-only or no-title variants.
-        ("get_dashboard", {"title": "Sales", "charts": "broken"}, 'dashboard "Sales"'),
-        ("get_dashboard", {"dashboard_id": "d99"}, "dashboard d99"),
-        ("get_chart", {"name": "Trend"}, 'chart "Trend"'),
+        # BI fallbacks
+        ("get_dashboard", {"title": "Sales", "charts": "broken"}, "dash: Sales"),
+        ("get_dashboard", {"dashboard_id": "d99"}, "dash d99"),
+        ("get_chart", {"name": "Trend"}, "chart: Trend"),
         ("get_chart", {"chart_id": "c7"}, "chart c7"),
         ("get_chart_data", {"row_count": 4}, "4 rows"),
-        ("get_chart_data", {"rows": [1, 2], "column_names": ["a", "b"]}, "2 rows × 2 cols"),
-        ("create_dashboard", {"title": "Sales"}, 'created dashboard "Sales"'),
-        ("create_dashboard", {"dashboard_id": "d1"}, "created dashboard d1"),
-        ("update_dashboard", {"title": "X"}, 'updated dashboard "X"'),
-        ("update_dashboard", {"dashboard_id": "d2"}, "updated dashboard d2"),
-        ("delete_dashboard", {"deleted": False, "dashboard_id": "d3"}, "dashboard d3 (not deleted)"),
+        ("get_chart_data", {"rows": [1, 2], "column_names": ["a", "b"]}, "2r × 2c"),
+        ("create_dashboard", {"title": "Sales"}, "created: Sales"),
+        ("create_dashboard", {"dashboard_id": "d1"}, "created: d1"),
+        ("update_dashboard", {"title": "X"}, "updated: X"),
+        ("update_dashboard", {"dashboard_id": "d2"}, "updated: d2"),
+        ("delete_dashboard", {"deleted": False, "dashboard_id": "d3"}, "not deleted: d3"),
         ("delete_dashboard", {"deleted": True}, "deleted dashboard"),
-        ("create_chart", {"name": "T"}, 'created chart "T"'),
-        ("create_chart", {"chart_id": "c"}, "created chart c"),
-        ("update_chart", {"chart_id": "c1"}, "updated chart c1"),
-        ("add_chart_to_dashboard", {"chart_id": "c", "dashboard_id": "d"}, "chart c → dashboard d"),
-        ("delete_chart", {"chart_id": "c5"}, "deleted chart c5"),
+        ("create_chart", {"name": "T"}, "created: T"),
+        ("create_chart", {"chart_id": "c"}, "created: c"),
+        ("update_chart", {"chart_id": "c1"}, "updated: c1"),
+        ("add_chart_to_dashboard", {"chart_id": "c", "dashboard_id": "d"}, "chart c→dash d"),
+        ("delete_chart", {"chart_id": "c5"}, "deleted: c5"),
         ("delete_chart", {"deleted": True}, "deleted chart"),
-        ("create_dataset", {"name": "ds"}, 'created dataset "ds"'),
-        ("create_dataset", {"dataset_id": "7"}, "created dataset 7"),
-        ("delete_dataset", {"dataset_id": "9"}, "deleted dataset 9"),
+        ("create_dataset", {"name": "ds"}, "created: ds"),
+        ("create_dataset", {"dataset_id": "7"}, "created: 7"),
+        ("delete_dataset", {"dataset_id": "9"}, "deleted: 9"),
         ("delete_dataset", {"deleted": True}, "deleted dataset"),
-        ("write_query", {"rows_written": 5}, "wrote 5 rows"),
-        ("list_bi_databases", [{"id": 1}, {"id": 2}], "2 BI databases"),
-        # Database: search_table partial / read_query partial.
+        ("write_query", {"rows_written": 5}, "+5 rows"),
+        ("list_bi_databases", [{"id": 1}, {"id": 2}], "2 BI dbs"),
+        # Database fallbacks
         ("read_query", [1, 2, 3], "3 rows"),
-        ("describe_table", {"schema": [{"name": "id"}, {"name": "v"}]}, "2 columns"),
-        ("get_table_ddl", {"table_name": "orders", "definition": "CREATE TABLE..."}, "DDL of orders"),
-        ("list_tables", [{"name": "orders"}], "1 table: orders"),
-        ("list_databases", ["mydb"], "1 database: mydb"),
-        # Semantic: validate / attribution / get_dimensions partial.
+        ("describe_table", {"schema": [{"name": "id"}, {"name": "v"}]}, "2 cols"),
+        ("get_table_ddl", {"table_name": "orders", "definition": "CREATE TABLE..."}, "DDL: orders"),
+        ("list_tables", [{"name": "orders"}], "1 table"),
+        ("list_databases", ["mydb"], "1 db"),
+        # Semantic fallbacks
         ("validate_semantic", {"valid": False, "issues": []}, "invalid"),
-        ("attribution_analyze", {"selected_dimensions": [1]}, "selected 1 dimension"),
-        ("query_metrics", {"columns": ["a", "b"]}, "2 columns"),
+        ("attribution_analyze", {"selected_dimensions": [1]}, "sel 1 dim"),
+        ("query_metrics", {"columns": ["a", "b"]}, "2 cols"),
         ("query_metrics", {"data": {"original_rows": 7}}, "7 rows"),
-        # Generation
+        # Generation fallbacks
         ("check_semantic_object_exists", {"exists": True}, "object exists"),
         ("check_semantic_model_exists", {"exists": True}, "table exists"),
         ("check_semantic_model_exists", {"exists": False}, "table not found"),
         ("end_metric_generation", {"metric_file": "m.yml"}, "metric generated"),
-        ("analyze_table_relationships", {"relationships": [{}, {}, {}]}, "3 relationships"),
+        ("analyze_table_relationships", {"relationships": [{}, {}, {}]}, "3 rels"),
         (
             "analyze_column_usage_patterns",
             {"summary": "Analyzed 5 columns from 10 SQLs"},
-            "Analyzed 5 columns from 10 SQLs",
+            "Analyzed 5 columns…",
         ),
-        ("analyze_column_usage_patterns", {"column_patterns": {"a": {}, "b": {}}}, "2 columns analyzed"),
-        # Scheduler
-        ("submit_sql_job", {"job_id": "j"}, "submitted j"),
-        ("submit_sparksql_job", {"job_id": "j2"}, "submitted spark j2"),
-        ("trigger_scheduler_job", {"job_id": "j3"}, "triggered j3"),
+        ("analyze_column_usage_patterns", {"column_patterns": {"a": {}, "b": {}}}, "2 cols analyzed"),
+        # Scheduler fallbacks
+        ("submit_sql_job", {"job_id": "j"}, "+job j"),
+        ("submit_sparksql_job", {"job_id": "j2"}, "+spark j2"),
+        ("trigger_scheduler_job", {"job_id": "j3"}, "trig j3"),
         ("get_scheduler_job", {"job_id": "j4"}, "job j4"),
-        ("get_run_log", {"run_id": "r2"}, "log of run r2"),
-        # Context search
+        ("get_run_log", {"run_id": "r2"}, "log: r2"),
+        # Context search fallbacks
         ("get_metrics", [{"name": "a"}, {"name": "b"}], "2 metrics"),
-        ("get_reference_sql", [{"name": "s"}], "1 reference SQL"),
-        # Reference template
+        ("get_reference_sql", [{"name": "s"}], "1 SQL"),
+        # Reference template fallback
         ("execute_reference_template", {"template_name": "x"}, 'executed "x"'),
-        # Filesystem fallback
+        # Filesystem fallbacks (exempt from clip)
         ("read_file", "single line no newline", "read 1 line"),
         ("write_file", "Some other format", "Some other format"),
         ("edit_file", "Some other edit msg", "Some other edit msg"),
         ("grep", {"matches": [{"f": "a"}, {"f": "b"}], "truncated": True}, "2 matches (truncated)"),
-        # Plan
+        # Plan fallbacks
         ("todo_read", {"lists": [], "total_lists": 0}, "no todos"),
-        ("todo_update", {"updated_item": {"status": "pending"}}, "todo → pending"),
-        # Skill / ask user / date
-        ("validate_skill", {"warnings": 1}, "skill valid (1 warning)"),
+        ("todo_update", {"updated_item": {"status": "pending"}}, "todo: pending"),
+        # Skill / ask user fallbacks
+        ("validate_skill", {"warnings": 1}, "skill valid (1 war…"),
         ("ask_user", "free-text answer", '"free-text answer"'),
         ("ask_user", {"answer": "yes"}, '"yes"'),
-        # Sub-agent task
+        # Sub-agent task fallbacks
         ("task", {"sql_file_path": "/tmp/q.sql"}, "SQL file generated"),
-        ("task", {"semantic_models": ["a.yml", "b.yml"]}, "2 semantic models generated"),
+        ("task", {"semantic_models": ["a.yml", "b.yml"]}, "2 semantic models"),
         ("task", {"sql_summary_file": "x"}, "SQL summary saved"),
         ("task", {"ext_knowledge_file": "k"}, "knowledge saved"),
         ("task", {"report_result": {}}, "report ready"),
         ("task", {"skill_path": "/tmp", "skill_name": "x"}, 'skill "x" generated'),
         ("task", {"scheduler_result": {}}, "scheduler updated"),
         ("task", {"items_saved": 3}, "feedback saved"),
-        # Platform docs
+        # Platform docs fallbacks
         ("list_document_nav", {"total_docs": 5}, "5 docs"),
         ("get_document", {"chunks": [1, 2, 3]}, "3 chunks"),
         ("search_document", {"docs": [1]}, "1 doc match"),
@@ -856,8 +872,134 @@ def test_per_tool_fallback_branches(tool: str, payload: Any, expected: str):
     assert out == expected, f"tool={tool!r}, payload={payload!r}, got={out!r}"
 
 
+# ── Length contract: every non-fs summary must be ≤ 19 characters ───────
+
+
+_LENGTH_CONTRACT_SAMPLES: list[tuple[str, Any]] = [
+    # database
+    ("read_query", {"original_rows": 1234567, "column_count": 9999}),
+    ("query", {"original_rows": 1234567}),
+    ("execute_write", {"row_count": 9999999}),
+    ("execute_ddl", {"message": "ok"}),
+    ("describe_table", {"columns": [{"name": str(i)} for i in range(99)]}),
+    ("get_table_ddl", {"identifier": "very_long_schema.very_long_table_name", "definition": "CREATE..."}),
+    ("list_tables", [{"name": str(i)} for i in range(50)]),
+    ("table_overview", [{"name": str(i)} for i in range(50)]),
+    ("list_databases", [str(i) for i in range(99)]),
+    ("list_schemas", [str(i) for i in range(99)]),
+    ("search_table", {"metadata": [{"name": str(i)} for i in range(20)], "sample_data": {"original_rows": 999}}),
+    ("transfer_query_result", {"row_count": 99999, "target_table": "very_long_target_table_name"}),
+    # bi
+    ("list_dashboards", {"items": [{"title": "x"} for _ in range(99)], "total": 999, "has_more": True}),
+    ("get_dashboard", {"title": "Very Long Dashboard Title Here", "charts": [1, 2, 3]}),
+    ("list_charts", {"items": [{"name": "x"} for _ in range(99)]}),
+    ("get_chart", {"name": "Very Long Chart Name Here", "chart_type": "line"}),
+    ("get_chart_data", {"row_count": 99999, "column_names": ["x"] * 99}),
+    ("list_datasets", {"items": [{"name": "x"} for _ in range(50)]}),
+    ("create_dashboard", {"title": "Very Long Dashboard Title", "dashboard_id": "12345"}),
+    ("update_dashboard", {"title": "Very Long Dashboard Title"}),
+    ("delete_dashboard", {"deleted": True, "dashboard_id": "12345", "title": "VeryLongTitle"}),
+    ("create_chart", {"name": "Very Long Chart Name", "dashboard_id": "42"}),
+    ("update_chart", {"name": "Very Long Chart Name"}),
+    ("add_chart_to_dashboard", {"chart_id": "very_long_chart_id", "dashboard_id": "very_long_dash_id"}),
+    ("delete_chart", {"chart_id": "very_long_chart_id_here", "name": "Very Long Chart Name"}),
+    ("create_dataset", {"name": "very_long_dataset_name_here"}),
+    ("list_bi_databases", [{"id": i} for i in range(99)]),
+    ("delete_dataset", {"dataset_id": "very_long_dataset_id"}),
+    ("write_query", {"rows_written": 99999, "table_name": "schema.very_long_table"}),
+    # semantic
+    ("list_metrics", {"items": [{"name": "m"} for _ in range(50)], "total": 9999, "has_more": True}),
+    ("get_dimensions", {"items": [{"name": "d"} for _ in range(50)], "total": 9999}),
+    ("query_metrics", {"columns": ["x"] * 50, "data": {"original_rows": 99999}}),
+    ("validate_semantic", {"valid": False, "issues": list(range(999))}),
+    ("attribution_analyze", {"dimension_ranking": list(range(99)), "selected_dimensions": list(range(99))}),
+    ("search_metrics", [{}] * 99),
+    ("search_reference_sql", [{}] * 99),
+    ("search_semantic_objects", [{}] * 99),
+    ("search_knowledge", [{}] * 99),
+    # generation
+    ("check_semantic_object_exists", {"exists": True, "kind": "long_kind_name"}),
+    ("check_semantic_model_exists", {"exists": False}),
+    ("end_semantic_model_generation", {"semantic_model_files": ["a"] * 99}),
+    ("end_metric_generation", {"sync": {"success": True}}),
+    ("generate_sql_summary_id", "very_long_summary_id_12345"),
+    ("analyze_table_relationships", {"relationships": [{}] * 99, "summary": "x" * 100}),
+    ("analyze_column_usage_patterns", {"column_patterns": {str(i): {} for i in range(99)}}),
+    ("get_multiple_tables_ddl", [{}] * 99),
+    # scheduler
+    ("submit_sql_job", {"job_id": "very_long_job_id_here"}),
+    ("submit_sparksql_job", {"job_id": "very_long_spark_id_here"}),
+    ("trigger_scheduler_job", {"job_id": "long_job", "run_id": "long_run"}),
+    ("get_scheduler_job", {"found": True, "job_id": "j", "job_name": "long_name", "status": "running"}),
+    ("get_scheduler_job", {"found": False, "job_id": "very_long_job_id"}),
+    ("list_scheduler_jobs", {"items": [{}] * 99, "total": 9999, "has_more": True}),
+    ("pause_job", {"job_id": "very_long_job_id_here"}),
+    ("resume_job", {"job_id": "very_long_job_id_here"}),
+    ("delete_job", {"job_id": "very_long_job_id_here"}),
+    ("delete_scheduler_job", {"job_id": "very_long_job_id_here"}),
+    ("update_job", {"job_id": "very_long_job_id_here"}),
+    ("list_job_runs", {"items": [{}] * 99}),
+    ("get_run_log", {"run_id": "very_long_run_id", "log": "line\n" * 999}),
+    ("list_scheduler_connections", {"total": 99999}),
+    # context search
+    ("list_subject_tree", {"a": {"metrics": ["m"] * 999}}),
+    ("get_metrics", {"name": "very_long_metric_name_here"}),
+    ("get_reference_sql", {"name": "very_long_sql_name_here"}),
+    ("get_knowledge", [{}] * 99),
+    # reference templates
+    ("search_reference_template", [{}] * 99),
+    ("get_reference_template", {"name": "very_long_template_name_here"}),
+    ("render_reference_template", {"template_name": "very_long_template_name"}),
+    ("execute_reference_template", {"template_name": "very_long", "query_result": {"original_rows": 9999}}),
+    # plan / todo
+    ("todo_read", {"lists": [{"items": [{"status": "completed"}] * 99}]}),
+    ("todo_write", {"todo_list": {"items": list(range(999))}}),
+    ("todo_update", {"updated_item": {"content": "Very long todo content here", "status": "completed"}}),
+    # date / session
+    ("parse_temporal_expressions", {"extracted_dates": list(range(99))}),
+    ("get_current_date", {"current_date": "2026-04-25"}),
+    ("search_skill_usage", {"matches": [{}] * 99}),
+    # skill
+    ("load_skill", {"metadata": {"name": "very-long-skill-name-here"}}),
+    ("validate_skill", {"skill_name": "very_long_skill_name", "warnings": 99}),
+    # ask user
+    ("ask_user", json.dumps([{"answer": "Very long answer text here"} for _ in range(5)])),
+    # task
+    ("task", {"semantic_models": [{}] * 999}),
+    ("task", {"response": "Very long task response that exceeds the limit"}),
+    # docs
+    ("list_document_nav", {"platform": "snowflake", "total_docs": 99999}),
+    ("get_document", {"platform": "snowflake", "chunk_count": 99999}),
+    ("search_document", {"docs": [{}] * 999}),
+    ("web_search_document", [{}] * 999),
+]
+
+
+@pytest.mark.parametrize("tool, result", _LENGTH_CONTRACT_SAMPLES)
+def test_summary_length_contract_under_20(tool: str, result: Any):
+    """Every non-fs tool summary must be ≤ SUMMARY_TEXT_MAX_CHARS (19) characters."""
+    out = TOOL_SUMMARY_REGISTRY.summarize_dict({"success": 1, "result": result}, tool)
+    assert tool not in FS_TOOLS_NO_CLIP, "fs tools are not part of this contract"
+    assert len(out) <= SUMMARY_TEXT_MAX_CHARS, f"{tool}: {out!r} ({len(out)} chars)"
+
+
+def test_failure_summary_length_contract():
+    """Failure path is also clipped to ≤ SUMMARY_TEXT_MAX_CHARS for non-fs tools."""
+    out = TOOL_SUMMARY_REGISTRY.summarize_dict({"success": 0, "error": "x" * 200}, "read_query")
+    assert len(out) <= SUMMARY_TEXT_MAX_CHARS
+
+
+def test_filesystem_tools_bypass_clip():
+    """Filesystem tools return long output verbatim — they're exempt by design."""
+    out = TOOL_SUMMARY_REGISTRY.summarize_dict(
+        {"success": 1, "result": "File written successfully: /very/long/absolute/path/to/file.txt"},
+        "write_file",
+    )
+    assert len(out) > SUMMARY_TEXT_MAX_CHARS
+    assert out.startswith("wrote /")
+
+
 def test_summarize_dict_passes_non_dict_to_generic():
-    """When ``data`` itself isn't a dict, fall back to the generic formatter."""
     assert TOOL_SUMMARY_REGISTRY.summarize_dict([1, 2], "any") == "2 items"
 
 

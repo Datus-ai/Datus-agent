@@ -15,6 +15,10 @@ The same string is consumed by:
 Both call sites must produce identical wording, so the per-tool formatters
 live in one place. Only the ``success`` path is per-tool; failure
 summaries are produced uniformly by :func:`format_failure`.
+
+All non-filesystem summaries are clipped to ``SUMMARY_TEXT_MAX_CHARS``
+characters at the registry exit; filesystem tools (``read_file``,
+``write_file``, ``edit_file``, ``glob``, ``grep``) bypass the clip.
 """
 
 from __future__ import annotations
@@ -27,9 +31,10 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-# Limits matching the previous behaviour in ``openai_compatible.py``.
-SUMMARY_ERROR_MAX_CHARS = 100
-SUMMARY_TEXT_MAX_CHARS = 80
+SUMMARY_TEXT_MAX_CHARS = 19
+SUMMARY_ERROR_MAX_CHARS = 19
+
+FS_TOOLS_NO_CLIP = frozenset({"read_file", "write_file", "edit_file", "glob", "grep"})
 
 
 # ── Generic helpers (public API) ────────────────────────────────────────
@@ -45,7 +50,7 @@ def truncate_text(text: str, limit: int = SUMMARY_TEXT_MAX_CHARS) -> str:
         return "Empty result"
     if len(first_line) <= limit:
         return first_line
-    return first_line[:limit].rstrip() + "…"
+    return first_line[: limit - 1].rstrip() + "…"
 
 
 def looks_like_failure(data: dict) -> bool:
@@ -75,15 +80,7 @@ def is_empty_result(value: Any) -> bool:
 
 def format_list_envelope(value: dict) -> str:
     """Default rendering for a ``FuncToolListResult`` payload."""
-    items_n = len(value.get("items") or [])
-    total = value.get("total")
-    has_more = value.get("has_more")
-    base = pluralize(items_n, "item")
-    if isinstance(total, int) and total != items_n:
-        base = f"{base} of {total}"
-    if has_more:
-        base = f"{base} (+more)"
-    return base
+    return _envelope_with_label(value, "item", "items")
 
 
 def format_generic_result(value: Any) -> str:
@@ -110,31 +107,27 @@ def format_generic_result(value: Any) -> str:
     return "OK"
 
 
-# ── Per-tool helpers (small utilities used by formatters below) ─────────
+# ── Per-tool helpers ────────────────────────────────────────────────────
 
 
-def _envelope_with_label(value: Any, singular: str, plural: str, *, with_preview: bool = True) -> str:
+def _envelope_with_label(value: Any, singular: str, plural: str) -> str:
     """Render a ``FuncToolListResult`` payload with a tool-specific noun.
 
-    When ``with_preview`` is True (default), the first few item names are
-    appended (``"3 metrics: revenue, gmv, dau"``) when extractable.
+    Compact format: ``"N noun"`` / ``"N/total noun"`` / ``"... noun+"``
+    when ``has_more`` is set.
     """
     if not isinstance(value, dict) or "items" not in value:
         return ""
     items = value.get("items") or []
-    items_n = len(items)
-    noun = singular if items_n == 1 else plural
-    base = f"{items_n} {noun}"
+    n = len(items)
+    noun = singular if n == 1 else plural
     total = value.get("total")
-    has_more = value.get("has_more")
-    if isinstance(total, int) and total != items_n:
-        base = f"{base} of {total}"
-    if has_more:
-        base = f"{base} (+more)"
-    if with_preview and items_n:
-        preview = _items_preview(items)
-        if preview:
-            base = f"{base}: {preview}"
+    if isinstance(total, int) and total != n:
+        base = f"{n}/{total} {noun}"
+    else:
+        base = f"{n} {noun}"
+    if value.get("has_more"):
+        base = f"{base}+"
     return base
 
 
@@ -146,68 +139,30 @@ def _list_count(value: Any, singular: str, plural: str) -> str:
     return f"{n} {singular}" if n == 1 else f"{n} {plural}"
 
 
-_ITEM_NAME_KEYS = (
-    "name",
-    "table_name",
-    "database",
-    "schema",
-    "identifier",
-    "title",
-    "id",
-    "job_name",
-    "job_id",
-    "dataset_name",
-    "chart_name",
-    "metric_name",
-    "skill_name",
-)
+def _clip_short(text: str, tool_name: str = "", limit: int = SUMMARY_TEXT_MAX_CHARS) -> str:
+    """Final-stage clip applied at registry exit.
 
-
-def _item_name(item: Any) -> str:
-    """Best-effort extraction of a short identifier from a list item."""
-    if isinstance(item, str):
-        return item
-    if isinstance(item, dict):
-        for key in _ITEM_NAME_KEYS:
-            val = item.get(key)
-            if val:
-                return str(val)
-    return ""
-
-
-def _items_preview(items: list, max_show: int = 3) -> str:
-    """Return ``"a, b, c"`` from the first ``max_show`` named items; ``""`` if none."""
-    names: list = []
-    for item in items[:max_show]:
-        name = _item_name(item)
-        if name:
-            names.append(name)
-        if len(names) >= max_show:
-            break
-    if not names:
-        return ""
-    preview = ", ".join(names)
-    if len(items) > len(names):
-        preview += ", ..."
-    return preview
-
-
-def _count_with_preview(items: list, singular: str, plural: str) -> str:
-    """``N nouns: a, b, c`` when items have extractable names; otherwise just ``N nouns``."""
-    n = len(items)
-    header = f"{n} {singular}" if n == 1 else f"{n} {plural}"
-    preview = _items_preview(items)
-    return f"{header}: {preview}" if preview else header
+    Filesystem tools (``read_file``, ``write_file``, ``edit_file``,
+    ``glob``, ``grep``) are exempt — their summaries are returned
+    verbatim because users want full path / count visibility there.
+    """
+    if not isinstance(text, str):
+        return text
+    if tool_name in FS_TOOLS_NO_CLIP:
+        return text
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
 
 
 # ── Tool-specific formatters ────────────────────────────────────────────
 #
 # Each formatter takes the unwrapped ``result`` field of a FuncToolResult
 # (success path only) and returns a one-line summary, or ``""`` to fall
-# back to the generic formatter.
+# back to the generic formatter. The registry exit applies _clip_short.
 
 
-# === Database tools (datus/tools/func_tool/database.py) ===
+# === Database tools ===
 
 
 def _fmt_read_query(result: Any) -> str:
@@ -221,7 +176,7 @@ def _fmt_read_query(result: Any) -> str:
                 if first_line:
                     cols = len(first_line.split(","))
         if isinstance(rows, int) and isinstance(cols, int):
-            return f"{rows} × {cols} result"
+            return f"{rows}×{cols} rows"
         if isinstance(rows, int):
             return pluralize(rows, "row")
     if isinstance(result, list):
@@ -233,7 +188,7 @@ def _fmt_execute_write(result: Any) -> str:
     if isinstance(result, dict):
         for key in ("row_count", "affected_rows", "rows_affected"):
             if isinstance(result.get(key), int):
-                return f"wrote {pluralize(result[key], 'row')}"
+                return f"+{pluralize(result[key], 'row')}"
     return ""
 
 
@@ -248,32 +203,34 @@ def _fmt_describe_table(result: Any) -> str:
         return ""
     columns = result.get("columns") or result.get("schema")
     if isinstance(columns, list):
-        return pluralize(len(columns), "column")
+        n = len(columns)
+        return f"{n} col" if n == 1 else f"{n} cols"
     return ""
 
 
 def _fmt_get_table_ddl(result: Any) -> str:
     if isinstance(result, dict) and result.get("definition"):
         identifier = result.get("identifier") or result.get("table_name") or "table"
-        return f"DDL of {identifier}"
+        return f"DDL: {identifier}"
     return ""
 
 
 def _fmt_list_tables(result: Any) -> str:
     if isinstance(result, list):
-        return _count_with_preview(result, "table", "tables")
+        return _list_count(result, "table", "tables")
     return ""
 
 
 def _fmt_list_databases(result: Any) -> str:
     if isinstance(result, list):
-        return _count_with_preview(result, "database", "databases")
+        n = len(result)
+        return f"{n} db" if n == 1 else f"{n} dbs"
     return ""
 
 
 def _fmt_list_schemas(result: Any) -> str:
     if isinstance(result, list):
-        return _count_with_preview(result, "schema", "schemas")
+        return _list_count(result, "schema", "schemas")
     return ""
 
 
@@ -291,26 +248,27 @@ def _fmt_search_table(result: Any) -> str:
         sample_rows = len(sample)
     else:
         sample_rows = 0
-    table_label = "table" if n == 1 else "tables"
-    sample_label = "sample row" if sample_rows == 1 else "sample rows"
     if n == 0 and sample_rows == 0:
-        return "no tables matched"
+        return "no matches"
+    tbl_label = "tbl" if n == 1 else "tbls"
     if sample_rows:
-        return f"{n} {table_label} and {sample_rows} {sample_label}"
-    return f"{n} {table_label}"
+        return f"{n} {tbl_label}, {sample_rows} rows"
+    return f"{n} {tbl_label}"
 
 
 def _fmt_transfer_query_result(result: Any) -> str:
     if isinstance(result, dict):
         for key in ("row_count", "rows_transferred", "rows", "affected_rows"):
             if isinstance(result.get(key), int):
+                rows = result[key]
                 target = result.get("target_table")
-                base = f"transferred {pluralize(result[key], 'row')}"
-                return f"{base} → {target}" if target else base
+                if target:
+                    return f"moved {rows}→{target}"
+                return f"moved {pluralize(rows, 'row')}"
     return ""
 
 
-# === BI tools (datus/tools/func_tool/bi_tools.py) ===
+# === BI tools ===
 
 
 def _fmt_list_dashboards(result: Any) -> str:
@@ -322,12 +280,12 @@ def _fmt_get_dashboard(result: Any) -> str:
         title = result.get("title") or result.get("name")
         charts = result.get("charts")
         if title and isinstance(charts, list):
-            return f'dashboard "{title}" ({pluralize(len(charts), "chart")})'
+            return f"dash: {title} ({len(charts)})"
         if title:
-            return f'dashboard "{title}"'
+            return f"dash: {title}"
         dash_id = result.get("dashboard_id") or result.get("id")
         if dash_id:
-            return f"dashboard {dash_id}"
+            return f"dash {dash_id}"
     return ""
 
 
@@ -338,11 +296,8 @@ def _fmt_list_charts(result: Any) -> str:
 def _fmt_get_chart(result: Any) -> str:
     if isinstance(result, dict):
         name = result.get("name") or result.get("title")
-        chart_type = result.get("chart_type") or result.get("type")
-        if name and chart_type:
-            return f'chart "{name}" ({chart_type})'
         if name:
-            return f'chart "{name}"'
+            return f"chart: {name}"
         chart_id = result.get("chart_id") or result.get("id")
         if chart_id:
             return f"chart {chart_id}"
@@ -356,7 +311,7 @@ def _fmt_get_chart_data(result: Any) -> str:
             rows = len(result["rows"])
         cols = result.get("column_names")
         if isinstance(rows, int) and isinstance(cols, list):
-            return f"{rows} rows × {len(cols)} cols"
+            return f"{rows}r × {len(cols)}c"
         if isinstance(rows, int):
             return pluralize(rows, "row")
     return ""
@@ -370,12 +325,10 @@ def _fmt_create_dashboard(result: Any) -> str:
     if isinstance(result, dict):
         title = result.get("title") or result.get("name")
         dash_id = result.get("dashboard_id") or result.get("id")
-        if title and dash_id:
-            return f'created dashboard "{title}" ({dash_id})'
         if title:
-            return f'created dashboard "{title}"'
+            return f"created: {title}"
         if dash_id:
-            return f"created dashboard {dash_id}"
+            return f"created: {dash_id}"
     return ""
 
 
@@ -384,20 +337,23 @@ def _fmt_update_dashboard(result: Any) -> str:
         title = result.get("title") or result.get("name")
         dash_id = result.get("dashboard_id") or result.get("id")
         if title:
-            return f'updated dashboard "{title}"'
+            return f"updated: {title}"
         if dash_id:
-            return f"updated dashboard {dash_id}"
+            return f"updated: {dash_id}"
     return ""
 
 
 def _fmt_delete_dashboard(result: Any) -> str:
     if isinstance(result, dict):
+        title = result.get("title") or result.get("name")
         deleted = result.get("deleted")
-        dash_id = result.get("dashboard_id")
+        dash_id = result.get("dashboard_id") or result.get("id")
         if deleted is False and dash_id:
-            return f"dashboard {dash_id} (not deleted)"
+            return f"not deleted: {dash_id}"
+        if title:
+            return f"deleted: {title}"
         if dash_id:
-            return f"deleted dashboard {dash_id}"
+            return f"deleted: {dash_id}"
         if deleted:
             return "deleted dashboard"
     return ""
@@ -406,14 +362,11 @@ def _fmt_delete_dashboard(result: Any) -> str:
 def _fmt_create_chart(result: Any) -> str:
     if isinstance(result, dict):
         name = result.get("name") or result.get("title")
-        dash_id = result.get("dashboard_id")
         chart_id = result.get("chart_id") or result.get("id")
-        if name and dash_id:
-            return f'created chart "{name}" → dashboard {dash_id}'
         if name:
-            return f'created chart "{name}"'
+            return f"created: {name}"
         if chart_id:
-            return f"created chart {chart_id}"
+            return f"created: {chart_id}"
     return ""
 
 
@@ -422,9 +375,9 @@ def _fmt_update_chart(result: Any) -> str:
         name = result.get("name") or result.get("title")
         chart_id = result.get("chart_id") or result.get("id")
         if name:
-            return f'updated chart "{name}"'
+            return f"updated: {name}"
         if chart_id:
-            return f"updated chart {chart_id}"
+            return f"updated: {chart_id}"
     return ""
 
 
@@ -433,15 +386,18 @@ def _fmt_add_chart_to_dashboard(result: Any) -> str:
         chart_id = result.get("chart_id")
         dash_id = result.get("dashboard_id")
         if chart_id and dash_id:
-            return f"chart {chart_id} → dashboard {dash_id}"
+            return f"chart {chart_id}→dash {dash_id}"
     return ""
 
 
 def _fmt_delete_chart(result: Any) -> str:
     if isinstance(result, dict):
-        chart_id = result.get("chart_id")
+        name = result.get("name") or result.get("title")
+        chart_id = result.get("chart_id") or result.get("id")
+        if name:
+            return f"deleted: {name}"
         if chart_id:
-            return f"deleted chart {chart_id}"
+            return f"deleted: {chart_id}"
         if result.get("deleted"):
             return "deleted chart"
     return ""
@@ -452,21 +408,24 @@ def _fmt_create_dataset(result: Any) -> str:
         name = result.get("name")
         dataset_id = result.get("dataset_id") or result.get("id")
         if name:
-            return f'created dataset "{name}"'
+            return f"created: {name}"
         if dataset_id:
-            return f"created dataset {dataset_id}"
+            return f"created: {dataset_id}"
     return ""
 
 
 def _fmt_list_bi_databases(result: Any) -> str:
-    return _list_count(result, "BI database", "BI databases")
+    if isinstance(result, list):
+        n = len(result)
+        return f"{n} BI db" if n == 1 else f"{n} BI dbs"
+    return ""
 
 
 def _fmt_delete_dataset(result: Any) -> str:
     if isinstance(result, dict):
-        dataset_id = result.get("dataset_id")
+        dataset_id = result.get("dataset_id") or result.get("id")
         if dataset_id:
-            return f"deleted dataset {dataset_id}"
+            return f"deleted: {dataset_id}"
         if result.get("deleted"):
             return "deleted dataset"
     return ""
@@ -477,13 +436,13 @@ def _fmt_write_query(result: Any) -> str:
         rows = result.get("rows_written")
         table = result.get("table_name")
         if isinstance(rows, int) and table:
-            return f"wrote {pluralize(rows, 'row')} → {table}"
+            return f"+{rows}→{table}"
         if isinstance(rows, int):
-            return f"wrote {pluralize(rows, 'row')}"
+            return f"+{pluralize(rows, 'row')}"
     return ""
 
 
-# === Semantic tools (datus/tools/func_tool/semantic_tools.py) ===
+# === Semantic tools ===
 
 
 def _fmt_list_metrics(result: Any) -> str:
@@ -502,11 +461,12 @@ def _fmt_query_metrics(result: Any) -> str:
         if isinstance(data, dict):
             rows = data.get("original_rows")
         if isinstance(cols, list) and isinstance(rows, int):
-            return f"{rows} rows × {len(cols)} cols"
+            return f"{rows}r × {len(cols)}c"
         if isinstance(rows, int):
             return pluralize(rows, "row")
         if isinstance(cols, list):
-            return f"{len(cols)} columns"
+            n = len(cols)
+            return f"{n} col" if n == 1 else f"{n} cols"
     return ""
 
 
@@ -529,26 +489,34 @@ def _fmt_attribution_analyze(result: Any) -> str:
         n_sel = len(selected) if isinstance(selected, list) else 0
         n_rank = len(ranking) if isinstance(ranking, list) else 0
         if n_sel and n_rank:
-            return f"selected {n_sel} of {n_rank} dimensions"
+            return f"sel {n_sel}/{n_rank} dims"
         if n_sel:
-            return f"selected {pluralize(n_sel, 'dimension')}"
+            return f"sel {n_sel} dim" if n_sel == 1 else f"sel {n_sel} dims"
     return ""
 
 
 def _fmt_search_metrics(result: Any) -> str:
-    return _list_count(result, "metric matched", "metrics matched")
+    if isinstance(result, list):
+        n = len(result)
+        return f"{n} metric hit" if n == 1 else f"{n} metric hits"
+    return ""
 
 
 def _fmt_search_reference_sql(result: Any) -> str:
-    return _list_count(result, "reference SQL", "reference SQLs")
+    if isinstance(result, list):
+        n = len(result)
+        return f"{n} SQL hit" if n == 1 else f"{n} SQL hits"
+    return ""
 
 
 def _fmt_search_semantic_objects(result: Any) -> str:
-    return _list_count(result, "semantic object", "semantic objects")
+    return _list_count(result, "object", "objects")
 
 
 def _fmt_search_knowledge(result: Any) -> str:
-    return _list_count(result, "knowledge entry", "knowledge entries")
+    if isinstance(result, list):
+        return f"{len(result)} knowledge"
+    return ""
 
 
 # === Generation / semantic-model-gen tools ===
@@ -577,7 +545,8 @@ def _fmt_end_semantic_model_generation(result: Any) -> str:
     if isinstance(result, dict):
         files = result.get("semantic_model_files")
         if isinstance(files, list):
-            return f"validated {pluralize(len(files), 'semantic file')}"
+            n = len(files)
+            return f"{n} semantic file" if n == 1 else f"{n} semantic files"
     return ""
 
 
@@ -585,7 +554,7 @@ def _fmt_end_metric_generation(result: Any) -> str:
     if isinstance(result, dict):
         sync = result.get("sync") or {}
         if isinstance(sync, dict) and sync.get("success"):
-            return "metric generated and synced"
+            return "metric synced"
         if result.get("metric_file"):
             return "metric generated"
     return ""
@@ -593,56 +562,59 @@ def _fmt_end_metric_generation(result: Any) -> str:
 
 def _fmt_generate_sql_summary_id(result: Any) -> str:
     if isinstance(result, str) and result:
-        return f"id: {truncate_text(result, 40)}"
+        return f"id: {result}"
     return ""
 
 
 def _fmt_analyze_table_relationships(result: Any) -> str:
-    """Reuse the inline ``summary`` field already produced by the tool."""
-    if isinstance(result, dict) and isinstance(result.get("summary"), str):
-        return result["summary"]
-    if isinstance(result, dict) and isinstance(result.get("relationships"), list):
-        return f"{pluralize(len(result['relationships']), 'relationship')}"
+    if isinstance(result, dict):
+        relationships = result.get("relationships")
+        if isinstance(relationships, list) and relationships:
+            n = len(relationships)
+            return f"{n} rel" if n == 1 else f"{n} rels"
+        summary = result.get("summary")
+        if isinstance(summary, str) and summary:
+            return summary
+        if isinstance(relationships, list):
+            return "0 rels"
     return ""
 
 
 def _fmt_analyze_column_usage_patterns(result: Any) -> str:
-    if isinstance(result, dict) and isinstance(result.get("summary"), str):
-        return result["summary"]
-    if isinstance(result, dict) and isinstance(result.get("column_patterns"), dict):
-        return f"{pluralize(len(result['column_patterns']), 'column')} analyzed"
+    if isinstance(result, dict):
+        patterns = result.get("column_patterns")
+        if isinstance(patterns, dict) and patterns:
+            n = len(patterns)
+            return f"{n} col analyzed" if n == 1 else f"{n} cols analyzed"
+        summary = result.get("summary")
+        if isinstance(summary, str) and summary:
+            return summary
     return ""
 
 
 def _fmt_get_multiple_tables_ddl(result: Any) -> str:
     if isinstance(result, list):
         n = len(result)
-        return f"DDL of {pluralize(n, 'table')}"
+        return f"DDL of {n} table" if n == 1 else f"DDL of {n} tables"
     return ""
 
 
-# === Scheduler tools (datus/tools/func_tool/scheduler_tools.py) ===
+# === Scheduler tools ===
 
 
 def _fmt_submit_sql_job(result: Any) -> str:
     if isinstance(result, dict):
-        job_name = result.get("job_name")
         job_id = result.get("job_id")
-        if job_name and job_id:
-            return f'submitted "{job_name}" ({job_id})'
         if job_id:
-            return f"submitted {job_id}"
+            return f"+job {job_id}"
     return ""
 
 
 def _fmt_submit_sparksql_job(result: Any) -> str:
     if isinstance(result, dict):
-        job_name = result.get("job_name")
         job_id = result.get("job_id")
-        if job_name and job_id:
-            return f'submitted spark "{job_name}" ({job_id})'
         if job_id:
-            return f"submitted spark {job_id}"
+            return f"+spark {job_id}"
     return ""
 
 
@@ -651,20 +623,20 @@ def _fmt_trigger_scheduler_job(result: Any) -> str:
         run_id = result.get("run_id")
         job_id = result.get("job_id")
         if job_id and run_id:
-            return f"triggered {job_id} → run {run_id}"
+            return f"{job_id}→{run_id}"
         if job_id:
-            return f"triggered {job_id}"
+            return f"trig {job_id}"
     return ""
 
 
 def _fmt_get_scheduler_job(result: Any) -> str:
     if isinstance(result, dict):
         if result.get("found") is False:
-            return f"job {result.get('job_id', '?')} not found"
+            return f"{result.get('job_id', '?')} not found"
         job_name = result.get("job_name")
         status = result.get("status")
         if job_name and status:
-            return f'job "{job_name}" ({status})'
+            return f"{job_name}: {status}"
         if result.get("job_id"):
             return f"job {result['job_id']}"
     return ""
@@ -708,51 +680,45 @@ def _fmt_get_run_log(result: Any) -> str:
         log = result.get("log")
         if run_id and isinstance(log, str):
             lines = len(log.splitlines())
-            return f"log of run {run_id} ({pluralize(lines, 'line')})"
+            return f"{run_id}: {lines} lines" if lines != 1 else f"{run_id}: 1 line"
         if run_id:
-            return f"log of run {run_id}"
+            return f"log: {run_id}"
     return ""
 
 
 def _fmt_list_scheduler_connections(result: Any) -> str:
     if isinstance(result, dict) and isinstance(result.get("total"), int):
-        return f"{pluralize(result['total'], 'scheduler connection')}"
+        n = result["total"]
+        return f"{n} connection" if n == 1 else f"{n} connections"
     return ""
 
 
-# === Context search tools (datus/tools/func_tool/context_search.py) ===
+# === Context search tools ===
 
 
 def _fmt_list_subject_tree(result: Any) -> str:
-    """Walk the nested taxonomy and aggregate per-leaf-kind counts."""
+    """Walk the nested taxonomy and return the total leaf count."""
     if not isinstance(result, dict):
         return ""
 
-    counts = {"metrics": 0, "reference_sql": 0, "knowledge": 0, "reference_template": 0}
+    leaf_keys = {"metrics", "reference_sql", "knowledge", "reference_template"}
+    total = 0
 
     def walk(node: Any) -> None:
+        nonlocal total
         if not isinstance(node, dict):
             return
         for key, value in node.items():
-            if key in counts:
+            if key in leaf_keys:
                 if isinstance(value, list):
-                    counts[key] += len(value)
+                    total += len(value)
             elif isinstance(value, dict):
                 walk(value)
 
     walk(result)
-    parts = []
-    if counts["metrics"]:
-        parts.append(pluralize(counts["metrics"], "metric"))
-    if counts["reference_sql"]:
-        parts.append(f"{counts['reference_sql']} SQLs")
-    if counts["knowledge"]:
-        parts.append(f"{counts['knowledge']} knowledge")
-    if counts["reference_template"]:
-        parts.append(f"{counts['reference_template']} templates")
-    if not parts:
-        return "subject tree (empty)"
-    return ", ".join(parts)
+    if total == 0:
+        return "subject tree empty"
+    return f"{total} item" if total == 1 else f"{total} items"
 
 
 def _fmt_get_metrics(result: Any) -> str:
@@ -769,14 +735,17 @@ def _fmt_get_reference_sql(result: Any) -> str:
     if isinstance(result, dict):
         name = result.get("name")
         if name:
-            return f'reference SQL "{name}"'
+            return f"SQL: {name}"
     if isinstance(result, list):
-        return _list_count(result, "reference SQL", "reference SQLs")
+        n = len(result)
+        return f"{n} SQL" if n == 1 else f"{n} SQLs"
     return ""
 
 
 def _fmt_get_knowledge(result: Any) -> str:
-    return _list_count(result, "knowledge entry", "knowledge entries")
+    if isinstance(result, list):
+        return f"{len(result)} knowledge"
+    return ""
 
 
 # === Reference template tools ===
@@ -806,17 +775,16 @@ def _fmt_execute_reference_template(result: Any) -> str:
         if isinstance(query_result, dict):
             rows = query_result.get("original_rows")
         if name and isinstance(rows, int):
-            return f'{rows} rows from "{name}"'
+            return f"{rows} rows: {name}"
         if name:
             return f'executed "{name}"'
     return ""
 
 
-# === Filesystem tools ===
+# === Filesystem tools (NOT clipped at exit) ===
 
 
 def _fmt_read_file(result: Any) -> str:
-    """``read_file`` returns a plain content string; we only know the byte size."""
     if isinstance(result, str):
         line_count = result.count("\n") + (1 if result and not result.endswith("\n") else 0)
         return f"read {pluralize(line_count, 'line')}"
@@ -825,7 +793,6 @@ def _fmt_read_file(result: Any) -> str:
 
 def _fmt_write_file(result: Any) -> str:
     if isinstance(result, str):
-        # The tool returns ``"File written successfully: {path}"``.
         marker = "File written successfully: "
         if result.startswith(marker):
             return f"wrote {result[len(marker) :]}"
@@ -896,9 +863,9 @@ def _fmt_todo_update(result: Any) -> str:
             status = item.get("status")
             content = item.get("content")
             if status and content:
-                return f'"{truncate_text(content, 40)}" → {status}'
+                return f"{content}: {status}"
             if status:
-                return f"todo → {status}"
+                return f"todo: {status}"
     return ""
 
 
@@ -909,7 +876,7 @@ def _fmt_parse_temporal_expressions(result: Any) -> str:
     if isinstance(result, dict):
         dates = result.get("extracted_dates")
         if isinstance(dates, list):
-            return f"parsed {pluralize(len(dates), 'expression')}"
+            return f"parsed {len(dates)} dates"
     return ""
 
 
@@ -923,8 +890,7 @@ def _fmt_search_skill_usage(result: Any) -> str:
     if isinstance(result, dict):
         matches = result.get("matches")
         if isinstance(matches, list):
-            n = len(matches)
-            return f"{n} session match" if n == 1 else f"{n} session matches"
+            return _list_count(matches, "session", "sessions")
     return ""
 
 
@@ -936,7 +902,7 @@ def _fmt_load_skill(result: Any) -> str:
         metadata = result.get("metadata") or {}
         name = metadata.get("name") or result.get("name")
         if name:
-            return f'loaded "{name}"'
+            return f"+{name}"
     return ""
 
 
@@ -945,7 +911,7 @@ def _fmt_validate_skill(result: Any) -> str:
         skill_name = result.get("skill_name") or "skill"
         warnings = result.get("warnings", 0)
         if warnings:
-            return f"{skill_name} valid ({pluralize(warnings, 'warning')})"
+            return f"{skill_name} valid ({warnings} warns)"
         return f"{skill_name} valid"
     return ""
 
@@ -973,11 +939,11 @@ def _fmt_ask_user(result: Any) -> str:
             if ans is not None:
                 preview = ans if isinstance(ans, str) else str(ans)
                 if len(decoded) > 1:
-                    return f'"{truncate_text(preview, 40)}" (+{len(decoded) - 1} more)'
-                return f'"{truncate_text(preview, 40)}"'
+                    return f"{preview} +{len(decoded) - 1}"
+                return f'"{preview}"'
         return f"{len(decoded)} answers"
     if isinstance(text, str):
-        return f'"{truncate_text(text, 40)}"'
+        return f'"{text}"'
     return ""
 
 
@@ -985,11 +951,6 @@ def _fmt_ask_user(result: Any) -> str:
 
 
 def _fmt_task(result: Any) -> str:
-    """Sub-agent ``task`` returns a polymorphic dict — pick the best key.
-
-    ``is not None`` is used (instead of truthy) because some keys carry an
-    empty dict / empty list and that still signals "this kind of task ran".
-    """
     if not isinstance(result, dict):
         return ""
     if result.get("sql_file_path"):
@@ -998,7 +959,8 @@ def _fmt_task(result: Any) -> str:
         return "SQL generated"
     semantic_models = result.get("semantic_models")
     if isinstance(semantic_models, list):
-        return f"{pluralize(len(semantic_models), 'semantic model')} generated"
+        n = len(semantic_models)
+        return f"{n} semantic model" if n == 1 else f"{n} semantic models"
     if result.get("sql_summary_file"):
         return "SQL summary saved"
     if result.get("ext_knowledge_file"):
@@ -1016,7 +978,7 @@ def _fmt_task(result: Any) -> str:
         return "feedback saved"
     response = result.get("response")
     if isinstance(response, str) and response.strip():
-        return f'"{truncate_text(response, 40)}"'
+        return f'"{response}"'
     return ""
 
 
@@ -1079,6 +1041,9 @@ class ToolSummaryRegistry:
     Failure summaries are produced uniformly by :func:`format_failure`;
     per-tool formatters are invoked only when the payload indicates
     success and the unwrapped ``result`` is non-empty.
+
+    The registry exit applies :func:`_clip_short` so every non-filesystem
+    summary is bounded to ``SUMMARY_TEXT_MAX_CHARS`` characters.
     """
 
     def __init__(self) -> None:
@@ -1094,55 +1059,49 @@ class ToolSummaryRegistry:
         return sorted(self._formatters.keys())
 
     def summarize_dict(self, data: Any, tool_name: str = "") -> str:
-        """Build a one-line summary from a FuncToolResult-shaped dict.
-
-        Priority:
-          1. Failure state (``success`` in (0, False) or non-empty ``error``)
-          2. Tool-specific formatter from the registry
-          3. Canonical FuncToolListResult envelope and common count fields
-          4. Generic shape fallbacks (list/int/str/dict)
-        """
+        """Build a one-line summary from a FuncToolResult-shaped dict."""
         if not isinstance(data, dict):
-            return format_generic_result(data) if data is not None else "Empty result"
+            raw = format_generic_result(data) if data is not None else "Empty result"
+            return _clip_short(raw, tool_name)
 
         if looks_like_failure(data):
-            return format_failure(data)
+            return _clip_short(format_failure(data), tool_name)
 
         result_value = data["result"] if "result" in data else data
 
         if is_empty_result(result_value):
-            return "Empty result"
+            return _clip_short("Empty result", tool_name)
 
         formatter = self._formatters.get(tool_name)
         if formatter is not None:
             try:
                 summary = formatter(result_value)
                 if summary:
-                    return summary
+                    return _clip_short(summary, tool_name)
             except Exception as fmt_err:  # pragma: no cover - defensive
                 logger.debug(f"Tool summary formatter for {tool_name} raised: {fmt_err}")
 
-        return format_generic_result(result_value)
+        return _clip_short(format_generic_result(result_value), tool_name)
 
     def summarize_content(self, content: str, tool_name: str = "") -> str:
         """Build a summary from a tool result string (MCP / legacy adapters)."""
         if not content:
-            return "Empty result"
+            return _clip_short("Empty result", tool_name)
 
         try:
             data = json.loads(content)
         except (TypeError, ValueError):
-            return truncate_text(content)
+            return _clip_short(truncate_text(content), tool_name)
 
         if isinstance(data, dict):
             return self.summarize_dict(data, tool_name)
         if isinstance(data, list):
-            return pluralize(len(data), "item")
+            return _clip_short(pluralize(len(data), "item"), tool_name)
         if isinstance(data, bool):
-            return "OK" if data else "Failed"
+            return _clip_short("OK" if data else "Failed", tool_name)
         if isinstance(data, int):
-            return pluralize(data, "row")
-        return truncate_text(str(data))
+            return _clip_short(pluralize(data, "row"), tool_name)
+        return _clip_short(truncate_text(str(data)), tool_name)
 
 
 def _register_builtins(registry: ToolSummaryRegistry) -> None:
