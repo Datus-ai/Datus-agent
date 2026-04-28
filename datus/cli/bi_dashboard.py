@@ -178,6 +178,7 @@ class BiDashboardCommands:
 
             with self.console.status("Loading datasets..."):
                 datasets = self._items_from_adapter_result(adapter.list_datasets(dashboard_id))
+            datasets = self._hydrate_datasets(assembler, datasets, dashboard_id)
 
             result = assembler.assemble(dashboard, chart_selections_ref, chart_selections_metrics, datasets)
 

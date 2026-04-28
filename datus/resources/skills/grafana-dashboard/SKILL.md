@@ -40,7 +40,29 @@ configured `dataset_db.bi_database_name`; `create_chart` resolves the Grafana
 datasource automatically. If the datasource cannot be resolved, bail with a
 structured error. Do NOT try to auto-provision.
 
-### Step 2: Create Dashboard (`create_dashboard`)
+### Step 2: Plan Dashboard Layout Before Creating Panels
+
+Before calling `create_dashboard` or `create_chart`, make an internal layout
+plan. Do not expose a long plan to the user unless asked, but use it to decide
+the panel count, panel order, row grouping, and expected size before any
+dashboard or panel write calls.
+
+The layout plan must include:
+
+- Reading flow: KPI overview first, then trend, breakdown / ranking,
+  composition, and optional detail.
+- Row grouping: which panels should share a row and which panel should span a
+  full row.
+- Panel sizing intent: KPI cards are compact and share rows; trend and
+  breakdown panels usually share rows; detail tables usually span the full row.
+- Creation order: create panels in the same order users should read the
+  dashboard because Grafana appends panels in creation order.
+
+If the user provides a row-by-row layout, normalize it against these rules
+before creating resources. Avoid blindly creating one row per panel when panels
+can share a row.
+
+### Step 3: Create Dashboard (`create_dashboard`)
 
 Create the dashboard first — Grafana requires `dashboard_id` to add panels.
 
@@ -48,9 +70,9 @@ Create the dashboard first — Grafana requires `dashboard_id` to add panels.
 create_dashboard(title="Dashboard Title", description="Optional description")
 ```
 
-Returns `dashboard_id` — save it for Step 3.
+Returns `dashboard_id` — save it for Step 4.
 
-### Step 3: Create Charts (`create_chart`)
+### Step 4: Create Charts (`create_chart`)
 
 Create panels with SQL that queries the **existing table** in the
 Grafana-registered datasource.
@@ -77,11 +99,26 @@ create_chart(
 
 Repeat Step 3 for each chart. All panels use the same `dashboard_id`.
 
+Create panels in this visual order because Grafana appends panels to the
+dashboard in creation order:
+
+1. KPI overview: 3-5 `big_number` panels for headline totals, rates, averages, or sums.
+2. Time trends: 1-2 `line` panels over a real time column.
+3. Breakdowns / rankings: `bar` panels for top categories, statuses, teams, or owners.
+4. Composition: `pie` only for fewer than 7 categories and exactly one metric.
+5. Detail: one `table` panel only when users need row-level inspection.
+
+For high-cardinality categories, write SQL that ranks or limits the result to
+the top 10-15 values. Avoid one panel per column. Do not use a fixed panel
+count; include the panels needed to answer distinct business questions, then
+stop. Keep panel titles short and business-facing, and put units in aliases or
+descriptions when useful.
+
 If a chart needs a different data shape and the table isn't available, stop
 and return a structured error listing the missing table. The caller must
 prepare or refresh that data separately before retrying.
 
-### Step 4: Finish and Let Validation Run
+### Step 5: Finish and Let Validation Run
 
 After creating the dashboard and panels, finish the run and return the created
 IDs. `bi-validation` is a validator skill invoked automatically by

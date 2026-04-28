@@ -56,7 +56,37 @@ create_dataset(name="view_name", database_id="<from step 1>", sql="SELECT ... FR
   `list_bi_databases()`. Source connector IDs and Superset BI database IDs are
   separate identifiers.
 
-### Step 3: Create Charts (`create_chart`)
+### Step 3: Plan Dashboard Layout Before Creating Charts
+
+Before calling `create_dashboard`, `create_chart`, or
+`add_chart_to_dashboard`, make an internal layout plan. Do not expose a long
+plan to the user unless asked, but use it to decide the chart count, chart
+order, and expected row grouping before any dashboard or chart write calls.
+
+The layout plan must include:
+
+- Reading flow: KPI overview first, then trend, breakdown / ranking,
+  composition, and optional detail.
+- Row grouping: which charts should share a row and which chart should span a
+  full row.
+- Chart sizing intent: KPI cards are compact and share rows; trend and
+  breakdown charts usually share rows; detail tables usually span the full row.
+- Creation order: create and add charts in the same order users should read
+  the dashboard.
+
+If the user provides a row-by-row layout, normalize it against these rules
+before creating resources. Avoid blindly creating one row per chart when charts
+can share a row.
+
+### Step 4: Create Dashboard (`create_dashboard`)
+
+```python
+create_dashboard(title="Dashboard Title", description="Optional description")
+```
+
+Returns `dashboard_id` — save it for chart creation and assembly.
+
+### Step 5: Create Charts (`create_chart`)
 
 Create visualization charts referencing the dataset.
 
@@ -65,6 +95,7 @@ create_chart(
     chart_type="bar",        # bar, line, pie, table, big_number, scatter
     title="Chart Title",
     dataset_id="<from step 2>",
+    dashboard_id="<from step 4>",
     metrics="revenue,COUNT(order_id)",
     x_axis="date_column",
     dimensions="category"
@@ -80,23 +111,30 @@ create_chart(
 - Use a single metric: `metrics="AVG(activity_count)"`
 - No `x_axis` or `dimensions` needed.
 
-### Step 4: Create Dashboard (`create_dashboard`)
+**Dashboard design defaults:**
+- Create charts in this visual order: KPI overview, time trends, category
+  breakdowns / rankings, composition, then optional detail table.
+- Use 3-5 `big_number` charts for headline metrics when the request includes
+  totals, counts, rates, averages, or sums.
+- Use `line` only when there is a real temporal column; otherwise use `bar`
+  for comparisons and rankings.
+- For high-cardinality categories, prefer a virtual dataset SQL that pre-filters
+  or ranks the top 10-15 values before creating the chart.
+- Use `pie` only for fewer than 7 categories and exactly one metric.
+- Avoid one chart per column. Do not use a fixed chart count; include the
+  charts needed to answer distinct business questions, then stop.
+- Keep chart titles short and business-facing, for example
+  "Open Requisitions by Team" instead of "count by team chart".
+
+### Step 6: Add Charts to Dashboard (`add_chart_to_dashboard`)
 
 ```python
-create_dashboard(title="Dashboard Title", description="Optional description")
-```
-
-Returns `dashboard_id` — save it for Step 5.
-
-### Step 5: Add Charts to Dashboard (`add_chart_to_dashboard`)
-
-```python
-add_chart_to_dashboard(chart_id="<from step 3>", dashboard_id="<from step 4>")
+add_chart_to_dashboard(chart_id="<from step 5>", dashboard_id="<from step 4>")
 ```
 
 Repeat for each chart.
 
-### Step 6: Finish and Let Validation Run
+### Step 7: Finish and Let Validation Run
 
 After assembling the dashboard, finish the run and return the created IDs.
 `bi-validation` is a validator skill invoked automatically by

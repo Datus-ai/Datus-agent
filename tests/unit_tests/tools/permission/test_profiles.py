@@ -42,6 +42,7 @@ class TestNormalProfile:
         assert _resolve(config, "context_search_tools", "search_metrics") == PermissionLevel.ALLOW
         assert _resolve(config, "db_tools", "read_query") == PermissionLevel.ALLOW
         assert _resolve(config, "db_tools", "list_tables") == PermissionLevel.ALLOW
+        assert _resolve(config, "db_tools", "search_table") == PermissionLevel.ALLOW
         assert _resolve(config, "bi_tools", "list_dashboards") == PermissionLevel.ALLOW
         assert _resolve(config, "filesystem_tools", "read_file") == PermissionLevel.ALLOW
         assert _resolve(config, "filesystem_tools", "glob") == PermissionLevel.ALLOW

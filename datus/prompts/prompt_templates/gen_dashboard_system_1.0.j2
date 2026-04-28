@@ -60,6 +60,23 @@ You MUST follow the workflow described by the active skills for dashboard creati
 | big_number | Single KPI metrics |
 | scatter | Correlation between metrics |
 
+## Dashboard Composition Guide
+
+For dashboard creation requests, plan the chart set before calling write tools.
+Default to a readable executive-to-detail flow:
+
+1. KPI overview: 3-5 `big_number` charts for headline totals, rates, or averages.
+2. Time trend: 1-2 `line` or time-based `bar` charts when a temporal column exists.
+3. Breakdown / ranking: `bar` charts for top categories, statuses, regions, teams, or owners.
+4. Composition: `pie` only for part-to-whole views with fewer than 7 categories.
+5. Detail: one `table` chart only when row-level inspection is useful.
+
+Do not use a fixed chart count. Include as many charts as the business
+questions need, but avoid multiple charts that answer the same question with
+only a different title. Use concise business-facing titles, include units in
+the title or description when needed, and order creation calls in the same
+order users should read the dashboard.
+
 ## Rules
 - When listing dashboards, present results in a readable format.
 - For chart creation, choose appropriate chart types based on the data.

@@ -973,6 +973,23 @@ class TestGenDashboardPromptBoundary:
 
         assert "bi_database_name" in prompt
 
+    def test_system_prompt_guides_dashboard_composition(self, real_agent_config, mock_llm_create):
+        _add_dashboard_config(real_agent_config)
+        _bi_core_mock.adapter_registry.get.return_value = lambda **kwargs: FullMockAdapter()
+        with patch.dict(sys.modules, _BI_MODULES_PATCH):
+            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+            node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+            prompt = node._get_system_prompt(template_context=node._prepare_template_context())
+
+        assert "Dashboard Composition Guide" in prompt
+        assert "KPI overview" in prompt
+        assert "Time trend" in prompt
+        assert "Breakdown / ranking" in prompt
+        assert "Do not use a fixed chart count" in prompt
+        assert "as many charts as the business" in prompt
+        assert "same question" in prompt
+
 
 class TestPlatformSkillTrim:
     """The per-platform skills (superset-dashboard, grafana-dashboard) must no
@@ -992,6 +1009,28 @@ class TestPlatformSkillTrim:
     def test_grafana_dashboard_skill_has_no_write_query_step(self):
         body = self._skill_body("grafana-dashboard")
         assert "write_query" not in body
+
+    def test_superset_dashboard_skill_guides_chart_organization(self):
+        body = self._skill_body("superset-dashboard")
+        assert "Dashboard design defaults" in body
+        assert "Plan Dashboard Layout Before Creating Charts" in body
+        assert "Before calling `create_dashboard`, `create_chart`, or" in body
+        assert "Row grouping" in body
+        assert "Create charts in this visual order" in body
+        assert "top 10-15 values" in body
+        assert "Avoid one chart per column" in body
+        assert "Do not use a fixed chart count" in body
+
+    def test_grafana_dashboard_skill_guides_panel_organization(self):
+        body = self._skill_body("grafana-dashboard")
+        assert "Plan Dashboard Layout Before Creating Panels" in body
+        assert "Before calling `create_dashboard` or `create_chart`" in body
+        assert "Row grouping" in body
+        assert "creation order" in body
+        assert "KPI overview" in body
+        assert "top 10-15 values" in body
+        assert "Avoid one panel per column" in body
+        assert "Do not use a fixed panel" in body
 
 
 class TestGenDashboardSkillContext:
