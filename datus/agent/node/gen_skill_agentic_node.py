@@ -59,6 +59,7 @@ class SkillCreatorAgenticNode(AgenticNode):
         tools: Optional[list] = None,
         node_name: Optional[str] = None,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
+        scope: Optional[str] = None,
         is_subagent: bool = False,
     ):
         # Support custom node_name for alias subagents (e.g. my_skill_editor:
@@ -89,6 +90,7 @@ class SkillCreatorAgenticNode(AgenticNode):
             agent_config=agent_config,
             tools=tools or [],
             mcp_servers={},
+            scope=scope,
             is_subagent=is_subagent,
         )
 

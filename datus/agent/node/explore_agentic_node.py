@@ -11,7 +11,7 @@ SQL generation. It exposes only read-only tools and runs with a low max_turns
 budget for fast, focused exploration.
 """
 
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.workflow import Workflow
@@ -57,9 +57,14 @@ class ExploreAgenticNode(AgenticNode):
         agent_config: Optional[AgentConfig] = None,
         tools: Optional[list] = None,
         node_name: Optional[str] = None,
+        execution_mode: Literal["interactive", "workflow"] = "interactive",
         is_subagent: bool = False,
     ):
         self.configured_node_name = node_name
+        # Surface to permission-hook code paths so workflow callers (API /
+        # gateway) can short-circuit interactive ASK prompts that would
+        # otherwise block on a missing broker listener.
+        self.execution_mode = execution_mode
 
         # Default max_turns = 15, can be overridden by agent.yml
         self.max_turns = 15

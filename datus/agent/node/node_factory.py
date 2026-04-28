@@ -70,12 +70,13 @@ def create_interactive_node(
                 agent_config=agent_config,
                 execution_mode=execution_mode,
                 node_name=subagent_name if node_class_type == "gen_table" else None,
+                scope=scope,
             )
 
         elif subagent_name == "gen_job":
             from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-            return GenJobAgenticNode(agent_config=agent_config, execution_mode=execution_mode)
+            return GenJobAgenticNode(agent_config=agent_config, execution_mode=execution_mode, scope=scope)
 
         elif subagent_name == "gen_report" or node_class_type == "gen_report":
             from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
@@ -110,6 +111,7 @@ def create_interactive_node(
                 agent_config=agent_config,
                 tools=None,
                 node_name=subagent_name,
+                execution_mode=execution_mode,
             )
 
         elif subagent_name == "gen_skill" or node_class_type == "gen_skill":
@@ -124,6 +126,7 @@ def create_interactive_node(
                 tools=None,
                 node_name=subagent_name if node_class_type == "gen_skill" else "gen_skill",
                 execution_mode=execution_mode,
+                scope=scope,
             )
 
         elif subagent_name == "gen_dashboard" or node_class_type == "gen_dashboard":

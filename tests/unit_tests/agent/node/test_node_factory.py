@@ -112,7 +112,7 @@ class TestCreateInteractiveNode:
     def test_gen_table(self, mock_init):
         config = _mock_agent_config()
         create_interactive_node("gen_table", config)
-        mock_init.assert_called_once_with(agent_config=config, execution_mode="interactive", node_name=None)
+        mock_init.assert_called_once_with(agent_config=config, execution_mode="interactive", node_name=None, scope=None)
 
     @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
     def test_default_subagent_is_gensql(self, mock_init):
@@ -132,6 +132,7 @@ class TestCreateInteractiveNode:
             agent_config=config,
             execution_mode="interactive",
             node_name="wide_table_builder",
+            scope=None,
         )
 
     @patch("datus.agent.node.gen_skill_agentic_node.SkillCreatorAgenticNode.__init__", return_value=None)
@@ -204,6 +205,36 @@ class TestCreateInteractiveNode:
         config = _mock_agent_config()
         create_interactive_node(None, config, node_id="api-session-7")
         assert mock_init.call_args[1]["node_id"] == "api-session-7"
+
+    @patch("datus.agent.node.gen_table_agentic_node.GenTableAgenticNode.__init__", return_value=None)
+    def test_gen_table_scope_propagates(self, mock_init):
+        """API path passes user_id as scope; gen_table must isolate session by user."""
+        config = _mock_agent_config()
+        create_interactive_node("gen_table", config, scope="user-42")
+        assert mock_init.call_args[1]["scope"] == "user-42"
+
+    @patch("datus.agent.node.gen_job_agentic_node.GenJobAgenticNode.__init__", return_value=None)
+    def test_gen_job_scope_propagates(self, mock_init):
+        """gen_job session files must land under the per-user shard on the API path."""
+        config = _mock_agent_config()
+        create_interactive_node("gen_job", config, scope="user-42")
+        mock_init.assert_called_once_with(agent_config=config, execution_mode="interactive", scope="user-42")
+
+    @patch("datus.agent.node.gen_skill_agentic_node.SkillCreatorAgenticNode.__init__", return_value=None)
+    def test_gen_skill_scope_propagates(self, mock_init):
+        """gen_skill must accept and forward scope so user-scoped skill drafts are isolated."""
+        config = _mock_agent_config()
+        create_interactive_node("gen_skill", config, scope="user-42")
+        assert mock_init.call_args[1]["scope"] == "user-42"
+
+    @patch("datus.agent.node.explore_agentic_node.ExploreAgenticNode.__init__", return_value=None)
+    def test_explore_execution_mode_propagates(self, mock_init):
+        """explore must receive execution_mode so workflow callers don't trip the
+        interactive permission-hook ASK path (which would block on a missing
+        broker listener in API / gateway runs)."""
+        config = _mock_agent_config()
+        create_interactive_node("explore", config, execution_mode="workflow")
+        assert mock_init.call_args[1]["execution_mode"] == "workflow"
 
 
 # ---------------------------------------------------------------------------
