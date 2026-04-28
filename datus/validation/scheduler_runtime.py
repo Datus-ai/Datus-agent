@@ -25,6 +25,7 @@ logger = get_logger(__name__)
 SCHEDULER_RUNTIME_TIMEOUT_SECONDS = 300
 SCHEDULER_RUNTIME_POLL_INTERVAL_SECONDS = 5
 SCHEDULER_RUNTIME_MIN_POLL_INTERVAL_SECONDS = 0.1
+SCHEDULER_RUNTIME_RUN_PAGE_LIMIT = 10
 _SCHEDULER_RUN_SUCCESS = {"success", "succeeded"}
 _SCHEDULER_RUN_FAILED = {"failed", "error", "killed", "upstream_failed"}
 
@@ -132,27 +133,20 @@ def _trigger_and_poll_job(
         time.sleep(min(effective_poll_interval, remaining))
         observed["polls"] += 1
 
-        try:
-            runs_result = scheduler_tool.list_job_runs(job_id=target.job_id, limit=10)
-        except Exception as exc:
+        run, list_error, pages_scanned = _find_run_in_list_pages(target, scheduler_tool, run_id)
+        observed["last_poll_pages_scanned"] = pages_scanned
+        if list_error:
             return _runtime_check(
                 passed=False,
                 observed=observed,
-                error=f"list_job_runs raised while polling {run_id}: {exc}",
+                error=list_error,
             )
 
-        if not getattr(runs_result, "success", False):
-            return _runtime_check(
-                passed=False,
-                observed=observed,
-                error=getattr(runs_result, "error", f"list_job_runs failed while polling {run_id}"),
-            )
-
-        run = _find_run(getattr(runs_result, "result", None), run_id)
         if run is None:
             observed["last_poll_missing_run"] = True
             continue
 
+        observed.pop("last_poll_missing_run", None)
         final_status = _normalize_status(run.get("status"))
         observed["final_status"] = final_status
         if final_status in _SCHEDULER_RUN_SUCCESS:
@@ -175,6 +169,39 @@ def _normalize_status(value: Any) -> str:
     return str(value or "").strip().lower()
 
 
+def _find_run_in_list_pages(
+    target: SchedulerJobTarget,
+    scheduler_tool: Any,
+    run_id: str,
+) -> tuple[Optional[dict[str, Any]], Optional[str], int]:
+    offset = 0
+    pages_scanned = 0
+    while True:
+        try:
+            runs_result = scheduler_tool.list_job_runs(
+                job_id=target.job_id,
+                limit=SCHEDULER_RUNTIME_RUN_PAGE_LIMIT,
+                offset=offset,
+            )
+        except Exception as exc:
+            return None, f"list_job_runs raised while polling {run_id}: {exc}", pages_scanned
+
+        if not getattr(runs_result, "success", False):
+            error = getattr(runs_result, "error", None) or f"list_job_runs failed while polling {run_id}"
+            return None, error, pages_scanned
+
+        pages_scanned += 1
+        payload = getattr(runs_result, "result", None)
+        run = _find_run(payload, run_id)
+        if run is not None:
+            return run, None, pages_scanned
+
+        next_offset = _next_offset(payload, offset)
+        if next_offset is None or next_offset <= offset:
+            return None, None, pages_scanned
+        offset = next_offset
+
+
 def _find_run(result_payload: Any, run_id: str) -> Optional[dict[str, Any]]:
     payload = _as_mapping(result_payload)
     if payload is None:
@@ -191,6 +218,30 @@ def _find_run(result_payload: Any, run_id: str) -> Optional[dict[str, Any]]:
         item_payload = _as_mapping(item)
         if item_payload is not None and item_payload.get("run_id") == run_id:
             return item_payload
+    return None
+
+
+def _next_offset(result_payload: Any, current_offset: int) -> Optional[int]:
+    payload = _as_mapping(result_payload)
+    if payload is None:
+        return None
+
+    nested_payload = _as_mapping(payload.get("result")) if "result" in payload else None
+    if nested_payload is not None:
+        payload = nested_payload
+
+    if payload.get("has_more") is not True:
+        return None
+
+    extra = payload.get("extra")
+    if isinstance(extra, dict):
+        next_offset = extra.get("next_offset")
+        if isinstance(next_offset, int):
+            return next_offset
+
+    items = payload.get("items")
+    if isinstance(items, list):
+        return current_offset + len(items)
     return None
 
 

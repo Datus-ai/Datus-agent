@@ -34,8 +34,8 @@ class FakeSchedulerTool:
             return FuncToolResult(success=0, error="trigger failed")
         return FuncToolResult(result={"job_id": job_id, "run_id": self.run_id, "status": self.trigger_status})
 
-    def list_job_runs(self, job_id, limit=10):
-        self.calls.append(("list_job_runs", job_id, limit))
+    def list_job_runs(self, job_id, limit=10, offset=0):
+        self.calls.append(("list_job_runs", job_id, limit, offset))
         status = self.poll_statuses.pop(0) if self.poll_statuses else "running"
         return FuncToolResult(
             result={
@@ -51,8 +51,8 @@ class FakeSchedulerTool:
 
 
 class ListResultSchedulerTool(FakeSchedulerTool):
-    def list_job_runs(self, job_id, limit=10):
-        self.calls.append(("list_job_runs", job_id, limit))
+    def list_job_runs(self, job_id, limit=10, offset=0):
+        self.calls.append(("list_job_runs", job_id, limit, offset))
         status = self.poll_statuses.pop(0) if self.poll_statuses else "running"
         return FuncToolResult(
             result=FuncToolListResult(
@@ -64,8 +64,8 @@ class ListResultSchedulerTool(FakeSchedulerTool):
 
 
 class NestedResultSchedulerTool(FakeSchedulerTool):
-    def list_job_runs(self, job_id, limit=10):
-        self.calls.append(("list_job_runs", job_id, limit))
+    def list_job_runs(self, job_id, limit=10, offset=0):
+        self.calls.append(("list_job_runs", job_id, limit, offset))
         status = self.poll_statuses.pop(0) if self.poll_statuses else "running"
         return FuncToolResult(
             result={
@@ -75,6 +75,27 @@ class NestedResultSchedulerTool(FakeSchedulerTool):
                     "has_more": False,
                 }
             }
+        )
+
+
+class PaginatedSchedulerTool(FakeSchedulerTool):
+    def list_job_runs(self, job_id, limit=10, offset=0):
+        self.calls.append(("list_job_runs", job_id, limit, offset))
+        if offset == 0:
+            return FuncToolResult(
+                result=FuncToolListResult(
+                    items=[{"job_id": job_id, "run_id": f"other-{idx}", "status": "success"} for idx in range(limit)],
+                    total=limit + 1,
+                    has_more=True,
+                    extra={"next_offset": limit},
+                ).model_dump()
+            )
+        return FuncToolResult(
+            result=FuncToolListResult(
+                items=[{"job_id": job_id, "run_id": self.run_id, "status": "success"}],
+                total=limit + 1,
+                has_more=False,
+            ).model_dump()
         )
 
 
@@ -116,6 +137,19 @@ async def test_triggered_run_success_accepts_nested_result_envelope():
     check = report.checks[0]
     assert check.passed is True
     assert check.observed["final_status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_triggered_run_success_scans_paginated_run_history():
+    tool = PaginatedSchedulerTool(trigger_status="queued")
+
+    report = await run_scheduler_runtime_validation(_session(), tool, timeout_seconds=1, poll_interval_seconds=0)
+
+    check = report.checks[0]
+    assert check.passed is True
+    assert check.observed["final_status"] == "success"
+    assert check.observed["last_poll_pages_scanned"] == 2
+    assert ("list_job_runs", "j-1", 10, 10) in tool.calls
 
 
 @pytest.mark.asyncio
