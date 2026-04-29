@@ -36,8 +36,10 @@ Analyze the user's request and confirm the generation scope before proceeding. W
 
 **Step 1a: Inspect the table** — Call `describe_table(table_name)` to understand the columns and types. Optionally call `read_query` to sample data.
 
-**Step 1b: Ask for reference SQL (optional)** — Use `ask_user` to ask:
+**Step 1b: Ask for reference SQL (optional)** — When `ask_user` is available, use it to ask:
 > "Do you have any existing SQL queries for this table that show the aggregations you care about? You can paste them here, or skip if not available."
+
+When `ask_user` is not available, skip this question and infer SQL/aggregation context from the user's request, attached files, or discovered query/table evidence. If that is not enough, stop and explain the missing information instead of calling `ask_user`.
 
 If the user provides SQL, parse it to extract:
 - Aggregation functions + columns (e.g., `SUM(amount)` → candidate measure `total_amount`, `COUNT(*)` → candidate measure `record_count`)
@@ -59,8 +61,8 @@ If the user skips, proceed to Step 1c using only table structure and the user's 
   - **Direct paste**: multiple SQL statements in the prompt
   - **File path**: user provides a path — call `read_file` to load it, then parse by file type:
     - `.sql`: split by `;` or blank-line separators to extract individual statements
-    - `.csv` / `.tsv`: identify the SQL column by header name (common names: `sql`, `query`, `SQL`, `statement`) or by content heuristic (column values contain SQL keywords like `SELECT`, `FROM`, `GROUP BY`). The description/question column is any remaining text column. If column roles are ambiguous, call `ask_user` to confirm which column is SQL.
-    - Other formats: call `ask_user` to clarify the file structure before proceeding
+    - `.csv` / `.tsv`: identify the SQL column by header name (common names: `sql`, `query`, `SQL`, `statement`) or by content heuristic (column values contain SQL keywords like `SELECT`, `FROM`, `GROUP BY`). The description/question column is any remaining text column. If column roles are ambiguous, call `ask_user` when available to confirm which column is SQL; otherwise stop and explain the missing column mapping.
+    - Other formats: call `ask_user` when available to clarify the file structure before proceeding; otherwise stop and explain the supported file formats or required structure.
 - Parse all SQL queries from the input
 - Call `describe_table` for each unique table found in the SQL queries
 
@@ -98,6 +100,7 @@ From N SQL queries, propose at most a **small set of core metrics** (typically f
   ```
 - Clearly show how many SQL queries were analyzed and how many core metrics were extracted
 - If the user wants additional derived/ratio metrics beyond the core set, they can request them after the base metrics are created
+- When `ask_user` is not available, proceed with the deduplicated metrics only if the input makes the scope unambiguous; otherwise stop and explain what needs to be provided.
 
 ### Metric type detection rules
 

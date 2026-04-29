@@ -630,7 +630,16 @@ class GenMetricsAgenticNode(AgenticNode):
                 )
             return
 
-        if not metric_file or self.generation_evidence.metric_kb_sync_passed:
+        if self.generation_evidence.metric_kb_sync_passed:
+            return
+
+        if normalized_status == "generated" and not metric_file:
+            raise RuntimeError(
+                "Metric generation returned status='generated' without a metric_file. "
+                "Generated responses must include metric_file or call end_metric_generation."
+            )
+
+        if not metric_file:
             return
 
         if not self.generation_tools:
@@ -704,13 +713,14 @@ class GenMetricsAgenticNode(AgenticNode):
                 semantic_model_file = content.get("semantic_model_file")
                 metric_file = content.get("metric_file")
                 status = content.get("status")
+                normalized_status = status.strip().lower() if isinstance(status, str) else None
 
-                if (metric_file and isinstance(metric_file, str)) or status == "skipped":
+                if (metric_file and isinstance(metric_file, str)) or normalized_status in {"generated", "skipped"}:
                     logger.debug(
                         f"Extracted from dict: semantic_model_file={semantic_model_file}, "
-                        f"metric_file={metric_file}, status={status}"
+                        f"metric_file={metric_file}, status={normalized_status}"
                     )
-                    return semantic_model_file, metric_file, status, output_text
+                    return semantic_model_file, metric_file, normalized_status, output_text
 
                 logger.warning(f"Dict format but missing expected keys or invalid format: {content.keys()}")
 
@@ -728,14 +738,18 @@ class GenMetricsAgenticNode(AgenticNode):
                             semantic_model_file = parsed.get("semantic_model_file")
                             metric_file = parsed.get("metric_file")
                             status = parsed.get("status")
+                            normalized_status = status.strip().lower() if isinstance(status, str) else None
 
-                            if (metric_file and isinstance(metric_file, str)) or status == "skipped":
+                            if (metric_file and isinstance(metric_file, str)) or normalized_status in {
+                                "generated",
+                                "skipped",
+                            }:
                                 logger.debug(
                                     f"Extracted from JSON string: "
                                     f"semantic_model_file={semantic_model_file}, "
-                                    f"metric_file={metric_file}, status={status}"
+                                    f"metric_file={metric_file}, status={normalized_status}"
                                 )
-                                return semantic_model_file, metric_file, status, output_text
+                                return semantic_model_file, metric_file, normalized_status, output_text
 
                             logger.warning(f"Parsed JSON but missing expected keys or invalid format: {parsed.keys()}")
                     except Exception as e:

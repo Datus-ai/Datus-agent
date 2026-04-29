@@ -16,6 +16,7 @@ Tests cover:
 NO MOCK EXCEPT LLM. All objects are real.
 """
 
+import contextvars
 import copy
 import warnings
 
@@ -618,6 +619,21 @@ class TestPostprocessMessagesForReasoning:
 
         _reasoning_content_cache.clear()
 
+    def test_deepseek_does_not_patch_plain_assistant_history_from_cache(self):
+        """Cached DeepSeek reasoning should only be reused for tool-call turns."""
+        _reasoning_content_cache.clear()
+        _reasoning_content_cache["deepseek/deepseek-v4-pro"] = "cached thinking"
+
+        messages = [
+            {"role": "assistant", "content": "Old plain answer."},
+            {"role": "user", "content": "next question"},
+        ]
+        result = _postprocess_messages_for_reasoning(messages, "deepseek/deepseek-v4-pro")
+
+        assert "reasoning_content" not in result[0]
+
+        _reasoning_content_cache.clear()
+
     def test_deepseek_uses_cached_reasoning_content_across_model_aliases(self):
         """DeepSeek cache lookup handles LiteLLM-prefixed and raw model names."""
         _reasoning_content_cache.clear()
@@ -752,6 +768,20 @@ class TestReasoningContentExtraction:
         _cache_reasoning_content("deepseek-v4-flash", "thought")
         assert _get_cached_reasoning_content("deepseek/deepseek-v4-flash") == "thought"
 
+        _reasoning_content_cache.clear()
+
+    def test_reasoning_cache_is_context_local(self):
+        _reasoning_content_cache.clear()
+        _cache_reasoning_content("deepseek-v4-flash", "outer thought")
+
+        def run_in_fresh_context():
+            assert _get_cached_reasoning_content("deepseek-v4-flash") is None
+            _cache_reasoning_content("deepseek-v4-flash", "inner thought")
+            assert _get_cached_reasoning_content("deepseek-v4-flash") == "inner thought"
+
+        contextvars.Context().run(run_in_fresh_context)
+
+        assert _get_cached_reasoning_content("deepseek-v4-flash") == "outer thought"
         _reasoning_content_cache.clear()
 
 

@@ -33,7 +33,8 @@ Kimi/Moonshot to DeepSeek models.
 
 import copy
 import warnings
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator, MutableMapping
+from contextvars import ContextVar
 from typing import Any
 
 from datus.utils.loggings import get_logger
@@ -180,10 +181,46 @@ _original_usage_model_dump_json = None
 _original_usage_init = None
 _original_showwarning = None
 
-# Cache reasoning_content from API responses, keyed by model name.
-# This provides a fallback when the SDK converter fails to extract
-# reasoning_content from items (e.g., when summary is empty).
-_reasoning_content_cache: dict[str, str] = {}
+# Cache reasoning_content from API responses, keyed by model name within the
+# current execution context. This avoids leaking one session's hidden reasoning
+# into another request while preserving the fallback inside a tool-calling run.
+_reasoning_content_cache_var: ContextVar[dict[str, str] | None] = ContextVar(
+    "datus_reasoning_content_cache",
+    default=None,
+)
+
+
+def _current_reasoning_content_cache() -> dict[str, str]:
+    cache = _reasoning_content_cache_var.get()
+    if cache is None:
+        cache = {}
+        _reasoning_content_cache_var.set(cache)
+    return cache
+
+
+class _ReasoningContentCache(MutableMapping[str, str]):
+    """Context-local mapping kept for tests and local cache helpers."""
+
+    def __getitem__(self, key: str) -> str:
+        return _current_reasoning_content_cache()[key]
+
+    def __setitem__(self, key: str, value: str) -> None:
+        _current_reasoning_content_cache()[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del _current_reasoning_content_cache()[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(_current_reasoning_content_cache())
+
+    def __len__(self) -> int:
+        return len(_current_reasoning_content_cache())
+
+    def clear(self) -> None:
+        _current_reasoning_content_cache().clear()
+
+
+_reasoning_content_cache: MutableMapping[str, str] = _ReasoningContentCache()
 
 
 _REASONING_CONTENT_FIELD_NAMES = (
@@ -477,17 +514,19 @@ def _postprocess_messages_for_reasoning(
     if is_deepseek and not last_reasoning_content:
         messages = _sanitize_deepseek_history_without_reasoning(messages)
 
-    # Ensure assistant messages preserve reasoning_content when the provider
-    # requires it. DeepSeek V4 Pro rejects follow-up requests if the final
-    # assistant message from a tool-using turn is missing reasoning_content,
-    # even though that final message has no tool_calls. Kimi/Moonshot keeps the
-    # narrower historical behavior and only patches assistant+tool_calls turns.
-    for msg in messages:
+    # Ensure assistant messages preserve reasoning_content on tool-calling turns.
+    # DeepSeek also requires the final assistant message immediately after a tool
+    # result to carry reasoning_content. Keep ordinary assistant history untouched.
+    for idx, msg in enumerate(messages):
         if not isinstance(msg, dict) or msg.get("role") != "assistant":
             continue
 
         has_tool_calls = bool(msg.get("tool_calls"))
-        should_patch_message = has_tool_calls or is_deepseek
+        previous_message = messages[idx - 1] if idx > 0 else None
+        follows_tool_result = (
+            is_deepseek and isinstance(previous_message, dict) and previous_message.get("role") == "tool"
+        )
+        should_patch_message = has_tool_calls or follows_tool_result
         if should_patch_message:
             current_rc = _coerce_reasoning_text(msg.get("reasoning_content"))
             if current_rc:
