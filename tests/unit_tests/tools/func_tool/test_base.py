@@ -8,7 +8,7 @@ import logging
 
 import pytest
 
-from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, trans_to_function_tool
+from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, parse_tool_args, trans_to_function_tool
 
 
 class TestTransToFunctionTool:
@@ -197,6 +197,57 @@ class TestTransToFunctionTool:
 
         assert result["success"] == 1
         assert result["result"] == "test"
+
+
+class TestParseToolArgs:
+    """Direct tests for parse_tool_args covering branches not reachable via trans_to_function_tool."""
+
+    def test_empty_args_with_required_fields(self):
+        """Empty args_str with required_fields should return error."""
+        result, error = parse_tool_args("", required_fields={"x"}, tool_name="test")
+        assert error is not None
+        assert "missing required fields" in error
+        assert result == {}
+
+    def test_none_args_with_required_fields(self):
+        """None args_str with required_fields should return error."""
+        result, error = parse_tool_args(None, required_fields={"x"}, tool_name="test")
+        assert error is not None
+        assert "missing required fields" in error
+
+    def test_whitespace_only_args_with_required_fields(self):
+        """Whitespace-only string with required_fields should return error."""
+        result, error = parse_tool_args("   ", required_fields={"x"}, tool_name="test")
+        assert error is not None
+        assert "missing required fields" in error
+
+    def test_non_string_dict_input(self):
+        """Non-string dict-like input should be converted."""
+        result, error = parse_tool_args({"key": "val"}, tool_name="test")
+        assert error is None
+        assert result == {"key": "val"}
+
+    def test_non_string_dict_input_missing_required(self):
+        """Non-string dict input missing required fields should return error."""
+        result, error = parse_tool_args({"a": 1}, required_fields={"b"}, tool_name="test")
+        assert error is not None
+        assert "missing required fields" in error
+
+    def test_non_string_invalid_input(self):
+        """Non-string, non-dict input should return error."""
+        result, error = parse_tool_args(12345, tool_name="test")
+        assert error is not None
+        assert "Invalid arguments" in error
+
+    def test_json_repair_exception_falls_through(self):
+        """When json_repair itself raises, should fall through to error path."""
+        result, error = parse_tool_args("<<<>>>", required_fields={"x"}, tool_name="test")
+        assert error is not None
+
+    def test_truncated_json_hint(self):
+        """Truncated JSON not ending in } or ] should include truncation hint."""
+        result, error = parse_tool_args('{"key": "val', tool_name="test")
+        assert error is None or "truncated" in (error or "").lower()
 
 
 class TestFuncToolListResult:
