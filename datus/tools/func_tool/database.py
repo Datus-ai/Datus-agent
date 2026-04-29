@@ -1050,7 +1050,9 @@ class DBFuncTool:
                 )
 
             logger.info("read_query", sql_type=sql_type.value, datasource=datasource or "default")
-            result = connector.execute_query(sql, result_format="arrow" if connector.dialect == "snowflake" else "list")
+            result = connector.execute_query(
+                sql=sql, result_format="arrow" if connector.dialect == "snowflake" else "list"
+            )
             if result.success:
                 data = result.sql_return
                 return FuncToolResult(result=self.compressor.compress(data))
@@ -1100,7 +1102,10 @@ class DBFuncTool:
             # Get tables with DDL
             connector = self._get_connector(datasource)
             tables_with_ddl = connector.get_tables_with_ddl(
-                catalog_name=catalog, database_name=database, schema_name=schema_name, tables=[table_name]
+                catalog_name=catalog or "",
+                database_name=database or "",
+                schema_name=schema_name or "",
+                tables=[table_name],
             )
 
             if not tables_with_ddl:

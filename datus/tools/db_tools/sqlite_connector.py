@@ -91,7 +91,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
         """Handle SQLite exceptions and map to appropriate Datus ErrorCode."""
         if isinstance(e, DatusException):
             return e
-
+        logger.error(f"Handle database execution exceptions: {e}")
         error_msg = str(e).lower()
 
         if isinstance(e, sqlite3.OperationalError):
@@ -103,7 +103,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
             elif "no such table" in error_msg:
                 return DatusException(
                     ErrorCode.DB_TABLE_NOT_EXISTS,
-                    message_args={"table_name": sql, "error_message": str(e)},
+                    message_args={"error_message": str(e)},
                 )
             elif "locked" in error_msg or "database is locked" in error_msg:
                 return DatusException(
@@ -132,7 +132,9 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
             )
 
     @override
-    def execute_insert(self, sql: str) -> ExecuteSQLResult:
+    def execute_insert(
+        self, sql: str, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> ExecuteSQLResult:
         """Execute an INSERT SQL statement."""
         try:
             self.connect()
@@ -154,7 +156,9 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
             )
 
     @override
-    def execute_update(self, sql: str) -> ExecuteSQLResult:
+    def execute_update(
+        self, sql: str, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> ExecuteSQLResult:
         """Execute an UPDATE SQL statement."""
         try:
             self.connect()
@@ -176,7 +180,9 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
             )
 
     @override
-    def execute_delete(self, sql: str) -> ExecuteSQLResult:
+    def execute_delete(
+        self, sql: str, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> ExecuteSQLResult:
         """Execute a DELETE SQL statement."""
         try:
             self.connect()
@@ -198,7 +204,9 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
             )
 
     @override
-    def execute_ddl(self, sql: str) -> ExecuteSQLResult:
+    def execute_ddl(
+        self, sql: str, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> ExecuteSQLResult:
         """Execute a DDL SQL statement."""
         try:
             self.connect()
@@ -221,7 +229,12 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
 
     @override
     def execute_query(
-        self, sql: str, result_format: Literal["csv", "arrow", "pandas", "list"] = "csv"
+        self,
+        sql: str,
+        result_format: Literal["csv", "arrow", "pandas", "list"] = "csv",
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
     ) -> ExecuteSQLResult:
         """Execute a SELECT query."""
         try:

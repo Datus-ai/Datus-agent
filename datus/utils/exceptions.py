@@ -165,7 +165,7 @@ class ErrorCode(Enum):
     # Database errors - Transaction (SQLAlchemy transaction issues)
     DB_TRANSACTION_FAILED = ("500009", "Database transaction failed. Error details: {error_message}")
 
-    DB_TABLE_NOT_EXISTS = ("500010", "Table {table_name} does not exist.")
+    DB_TABLE_NOT_EXISTS = ("500010", "Table not found. Error details: {error_message}")
 
     # Semantic adapter errors
     SEMANTIC_ADAPTER_NOT_FOUND = ("600001", "Semantic adapter '{adapter_type}' not found or not installed")

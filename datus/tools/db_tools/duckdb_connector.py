@@ -54,6 +54,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         self.connection: Optional[duckdb.DuckDBPyConnection] = None
         self.enable_external_access = config.enable_external_access
         self.memory_limit = config.memory_limit
+        self.read_only = config.read_only
 
         if config.database_name:
             self.database_name = config.database_name
@@ -78,9 +79,9 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
                 from duckdb_engine import __version__ as _de_ver
 
                 config = {"custom_user_agent": f"duckdb_engine/{_de_ver}(sqlalchemy/{_sa.__version__})"}
-                self.connection = duckdb.connect(self.db_path, config=config)
+                self.connection = duckdb.connect(self.db_path, read_only=self.read_only, config=config)
             except ImportError:
-                self.connection = duckdb.connect(self.db_path)
+                self.connection = duckdb.connect(self.db_path, read_only=self.read_only)
 
             # Per-session settings — kept as post-connect SET so they don't enter
             # DuckDB's instance-config equality check.
@@ -129,6 +130,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         if isinstance(e, DatusException):
             return e
 
+        logger.error(f"Handle database execution exceptions: {e}")
         error_msg = str(e).lower()
 
         # Check for common error patterns
@@ -140,7 +142,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         elif "table" in error_msg and "does not exist" in error_msg:
             return DatusException(
                 ErrorCode.DB_TABLE_NOT_EXISTS,
-                message_args={"table_name": sql, "error_message": str(e)},
+                message_args={"error_message": str(e)},
             )
         elif "constraint" in error_msg or "unique" in error_msg:
             return DatusException(
@@ -159,7 +161,9 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
             )
 
     @override
-    def execute_insert(self, sql: str) -> ExecuteSQLResult:
+    def execute_insert(
+        self, sql: str, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> ExecuteSQLResult:
         """Execute an INSERT SQL statement."""
         try:
             self.connect()
@@ -186,7 +190,9 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
             )
 
     @override
-    def execute_update(self, sql: str) -> ExecuteSQLResult:
+    def execute_update(
+        self, sql: str, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> ExecuteSQLResult:
         """Execute an UPDATE SQL statement."""
         try:
             self.connect()
@@ -213,7 +219,9 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
             )
 
     @override
-    def execute_delete(self, sql: str) -> ExecuteSQLResult:
+    def execute_delete(
+        self, sql: str, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> ExecuteSQLResult:
         """Execute a DELETE SQL statement."""
         try:
             self.connect()
@@ -240,7 +248,9 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
             )
 
     @override
-    def execute_ddl(self, sql: str) -> ExecuteSQLResult:
+    def execute_ddl(
+        self, sql: str, catalog_name: str = "", database_name: str = "", schema_name: str = ""
+    ) -> ExecuteSQLResult:
         """Execute a DDL SQL statement."""
         try:
             self.connect()
@@ -261,12 +271,17 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
 
     @override
     def execute_query(
-        self, sql: str, result_format: Literal["csv", "arrow", "pandas", "list"] = "csv"
+        self,
+        sql: str,
+        result_format: Literal["csv", "arrow", "pandas", "list"] = "csv",
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
     ) -> ExecuteSQLResult:
         """Execute a SELECT query."""
         try:
             self.connect()
-            result = self.connection.execute(sql)
+            result = self.connection.execute(query=sql)
 
             if result_format == "csv":
                 df = result.df()
@@ -448,8 +463,15 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
 
     @override
     def do_switch_context(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
+        # datus-db-core>=0.1.3 splits in-memory context (ContextVars) from connection state,
+        # so this method must move the live DuckDB session; otherwise queries that rely on
+        # the resolved database/schema fail with "table does not exist".
         self.connect()
-        if schema_name:
+        if database_name and schema_name:
+            self.connection.execute(f'USE "{database_name}"."{schema_name}"')
+        elif database_name:
+            self.connection.execute(f'USE "{database_name}"')
+        elif schema_name:
             self.connection.execute(f'USE "{schema_name}"')
 
     @override
