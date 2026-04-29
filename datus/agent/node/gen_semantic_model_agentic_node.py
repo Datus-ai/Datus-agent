@@ -512,25 +512,12 @@ class GenSemanticModelAgenticNode(AgenticNode):
                                 else:
                                     logger.warning(f"no usage token found in this action {action.messages}")
 
-            # Auto-save to database in workflow mode (support multiple files)
-            if self.execution_mode == "workflow" and semantic_model_files:
-                try:
-                    for semantic_model_file in semantic_model_files:
-                        self._save_to_db(
-                            semantic_model_file,
-                            catalog=user_input.catalog,
-                            database=user_input.database,
-                            db_schema=user_input.db_schema,
-                        )
-                    logger.info(f"Auto-saved {len(semantic_model_files)} semantic models to database")
-                except Exception as e:
-                    logger.error(f"Failed to auto-save to database: {e}")
-
-            if semantic_model_files and not self.generation_evidence.semantic_kb_sync_passed:
-                raise RuntimeError(
-                    "Semantic model generation did not publish to Knowledge Base. "
-                    "Call end_semantic_model_generation after validate_semantic succeeds."
-                )
+            self._finalize_semantic_model_generation(
+                semantic_model_files=semantic_model_files,
+                catalog=user_input.catalog,
+                database=user_input.database,
+                db_schema=user_input.db_schema,
+            )
 
             # Create final result
             result = SemanticNodeResult(
@@ -587,6 +574,64 @@ class GenSemanticModelAgenticNode(AgenticNode):
             )
             action_history_manager.add_action(error_action)
             yield error_action
+
+    @staticmethod
+    def _tool_succeeded(result: Any) -> bool:
+        if isinstance(result, dict):
+            return result.get("success", 1) in (1, True)
+        if hasattr(result, "success"):
+            return result.success in (1, True)
+        return False
+
+    @staticmethod
+    def _tool_error(result: Any) -> str:
+        if isinstance(result, dict):
+            return str(result.get("error") or result.get("result") or "unknown error")
+        return str(getattr(result, "error", None) or getattr(result, "result", None) or "unknown error")
+
+    def _finalize_semantic_model_generation(
+        self,
+        semantic_model_files: list[str],
+        catalog=None,
+        database=None,
+        db_schema=None,
+    ) -> None:
+        """Validate and publish semantic model artifacts without relying on one LLM tool call."""
+        if not semantic_model_files or self.generation_evidence.semantic_kb_sync_passed:
+            return
+
+        if not self.generation_evidence.validation_passed:
+            if not getattr(self, "semantic_func_tool", None):
+                raise RuntimeError(
+                    "Semantic model generation produced semantic_model_files, but validate_semantic is unavailable."
+                )
+            validation_result = self.semantic_func_tool.validate_semantic()
+            self.generation_evidence.record_validation_result(validation_result)
+            if not self._tool_succeeded(validation_result):
+                raise RuntimeError(
+                    f"validate_semantic failed before publishing semantic models: {self._tool_error(validation_result)}"
+                )
+
+        synced_files = []
+        failed_files = []
+        for semantic_model_file in semantic_model_files:
+            if self._save_to_db(
+                semantic_model_file,
+                catalog=catalog,
+                database=database,
+                db_schema=db_schema,
+            ):
+                synced_files.append(semantic_model_file)
+            else:
+                failed_files.append(semantic_model_file)
+
+        if failed_files:
+            raise RuntimeError(
+                "Semantic model generation produced file(s), but failed to sync to Knowledge Base: "
+                f"{', '.join(failed_files)}"
+            )
+
+        logger.info(f"Auto-saved {len(synced_files)} semantic models to database")
 
     def _extract_semantic_model_and_output_from_response(self, output: dict) -> tuple[list[str], Optional[str]]:
         """
@@ -646,7 +691,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
             logger.error(f"Unexpected error extracting semantic_model_files: {e}", exc_info=True)
             return [], None
 
-    def _save_to_db(self, semantic_model_file: str, catalog=None, database=None, db_schema=None):
+    def _save_to_db(self, semantic_model_file: str, catalog=None, database=None, db_schema=None) -> bool:
         """
         Save generated semantic model to database (synchronous).
 
@@ -664,11 +709,11 @@ class GenSemanticModelAgenticNode(AgenticNode):
             full_path = resolve_kb_sandbox_path(semantic_model_file, "semantic", self.knowledge_base_dir)
             if not full_path:
                 logger.warning(f"Semantic model file rejected by sandbox check: {semantic_model_file!r}")
-                return
+                return False
 
             if not os.path.exists(full_path):
                 logger.warning(f"Semantic model file not found: {full_path}")
-                return
+                return False
 
             # Call static method to save to database
             # Deduplication is handled inside _sync_semantic_to_db
@@ -679,9 +724,11 @@ class GenSemanticModelAgenticNode(AgenticNode):
             if result.get("success"):
                 self.generation_evidence.mark_kb_sync("semantic")
                 logger.info(f"Successfully saved to database: {result.get('message')}")
+                return True
             else:
                 error = result.get("error", "Unknown error")
                 logger.error(f"Failed to save to database: {error}")
+                return False
 
         except Exception as e:
             logger.error(f"Error saving to database: {e}", exc_info=True)

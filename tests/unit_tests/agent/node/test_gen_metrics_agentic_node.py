@@ -519,9 +519,10 @@ class TestExtractMetricAndOutputFromResponse:
                 "output": "Generated successfully",
             }
         }
-        sem_model, metric_file, out = node._extract_metric_and_output_from_response(output)
+        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
         assert metric_file == "revenue_metrics.yml"
         assert sem_model == "model.yml"
+        assert status is None
         assert out == "Generated successfully"
 
     def test_extracts_from_json_string(self, real_agent_config, mock_llm_create):
@@ -534,29 +535,65 @@ class TestExtractMetricAndOutputFromResponse:
             }
         )
         output = {"content": content}
-        sem_model, metric_file, out = node._extract_metric_and_output_from_response(output)
+        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
         assert metric_file == "sales_metrics.yml"
+        assert status is None
         assert out == "Done"
 
-    def test_returns_none_triple_on_empty_content(self, real_agent_config, mock_llm_create):
+    def test_extracts_status_from_dict_content(self, real_agent_config, mock_llm_create):
+        node = _make_node(real_agent_config, mock_llm_create)
+        output = {
+            "content": {
+                "semantic_model_file": "model.yml",
+                "metric_file": None,
+                "status": "skipped",
+                "output": "All requested metrics already exist; skipped per Step 4.",
+            }
+        }
+        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        assert sem_model == "model.yml"
+        assert metric_file is None
+        assert status == "skipped"
+        assert out.startswith("All requested metrics already exist")
+
+    def test_extracts_status_from_json_string(self, real_agent_config, mock_llm_create):
+        node = _make_node(real_agent_config, mock_llm_create)
+        content = json.dumps(
+            {
+                "semantic_model_file": "model.yml",
+                "metric_file": None,
+                "status": "skipped",
+                "output": "Skipped: metric already exists.",
+            }
+        )
+        output = {"content": content}
+        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        assert metric_file is None
+        assert status == "skipped"
+        assert out == "Skipped: metric already exists."
+
+    def test_returns_none_quad_on_empty_content(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)
         output = {"content": ""}
-        sem_model, metric_file, out = node._extract_metric_and_output_from_response(output)
+        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
         assert metric_file is None
         assert sem_model is None
+        assert status is None
         assert out is None
 
-    def test_returns_none_triple_on_dict_missing_metric_file(self, real_agent_config, mock_llm_create):
+    def test_returns_none_quad_on_dict_missing_metric_file(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)
         output = {"content": {"some_key": "some_value"}}
-        sem_model, metric_file, out = node._extract_metric_and_output_from_response(output)
+        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
         assert metric_file is None
+        assert status is None
 
-    def test_returns_none_triple_on_invalid_json(self, real_agent_config, mock_llm_create):
+    def test_returns_none_quad_on_invalid_json(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)
         output = {"content": "not json at all !!!"}
-        sem_model, metric_file, out = node._extract_metric_and_output_from_response(output)
+        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
         assert metric_file is None
+        assert status is None
 
 
 # ---------------------------------------------------------------------------
@@ -716,17 +753,30 @@ class TestExecuteStreamGenMetricsError:
         assert last.action_type == "error"
 
     @pytest.mark.asyncio
-    async def test_final_metric_file_without_publish_fails(self, real_agent_config, mock_llm_create):
-        """A final JSON metric_file is not enough; end_metric_generation must publish."""
+    async def test_final_metric_file_without_end_tool_auto_publishes(self, real_agent_config, mock_llm_create):
+        """A final JSON metric_file is enough when the node can validate, dry-run, and publish it."""
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.tools.func_tool.base import FuncToolResult
+
+        datasource = real_agent_config.current_datasource
+        metric_dir = real_agent_config.path_manager.semantic_model_path(datasource) / "metrics"
+        metric_dir.mkdir(parents=True, exist_ok=True)
+        metric_path = metric_dir / "orders_metrics.yml"
+        metric_path.write_text(
+            "metric:\n  name: orders_total\n  type: measure_proxy\n  type_params:\n    measure: orders\n",
+            encoding="utf-8",
+        )
+        reported_semantic_path = f"subject/semantic_models/{datasource}/orders.yml"
+        reported_metric_path = f"subject/semantic_models/{datasource}/metrics/orders_metrics.yml"
 
         mock_llm_create.reset(
             responses=[
                 build_simple_response(
                     json.dumps(
                         {
-                            "semantic_model_file": "orders.yml",
-                            "metric_file": "orders_metrics.yml",
+                            "semantic_model_file": reported_semantic_path,
+                            "metric_file": reported_metric_path,
+                            "status": "generated",
                             "output": "Generated metrics.",
                         }
                     )
@@ -739,6 +789,77 @@ class TestExecuteStreamGenMetricsError:
             execution_mode="workflow",
         )
         node.input = SemanticNodeInput(user_message="Generate metrics")
+        node.permission_manager = None
+        node.permission_hooks = None
+        node.semantic_tools = MagicMock()
+        node.semantic_tools.validate_semantic = MagicMock(
+            return_value=FuncToolResult(result={"valid": True, "issues": []})
+        )
+        node.semantic_tools.query_metrics = MagicMock(
+            return_value=FuncToolResult(result={"columns": ["sql"], "data": [], "metadata": {"sql": "SELECT 1"}})
+        )
+        node.generation_tools.end_metric_generation = MagicMock(
+            return_value=FuncToolResult(result={"message": "Metric generation completed and synced to Knowledge Base"})
+        )
+
+        action_manager = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(action_manager):
+            actions.append(action)
+
+        assert actions[-1].status == ActionStatus.SUCCESS
+        assert actions[-1].action_type == "metrics_response"
+        node.semantic_tools.validate_semantic.assert_called_once()
+        node.semantic_tools.query_metrics.assert_called_once_with(metrics=["orders_total"], dry_run=True)
+        node.generation_tools.end_metric_generation.assert_called_once_with(
+            metric_file=str(metric_path),
+            semantic_model_file=str(real_agent_config.path_manager.semantic_model_path(datasource) / "orders.yml"),
+        )
+
+    @pytest.mark.asyncio
+    async def test_final_metric_file_rejects_out_of_sandbox_absolute_path(
+        self, real_agent_config, mock_llm_create, tmp_path
+    ):
+        """Final JSON fallback must reject fabricated metric paths before opening them."""
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.tools.func_tool.base import FuncToolResult
+
+        outside = tmp_path / "outside_metrics.yml"
+        outside.write_text(
+            "metric:\n  name: outside_metric\n  type: measure_proxy\n  type_params:\n    measure: outside\n",
+            encoding="utf-8",
+        )
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response(
+                    json.dumps(
+                        {
+                            "semantic_model_file": None,
+                            "metric_file": str(outside),
+                            "status": "generated",
+                            "output": "Generated metrics.",
+                        }
+                    )
+                ),
+            ]
+        )
+
+        node = GenMetricsAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+        node.input = SemanticNodeInput(user_message="Generate metrics")
+        node.permission_manager = None
+        node.permission_hooks = None
+        node.semantic_tools = MagicMock()
+        node.semantic_tools.validate_semantic = MagicMock(
+            return_value=FuncToolResult(result={"valid": True, "issues": []})
+        )
+        node.generation_tools._validate_metric_file_has_blocks = MagicMock(return_value=None)
+        node.generation_tools.end_metric_generation = MagicMock(
+            return_value=FuncToolResult(result={"message": "should not publish"})
+        )
 
         action_manager = ActionHistoryManager()
         actions = []
@@ -747,7 +868,89 @@ class TestExecuteStreamGenMetricsError:
 
         assert actions[-1].status == ActionStatus.FAILED
         assert actions[-1].action_type == "error"
-        assert "did not publish to Knowledge Base" in actions[-1].output["error"]
+        assert "outside Knowledge Base sandbox" in actions[-1].output["error"]
+        node.generation_tools._validate_metric_file_has_blocks.assert_not_called()
+        node.generation_tools.end_metric_generation.assert_not_called()
+
+    def test_final_metric_path_resolver_rejects_parent_traversal(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        node = GenMetricsAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+
+        with pytest.raises(RuntimeError, match="outside Knowledge Base sandbox"):
+            node._resolve_metric_artifact_path("../outside_metrics.yml", "metric")
+
+    @pytest.mark.asyncio
+    async def test_skipped_status_bypasses_publish_gate(self, real_agent_config, mock_llm_create):
+        """``status: 'skipped'`` with ``metric_file: null`` is a clean exit, not a publish failure."""
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response(
+                    json.dumps(
+                        {
+                            "semantic_model_file": "orders.yml",
+                            "metric_file": None,
+                            "status": "skipped",
+                            "output": "All requested metrics already exist; nothing generated.",
+                        }
+                    )
+                ),
+            ]
+        )
+
+        node = GenMetricsAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+        node.input = SemanticNodeInput(user_message="Generate metrics that already exist")
+
+        action_manager = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(action_manager):
+            actions.append(action)
+
+        assert actions[-1].status == ActionStatus.SUCCESS
+        assert actions[-1].action_type == "metrics_response"
+
+    @pytest.mark.asyncio
+    async def test_skipped_status_with_metric_file_fails_closed(self, real_agent_config, mock_llm_create):
+        """``status: 'skipped'`` is only valid when no metric file was generated."""
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response(
+                    json.dumps(
+                        {
+                            "semantic_model_file": "orders.yml",
+                            "metric_file": "orders_metrics.yml",
+                            "status": "skipped",
+                            "output": "Metric already exists; reused existing definition.",
+                        }
+                    )
+                ),
+            ]
+        )
+
+        node = GenMetricsAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+        node.input = SemanticNodeInput(user_message="Generate metrics that already exist")
+
+        action_manager = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(action_manager):
+            actions.append(action)
+
+        assert actions[-1].status == ActionStatus.FAILED
+        assert actions[-1].action_type == "error"
+        assert "status='skipped' with a non-null metric_file" in actions[-1].output["error"]
 
 
 class TestGenMetricsFilesystemRootPath:

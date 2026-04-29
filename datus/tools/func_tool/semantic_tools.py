@@ -141,6 +141,26 @@ class SemanticTools:
         # Lazy load adapter and attribution tool
         self._adapter: Optional[BaseSemanticAdapter] = None
         self._attribution_tool: Optional[DimensionAttributionUtil] = None
+        self._adapter_load_error: Optional[str] = None
+
+    def _configured_adapter_type(self) -> Optional[str]:
+        """Return the configured adapter type without instantiating the adapter."""
+        if self.adapter_type:
+            return self.adapter_type
+
+        resolver = getattr(self.agent_config, "resolve_semantic_adapter", None)
+        if not callable(resolver):
+            return None
+
+        try:
+            resolved_adapter = resolver(self.adapter_type)
+        except Exception as e:
+            logger.debug(f"No semantic adapter configuration available: {e}")
+            return None
+
+        if resolved_adapter:
+            self.adapter_type = resolved_adapter
+        return resolved_adapter
 
     def _extract_db_config(self, datasource: str) -> Optional[dict]:
         """Extract db_config dict from the selected database config."""
@@ -205,9 +225,11 @@ class SemanticTools:
 
                 self.adapter_type = resolved_adapter
                 self._adapter = semantic_adapter_registry.create_adapter(resolved_adapter, adapter_config)
+                self._adapter_load_error = None
                 logger.info(f"Loaded semantic adapter: {resolved_adapter}")
             except Exception as e:
                 logger.warning(f"Failed to load semantic adapter '{self.adapter_type}': {e}")
+                self._adapter_load_error = str(e)
                 self._adapter = None
         return self._adapter
 
@@ -262,8 +284,10 @@ class SemanticTools:
             trans_to_function_tool(self.query_metrics),
         ]
 
-        # Add adapter-dependent tools
-        if self.adapter:
+        # Add validation whenever an adapter is configured, even if the current
+        # YAML makes adapter construction fail. In that case validate_semantic
+        # returns the adapter-load error so the agent can fix the files.
+        if self._configured_adapter_type():
             tools.append(trans_to_function_tool(self.validate_semantic))
 
         # Add attribution tools if attribution_tool is available
@@ -584,7 +608,14 @@ class SemanticTools:
             FuncToolResult with validation status and issues
         """
         logger.info("validate_semantic called")
-        if not self.adapter:
+        adapter = self.adapter
+        if not adapter:
+            if self._adapter_load_error:
+                return FuncToolResult(
+                    success=0,
+                    error=f"Failed to load semantic adapter '{self.adapter_type}': {self._adapter_load_error}",
+                    result=None,
+                )
             return FuncToolResult(
                 success=0,
                 error="No semantic adapter configured. Cannot validate without adapter.",
@@ -592,7 +623,7 @@ class SemanticTools:
             )
 
         try:
-            validation_result = _run_async(self.adapter.validate_semantic())
+            validation_result = _run_async(adapter.validate_semantic())
 
             # Serialize ValidationIssue objects to dicts
             issues_data = [

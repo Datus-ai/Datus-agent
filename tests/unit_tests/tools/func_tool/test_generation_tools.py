@@ -195,8 +195,10 @@ class TestEndMetricGeneration:
     def _patch_sync(self, generation_tools):
         """Patch get_path_manager, the pre-flight validator (so legacy tests
         can pass synthetic paths), and _sync_metric_to_db."""
+        mock_pm = Mock()
+        mock_pm.subject_dir = "/path"
         return (
-            patch("datus.tools.func_tool.generation_tools.get_path_manager"),
+            patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
             patch.object(
                 type(generation_tools),
                 "_validate_metric_file_has_blocks",
@@ -206,13 +208,13 @@ class TestEndMetricGeneration:
         )
 
     def test_requires_validation(self, generation_tools):
-        result = generation_tools.end_metric_generation(metric_file="/path/metric.yaml")
+        result = generation_tools.end_metric_generation(metric_file="/path/semantic_models/metric.yaml")
         assert result.success == 0
         assert "validate_semantic must pass" in result.error
 
     def test_requires_dry_run(self, generation_tools):
         generation_tools.generation_evidence.validation_passed = True
-        result = generation_tools.end_metric_generation(metric_file="/path/metric.yaml")
+        result = generation_tools.end_metric_generation(metric_file="/path/semantic_models/metric.yaml")
         assert result.success == 0
         assert "query_metrics(dry_run=True) must pass" in result.error
 
@@ -220,9 +222,9 @@ class TestEndMetricGeneration:
         self._mark_ready_to_publish(generation_tools)
         p1, p2, p3 = self._patch_sync(generation_tools)
         with p1, p2, p3:
-            result = generation_tools.end_metric_generation(metric_file="/path/metric.yaml")
+            result = generation_tools.end_metric_generation(metric_file="/path/semantic_models/metric.yaml")
         assert result.success == 1
-        assert result.result["metric_file"] == "/path/metric.yaml"
+        assert result.result["metric_file"] == "/path/semantic_models/metric.yaml"
         assert result.result["semantic_model_file"] == ""
         assert result.result["metric_sqls"] == {}
         assert result.result["sync"]["success"] is True
@@ -232,10 +234,11 @@ class TestEndMetricGeneration:
         p1, p2, p3 = self._patch_sync(generation_tools)
         with p1, p2, p3:
             result = generation_tools.end_metric_generation(
-                metric_file="/path/metric.yaml", semantic_model_file="/path/model.yaml"
+                metric_file="/path/semantic_models/metric.yaml",
+                semantic_model_file="/path/semantic_models/model.yaml",
             )
         assert result.success == 1
-        assert result.result["semantic_model_file"] == "/path/model.yaml"
+        assert result.result["semantic_model_file"] == "/path/semantic_models/model.yaml"
 
     def test_success_with_metric_sqls_json(self, generation_tools):
         self._mark_ready_to_publish(generation_tools)
@@ -243,7 +246,7 @@ class TestEndMetricGeneration:
         p1, p2, p3 = self._patch_sync(generation_tools)
         with p1, p2, p3:
             result = generation_tools.end_metric_generation(
-                metric_file="/path/metric.yaml", metric_sqls_json=metric_sqls_json
+                metric_file="/path/semantic_models/metric.yaml", metric_sqls_json=metric_sqls_json
             )
         assert result.success == 1
         assert result.result["metric_sqls"] == {"revenue_total": "SELECT SUM(revenue) FROM orders"}
@@ -253,7 +256,7 @@ class TestEndMetricGeneration:
         p1, p2, p3 = self._patch_sync(generation_tools)
         with p1, p2, p3:
             result = generation_tools.end_metric_generation(
-                metric_file="/path/metric.yaml", metric_sqls_json="not valid json"
+                metric_file="/path/semantic_models/metric.yaml", metric_sqls_json="not valid json"
             )
         assert result.success == 1
         assert result.result["metric_sqls"] == {}
@@ -266,7 +269,7 @@ class TestEndMetricGenerationPreflight:
 
     @staticmethod
     def _patch_path_resolution(tools, kb_root):
-        """Make end_metric_generation treat absolute paths as-is."""
+        """Make end_metric_generation resolve paths under a synthetic KB root."""
         mock_pm = Mock()
         mock_pm.subject_dir = str(kb_root)
         return patch(
@@ -281,14 +284,16 @@ class TestEndMetricGenerationPreflight:
 
     def test_rejects_missing_metric_file(self, generation_tools, tmp_path):
         self._mark_ready_to_publish(generation_tools)
+        missing = tmp_path / "semantic_models" / "missing.yaml"
         with self._patch_path_resolution(generation_tools, tmp_path):
-            result = generation_tools.end_metric_generation(metric_file=str(tmp_path / "missing.yaml"))
+            result = generation_tools.end_metric_generation(metric_file=str(missing))
         assert result.success == 0
         assert "Metric file not found" in result.error
 
     def test_rejects_documentation_only_metric_file(self, generation_tools, tmp_path):
         self._mark_ready_to_publish(generation_tools)
-        bad = tmp_path / "frpm_metrics.yml"
+        bad = tmp_path / "semantic_models" / "frpm_metrics.yml"
+        bad.parent.mkdir(parents=True, exist_ok=True)
         bad.write_text(
             "# Generated metric documentation\n\n"
             "## Summary\n\n"
@@ -307,7 +312,8 @@ class TestEndMetricGenerationPreflight:
 
     def test_rejects_invalid_yaml(self, generation_tools, tmp_path):
         self._mark_ready_to_publish(generation_tools)
-        bad = tmp_path / "broken.yml"
+        bad = tmp_path / "semantic_models" / "broken.yml"
+        bad.parent.mkdir(parents=True, exist_ok=True)
         bad.write_text("name: x\n  bad-indent: : :\n")
         with (
             self._patch_path_resolution(generation_tools, tmp_path),
@@ -321,7 +327,8 @@ class TestEndMetricGenerationPreflight:
     def test_accepts_file_with_metric_block(self, generation_tools, tmp_path):
         self._mark_ready_to_publish(generation_tools)
         generation_tools.generation_evidence.metric_dry_run_metrics.add("revenue_total")
-        good = tmp_path / "good_metric.yml"
+        good = tmp_path / "semantic_models" / "good_metric.yml"
+        good.parent.mkdir(parents=True, exist_ok=True)
         good.write_text("metric:\n  name: revenue_total\n  type: measure_proxy\n  type_params:\n    measure: revenue\n")
         with (
             self._patch_path_resolution(generation_tools, tmp_path),
@@ -332,7 +339,8 @@ class TestEndMetricGenerationPreflight:
 
     def test_rejects_metric_not_covered_by_dry_run(self, generation_tools, tmp_path):
         self._mark_ready_to_publish(generation_tools)
-        good = tmp_path / "good_metric.yml"
+        good = tmp_path / "semantic_models" / "good_metric.yml"
+        good.parent.mkdir(parents=True, exist_ok=True)
         good.write_text("metric:\n  name: revenue_total\n  type: measure_proxy\n  type_params:\n    measure: revenue\n")
         with (
             self._patch_path_resolution(generation_tools, tmp_path),
@@ -341,6 +349,21 @@ class TestEndMetricGenerationPreflight:
             result = generation_tools.end_metric_generation(metric_file=str(good))
         assert result.success == 0
         assert "revenue_total" in result.error
+        sync_mock.assert_not_called()
+
+    def test_rejects_out_of_sandbox_metric_path_before_reading(self, generation_tools, tmp_path):
+        self._mark_ready_to_publish(generation_tools)
+        outside = tmp_path / "outside_metric.yml"
+        outside.write_text("metric:\n  name: outside_metric\n")
+        with (
+            self._patch_path_resolution(generation_tools, tmp_path),
+            patch.object(type(generation_tools), "_validate_metric_file_has_blocks") as validate_mock,
+            patch.object(generation_tools, "_sync_metric_to_db") as sync_mock,
+        ):
+            result = generation_tools.end_metric_generation(metric_file=str(outside))
+        assert result.success == 0
+        assert "metric_file escapes Knowledge Base sandbox" in result.error
+        validate_mock.assert_not_called()
         sync_mock.assert_not_called()
 
 

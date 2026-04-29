@@ -22,6 +22,9 @@ import warnings
 import pytest
 
 from datus.models.sdk_patches import (
+    _cache_reasoning_content,
+    _extract_reasoning_content,
+    _get_cached_reasoning_content,
     _is_deepseek_model,
     _is_kimi_model,
     _needs_reasoning_injection,
@@ -29,8 +32,10 @@ from datus.models.sdk_patches import (
     _normalize_text_content_blocks,
     _postprocess_messages_for_reasoning,
     _preprocess_items_for_reasoning,
+    _reasoning_cache_keys,
     _reasoning_content_cache,
     _ReasoningContentStreamWrapper,
+    _sanitize_deepseek_history_without_reasoning,
     apply_sdk_patches,
     remove_sdk_patches,
 )
@@ -307,6 +312,73 @@ class TestReasoningContentStreamWrapper:
         assert _reasoning_content_cache["kimi-test-model"] == "Step 1. Step 2."
 
     @pytest.mark.asyncio
+    async def test_wrapper_captures_dict_delta_reasoning_content(self):
+        """Stream wrapper captures reasoning_content from dict-shaped LiteLLM deltas."""
+        _reasoning_content_cache.clear()
+
+        class FakeChoice:
+            def __init__(self, rc):
+                self.delta = {"reasoning_content": rc}
+
+        class FakeChunk:
+            def __init__(self, rc):
+                self.choices = [FakeChoice(rc)]
+
+        class FakeStream:
+            def __init__(self):
+                self._chunks = iter([FakeChunk("Step 1."), FakeChunk(" Step 2.")])
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self._chunks)
+                except StopIteration:
+                    raise StopAsyncIteration
+
+        wrapper = _ReasoningContentStreamWrapper(FakeStream(), "deepseek/deepseek-v4-flash")
+        async for _ in wrapper:
+            pass
+
+        assert _reasoning_content_cache["deepseek/deepseek-v4-flash"] == "Step 1. Step 2."
+        assert _reasoning_content_cache["deepseek-v4-flash"] == "Step 1. Step 2."
+
+    @pytest.mark.asyncio
+    async def test_wrapper_captures_nested_delta_reasoning_content(self):
+        """Stream wrapper handles provider-specific/model-extra reasoning fields."""
+        _reasoning_content_cache.clear()
+
+        class Delta:
+            model_extra = {"provider_specific_fields": {"reasoning_content": "nested thought"}}
+
+        class FakeChoice:
+            delta = Delta()
+
+        class FakeChunk:
+            choices = [FakeChoice()]
+
+        class FakeStream:
+            def __init__(self):
+                self._chunks = iter([FakeChunk()])
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self._chunks)
+                except StopIteration:
+                    raise StopAsyncIteration
+
+        wrapper = _ReasoningContentStreamWrapper(FakeStream(), "deepseek-v4-flash")
+        async for _ in wrapper:
+            pass
+
+        assert _reasoning_content_cache["deepseek-v4-flash"] == "nested thought"
+        assert _reasoning_content_cache["deepseek/deepseek-v4-flash"] == "nested thought"
+
+    @pytest.mark.asyncio
     async def test_wrapper_no_reasoning_content_no_cache(self):
         """Stream wrapper does not cache if no reasoning_content in chunks."""
         _reasoning_content_cache.clear()
@@ -460,16 +532,19 @@ class TestPostprocessMessagesForReasoning:
         """DeepSeek must NOT get an empty reasoning_content placeholder when no source exists.
 
         DeepSeek's API rejects empty reasoning_content in thinking mode with the same error
-        we're trying to fix; Kimi tolerates it. Only Kimi gets the "" fallback.
+        we're trying to fix; Kimi tolerates it. Only Kimi gets the "" fallback. Since this
+        message is after the last user turn, it is an in-flight tool call and must not be
+        hidden by cross-provider history cleanup.
         """
         _reasoning_content_cache.clear()
 
         messages = [
+            {"role": "user", "content": "current question"},
             {"role": "assistant", "content": "", "tool_calls": [{"id": "1"}]},
         ]
         result = _postprocess_messages_for_reasoning(messages, "deepseek-v4")
         # Key should NOT be present (leave the message alone)
-        assert "reasoning_content" not in result[0]
+        assert "reasoning_content" not in result[1]
 
         _reasoning_content_cache.clear()
 
@@ -493,6 +568,36 @@ class TestPostprocessMessagesForReasoning:
 
         _reasoning_content_cache.clear()
 
+    def test_deepseek_normalizes_non_string_reasoning_content_before_patch_loop(self):
+        """Provider-shaped reasoning_content must be normalized before current-value checks."""
+        _reasoning_content_cache.clear()
+
+        messages = [
+            {"role": "user", "content": "old question"},
+            {
+                "role": "assistant",
+                "content": None,
+                "reasoning_content": [{"text": "first turn thinking"}],
+                "tool_calls": [{"id": "1"}],
+            },
+            {"role": "tool", "content": "result"},
+            {
+                "role": "assistant",
+                "content": "Final answer",
+                "reasoning_content": {"text": "final answer thinking"},
+            },
+            {"role": "user", "content": "next question"},
+        ]
+
+        result = _postprocess_messages_for_reasoning(messages, "deepseek/deepseek-v4-flash")
+
+        assert result is messages
+        assert result[1]["reasoning_content"] == "first turn thinking"
+        assert result[1]["content"] == ""
+        assert result[3]["reasoning_content"] == "final answer thinking"
+
+        _reasoning_content_cache.clear()
+
     def test_deepseek_injects_reasoning_content_into_final_assistant_message(self):
         """DeepSeek V4 Pro requires final assistant messages from tool turns to keep reasoning_content."""
         _reasoning_content_cache.clear()
@@ -513,6 +618,96 @@ class TestPostprocessMessagesForReasoning:
 
         _reasoning_content_cache.clear()
 
+    def test_deepseek_uses_cached_reasoning_content_across_model_aliases(self):
+        """DeepSeek cache lookup handles LiteLLM-prefixed and raw model names."""
+        _reasoning_content_cache.clear()
+        _cache_reasoning_content("deepseek/deepseek-v4-flash", "alias cached thinking")
+
+        messages = [
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "1"}]},
+        ]
+        result = _postprocess_messages_for_reasoning(messages, "deepseek-v4-flash")
+
+        assert result[0]["reasoning_content"] == "alias cached thinking"
+        assert result[0]["content"] == ""
+
+        _reasoning_content_cache.clear()
+
+    def test_deepseek_drops_historical_tool_protocol_when_no_reasoning_source(self):
+        """Cross-provider session history may contain tool calls with no DeepSeek reasoning_content."""
+        _reasoning_content_cache.clear()
+
+        messages = [
+            {"role": "user", "content": "old question"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"id": "call_1", "function": {"name": "lookup", "arguments": "{}"}}],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "tool result"},
+            {"role": "assistant", "content": "old final answer"},
+            {"role": "user", "content": "new DeepSeek question"},
+        ]
+
+        result = _postprocess_messages_for_reasoning(messages, "deepseek/deepseek-v4-flash")
+
+        assert result == [
+            {"role": "user", "content": "old question"},
+            {"role": "assistant", "content": "old final answer"},
+            {"role": "user", "content": "new DeepSeek question"},
+        ]
+
+        _reasoning_content_cache.clear()
+
+    def test_deepseek_keeps_current_inflight_tool_call_when_no_reasoning_source(self):
+        """The cleanup must only affect history before the last user message."""
+        _reasoning_content_cache.clear()
+
+        messages = [
+            {"role": "user", "content": "current question"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"id": "call_1", "function": {"name": "lookup", "arguments": "{}"}}],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "tool result"},
+        ]
+
+        result = _postprocess_messages_for_reasoning(messages, "deepseek/deepseek-v4-flash")
+
+        assert result is messages
+        assert result[1]["tool_calls"]
+        assert "reasoning_content" not in result[1]
+        assert result[2]["role"] == "tool"
+
+        _reasoning_content_cache.clear()
+
+    def test_deepseek_uses_cache_instead_of_dropping_historical_tool_protocol(self):
+        """When DeepSeek reasoning is available, preserve and patch tool-call history."""
+        _reasoning_content_cache.clear()
+        _cache_reasoning_content("deepseek/deepseek-v4-flash", "cached reasoning")
+
+        messages = [
+            {"role": "user", "content": "old question"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"id": "call_1", "function": {"name": "lookup", "arguments": "{}"}}],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "tool result"},
+            {"role": "assistant", "content": "old final answer"},
+            {"role": "user", "content": "new DeepSeek question"},
+        ]
+
+        result = _postprocess_messages_for_reasoning(messages, "deepseek/deepseek-v4-flash")
+
+        assert result is messages
+        assert result[1]["reasoning_content"] == "cached reasoning"
+        assert result[1]["content"] == ""
+        assert result[3]["reasoning_content"] == "cached reasoning"
+
+        _reasoning_content_cache.clear()
+
     def test_kimi_does_not_inject_reasoning_content_into_final_assistant_message(self):
         """Kimi keeps the historical narrower assistant+tool_calls patch scope."""
         _reasoning_content_cache.clear()
@@ -529,6 +724,57 @@ class TestPostprocessMessagesForReasoning:
         assert "reasoning_content" not in result[2]
 
         _reasoning_content_cache.clear()
+
+
+class TestReasoningContentExtraction:
+    """Tests for robust reasoning_content extraction and cache aliases."""
+
+    def test_extracts_from_dict_and_nested_provider_fields(self):
+        value = {"provider_specific_fields": {"reasoning_content": "nested thought"}}
+        assert _extract_reasoning_content(value) == "nested thought"
+
+    def test_extracts_from_object_model_extra(self):
+        class Value:
+            model_extra = {"reasoning": {"text": "model-extra thought"}}
+
+        assert _extract_reasoning_content(Value()) == "model-extra thought"
+
+    def test_does_not_treat_normal_content_as_reasoning(self):
+        value = {"content": "visible assistant text"}
+        assert _extract_reasoning_content(value) is None
+
+    def test_reasoning_cache_keys_include_prefixed_and_raw_deepseek_names(self):
+        keys = _reasoning_cache_keys("deepseek/deepseek-v4-flash")
+        assert "deepseek/deepseek-v4-flash" in keys
+        assert "deepseek-v4-flash" in keys
+
+        _reasoning_content_cache.clear()
+        _cache_reasoning_content("deepseek-v4-flash", "thought")
+        assert _get_cached_reasoning_content("deepseek/deepseek-v4-flash") == "thought"
+
+        _reasoning_content_cache.clear()
+
+
+class TestDeepSeekHistorySanitization:
+    """Tests for cross-provider DeepSeek history cleanup."""
+
+    def test_sanitize_keeps_visible_assistant_text_from_tool_call_message(self):
+        messages = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "old"},
+            {"role": "assistant", "content": "visible text", "tool_calls": [{"id": "call_1"}]},
+            {"role": "tool", "tool_call_id": "call_1", "content": "tool result"},
+            {"role": "user", "content": "new"},
+        ]
+
+        result = _sanitize_deepseek_history_without_reasoning(messages)
+
+        assert result == [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "old"},
+            {"role": "assistant", "content": "visible text"},
+            {"role": "user", "content": "new"},
+        ]
 
 
 class TestApplyAndRemoveSdkPatches:

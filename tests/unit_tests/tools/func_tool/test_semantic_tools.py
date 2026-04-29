@@ -471,6 +471,41 @@ class TestAvailableTools:
         # 3 base + validate_semantic + attribution_analyze (both enabled when adapter is set)
         assert len(tools) == 5
 
+    def test_configured_adapter_load_failure_still_exposes_validate(self):
+        with (
+            patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
+            patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
+            patch(
+                "datus.tools.func_tool.semantic_tools.semantic_adapter_registry.create_adapter",
+                side_effect=RuntimeError("bad yaml"),
+            ),
+        ):
+            from datus.tools.func_tool.semantic_tools import SemanticTools
+
+            config = Mock()
+            config.active_model.return_value.model = "gpt-4o"
+            config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: adapter_type
+            config.build_semantic_adapter_config.side_effect = lambda adapter_type=None: {"datasource": "ns1"}
+            tool = SemanticTools(agent_config=config, adapter_type="metricflow")
+
+            with patch("datus.tools.func_tool.semantic_tools.trans_to_function_tool") as mock_trans:
+
+                def _mock_tool(func):
+                    tool = Mock()
+                    tool.name = func.__name__
+                    return tool
+
+                mock_trans.side_effect = _mock_tool
+                tools = tool.available_tools()
+
+            names = [tool.name for tool in tools]
+            assert "validate_semantic" in names
+            assert "attribution_analyze" not in names
+
+            result = tool.validate_semantic()
+            assert result.success == 0
+            assert "bad yaml" in result.error
+
 
 class TestListMetrics:
     def test_success_from_storage(self, semantic_tools_ext):

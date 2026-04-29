@@ -875,7 +875,7 @@ class TestBuiltinNodeDefaultSkills:
     def test_gen_metrics_defaults(self):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
-        assert GenMetricsAgenticNode.DEFAULT_SKILLS == "gen-metrics"
+        assert GenMetricsAgenticNode.DEFAULT_SKILLS == "gen-metrics, gen-semantic-model"
 
     def test_gen_semantic_model_defaults(self):
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
@@ -951,7 +951,7 @@ class TestSkillAllowedAgentsConsistency:
             ("gen_job", ["gen-table", "table-validation", "data-migration"]),
             ("gen_table", ["gen-table", "table-validation"]),
             ("gen_semantic_model", ["gen-semantic-model"]),
-            ("gen_metrics", ["gen-metrics"]),
+            ("gen_metrics", ["gen-metrics", "gen-semantic-model"]),
             ("gen_dashboard", ["bi-validation", "grafana-dashboard", "superset-dashboard"]),
             ("gen_skill", ["create-skill", "optimize-skill"]),
             ("scheduler", ["airflow-workflow", "scheduler-validation"]),

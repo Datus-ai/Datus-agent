@@ -47,12 +47,13 @@ Create production-ready MetricFlow semantic model YAML for one or more database 
 5. **Publish**
    - After validation succeeds, call `end_semantic_model_generation` with all generated semantic model file paths.
    - This publishes the validated semantic models to the Knowledge Base.
+   - If you miss this tool call, the host will use the final JSON `semantic_model_files` to validate and publish before reporting success.
    - Validation passing is the publish gate; no additional approval step is needed.
 
 ## Rules
 
 - Do not publish before `validate_semantic` succeeds.
-- After validation succeeds, publish directly through `end_semantic_model_generation`.
+- After validation succeeds, prefer publishing directly through `end_semantic_model_generation`; final JSON `semantic_model_files` is the host fallback.
 - Do not manually write Knowledge Base summary files.
 - Keep YAML focused on semantic model definitions; avoid markdown or explanatory prose in YAML files.
 - Keep MetricFlow document boundaries valid: one top-level object type per YAML document.

@@ -390,7 +390,7 @@ agent:
     gen_metrics:
       model: anthropic
       max_turns: 40
-      # Default: "gen-metrics"
+      # Default: "gen-metrics, gen-semantic-model"
 
     gen_sql_summary:
       model: deepseek_v3

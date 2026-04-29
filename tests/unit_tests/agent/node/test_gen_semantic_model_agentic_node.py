@@ -554,9 +554,71 @@ class TestExecuteStreamGenSemanticModelError:
         assert last.action_type == "error"
 
     @pytest.mark.asyncio
-    async def test_final_semantic_files_without_publish_fails(self, real_agent_config, mock_llm_create):
-        """A final JSON file list is not enough; the node must observe KB publish evidence."""
+    async def test_final_semantic_files_without_end_tool_auto_validates_and_publishes(
+        self, real_agent_config, mock_llm_create
+    ):
+        """A final JSON file list is enough when the node can validate and publish it."""
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+        from datus.tools.func_tool.base import FuncToolResult
+
+        datasource = real_agent_config.current_datasource
+        model_dir = real_agent_config.path_manager.semantic_model_path(datasource)
+        model_dir.mkdir(parents=True, exist_ok=True)
+        semantic_path = model_dir / "orders.yml"
+        semantic_path.write_text(
+            "data_source:\n"
+            "  name: orders\n"
+            "  sql_table: orders\n"
+            "  measures:\n"
+            "    - name: order_count\n"
+            "      agg: COUNT\n"
+            '      expr: "1"\n',
+            encoding="utf-8",
+        )
+        reported_semantic_path = f"subject/semantic_models/{datasource}/orders.yml"
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response(
+                    json.dumps(
+                        {
+                            "semantic_model_files": [reported_semantic_path],
+                            "output": "Generated semantic model.",
+                        }
+                    )
+                ),
+            ]
+        )
+
+        node = GenSemanticModelAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+        node.input = SemanticNodeInput(user_message="Generate semantic model")
+        node.semantic_func_tool = MagicMock()
+        node.semantic_func_tool.validate_semantic = MagicMock(
+            return_value=FuncToolResult(result={"valid": True, "issues": []})
+        )
+
+        action_manager = ActionHistoryManager()
+        actions = []
+        with patch(
+            "datus.agent.node.gen_semantic_model_agentic_node.GenerationHooks._sync_semantic_to_db",
+            return_value={"success": True, "message": "synced"},
+        ) as sync_mock:
+            async for action in node.execute_stream(action_manager):
+                actions.append(action)
+
+        assert actions[-1].status == ActionStatus.SUCCESS
+        assert actions[-1].action_type == "semantic_response"
+        node.semantic_func_tool.validate_semantic.assert_called_once()
+        sync_mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_final_semantic_files_without_validation_fails_closed(self, real_agent_config, mock_llm_create):
+        """Final JSON files do not publish when host-side validate_semantic fails."""
+        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+        from datus.tools.func_tool.base import FuncToolResult
 
         mock_llm_create.reset(
             responses=[
@@ -576,15 +638,27 @@ class TestExecuteStreamGenSemanticModelError:
             execution_mode="workflow",
         )
         node.input = SemanticNodeInput(user_message="Generate semantic model")
+        node.semantic_func_tool = MagicMock()
+        node.semantic_func_tool.validate_semantic = MagicMock(
+            return_value=FuncToolResult(
+                success=0,
+                error="bad semantic YAML",
+                result={"valid": False, "issues": [{"message": "bad semantic YAML"}]},
+            )
+        )
 
         action_manager = ActionHistoryManager()
         actions = []
-        async for action in node.execute_stream(action_manager):
-            actions.append(action)
+        with patch(
+            "datus.agent.node.gen_semantic_model_agentic_node.GenerationHooks._sync_semantic_to_db"
+        ) as sync_mock:
+            async for action in node.execute_stream(action_manager):
+                actions.append(action)
 
         assert actions[-1].status == ActionStatus.FAILED
         assert actions[-1].action_type == "error"
-        assert "did not publish to Knowledge Base" in actions[-1].output["error"]
+        assert "validate_semantic failed before publishing semantic models" in actions[-1].output["error"]
+        sync_mock.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_execute_stream_with_catalog_context(self, real_agent_config, mock_llm_create):
@@ -637,7 +711,7 @@ class TestSaveToDb:
         with patch(
             "datus.agent.node.gen_semantic_model_agentic_node.GenerationHooks._sync_semantic_to_db"
         ) as sync_mock:
-            assert node._save_to_db("nonexistent_model.yml") is None
+            assert node._save_to_db("nonexistent_model.yml") is False
         sync_mock.assert_not_called()
 
     def test_save_to_db_skips_empty_filename(self, real_agent_config, mock_llm_create, tmp_path):
@@ -647,7 +721,7 @@ class TestSaveToDb:
         with patch(
             "datus.agent.node.gen_semantic_model_agentic_node.GenerationHooks._sync_semantic_to_db"
         ) as sync_mock:
-            assert node._save_to_db("") is None
+            assert node._save_to_db("") is False
         sync_mock.assert_not_called()
 
     def test_save_to_db_rejects_out_of_sandbox_absolute_path(self, real_agent_config, mock_llm_create, tmp_path):

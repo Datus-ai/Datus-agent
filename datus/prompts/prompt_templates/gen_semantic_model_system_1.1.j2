@@ -99,12 +99,13 @@ Please strictly follow the instructions below:
      - Column not found: check column names match exactly with DDL
      - Invalid YAML syntax: check indentation and quoting
 
-7. **Complete generation** (REQUIRED - ONLY AFTER VALIDATION PASSES):
+7. **Complete generation** (ONLY AFTER VALIDATION PASSES):
    - **PREREQUISITE**: `validate_semantic` MUST have returned success. If not, go back to step 6.
-   - If `end_semantic_model_generation` tool is available: Call it with the list of generated file paths
+   - Prefer calling `end_semantic_model_generation` with the list of generated file paths so publish errors are caught while you can still fix files
      - **Path Rule**: Use the same path you passed to `write_file`, e.g. `{{ kind_subdir }}/{table_name}.yml`. Absolute paths are also accepted; bare filenames (`orders.yml`) are silently normalized but the prefixed form is preferred for clarity.
      - Example: `end_semantic_model_generation(semantic_model_files=["{{ kind_subdir }}/orders.yml", "{{ kind_subdir }}/customers.yml"])`
-   - After validation passes, call `end_semantic_model_generation` directly; no additional approval step is needed for Knowledge Base publishing.
+   - If you forget this tool, the host will still use the final JSON `semantic_model_files` to validate and publish the generated semantic models before reporting success.
+   - After validation passes, publish directly; no additional approval step is needed for Knowledge Base publishing.
    - **CRITICAL**: After all steps complete (including tool call if available), your final response MUST be a JSON object (see Output Format section)
 
 ## Multi-Table Generation Workflow
@@ -185,8 +186,9 @@ data_source:
 
 ### Step 7: Complete Generation (ONLY AFTER VALIDATION PASSES)
 - **PREREQUISITE**: `validate_semantic` MUST have returned success
-- If `end_semantic_model_generation` tool is available: Call it with **ALL generated file paths** using the form `{{ kind_subdir }}/{table_name}.yml` (absolute paths are also accepted)
-- After validation passes, publish directly through `end_semantic_model_generation`; validation is the publish gate.
+- Prefer calling `end_semantic_model_generation` with **ALL generated file paths** using the form `{{ kind_subdir }}/{table_name}.yml` (absolute paths are also accepted)
+- If you forget this tool, the host will use the final JSON `semantic_model_files` to validate and publish before reporting success.
+- After validation passes, publish directly; validation is the publish gate.
 - **CRITICAL**: Your final response MUST be a JSON object (see Output Format section)
 
 ## Relationship Discovery Strategy
@@ -201,7 +203,7 @@ The `analyze_table_relationships` tool uses a three-tier strategy:
 - **Required Fields**: Pay attention to fields marked as (required).
 - **Enum Values**: Use exact enum values (prefer uppercase).
 - **SQL Expressions**: Use complex SQL logic in expr fields when needed.
-- **Metric Creation**: Set `create_metric: true` for measures that should become queryable metrics.
+- **Metric Creation**: Do not rely on `create_metric: true` for persisted metrics. Generate explicit `metric:` YAML through the metrics workflow when metrics need to be discoverable in the Knowledge Base.
 - **Time Dimensions**: Include at least one time dimension with appropriate granularity.
 - **Document Structure**: Keep `data_source:` and explicit `metric:` definitions in separate YAML documents. Never place a top-level `metrics:` list beside `data_source:` in the same document.
 
@@ -213,7 +215,7 @@ Generate comprehensive, production-ready semantic models following MetricFlow be
 1. All YAML files have been written using `write_file` or `edit_file`
 2. `validate_semantic` has returned **success** (not just called - it must pass)
 3. If validation failed, you have fixed the issues and re-validated successfully
-4. `end_semantic_model_generation` has completed successfully when the tool is available
+4. `end_semantic_model_generation` has completed successfully when the tool is available, or the final JSON `semantic_model_files` names the files for host-side validation and publishing
 
 **CRITICAL**: Your final response MUST always be a valid JSON object, regardless of whether you called any tools.
 
@@ -283,7 +285,7 @@ data_source:
         percentile: number
         use_discrete_percentile: boolean
         use_approximate_percentile: boolean
-      create_metric: boolean          # Auto-create metric
+      create_metric: boolean          # Runtime MetricFlow metric only; not persisted to the Knowledge Base metric catalog
       create_metric_display_name: string  # Display name for auto-created metric
       non_additive_dimension:         # Non-additive dimension
         name: string
@@ -367,11 +369,9 @@ data_source:
     - name: total_amount
       agg: SUM
       expr: transaction_amount
-      create_metric: true
     - name: transaction_count
       agg: SUM
       expr: "1"
-      create_metric: true
     - name: unique_customers
       agg: COUNT_DISTINCT
       expr: customer_id

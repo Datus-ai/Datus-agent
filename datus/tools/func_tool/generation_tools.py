@@ -203,8 +203,9 @@ class GenerationTools:
             metric_file: Path to the generated metric YAML file (required).
                 Relative paths (e.g. ``"metrics/orders_metrics.yml"``) are preferred
                 and resolved against the sub-agent's semantic-model workspace using
-                the live ``agent_config.current_datasource``. Absolute paths are also
-                accepted and used as-is.
+                the live ``agent_config.current_datasource``. Absolute paths are only
+                accepted when they resolve inside the Knowledge Base semantic-model
+                sandbox.
             semantic_model_file: Path to the primary semantic model file that defines
                 the measure(s) used by this metric. Optional — provide this if the
                 semantic model was newly created or updated. Same relative/absolute
@@ -267,20 +268,40 @@ class GenerationTools:
                 f"metric_sqls={metric_sqls}"
             )
 
-            # Resolve relative paths against the project's subject/ tree,
-            # applying the same silent prefix normalization as FilesystemFuncTool
-            # so the LLM-reported path matches where the file was actually written.
-            from datus.cli.generation_hooks import normalize_kb_relative_path
+            # Resolve LLM-reported paths against the project's subject/ tree.
+            # Reject anything that escapes the per-kind semantic-model sandbox
+            # before opening or syncing files.
+            from datus.cli.generation_hooks import resolve_kb_sandbox_path
 
             subject_root = str(get_path_manager(agent_config=self.agent_config).subject_dir)
 
             def _resolve(path: str, kind: str) -> str:
-                if not path or os.path.isabs(path):
-                    return path
-                return os.path.normpath(os.path.join(subject_root, normalize_kb_relative_path(path, kind)))
+                if not path:
+                    return ""
+                return resolve_kb_sandbox_path(path, kind, subject_root) or ""
 
             abs_metric = _resolve(metric_file, "metric")
             abs_semantic = _resolve(semantic_model_file, "semantic")
+            if not abs_metric:
+                return FuncToolResult(
+                    success=0,
+                    error=f"metric_file escapes Knowledge Base sandbox: {metric_file!r}",
+                    result={
+                        "metric_file": metric_file,
+                        "semantic_model_file": semantic_model_file,
+                        "metric_sqls": metric_sqls,
+                    },
+                )
+            if semantic_model_file and not abs_semantic:
+                return FuncToolResult(
+                    success=0,
+                    error=f"semantic_model_file escapes Knowledge Base sandbox: {semantic_model_file!r}",
+                    result={
+                        "metric_file": metric_file,
+                        "semantic_model_file": semantic_model_file,
+                        "metric_sqls": metric_sqls,
+                    },
+                )
 
             # Pre-flight: refuse to sync a metric file that has no `metric:`
             # YAML blocks. The LLM occasionally fills the file with markdown

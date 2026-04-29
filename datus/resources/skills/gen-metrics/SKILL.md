@@ -23,9 +23,9 @@ Before anything else, call `list_metrics()` to get all metrics already in the kn
 - **Detect conflicts** — warn the user if a proposed metric name collides with an existing one
 - **Enable derived/ratio metrics** — know which metrics can serve as building blocks for more complex definitions
 
-## Phase 1: Understand Intent (MANDATORY ask_user)
+## Phase 1: Understand Intent
 
-Analyze the user's request, then **ALWAYS call `ask_user`** to confirm before proceeding. This phase supports two input modes:
+Analyze the user's request and confirm the generation scope before proceeding. When `ask_user` is available, call it to confirm the metric name(s), business meaning, and calculation logic. When `ask_user` is not available (for example workflow or batch mode), infer from the provided SQL/request and stop only if the scope is materially ambiguous.
 
 ### Input Mode Detection
 
@@ -50,7 +50,7 @@ If the user skips, proceed to Step 1c using only table structure and the user's 
 
 **Step 1c: Propose metric candidates** — Based on the table structure, reference SQL (if provided), and user's request, identify potential metric scenarios. See "Metric type detection rules" below.
 
-**Step 1d: MUST call `ask_user`** to confirm — present proposed metrics with `multi_select: true` (see Step 1-batch-d for format).
+**Step 1d: Confirm scope** — when `ask_user` is available, call it to confirm and present proposed metrics with `multi_select: true` (see Step 1-batch-d for format). If `ask_user` is not available, proceed with the confirmed/inferred scope from the input.
 
 ### Batch Mode: Step 1-batch
 
@@ -81,8 +81,8 @@ From N SQL queries, propose at most a **small set of core metrics** (typically f
 - Is this a **base metric** (simple aggregation on a column) or a **derivative** (ratio, expression combining other metrics)? Only propose base metrics by default.
 - Would a business user recognize this as a **standalone KPI**? If it's just an intermediate calculation, skip.
 
-**Step 1-batch-d: MUST call `ask_user`** to confirm with the user:
-- Present the deduplicated core metrics as **options** with `multi_select: true`
+**Step 1-batch-d: Confirm with the user when possible**
+- When `ask_user` is available, present the deduplicated core metrics as **options** with `multi_select: true`
 - Pass `questions` as an actual array argument, not a JSON string. Example tool arguments:
   ```json
   {
@@ -115,7 +115,7 @@ Detection keywords:
 - "per", "divided by", "average ... per" → derived/expr
 - "list all...", "show me the..." → not a metric, better suited for `gen_sql`
 
-**IMPORTANT**: Do NOT proceed to Phase 2 without user confirmation from `ask_user`.
+**IMPORTANT**: Do NOT proceed to Phase 2 with materially ambiguous scope. Use `ask_user` when available; otherwise stop and explain what information is needed.
 
 ## Phase 2: Ensure Semantic Model Exists
 
@@ -204,7 +204,8 @@ Bare filenames are silently normalized by the host, but the prefixed form is pre
 
 After all generated metrics have passed validation and dry-run:
 - Collect all generated metrics and their dry-run SQLs into `metric_sqls_json`
-- Call `end_metric_generation(metric_file, semantic_model_file, metric_sqls_json)` **ONCE** to sync them to Knowledge Base
+- Prefer calling `end_metric_generation(metric_file, semantic_model_file, metric_sqls_json)` **ONCE** to sync them to Knowledge Base while you can still fix publish errors
+- If you miss this tool call, the host will use the final JSON `metric_file` to validate, dry-run, and publish before reporting success
 - If no metrics were generated, do NOT call `end_metric_generation`
 
 Phase 1 confirms the generation scope; validation plus dry-run are the acceptance gate before syncing.
@@ -225,9 +226,9 @@ Phase 1 confirms the generation scope; validation plus dry-run are the acceptanc
 
 ## Important Rules
 
-- **Phase 1**: MUST call `ask_user` to confirm which metrics to generate before proceeding.
+- **Phase 1**: Confirm which metrics to generate before proceeding. Use `ask_user` when it is available.
 - **Validation MUST pass** — always call `validate_semantic` and ensure it passes before proceeding to the next phase. If it fails, fix and retry until it passes.
-- **Sync automatically after validation** — once validation and dry-run pass, call `end_metric_generation` without another user confirmation.
+- **Sync automatically after validation** — once validation and dry-run pass, prefer calling `end_metric_generation` without another user confirmation. The final JSON `metric_file` is the host fallback.
 - **COUNT agg must use `expr: "1"`** — never use `expr: {column}` with COUNT (use COUNT_DISTINCT for that).
 - For ratio metrics, both numerator and denominator measures must exist in the semantic model.
 - For derived metrics, all referenced metrics must already be defined.
@@ -237,4 +238,4 @@ Phase 1 confirms the generation scope; validation plus dry-run are the acceptanc
 - Every data_source MUST have a primary time dimension (`type: TIME` with `is_primary: true`).
 - Measure names must be globally unique across all data sources.
 - For snapshot/balance data, always add `non_additive_dimension` to prevent incorrect time aggregation.
-- **Keep files scoped** — only write semantic model YAML and metric YAML files. Sync metrics through `end_metric_generation`.
+- **Keep files scoped** — only write semantic model YAML and metric YAML files. Prefer syncing metrics through `end_metric_generation`; the final JSON `metric_file` is the host fallback.

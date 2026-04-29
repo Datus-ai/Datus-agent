@@ -43,7 +43,7 @@ class GenMetricsAgenticNode(AgenticNode):
     NODE_NAME = "gen_metrics"
 
     # Define-metric workflow scoped to ``gen_metrics`` via SKILL.md allowed_agents.
-    DEFAULT_SKILLS = "gen-metrics"
+    DEFAULT_SKILLS = "gen-metrics, gen-semantic-model"
 
     def __init__(
         self,
@@ -498,18 +498,21 @@ class GenMetricsAgenticNode(AgenticNode):
                 else:
                     response_content = str(last_successful_output)  # Fallback to string representation
 
-            # Extract semantic_model_file, metric_file and output from the final response_content
-            semantic_model_file, metric_file, extracted_output = self._extract_metric_and_output_from_response(
-                {"content": response_content}
-            )
+            # Extract semantic_model_file, metric_file, status and output from the final response_content
+            (
+                semantic_model_file,
+                metric_file,
+                status,
+                extracted_output,
+            ) = self._extract_metric_and_output_from_response({"content": response_content})
             if extracted_output:
                 response_content = extracted_output
 
-            if metric_file and not self.generation_evidence.metric_kb_sync_passed:
-                raise RuntimeError(
-                    "Metric generation did not publish to Knowledge Base. "
-                    "Call end_metric_generation after validate_semantic and query_metrics(dry_run=True) succeed."
-                )
+            self._finalize_metric_generation(
+                semantic_model_file=semantic_model_file,
+                metric_file=metric_file,
+                status=status,
+            )
 
             # Extract token usage (only in interactive mode with session)
             tokens_used = 0
@@ -585,20 +588,109 @@ class GenMetricsAgenticNode(AgenticNode):
             action_history_manager.add_action(error_action)
             yield error_action
 
+    @staticmethod
+    def _tool_succeeded(result: Any) -> bool:
+        if isinstance(result, dict):
+            return result.get("success", 1) in (1, True)
+        if hasattr(result, "success"):
+            return result.success in (1, True)
+        return False
+
+    @staticmethod
+    def _tool_error(result: Any) -> str:
+        if isinstance(result, dict):
+            return str(result.get("error") or result.get("result") or "unknown error")
+        return str(getattr(result, "error", None) or getattr(result, "result", None) or "unknown error")
+
+    def _resolve_metric_artifact_path(self, path: Optional[str], kind: str) -> str:
+        if not path:
+            return ""
+
+        from datus.cli.generation_hooks import resolve_kb_sandbox_path
+
+        resolved_path = resolve_kb_sandbox_path(path, kind, self.knowledge_base_dir)
+        if not resolved_path:
+            raise RuntimeError(f"Metric generation reported {kind}_file outside Knowledge Base sandbox: {path!r}")
+        return resolved_path
+
+    def _finalize_metric_generation(
+        self,
+        semantic_model_file: Optional[str],
+        metric_file: Optional[str],
+        status: Optional[str],
+    ) -> None:
+        """Ensure generated metric artifacts are published without relying on one LLM tool call."""
+        normalized_status = status.strip().lower() if isinstance(status, str) else status
+
+        if normalized_status == "skipped":
+            if metric_file:
+                raise RuntimeError(
+                    "Metric generation returned status='skipped' with a non-null metric_file. "
+                    "Skipped responses must set metric_file to null; generated metric files must be published."
+                )
+            return
+
+        if not metric_file or self.generation_evidence.metric_kb_sync_passed:
+            return
+
+        if not self.generation_tools:
+            raise RuntimeError("Metric generation produced a metric_file, but generation tools are unavailable.")
+
+        if not self.generation_evidence.validation_passed:
+            if not getattr(self, "semantic_tools", None):
+                raise RuntimeError("Metric generation produced a metric_file, but validate_semantic is unavailable.")
+            validation_result = self.semantic_tools.validate_semantic()
+            self.generation_evidence.record_validation_result(validation_result)
+            if not self._tool_succeeded(validation_result):
+                raise RuntimeError(
+                    f"validate_semantic failed before publishing metrics: {self._tool_error(validation_result)}"
+                )
+
+        abs_metric_file = self._resolve_metric_artifact_path(metric_file, "metric")
+        abs_semantic_model_file = (
+            self._resolve_metric_artifact_path(semantic_model_file, "semantic") if semantic_model_file else ""
+        )
+        preflight_error = self.generation_tools._validate_metric_file_has_blocks(abs_metric_file)
+        if preflight_error:
+            raise RuntimeError(preflight_error)
+
+        metric_names = self.generation_tools._extract_metric_names_from_file(abs_metric_file)
+        if metric_names and not self.generation_evidence.has_metric_dry_run(metric_names):
+            if not getattr(self, "semantic_tools", None):
+                raise RuntimeError("Metric generation produced a metric_file, but query_metrics is unavailable.")
+            dry_run_result = self.semantic_tools.query_metrics(metrics=metric_names, dry_run=True)
+            self.generation_evidence.record_metric_dry_run(metric_names, dry_run_result)
+            if not self._tool_succeeded(dry_run_result):
+                raise RuntimeError(
+                    "query_metrics(dry_run=True) failed for generated metric(s) "
+                    f"{', '.join(metric_names)}: {self._tool_error(dry_run_result)}"
+                )
+
+        publish_result = self.generation_tools.end_metric_generation(
+            metric_file=abs_metric_file,
+            semantic_model_file=abs_semantic_model_file,
+        )
+        if not self._tool_succeeded(publish_result):
+            raise RuntimeError(f"Metric KB sync failed: {self._tool_error(publish_result)}")
+        self.generation_evidence.mark_kb_sync("metric")
+
     def _extract_metric_and_output_from_response(
         self, output: dict
-    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    ) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
         """
-        Extract semantic model file, metric file and formatted output from model response.
+        Extract semantic model file, metric file, status and formatted output from model response.
 
         Per prompt template requirements, LLM should return JSON format:
-        {"semantic_model_file": "path.yml", "metric_file": "path.yml", "output": "markdown text"}
+        {"semantic_model_file": "path.yml", "metric_file": "path.yml",
+         "status": "generated" | "skipped", "output": "markdown text"}
+
+        ``status`` is optional for backward compatibility; absent values are treated as ``"generated"``.
 
         Args:
             output: Output dictionary from model generation
 
         Returns:
-            Tuple of (semantic_model_file: Optional[str], metric_file: Optional[str], output_string: Optional[str])
+            Tuple of (semantic_model_file, metric_file, status, output_string), each Optional[str].
         """
         try:
             from datus.utils.json_utils import strip_json_str
@@ -611,12 +703,14 @@ class GenMetricsAgenticNode(AgenticNode):
                 output_text = content.get("output")
                 semantic_model_file = content.get("semantic_model_file")
                 metric_file = content.get("metric_file")
+                status = content.get("status")
 
-                if metric_file and isinstance(metric_file, str):
+                if (metric_file and isinstance(metric_file, str)) or status == "skipped":
                     logger.debug(
-                        f"Extracted from dict: semantic_model_file={semantic_model_file}, metric_file={metric_file}"
+                        f"Extracted from dict: semantic_model_file={semantic_model_file}, "
+                        f"metric_file={metric_file}, status={status}"
                     )
-                    return semantic_model_file, metric_file, output_text
+                    return semantic_model_file, metric_file, status, output_text
 
                 logger.warning(f"Dict format but missing expected keys or invalid format: {content.keys()}")
 
@@ -633,21 +727,23 @@ class GenMetricsAgenticNode(AgenticNode):
                             output_text = parsed.get("output")
                             semantic_model_file = parsed.get("semantic_model_file")
                             metric_file = parsed.get("metric_file")
+                            status = parsed.get("status")
 
-                            if metric_file and isinstance(metric_file, str):
+                            if (metric_file and isinstance(metric_file, str)) or status == "skipped":
                                 logger.debug(
                                     f"Extracted from JSON string: "
-                                    f"semantic_model_file={semantic_model_file}, metric_file={metric_file}"
+                                    f"semantic_model_file={semantic_model_file}, "
+                                    f"metric_file={metric_file}, status={status}"
                                 )
-                                return semantic_model_file, metric_file, output_text
+                                return semantic_model_file, metric_file, status, output_text
 
                             logger.warning(f"Parsed JSON but missing expected keys or invalid format: {parsed.keys()}")
                     except Exception as e:
                         logger.warning(f"Failed to parse cleaned JSON: {e}. Cleaned content: {cleaned_json[:200]}")
 
             logger.warning(f"Could not extract metric_file from response. Content type: {type(content)}")
-            return None, None, None
+            return None, None, None, None
 
         except Exception as e:
             logger.error(f"Unexpected error extracting metric_file: {e}", exc_info=True)
-            return None, None, None
+            return None, None, None, None

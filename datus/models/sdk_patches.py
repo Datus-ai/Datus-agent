@@ -186,6 +186,208 @@ _original_showwarning = None
 _reasoning_content_cache: dict[str, str] = {}
 
 
+_REASONING_CONTENT_FIELD_NAMES = (
+    "reasoning_content",
+    "reasoning",
+    "reasoning_text",
+    "thinking",
+)
+_REASONING_CONTENT_NESTED_FIELD_NAMES = (
+    "model_extra",
+    "additional_kwargs",
+    "provider_specific_fields",
+    "extra",
+    "extra_fields",
+    "__pydantic_extra__",
+)
+
+
+def _read_field(value: Any, name: str) -> Any:
+    """Safely read ``name`` from dict-like and object-like values."""
+    if isinstance(value, dict):
+        return value.get(name)
+    try:
+        return getattr(value, name)
+    except Exception:
+        return None
+
+
+def _coerce_reasoning_text(value: Any) -> str | None:
+    """Return a non-empty reasoning string from known reasoning-shaped values."""
+    if isinstance(value, str):
+        return value if value.strip() else None
+
+    if isinstance(value, dict):
+        for key in _REASONING_CONTENT_FIELD_NAMES + ("text", "content"):
+            text = _coerce_reasoning_text(value.get(key))
+            if text:
+                return text
+        return None
+
+    if isinstance(value, list):
+        parts = [_coerce_reasoning_text(item) for item in value]
+        text = "".join(part for part in parts if part)
+        return text if text.strip() else None
+
+    return None
+
+
+def _extract_reasoning_content(value: Any) -> str | None:
+    """Extract reasoning text from LiteLLM/OpenAI-style dicts or objects.
+
+    LiteLLM and provider adapters do not expose DeepSeek reasoning deltas in
+    one uniform shape. Some versions use ``delta.reasoning_content`` while
+    others put the same value inside dict deltas, ``model_extra`` or
+    ``provider_specific_fields``. Only inspect known reasoning fields so normal
+    assistant ``content`` is never mistaken for hidden reasoning.
+    """
+    seen: set[int] = set()
+    stack = [value]
+
+    while stack:
+        current = stack.pop()
+        if current is None:
+            continue
+        current_id = id(current)
+        if current_id in seen:
+            continue
+        seen.add(current_id)
+
+        for field_name in _REASONING_CONTENT_FIELD_NAMES:
+            text = _coerce_reasoning_text(_read_field(current, field_name))
+            if text:
+                return text
+
+        for nested_field_name in _REASONING_CONTENT_NESTED_FIELD_NAMES:
+            nested = _read_field(current, nested_field_name)
+            if nested is not None and nested is not current:
+                stack.append(nested)
+
+    return None
+
+
+def _reasoning_cache_keys(model: str | None) -> list[str]:
+    """Return equivalent cache keys for prefixed/unprefixed LiteLLM model names."""
+    if not model:
+        return []
+
+    raw_model = str(model).strip()
+    if not raw_model:
+        return []
+
+    keys: list[str] = []
+
+    def add(key: str | None) -> None:
+        if not key:
+            return
+        stripped = key.strip()
+        if stripped and stripped not in keys:
+            keys.append(stripped)
+        lowered = stripped.lower()
+        if lowered and lowered not in keys:
+            keys.append(lowered)
+
+    add(raw_model)
+
+    if "/" in raw_model:
+        _, suffix = raw_model.split("/", 1)
+        add(suffix)
+    elif _is_deepseek_model(raw_model):
+        add(f"deepseek/{raw_model}")
+    elif _is_kimi_model(raw_model):
+        add(f"moonshot/{raw_model}")
+
+    return keys
+
+
+def _cache_reasoning_content(model: str | None, reasoning_content: str) -> None:
+    """Cache reasoning_content under all equivalent model aliases."""
+    if not reasoning_content or not reasoning_content.strip():
+        return
+    for key in _reasoning_cache_keys(model):
+        _reasoning_content_cache[key] = reasoning_content
+
+
+def _get_cached_reasoning_content(model: str | None) -> str | None:
+    """Fetch cached reasoning_content across prefixed/unprefixed aliases."""
+    for key in _reasoning_cache_keys(model):
+        cached = _reasoning_content_cache.get(key)
+        if cached and cached.strip():
+            return cached
+    return None
+
+
+def _content_text(content: Any) -> str | None:
+    """Extract visible text from a chat-completion content value."""
+    if isinstance(content, str):
+        text = content.strip()
+        return text or None
+
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text")
+            else:
+                text = _read_field(item, "text")
+            if isinstance(text, str) and text.strip():
+                parts.append(text.strip())
+        joined = "\n".join(parts).strip()
+        return joined or None
+
+    return None
+
+
+def _sanitize_deepseek_history_without_reasoning(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop historical tool protocol messages that DeepSeek thinking cannot replay.
+
+    DeepSeek thinking mode requires every assistant message with ``tool_calls``
+    to carry the exact reasoning_content that DeepSeek produced. When a user
+    switches from another provider, old session history can contain tool-call
+    turns without any DeepSeek reasoning source. The current turn still has a
+    trailing user message, so only sanitize messages before the last user
+    message and leave in-flight DeepSeek tool calls untouched.
+    """
+    last_user_index = -1
+    for idx, msg in enumerate(messages):
+        if isinstance(msg, dict) and msg.get("role") == "user":
+            last_user_index = idx
+
+    if last_user_index <= 0:
+        return messages
+
+    sanitized: list[dict[str, Any]] = []
+    dropped_count = 0
+    for idx, msg in enumerate(messages):
+        if not isinstance(msg, dict) or idx >= last_user_index:
+            sanitized.append(msg)
+            continue
+
+        role = msg.get("role")
+        if role == "assistant" and msg.get("tool_calls") and not _extract_reasoning_content(msg):
+            text = _content_text(msg.get("content"))
+            if text:
+                clean_msg = {key: value for key, value in msg.items() if key not in ("tool_calls", "reasoning_content")}
+                clean_msg["content"] = text
+                sanitized.append(clean_msg)
+            dropped_count += 1
+            continue
+
+        if role == "tool":
+            dropped_count += 1
+            continue
+
+        sanitized.append(msg)
+
+    if dropped_count:
+        logger.info(
+            "[SDK Patch] Dropped %s historical tool-protocol message(s) before DeepSeek thinking call "
+            "because no replayable reasoning_content was available.",
+            dropped_count,
+        )
+    return sanitized
+
+
 class _ReasoningContentStreamWrapper:
     """
     Async iterator wrapper that intercepts streaming chunks to cache
@@ -212,11 +414,12 @@ class _ReasoningContentStreamWrapper:
             raise
 
         try:
-            for choice in getattr(chunk, "choices", []):
-                delta = getattr(choice, "delta", None)
+            choices = _read_field(chunk, "choices") or []
+            for choice in choices:
+                delta = _read_field(choice, "delta")
                 if delta:
-                    rc = getattr(delta, "reasoning_content", None)
-                    if rc and isinstance(rc, str):
+                    rc = _extract_reasoning_content(delta)
+                    if rc:
                         self._reasoning_chunks.append(rc)
         except Exception:
             pass
@@ -228,7 +431,7 @@ class _ReasoningContentStreamWrapper:
         if self._reasoning_chunks:
             full_rc = "".join(self._reasoning_chunks)
             if full_rc.strip():
-                _reasoning_content_cache[self._model] = full_rc
+                _cache_reasoning_content(self._model, full_rc)
                 logger.debug(
                     f"[SDK Patch] Cached reasoning_content from stream, model={self._model}, length={len(full_rc)}"
                 )
@@ -258,18 +461,21 @@ def _postprocess_messages_for_reasoning(
     # Find the last non-empty reasoning_content to reuse if needed
     last_reasoning_content = None
     for msg in messages:
-        if isinstance(msg, dict) and "reasoning_content" in msg:
-            rc = msg.get("reasoning_content", "")
-            if rc and rc.strip():
+        if isinstance(msg, dict):
+            rc = _extract_reasoning_content(msg)
+            if rc:
                 last_reasoning_content = rc
                 logger.debug(f"[SDK Patch] Found non-empty reasoning_content in messages, length={len(rc)}")
 
     # Fallback: use cached reasoning_content from a previous API response
     if not last_reasoning_content and model:
-        cached_rc = _reasoning_content_cache.get(model)
+        cached_rc = _get_cached_reasoning_content(model)
         if cached_rc:
             last_reasoning_content = cached_rc
             logger.debug(f"[SDK Patch] Using cached reasoning_content as fallback, length={len(cached_rc)}")
+
+    if is_deepseek and not last_reasoning_content:
+        messages = _sanitize_deepseek_history_without_reasoning(messages)
 
     # Ensure assistant messages preserve reasoning_content when the provider
     # requires it. DeepSeek V4 Pro rejects follow-up requests if the final
@@ -283,8 +489,10 @@ def _postprocess_messages_for_reasoning(
         has_tool_calls = bool(msg.get("tool_calls"))
         should_patch_message = has_tool_calls or is_deepseek
         if should_patch_message:
-            current_rc = msg.get("reasoning_content", "")
-            if (not current_rc or not current_rc.strip()) and last_reasoning_content:
+            current_rc = _coerce_reasoning_text(msg.get("reasoning_content"))
+            if current_rc:
+                msg["reasoning_content"] = current_rc
+            elif last_reasoning_content:
                 msg["reasoning_content"] = last_reasoning_content
                 logger.debug("[SDK Patch] Injected reasoning_content into assistant message")
             elif has_tool_calls and "reasoning_content" not in msg and is_kimi:
@@ -474,9 +682,9 @@ def apply_sdk_patches() -> None:
                         for choice in getattr(response, "choices", []):
                             msg = getattr(choice, "message", None)
                             if msg:
-                                rc = getattr(msg, "reasoning_content", None)
-                                if rc and isinstance(rc, str) and rc.strip():
-                                    _reasoning_content_cache[model] = rc
+                                rc = _extract_reasoning_content(msg)
+                                if rc:
+                                    _cache_reasoning_content(model, rc)
                                     logger.debug(
                                         f"[SDK Patch] Cached reasoning_content from response, "
                                         f"model={model}, length={len(rc)}"
@@ -513,9 +721,9 @@ def apply_sdk_patches() -> None:
                     for choice in getattr(response, "choices", []):
                         msg = getattr(choice, "message", None)
                         if msg:
-                            rc = getattr(msg, "reasoning_content", None)
-                            if rc and isinstance(rc, str) and rc.strip():
-                                _reasoning_content_cache[model] = rc
+                            rc = _extract_reasoning_content(msg)
+                            if rc:
+                                _cache_reasoning_content(model, rc)
                                 logger.debug(
                                     f"[SDK Patch] Cached reasoning_content from sync response, "
                                     f"model={model}, length={len(rc)}"

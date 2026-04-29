@@ -175,7 +175,7 @@ If `query_metrics(dry_run=True)` fails for any metric, fix the YAML and rerun
 
 ### Step 10: Complete Generation
 
-After validation succeeds and SQLs are collected, MUST call `end_metric_generation` tool with the metric SQLs as a JSON string. `metric_file` and `semantic_model_file` use the same `{{ kind_subdir }}/` prefix you wrote to:
+After validation succeeds and SQLs are collected, prefer calling `end_metric_generation` tool with the metric SQLs as a JSON string so publish errors are caught while you can still fix files. If you forget this tool, the host will still use the final JSON `metric_file` to validate, dry-run, and publish the generated metrics before reporting success. `metric_file` and `semantic_model_file` use the same `{{ kind_subdir }}/` prefix you wrote to:
 ```
 end_metric_generation(
     metric_file="{{ kind_subdir }}/metrics/users_metrics.yml",
@@ -196,13 +196,25 @@ end_metric_generation(
 {
   "semantic_model_file": "{{ kind_subdir }}/users.yml",
   "metric_file": "{{ kind_subdir }}/metrics/users_metrics.yml",
+  "status": "generated",
   "output": "markdown summary of extracted measures and generated metrics"
 }
 ```
 
 - `semantic_model_file`: Path using the semantic model prefix, e.g. `"{{ kind_subdir }}/users.yml"`
 - `metric_file`: Path using the semantic model prefix, e.g. `"{{ kind_subdir }}/metrics/users_metrics.yml"`
+- `status`: One of `"generated"` (at least one new metric was created and is ready to publish via `end_metric_generation` or the host fallback) or `"skipped"` (every requested metric already existed and was skipped — set `metric_file` to `null` in this case).
 - `output`: Brief summary message
+
+If every requested metric already exists, return:
+```json
+{
+  "semantic_model_file": null,
+  "metric_file": null,
+  "status": "skipped",
+  "output": "All requested metrics already exist; no new metric was generated."
+}
+```
 
 **DO NOT** return markdown, plain text, or any other format. Return **ONLY** the JSON object.
 
@@ -268,6 +280,6 @@ metric:
 4. **No redundancy**: If a measure already exists in semantic model, reuse it
 5. **Validate**: Always validate before completing
 6. **Generate SQL**: Use query_metrics(dry_run=True) to get SQL for each metric
-7. **Complete**: Always call end_metric_generation with metric_sqls_json (JSON string) at the end
+7. **Complete**: Prefer calling end_metric_generation with metric_sqls_json (JSON string) at the end; final JSON `metric_file` is the host fallback
 8. **YAML String Quoting**: ALWAYS wrap `description` values in double quotes (`"`). Escape special characters: `"` → `\"`, `\` → `\\`
 9. **The metric file MUST contain explicit `metric:` YAML blocks** (one per metric, separated by `---`). Documentation, markdown, comments, or empty content will be rejected by the sync step. Never rely on `create_metric: true` on semantic-model measures — that flag only emits metrics at MetricFlow runtime and they are NOT synced to the Knowledge Base.
