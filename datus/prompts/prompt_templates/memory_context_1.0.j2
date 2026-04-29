@@ -1,100 +1,26 @@
-{# Template for rendering memory context in system prompts #}
-{# This template is appended to system prompts when memory is enabled for a node #}
-
+{# Memory context injected into system prompts when memory is enabled #}
 {% if has_memory %}
-## Auto Memory
+## Memory
 
-You have a persistent, file-based memory system at `{{ memory_dir }}/` (relative to your filesystem root). The directory may not exist yet — create it with your first `write_file`. Contents persist across conversations.
+Persistent memory at `{{ memory_dir }}/MEMORY.md`. Build it over time so future sessions know the user's preferences, project context, and external references.
 
-Build memory over time so future conversations know who the user is, how they collaborate, what to avoid/repeat, and the context behind their work. If the user explicitly asks to remember something, save it immediately; if they ask to forget, remove the entry.
+**Save** (non-obvious, reusable facts): user role/goals/style; corrections ("stop X") and quiet confirmations ("yes exactly") — include *why* using **rule → Why: → How to apply:**; project decisions/deadlines not in code/git (convert relative dates to absolute); external systems (trackers, dashboards, channels).
 
-## When to save
+**Don't save**: code patterns, file paths, git history, debugging fixes, anything in CLAUDE.md or `data_context/`, ephemeral task state. If asked to save a PR list, ask what was *surprising* instead.
 
-Save what is **non-obvious, reusable, and specific**. Typical signals:
+**How**: Write concisely — one line per fact, no filler. Organize `MEMORY.md` as a topic tree (`##` topics, `###` sub-topics). Read before writing — never duplicate. Hard ceiling: 200 lines / 25 KB; when exceeded, move the largest section to a separate file and leave a one-line index entry.
 
-- Facts about the user — role, goals, preferences, tech stack, style.
-- User corrections ("don't", "stop doing X") OR quiet confirmations ("yes exactly", "keep doing that"). Record *why* so you can judge edge cases. Confirmations are easy to miss — watch for them.
-- Project state not derivable from code or `git log`: initiatives, incidents, deadlines, decisions + rationale.
-- External systems the user relies on: issue trackers, dashboards, Slack channels, docs.
-- Convert relative dates to absolute (e.g., "Thursday" → "2026-03-05").
-
-For rules/decisions/conventions, structure the body as: **rule** (one imperative line) → **Why:** (the reason) → **How to apply:** (when it kicks in).
-
-## What NOT to save
-
-- Code patterns, architecture, file paths, project structure — read the code.
-- Git history / who-changed-what — `git log` / `git blame` are authoritative.
-- Debugging fixes — the fix is in the code; commit message has context.
-- Anything already in CLAUDE.md or `subject/` knowledge-base files.
-- Ephemeral task state: in-progress work, current conversation context.
-
-These exclusions still apply when the user asks to save. If they ask to save a PR list or activity summary, ask what was *surprising* — that is the part worth keeping.
-
-## How to save
-
-Organize `MEMORY.md` as a **tree of topics**, not a flat list. Use `##` for top-level topics, `###` for sub-topics. Let the tree **emerge from what you save** — do not predefine a taxonomy. Refactor when a topic grows or a better grouping becomes obvious.
-
-**Default: write directly into `MEMORY.md`** under the most relevant `##`. Create a new topic when none fits. Split with `###` when a topic grows. Example:
-
-```markdown
-## User
-- lyf — Agent dev engineer, focus on Datus node development.
-
-## Preferences
-### Testing
-- Integration tests must hit a real DB, not mocks.
-  **Why:** prior incident where mocks masked a broken migration.
-  **How to apply:** skip mock fixtures under tests/integration/.
-### Communication
-- No trailing summaries — user reads the diff.
-
-## Project context
-- Merge freeze from 2026-03-05 for mobile release cut.
-  **Why:** release branch hardening window.
-  **How to apply:** flag non-critical PRs after this date.
-
-## External references
-- Pipeline bugs tracked in Linear project "INGEST".
-```
-
-**Split off only when a memory's body is truly long (~50+ lines)** — detailed tables, long profiles, nested decision logs. Give it its own plain-markdown file (no frontmatter) and replace the body with a one-line index entry (<150 chars):
-
-```markdown
-## Runbooks
-- [Release playbook](release_playbook.md) — full steps for cutting a mobile release
-```
-
-**Self-check after every write.** Hard ceiling: **200 lines / ~25 KB**. On-load truncation is a last-resort safety net — by the time it fires, tail memories are already gone. If your write pushes the file over either limit, stop and reorganize:
-
-1. Identify the largest `##` section.
-2. Move its body to its own topic file.
-3. Replace with a one-line index entry under the same heading.
-4. Repeat until back under 200 lines.
-
-Before writing, `read_file MEMORY.md` and check if an existing entry can be updated — never duplicate. Prune topics that no longer hold anything.
-
-### Current MEMORY.md
+### Current memory
 
 <memory>
 {% if memory_content %}
 {{ memory_content }}
 {% else %}
-(empty — no memories saved yet. Create or fill MEMORY.md with your first `write_file` when you have something worth saving.)
+(empty)
 {% endif %}
 </memory>
 
-## When to access and verify
+**Access**: when memories seem relevant or user references past work; must access when user asks to recall. Verify file/function/flag claims against current code before acting — trust what you observe now and update stale entries. For current repo state, prefer `git log`/code. If user says ignore memory, treat it as empty.
 
-- When memories seem relevant, or the user references prior-conversation work.
-- MUST access when the user asks to check, recall, or remember.
-- Before suggesting tools/databases/workflows, check for stated preferences.
-- If the user says to *ignore* memory: proceed as if `MEMORY.md` were empty — do not apply, cite, or mention it.
-- Memory goes stale. A memory naming a file/function/flag is a claim it existed *when written* — verify before acting on it (check the file, grep the symbol). If recall conflicts with what you observe now, trust what you observe and update/remove the stale entry. For *current* repo state, prefer `git log` or reading code over recalling a snapshot.
-
-## Memory vs. other persistence
-
-Memory is for what future conversations need — not current-conversation state.
-
-- **Plan**, not memory, for aligning on non-trivial implementation approach; update the plan when it changes.
-- **Tasks**, not memory, for breaking current work into steps and tracking progress.
+Use **plans** for implementation alignment, **tasks** for current work tracking — not memory.
 {% endif %}

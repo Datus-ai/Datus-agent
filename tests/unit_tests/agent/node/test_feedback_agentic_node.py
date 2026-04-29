@@ -441,7 +441,7 @@ class TestMemoryEnabled:
 
         prompt = node._inject_memory_context("BASE PROMPT")
         assert prompt == "BASE PROMPT"
-        assert "## Auto Memory" not in prompt
+        assert "## Memory" not in prompt
 
     def test_explicit_override_forces_injection(self, real_agent_config, mock_llm_create):
         """Passing override_node_name bypasses self.memory_enabled (feedback path)."""
@@ -459,7 +459,7 @@ class TestMemoryEnabled:
         assert node.memory_enabled is False
 
         prompt = node._inject_memory_context("BASE PROMPT", override_node_name="chat")
-        assert "## Auto Memory" in prompt
+        assert "## Memory" in prompt
         assert ".datus/memory/chat" in prompt
 
     def test_explicit_memory_enabled_override(self, real_agent_config, mock_llm_create):
@@ -481,7 +481,7 @@ class TestMemoryEnabled:
         # Flipping the attribute post-init should re-enable injection.
         node.memory_enabled = True
         prompt = node._inject_memory_context("BASE PROMPT")
-        assert "## Auto Memory" in prompt
+        assert "## Memory" in prompt
         assert ".datus/memory/gen_sql" in prompt
 
 
@@ -621,7 +621,7 @@ class TestFeedbackSystemPrompt:
 
         prompt = node._get_system_prompt()
 
-        assert "## Auto Memory" in prompt
+        assert "## Memory" in prompt
         # get_memory_dir returns a relative path; it should appear verbatim.
         assert ".datus/memory/chat" in prompt
         # The truncated memory content itself is embedded in <memory>…</memory>.
@@ -648,7 +648,7 @@ class TestFeedbackSystemPrompt:
 
         prompt = node._get_system_prompt()
 
-        assert "## Auto Memory" in prompt
+        assert "## Memory" in prompt
         assert ".datus/memory/gen_sql" in prompt
 
     def test_feedback_system_prompt_renders_empty_placeholder_when_caller_file_missing(
@@ -666,13 +666,13 @@ class TestFeedbackSystemPrompt:
 
         prompt = node._get_system_prompt()
 
-        assert "## Auto Memory" in prompt
+        assert "## Memory" in prompt
         assert ".datus/memory/chat" in prompt
         # The <memory> block is always rendered, with an explicit empty marker
         # when no MEMORY.md has been created yet.
         assert "<memory>" in prompt
         assert "</memory>" in prompt
-        assert "empty — no memories saved yet" in prompt
+        assert "(empty)" in prompt
 
     def test_feedback_system_prompt_renders_empty_placeholder_when_caller_file_is_empty(
         self, real_agent_config, mock_llm_create
@@ -695,9 +695,9 @@ class TestFeedbackSystemPrompt:
 
         prompt = node._get_system_prompt()
 
-        assert "## Auto Memory" in prompt
+        assert "## Memory" in prompt
         assert "<memory>" in prompt
-        assert "empty — no memories saved yet" in prompt
+        assert "(empty)" in prompt
 
 
 # ---------------------------------------------------------------------------
