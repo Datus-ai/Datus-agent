@@ -607,9 +607,7 @@ class FilesystemFuncTool(BaseTool):
 
             target_path = seed.resolved
             if not target_path.exists():
-                return FuncToolResult(success=0, error=f"Directory not found: {seed.display}")
-            if not target_path.is_dir():
-                return FuncToolResult(success=0, error=f"Path is not a directory: {seed.display}")
+                return FuncToolResult(success=0, error=f"Path not found: {seed.display}")
 
             flags = 0 if case_sensitive else re.IGNORECASE
             try:
@@ -621,44 +619,53 @@ class FilesystemFuncTool(BaseTool):
             if seed.zone in (PathZone.INTERNAL, PathZone.WHITELIST):
                 report_relative_to = self._root_resolved
 
-            matches: List[dict] = []
-            for file_path in self._walk_files(seed, include_pattern=include):
+            def _search_file(file_path: Path, reported_file: str) -> List[dict]:
                 if not self._is_allowed_file(file_path):
-                    continue
-
+                    return []
                 try:
                     if file_path.stat().st_size > self.config.max_file_size:
-                        continue
+                        return []
                 except OSError:
-                    continue
-
+                    return []
                 try:
                     content = file_path.read_text(encoding="utf-8")
                 except (UnicodeDecodeError, PermissionError, OSError):
-                    continue
-
-                if report_relative_to is not None:
-                    try:
-                        reported_file = str(file_path.relative_to(report_relative_to))
-                    except ValueError:
-                        reported_file = str(file_path)
-                else:
-                    reported_file = str(file_path)
-
+                    return []
+                found = []
                 for line_num, line in enumerate(content.split("\n"), start=1):
                     if compiled.search(line):
-                        matches.append(
-                            {
-                                "file": reported_file,
-                                "line": line_num,
-                                "content": line.rstrip(),
-                            }
-                        )
+                        found.append({"file": reported_file, "line": line_num, "content": line.rstrip()})
+                return found
+
+            matches: List[dict] = []
+
+            if target_path.is_file():
+                if report_relative_to is not None:
+                    try:
+                        reported_file = str(target_path.relative_to(report_relative_to))
+                    except ValueError:
+                        reported_file = str(target_path)
+                else:
+                    reported_file = str(target_path)
+                matches = _search_file(target_path, reported_file)[:max_matches]
+            elif target_path.is_dir():
+                for file_path in self._walk_files(seed, include_pattern=include):
+                    if report_relative_to is not None:
+                        try:
+                            reported_file = str(file_path.relative_to(report_relative_to))
+                        except ValueError:
+                            reported_file = str(file_path)
+                    else:
+                        reported_file = str(file_path)
+
+                    for m in _search_file(file_path, reported_file):
+                        matches.append(m)
                         if len(matches) >= max_matches:
                             break
-
-                if len(matches) >= max_matches:
-                    break
+                    if len(matches) >= max_matches:
+                        break
+            else:
+                return FuncToolResult(success=0, error=f"Path is not a file or directory: {seed.display}")
 
             truncated = len(matches) >= max_matches
             result_data: dict = {

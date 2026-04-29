@@ -477,6 +477,32 @@ class TestGrep:
         assert result.result["truncated"] is True
         assert len(result.result["matches"]) == 100
 
+    def test_grep_single_file(self, tmp_path):
+        f = tmp_path / "target.py"
+        f.write_text("hello world\nno match\nhello again\n")
+        tool = _make_tool(str(tmp_path))
+        result = tool.grep("hello", "target.py")
+        assert result.success == 1
+        assert len(result.result["matches"]) == 2
+        assert result.result["matches"][0]["line"] == 1
+        assert result.result["matches"][1]["line"] == 3
+
+    def test_grep_single_file_no_match(self, tmp_path):
+        f = tmp_path / "empty.py"
+        f.write_text("nothing here\n")
+        tool = _make_tool(str(tmp_path))
+        result = tool.grep("missing", "empty.py")
+        assert result.success == 1
+        assert result.result["matches"] == []
+
+    def test_grep_file_not_dir_error_gone(self, tmp_path):
+        f = tmp_path / "code.sql"
+        f.write_text("SELECT 1\n")
+        tool = _make_tool(str(tmp_path))
+        result = tool.grep("SELECT", "code.sql")
+        assert result.success == 1
+        assert len(result.result["matches"]) == 1
+
 
 # ---------------------------------------------------------------------------
 # FilesystemFuncTool - available_tools
