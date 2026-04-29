@@ -22,6 +22,8 @@ Tests verify:
 NO MOCK EXCEPT LLM: The only mock is LLMBaseModel.create_model -> MockLLMModel.
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from datus.configuration.node_type import NodeType
@@ -496,25 +498,23 @@ class TestChatAgenticNodeMCPSetup:
         assert isinstance(node.mcp_servers, dict)
         assert len(node.mcp_servers) == 0
 
-    def test_setup_metricflow_mcp_returns_none_without_db_config(self, real_agent_config, mock_llm_create):
-        """_setup_metricflow_mcp returns None when agent_config is None."""
+    def test_mcp_setup_uses_configured_servers_only(self, real_agent_config, mock_llm_create):
+        """MCP server setup delegates configured names to MCPManager."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
 
         node = ChatAgenticNode(
-            node_id="test_mf_none",
-            description="Test metricflow none",
+            node_id="test_mcp_configured",
+            description="Test configured MCP",
             node_type=NodeType.TYPE_CHAT,
             agent_config=real_agent_config,
         )
+        node.node_config = {"mcp": "custom_server"}
 
-        # Temporarily set agent_config to None
-        original_config = node.agent_config
-        node.agent_config = None
-
-        result = node._setup_metricflow_mcp()
-        assert result is None
-
-        node.agent_config = original_config
+        mock_server = MagicMock()
+        with patch.object(node, "_setup_mcp_server_from_config", return_value=mock_server) as mock_setup:
+            result = node._setup_mcp_servers()
+        mock_setup.assert_called_once_with("custom_server")
+        assert result == {"custom_server": mock_server}
 
     def test_setup_mcp_server_from_config_returns_none_for_unknown_server(self, real_agent_config, mock_llm_create):
         """_setup_mcp_server_from_config returns None for non-existent server name."""

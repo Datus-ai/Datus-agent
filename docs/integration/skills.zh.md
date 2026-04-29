@@ -192,7 +192,7 @@ agentic_nodes:
 | 字段 | 来源 | 描述 |
 |------|------|------|
 | `tools` | 内置 | Datus 原生工具（如 `db_tools.*`、`context_search_tools.*`、`date_parsing_tools.*`） |
-| `mcp` | 第三方 | 外部 MCP 服务器工具，通过 `.mcp.json` 配置（如 `metricflow_mcp`、`filesystem`） |
+| `mcp` | 第三方 | 外部 MCP 服务器工具，通过 `.mcp.json` 配置（如 `filesystem`） |
 | `skills` | 用户自定义 | 从 `SKILL.md` 文件发现的技能 — 可在 Markdown 中定义工作流，也可通过自定义脚本扩展能力 |
 
 要在自定义 Subagent 中启用技能，请在 `agent.yml` 的 `agentic_nodes` 部分中为对应 Subagent 添加 `skills` 字段：
@@ -203,7 +203,7 @@ agentic_nodes:
   school_report:
     node_class: gen_report
     tools: db_tools.*, context_search_tools.*
-    mcp: metricflow_mcp
+    mcp: filesystem
     skills: "report-*, data-*"
     model: deepseek
 

@@ -125,15 +125,13 @@ MCP（Model Context Protocol）是 Datus-CLI 连接外部工具服务器的方�
 ```json
 {
   "mcpServers": {
-    "metricflow": {
-      "command": "/Users/me/miniconda3/bin/uv",
+    "filesystem": {
+      "command": "npx",
       "args": [
-        "--directory", "/Users/me/src/mcp-metricflow-server",
-        "run", "mcp-metricflow-server"
-      ],
-      "env": {
-        "MF_PROJECT_DIR": "/Users/me/.metricflow/sample_models"
-      }
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/Users/me/project"
+      ]
     }
   }
 }
@@ -217,4 +215,3 @@ MCP 配置支持环境变量展开：
 /mcp call filesystem.list_directory /reports
 /mcp call filesystem.read_file /reports/summary.md
 ```
-

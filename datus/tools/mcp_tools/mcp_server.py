@@ -2,8 +2,6 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-import os
-import threading
 from pathlib import Path
 
 from agents.mcp import MCPServerStdio, MCPServerStdioParams
@@ -105,58 +103,3 @@ def find_mcp_directory(mcp_name: str) -> str:
     raise FileNotFoundError(
         f"MCP directory '{mcp_name}' not found in development mcp directory or installed datus-mcp package"
     )
-
-
-class MCPServer:
-    _metricflow_mcp_server = None
-    _lock = threading.Lock()
-
-    @classmethod
-    def get_metricflow_mcp_server(cls, datasource: str):
-        if cls._metricflow_mcp_server is None:
-            with cls._lock:
-                if cls._metricflow_mcp_server is None:
-                    directory = os.getenv("METRICFLOW_MCP_DIR")
-                    if not directory:
-                        try:
-                            directory = find_mcp_directory("mcp-metricflow-server")
-                        except FileNotFoundError as e:
-                            logger.error(f"Could not find MetricFlow MCP directory: {e}")
-                            return None
-                    logger.info(f"Using MetricFlow MCP server with directory: {directory}")
-
-                    # Verify directory exists
-                    if not os.path.exists(directory):
-                        logger.error(f"MetricFlow MCP directory does not exist: {directory}")
-                        return None
-
-                    # Verify mcp-metricflow-server exists
-                    pyproject_path = os.path.join(directory, "pyproject.toml")
-                    if not os.path.exists(pyproject_path):
-                        logger.error(f"MetricFlow MCP pyproject.toml not found: {pyproject_path}")
-                        return None
-
-                    logger.info(f"MetricFlow MCP server directory verified: {directory}")
-
-                    # MetricFlow can now read Datus config directly via DatusConfigHandler
-                    # Pass the datasource via --datasource command line argument
-                    # Pass current working directory so mf can find ./conf/agent.yml
-                    env_dict = os.environ.copy()
-                    env_dict["DATUS_PROJECT_ROOT"] = os.getcwd()
-
-                    mcp_server_params = MCPServerStdioParams(
-                        command="uv",
-                        args=[
-                            "--directory",
-                            directory,
-                            "run",
-                            "mcp-metricflow-server",
-                            "--datasource",
-                            datasource,
-                        ],
-                        env=env_dict,
-                    )
-                    cls._metricflow_mcp_server = SilentMCPServerStdio(
-                        params=mcp_server_params, client_session_timeout_seconds=20
-                    )
-        return cls._metricflow_mcp_server

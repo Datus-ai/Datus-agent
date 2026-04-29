@@ -125,15 +125,13 @@ Allows you to explicitly include or exclude specific tools exposed by a server.
 ```json
 {
   "mcpServers": {
-    "metricflow": {
-      "command": "/Users/me/miniconda3/bin/uv",
+    "filesystem": {
+      "command": "npx",
       "args": [
-        "--directory", "/Users/me/src/mcp-metricflow-server",
-        "run", "mcp-metricflow-server"
-      ],
-      "env": {
-        "MF_PROJECT_DIR": "/Users/me/.metricflow/sample_models"
-      }
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/Users/me/project"
+      ]
     }
   }
 }

@@ -1,14 +1,14 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 
-"""Unit tests for datus/tools/mcp_tools/mcp_server.py (SilentMCPServerStdio + find_mcp_directory + MCPServer)"""
+"""Unit tests for datus/tools/mcp_tools/mcp_server.py."""
 
 import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from datus.tools.mcp_tools.mcp_server import MCPServer, SilentMCPServerStdio, find_mcp_directory
+from datus.tools.mcp_tools.mcp_server import SilentMCPServerStdio, find_mcp_directory
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -127,61 +127,3 @@ class TestFindMcpDirectory:
         with patch("sys.path", []):
             with pytest.raises(FileNotFoundError, match="not found"):
                 find_mcp_directory("nonexistent-server-xyz")
-
-
-# ---------------------------------------------------------------------------
-# MCPServer singleton
-# ---------------------------------------------------------------------------
-
-
-class TestMCPServer:
-    def setup_method(self):
-        # Reset singleton before each test
-        MCPServer._metricflow_mcp_server = None
-
-    def test_returns_none_when_dir_env_not_set_and_not_found(self):
-        with patch.dict("os.environ", {}, clear=False):
-            # Remove METRICFLOW_MCP_DIR if set
-            import os
-
-            os.environ.pop("METRICFLOW_MCP_DIR", None)
-            with patch(
-                "datus.tools.mcp_tools.mcp_server.find_mcp_directory", side_effect=FileNotFoundError("not found")
-            ):
-                result = MCPServer.get_metricflow_mcp_server(datasource="test")
-        assert result is None
-
-    def test_returns_none_when_directory_does_not_exist(self, tmp_path):
-        nonexistent = str(tmp_path / "missing_dir")
-        with patch.dict("os.environ", {"METRICFLOW_MCP_DIR": nonexistent}):
-            result = MCPServer.get_metricflow_mcp_server(datasource="test")
-        assert result is None
-
-    def test_returns_none_when_pyproject_missing(self, tmp_path):
-        # Directory exists but no pyproject.toml
-        tmp_path.mkdir(parents=True, exist_ok=True)
-        with patch.dict("os.environ", {"METRICFLOW_MCP_DIR": str(tmp_path)}):
-            result = MCPServer.get_metricflow_mcp_server(datasource="test")
-        assert result is None
-
-    def test_creates_server_when_valid_directory(self, tmp_path):
-        # Create a valid directory structure
-        (tmp_path / "pyproject.toml").write_text("[project]\nname = 'test'")
-        with patch.dict("os.environ", {"METRICFLOW_MCP_DIR": str(tmp_path)}):
-            with patch("datus.tools.mcp_tools.mcp_server.SilentMCPServerStdio") as mock_cls:
-                mock_instance = MagicMock()
-                mock_cls.return_value = mock_instance
-                result = MCPServer.get_metricflow_mcp_server(datasource="my_ns")
-        assert result is mock_instance
-
-    def test_singleton_returns_same_instance(self, tmp_path):
-        (tmp_path / "pyproject.toml").write_text("[project]")
-        with patch.dict("os.environ", {"METRICFLOW_MCP_DIR": str(tmp_path)}):
-            with patch("datus.tools.mcp_tools.mcp_server.SilentMCPServerStdio") as mock_cls:
-                mock_instance = MagicMock()
-                mock_cls.return_value = mock_instance
-                result1 = MCPServer.get_metricflow_mcp_server(datasource="ns1")
-                result2 = MCPServer.get_metricflow_mcp_server(datasource="ns2")
-        assert result1 is result2
-        # Constructor called only once
-        assert mock_cls.call_count == 1

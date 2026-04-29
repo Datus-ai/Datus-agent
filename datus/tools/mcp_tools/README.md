@@ -124,18 +124,16 @@ You can customize the root directory by configuring `agent.home` in `agent.yml`.
 ```json
 {
   "mcpServers": {
-    "metricflow": {
+    "filesystem": {
       "type": "stdio",
-      "command": "/usr/local/bin/uv",
+      "command": "npx",
       "args": [
-        "--directory", "/path/to/mcp-metricflow-server",
-        "run", "mcp-metricflow-server"
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/path/to/project"
       ],
-      "env": {
-        "MF_PROJECT_DIR": "/path/to/models"
-      },
       "tool_filter": {
-        "allowed_tool_names": ["get_dimensions", "get_metrics", "query_metrics"],
+        "allowed_tool_names": ["read_file", "list_directory"],
         "enabled": true
       }
     },

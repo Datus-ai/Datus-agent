@@ -22,7 +22,6 @@ from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
-from datus.tools.mcp_tools import MCPServer
 from datus.tools.permission.permission_hooks import CompositeHooks, PermissionHooks
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
@@ -347,15 +346,6 @@ class ChatAgenticNode(AgenticNode):
 
         for server_name in mcp_server_names:
             try:
-                if server_name == "metricflow_mcp":
-                    server = self._setup_metricflow_mcp()
-                    if server:
-                        mcp_servers["metricflow_mcp"] = server
-                        logger.info(
-                            f"Setup metricflow_mcp MCP server for database: {self.agent_config.current_datasource}"
-                        )
-                    continue
-
                 server = self._setup_mcp_server_from_config(server_name)
                 if server:
                     mcp_servers[server_name] = server
@@ -365,24 +355,6 @@ class ChatAgenticNode(AgenticNode):
 
         logger.debug(f"Setup {len(mcp_servers)} MCP servers: {list(mcp_servers.keys())}")
         return mcp_servers
-
-    def _setup_metricflow_mcp(self) -> Optional[Any]:
-        """Setup MetricFlow MCP server."""
-        try:
-            if not self.agent_config:
-                return None
-
-            db_config = self.agent_config.current_db_config()
-            if not db_config:
-                return None
-
-            metricflow_server = MCPServer.get_metricflow_mcp_server(datasource=self.agent_config.current_datasource)
-            if metricflow_server:
-                logger.info(f"Added metricflow_mcp MCP server for database: {db_config.database}")
-                return metricflow_server
-        except Exception as e:
-            logger.error(f"Failed to setup metricflow_mcp: {e}")
-        return None
 
     def _setup_mcp_server_from_config(self, server_name: str) -> Optional[Any]:
         """Setup MCP server from {agent.home}/conf/.mcp.json using mcp_manager."""
@@ -422,7 +394,7 @@ class ChatAgenticNode(AgenticNode):
             node_config=self.node_config,
             has_db_tools=bool(self.db_func_tool),
             has_filesystem_tools=bool(self.filesystem_func_tool),
-            has_mf_tools=any("metricflow" in k for k in self.mcp_servers.keys()),
+            has_mf_tools=False,
             has_context_search_tools=bool(self.context_search_tools),
             has_reference_template_tools=bool(
                 self.reference_template_tools and self.reference_template_tools.has_reference_templates

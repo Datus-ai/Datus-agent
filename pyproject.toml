@@ -112,9 +112,6 @@ exclude = ["benchmark*", "docs*"]
 "datus.prompts" = ["*.txt", "*.md", "*.j2"]
 "datus.prompts.prompt_templates" = ["*.j2"]
 
-[tool.setuptools.package-dir]
-"mcp.mcp-metricflow-server" = "mcp/mcp-metricflow-server"
-
 [tool.setuptools.data-files]
 "datus/conf" = ["conf/*.yml", "conf/*.yml.*"]
 
@@ -205,4 +202,3 @@ exclude_lines = [
 ]
 show_missing = true
 precision = 2
-

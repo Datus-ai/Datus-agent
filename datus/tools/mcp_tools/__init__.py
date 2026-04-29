@@ -20,7 +20,7 @@ from .mcp_config import (
     STDIOServerConfig,
 )
 from .mcp_manager import MCPManager
-from .mcp_server import MCPServer, MCPServerStdioParams, SilentMCPServerStdio, find_mcp_directory
+from .mcp_server import MCPServerStdioParams, SilentMCPServerStdio, find_mcp_directory
 from .mcp_tool import MCPTool, parse_command_string
 
 __all__ = [
@@ -34,7 +34,6 @@ __all__ = [
     "STDIOServerConfig",
     "parse_command_string",
     "SilentMCPServerStdio",
-    "MCPServer",
     "MCPServerStdioParams",
     "find_mcp_directory",
 ]
