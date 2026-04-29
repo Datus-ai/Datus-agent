@@ -92,6 +92,75 @@ class FuncToolListResult(BaseModel):
     )
 
 
+def parse_tool_args(
+    args_str: Any,
+    required_fields: set[str] | None = None,
+    tool_name: str = "unknown",
+) -> tuple[dict, str | None]:
+    """Parse JSON tool arguments with json_repair fallback and required-field validation.
+
+    Returns (args_dict, error_message). error_message is None on success.
+    """
+    if not args_str:
+        if required_fields:
+            return {}, f"Empty arguments for tool '{tool_name}', missing required fields {required_fields}."
+        return {}, None
+    if not isinstance(args_str, str):
+        try:
+            result = dict(args_str)
+        except (TypeError, ValueError) as e:
+            return {}, f"Invalid arguments for tool '{tool_name}' ({e})"
+        else:
+            if required_fields:
+                missing = required_fields - set(result.keys())
+                if missing:
+                    return {}, f"Arguments for tool '{tool_name}' missing required fields {missing}."
+            return result, None
+
+    stripped = args_str.strip()
+    if not stripped:
+        if required_fields:
+            return {}, f"Empty arguments for tool '{tool_name}', missing required fields {required_fields}."
+        return {}, None
+
+    args_dict = None
+    original_error = None
+    try:
+        parsed = json.loads(stripped)
+        if isinstance(parsed, dict):
+            args_dict = parsed
+        else:
+            original_error = TypeError(f"Expected dict, got {type(parsed).__name__}")
+    except (json.JSONDecodeError, TypeError) as e:
+        original_error = e
+
+    if args_dict is None and original_error is not None:
+        try:
+            repaired = json_repair.loads(stripped)
+            if isinstance(repaired, dict):
+                args_dict = repaired
+                logger.warning(f"Repaired malformed JSON arguments for tool '{tool_name}': {original_error}")
+        except Exception:
+            pass
+
+    if args_dict is None or not isinstance(args_dict, dict):
+        args_len = len(args_str)
+        truncated_hint = ""
+        if not stripped.endswith("}") and not stripped.endswith("]"):
+            truncated_hint = " Output appears truncated — likely hit model max_output_tokens limit."
+        return {}, f"Invalid JSON arguments ({original_error}). Args length: {args_len} chars.{truncated_hint}"
+
+    if required_fields:
+        missing = required_fields - set(args_dict.keys())
+        if missing:
+            return {}, (
+                f"Repaired JSON for tool '{tool_name}' is missing required fields {missing}. "
+                f"Args length: {len(args_str)} chars."
+            )
+
+    return args_dict, None
+
+
 def trans_to_function_tool(bound_method: Callable, *, strict_mode: bool = True) -> FunctionTool:
     """
     Transfer a bound method to a function tool.
@@ -113,53 +182,28 @@ def trans_to_function_tool(bound_method: Callable, *, strict_mode: bool = True) 
     if "self" in corrected_schema.get("required", []):
         corrected_schema["required"].remove("self")
 
-    # The invoker MUST be an 'async' function.
-    # We define a closure to correctly capture the 'bound_method' for each iteration.
     def create_async_invoker(method_to_call: Callable) -> Callable:
-        async def final_invoker(tool_ctx, args_str) -> dict:
-            """
-            This is an async wrapper for tool methods.
-            The agent framework will 'await' this coroutine.
-            """
-            # The actual work (JSON parsing, method call)
-            try:
-                if args_str:
-                    args_dict = json.loads(args_str) if isinstance(args_str, str) else dict(args_str or {})
-                else:
-                    args_dict = {}
-            except (TypeError, json.JSONDecodeError) as e:
-                if isinstance(args_str, str) and args_str.strip():
-                    try:
-                        args_dict = json_repair.loads(args_str)
-                        if not isinstance(args_dict, dict):
-                            raise ValueError("Repaired result is not a dict")
-                        logger.warning(f"Repaired malformed JSON arguments for tool '{method_to_call.__name__}': {e}")
-                    except Exception:
-                        args_len = len(args_str)
-                        truncated_hint = ""
-                        stripped = args_str.rstrip()
-                        if not stripped.endswith("}") and not stripped.endswith("]"):
-                            truncated_hint = " Output appears truncated — likely hit model max_output_tokens limit."
-                        return {
-                            "success": 0,
-                            "error": f"Invalid JSON arguments ({e}). Args length: {args_len} chars.{truncated_hint}",
-                            "result": None,
-                        }
-                else:
-                    return {
-                        "success": 0,
-                        "error": f"Invalid JSON arguments ({e})",
-                        "result": None,
-                    }
+        sig = inspect.signature(method_to_call)
+        required_params = {
+            name
+            for name, p in sig.parameters.items()
+            if name != "self"
+            and p.default is inspect.Parameter.empty
+            and p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        }
 
-            # Call sync or async bound methods transparently
+        async def final_invoker(tool_ctx, args_str) -> dict:
+            args_dict, error = parse_tool_args(
+                args_str, required_fields=required_params, tool_name=method_to_call.__name__
+            )
+            if error:
+                return {"success": 0, "error": error, "result": None}
+
             if inspect.ismethod(method_to_call):
                 tool = method_to_call.__self__
                 if hasattr(tool, "set_tool_context"):
                     tool.set_tool_context(tool_ctx)
 
-            # Filter out unexpected parameters that LLM may hallucinate
-            sig = inspect.signature(method_to_call)
             valid_params = set(sig.parameters.keys()) - {"self"}
             has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
             if not has_var_keyword:
@@ -187,7 +231,7 @@ def trans_to_function_tool(bound_method: Callable, *, strict_mode: bool = True) 
         name=tool_template.name,
         description=tool_template.description,
         params_json_schema=corrected_schema,
-        on_invoke_tool=async_invoker,  # <--- Assign the async function
+        on_invoke_tool=async_invoker,
         strict_json_schema=strict_mode,
     )
     return final_tool

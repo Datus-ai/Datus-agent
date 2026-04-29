@@ -2549,6 +2549,7 @@ class TestTaskToolJsonRepair:
         assert result["success"] == 1
         assert captured_args.get("type") == "gen_sql"
         assert captured_args.get("prompt") == "Show users"
+        assert captured_args.get("description") == "test"
 
     @pytest.mark.asyncio
     async def test_invalid_json_still_returns_error(self, task_tool):
@@ -2559,3 +2560,14 @@ class TestTaskToolJsonRepair:
         result = await task_tool_fn.on_invoke_tool(None, "totally broken garbage @@!!")
         assert result["success"] == 0
         assert "Invalid JSON" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_repair_missing_required_fields(self, task_tool):
+        """Repaired JSON missing required fields (prompt, description) should return error."""
+        tools = task_tool.available_tools()
+        task_tool_fn = tools[0]
+
+        args_str = '{"type": gen_sql}'
+        result = await task_tool_fn.on_invoke_tool(None, args_str)
+        assert result["success"] == 0
+        assert "missing required fields" in result["error"]

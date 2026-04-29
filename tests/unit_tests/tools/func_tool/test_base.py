@@ -100,6 +100,7 @@ class TestTransToFunctionTool:
         result = await tool.on_invoke_tool(None, malformed)
 
         assert result["success"] == 1
+        assert result["result"]["keywords"] == "PERCENTILE function"
         assert result["result"]["platform"] == "starrocks"
 
     @pytest.mark.asyncio
@@ -119,6 +120,66 @@ class TestTransToFunctionTool:
 
         assert result["success"] == 1
         assert any("Repaired malformed JSON" in msg for msg in caplog.messages)
+
+    @pytest.mark.asyncio
+    async def test_repair_not_valid_json_brace(self):
+        """'not-valid-json{' repairs to {} but should fail on missing required params."""
+
+        class FakeTool:
+            def some_method(self, x: str) -> FuncToolResult:
+                return FuncToolResult(result=x)
+
+        fake = FakeTool()
+        tool = self._make_tool_from_method(fake.some_method)
+
+        result = await tool.on_invoke_tool(None, "not-valid-json{")
+        assert result["success"] == 0
+        assert "missing required fields" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_repair_truncated_key_value(self):
+        """'{"x":' repairs to {"x": ""} but should fail on missing required params."""
+
+        class FakeTool:
+            def some_method(self, name: str) -> FuncToolResult:
+                return FuncToolResult(result=name)
+
+        fake = FakeTool()
+        tool = self._make_tool_from_method(fake.some_method)
+
+        result = await tool.on_invoke_tool(None, '{"x":')
+        assert result["success"] == 0
+        assert "missing required fields" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_repair_empty_dict(self):
+        """'{}' is valid JSON but should fail when required params are missing."""
+
+        class FakeTool:
+            def some_method(self, x: str) -> FuncToolResult:
+                return FuncToolResult(result=x)
+
+        fake = FakeTool()
+        tool = self._make_tool_from_method(fake.some_method)
+
+        result = await tool.on_invoke_tool(None, "{}")
+        assert result["success"] == 0
+        assert "missing required fields" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_repair_array_not_dict(self):
+        """'[1,2,3]' is valid JSON but not a dict — should return error."""
+
+        class FakeTool:
+            def some_method(self, x: str) -> FuncToolResult:
+                return FuncToolResult(result=x)
+
+        fake = FakeTool()
+        tool = self._make_tool_from_method(fake.some_method)
+
+        result = await tool.on_invoke_tool(None, "[1,2,3]")
+        assert result["success"] == 0
+        assert "Invalid JSON" in result["error"]
 
     @pytest.mark.asyncio
     async def test_multiple_extra_params_all_filtered(self):
