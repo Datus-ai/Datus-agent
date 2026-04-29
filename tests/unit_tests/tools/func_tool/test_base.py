@@ -239,15 +239,29 @@ class TestParseToolArgs:
         assert error is not None
         assert "Invalid arguments" in error
 
-    def test_json_repair_exception_falls_through(self):
-        """When json_repair itself raises, should fall through to error path."""
-        result, error = parse_tool_args("<<<>>>", required_fields={"x"}, tool_name="test")
-        assert error is not None
+    def test_json_repair_exception_falls_through(self, monkeypatch):
+        """When json_repair itself raises, should fall through to Invalid JSON error."""
+        import json_repair as _jr
 
-    def test_truncated_json_hint(self):
+        monkeypatch.setattr(_jr, "loads", lambda *a, **kw: (_ for _ in ()).throw(ValueError("boom")))
+        result, error = parse_tool_args("{bad json}", tool_name="test")
+        assert error is not None
+        assert "Invalid JSON" in error
+
+    def test_truncated_json_hint(self, monkeypatch):
         """Truncated JSON not ending in } or ] should include truncation hint."""
+        import json_repair as _jr
+
+        monkeypatch.setattr(_jr, "loads", lambda *a, **kw: None)
         result, error = parse_tool_args('{"key": "val', tool_name="test")
-        assert error is None or "truncated" in (error or "").lower()
+        assert error is not None
+        assert "truncated" in error.lower()
+
+    def test_repair_succeeds_no_truncation_hint(self):
+        """json_repair fixes truncated JSON — no error expected."""
+        result, error = parse_tool_args('{"key": "val', tool_name="test")
+        assert error is None
+        assert result == {"key": "val"}
 
 
 class TestFuncToolListResult:
