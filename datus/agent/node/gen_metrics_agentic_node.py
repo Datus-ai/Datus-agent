@@ -633,10 +633,10 @@ class GenMetricsAgenticNode(AgenticNode):
         if self.generation_evidence.metric_kb_sync_passed:
             return
 
-        if normalized_status == "generated" and not metric_file:
+        if normalized_status and not metric_file:
             raise RuntimeError(
-                "Metric generation returned status='generated' without a metric_file. "
-                "Generated responses must include metric_file or call end_metric_generation."
+                f"Metric generation returned status='{normalized_status}' without a metric_file. "
+                "Non-skipped metric responses must include metric_file or call end_metric_generation."
             )
 
         if not metric_file:
@@ -715,7 +715,7 @@ class GenMetricsAgenticNode(AgenticNode):
                 status = content.get("status")
                 normalized_status = status.strip().lower() if isinstance(status, str) else None
 
-                if (metric_file and isinstance(metric_file, str)) or normalized_status in {"generated", "skipped"}:
+                if (metric_file and isinstance(metric_file, str)) or normalized_status:
                     logger.debug(
                         f"Extracted from dict: semantic_model_file={semantic_model_file}, "
                         f"metric_file={metric_file}, status={normalized_status}"
@@ -740,10 +740,7 @@ class GenMetricsAgenticNode(AgenticNode):
                             status = parsed.get("status")
                             normalized_status = status.strip().lower() if isinstance(status, str) else None
 
-                            if (metric_file and isinstance(metric_file, str)) or normalized_status in {
-                                "generated",
-                                "skipped",
-                            }:
+                            if (metric_file and isinstance(metric_file, str)) or normalized_status:
                                 logger.debug(
                                     f"Extracted from JSON string: "
                                     f"semantic_model_file={semantic_model_file}, "

@@ -572,6 +572,22 @@ class TestExtractMetricAndOutputFromResponse:
         assert status == "generated"
         assert out == "Generated successfully."
 
+    def test_extracts_explicit_status_without_metric_file(self, real_agent_config, mock_llm_create):
+        node = _make_node(real_agent_config, mock_llm_create)
+        output = {
+            "content": {
+                "semantic_model_file": "model.yml",
+                "metric_file": None,
+                "status": "done",
+                "output": "Done.",
+            }
+        }
+        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        assert sem_model == "model.yml"
+        assert metric_file is None
+        assert status == "done"
+        assert out == "Done."
+
     def test_extracts_status_from_json_string(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)
         content = json.dumps(
@@ -1002,6 +1018,43 @@ class TestExecuteStreamGenMetricsError:
         assert actions[-1].status == ActionStatus.FAILED
         assert actions[-1].action_type == "error"
         assert "status='generated' without a metric_file" in actions[-1].output["error"]
+
+    @pytest.mark.asyncio
+    async def test_explicit_non_skipped_status_without_metric_file_fails_closed(
+        self, real_agent_config, mock_llm_create
+    ):
+        """Any explicit non-skipped final status must not silently bypass publishing."""
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response(
+                    json.dumps(
+                        {
+                            "semantic_model_file": "orders.yml",
+                            "metric_file": None,
+                            "status": "done",
+                            "output": "Done.",
+                        }
+                    )
+                ),
+            ]
+        )
+
+        node = GenMetricsAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+        node.input = SemanticNodeInput(user_message="Generate metrics")
+
+        action_manager = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(action_manager):
+            actions.append(action)
+
+        assert actions[-1].status == ActionStatus.FAILED
+        assert actions[-1].action_type == "error"
+        assert "status='done' without a metric_file" in actions[-1].output["error"]
 
 
 class TestGenMetricsFilesystemRootPath:
