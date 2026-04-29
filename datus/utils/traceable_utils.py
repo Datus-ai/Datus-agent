@@ -72,11 +72,25 @@ def setup_tracing():
         return
     _tracing_initialized = True
 
+    def _disable_sdk_tracing(reason: str) -> None:
+        # The OpenAI Agents SDK's DefaultTraceProvider spawns a background worker
+        # whose atexit shutdown can deadlock under Ctrl+C. Disable it when we are
+        # not actively forwarding traces to LangSmith.
+        try:
+            from agents import set_tracing_disabled
+
+            set_tracing_disabled(True)
+            logger.debug(f"OpenAI Agents SDK tracing disabled: {reason}")
+        except ImportError:
+            pass
+
     if not HAS_LANGSMITH:
+        _disable_sdk_tracing("langsmith not installed")
         return
 
     if not _is_tracing_enabled():
         logger.debug("LangSmith tracing not enabled (set LANGSMITH_TRACING=true and LANGCHAIN_API_KEY to enable)")
+        _disable_sdk_tracing("LANGSMITH_TRACING/api key not set")
         return
 
     try:

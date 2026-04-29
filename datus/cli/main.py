@@ -470,6 +470,7 @@ class Application:
 
 def main():
     """Entry point for console scripts"""
+    import signal
     import sys
 
     # Intercept 'skill' subcommand and delegate to datus.main's skill handler
@@ -484,7 +485,19 @@ def main():
         sys.exit(run_skill_command(args))
 
     app = Application()
-    app.run()
+    try:
+        app.run()
+    finally:
+        # Ignore further SIGINT once the REPL has returned. Python's interpreter
+        # shutdown (threading._shutdown, atexit handlers) acquires locks while
+        # waiting for non-daemon threads from third-party libraries (agents SDK
+        # tracing worker, httpx pools, MCP clients). A user Ctrl+C during that
+        # wait raises KeyboardInterrupt mid-`lock.acquire()` and surfaces as
+        # noisy "Exception ignored in: <module 'threading'>" tracebacks.
+        try:
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+        except (ValueError, OSError):
+            pass
 
 
 if __name__ == "__main__":

@@ -5,8 +5,9 @@
 """Overlay provider model lists from OpenRouter's public catalog.
 
 Used by the `/model` command to present up-to-date model choices without shipping
-an ever-expanding local list. Failures silently fall back through:
+an ever-expanding local list. Resolution order:
 
+  L0 Fresh cache (mtime within FRESH_CACHE_TTL_SEC) — short-circuits remote
   L1 Remote GET https://openrouter.ai/api/v1/models  (8s timeout, no auth)
   L2 Cached file at ~/.datus/cache/openrouter_models.json
   L3 Local catalog from datus/conf/providers.yml
@@ -24,6 +25,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set
@@ -39,6 +41,10 @@ OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 OPENROUTER_TIMEOUT_SEC = 8.0
 CACHE_FILE_NAME = "openrouter_models.json"
 CACHE_SCHEMA_VERSION = 2
+# Skip the remote fetch if the on-disk cache was refreshed within this window.
+# Avoids two openrouter calls during a single CLI startup (Application credential
+# probe + AgentConfig.provider_catalog lazy load).
+FRESH_CACHE_TTL_SEC = 600.0
 # Cache versions that load_cached_models / load_cached_model_details accept.
 _SUPPORTED_CACHE_VERSIONS = frozenset({1, 2})
 
@@ -92,6 +98,15 @@ _MIN_CONTEXT_LENGTH = 4096
 
 def _cache_file_path() -> Path:
     return get_path_manager().datus_home / "cache" / CACHE_FILE_NAME
+
+
+def _cache_is_fresh(max_age_sec: float) -> bool:
+    """Return True iff the cache file exists and was modified within ``max_age_sec``."""
+    try:
+        mtime = _cache_file_path().stat().st_mtime
+    except OSError:
+        return False
+    return (time.time() - mtime) < max_age_sec
 
 
 def _extract_pricing(raw_pricing: Any) -> Optional[Dict[str, str]]:
@@ -368,7 +383,12 @@ def _resolve_models_from(catalog: dict) -> dict:
 
 
 def resolve_provider_models(local_catalog: dict) -> dict:
-    """Three-tier fallback: remote → cache → local. Never raises.
+    """Resolution order: fresh-cache → remote → stale-cache → local. Never raises.
+
+    A cache file refreshed within ``FRESH_CACHE_TTL_SEC`` is treated as
+    authoritative and short-circuits the remote fetch — this dedupes the two
+    openrouter requests that otherwise fire on every CLI startup (the
+    credential probe in ``main.py`` plus ``AgentConfig.provider_catalog``).
 
     Only overlays per-provider `models` lists; `model_overrides`, `model_specs`,
     `default_model`, `base_url`, `api_key_env`, `type`, `auth_type` are preserved.
@@ -380,16 +400,30 @@ def resolve_provider_models(local_catalog: dict) -> dict:
     providers_block = local_catalog.get("providers") if isinstance(local_catalog, dict) else None
     allowed_providers = set(providers_block.keys()) if isinstance(providers_block, dict) else None
 
+    if _cache_is_fresh(FRESH_CACHE_TTL_SEC):
+        cached_overlay = _overlay_from_cache(local_catalog, allowed_providers)
+        if cached_overlay is not None:
+            return cached_overlay
+
     remote_buckets = fetch_openrouter_models(allowed_providers=allowed_providers)
     if remote_buckets is not None:
         save_cached_models(remote_buckets)
         return _resolve_models_from(_overlay(local_catalog, remote_buckets))
 
-    cached_details = load_cached_model_details()
-    if cached_details is not None:
-        if allowed_providers is not None:
-            cached_details = {k: v for k, v in cached_details.items() if k in allowed_providers}
-        if cached_details:
-            return _resolve_models_from(_overlay(local_catalog, cached_details))
+    cached_overlay = _overlay_from_cache(local_catalog, allowed_providers)
+    if cached_overlay is not None:
+        return cached_overlay
 
     return _resolve_models_from(copy.deepcopy(local_catalog))
+
+
+def _overlay_from_cache(local_catalog: dict, allowed_providers: Optional[Set[str]]) -> Optional[dict]:
+    """Apply the on-disk cache as an overlay, filtered by ``allowed_providers``."""
+    cached_details = load_cached_model_details()
+    if cached_details is None:
+        return None
+    if allowed_providers is not None:
+        cached_details = {k: v for k, v in cached_details.items() if k in allowed_providers}
+    if not cached_details:
+        return None
+    return _resolve_models_from(_overlay(local_catalog, cached_details))
