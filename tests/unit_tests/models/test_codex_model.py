@@ -238,7 +238,7 @@ class TestCodexModelUtils:
         config = ModelConfig(type="codex", api_key="", model="gpt-5.4-codex", auth_type="oauth")
         model = CodexModel(model_config=config)
         try:
-            assert model.context_length() == 400000
+            assert model.context_length() == 1050000
         finally:
             oc._MODEL_SPECS_CACHE = original_cache
 
@@ -311,7 +311,9 @@ class TestCodexModelClientInit:
 
     @patch("datus.models.codex_model.OAuthManager")
     def test_get_responses_model(self, mock_oauth_cls, model_config):
-        from datus.models.codex_model import CodexModel
+        from agents.models.openai_responses import OpenAIResponsesModel
+
+        from datus.models.codex_model import CodexModel, _CodexResponsesModel
 
         mock_oauth = MagicMock()
         mock_oauth.get_access_token.return_value = "tok"
@@ -319,15 +321,12 @@ class TestCodexModelClientInit:
 
         model = CodexModel(model_config=model_config)
 
-        with (
-            patch("openai.AsyncOpenAI") as mock_async,
-            patch("agents.models.openai_responses.OpenAIResponsesModel") as mock_resp_model,
-        ):
+        with patch("openai.AsyncOpenAI") as mock_async:
             mock_async.return_value = MagicMock()
-            mock_resp_model.return_value = MagicMock()
             resp_model = model._get_responses_model()
-            mock_resp_model.assert_called_once()
-            assert resp_model is not None
+            assert isinstance(resp_model, _CodexResponsesModel)
+            assert isinstance(resp_model, OpenAIResponsesModel)
+            assert resp_model.model == model_config.model
 
     @patch("datus.models.codex_model.OAuthManager")
     def test_refresh_client_token_both_clients(self, mock_oauth_cls, model_config):
@@ -788,3 +787,233 @@ class TestCodexModelToolsAuth401Retry:
                 await model.generate_with_tools(prompt="test")
 
             mock_oauth.refresh_tokens.assert_called_once()
+
+
+class TestCodexResponsesModelPatch:
+    """Tests for _CodexResponsesModel.stream_response output-injection patch."""
+
+    @pytest.mark.asyncio
+    async def test_stream_response_injects_output_items(self, model_config):
+        """Items from ResponseOutputItemDoneEvent are injected into ResponseCompletedEvent.output."""
+        # Create a real function_call item
+        from openai.types.responses import ResponseCompletedEvent, ResponseFunctionToolCall, ResponseOutputItemDoneEvent
+
+        from datus.models.codex_model import _CodexResponsesModel
+
+        tool_item = ResponseFunctionToolCall(
+            id="fc_abc",
+            call_id="call_abc",
+            name="glob",
+            arguments='{"pattern":"*"}',
+            type="function_call",
+            status="completed",
+        )
+        done_event = ResponseOutputItemDoneEvent(
+            type="response.output_item.done",
+            item=tool_item,
+            output_index=0,
+            sequence_number=0,
+        )
+
+        # Build a completed event with empty output
+        from openai.types.responses import Response
+
+        mock_response = MagicMock(spec=Response)
+        mock_response.output = []
+
+        def _copy_response(update=None, **kw):
+            new = MagicMock(spec=Response)
+            new.output = (update or {}).get("output", mock_response.output)
+            return new
+
+        mock_response.model_copy = _copy_response
+
+        mock_completed_event = MagicMock(spec=ResponseCompletedEvent)
+        mock_completed_event.__class__ = ResponseCompletedEvent
+        mock_completed_event.response = mock_response
+
+        patched_events = []
+
+        def _copy_event(update=None, **kw):
+            new_evt = MagicMock(spec=ResponseCompletedEvent)
+            new_evt.__class__ = ResponseCompletedEvent
+            new_evt.response = (update or {}).get("response", mock_completed_event.response)
+            patched_events.append(new_evt)
+            return new_evt
+
+        mock_completed_event.model_copy = _copy_event
+
+        async def _fake_parent_stream(*args, **kwargs):
+            yield done_event
+            yield mock_completed_event
+
+        instance = MagicMock(spec=_CodexResponsesModel)
+        instance.__class__ = _CodexResponsesModel
+
+        with patch.object(_CodexResponsesModel, "stream_response", new=_CodexResponsesModel.stream_response):
+            with patch(
+                "agents.models.openai_responses.OpenAIResponsesModel.stream_response",
+                new=_fake_parent_stream,
+            ):
+                collected_yielded = []
+                async for evt in _CodexResponsesModel.stream_response(instance):
+                    collected_yielded.append(evt)
+
+        # Should have yielded 2 events
+        assert len(collected_yielded) == 2
+        # First event: unchanged ResponseOutputItemDoneEvent
+        assert isinstance(collected_yielded[0], ResponseOutputItemDoneEvent)
+        # Second event: patched ResponseCompletedEvent with injected output
+        assert isinstance(collected_yielded[1], ResponseCompletedEvent)
+        assert len(patched_events) == 1
+        assert patched_events[0].response.output == [tool_item]
+
+    @pytest.mark.asyncio
+    async def test_stream_response_excludes_reasoning_items(self, model_config):
+        """Reasoning items are NOT injected into ResponseCompletedEvent.output (store=False safety)."""
+        from openai.types.responses import (
+            Response,
+            ResponseCompletedEvent,
+            ResponseFunctionToolCall,
+            ResponseOutputItemDoneEvent,
+            ResponseReasoningItem,
+        )
+
+        from datus.models.codex_model import _CodexResponsesModel
+
+        reasoning_item = ResponseReasoningItem(
+            id="rs_abc",
+            type="reasoning",
+            summary=[],
+        )
+        tool_item = ResponseFunctionToolCall(
+            id="fc_abc",
+            call_id="call_abc",
+            name="glob",
+            arguments="{}",
+            type="function_call",
+            status="completed",
+        )
+        done_reasoning = ResponseOutputItemDoneEvent(
+            type="response.output_item.done",
+            item=reasoning_item,
+            output_index=0,
+            sequence_number=0,
+        )
+        done_tool = ResponseOutputItemDoneEvent(
+            type="response.output_item.done",
+            item=tool_item,
+            output_index=1,
+            sequence_number=1,
+        )
+
+        mock_response = MagicMock(spec=Response)
+        mock_response.output = []
+
+        injected_outputs = []
+
+        def _copy_response(update=None, **kw):
+            new = MagicMock(spec=Response)
+            new.output = (update or {}).get("output", [])
+            injected_outputs.extend(new.output)
+            return new
+
+        mock_response.model_copy = _copy_response
+
+        mock_completed = MagicMock(spec=ResponseCompletedEvent)
+        mock_completed.__class__ = ResponseCompletedEvent
+        mock_completed.response = mock_response
+        mock_completed.model_copy = lambda update=None, **kw: MagicMock(
+            spec=ResponseCompletedEvent, response=(update or {}).get("response", mock_response)
+        )
+
+        async def _fake_parent_stream(*args, **kwargs):
+            yield done_reasoning
+            yield done_tool
+            yield mock_completed
+
+        instance = MagicMock(spec=_CodexResponsesModel)
+        instance.__class__ = _CodexResponsesModel
+
+        with patch(
+            "agents.models.openai_responses.OpenAIResponsesModel.stream_response",
+            new=_fake_parent_stream,
+        ):
+            async for _ in _CodexResponsesModel.stream_response(instance):
+                pass
+
+        # Only the tool_item should be injected; reasoning_item must be excluded
+        assert injected_outputs == [tool_item]
+        assert reasoning_item not in injected_outputs
+
+    @pytest.mark.asyncio
+    async def test_stream_response_leaves_nonempty_output_unchanged(self, model_config):
+        """ResponseCompletedEvent with existing output is not modified."""
+        from openai.types.responses import ResponseCompletedEvent, ResponseFunctionToolCall, ResponseOutputItemDoneEvent
+
+        from datus.models.codex_model import _CodexResponsesModel
+
+        tool_item = ResponseFunctionToolCall(
+            id="fc_xyz",
+            call_id="call_xyz",
+            name="grep",
+            arguments="{}",
+            type="function_call",
+            status="completed",
+        )
+
+        from openai.types.responses import Response
+
+        mock_response = MagicMock(spec=Response)
+        mock_response.output = [tool_item]  # Already populated
+        mock_response.model_copy = MagicMock(side_effect=AssertionError("should not be called"))
+
+        mock_completed_event = MagicMock(spec=ResponseCompletedEvent)
+        mock_completed_event.__class__ = ResponseCompletedEvent
+        mock_completed_event.response = mock_response
+        mock_completed_event.model_copy = MagicMock(side_effect=AssertionError("should not be called"))
+
+        done_event = ResponseOutputItemDoneEvent(
+            type="response.output_item.done",
+            item=tool_item,
+            output_index=0,
+            sequence_number=0,
+        )
+
+        async def _fake_parent_stream(*args, **kwargs):
+            yield done_event
+            yield mock_completed_event
+
+        instance = MagicMock(spec=_CodexResponsesModel)
+        instance.__class__ = _CodexResponsesModel
+
+        with patch(
+            "agents.models.openai_responses.OpenAIResponsesModel.stream_response",
+            new=_fake_parent_stream,
+        ):
+            yielded = []
+            async for evt in _CodexResponsesModel.stream_response(instance):
+                yielded.append(evt)
+
+        assert len(yielded) == 2
+        # Completed event must be the exact same object (no copy made)
+        assert yielded[1] is mock_completed_event
+
+    @patch("datus.models.codex_model.OAuthManager")
+    def test_get_responses_model_returns_codex_subclass(self, mock_oauth_cls, model_config):
+        """_get_responses_model() returns _CodexResponsesModel, not plain OpenAIResponsesModel."""
+        from agents.models.openai_responses import OpenAIResponsesModel
+
+        from datus.models.codex_model import CodexModel, _CodexResponsesModel
+
+        mock_oauth = MagicMock()
+        mock_oauth.get_access_token.return_value = "tok"
+        mock_oauth_cls.return_value = mock_oauth
+
+        with patch("openai.AsyncOpenAI"):
+            model = CodexModel(model_config=model_config)
+            responses_model = model._get_responses_model()
+
+        assert type(responses_model) is _CodexResponsesModel
+        assert issubclass(_CodexResponsesModel, OpenAIResponsesModel)
+        assert responses_model.model == model_config.model

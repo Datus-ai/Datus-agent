@@ -6,11 +6,12 @@ providers:
     type: openai
     base_url: https://api.openai.com/v1
     api_key_env: OPENAI_API_KEY
-    default_model: gpt-4.1
+    default_model: gpt-5.5
     models:
-      - gpt-5.2
-      - gpt-4.1
-      - gpt-4.1-mini
+      - gpt-5.5
+      - gpt-5.4
+      - gpt-5.4-mini
+      - gpt-5.4-nano
       - o3
       - o3-pro
       - o4-mini
@@ -19,59 +20,59 @@ providers:
     type: deepseek
     base_url: https://api.deepseek.com
     api_key_env: DEEPSEEK_API_KEY
-    default_model: deepseek-chat
+    default_model: deepseek-v4-pro
     models:
-      - deepseek-chat
-      - deepseek-reasoner
+      - deepseek-v4-pro
+      - deepseek-v4-flash
 
   claude:
     type: claude
     base_url: https://api.anthropic.com
     api_key_env: ANTHROPIC_API_KEY
-    default_model: claude-sonnet-4-5
+    default_model: claude-sonnet-4-6
     models:
       - claude-haiku-4-5
-      - claude-sonnet-4-5
-      - claude-opus-4-5
-      - claude-sonnet-4
-      - claude-opus-4
+      - claude-sonnet-4-6
+      - claude-opus-4-6
+      - claude-opus-4-7
 
   kimi:
     type: kimi
     base_url: https://api.moonshot.cn/v1
     api_key_env: KIMI_API_KEY
-    default_model: kimi-k2.5
+    default_model: kimi-k2.6
     models:
+      - kimi-k2.6
       - kimi-k2.5
-      - kimi-k2-turbo-preview
-      - kimi-k2-0905-Preview
       - kimi-k2-thinking
 
   qwen:
     type: openai
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
     api_key_env: DASHSCOPE_API_KEY
-    default_model: qwen3-max
+    default_model: qwen3.6-plus
     models:
-      - qwen3-max
+      - qwen3.6-plus
+      - qwen3.6-flash
+      - qwen3.5-plus
+      - qwen3-coder-next
       - qwen3-coder-plus
-      - qwen-plus
-      - qwen-flash
 
   gemini:
     type: gemini
     base_url: https://generativelanguage.googleapis.com/v1beta
     api_key_env: GEMINI_API_KEY
-    default_model: gemini-2.5-flash
+    default_model: gemini-3.1-pro-preview
     models:
-      - gemini-2.5-flash
+      - gemini-3.1-pro-preview
+      - gemini-3.1-flash-lite-preview
       - gemini-2.5-pro
-      - gemini-3-flash-preview
-      - gemini-3-pro-preview
+      - gemini-2.5-flash
 
   minimax:
     type: minimax
     base_url: https://api.minimaxi.com/v1
+    api_key_env: MINIMAX_API_KEY
     default_model: MiniMax-M2.7
     models:
       - MiniMax-M2.7
@@ -81,9 +82,10 @@ providers:
     type: glm
     base_url: https://open.bigmodel.cn/api/paas/v4
     api_key_env: GLM_API_KEY
-    default_model: glm-5
+    default_model: glm-5.1
     models:
       - glm-5.1
+      - glm-5-turbo
       - glm-5
       - glm-4.7
       - glm-4.5-air
@@ -105,7 +107,6 @@ providers:
   bigmodel_coding:
     type: claude
     base_url: https://open.bigmodel.cn/api/anthropic
-    api_key_env: GLM_API_KEY
     default_model: glm-5.1
     models_from: glm
     models:
@@ -115,7 +116,6 @@ providers:
   zai_coding:
     type: claude
     base_url: https://api.z.ai/api/anthropic
-    api_key_env: ZAI_API_KEY
     default_model: glm-5.1
     models_from: glm
     models:
@@ -146,8 +146,9 @@ providers:
     default_model: claude-sonnet-4-6
     models_from: claude
     models:
-      - claude-sonnet-4-6
+      - claude-opus-4-7
       - claude-opus-4-6
+      - claude-sonnet-4-6
       - claude-haiku-4-5
 
   # Codex (ChatGPT Plus/Pro subscription via OAuth)
@@ -166,7 +167,13 @@ model_overrides:
   kimi-k2.5:
     temperature: 1.0
     top_p: 0.95
+  kimi-k2.6:
+    temperature: 1.0
+    top_p: 0.95
   qwen3-coder-plus:
+    temperature: 1.0
+    top_p: 0.95
+  qwen3-coder-next:
     temperature: 1.0
     top_p: 0.95
 
@@ -175,6 +182,18 @@ model_overrides:
 # (e.g. "gpt-4o-mini" matches "gpt-4o", "kimi-k2-0711-preview" matches "kimi-k2").
 model_specs:
   # OpenAI Models
+  gpt-5.5:
+    context_length: 1050000
+    max_tokens: 128000
+  gpt-5.4:
+    context_length: 1050000
+    max_tokens: 128000
+  gpt-5.4-mini:
+    context_length: 400000
+    max_tokens: 128000
+  gpt-5.4-nano:
+    context_length: 400000
+    max_tokens: 128000
   gpt-5:
     context_length: 400000
     max_tokens: 128000
@@ -192,6 +211,12 @@ model_specs:
     max_tokens: 200000
 
   # DeepSeek Models
+  deepseek-v4-pro:
+    context_length: 1048576
+    max_tokens: 384000
+  deepseek-v4-flash:
+    context_length: 1048576
+    max_tokens: 384000
   deepseek-chat:
     context_length: 65535
     max_tokens: 8192
@@ -206,28 +231,46 @@ model_specs:
     max_tokens: 65535
 
   # Moonshot (Kimi) Models
-  kimi-k2:
+  kimi-k2.6:
     context_length: 256000
-    max_tokens: 8192
+    max_tokens: 65536
   kimi-k2.5:
     context_length: 256000
     max_tokens: 16384
+  kimi-k2:
+    context_length: 256000
+    max_tokens: 8192
   kimi-k2-turbo:
     context_length: 256000
     max_tokens: 8192
 
   # Qwen Models
+  qwen3.6-plus:
+    context_length: 1000000
+    max_tokens: 65536
+  qwen3.6-flash:
+    context_length: 1000000
+    max_tokens: 65536
+  qwen3.5-plus:
+    context_length: 1000000
+    max_tokens: 65536
+  qwen3-coder-next:
+    context_length: 262144
+    max_tokens: 262144
   qwen3-coder:
     context_length: 128000
     max_tokens: 8192
-  qwen3.5-plus:
-    context_length: 1000000
-    max_tokens: 16384
   qwen3-coder-plus:
     context_length: 1000000
     max_tokens: 16384
 
   # GLM Models (Coding Plan)
+  glm-5.1:
+    context_length: 202752
+    max_tokens: 65535
+  glm-5-turbo:
+    context_length: 202752
+    max_tokens: 131072
   glm-5:
     context_length: 200000
     max_tokens: 131072
@@ -255,6 +298,15 @@ model_specs:
     max_tokens: 8192
 
   # Claude Models
+  claude-opus-4-7:
+    context_length: 1000000
+    max_tokens: 128000
+  claude-opus-4-6:
+    context_length: 1000000
+    max_tokens: 128000
+  claude-sonnet-4-6:
+    context_length: 1000000
+    max_tokens: 128000
   claude-sonnet-4-5:
     context_length: 1048576
     max_tokens: 65536
@@ -272,6 +324,12 @@ model_specs:
     max_tokens: 128000
 
   # Gemini Models
+  gemini-3.1-pro-preview:
+    context_length: 1048576
+    max_tokens: 65536
+  gemini-3.1-flash-lite-preview:
+    context_length: 1048576
+    max_tokens: 65536
   gemini-2.5-pro:
     context_length: 1048576
     max_tokens: 65535

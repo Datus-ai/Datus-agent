@@ -10,6 +10,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 from agents import Agent, ModelSettings, Runner, SQLiteSession, Tool
 from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
+from agents.models.openai_responses import OpenAIResponsesModel
 
 from datus.auth.oauth_config import CODEX_API_BASE_URL
 from datus.auth.oauth_manager import OAuthManager
@@ -26,6 +27,37 @@ logger = get_logger(__name__)
 # Fallback values when providers.yml / OpenRouter cache do not cover a codex slug.
 _CODEX_DEFAULT_CONTEXT_LENGTH = 192000
 _CODEX_DEFAULT_MAX_TOKENS = 16384
+
+
+class _CodexResponsesModel(OpenAIResponsesModel):
+    """OpenAIResponsesModel subclass that fixes Codex returning output:[] in response.completed.
+
+    Codex streams correct items via response.output_item.done events but sends an empty
+    output array in response.completed. The Agents SDK builds final_response from the
+    completed event, so without this patch the session receives no items and multi-turn
+    conversation and tool chaining break.
+
+    Fix: collect items from ResponseOutputItemDoneEvent during streaming; when
+    ResponseCompletedEvent arrives with empty output, inject the collected items before
+    yielding so the SDK run loop can persist them to the session.
+    """
+
+    async def stream_response(self, *args, **kwargs):  # type: ignore[override]
+        from openai.types.responses import ResponseCompletedEvent, ResponseOutputItemDoneEvent, ResponseReasoningItem
+
+        collected: list = []
+        async for event in super().stream_response(*args, **kwargs):
+            if isinstance(event, ResponseOutputItemDoneEvent):
+                # Reasoning items are reference-only ({type, id}) and cannot be replayed
+                # when store=False — the server never persisted them. Exclude from the
+                # injected output so they are not written to the SQLite session, while
+                # still yielding the raw event for streaming display.
+                if not isinstance(event.item, ResponseReasoningItem):
+                    collected.append(event.item)
+            elif isinstance(event, ResponseCompletedEvent) and not event.response.output and collected:
+                patched_response = event.response.model_copy(update={"output": list(collected)})
+                event = event.model_copy(update={"response": patched_response})
+            yield event
 
 
 class CodexModel(LLMBaseModel):
@@ -92,12 +124,10 @@ class CodexModel(LLMBaseModel):
             self._async_client.api_key = self._get_access_token()
         return self._async_client
 
-    def _get_responses_model(self):
-        """Create an OpenAIResponsesModel for use with the Agent SDK."""
-        from agents.models.openai_responses import OpenAIResponsesModel
-
+    def _get_responses_model(self) -> _CodexResponsesModel:
+        """Create a _CodexResponsesModel for use with the Agent SDK."""
         async_client = self._get_async_client()
-        return OpenAIResponsesModel(model=self.model_name, openai_client=async_client)
+        return _CodexResponsesModel(model=self.model_name, openai_client=async_client)
 
     def _refresh_client_token(self):
         """Refresh the token on existing clients."""

@@ -604,6 +604,24 @@ class TestApplyAndRemoveSdkPatches:
         assert litellm.completion is true_original_completion
         assert litellm.acompletion is true_original_acompletion
 
+    def test_litellm_usage_server_tool_use_dict_coerced_to_model(self):
+        """server_tool_use dict is coerced to ServerToolUse at construction — root-cause fix."""
+        from litellm.types.utils import ServerToolUse, Usage
+
+        apply_sdk_patches()
+        try:
+            usage = Usage(
+                prompt_tokens=1,
+                completion_tokens=2,
+                total_tokens=3,
+                server_tool_use={"web_search_requests": 5, "tool_search_requests": None},
+            )
+            assert isinstance(usage.server_tool_use, ServerToolUse)
+            assert usage.server_tool_use.web_search_requests == 5
+            assert usage.server_tool_use.tool_search_requests is None
+        finally:
+            remove_sdk_patches()
+
     def test_litellm_usage_server_tool_use_dict_serializes_without_warning(self):
         """Regression for GLM/Z.AI coding plan: LiteLLM usage dicts must not print Pydantic warnings."""
         from litellm.types.utils import Usage
@@ -624,6 +642,81 @@ class TestApplyAndRemoveSdkPatches:
             assert "tool_search_requests" in dumped["server_tool_use"]
             assert dumped["server_tool_use"]["tool_search_requests"] is None
             assert not [warning for warning in caught if "Pydantic serializer warnings" in str(warning.message)]
+        finally:
+            remove_sdk_patches()
+
+    def test_pydantic_serializer_warning_redirected_to_log(self, capsys, caplog):
+        """Parent-model serialization path: warning is routed to logger, not stderr/CLI."""
+        import logging
+
+        apply_sdk_patches()
+        try:
+            with caplog.at_level(logging.DEBUG, logger="datus.models.sdk_patches"):
+                warnings.showwarning(
+                    "Pydantic serializer warnings:\n  PydanticSerializationUnexpectedValue(...)",
+                    UserWarning,
+                    "pydantic/main.py",
+                    475,
+                )
+            captured = capsys.readouterr()
+            assert "Pydantic serializer warnings" not in captured.err
+            assert "Pydantic serializer warnings" not in captured.out
+            assert any(
+                "Pydantic serializer warning redirected from CLI" in record.getMessage() for record in caplog.records
+            )
+        finally:
+            remove_sdk_patches()
+
+    def test_non_pydantic_warning_still_propagates(self):
+        """The redirect hook only intercepts Pydantic serializer warnings; others delegate to the original."""
+        from datus.models import sdk_patches as sp
+
+        apply_sdk_patches()
+        try:
+            captured_calls = []
+
+            def _recorder(message, category, filename, lineno, file=None, line=None):
+                captured_calls.append((str(message), category, filename, lineno))
+
+            # Replace the saved "original" with our recorder so the hook delegates to it.
+            sp._original_showwarning = _recorder
+
+            warnings.showwarning(
+                "Some unrelated warning",
+                UserWarning,
+                "module.py",
+                1,
+            )
+            assert captured_calls == [("Some unrelated warning", UserWarning, "module.py", 1)]
+
+            # Pydantic-serializer messages must NOT delegate to the original.
+            warnings.showwarning(
+                "Pydantic serializer warnings: x",
+                UserWarning,
+                "pydantic/main.py",
+                475,
+            )
+            assert len(captured_calls) == 1
+        finally:
+            remove_sdk_patches()
+
+    def test_remove_sdk_patches_restores_showwarning(self):
+        """After removal, warnings.showwarning is the original (non-patched) callable."""
+        original_showwarning = warnings.showwarning
+        apply_sdk_patches()
+        try:
+            assert warnings.showwarning is not original_showwarning
+        finally:
+            remove_sdk_patches()
+        assert warnings.showwarning is original_showwarning
+
+    def test_apply_sdk_patches_idempotent_for_showwarning(self):
+        """Calling apply_sdk_patches twice must not double-wrap warnings.showwarning."""
+        apply_sdk_patches()
+        try:
+            patched_first = warnings.showwarning
+            apply_sdk_patches()
+            assert warnings.showwarning is patched_first
         finally:
             remove_sdk_patches()
 
