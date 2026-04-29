@@ -15,6 +15,7 @@ real PathManager.
 """
 
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -2931,3 +2932,71 @@ class TestGenSQLSystemPromptToolContext:
         assert call_kwargs["has_describe_table_tool"] is True
         assert call_kwargs["has_read_query_tool"] is False
         assert call_kwargs["has_ask_user_tool"] is True
+
+    def test_system_prompt_context_includes_configured_mcp_tool_names(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        real_agent_config.agentic_nodes["mcp_metrics"] = {
+            "system_prompt": "mcp_metrics",
+            "tools": "db_tools.describe_table",
+            "mcp": "metrics_server",
+            "max_turns": 5,
+        }
+        node = GenSQLAgenticNode(
+            node_id="mcp_metrics",
+            description="MCP metrics GenSQL",
+            node_type=NodeType.TYPE_GENSQL,
+            agent_config=real_agent_config,
+            node_name="mcp_metrics",
+        )
+        node.mcp_servers = {"metrics_server": MagicMock()}
+
+        tool_filter = MagicMock()
+        tool_filter.allowed_tool_names = ["list_metrics", "query_metrics", "blocked_metric"]
+        tool_filter.is_tool_allowed.side_effect = lambda name: name != "blocked_metric"
+        server_config = MagicMock()
+        server_config.tool_filter = tool_filter
+        mcp_manager = MagicMock()
+        mcp_manager.get_server_config.return_value = server_config
+
+        with (
+            patch("datus.tools.mcp_tools.mcp_manager.MCPManager", return_value=mcp_manager),
+            patch("datus.prompts.prompt_manager.get_prompt_manager") as mock_get_prompt_manager,
+        ):
+            mock_prompt_manager = MagicMock()
+            mock_prompt_manager.render_template.return_value = "rendered prompt"
+            mock_get_prompt_manager.return_value = mock_prompt_manager
+
+            node._get_system_prompt()
+
+        mcp_manager.get_server_config.assert_called_once_with("metrics_server")
+        call_kwargs = mock_prompt_manager.render_template.call_args.kwargs
+        assert "list_metrics" in call_kwargs["available_tool_names"]
+        assert "query_metrics" in call_kwargs["available_tool_names"]
+        assert "blocked_metric" not in call_kwargs["available_tool_names"]
+        assert call_kwargs["has_list_metrics_tool"] is True
+        assert call_kwargs["has_query_metrics_tool"] is True
+
+    def test_available_tool_names_includes_cached_mcp_tool_names(self, real_agent_config, mock_llm_create):
+        node = _make_gensql_node(agent_config=real_agent_config)
+        node.tools = [SimpleNamespace(name="describe_table")]
+        node.mcp_servers = {
+            "templates_server": SimpleNamespace(
+                _tools_list=[
+                    SimpleNamespace(name="search_reference_template"),
+                    SimpleNamespace(name="blocked_template"),
+                ]
+            )
+        }
+        tool_filter = SimpleNamespace(
+            allowed_tool_names=None,
+            is_tool_allowed=lambda name: name != "blocked_template",
+        )
+        server_config = SimpleNamespace(tool_filter=tool_filter)
+        mcp_manager = MagicMock()
+        mcp_manager.get_server_config.return_value = server_config
+
+        with patch("datus.tools.mcp_tools.mcp_manager.MCPManager", return_value=mcp_manager):
+            tool_names = node._get_available_tool_names()
+
+        assert tool_names == ["describe_table", "search_reference_template"]

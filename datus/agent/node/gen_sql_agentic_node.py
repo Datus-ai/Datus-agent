@@ -548,6 +548,51 @@ class GenSQLAgenticNode(AgenticNode):
 
         return mcp_servers
 
+    def _get_available_tool_names(self) -> list[str]:
+        """Return native tool names plus discoverable MCP tool names."""
+        tool_names = {getattr(tool, "name", "") for tool in (self.tools or []) if getattr(tool, "name", "")}
+        tool_names.update(self._get_mcp_tool_names_for_prompt())
+        return sorted(tool_names)
+
+    def _get_mcp_tool_names_for_prompt(self) -> set[str]:
+        """Collect MCP tool names that can be known without starting new MCP connections."""
+        active_server_names = [name for name in (self.mcp_servers or {}).keys() if name]
+        if not active_server_names or not self.agent_config:
+            return set()
+
+        try:
+            from datus.tools.mcp_tools.mcp_manager import MCPManager
+
+            mcp_manager = MCPManager(agent_config=self.agent_config)
+        except Exception as e:
+            logger.debug(f"Unable to inspect MCP tool filters for prompt context: {e}")
+            return set()
+
+        tool_names: set[str] = set()
+        for server_name in active_server_names:
+            server_config = mcp_manager.get_server_config(server_name)
+            tool_filter = getattr(server_config, "tool_filter", None) if server_config else None
+
+            allowed_tool_names = getattr(tool_filter, "allowed_tool_names", None)
+            if allowed_tool_names:
+                tool_names.update(name for name in allowed_tool_names if tool_filter.is_tool_allowed(name))
+
+            cached_tool_names = self._get_cached_mcp_tool_names(self.mcp_servers[server_name])
+            if tool_filter:
+                cached_tool_names = {name for name in cached_tool_names if tool_filter.is_tool_allowed(name)}
+            tool_names.update(cached_tool_names)
+
+        return tool_names
+
+    @staticmethod
+    def _get_cached_mcp_tool_names(server: Any) -> set[str]:
+        """Read SDK-cached MCP tool names when the server already discovered them."""
+        cached_tools = getattr(server, "_tools_list", None)
+        if not isinstance(cached_tools, (list, tuple, set)):
+            return set()
+
+        return {getattr(tool, "name", "") for tool in cached_tools if getattr(tool, "name", "")}
+
     def _get_system_prompt(
         self,
         conversation_summary: Optional[str] = None,
@@ -579,9 +624,7 @@ class GenSQLAgenticNode(AgenticNode):
         )
         context["conversation_summary"] = conversation_summary
         context["has_task_tool"] = bool(self.sub_agent_task_tool)
-        available_tool_names = sorted(
-            {getattr(tool, "name", "") for tool in (self.tools or []) if getattr(tool, "name", "")}
-        )
+        available_tool_names = self._get_available_tool_names()
         context["available_tool_names"] = available_tool_names
         context["has_read_query_tool"] = "read_query" in available_tool_names
         context["has_describe_table_tool"] = "describe_table" in available_tool_names
