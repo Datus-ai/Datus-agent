@@ -115,6 +115,62 @@ class TestChatServiceListSessions:
         session_ids = {s.session_id for s in result.data.sessions}
         assert {"chat_session_a", "gen_metrics_session_a"} <= session_ids
 
+    def test_list_sessions_timestamps_use_iso_z_format(self, chat_svc):
+        """created_at / last_updated must be ISO-8601 UTC with 'Z' suffix.
+
+        Regression guard: previously these fields were emitted as bare SQLite
+        ``YYYY-MM-DD HH:MM:SS`` strings (no timezone), so clients could not
+        convert them to local time correctly.
+        """
+        import os
+        import re
+        import sqlite3
+        from datetime import datetime
+
+        # Build a session DB with explicit naive UTC timestamps in agent_sessions
+        # and one user message, mirroring the schema OpenAI Agents SDK creates.
+        session_id = "ts-format-session"
+        db_path = os.path.join(chat_svc._session_dir, f"{session_id}.db")
+        os.makedirs(chat_svc._session_dir, exist_ok=True)
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "CREATE TABLE agent_sessions ("
+                "session_id TEXT PRIMARY KEY, "
+                "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
+                "updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+            )
+            conn.execute(
+                "CREATE TABLE agent_messages ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "session_id TEXT NOT NULL, "
+                "message_data TEXT NOT NULL, "
+                "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+            )
+            conn.execute(
+                "INSERT INTO agent_sessions (session_id, created_at, updated_at) "
+                "VALUES (?, '2026-04-30 12:34:56', '2026-04-30 12:35:10')",
+                (session_id,),
+            )
+            conn.execute(
+                "INSERT INTO agent_messages (session_id, message_data, created_at) "
+                "VALUES (?, ?, '2026-04-30 12:34:56')",
+                (session_id, '{"role": "user", "content": "Hi"}'),
+            )
+
+        result = chat_svc.list_sessions()
+        target = next(s for s in result.data.sessions if s.session_id == session_id)
+
+        assert target.created_at == "2026-04-30T12:34:56Z"
+        assert target.last_updated == "2026-04-30T12:35:10Z"
+        iso_z_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+        assert iso_z_pattern.match(target.created_at), target.created_at
+        assert iso_z_pattern.match(target.last_updated), target.last_updated
+        # And they must round-trip through fromisoformat as aware UTC datetimes.
+        from datetime import timezone
+
+        parsed = datetime.fromisoformat(target.created_at.replace("Z", "+00:00"))
+        assert parsed == datetime(2026, 4, 30, 12, 34, 56, tzinfo=timezone.utc)
+
 
 class TestChatServiceDeleteSession:
     """Tests for delete_session."""

@@ -6,7 +6,6 @@ import asyncio
 import threading
 import time
 import uuid
-from datetime import datetime
 from typing import Dict, Optional
 
 from datus.api.models.base_models import Result
@@ -33,6 +32,7 @@ from datus.schemas.action_history import (
 )
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.loggings import get_logger
+from datus.utils.time_utils import now_utc_iso
 
 logger = get_logger(__name__)
 
@@ -204,7 +204,7 @@ class CLIService:
                     sql_return=sql_return,
                     result_format=request.result_format,
                     execution_time=exec_time,
-                    executed_at=datetime.now().isoformat() + "Z",
+                    executed_at=now_utc_iso(),
                     columns=columns,
                 )
 
@@ -405,7 +405,7 @@ class CLIService:
                     "current_catalog": getattr(self.cli_context, "current_catalog", None) if self.cli_context else None,
                     "current_schema": getattr(self.cli_context, "current_schema", None) if self.cli_context else None,
                     "database": db_info,
-                    "timestamp": datetime.now().isoformat() + "Z",
+                    "timestamp": now_utc_iso(),
                 }
 
             elif context_type == "catalog":

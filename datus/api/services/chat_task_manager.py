@@ -32,6 +32,7 @@ from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.proxy.proxy_tool import apply_proxy_tools
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import set_current_path_manager
+from datus.utils.time_utils import now_utc_iso
 
 logger = get_logger(__name__)
 
@@ -377,7 +378,7 @@ class ChatTaskManager:
                                 id=-1,
                                 event="ping",
                                 data=SSEPingData(),
-                                timestamp=datetime.now().isoformat() + "Z",
+                                timestamp=now_utc_iso(),
                             )
                             break  # exit inner loop so ping can be yielded
                 new_events = task.events[cursor:]
@@ -474,7 +475,7 @@ class ChatTaskManager:
                         session_id=session_id,
                         llm_session_id=node.session_id,
                     ),
-                    timestamp=datetime.now().isoformat() + "Z",
+                    timestamp=now_utc_iso(),
                 ),
             )
             event_id += 1
@@ -591,7 +592,7 @@ class ChatTaskManager:
                         duration=(datetime.now() - start_time).total_seconds(),
                         **token_kwargs,
                     ),
-                    timestamp=datetime.now().isoformat() + "Z",
+                    timestamp=now_utc_iso(),
                 ),
             )
             event_id += 1
@@ -616,7 +617,7 @@ class ChatTaskManager:
                         session_id=session_id,
                         llm_session_id=task.node.session_id if task.node else None,
                     ),
-                    timestamp=datetime.now().isoformat() + "Z",
+                    timestamp=now_utc_iso(),
                 ),
             )
             event_id += 1

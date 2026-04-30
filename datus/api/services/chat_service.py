@@ -7,7 +7,6 @@ read from disk each time (no in-memory state).
 """
 
 import uuid
-from datetime import datetime
 from typing import AsyncGenerator, List, Optional
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
@@ -36,6 +35,7 @@ from datus.models.session_manager import SessionManager, session_matches_agent
 from datus.schemas.action_history import ActionRole, ActionStatus
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.time_utils import now_utc_iso
 
 logger = get_logger(__name__)
 
@@ -78,7 +78,7 @@ class ChatService:
                 id=1,
                 event="error",
                 data=SSEErrorData(error=str(e), error_type=error_code, session_id=request.session_id),
-                timestamp=datetime.now().isoformat() + "Z",
+                timestamp=now_utc_iso(),
             )
             return
         async for event in task_manager.consume_events(task):
@@ -117,8 +117,8 @@ class ChatService:
                     info = session_mgr.get_session_info(sid)
                     if not info.get("exists", False):
                         continue
-                    created_at = info.get("created_at", "")
-                    last_updated = info.get("updated_at", "") or info.get("file_modified_iso", "") or created_at
+                    created_at = info.get("created_at") or ""
+                    last_updated = info.get("updated_at") or info.get("file_modified_iso") or created_at
                     sessions.append(
                         ChatSessionItemInfo(
                             user_query=info.get("first_user_message"),
@@ -159,7 +159,7 @@ class ChatService:
                 data=ChatSessionData(
                     session_id=session_id,
                     created_at="",
-                    last_updated=datetime.now().isoformat() + "Z",
+                    last_updated=now_utc_iso(),
                     total_turns=0,
                     token_count=0,
                     last_sql_queries=[],

@@ -6,7 +6,6 @@ chat-history retrieval can share the same conversion logic.
 """
 
 import json
-from datetime import datetime
 from typing import Any, List, Optional
 
 from datus.api.models.cli_models import (
@@ -19,6 +18,7 @@ from datus.api.models.cli_models import (
 from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
 from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
+from datus.utils.time_utils import now_utc_iso, to_utc_iso
 
 logger = get_logger(__name__)
 
@@ -424,7 +424,7 @@ def action_to_sse_event(
             id=event_id,
             event="message",
             data=sse_data,
-            timestamp=getattr(action, "start_time", datetime.now()).isoformat() + "Z",
+            timestamp=to_utc_iso(getattr(action, "start_time", None)) or now_utc_iso(),
         )
 
     except Exception as e:

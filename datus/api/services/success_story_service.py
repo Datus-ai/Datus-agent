@@ -8,7 +8,6 @@ consumers keep working.
 import csv
 import os
 import re
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -17,6 +16,7 @@ from datus.api.models.success_story_models import SuccessStoryData, SuccessStory
 from datus.configuration.agent_config import AgentConfig
 from datus.utils.csv_utils import sanitize_csv_field
 from datus.utils.loggings import get_logger
+from datus.utils.time_utils import now_utc_iso
 
 logger = get_logger(__name__)
 
@@ -49,7 +49,7 @@ class SuccessStoryService:
         target_dir.mkdir(parents=True, exist_ok=True)
         csv_path = target_dir / "success_story.csv"
 
-        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = now_utc_iso()
         row = {
             "session_link": sanitize_csv_field(payload.session_link),
             "session_id": payload.session_id,

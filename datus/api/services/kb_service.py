@@ -3,7 +3,6 @@
 import asyncio
 import os
 import types
-from datetime import datetime
 from typing import AsyncGenerator, Optional
 
 from datus.api.models.kb_models import (
@@ -31,6 +30,7 @@ from datus.storage.semantic_model.semantic_model_init import (
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.loggings import get_logger
+from datus.utils.time_utils import now_utc_iso, to_utc_iso
 
 logger = get_logger(__name__)
 
@@ -513,7 +513,7 @@ class KbService:
             error=error,
             progress=progress,
             payload=payload,
-            timestamp=datetime.now().isoformat(),
+            timestamp=now_utc_iso(),
         )
 
     @staticmethod
@@ -534,5 +534,5 @@ class KbService:
             error=event.error,
             progress=progress,
             payload=event.payload,
-            timestamp=event.timestamp.isoformat() if event.timestamp else datetime.now().isoformat(),
+            timestamp=to_utc_iso(event.timestamp) or now_utc_iso(),
         )

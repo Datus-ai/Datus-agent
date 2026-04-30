@@ -22,6 +22,7 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import extract_user_input
+from datus.utils.time_utils import to_utc_iso
 
 logger = get_logger(__name__)
 
@@ -593,6 +594,7 @@ class SessionManager:
                 file_info = {
                     "file_size": stat.st_size,
                     "file_modified": stat.st_mtime,
+                    "file_modified_iso": to_utc_iso(stat.st_mtime),
                 }
         except Exception as e:
             logger.debug(f"Could not get file info for {db_path}: {e}")
@@ -711,6 +713,17 @@ class SessionManager:
             # Return basic info even if database query fails
             session_metadata = {"total_tokens": 0, "message_count": 0, "item_count": 0}
 
+        # Normalize SQLite naive timestamps (UTC) to ISO-8601 with 'Z' suffix.
+        for key in (
+            "created_at",
+            "updated_at",
+            "latest_message_at",
+            "latest_user_message_at",
+            "first_user_message_at",
+        ):
+            if key in session_metadata and session_metadata[key]:
+                session_metadata[key] = to_utc_iso(session_metadata[key])
+
         return {
             "exists": True,
             "session_id": session_id,
@@ -782,7 +795,7 @@ class SessionManager:
                             "total_tokens": tot or 0,
                             "input_tokens_details": inp_detail_dict,
                             "output_tokens_details": out_detail_dict,
-                            "created_at": created_at,
+                            "created_at": to_utc_iso(created_at),
                         }
                     )
         except sqlite3.OperationalError:
@@ -891,6 +904,8 @@ class SessionManager:
                 current_actions = []  # Collect ActionHistory objects for detailed view
 
                 for message_data, created_at in cursor.fetchall():
+                    # Normalize SQLite naive UTC timestamp for outward-facing fields.
+                    created_at_iso = to_utc_iso(created_at)
                     try:
                         message_json = json.loads(message_data)
                         role = message_json.get("role", "")
@@ -918,7 +933,12 @@ class SessionManager:
                             # Add user message (extract original user input from structured content)
                             content = extract_user_input(message_json.get("content", ""))
                             messages.append(
-                                {"role": "user", "content": content, "timestamp": created_at, "created_at": created_at}
+                                {
+                                    "role": "user",
+                                    "content": content,
+                                    "timestamp": created_at_iso,
+                                    "created_at": created_at_iso,
+                                }
                             )
                             continue
 
@@ -932,8 +952,8 @@ class SessionManager:
                                 current_assistant_group = {
                                     "role": "assistant",
                                     "content": "",
-                                    "timestamp": created_at,
-                                    "created_at": created_at,
+                                    "timestamp": created_at_iso,
+                                    "created_at": created_at_iso,
                                 }
 
                             # Parse arguments
@@ -1030,8 +1050,8 @@ class SessionManager:
                                         current_assistant_group = {
                                             "role": "assistant",
                                             "content": "",
-                                            "timestamp": created_at,
-                                            "created_at": created_at,
+                                            "timestamp": created_at_iso,
+                                            "created_at": created_at_iso,
                                         }
 
                                     # Add to progress

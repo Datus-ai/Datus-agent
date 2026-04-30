@@ -1,10 +1,11 @@
 """Pydantic models for CLI Command Type API endpoints."""
 
-from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from datus.utils.time_utils import now_utc_iso
 
 
 # SQL Execution models
@@ -514,7 +515,7 @@ class SSEEvent(BaseModel):
         description="Event type (start, thinking, action, message, response, error, ping, end)",
     )
     data: SSEEventData = Field(..., description="Event payload")
-    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat() + "Z")
+    timestamp: str = Field(default_factory=now_utc_iso)
 
 
 class ChatHistoryData(BaseModel):

@@ -30,6 +30,7 @@ from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.utils.loggings import get_logger
 from datus.utils.terminal_utils import EscapeGuard, interrupt_on_escape
+from datus.utils.time_utils import format_local_time
 
 
 @contextmanager
@@ -1356,7 +1357,7 @@ class ChatCommands:
                     first_msg = raw_first_msg.replace("\n", " ").replace("\r", " ")
                     if not first_msg:
                         first_msg = "(empty)"
-                    updated = (info.get("updated_at") or info.get("latest_message_at") or "N/A")[:19]
+                    updated = format_local_time(info.get("updated_at") or info.get("latest_message_at")) or "N/A"
                     msg_count = str(info.get("message_count", 0))
                     items.append(
                         ListItem(key=sid, primary=first_msg, secondary=f"{sid}  Updated: {updated}  Msgs: {msg_count}")
@@ -1502,7 +1503,7 @@ class ChatCommands:
                     content = (turn_msg.get("content", "") or "").replace("\n", " ").replace("\r", " ")
                     if not content:
                         content = "(empty)"
-                    timestamp = (turn_msg.get("created_at") or "")[:19]
+                    timestamp = format_local_time(turn_msg.get("created_at"))
                     items.append(ListItem(key=str(idx), primary=content, secondary=f"Turn: {idx}  {timestamp}"))
 
                 app = ListSelectorApp(title="Session Rewind", items=items)

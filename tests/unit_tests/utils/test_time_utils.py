@@ -5,10 +5,18 @@
 """Unit tests for datus/utils/time_utils.py — CI tier, zero external deps."""
 
 import re
+from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import pytest
 
-from datus.utils.time_utils import format_duration_human, get_default_current_date
+from datus.utils.time_utils import (
+    format_duration_human,
+    format_local_time,
+    get_default_current_date,
+    now_utc_iso,
+    to_utc_iso,
+)
 
 
 class TestGetDefaultCurrentDate:
@@ -89,6 +97,113 @@ class TestFormatDurationHuman:
     )
     def test_parametrized_durations(self, seconds, expected):
         assert format_duration_human(seconds) == expected
+
+
+_ISO_Z_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+
+class TestNowUtcIso:
+    """Tests for now_utc_iso."""
+
+    def test_format_matches_iso8601_with_z_suffix(self):
+        result = now_utc_iso()
+        assert _ISO_Z_PATTERN.match(result), result
+
+    def test_returns_utc_time(self):
+        fixed = datetime(2026, 4, 30, 12, 34, 56, tzinfo=timezone.utc)
+
+        class _FakeDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                assert tz is timezone.utc
+                return fixed
+
+        with patch("datus.utils.time_utils.datetime", _FakeDatetime):
+            assert now_utc_iso() == "2026-04-30T12:34:56Z"
+
+
+class TestToUtcIso:
+    """Tests for to_utc_iso normalization."""
+
+    def test_none_returns_none(self):
+        assert to_utc_iso(None) is None
+
+    def test_empty_string_returns_none(self):
+        assert to_utc_iso("") is None
+        assert to_utc_iso("   ") is None
+
+    def test_unparseable_string_returns_none(self):
+        assert to_utc_iso("not-a-timestamp") is None
+
+    def test_sqlite_naive_string_treated_as_utc(self):
+        # SQLite CURRENT_TIMESTAMP form: space separator, no offset.
+        assert to_utc_iso("2026-04-30 12:34:56") == "2026-04-30T12:34:56Z"
+
+    def test_iso_t_form_naive_is_utc(self):
+        assert to_utc_iso("2026-04-30T12:34:56") == "2026-04-30T12:34:56Z"
+
+    def test_iso_with_z_suffix(self):
+        assert to_utc_iso("2026-04-30T12:34:56Z") == "2026-04-30T12:34:56Z"
+
+    def test_iso_with_explicit_offset(self):
+        assert to_utc_iso("2026-04-30T20:34:56+08:00") == "2026-04-30T12:34:56Z"
+
+    def test_microseconds_are_truncated_to_seconds(self):
+        assert to_utc_iso("2026-04-30T12:34:56.789012Z") == "2026-04-30T12:34:56Z"
+
+    def test_unix_float_timestamp(self):
+        # 1761835200.0 = 2025-10-30T14:40:00Z (verified via fromtimestamp(..., UTC))
+        assert to_utc_iso(1761835200.0) == "2025-10-30T14:40:00Z"
+
+    def test_unix_int_timestamp(self):
+        assert to_utc_iso(1761835200) == "2025-10-30T14:40:00Z"
+
+    def test_naive_datetime_treated_as_utc(self):
+        dt = datetime(2026, 4, 30, 12, 34, 56)
+        assert to_utc_iso(dt) == "2026-04-30T12:34:56Z"
+
+    def test_aware_datetime_converted_to_utc(self):
+        dt = datetime(2026, 4, 30, 20, 34, 56, tzinfo=timezone(timedelta(hours=8)))
+        assert to_utc_iso(dt) == "2026-04-30T12:34:56Z"
+
+    def test_already_utc_aware_datetime(self):
+        dt = datetime(2026, 4, 30, 12, 34, 56, tzinfo=timezone.utc)
+        assert to_utc_iso(dt) == "2026-04-30T12:34:56Z"
+
+    def test_unsupported_type_returns_none(self):
+        assert to_utc_iso([1, 2, 3]) is None
+        assert to_utc_iso({"a": 1}) is None
+
+
+class TestFormatLocalTime:
+    """Tests for format_local_time (CLI display helper)."""
+
+    def test_none_returns_empty(self):
+        assert format_local_time(None) == ""
+
+    def test_empty_string_returns_empty(self):
+        assert format_local_time("") == ""
+
+    def test_unparseable_returns_empty(self):
+        assert format_local_time("not a date") == ""
+
+    def test_utc_zulu_converted_to_local(self):
+        # Force a known local timezone via patching astimezone result.
+        # Easier: pass an aware datetime and assert the pre-conversion math
+        # by comparing to manual astimezone() output.
+        utc = datetime(2026, 4, 30, 12, 34, 56, tzinfo=timezone.utc)
+        expected = utc.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        assert format_local_time("2026-04-30T12:34:56Z") == expected
+
+    def test_sqlite_naive_string_converted_to_local(self):
+        utc = datetime(2026, 4, 30, 12, 34, 56, tzinfo=timezone.utc)
+        expected = utc.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        assert format_local_time("2026-04-30 12:34:56") == expected
+
+    def test_custom_format(self):
+        utc = datetime(2026, 4, 30, 12, 34, 56, tzinfo=timezone.utc)
+        expected = utc.astimezone().strftime("%H:%M")
+        assert format_local_time("2026-04-30T12:34:56Z", fmt="%H:%M") == expected
 
 
 class TestGetDefaultCurrentDateExtended:
