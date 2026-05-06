@@ -610,6 +610,77 @@ class TestEditAgent:
         assert get_result.success is True
         assert get_result.data["agent"]["description"] == "updated description"
 
+    async def test_edit_with_prompt_template_writes_under_resolved_home(
+        self, real_agent_config, agent_yml_with_singleton
+    ):
+        """``edit_agent`` with an explicit ``prompt_template`` invokes
+        ``_save_prompt_template``, which must resolve ``agent_config.home``
+        through ``path_manager`` so a literal ``~`` does not leak into the
+        filesystem write.
+        """
+        from datus.api.models.agent_models import CreateAgentInput, EditAgentInput
+
+        resolved_home = real_agent_config.path_manager.datus_home
+        # Mutate ``agent_config.home`` post-construction to a tilde path —
+        # path_manager remains pointed at resolved_home.
+        real_agent_config.home = "~/datus-tilde-edit-template-does-not-exist"
+
+        svc = AgentService()
+        await svc.create_agent(
+            CreateAgentInput(name="prompt_edit_agent", type="gen_sql"),
+            real_agent_config,
+        )
+        edit = await svc.edit_agent(
+            EditAgentInput(
+                id="prompt_edit_agent",
+                name="prompt_edit_agent",
+                prompt_template="custom system prompt body",
+                prompt_version="1.0",
+            ),
+            real_agent_config,
+        )
+        assert edit.success is True
+        # Template file landed under the resolved home, not anywhere a
+        # literal-tilde expansion would point.
+        target = resolved_home / "template" / "prompt_edit_agent_system_1.0.j2"
+        assert target.exists() and target.read_text(encoding="utf-8") == "custom system prompt body"
+
+    async def test_template_copy_resolves_tilde_in_home(self, real_agent_config, agent_yml_with_singleton, tmp_path):
+        """Regression: ``agent_config.home`` may carry a literal ``~`` (default
+        ``~/.datus``). ``_copy_prompt_template`` (called by ``create_agent``)
+        must route through ``path_manager.datus_home`` — which is already
+        ``Path(home).expanduser().resolve()`` — instead of constructing
+        ``Path(agent_config.home) / "template"`` directly.
+
+        Pre-fix, ``Path("~/.datus")`` left the literal tilde in place and
+        every subsequent ``os.makedirs`` / ``write_text`` either polluted the
+        real home or crashed depending on the OS. With path_manager the
+        template lands under the resolved tmp home regardless of how
+        ``agent_config.home`` is shaped.
+        """
+        from datus.api.models.agent_models import CreateAgentInput
+
+        # Override agent_config.home with a literal tilde path AFTER fixture
+        # setup. path_manager remains pointed at the resolved tmp home, so
+        # the call should resolve through that and succeed.
+        resolved_home = real_agent_config.path_manager.datus_home
+        real_agent_config.home = "~/datus-tilde-regression-does-not-exist"
+
+        svc = AgentService()
+        result = await svc.create_agent(
+            CreateAgentInput(name="tilde_template_agent", type="gen_sql"),
+            real_agent_config,
+        )
+        assert result.success is True
+
+        # The template should land under the resolved home, never under a
+        # literal tilde-prefixed directory next to CWD. CreateAgentInput
+        # defaults prompt_version="1.0", so the file is suffixed accordingly.
+        template_file = resolved_home / "template" / "tilde_template_agent_system_1.0.j2"
+        assert template_file.exists(), f"template not found at {template_file}"
+        # And no literal-tilde directory should have been created on disk.
+        assert not (tmp_path / "~").exists()
+
     async def test_save_targets_loaded_config_path_not_home(self, real_agent_config, tmp_path):
         """Regression: ``--config /custom/path/agent.yml`` must persist to that
         same path, not to ``{datus_home}/agent.yml``.
@@ -647,12 +718,12 @@ class TestEditAgent:
             assert saved["agent"]["agentic_nodes"]["cross_path_agent"]["type"] == "gen_sql"
 
             # The ``{datus_home}/agent.yml`` location must NOT have been written
-            # — that was the bug.
+            # — that was the bug. Read it (or treat it as empty when absent)
+            # and assert the leak is absent under either possible yaml shape.
             home_yaml = real_agent_config.path_manager.datus_home / "agent.yml"
-            if home_yaml.exists():
-                home_data = yaml.safe_load(home_yaml.read_text(encoding="utf-8")) or {}
-                # Neither shape should leak the new agent into home.
-                assert "cross_path_agent" not in (home_data.get("agentic_nodes") or {})
-                assert "cross_path_agent" not in (home_data.get("agent", {}).get("agentic_nodes") or {})
+            home_data = yaml.safe_load(home_yaml.read_text(encoding="utf-8")) if home_yaml.exists() else {}
+            home_data = home_data or {}
+            assert "cross_path_agent" not in (home_data.get("agentic_nodes") or {})
+            assert "cross_path_agent" not in (home_data.get("agent", {}).get("agentic_nodes") or {})
         finally:
             agent_config_loader.CONFIGURATION_MANAGER = None

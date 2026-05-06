@@ -411,7 +411,7 @@ class AgentService:
             return
 
         safe_version = self._sanitize_path_component(version) if version else version
-        template_dir = Path(agent_config.home) / "template"
+        template_dir = agent_config.path_manager.datus_home / "template"
         os.makedirs(template_dir, exist_ok=True)
         target_file = template_dir / f"{safe_name}_system_{safe_version}.j2"
         if not target_file.resolve().is_relative_to(template_dir.resolve()):
@@ -433,7 +433,7 @@ class AgentService:
             return
         safe_name = self._sanitize_path_component(agent_name)
         resolved = self._sanitize_path_component(version or "1.0")
-        template_dir = Path(agent_config.home) / "template"
+        template_dir = agent_config.path_manager.datus_home / "template"
         os.makedirs(template_dir, exist_ok=True)
         target_file = template_dir / f"{safe_name}_system_{resolved}.j2"
         if not target_file.resolve().is_relative_to(template_dir.resolve()):
