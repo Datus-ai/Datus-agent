@@ -353,9 +353,7 @@ class TestGetAgent:
         result = await svc.get_agent("mtime_agent", real_agent_config)
         assert result.success is True
         created_at = result.data["agent"]["created_at"]
-        assert isinstance(created_at, str) and ISO_UTC_Z_RE.match(created_at), (
-            f"unexpected created_at: {created_at!r}"
-        )
+        assert isinstance(created_at, str) and ISO_UTC_Z_RE.match(created_at), f"unexpected created_at: {created_at!r}"
 
 
 @pytest.mark.asyncio
