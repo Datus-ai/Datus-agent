@@ -64,6 +64,14 @@ class ReferenceTemplateTools:
         self.has_reference_templates = self.reference_template_store.get_reference_template_size() > 0
         self.db_func_tool = db_func_tool
 
+    @staticmethod
+    def all_tools_name() -> List[str]:
+        from datus.utils.class_utils import get_public_instance_methods
+
+        return [
+            name for name in get_public_instance_methods(ReferenceTemplateTools).keys() if name != "available_tools"
+        ]
+
     def available_tools(self) -> List[Tool]:
         tools = []
         if self.has_reference_templates:
