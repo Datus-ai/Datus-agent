@@ -2,7 +2,6 @@
 
 import re
 from datetime import datetime, timezone
-from pathlib import Path
 
 import pytest
 
@@ -22,6 +21,28 @@ from datus.api.services.agent_service import (
 from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
 
 ISO_UTC_Z_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$")
+
+
+@pytest.fixture
+def agent_yml_with_singleton(real_agent_config):
+    """Pre-seed an ``agent.yml`` at the resolved home and install the
+    ``ConfigurationManager`` singleton at that path.
+
+    ``_save_agentic_nodes`` and ``get_agent``'s mtime fallback now route
+    through ``configuration_manager()``; tests that exercise create/edit/get
+    need the singleton wired up to a tmp-path yaml so writes don't escape
+    the temp dir. The fixture also resets the singleton on teardown so
+    subsequent tests don't see leaked state.
+    """
+    from datus.configuration import agent_config_loader
+
+    home = real_agent_config.path_manager.datus_home
+    cfg_path = home / "agent.yml"
+    if not cfg_path.exists():
+        cfg_path.write_text("agent: {}\n", encoding="utf-8")
+    agent_config_loader.configuration_manager(config_path=str(cfg_path), reload=True)
+    yield cfg_path
+    agent_config_loader.CONFIGURATION_MANAGER = None
 
 
 class TestValidateTools:
@@ -383,7 +404,7 @@ class TestGetAgent:
         assert result.success is False
         assert result.errorCode == "AGENT_NOT_FOUND"
 
-    async def test_get_custom_agent_schema_matches_contract(self, real_agent_config):
+    async def test_get_custom_agent_schema_matches_contract(self, real_agent_config, agent_yml_with_singleton):
         """Custom agent response matches the documented schema and omits system_prompt."""
         svc = AgentService()
         nodes = real_agent_config.agentic_nodes or {}
@@ -402,7 +423,7 @@ class TestGetAgent:
         for field in ("rules", "catalogs", "subjects"):
             assert isinstance(agent[field], list)
 
-    async def test_get_custom_agent_parses_tools_string(self, real_agent_config):
+    async def test_get_custom_agent_parses_tools_string(self, real_agent_config, agent_yml_with_singleton):
         """yaml ``tools: "db_tools.*, ctx.*"`` is returned as a trimmed list."""
         # Inject a custom node with a comma-separated tools string directly into the
         # in-memory config — get_agent reads agent_config.agentic_nodes, not yaml.
@@ -434,11 +455,10 @@ class TestGetAgent:
         assert result.success is True
         assert result.data["agent"]["created_at"] == "2026-04-30T09:20:31.545000Z"
 
-    async def test_get_custom_agent_created_at_falls_back_to_file_mtime(self, real_agent_config):
-        """When yaml has no ``created_at``, fall back to agent.yml file mtime in ISO-Z."""
-        # Ensure agent.yml exists so the mtime fallback can resolve
-        config_path = Path(real_agent_config.home) / "agent.yml"
-        config_path.write_text("agentic_nodes: {}\n", encoding="utf-8")
+    async def test_get_custom_agent_created_at_falls_back_to_file_mtime(
+        self, real_agent_config, agent_yml_with_singleton
+    ):
+        """When yaml has no ``created_at``, fall back to the loaded config file's mtime."""
         real_agent_config.agentic_nodes["mtime_agent"] = {
             "type": "gen_sql",
             "description": "no explicit created_at",
@@ -456,17 +476,9 @@ class TestGetAgent:
 class TestCreateAgent:
     """Tests for create_agent — agent creation with YAML persistence."""
 
-    async def test_create_agent_success(self, real_agent_config):
+    async def test_create_agent_success(self, real_agent_config, agent_yml_with_singleton):
         """create_agent creates a new custom agent."""
-        import yaml
-
         from datus.api.models.agent_models import CreateAgentInput
-
-        # Ensure agent.yml exists
-        config_path = Path(real_agent_config.home) / "agent.yml"
-        if not config_path.exists():
-            with open(config_path, "w") as f:
-                yaml.dump({"agentic_nodes": {}}, f)
 
         svc = AgentService()
         request = CreateAgentInput(
@@ -479,16 +491,9 @@ class TestCreateAgent:
         assert result.success is True
         assert result.data["name"] == "test_new_agent"
 
-    async def test_create_agent_duplicate_name_fails(self, real_agent_config):
+    async def test_create_agent_duplicate_name_fails(self, real_agent_config, agent_yml_with_singleton):
         """create_agent rejects duplicate agent name."""
-        import yaml
-
         from datus.api.models.agent_models import CreateAgentInput
-
-        config_path = Path(real_agent_config.home) / "agent.yml"
-        if not config_path.exists():
-            with open(config_path, "w") as f:
-                yaml.dump({"agentic_nodes": {}}, f)
 
         svc = AgentService()
         # Create first
@@ -504,16 +509,9 @@ class TestCreateAgent:
         assert result.success is False
         assert result.errorCode == "AGENT_ALREADY_EXISTS"
 
-    async def test_create_agent_builtin_name_fails(self, real_agent_config):
+    async def test_create_agent_builtin_name_fails(self, real_agent_config, agent_yml_with_singleton):
         """create_agent rejects builtin agent names."""
-        import yaml
-
         from datus.api.models.agent_models import CreateAgentInput
-
-        config_path = Path(real_agent_config.home) / "agent.yml"
-        if not config_path.exists():
-            with open(config_path, "w") as f:
-                yaml.dump({"agentic_nodes": {}}, f)
 
         svc = AgentService()
         result = await svc.create_agent(
@@ -523,16 +521,11 @@ class TestCreateAgent:
         assert result.success is False
         assert result.errorCode == "AGENT_ALREADY_EXISTS"
 
-    async def test_create_agent_persists_created_at(self, real_agent_config):
+    async def test_create_agent_persists_created_at(self, real_agent_config, agent_yml_with_singleton):
         """create_agent writes a UTC ISO-Z created_at into agent.yml."""
         import yaml
 
         from datus.api.models.agent_models import CreateAgentInput
-
-        config_path = Path(real_agent_config.home) / "agent.yml"
-        if not config_path.exists():
-            with open(config_path, "w") as f:
-                yaml.dump({"agentic_nodes": {}}, f)
 
         svc = AgentService()
         result = await svc.create_agent(
@@ -541,9 +534,11 @@ class TestCreateAgent:
         )
         assert result.success is True
 
-        with open(config_path) as f:
+        with open(agent_yml_with_singleton) as f:
             raw = yaml.safe_load(f)
-        entry = raw["agentic_nodes"]["created_at_agent"]
+        # Production yaml wraps everything under ``agent:`` and
+        # ConfigurationManager.save() round-trips that wrapping.
+        entry = raw["agent"]["agentic_nodes"]["created_at_agent"]
         assert "created_at" in entry
         # Round-trip through the public API: the value surfaces unchanged
         get_result = await svc.get_agent("created_at_agent", real_agent_config)
@@ -552,16 +547,9 @@ class TestCreateAgent:
         # Either yaml stored a string (Z-suffixed) or a datetime that gets normalized
         assert created_at is not None and created_at.endswith("Z")
 
-    async def test_create_agent_invalid_tools_fails(self, real_agent_config):
+    async def test_create_agent_invalid_tools_fails(self, real_agent_config, agent_yml_with_singleton):
         """create_agent rejects invalid tool patterns."""
-        import yaml
-
         from datus.api.models.agent_models import CreateAgentInput
-
-        config_path = Path(real_agent_config.home) / "agent.yml"
-        if not config_path.exists():
-            with open(config_path, "w") as f:
-                yaml.dump({"agentic_nodes": {}}, f)
 
         svc = AgentService()
         result = await svc.create_agent(
@@ -576,7 +564,7 @@ class TestCreateAgent:
 class TestEditAgent:
     """Tests for edit_agent — agent update with YAML persistence."""
 
-    async def test_edit_agent_not_found(self, real_agent_config):
+    async def test_edit_agent_not_found(self, real_agent_config, agent_yml_with_singleton):
         """edit_agent returns error for nonexistent agent."""
         from datus.api.models.agent_models import EditAgentInput
 
@@ -588,7 +576,7 @@ class TestEditAgent:
         assert result.success is False
         assert result.errorCode == "AGENT_NOT_FOUND"
 
-    async def test_edit_agent_invalid_tools(self, real_agent_config):
+    async def test_edit_agent_invalid_tools(self, real_agent_config, agent_yml_with_singleton):
         """edit_agent rejects invalid tool patterns."""
         from datus.api.models.agent_models import EditAgentInput
 
@@ -600,16 +588,9 @@ class TestEditAgent:
         assert result.success is False
         assert result.errorCode == "INVALID_TOOLS"
 
-    async def test_edit_existing_agent(self, real_agent_config):
+    async def test_edit_existing_agent(self, real_agent_config, agent_yml_with_singleton):
         """edit_agent updates existing custom agent."""
-        import yaml
-
         from datus.api.models.agent_models import CreateAgentInput, EditAgentInput
-
-        config_path = Path(real_agent_config.home) / "agent.yml"
-        if not config_path.exists():
-            with open(config_path, "w") as f:
-                yaml.dump({"agentic_nodes": {}}, f)
 
         svc = AgentService()
         # Create first
@@ -628,3 +609,50 @@ class TestEditAgent:
         get_result = await svc.get_agent("edit_me", real_agent_config)
         assert get_result.success is True
         assert get_result.data["agent"]["description"] == "updated description"
+
+    async def test_save_targets_loaded_config_path_not_home(self, real_agent_config, tmp_path):
+        """Regression: ``--config /custom/path/agent.yml`` must persist to that
+        same path, not to ``{datus_home}/agent.yml``.
+
+        The original bug: a user starts the web UI with
+        ``datus --web --config ana-docs/conf/agent.yml`` and saves an agent.
+        The change landed in ``~/.datus/agent.yml`` instead of the
+        ``ana-docs/conf/agent.yml`` they configured. This test reproduces
+        that scenario by installing the ConfigurationManager singleton at
+        a custom path outside ``datus_home`` and asserting writes follow
+        the singleton's ``config_path``.
+        """
+        import yaml
+
+        from datus.api.models.agent_models import CreateAgentInput
+        from datus.configuration import agent_config_loader
+
+        # The "real" config the user passed via --config — not under home.
+        custom_dir = tmp_path / "ana-docs" / "conf"
+        custom_dir.mkdir(parents=True)
+        custom_yaml = custom_dir / "agent.yml"
+        custom_yaml.write_text("agent: {}\n", encoding="utf-8")
+        agent_config_loader.configuration_manager(config_path=str(custom_yaml), reload=True)
+        try:
+            svc = AgentService()
+            result = await svc.create_agent(
+                CreateAgentInput(name="cross_path_agent", type="gen_sql", description="x"),
+                real_agent_config,
+            )
+            assert result.success is True
+
+            # The custom yaml must contain the new agent under the production
+            # ``agent.agentic_nodes`` shape.
+            saved = yaml.safe_load(custom_yaml.read_text(encoding="utf-8"))
+            assert saved["agent"]["agentic_nodes"]["cross_path_agent"]["type"] == "gen_sql"
+
+            # The ``{datus_home}/agent.yml`` location must NOT have been written
+            # — that was the bug.
+            home_yaml = real_agent_config.path_manager.datus_home / "agent.yml"
+            if home_yaml.exists():
+                home_data = yaml.safe_load(home_yaml.read_text(encoding="utf-8")) or {}
+                # Neither shape should leak the new agent into home.
+                assert "cross_path_agent" not in (home_data.get("agentic_nodes") or {})
+                assert "cross_path_agent" not in (home_data.get("agent", {}).get("agentic_nodes") or {})
+        finally:
+            agent_config_loader.CONFIGURATION_MANAGER = None

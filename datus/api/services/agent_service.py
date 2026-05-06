@@ -190,15 +190,22 @@ def _validate_tools(tools: list[str]) -> list[str]:
 
 
 def _save_agentic_nodes(agent_config: AgentConfig, nodes: dict) -> None:
-    """Save agentic_nodes back to agent.yml."""
-    import yaml
+    """Persist agentic_nodes back to the loaded ``agent.yml``.
 
-    config_path = Path(agent_config.home) / "agent.yml"
-    with open(config_path) as f:
-        raw = yaml.safe_load(f)
-    raw["agentic_nodes"] = nodes
-    with open(config_path, "w") as f:
-        yaml.dump(raw, f, allow_unicode=True, default_flow_style=False)
+    Routes through the :class:`ConfigurationManager` singleton so:
+
+    - Writes land in the same yaml that was read at startup (``--config``
+      path), not a synthetic ``{home}/agent.yml`` — the latter is the
+      runtime-data home and may be different from the source config file.
+    - The on-disk shape is preserved (production configs nest everything
+      under ``agent:``); ``ConfigurationManager.save`` round-trips the
+      wrapping correctly via ``{"agent": self.data}``.
+    """
+    from datus.configuration.agent_config_loader import configuration_manager
+
+    cfg_mgr = configuration_manager()
+    cfg_mgr.data["agentic_nodes"] = nodes
+    cfg_mgr.save()
 
 
 class AgentService:
@@ -261,7 +268,9 @@ class AgentService:
         agent_type = agent.get("type", "gen_sql")
         created_at = _normalize_created_at(agent.get("created_at"))
         if not created_at:
-            created_at = _file_mtime_iso(Path(agent_config.home) / "agent.yml")
+            from datus.configuration.agent_config_loader import configuration_manager
+
+            created_at = _file_mtime_iso(configuration_manager().config_path)
 
         return Result(
             success=True,
