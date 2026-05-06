@@ -1,5 +1,7 @@
 """Tests for datus.api.services.agent_service — tool validation and agent constants."""
 
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -10,9 +12,14 @@ from datus.api.services.agent_service import (
     VALID_TOOL_CATEGORIES,
     VALID_TOOL_METHODS,
     AgentService,
+    _normalize_created_at,
+    _parse_tools,
+    _utc_now_iso,
     _validate_tools,
 )
 from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
+
+ISO_UTC_Z_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$")
 
 
 class TestValidateTools:
@@ -166,17 +173,112 @@ class TestListAgents:
         assert len(agent_names) >= len(BUILTIN_SUBAGENTS)
 
 
+class TestParseTools:
+    """Tests for _parse_tools — normalize yaml tools field to list[str]."""
+
+    def test_comma_separated_string_is_split(self):
+        """Comma-separated string is split into trimmed entries."""
+        assert _parse_tools("db_tools.*, context_search_tools.*") == [
+            "db_tools.*",
+            "context_search_tools.*",
+        ]
+
+    def test_string_entries_are_trimmed(self):
+        """Surrounding whitespace is removed from each split entry."""
+        assert _parse_tools("  db_tools.*  ,\tcontext_search_tools.read_query \n") == [
+            "db_tools.*",
+            "context_search_tools.read_query",
+        ]
+
+    def test_list_input_is_trimmed_and_passed_through(self):
+        """List input is preserved with each entry trimmed."""
+        assert _parse_tools(["db_tools.*", "  ctx.*  "]) == ["db_tools.*", "ctx.*"]
+
+    def test_empty_string_returns_empty_list(self):
+        """Empty / whitespace-only string yields []."""
+        assert _parse_tools("") == []
+        assert _parse_tools("   ") == []
+        assert _parse_tools(",,, ,") == []
+
+    def test_none_returns_empty_list(self):
+        """None input yields []."""
+        assert _parse_tools(None) == []
+
+    def test_unsupported_type_returns_empty_list(self):
+        """Non-string non-list inputs (e.g. int, dict) yield [] safely."""
+        assert _parse_tools(42) == []
+        assert _parse_tools({"db_tools": "*"}) == []
+
+
+class TestUtcNowIso:
+    """Tests for _utc_now_iso — UTC ISO-8601 with Z suffix."""
+
+    def test_format_matches_iso_with_z_suffix(self):
+        """Returned string matches ISO-8601 microsecond format ending in Z."""
+        value = _utc_now_iso()
+        assert ISO_UTC_Z_RE.match(value), f"unexpected format: {value!r}"
+
+    def test_value_is_recent_utc_time(self):
+        """Returned timestamp is within a few seconds of now (UTC)."""
+        before = datetime.now(timezone.utc)
+        value = _utc_now_iso()
+        # Parse back: replace trailing Z so fromisoformat accepts it
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        delta = abs((parsed - before).total_seconds())
+        assert delta < 5, f"timestamp {value} not close to {before.isoformat()}"
+
+
+class TestNormalizeCreatedAt:
+    """Tests for _normalize_created_at — coerce yaml-loaded values to ISO Z string."""
+
+    def test_none_returns_none(self):
+        """Missing value returns None."""
+        assert _normalize_created_at(None) is None
+
+    def test_string_passes_through(self):
+        """String values pass through unchanged (assumed already ISO)."""
+        s = "2026-04-30T09:20:31.545000Z"
+        assert _normalize_created_at(s) == s
+
+    def test_aware_datetime_converted_to_z_suffix(self):
+        """Timezone-aware datetime converts to ISO Z."""
+        dt = datetime(2026, 4, 30, 9, 20, 31, 545000, tzinfo=timezone.utc)
+        assert _normalize_created_at(dt) == "2026-04-30T09:20:31.545000Z"
+
+    def test_naive_datetime_assumed_utc(self):
+        """Naive datetime is assumed UTC and gets Z suffix."""
+        dt = datetime(2026, 4, 30, 9, 20, 31, 545000)
+        assert _normalize_created_at(dt) == "2026-04-30T09:20:31.545000Z"
+
+    def test_unsupported_type_returns_none(self):
+        """Unsupported types (int, dict, etc.) yield None."""
+        assert _normalize_created_at(123) is None
+        assert _normalize_created_at({"foo": "bar"}) is None
+
+
 @pytest.mark.asyncio
 class TestGetAgent:
     """Tests for get_agent — retrieve single agent config."""
 
-    async def test_get_builtin_agent(self, real_agent_config):
-        """get_agent returns builtin agent info."""
+    EXPECTED_FIELDS = {"id", "name", "type", "description", "created_at", "tools", "rules", "catalogs", "subjects"}
+
+    async def test_get_builtin_agent_has_full_schema(self, real_agent_config):
+        """Builtin agent response carries the same field set as custom agents."""
         svc = AgentService()
         result = await svc.get_agent("gen_sql", real_agent_config)
         assert result.success is True
-        assert result.data["agent"]["name"] == "gen_sql"
-        assert result.data["agent"]["type"] == "builtin"
+        agent = result.data["agent"]
+        assert agent["name"] == "gen_sql"
+        assert agent["id"] == "gen_sql"
+        assert agent["type"] == "builtin"
+        assert set(agent.keys()) == self.EXPECTED_FIELDS
+        # All collection fields default to empty list, not None
+        assert agent["tools"] == []
+        assert agent["rules"] == []
+        assert agent["catalogs"] == []
+        assert agent["subjects"] == []
+        # system_prompt must NOT be present
+        assert "system_prompt" not in agent
 
     async def test_get_nonexistent_agent(self, real_agent_config):
         """get_agent returns error for unknown agent."""
@@ -185,17 +287,75 @@ class TestGetAgent:
         assert result.success is False
         assert result.errorCode == "AGENT_NOT_FOUND"
 
-    async def test_get_custom_agent_from_agentic_nodes(self, real_agent_config):
-        """get_agent returns custom agent info from agentic_nodes."""
+    async def test_get_custom_agent_schema_matches_contract(self, real_agent_config):
+        """Custom agent response matches the documented schema and omits system_prompt."""
         svc = AgentService()
-        # real_agent_config has agentic_nodes from conftest (e.g. 'gensql', 'chat', etc.)
         nodes = real_agent_config.agentic_nodes or {}
         assert nodes, "real_agent_config fixture must provide agentic_nodes"
         first_name = next(iter(nodes))
         result = await svc.get_agent(first_name, real_agent_config)
         assert result.success is True
-        assert result.data["agent"]["name"] == first_name
-        assert result.data["agent"]["id"] == first_name
+        agent = result.data["agent"]
+        assert agent["name"] == first_name
+        assert agent["id"] == first_name
+        assert set(agent.keys()) == self.EXPECTED_FIELDS
+        assert "system_prompt" not in agent
+        # tools is always a list — never a string
+        assert isinstance(agent["tools"], list)
+        # collection fields are always lists, never None
+        for field in ("rules", "catalogs", "subjects"):
+            assert isinstance(agent[field], list)
+
+    async def test_get_custom_agent_parses_tools_string(self, real_agent_config):
+        """yaml ``tools: "db_tools.*, ctx.*"`` is returned as a trimmed list."""
+        # Inject a custom node with a comma-separated tools string directly into the
+        # in-memory config — get_agent reads agent_config.agentic_nodes, not yaml.
+        real_agent_config.agentic_nodes["string_tools_agent"] = {
+            "type": "gen_sql",
+            "description": "agent with string tools",
+            "tools": "db_tools.*,  context_search_tools.read_query  ",
+        }
+
+        svc = AgentService()
+        result = await svc.get_agent("string_tools_agent", real_agent_config)
+        assert result.success is True
+        assert result.data["agent"]["tools"] == [
+            "db_tools.*",
+            "context_search_tools.read_query",
+        ]
+
+    async def test_get_custom_agent_returns_explicit_created_at(self, real_agent_config):
+        """An explicit yaml ``created_at`` is surfaced verbatim in the response."""
+        real_agent_config.agentic_nodes["dated_agent"] = {
+            "type": "gen_sql",
+            "description": "agent with explicit created_at",
+            "tools": "db_tools.*",
+            "created_at": "2026-04-30T09:20:31.545000Z",
+        }
+
+        svc = AgentService()
+        result = await svc.get_agent("dated_agent", real_agent_config)
+        assert result.success is True
+        assert result.data["agent"]["created_at"] == "2026-04-30T09:20:31.545000Z"
+
+    async def test_get_custom_agent_created_at_falls_back_to_file_mtime(self, real_agent_config):
+        """When yaml has no ``created_at``, fall back to agent.yml file mtime in ISO-Z."""
+        # Ensure agent.yml exists so the mtime fallback can resolve
+        config_path = Path(real_agent_config.home) / "agent.yml"
+        config_path.write_text("agentic_nodes: {}\n", encoding="utf-8")
+        real_agent_config.agentic_nodes["mtime_agent"] = {
+            "type": "gen_sql",
+            "description": "no explicit created_at",
+            "tools": "db_tools.*",
+        }
+
+        svc = AgentService()
+        result = await svc.get_agent("mtime_agent", real_agent_config)
+        assert result.success is True
+        created_at = result.data["agent"]["created_at"]
+        assert isinstance(created_at, str) and ISO_UTC_Z_RE.match(created_at), (
+            f"unexpected created_at: {created_at!r}"
+        )
 
 
 @pytest.mark.asyncio
@@ -268,6 +428,35 @@ class TestCreateAgent:
         )
         assert result.success is False
         assert result.errorCode == "AGENT_ALREADY_EXISTS"
+
+    async def test_create_agent_persists_created_at(self, real_agent_config):
+        """create_agent writes a UTC ISO-Z created_at into agent.yml."""
+        import yaml
+
+        from datus.api.models.agent_models import CreateAgentInput
+
+        config_path = Path(real_agent_config.home) / "agent.yml"
+        if not config_path.exists():
+            with open(config_path, "w") as f:
+                yaml.dump({"agentic_nodes": {}}, f)
+
+        svc = AgentService()
+        result = await svc.create_agent(
+            CreateAgentInput(name="created_at_agent", type="gen_sql"),
+            real_agent_config,
+        )
+        assert result.success is True
+
+        with open(config_path) as f:
+            raw = yaml.safe_load(f)
+        entry = raw["agentic_nodes"]["created_at_agent"]
+        assert "created_at" in entry
+        # Round-trip through the public API: the value surfaces unchanged
+        get_result = await svc.get_agent("created_at_agent", real_agent_config)
+        assert get_result.success is True
+        created_at = get_result.data["agent"]["created_at"]
+        # Either yaml stored a string (Z-suffixed) or a datetime that gets normalized
+        assert created_at is not None and created_at.endswith("Z")
 
     async def test_create_agent_invalid_tools_fails(self, real_agent_config):
         """create_agent rejects invalid tool patterns."""

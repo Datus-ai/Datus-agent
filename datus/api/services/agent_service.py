@@ -6,8 +6,9 @@ from the BUILTIN_SUBAGENTS set; custom agents are persisted in agent.yml.
 """
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from datus.api.models.agent_models import CreateAgentInput, EditAgentInput
 from datus.api.models.base_models import Result
@@ -50,6 +51,53 @@ SUBAGENT_TOOL_REFERENCE: dict[str, list[str]] = {
     "gen_sql": list(VALID_TOOL_METHODS.keys()),
     "gen_report": list(VALID_TOOL_METHODS.keys()),
 }
+
+
+def _parse_tools(value: Any) -> list[str]:
+    """Normalize the yaml ``tools`` field to a list of pattern strings.
+
+    Accepts either a comma-separated string (legacy yaml form) or a list, and
+    trims surrounding whitespace from every entry. Empty entries are dropped.
+    """
+    if not value:
+        return []
+    if isinstance(value, str):
+        items = value.split(",")
+    elif isinstance(value, (list, tuple)):
+        items = value
+    else:
+        return []
+    return [str(item).strip() for item in items if str(item).strip()]
+
+
+def _utc_now_iso() -> str:
+    """Current UTC time as ISO-8601 string with ``Z`` suffix."""
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _normalize_created_at(value: Any) -> Optional[str]:
+    """Coerce a yaml-loaded ``created_at`` value into ISO-8601 UTC with ``Z``.
+
+    yaml may parse the field as a ``datetime`` or pass it through as a string.
+    Returns ``None`` when the value is missing or unrecognized.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+    if isinstance(value, str):
+        return value
+    return None
+
+
+def _file_mtime_iso(path: Path) -> Optional[str]:
+    """Return the file's mtime as ISO-8601 UTC with ``Z`` suffix, or None on error."""
+    try:
+        ts = path.stat().st_mtime
+    except OSError:
+        return None
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def _validate_tools(tools: list[str]) -> list[str]:
@@ -134,6 +182,12 @@ class AgentService:
                         "id": agent_id,
                         "name": agent_id,
                         "type": "builtin",
+                        "description": BUILTIN_SUBAGENT_DESCRIPTIONS.get(agent_id, ""),
+                        "created_at": None,
+                        "tools": [],
+                        "rules": [],
+                        "catalogs": [],
+                        "subjects": [],
                     }
                 },
             )
@@ -144,14 +198,10 @@ class AgentService:
         if not agent:
             return Result(success=False, errorCode="AGENT_NOT_FOUND", errorMessage=f"Agent '{agent_id}' not found")
 
-        # 3. Read prompt template content from project template file
         agent_type = agent.get("type", "gen_sql")
-        prompt_content = self._read_prompt_template(
-            agent_name=agent_id,
-            agent_type=agent_type,
-            version=agent.get("prompt_version"),
-            agent_config=agent_config,
-        )
+        created_at = _normalize_created_at(agent.get("created_at"))
+        if not created_at:
+            created_at = _file_mtime_iso(Path(agent_config.home) / "agent.yml")
 
         return Result(
             success=True,
@@ -161,11 +211,11 @@ class AgentService:
                     "name": agent_id,
                     "type": agent_type,
                     "description": agent.get("description", ""),
-                    "system_prompt": prompt_content or agent.get("prompt_template", ""),
-                    "tools": agent.get("tools", []),
-                    "rules": agent.get("rules", []),
-                    "catalogs": agent.get("catalogs", []),
-                    "subjects": agent.get("subjects", []),
+                    "created_at": created_at,
+                    "tools": _parse_tools(agent.get("tools")),
+                    "rules": agent.get("rules") or [],
+                    "catalogs": agent.get("catalogs") or [],
+                    "subjects": agent.get("subjects") or [],
                 }
             },
         )
@@ -241,6 +291,7 @@ class AgentService:
             "catalogs": request.catalogs or [],
             "subjects": request.subjects or [],
             "rules": request.rules or [],
+            "created_at": _utc_now_iso(),
         }
         if request.prompt_template:
             agent_entry["prompt_template"] = request.prompt_template
@@ -263,12 +314,6 @@ class AgentService:
             logger.warning(f"Failed to copy prompt template for agent '{request.name}' (non-fatal)", exc_info=True)
 
         return Result(success=True, data={"name": request.name, "id": request.name})
-
-    def _resolve_template_version(self, template_base: str, version: Optional[str] = None) -> Optional[str]:
-        """Resolve prompt template version via PromptManager; returns latest if version is None."""
-        if version:
-            return version
-        return self._prompt_manager.get_latest_version(template_base)
 
     @staticmethod
     def _sanitize_path_component(value: str) -> str:
@@ -306,38 +351,6 @@ class AgentService:
             content = source_path.read_text(encoding="utf-8")
             target_file.write_text(content, encoding="utf-8")
             logger.info(f"Copied prompt template: {source_path.name} -> {target_file}")
-
-    def _read_prompt_template(
-        self,
-        agent_name: str,
-        agent_type: str,
-        version: Optional[str],
-        agent_config: AgentConfig,
-    ) -> str:
-        """Read prompt template content. Checks workspace dir first, falls back to builtin."""
-        template_base = self._TYPE_TO_TEMPLATE.get(agent_type, "gen_sql_system")
-        safe_name = self._sanitize_path_component(agent_name)
-        resolved = self._resolve_template_version(template_base, version)
-
-        if resolved:
-            safe_resolved = self._sanitize_path_component(resolved)
-            # Try workspace template first
-            template_dir = Path(agent_config.home) / "template"
-            target_file = template_dir / f"{safe_name}_system_{safe_resolved}.j2"
-            try:
-                if target_file.exists():
-                    return target_file.read_text(encoding="utf-8")
-            except Exception:
-                logger.warning(f"Failed to read project template '{target_file}'", exc_info=True)
-
-            # Fallback: read builtin via PromptManager
-            try:
-                source_path = self._prompt_manager._get_template_path(template_base, resolved)
-                return source_path.read_text(encoding="utf-8")
-            except (FileNotFoundError, Exception):
-                logger.warning(f"Failed to read builtin template '{template_base}' v{resolved}", exc_info=True)
-
-        return ""
 
     def _save_prompt_template(
         self,
