@@ -6,6 +6,7 @@ from the BUILTIN_SUBAGENTS set; custom agents are persisted in agent.yml.
 """
 
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -31,6 +32,12 @@ VALID_TOOL_METHODS: dict[str, set[str]] = {
     "db_tools": set(DBFuncTool.all_tools_name()),
     "context_search_tools": set(ContextSearchTools.all_tools_name()),
     "semantic_tools": set(SemanticTools.all_tools_name()),
+    "reference_template_tools": {
+        "search_reference_template",
+        "get_reference_template",
+        "render_reference_template",
+        "execute_reference_template",
+    },
     "date_parsing_tools": {"parse_temporal_expressions"},
     "filesystem_tools": {
         "read_file",
@@ -46,11 +53,64 @@ VALID_TOOL_CATEGORIES = set(VALID_TOOL_METHODS.keys())
 
 BUILTIN_SUBAGENTS = SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS
 
-# Tool reference for each agent type
-SUBAGENT_TOOL_REFERENCE: dict[str, list[str]] = {
-    "gen_sql": list(VALID_TOOL_METHODS.keys()),
-    "gen_report": list(VALID_TOOL_METHODS.keys()),
+# Curated list of categories surfaced through GET /agent/use_tools' ``tool_types``
+# block. Mirrors the saas Datus-backend choice — ``platform_doc_tools`` is a
+# valid tool (and stays in VALID_TOOL_METHODS for write-side validation) but is
+# excluded from the editor picker.
+_USER_FACING_TOOL_CATEGORIES: tuple[str, ...] = (
+    "db_tools",
+    "context_search_tools",
+    "semantic_tools",
+    "reference_template_tools",
+    "date_parsing_tools",
+    "filesystem_tools",
+)
+
+_ALL_TOOL_TYPES: dict[str, dict[str, list[str]]] = {
+    category: {"tools": sorted(VALID_TOOL_METHODS[category])} for category in _USER_FACING_TOOL_CATEGORIES
 }
+
+# Per-agent-type tool reference. Mirrors the saas Datus-backend contract:
+# ``default_tools`` are wildcard / specific patterns preselected for the type,
+# ``tool_types`` is the full catalog of allowed categories with their methods.
+SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
+    "chat": {
+        "default_tools": [
+            "db_tools.*",
+            "context_search_tools.*",
+            "reference_template_tools.*",
+            "date_parsing_tools.*",
+            "filesystem_tools.*",
+            "platform_doc_tools.*",
+        ],
+        "tool_types": _ALL_TOOL_TYPES,
+    },
+    "gen_sql": {
+        "default_tools": [
+            "db_tools.*",
+            "semantic_tools.*",
+            "context_search_tools.*",
+        ],
+        "tool_types": _ALL_TOOL_TYPES,
+    },
+    "gen_report": {
+        "default_tools": [
+            "semantic_tools.*",
+            "context_search_tools.list_subject_tree",
+        ],
+        "tool_types": _ALL_TOOL_TYPES,
+    },
+}
+
+
+def sanitize_agentic_node_name(name: str) -> str:
+    """Sanitize a sub-agent name for agentic_nodes keys and template filenames.
+
+    Replaces every character outside ``[A-Za-z0-9_-]`` with ``_`` so the name is
+    safe to use as a yaml key, dict key, or filesystem path component. ``None``
+    or an empty string degrades to ``""``.
+    """
+    return re.sub(r"[^a-zA-Z0-9_\-]", "_", name or "")
 
 
 def _parse_tools(value: Any) -> list[str]:
@@ -157,14 +217,18 @@ class AgentService:
 
     @staticmethod
     def get_use_tools(agent_type: str) -> Result[dict]:
-        """Return available tools for a given agent type."""
+        """Return available tools for a given agent type.
+
+        Response payload follows the saas Datus-backend contract:
+        ``{"default_tools": [...], "tool_types": {category: {"tools": [...]}}}``.
+        """
         if agent_type not in SUBAGENT_TOOL_REFERENCE:
             return Result(
                 success=False,
                 errorCode="INVALID_AGENT_TYPE",
                 errorMessage=f"Unknown agent_type '{agent_type}'. Must be one of: {', '.join(SUBAGENT_TOOL_REFERENCE)}",
             )
-        return Result(success=True, data={"tools": SUBAGENT_TOOL_REFERENCE[agent_type]})
+        return Result(success=True, data=SUBAGENT_TOOL_REFERENCE[agent_type])
 
     async def get_agent(
         self,

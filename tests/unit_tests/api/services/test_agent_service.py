@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from datus.api.services.agent_service import (
+    _USER_FACING_TOOL_CATEGORIES,
     BUILTIN_SUBAGENTS,
     SUBAGENT_TOOL_REFERENCE,
     VALID_TOOL_CATEGORIES,
@@ -16,6 +17,7 @@ from datus.api.services.agent_service import (
     _parse_tools,
     _utc_now_iso,
     _validate_tools,
+    sanitize_agentic_node_name,
 )
 from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
 
@@ -89,10 +91,55 @@ class TestConstants:
         """VALID_TOOL_CATEGORIES is non-empty."""
         assert len(VALID_TOOL_CATEGORIES) >= 4
 
-    def test_tool_reference_gen_sql(self):
-        """gen_sql tool reference includes all tool categories."""
-        assert "gen_sql" in SUBAGENT_TOOL_REFERENCE
-        assert set(SUBAGENT_TOOL_REFERENCE["gen_sql"]) == set(VALID_TOOL_METHODS.keys())
+    def test_tool_reference_gen_sql_has_saas_shape(self):
+        """gen_sql tool reference has the saas {default_tools, tool_types} shape."""
+        entry = SUBAGENT_TOOL_REFERENCE["gen_sql"]
+        assert set(entry.keys()) == {"default_tools", "tool_types"}
+        # tool_types is the user-facing curated subset, not every VALID_TOOL_METHODS key
+        assert set(entry["tool_types"].keys()) == set(_USER_FACING_TOOL_CATEGORIES)
+        for category, payload in entry["tool_types"].items():
+            assert payload == {"tools": sorted(VALID_TOOL_METHODS[category])}
+        # gen_sql defaults to db / semantic / context_search wildcards (matches saas)
+        assert entry["default_tools"] == [
+            "db_tools.*",
+            "semantic_tools.*",
+            "context_search_tools.*",
+        ]
+
+    def test_user_facing_categories_excludes_platform_doc_tools(self):
+        """platform_doc_tools is a valid tool but is intentionally hidden from the editor."""
+        assert "platform_doc_tools" in VALID_TOOL_METHODS
+        assert "platform_doc_tools" not in _USER_FACING_TOOL_CATEGORIES
+
+    def test_tool_reference_gen_report_has_saas_defaults(self):
+        """gen_report defaults to semantic.* + context_search.list_subject_tree."""
+        entry = SUBAGENT_TOOL_REFERENCE["gen_report"]
+        assert entry["default_tools"] == [
+            "semantic_tools.*",
+            "context_search_tools.list_subject_tree",
+        ]
+
+    def test_tool_reference_chat_has_full_default_set(self):
+        """chat default_tools enumerates every non-semantic category as wildcard."""
+        entry = SUBAGENT_TOOL_REFERENCE["chat"]
+        assert entry["default_tools"] == [
+            "db_tools.*",
+            "context_search_tools.*",
+            "reference_template_tools.*",
+            "date_parsing_tools.*",
+            "filesystem_tools.*",
+            "platform_doc_tools.*",
+        ]
+
+    def test_reference_template_tools_registered(self):
+        """reference_template_tools category exposes the 4 expected methods."""
+        assert "reference_template_tools" in VALID_TOOL_METHODS
+        assert VALID_TOOL_METHODS["reference_template_tools"] == {
+            "search_reference_template",
+            "get_reference_template",
+            "render_reference_template",
+            "execute_reference_template",
+        }
 
     def test_valid_tool_methods_db_tools_has_methods(self):
         """db_tools category exposes core query methods."""
@@ -120,14 +167,45 @@ class TestAgentServiceInit:
 
 
 class TestGetUseTools:
-    """Tests for get_use_tools — tool reference lookup."""
+    """Tests for get_use_tools — saas-shape tool reference lookup."""
 
-    def test_known_agent_type_returns_tools(self):
-        """get_use_tools returns tools for known agent type."""
+    def test_gen_sql_returns_default_tools_and_tool_types(self):
+        """gen_sql payload matches the saas {default_tools, tool_types} contract."""
         result = AgentService.get_use_tools("gen_sql")
         assert result.success is True
-        assert isinstance(result.data, dict)
-        assert set(result.data["tools"]) == set(SUBAGENT_TOOL_REFERENCE["gen_sql"])
+        assert set(result.data.keys()) == {"default_tools", "tool_types"}
+        assert result.data["default_tools"] == [
+            "db_tools.*",
+            "semantic_tools.*",
+            "context_search_tools.*",
+        ]
+        # tool_types covers exactly the user-facing curated categories, each as {"tools": [...]}
+        assert set(result.data["tool_types"].keys()) == set(_USER_FACING_TOOL_CATEGORIES)
+        for category, payload in result.data["tool_types"].items():
+            assert list(payload.keys()) == ["tools"]
+            assert payload["tools"] == sorted(VALID_TOOL_METHODS[category])
+
+    def test_gen_report_returns_correct_defaults(self):
+        """gen_report's default_tools is a curated subset, not the full wildcard list."""
+        result = AgentService.get_use_tools("gen_report")
+        assert result.success is True
+        assert result.data["default_tools"] == [
+            "semantic_tools.*",
+            "context_search_tools.list_subject_tree",
+        ]
+        assert set(result.data["tool_types"].keys()) == set(_USER_FACING_TOOL_CATEGORIES)
+
+    def test_chat_includes_reference_template_tools_in_default(self):
+        """chat default_tools wires up reference_template_tools.* (saas parity)."""
+        result = AgentService.get_use_tools("chat")
+        assert result.success is True
+        assert "reference_template_tools.*" in result.data["default_tools"]
+        assert "reference_template_tools" in result.data["tool_types"]
+
+    def test_payload_no_longer_wraps_in_tools_key(self):
+        """Old shape {"tools": [...]} is gone — data is now {default_tools, tool_types}."""
+        result = AgentService.get_use_tools("gen_sql")
+        assert "tools" not in result.data, "legacy 'tools' key must not appear at top level"
 
     def test_unknown_agent_type_returns_error(self):
         """get_use_tools returns error for unknown agent type."""
@@ -136,11 +214,12 @@ class TestGetUseTools:
         assert result.errorCode == "INVALID_AGENT_TYPE"
         assert "nonexistent" in result.errorMessage
 
-    def test_gen_report_returns_tools(self):
-        """get_use_tools returns tools for gen_report."""
-        result = AgentService.get_use_tools("gen_report")
-        assert result.success is True
-        assert set(result.data["tools"]) == set(SUBAGENT_TOOL_REFERENCE["gen_report"])
+    def test_known_agent_types_match_subagent_reference(self):
+        """Every key in SUBAGENT_TOOL_REFERENCE returns success and has saas shape."""
+        for agent_type in SUBAGENT_TOOL_REFERENCE:
+            result = AgentService.get_use_tools(agent_type)
+            assert result.success is True, f"agent_type {agent_type} should resolve"
+            assert set(result.data.keys()) == {"default_tools", "tool_types"}
 
 
 @pytest.mark.asyncio
@@ -171,6 +250,23 @@ class TestListAgents:
         # real_agent_config has agentic_nodes from conftest
         agent_names = {a["name"] for a in result.data["agents"]}
         assert len(agent_names) >= len(BUILTIN_SUBAGENTS)
+
+
+class TestSanitizeAgenticNodeName:
+    """Tests for sanitize_agentic_node_name — make a name safe for yaml/path keys."""
+
+    def test_alphanumeric_passthrough(self):
+        """Letters / digits / underscore / hyphen pass through unchanged."""
+        assert sanitize_agentic_node_name("OrderAnalyst-2") == "OrderAnalyst-2"
+
+    def test_unicode_and_punct_replaced_with_underscore(self):
+        """Spaces, dots, slashes, unicode all collapse to underscore."""
+        assert sanitize_agentic_node_name("订单 分析/v.1") == "______v_1"
+
+    def test_empty_and_none_become_empty_string(self):
+        """Empty / None inputs degrade to '' rather than raising."""
+        assert sanitize_agentic_node_name("") == ""
+        assert sanitize_agentic_node_name(None) == ""  # type: ignore[arg-type]
 
 
 class TestParseTools:
