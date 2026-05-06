@@ -674,6 +674,11 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         unique_columns: Optional[List[str]] = None,
         **kwargs,
     ):
+        # ``project`` is injected by the storage registry; pop it before forwarding
+        # so BaseEmbeddingStore (which has a strict signature) doesn't reject it.
+        # Falls back to the active path_manager for callers that bypass the registry.
+        project = kwargs.pop("project", None)
+
         super().__init__(
             table_name=table_name,
             embedding_model=embedding_model,
@@ -685,11 +690,14 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
             **kwargs,
         )
 
-        # Subject tree is project-scoped via the active path_manager.
         from datus.storage.registry import get_subject_tree_store
-        from datus.utils.path_manager import get_path_manager
 
-        self.subject_tree = get_subject_tree_store(project=get_path_manager().project_name)
+        if not project:
+            from datus.utils.path_manager import get_path_manager
+
+            project = get_path_manager().project_name
+
+        self.subject_tree = get_subject_tree_store(project=project)
 
     def batch_store(
         self,

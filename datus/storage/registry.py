@@ -67,17 +67,20 @@ def get_storage_defaults() -> Dict[str, Any]:
 def _get_storage_cached(factory_name: str, embedding_model_conf_name: str, project: str) -> BaseEmbeddingStore:
     """LRU-cached storage creation, keyed by (factory, embedding model, project)."""
     from datus.storage.backend_holder import create_vector_connection
+    from datus.storage.subject_tree.store import BaseSubjectEmbeddingStore
 
     with _registry_lock:
         factory = _factory_registry[factory_name]
     kwargs = dict(_storage_defaults)
     kwargs["db"] = create_vector_connection(project)
 
-    store = factory(get_embedding_model(embedding_model_conf_name), **kwargs)
-    from datus.storage.subject_tree.store import BaseSubjectEmbeddingStore
+    # Subject-aware stores need ``project`` so their constructor can build the
+    # SubjectTreeStore without falling back to an empty ContextVar-scoped
+    # path_manager (which fails outside chat task threads).
+    if isinstance(factory, type) and issubclass(factory, BaseSubjectEmbeddingStore):
+        kwargs["project"] = project
 
-    if isinstance(store, BaseSubjectEmbeddingStore):
-        store.subject_tree = _get_subject_tree_cached(project)
+    store = factory(get_embedding_model(embedding_model_conf_name), **kwargs)
     return store
 
 
