@@ -451,6 +451,38 @@ class TestGetAgent:
         created_at = result.data["agent"]["created_at"]
         assert isinstance(created_at, str) and ISO_UTC_Z_RE.match(created_at), f"unexpected created_at: {created_at!r}"
 
+    async def test_get_agent_uses_path_manager_when_home_has_tilde(self, real_agent_config):
+        """``agent_config.home`` may contain a literal ``~`` (default ``~/.datus``).
+
+        The created_at file-mtime fallback must resolve through ``path_manager``
+        rather than naively constructing ``Path(home)``, otherwise the literal
+        tilde leaks into ``open()`` and raises FileNotFoundError. This regresses
+        the production bug where saving an agent under default config tried to
+        open ``'~/.datus/agent.yml'`` verbatim.
+        """
+        # Pre-create agent.yml under the tmp-path-resolved home so the fallback
+        # has something to stat.
+        resolved_home = real_agent_config.path_manager.datus_home
+        (resolved_home / "agent.yml").write_text("agentic_nodes: {}\n", encoding="utf-8")
+        # Now break agent_config.home — point it at a tilde path that does NOT
+        # exist on disk. If get_agent uses Path(agent_config.home) directly the
+        # mtime probe silently swallows OSError and returns None; if it routes
+        # through path_manager it succeeds.
+        real_agent_config.home = "~/datus-tilde-bug-regression-does-not-exist"
+        real_agent_config.agentic_nodes["tilde_agent"] = {
+            "type": "gen_sql",
+            "description": "agent under tilde-prefixed home",
+            "tools": "db_tools.*",
+        }
+
+        svc = AgentService()
+        result = await svc.get_agent("tilde_agent", real_agent_config)
+        assert result.success is True
+        created_at = result.data["agent"]["created_at"]
+        assert isinstance(created_at, str) and ISO_UTC_Z_RE.match(created_at), (
+            f"created_at must resolve via path_manager, got {created_at!r}"
+        )
+
 
 @pytest.mark.asyncio
 class TestCreateAgent:
@@ -628,3 +660,43 @@ class TestEditAgent:
         get_result = await svc.get_agent("edit_me", real_agent_config)
         assert get_result.success is True
         assert get_result.data["agent"]["description"] == "updated description"
+
+    async def test_edit_existing_agent_when_home_has_tilde(self, real_agent_config):
+        """Regression: ``agent_config.home == "~/.datus"`` (the production default)
+        must not leak a literal tilde into ``open()``.
+
+        Before the fix, ``_save_agentic_nodes`` did ``Path(agent_config.home) / "agent.yml"``
+        which did NOT expand ``~``, raising ``FileNotFoundError: '~/.datus/agent.yml'``
+        on the live API. The fix routes the path through ``path_manager.datus_home``
+        which is already expanded and resolved.
+        """
+        import yaml
+
+        from datus.api.models.agent_models import CreateAgentInput, EditAgentInput
+
+        # Seed the resolved home with an empty agent.yml so create_agent has
+        # something to load.
+        resolved_home = real_agent_config.path_manager.datus_home
+        (resolved_home / "agent.yml").write_text(yaml.dump({"agentic_nodes": {}}), encoding="utf-8")
+        # Inject the production-shape default — a literal tilde path. If any
+        # write site uses Path(agent_config.home) directly, the next call
+        # raises FileNotFoundError and the test fails.
+        real_agent_config.home = "~/.datus-tilde-regression-does-not-exist"
+
+        svc = AgentService()
+        create_result = await svc.create_agent(
+            CreateAgentInput(name="tilde_edit", type="gen_sql", description="orig"),
+            real_agent_config,
+        )
+        assert create_result.success is True
+
+        edit_result = await svc.edit_agent(
+            EditAgentInput(id="tilde_edit", name="tilde_edit", description="updated under tilde"),
+            real_agent_config,
+        )
+        assert edit_result.success is True
+
+        # Confirm the change actually landed in the resolved home, not in
+        # whatever a literal ~ would expand to.
+        on_disk = yaml.safe_load((resolved_home / "agent.yml").read_text(encoding="utf-8"))
+        assert on_disk["agentic_nodes"]["tilde_edit"]["description"] == "updated under tilde"

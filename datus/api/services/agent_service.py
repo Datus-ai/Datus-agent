@@ -193,7 +193,7 @@ def _save_agentic_nodes(agent_config: AgentConfig, nodes: dict) -> None:
     """Save agentic_nodes back to agent.yml."""
     import yaml
 
-    config_path = Path(agent_config.home) / "agent.yml"
+    config_path = agent_config.path_manager.datus_home / "agent.yml"
     with open(config_path) as f:
         raw = yaml.safe_load(f)
     raw["agentic_nodes"] = nodes
@@ -261,7 +261,7 @@ class AgentService:
         agent_type = agent.get("type", "gen_sql")
         created_at = _normalize_created_at(agent.get("created_at"))
         if not created_at:
-            created_at = _file_mtime_iso(Path(agent_config.home) / "agent.yml")
+            created_at = _file_mtime_iso(agent_config.path_manager.datus_home / "agent.yml")
 
         return Result(
             success=True,
@@ -402,7 +402,7 @@ class AgentService:
             return
 
         safe_version = self._sanitize_path_component(version) if version else version
-        template_dir = Path(agent_config.home) / "template"
+        template_dir = agent_config.path_manager.datus_home / "template"
         os.makedirs(template_dir, exist_ok=True)
         target_file = template_dir / f"{safe_name}_system_{safe_version}.j2"
         if not target_file.resolve().is_relative_to(template_dir.resolve()):
@@ -424,7 +424,7 @@ class AgentService:
             return
         safe_name = self._sanitize_path_component(agent_name)
         resolved = self._sanitize_path_component(version or "1.0")
-        template_dir = Path(agent_config.home) / "template"
+        template_dir = agent_config.path_manager.datus_home / "template"
         os.makedirs(template_dir, exist_ok=True)
         target_file = template_dir / f"{safe_name}_system_{resolved}.j2"
         if not target_file.resolve().is_relative_to(template_dir.resolve()):
