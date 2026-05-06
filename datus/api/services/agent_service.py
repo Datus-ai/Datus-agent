@@ -109,6 +109,17 @@ def sanitize_agentic_node_name(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_\-]", "_", name or "")
 
 
+def _read_description(node: dict) -> str:
+    """Read the description field from a yaml ``agentic_nodes`` entry.
+
+    The runtime (``sub_agent_task_tool``, ``agentic_node``, the wizard, etc.)
+    persists this field as ``agent_description``. Older yaml files written by
+    earlier versions of the API used ``description`` — fall back to that so
+    existing configs keep working until the next edit migrates them.
+    """
+    return node.get("agent_description") or node.get("description") or ""
+
+
 def _parse_tools(value: Any) -> list[str]:
     """Normalize the yaml ``tools`` field to a list of pattern strings.
 
@@ -279,7 +290,7 @@ class AgentService:
                     "id": agent_id,
                     "name": agent_id,
                     "type": agent_type,
-                    "description": agent.get("description", ""),
+                    "description": _read_description(agent),
                     "created_at": created_at,
                     "tools": _parse_tools(agent.get("tools")),
                     "rules": agent.get("rules") or [],
@@ -310,7 +321,7 @@ class AgentService:
                 "id": name,
                 "name": name,
                 "type": node.get("type", "gen_sql"),
-                "description": node.get("description", ""),
+                "description": _read_description(node),
             }
             for name, node in sorted(agentic_nodes.items())
         ]
@@ -352,10 +363,13 @@ class AgentService:
                 errorMessage=f"Agent '{request.name}' already exists",
             )
 
-        # Create new agent entry (dict keyed by name, which acts as the id)
+        # Create new agent entry (dict keyed by name, which acts as the id).
+        # API field ``description`` is persisted as ``agent_description`` to
+        # match what the runtime reads (sub_agent_task_tool / agentic_node /
+        # the wizard all look up ``agent_description`` from agentic_nodes).
         agent_entry = {
             "type": request.type or "gen_sql",
-            "description": request.description or "",
+            "agent_description": request.description or "",
             "tools": request.tools or [],
             "catalogs": request.catalogs or [],
             "subjects": request.subjects or [],
@@ -483,8 +497,14 @@ class AgentService:
             except Exception:
                 logger.warning(f"Failed to save prompt template for agent '{request.id}' (non-fatal)", exc_info=True)
 
-        # Update only provided fields (name is the dict key and acts as id, so exclude it)
+        # Update only provided fields (name is the dict key and acts as id, so exclude it).
+        # API ``description`` lands on the runtime-visible ``agent_description``
+        # key; drop any legacy flat ``description`` left over from older edits
+        # so the read path doesn't see two competing values.
         update_data = request.model_dump(exclude={"id", "name", "prompt_template"}, exclude_none=True)
+        if "description" in update_data:
+            update_data["agent_description"] = update_data.pop("description")
+            agent.pop("description", None)
         if not update_data and prompt_content is None:
             return Result(success=True, data={"name": request.id, "id": request.id})
 

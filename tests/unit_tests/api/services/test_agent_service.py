@@ -455,6 +455,65 @@ class TestGetAgent:
         assert result.success is True
         assert result.data["agent"]["created_at"] == "2026-04-30T09:20:31.545000Z"
 
+    async def test_get_custom_agent_reads_description_from_agent_description_key(self, real_agent_config):
+        """yaml's ``agent_description`` key surfaces as the API ``description`` field.
+
+        The runtime stores descriptions under ``agent_description`` (read by
+        sub_agent_task_tool, agentic_node, the wizard, and Datus-backend's
+        config_loader). The /agent endpoint must surface the same key under
+        the API contract's ``description`` field so the editor reads what the
+        runtime sees.
+        """
+        real_agent_config.agentic_nodes["modern_agent"] = {
+            "type": "gen_sql",
+            "agent_description": "agent stored under the runtime-visible key",
+            "tools": "db_tools.*",
+            "created_at": "2026-04-30T09:20:31.545000Z",
+        }
+
+        svc = AgentService()
+        result = await svc.get_agent("modern_agent", real_agent_config)
+        assert result.success is True
+        assert result.data["agent"]["description"] == "agent stored under the runtime-visible key"
+
+    async def test_get_custom_agent_falls_back_to_legacy_description_key(self, real_agent_config):
+        """Older yaml files stored the description under ``description``.
+
+        Until a save migrates the entry, the read path must fall back so
+        existing configs keep rendering the right text in the editor.
+        """
+        real_agent_config.agentic_nodes["legacy_agent"] = {
+            "type": "gen_sql",
+            "description": "stored under the legacy key only",
+            "tools": "db_tools.*",
+            "created_at": "2026-04-30T09:20:31.545000Z",
+        }
+
+        svc = AgentService()
+        result = await svc.get_agent("legacy_agent", real_agent_config)
+        assert result.success is True
+        assert result.data["agent"]["description"] == "stored under the legacy key only"
+
+    async def test_get_custom_agent_prefers_agent_description_over_legacy(self, real_agent_config):
+        """When both keys are present, ``agent_description`` wins.
+
+        This matches the migration semantics: edit_agent writes the new key
+        and clears the legacy one, but during the transition both may briefly
+        coexist; the runtime sees ``agent_description`` so the API must too.
+        """
+        real_agent_config.agentic_nodes["mixed_agent"] = {
+            "type": "gen_sql",
+            "description": "stale legacy text",
+            "agent_description": "current text the runtime uses",
+            "tools": "db_tools.*",
+            "created_at": "2026-04-30T09:20:31.545000Z",
+        }
+
+        svc = AgentService()
+        result = await svc.get_agent("mixed_agent", real_agent_config)
+        assert result.success is True
+        assert result.data["agent"]["description"] == "current text the runtime uses"
+
     async def test_get_custom_agent_created_at_falls_back_to_file_mtime(
         self, real_agent_config, agent_yml_with_singleton
     ):
@@ -546,6 +605,37 @@ class TestCreateAgent:
         created_at = get_result.data["agent"]["created_at"]
         # Either yaml stored a string (Z-suffixed) or a datetime that gets normalized
         assert created_at is not None and created_at.endswith("Z")
+
+    async def test_create_agent_persists_description_as_agent_description(
+        self, real_agent_config, agent_yml_with_singleton
+    ):
+        """API ``description`` lands on yaml's ``agent_description`` key.
+
+        The runtime (sub_agent_task_tool, agentic_node, the wizard, and the
+        saas config_loader) reads ``agent_description``. Persisting under
+        the API field name ``description`` would be invisible to the
+        runtime — this is the bug this PR fixes.
+        """
+        import yaml
+
+        from datus.api.models.agent_models import CreateAgentInput
+
+        svc = AgentService()
+        result = await svc.create_agent(
+            CreateAgentInput(name="desc_agent", type="gen_sql", description="hello"),
+            real_agent_config,
+        )
+        assert result.success is True
+
+        with open(agent_yml_with_singleton) as f:
+            raw = yaml.safe_load(f)
+        # ConfigurationManager.save() round-trips the production ``agent:``
+        # wrapping, so the entry lives at agent.agentic_nodes.<name>.
+        entry = raw["agent"]["agentic_nodes"]["desc_agent"]
+        assert entry.get("agent_description") == "hello"
+        # The raw API field name must NOT be persisted — that would be invisible
+        # to the runtime.
+        assert "description" not in entry
 
     async def test_create_agent_invalid_tools_fails(self, real_agent_config, agent_yml_with_singleton):
         """create_agent rejects invalid tool patterns."""
@@ -727,3 +817,65 @@ class TestEditAgent:
             assert "cross_path_agent" not in (home_data.get("agent", {}).get("agentic_nodes") or {})
         finally:
             agent_config_loader.CONFIGURATION_MANAGER = None
+
+    async def test_edit_agent_persists_description_as_agent_description(
+        self, real_agent_config, agent_yml_with_singleton
+    ):
+        """edit_agent writes the API ``description`` field to ``agent_description``.
+
+        Without this mapping, the editor's update never reaches the runtime
+        (which only reads ``agent_description``).
+        """
+        import yaml
+
+        from datus.api.models.agent_models import CreateAgentInput, EditAgentInput
+
+        svc = AgentService()
+        await svc.create_agent(CreateAgentInput(name="edit_desc", type="gen_sql"), real_agent_config)
+        result = await svc.edit_agent(
+            EditAgentInput(id="edit_desc", name="edit_desc", description="brand new text"),
+            real_agent_config,
+        )
+        assert result.success is True
+
+        with open(agent_yml_with_singleton) as f:
+            raw = yaml.safe_load(f)
+        entry = raw["agent"]["agentic_nodes"]["edit_desc"]
+        assert entry.get("agent_description") == "brand new text"
+        assert "description" not in entry
+
+    async def test_edit_agent_clears_legacy_description_key_on_write(self, real_agent_config, agent_yml_with_singleton):
+        """When yaml has both keys, edit_agent migrates by clearing the legacy one.
+
+        Older API versions wrote ``description``. The new API writes
+        ``agent_description``. If a user edits an entry that was created
+        under the old code, both keys can coexist briefly. Writing the new
+        key alone (and dropping the legacy one) prevents stale shadow data
+        from confusing future reads or downstream tools.
+        """
+        import yaml
+
+        from datus.api.models.agent_models import EditAgentInput
+
+        # Seed an entry with the legacy ``description`` key only. Inject
+        # directly into the in-memory dict so edit_agent finds it; the
+        # singleton fixture handles the on-disk yaml.
+        real_agent_config.agentic_nodes["legacy_edit"] = {
+            "type": "gen_sql",
+            "description": "old text from a previous version",
+        }
+
+        svc = AgentService()
+        result = await svc.edit_agent(
+            EditAgentInput(id="legacy_edit", name="legacy_edit", description="migrated text"),
+            real_agent_config,
+        )
+        assert result.success is True
+
+        with open(agent_yml_with_singleton) as f:
+            raw = yaml.safe_load(f)
+        entry = raw["agent"]["agentic_nodes"]["legacy_edit"]
+        assert entry.get("agent_description") == "migrated text"
+        # Legacy key must be cleared so downstream readers can't pick up
+        # the old text.
+        assert "description" not in entry
