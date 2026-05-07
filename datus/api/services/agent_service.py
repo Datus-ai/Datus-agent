@@ -179,35 +179,186 @@ def _strip_leading_slashes(value: Any) -> list[str]:
     return [token.lstrip("/") for token in _parse_csv(value) if token.lstrip("/")]
 
 
+# Keys inside ``scoped_context`` that hold subject-tree path entries. ``subjects``
+# in the API payload is a flattened union of all three; the runtime stores them
+# split because each store (metrics, reference SQL, ext_knowledge) owns its own
+# scope filter.
+_SUBJECT_BUCKET_KEYS: tuple[str, ...] = ("metrics", "sqls", "ext_knowledge")
+
+
+def _path_to_slash_form(token: str) -> str:
+    """Render a stored subject token (``A.B.C`` or ``A/B/C``) as ``A/B/C``.
+
+    Existing subagent yaml may carry the wizard's dot-form
+    (``finance.revenue.daily_revenue``) or the API's slash-form
+    (``finance/revenue/daily_revenue``); the runtime accepts both via
+    ``ScopedFilterBuilder.build_subject_filter`` (which does
+    ``token.replace("/", ".")`` then ``split_reference_path``). The API
+    contract surfaces them as slash paths, so the read path normalizes
+    every stored token through here.
+    """
+    from datus.utils.reference_paths import split_reference_path
+
+    parts = split_reference_path(token.replace("/", "."))
+    return "/".join(parts)
+
+
+def _classify_subject_paths(
+    agent_config: AgentConfig,
+    subject_paths: list[str],
+    datasource_id: Optional[str] = None,
+) -> dict[str, list[str]]:
+    """Bucket subject paths into ``metrics`` / ``sqls`` / ``ext_knowledge``.
+
+    The API surfaces a single ``subjects`` array that's the merged union of
+    all entries the editor's subject-tree exposes (Metrics, Reference SQLs,
+    Knowledge — see ``ExplorerService.get_subject_list``). The runtime
+    expects them split: ``ScopedContext.metrics`` / ``.sqls`` /
+    ``.ext_knowledge`` each drive an independent scope filter.
+
+    For every input path:
+
+    1. Resolve the parent subject node via ``SubjectTreeStore.get_node_by_path``.
+    2. Probe the metric / reference-sql / ext-knowledge stores for an entry
+       named ``parts[-1]`` under that node.
+    3. Bucket on the first store that owns the name.
+
+    Paths that don't resolve land in ``metrics`` so the user's selection is
+    never silently dropped. If the storage layer can't be initialized at all
+    (no datasource bound, registry unavailable, etc.) every path falls back
+    to ``metrics`` and a warning is logged — the editor's input survives the
+    round-trip even when the project hasn't bootstrapped its KB yet.
+    """
+    buckets: dict[str, list[str]] = {key: [] for key in _SUBJECT_BUCKET_KEYS}
+    if not subject_paths:
+        return buckets
+
+    try:
+        from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
+        from datus.storage.metric.store import MetricRAG
+        from datus.storage.reference_sql.store import ReferenceSqlRAG
+        from datus.storage.registry import get_subject_tree_store
+        from datus.utils.reference_paths import split_reference_path
+    except ImportError:
+        logger.warning(
+            "Subject classification skipped — storage modules unavailable; routing all subjects to 'metrics'"
+        )
+        buckets["metrics"] = list(subject_paths)
+        return buckets
+
+    ds = datasource_id or getattr(agent_config, "current_datasource", None)
+    if not ds:
+        logger.warning(
+            "Subject classification skipped — no datasource bound on AgentConfig; routing all subjects to 'metrics'"
+        )
+        buckets["metrics"] = list(subject_paths)
+        return buckets
+
+    try:
+        subject_tree = get_subject_tree_store(project=agent_config.project_name)
+        metric_storage = MetricRAG(agent_config, datasource_id=ds).storage
+        sql_storage = ReferenceSqlRAG(agent_config, datasource_id=ds).reference_sql_storage
+        knowledge_storage = ExtKnowledgeRAG(agent_config, datasource_id=ds).store
+    except Exception:
+        logger.warning("Subject classification storage init failed — routing all subjects to 'metrics'", exc_info=True)
+        buckets["metrics"] = list(subject_paths)
+        return buckets
+
+    probes: tuple[tuple[str, Any], ...] = (
+        ("metrics", metric_storage),
+        ("sqls", sql_storage),
+        ("ext_knowledge", knowledge_storage),
+    )
+
+    for path in subject_paths:
+        normalized = path.replace("/", ".")
+        parts = split_reference_path(normalized)
+        if not parts:
+            continue
+        parent_path, name = parts[:-1], parts[-1]
+
+        parent_node = None
+        if parent_path:
+            try:
+                parent_node = subject_tree.get_node_by_path(parent_path)
+            except Exception:
+                parent_node = None
+        node_id = parent_node.get("node_id") if isinstance(parent_node, dict) else None
+
+        bucket: Optional[str] = None
+        if node_id is not None:
+            for candidate, storage in probes:
+                try:
+                    matched = storage.list_entries(node_id, name=name, limit=1)
+                except Exception:
+                    matched = None
+                if matched:
+                    bucket = candidate
+                    break
+
+        buckets[bucket or "metrics"].append(path)
+
+    return buckets
+
+
+def _merge_subjects_from_scoped_context(scoped_ctx: Optional[dict]) -> list[str]:
+    """Flatten ``metrics`` / ``sqls`` / ``ext_knowledge`` back into one list.
+
+    Mirrors the inverse of :func:`_classify_subject_paths` — every stored
+    bucket entry is normalized to slash-form (so wizard-written dot-form
+    entries like ``finance.revenue.daily_revenue`` come back as
+    ``finance/revenue/daily_revenue``) and entries are deduped while
+    preserving insertion order.
+    """
+    if not isinstance(scoped_ctx, dict):
+        return []
+    merged: list[str] = []
+    seen: set[str] = set()
+    for key in _SUBJECT_BUCKET_KEYS:
+        for token in _parse_csv(scoped_ctx.get(key)):
+            normalized = _path_to_slash_form(token)
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                merged.append(normalized)
+    return merged
+
+
 def _build_scoped_context(
     base: Optional[dict],
     *,
     catalogs: Any = None,
-    subjects: Any = None,
+    subject_buckets: Optional[dict[str, list[str]]] = None,
 ) -> Optional[dict]:
-    """Merge API-level ``catalogs`` / ``subjects`` into a ``scoped_context`` dict.
+    """Merge API-level ``catalogs`` / classified subject buckets into ``scoped_context``.
 
     ``base`` carries any existing scoped_context payload (yaml-loaded for
-    edits, an explicit ``request.scoped_context`` for inputs that send one);
-    ``catalogs`` and ``subjects`` are the API top-level fields that this
-    helper folds into the same dict using the comma-separated yaml form.
-    Path entries are normalized via :func:`_strip_leading_slashes` so the
-    on-disk shape never carries a leading ``/``. Returns ``None`` when the
-    result would be empty so ``scoped_context`` is omitted from the on-disk
-    entry rather than persisting a useless empty block.
+    edits, an explicit ``request.scoped_context`` for inputs that send one).
+    ``catalogs`` is folded in as a comma-separated string. ``subject_buckets``
+    — pre-classified by :func:`_classify_subject_paths` — are written to the
+    runtime-visible ``metrics`` / ``sqls`` / ``ext_knowledge`` keys; passing
+    a non-``None`` ``subject_buckets`` rewrites all three bucket keys (an
+    empty bucket clears its key), so the API contract is "the caller's
+    ``subjects`` list is the new full scope."
 
-    Passing ``None`` for ``catalogs`` / ``subjects`` leaves the corresponding
-    key untouched on ``base``; passing an empty list explicitly clears it.
+    Returns ``None`` when the merged dict would be empty.
     """
     merged: dict = dict(base) if isinstance(base, dict) else {}
-    for key, value in (("catalogs", catalogs), ("subjects", subjects)):
-        if value is None:
-            continue
-        rendered = _format_csv(_strip_leading_slashes(value))
+
+    if catalogs is not None:
+        rendered = _format_csv(_strip_leading_slashes(catalogs))
         if rendered:
-            merged[key] = rendered
+            merged["catalogs"] = rendered
         else:
-            merged.pop(key, None)
+            merged.pop("catalogs", None)
+
+    if subject_buckets is not None:
+        for key in _SUBJECT_BUCKET_KEYS:
+            rendered = _format_csv(_strip_leading_slashes(subject_buckets.get(key, [])))
+            if rendered:
+                merged[key] = rendered
+            else:
+                merged.pop(key, None)
+
     return merged or None
 
 
@@ -357,16 +508,21 @@ class AgentService:
 
             created_at = _file_mtime_iso(configuration_manager().config_path)
 
-        # ``catalogs`` / ``subjects`` are persisted under ``scoped_context``;
-        # the read path lifts them back to the top level so the editor sees
-        # the same shape it sent on save. Legacy entries that still carry the
-        # arrays at the top level keep working until the next edit migrates
-        # them into ``scoped_context``. Leading slashes are stripped on the
-        # way out so older entries written before this normalization land in
-        # the canonical form too.
+        # ``catalogs`` is persisted under ``scoped_context.catalogs``;
+        # ``subjects`` is recomposed from the three runtime buckets
+        # (``metrics`` / ``sqls`` / ``ext_knowledge``) — the inverse of the
+        # save-side classification. Legacy entries that still carry the
+        # arrays at the top level (older API writes) keep working until the
+        # next edit migrates them. Leading slashes are stripped so older
+        # entries written before this normalization land in the canonical
+        # form too, and stored dot-form (wizard convention) is converted to
+        # the API's slash-form on the way out.
         scoped_ctx = agent.get("scoped_context") if isinstance(agent.get("scoped_context"), dict) else {}
         catalogs = _strip_leading_slashes(scoped_ctx.get("catalogs")) or _strip_leading_slashes(agent.get("catalogs"))
-        subjects = _strip_leading_slashes(scoped_ctx.get("subjects")) or _strip_leading_slashes(agent.get("subjects"))
+        subjects = _merge_subjects_from_scoped_context(scoped_ctx)
+        if not subjects:
+            subjects = [_path_to_slash_form(t) for t in _strip_leading_slashes(agent.get("subjects"))]
+            subjects = [s for s in subjects if s]
 
         return Result(
             success=True,
@@ -463,10 +619,19 @@ class AgentService:
             "rules": request.rules or [],
             "created_at": _utc_now_iso(),
         }
+        subject_buckets = (
+            _classify_subject_paths(
+                agent_config,
+                _strip_leading_slashes(request.subjects),
+                datasource_id=request.datasource_id or None,
+            )
+            if request.subjects
+            else None
+        )
         scoped_ctx = _build_scoped_context(
             base=None,
             catalogs=request.catalogs,
-            subjects=request.subjects,
+            subject_buckets=subject_buckets,
         )
         if scoped_ctx:
             agent_entry["scoped_context"] = scoped_ctx
@@ -605,12 +770,15 @@ class AgentService:
         if "tools" in update_data:
             update_data["tools"] = _format_csv(update_data["tools"])
 
-        # ``catalogs`` / ``subjects`` are folded into ``scoped_context`` so the
-        # whole reference scope lives in a single nested block. The merge
-        # preserves yaml-loaded keys (``tables`` / ``metrics`` / ``sqls`` /
-        # ``ext_knowledge``) and any explicit ``scoped_context`` payload the
-        # caller sent. Top-level ``catalogs`` / ``subjects`` from older edits
-        # are also dropped so the read path doesn't see two competing copies.
+        # ``catalogs`` is folded in as a single ``scoped_context.catalogs`` key.
+        # ``subjects`` is *classified* (via the metric / reference-sql /
+        # ext-knowledge stores) and split across the runtime-visible
+        # ``metrics`` / ``sqls`` / ``ext_knowledge`` keys, since
+        # ``ScopedContext`` doesn't have a flat ``subjects`` field — each
+        # store owns its own scope filter. Pre-existing keys (``tables`` and
+        # any other yaml-loaded scoped_context payload) survive the merge.
+        # Top-level ``catalogs`` / ``subjects`` from older edits are dropped
+        # so the read path can't see two competing copies.
         catalogs_input = update_data.pop("catalogs", None)
         subjects_input = update_data.pop("subjects", None)
         if catalogs_input is not None or subjects_input is not None or "scoped_context" in update_data:
@@ -621,10 +789,16 @@ class AgentService:
             request_ctx = update_data.pop("scoped_context", None)
             if isinstance(request_ctx, dict):
                 base_ctx.update(request_ctx)
+            subject_buckets = None
+            if subjects_input is not None:
+                subject_buckets = _classify_subject_paths(
+                    agent_config,
+                    _strip_leading_slashes(subjects_input),
+                )
             merged = _build_scoped_context(
                 base=base_ctx,
                 catalogs=catalogs_input,
-                subjects=subjects_input,
+                subject_buckets=subject_buckets,
             )
             if merged:
                 update_data["scoped_context"] = merged
