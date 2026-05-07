@@ -228,7 +228,11 @@ def test_iceberg_execute_ddl_rewrites_create_or_replace_table(monkeypatch):
 
     try:
         assert result.success is True
-        assert executed[-1] == "DROP TABLE IF EXISTS lake.ws.table;\nCREATE TABLE lake.ws.table AS SELECT 1 AS x"
+        assert executed[-3:] == [
+            "BEGIN",
+            "DROP TABLE IF EXISTS lake.ws.table;\nCREATE TABLE lake.ws.table AS SELECT 1 AS x",
+            "COMMIT",
+        ]
     finally:
         connector.close()
 
@@ -264,9 +268,51 @@ def test_iceberg_execute_ddl_rewrites_quoted_create_or_replace_table(monkeypatch
 
     try:
         assert result.success is True
-        assert executed[-1] == (
-            'DROP TABLE IF EXISTS "lake"."raw"."my-table";\nCREATE TABLE "lake"."raw"."my-table" AS SELECT 1 AS x'
+        assert executed[-3:] == [
+            "BEGIN",
+            'DROP TABLE IF EXISTS "lake"."raw"."my-table";\nCREATE TABLE "lake"."raw"."my-table" AS SELECT 1 AS x',
+            "COMMIT",
+        ]
+    finally:
+        connector.close()
+
+
+def test_iceberg_execute_ddl_rewrite_rolls_back_on_create_failure(monkeypatch):
+    _fake_duckdb_engine(monkeypatch)
+    executed: list[str] = []
+
+    class FakeConnection:
+        def execute(self, sql):
+            executed.append(sql)
+            if sql.startswith("CREATE OR REPLACE TABLE"):
+                raise RuntimeError("CREATE OR REPLACE not supported in DuckDB-Iceberg")
+            if sql.startswith("DROP TABLE IF EXISTS"):
+                raise RuntimeError("create failed")
+            return self
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(duckdb, "connect", lambda *args, **kwargs: FakeConnection())
+
+    connector = DuckdbConnector(
+        DuckDBConfig(
+            db_path=":memory:",
+            iceberg={
+                "catalog_alias": "lake",
+                "catalog_uri": "http://127.0.0.1:8181",
+                "warehouse": "s3://warehouse/",
+            },
         )
+    )
+
+    result = connector.execute_ddl("CREATE OR REPLACE TABLE lake.ws.table AS SELECT invalid")
+
+    try:
+        assert result.success is False
+        assert "original error: CREATE OR REPLACE not supported in DuckDB-Iceberg" in result.error
+        assert "rewrite error: create failed" in result.error
+        assert executed[-1] == "ROLLBACK"
     finally:
         connector.close()
 
@@ -465,6 +511,41 @@ def test_iceberg_create_secret_false_uses_explicit_existing_secret(monkeypatch):
         assert not any("CREATE OR REPLACE SECRET existing_iceberg_secret" in sql for sql in executed)
         attach_sql = next(sql for sql in executed if "ATTACH 'public_catalog' AS lake" in sql)
         assert "SECRET existing_iceberg_secret" in attach_sql
+    finally:
+        connector.close()
+
+
+def test_iceberg_explicit_secret_name_without_credentials_does_not_attach_uncreated_secret(monkeypatch):
+    _fake_duckdb_engine(monkeypatch)
+    executed: list[str] = []
+
+    class FakeConnection:
+        def execute(self, sql):
+            executed.append(sql)
+            return self
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(duckdb, "connect", lambda *args, **kwargs: FakeConnection())
+
+    connector = DuckdbConnector(
+        DuckDBConfig(
+            db_path=":memory:",
+            iceberg={
+                "catalog_alias": "lake",
+                "catalog_uri": "https://catalog.example.com",
+                "warehouse": "public_catalog",
+                "secret_name": "uncreated_secret",
+            },
+        )
+    )
+    connector.connect()
+    try:
+        assert not any("CREATE OR REPLACE SECRET uncreated_secret" in sql for sql in executed)
+        attach_sql = next(sql for sql in executed if "ATTACH 'public_catalog' AS lake" in sql)
+        assert "SECRET uncreated_secret" not in attach_sql
+        assert "AUTHORIZATION_TYPE none" in attach_sql
     finally:
         connector.close()
 

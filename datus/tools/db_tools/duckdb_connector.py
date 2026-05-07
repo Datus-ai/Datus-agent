@@ -214,7 +214,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
             if option:
                 secret_parts.append(option)
         if len(secret_parts) == 1:
-            return secret_name
+            return None
 
         self.connection.execute("CREATE OR REPLACE SECRET " + secret_name + " (" + ", ".join(secret_parts) + ")")
         return secret_name
@@ -460,7 +460,12 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
 
     @override
     def execute_ddl(self, sql: str) -> ExecuteSQLResult:
-        """Execute a DDL SQL statement."""
+        """Execute a DDL SQL statement.
+
+        DuckDB-Iceberg does not natively support CREATE OR REPLACE TABLE.
+        For that extension, the connector emulates it with DROP + CREATE
+        inside an explicit transaction.
+        """
         try:
             self.connect()
             try:
@@ -471,7 +476,22 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
                     rewritten_sql = self._rewrite_iceberg_create_or_replace_table(sql)
                 if rewritten_sql is None:
                     raise
-                self.connection.execute(rewritten_sql)
+                try:
+                    self.connection.execute("BEGIN")
+                    self.connection.execute(rewritten_sql)
+                    self.connection.execute("COMMIT")
+                except Exception as rewrite_error:
+                    try:
+                        self.connection.execute("ROLLBACK")
+                    except Exception as rollback_error:
+                        logger.warning(
+                            "Failed to rollback DuckDB-Iceberg CREATE OR REPLACE emulation: %s",
+                            rollback_error,
+                        )
+                    raise RuntimeError(
+                        "DuckDB-Iceberg CREATE OR REPLACE TABLE emulation failed; "
+                        f"original error: {e}; rewrite error: {rewrite_error}"
+                    ) from e
             return ExecuteSQLResult(
                 success=True,
                 sql_query=sql,
