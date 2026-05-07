@@ -170,3 +170,58 @@ class TestRuntimeOverrideIntegration:
         c1, c2 = await asyncio.gather(run("table_one"), run("table_two"))
         assert "table_one" in c1 and "table_two" not in c1
         assert "table_two" in c2 and "table_one" not in c2
+
+    def test_override_preserves_non_subagentconfig_yaml_keys(self):
+        """Override must layer on top of YAML so keys outside SubAgentConfig
+        (model, max_turns, permissions, ...) survive when scoped_context is overridden.
+        """
+        from datus.configuration.scoped_context_overrides import effective_subagent
+        from datus.schemas.agent_models import ScopedContext, SubAgentConfig
+
+        config = self._real_config(
+            {
+                "team_a": {
+                    "model": "gpt-4.1",
+                    "max_turns": 7,
+                    "permissions": {"read": True},
+                    "scoped_context": {"tables": "public.users"},
+                }
+            }
+        )
+        override_cfg = SubAgentConfig(
+            system_prompt="x",
+            scoped_context=ScopedContext(tables="public.orders"),
+        )
+        with effective_subagent("team_a", override_cfg):
+            merged = config.sub_agent_config("team_a")
+        # Override fields win.
+        assert merged["scoped_context"]["tables"] == "public.orders"
+        # YAML-only fields preserved.
+        assert merged["model"] == "gpt-4.1"
+        assert merged["max_turns"] == 7
+        assert merged["permissions"] == {"read": True}
+
+    def test_override_only_overwrites_explicitly_set_fields(self):
+        """Fields not explicitly set on the override SubAgentConfig must not
+        clobber the YAML entry with their pydantic defaults.
+        """
+        from datus.configuration.scoped_context_overrides import effective_subagent
+        from datus.schemas.agent_models import ScopedContext, SubAgentConfig
+
+        config = self._real_config(
+            {
+                "team_a": {
+                    "system_prompt": "yaml_prompt",
+                    "tools": "list_tables,describe_table",
+                    "scoped_context": {"tables": "public.users"},
+                }
+            }
+        )
+        # Only scoped_context is explicitly set on the override.
+        override_cfg = SubAgentConfig(scoped_context=ScopedContext(tables="public.orders"))
+        with effective_subagent("team_a", override_cfg):
+            merged = config.sub_agent_config("team_a")
+        assert merged["scoped_context"]["tables"] == "public.orders"
+        # YAML system_prompt and tools survive because override didn't set them.
+        assert merged["system_prompt"] == "yaml_prompt"
+        assert merged["tools"] == "list_tables,describe_table"

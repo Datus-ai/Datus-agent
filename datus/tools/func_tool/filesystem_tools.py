@@ -30,7 +30,7 @@ class FilesystemConfig:
         self,
         root_path: str = None,
         allowed_extensions: List[str] = None,
-        max_file_size: int = 1024 * 1024,
+        max_file_size: int = 200 * 1024,
     ):
         self.root_path = root_path or os.getcwd()
         self.allowed_extensions = allowed_extensions or [

@@ -1891,10 +1891,14 @@ class AgentConfig:
     def sub_agent_config(self, sub_agent_name: str) -> Dict[str, Any]:
         from datus.configuration.scoped_context_overrides import get_override
 
+        base = self.agentic_nodes.get(sub_agent_name, {}) or {}
         override = get_override(sub_agent_name)
-        if override is not None:
-            return override.model_dump()
-        return self.agentic_nodes.get(sub_agent_name, {})
+        if override is None:
+            return base
+        # Layer override on top of YAML so non-SubAgentConfig keys
+        # (model, max_turns, permissions, hooks, ...) survive.
+        base_dict = dict(base) if isinstance(base, dict) else (base.model_dump() if hasattr(base, "model_dump") else {})
+        return {**base_dict, **override.model_dump(exclude_unset=True)}
 
     def benchmark_config(self, benchmark_platform) -> BenchmarkConfig:
         if benchmark_platform not in self.benchmark_configs:
