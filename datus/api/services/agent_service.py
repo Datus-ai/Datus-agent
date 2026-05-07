@@ -179,28 +179,11 @@ def _strip_leading_slashes(value: Any) -> list[str]:
     return [token.lstrip("/") for token in _parse_csv(value) if token.lstrip("/")]
 
 
-# Keys inside ``scoped_context`` that hold subject-tree path entries. ``subjects``
-# in the API payload is a flattened union of all three; the runtime stores them
+# Keys inside ``scoped_context`` that hold subject-tree path entries. The API's
+# flat ``subjects`` array is the union of all three; the runtime stores them
 # split because each store (metrics, reference SQL, ext_knowledge) owns its own
 # scope filter.
 _SUBJECT_BUCKET_KEYS: tuple[str, ...] = ("metrics", "sqls", "ext_knowledge")
-
-
-def _path_to_slash_form(token: str) -> str:
-    """Render a stored subject token (``A.B.C`` or ``A/B/C``) as ``A/B/C``.
-
-    Existing subagent yaml may carry the wizard's dot-form
-    (``finance.revenue.daily_revenue``) or the API's slash-form
-    (``finance/revenue/daily_revenue``); the runtime accepts both via
-    ``ScopedFilterBuilder.build_subject_filter`` (which does
-    ``token.replace("/", ".")`` then ``split_reference_path``). The API
-    contract surfaces them as slash paths, so the read path normalizes
-    every stored token through here.
-    """
-    from datus.utils.reference_paths import split_reference_path
-
-    parts = split_reference_path(token.replace("/", "."))
-    return "/".join(parts)
 
 
 def _classify_subject_paths(
@@ -210,18 +193,21 @@ def _classify_subject_paths(
 ) -> dict[str, list[str]]:
     """Bucket subject paths into ``metrics`` / ``sqls`` / ``ext_knowledge``.
 
-    The API surfaces a single ``subjects`` array that's the merged union of
-    all entries the editor's subject-tree exposes (Metrics, Reference SQLs,
-    Knowledge — see ``ExplorerService.get_subject_list``). The runtime
-    expects them split: ``ScopedContext.metrics`` / ``.sqls`` /
-    ``.ext_knowledge`` each drive an independent scope filter.
+    The API surfaces a single ``subjects`` array — dot-separated paths like
+    ``Commerce.Orders.Average_Order_Value.average_gross_order_value`` — that's
+    the merged union of all entries the editor's subject-tree exposes
+    (Metrics, Reference SQLs, Knowledge — see
+    ``ExplorerService.get_subject_list``). The runtime expects them split:
+    ``ScopedContext.metrics`` / ``.sqls`` / ``.ext_knowledge`` each drive an
+    independent scope filter.
 
     For every input path:
 
-    1. Resolve the parent subject node via ``SubjectTreeStore.get_node_by_path``.
-    2. Probe the metric / reference-sql / ext-knowledge stores for an entry
+    1. Split via ``split_reference_path`` (handles quoted segments).
+    2. Resolve the parent subject node via ``SubjectTreeStore.get_node_by_path``.
+    3. Probe the metric / reference-sql / ext-knowledge stores for an entry
        named ``parts[-1]`` under that node.
-    3. Bucket on the first store that owns the name.
+    4. Bucket on the first store that owns the name.
 
     Paths that don't resolve land in ``metrics`` so the user's selection is
     never silently dropped. If the storage layer can't be initialized at all
@@ -271,8 +257,7 @@ def _classify_subject_paths(
     )
 
     for path in subject_paths:
-        normalized = path.replace("/", ".")
-        parts = split_reference_path(normalized)
+        parts = split_reference_path(path)
         if not parts:
             continue
         parent_path, name = parts[:-1], parts[-1]
@@ -304,10 +289,8 @@ def _classify_subject_paths(
 def _merge_subjects_from_scoped_context(scoped_ctx: Optional[dict]) -> list[str]:
     """Flatten ``metrics`` / ``sqls`` / ``ext_knowledge`` back into one list.
 
-    Mirrors the inverse of :func:`_classify_subject_paths` — every stored
-    bucket entry is normalized to slash-form (so wizard-written dot-form
-    entries like ``finance.revenue.daily_revenue`` come back as
-    ``finance/revenue/daily_revenue``) and entries are deduped while
+    Inverse of :func:`_classify_subject_paths`. Stored entries are returned
+    verbatim (canonical dot-separated form), with duplicates dropped while
     preserving insertion order.
     """
     if not isinstance(scoped_ctx, dict):
@@ -316,10 +299,9 @@ def _merge_subjects_from_scoped_context(scoped_ctx: Optional[dict]) -> list[str]
     seen: set[str] = set()
     for key in _SUBJECT_BUCKET_KEYS:
         for token in _parse_csv(scoped_ctx.get(key)):
-            normalized = _path_to_slash_form(token)
-            if normalized and normalized not in seen:
-                seen.add(normalized)
-                merged.append(normalized)
+            if token and token not in seen:
+                seen.add(token)
+                merged.append(token)
     return merged
 
 
@@ -377,7 +359,7 @@ def _build_scoped_context(
 
     if subject_buckets is not None:
         for key in _SUBJECT_BUCKET_KEYS:
-            rendered = _format_csv(_strip_leading_slashes(subject_buckets.get(key, [])))
+            rendered = _format_csv(subject_buckets.get(key, []))
             if rendered:
                 merged[key] = rendered
             else:
@@ -645,7 +627,7 @@ class AgentService:
         subject_buckets = (
             _classify_subject_paths(
                 agent_config,
-                _strip_leading_slashes(request.subjects),
+                list(request.subjects),
                 datasource_id=datasource or None,
             )
             if request.subjects
@@ -820,7 +802,7 @@ class AgentService:
             if subjects_input is not None:
                 subject_buckets = _classify_subject_paths(
                     agent_config,
-                    _strip_leading_slashes(subjects_input),
+                    list(subjects_input),
                 )
             datasource = getattr(agent_config, "current_datasource", "") or base_ctx.get("datasource") or ""
             merged = _build_scoped_context(

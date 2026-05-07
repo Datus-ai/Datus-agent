@@ -19,7 +19,6 @@ from datus.api.services.agent_service import (
     _normalize_created_at,
     _parse_csv,
     _parse_tools,
-    _path_to_slash_form,
     _strip_leading_slashes,
     _utc_now_iso,
     _validate_tools,
@@ -958,18 +957,26 @@ class TestBuildScopedContext:
         assert result == {"tables": "A, B"}
 
     def test_subject_buckets_write_runtime_keys(self):
-        """``subject_buckets`` writes to ``metrics`` / ``sqls`` / ``ext_knowledge``."""
+        """``subject_buckets`` writes to ``metrics`` / ``sqls`` / ``ext_knowledge``.
+
+        Subject paths are stored verbatim in dot-form; no leading-slash
+        stripping happens since the API contract is dot-separated.
+        """
         result = _build_scoped_context(
             None,
             catalogs=["/A"],
             subject_buckets={
-                "metrics": ["/M1", "/M2"],
-                "sqls": ["/S1"],
+                "metrics": ["Finance.Revenue.M1", "Sales.M2"],
+                "sqls": ["Finance.SQL.s1"],
                 "ext_knowledge": [],
             },
         )
         # ext_knowledge is empty, so its key is omitted; subjects key never appears.
-        assert result == {"tables": "A", "metrics": "M1, M2", "sqls": "S1"}
+        assert result == {
+            "tables": "A",
+            "metrics": "Finance.Revenue.M1, Sales.M2",
+            "sqls": "Finance.SQL.s1",
+        }
 
     def test_datasource_is_written_when_provided(self):
         """A non-empty datasource is recorded under ``scoped_context.datasource``."""
@@ -1036,49 +1043,29 @@ class TestBuildScopedContext:
         assert _build_scoped_context(None, subject_buckets={"metrics": [], "sqls": [], "ext_knowledge": []}) is None
 
 
-class TestPathToSlashForm:
-    """Tests for _path_to_slash_form — normalize stored tokens to slash-form paths."""
-
-    def test_dot_form_is_converted_to_slash_form(self):
-        """Stored wizard-form (`a.b.c`) comes back as `a/b/c`."""
-        assert _path_to_slash_form("finance.revenue.daily_revenue") == "finance/revenue/daily_revenue"
-
-    def test_slash_form_passes_through(self):
-        """Stored slash-form is preserved."""
-        assert _path_to_slash_form("Commerce/Orders/Avg") == "Commerce/Orders/Avg"
-
-    def test_quoted_segments_are_unquoted(self):
-        """Quoted dot-form segments (`a."b.c".d`) round-trip through `split_reference_path`."""
-        assert _path_to_slash_form('domain."name with dots".item') == "domain/name with dots/item"
-
-    def test_empty_input_returns_empty(self):
-        """Empty token yields empty string, callers filter these out."""
-        assert _path_to_slash_form("") == ""
-
-
 class TestMergeSubjectsFromScopedContext:
     """Tests for _merge_subjects_from_scoped_context — flatten the three buckets."""
 
     def test_all_three_buckets_are_concatenated(self):
         """metrics + sqls + ext_knowledge concatenate into a single subjects list."""
         scoped = {
-            "metrics": "Commerce/Orders/Avg, Sales/Region",
-            "sqls": "finance/sql_a",
-            "ext_knowledge": "Docs/handbook",
+            "metrics": "Commerce.Orders.Avg, Sales.Region",
+            "sqls": "finance.sql_a",
+            "ext_knowledge": "Docs.handbook",
         }
         assert _merge_subjects_from_scoped_context(scoped) == [
-            "Commerce/Orders/Avg",
-            "Sales/Region",
-            "finance/sql_a",
-            "Docs/handbook",
+            "Commerce.Orders.Avg",
+            "Sales.Region",
+            "finance.sql_a",
+            "Docs.handbook",
         ]
 
-    def test_dot_form_entries_are_normalized_to_slash_form(self):
-        """Wizard-written entries (`a.b.c`) come back as slash paths."""
+    def test_stored_entries_are_returned_verbatim(self):
+        """Stored dot-form entries are surfaced unchanged — no path rewriting on read."""
         scoped = {"metrics": "finance.revenue.daily, sales.region"}
         assert _merge_subjects_from_scoped_context(scoped) == [
-            "finance/revenue/daily",
-            "sales/region",
+            "finance.revenue.daily",
+            "sales.region",
         ]
 
     def test_duplicates_across_buckets_are_dropped(self):
@@ -1104,9 +1091,9 @@ class TestClassifySubjectPaths:
         silently would be the worse failure mode.
         """
         real_agent_config.current_datasource = ""
-        result = _classify_subject_paths(real_agent_config, ["Commerce/Orders/Avg", "Sales/Region"])
+        result = _classify_subject_paths(real_agent_config, ["Commerce.Orders.Avg", "Sales.Region"])
         assert result == {
-            "metrics": ["Commerce/Orders/Avg", "Sales/Region"],
+            "metrics": ["Commerce.Orders.Avg", "Sales.Region"],
             "sqls": [],
             "ext_knowledge": [],
         }
@@ -1129,8 +1116,8 @@ class TestClassifySubjectPaths:
             raise RuntimeError("storage backend down")
 
         monkeypatch.setattr(MetricRAG, "__init__", broken_init)
-        result = _classify_subject_paths(real_agent_config, ["Commerce/Orders/Avg"])
-        assert result["metrics"] == ["Commerce/Orders/Avg"]
+        result = _classify_subject_paths(real_agent_config, ["Commerce.Orders.Avg"])
+        assert result["metrics"] == ["Commerce.Orders.Avg"]
         assert result["sqls"] == []
         assert result["ext_knowledge"] == []
 
@@ -1178,17 +1165,17 @@ class TestClassifySubjectPaths:
         result = _classify_subject_paths(
             real_agent_config,
             [
-                "Commerce/Orders/my_metric",
-                "Finance/my_sql",
-                "Docs/my_doc",
-                "Unknown/path",
+                "Commerce.Orders.my_metric",
+                "Finance.my_sql",
+                "Docs.my_doc",
+                "Unknown.path",
             ],
         )
         # Unknown paths fall back to metrics so the editor's input survives the
         # round-trip — losing the user's selection silently would be worse.
-        assert result["metrics"] == ["Commerce/Orders/my_metric", "Unknown/path"]
-        assert result["sqls"] == ["Finance/my_sql"]
-        assert result["ext_knowledge"] == ["Docs/my_doc"]
+        assert result["metrics"] == ["Commerce.Orders.my_metric", "Unknown.path"]
+        assert result["sqls"] == ["Finance.my_sql"]
+        assert result["ext_knowledge"] == ["Docs.my_doc"]
 
 
 @pytest.mark.asyncio
@@ -1248,7 +1235,7 @@ class TestSubagentScopedContextRoundTrip:
                 name="scoped_create_agent",
                 type="gen_sql",
                 catalogs=["/Commerce/Orders/Average_Gross_Order_Value", "/Commerce/Sales"],
-                subjects=["/Finance/Revenue/Daily"],
+                subjects=["Finance.Revenue.Daily"],
             ),
             real_agent_config,
         )
@@ -1269,10 +1256,10 @@ class TestSubagentScopedContextRoundTrip:
         assert "catalogs" not in scoped
         assert scoped["tables"] == "Commerce/Orders/Average_Gross_Order_Value, Commerce/Sales"
         # Subjects route to ``metrics`` (the fallback bucket) because the
-        # KB stores have no entry named "Daily" under "Finance/Revenue".
+        # KB stores have no entry named "Daily" under "Finance.Revenue".
         # No flat ``subjects`` key is persisted.
         assert "subjects" not in scoped
-        assert scoped["metrics"] == "Finance/Revenue/Daily"
+        assert scoped["metrics"] == "Finance.Revenue.Daily"
 
     async def test_edit_migrates_tools_and_scoped_context(self, real_agent_config, agent_yml_with_singleton):
         """An edit normalizes tools to CSV and rewrites scoped_context.
@@ -1301,7 +1288,7 @@ class TestSubagentScopedContextRoundTrip:
                 name="legacy_scope",
                 tools=["semantic_tools.*", "db_tools.*"],
                 catalogs=["/Commerce/Orders/Avg"],
-                subjects=["/Sales/Region"],
+                subjects=["Sales.Region"],
             ),
             real_agent_config,
         )
@@ -1315,14 +1302,14 @@ class TestSubagentScopedContextRoundTrip:
         assert "catalogs" not in entry
         assert "subjects" not in entry
         scoped = entry["scoped_context"]
-        # Leading slashes are stripped, and catalogs lands on ``tables`` —
-        # no non-runtime ``catalogs`` key persists.
+        # Leading slashes on catalogs are stripped, and catalogs lands on
+        # ``tables`` — no non-runtime ``catalogs`` key persists.
         assert "catalogs" not in scoped
         assert scoped["tables"] == "Commerce/Orders/Avg"
         # No flat ``subjects`` key — subjects are classified into runtime buckets.
         assert "subjects" not in scoped
         # Without pre-populated KB stores the classifier defaults to metrics.
-        assert scoped["metrics"] == "Sales/Region"
+        assert scoped["metrics"] == "Sales.Region"
         # The active datasource is rebound on every scope-touching edit.
         assert scoped["datasource"] == real_agent_config.current_datasource
 
@@ -1372,8 +1359,8 @@ class TestSubagentScopedContextRoundTrip:
 
         Catalog entries are recovered from the runtime ``tables`` key; subjects
         are recomposed by merging the three runtime buckets (metrics / sqls /
-        ext_knowledge) into a single flat list. Stored dot-form entries
-        (wizard convention) are normalized to slash-form on the way out.
+        ext_knowledge) into a single flat list. Stored entries surface in
+        their canonical dot-separated form unchanged.
         """
         real_agent_config.agentic_nodes["roundtrip_get"] = {
             "type": "gen_sql",
@@ -1381,9 +1368,9 @@ class TestSubagentScopedContextRoundTrip:
             "scoped_context": {
                 "datasource": "finance",
                 "tables": "/Commerce/Orders/Avg, /Commerce/Sales",
-                "metrics": "Finance/Revenue/Daily, finance.revenue.weekly",
-                "sqls": "Sales/region_query",
-                "ext_knowledge": "Docs/handbook",
+                "metrics": "Finance.Revenue.Daily, finance.revenue.weekly",
+                "sqls": "Sales.region_query",
+                "ext_knowledge": "Docs.handbook",
             },
             "created_at": "2026-04-30T09:20:31.545000Z",
         }
@@ -1400,13 +1387,13 @@ class TestSubagentScopedContextRoundTrip:
         # Catalogs come back from ``scoped_context.tables`` (the runtime key);
         # leading slashes are stripped on the way out.
         assert agent["catalogs"] == ["Commerce/Orders/Avg", "Commerce/Sales"]
-        # Subjects merge across all three buckets in probe order; the dot-form
-        # entry "finance.revenue.weekly" is normalized to slash-form.
+        # Subjects merge across all three buckets in probe order; entries
+        # surface verbatim in their stored dot-form.
         assert agent["subjects"] == [
-            "Finance/Revenue/Daily",
-            "finance/revenue/weekly",
-            "Sales/region_query",
-            "Docs/handbook",
+            "Finance.Revenue.Daily",
+            "finance.revenue.weekly",
+            "Sales.region_query",
+            "Docs.handbook",
         ]
 
     async def test_round_trip_create_then_get(self, real_agent_config, agent_yml_with_singleton):
@@ -1426,7 +1413,7 @@ class TestSubagentScopedContextRoundTrip:
                 type="gen_sql",
                 tools=["semantic_tools.*", "db_tools.*"],
                 catalogs=["/Commerce/Orders/Avg"],
-                subjects=["/Sales/Region"],
+                subjects=["Commerce.Orders.Average_Order_Value.average_gross_order_value"],
             ),
             real_agent_config,
         )
@@ -1436,4 +1423,4 @@ class TestSubagentScopedContextRoundTrip:
         agent = result.data["agent"]
         assert agent["tools"] == ["semantic_tools.*", "db_tools.*"]
         assert agent["catalogs"] == ["Commerce/Orders/Avg"]
-        assert agent["subjects"] == ["Sales/Region"]
+        assert agent["subjects"] == ["Commerce.Orders.Average_Order_Value.average_gross_order_value"]
