@@ -123,8 +123,10 @@ def _read_description(node: dict) -> str:
 def _parse_tools(value: Any) -> list[str]:
     """Normalize the yaml ``tools`` field to a list of pattern strings.
 
-    Accepts either a comma-separated string (legacy yaml form) or a list, and
-    trims surrounding whitespace from every entry. Empty entries are dropped.
+    Accepts either a comma-separated string (the canonical yaml form, which
+    the runtime in ``GenSQLAgenticNode.setup_tools`` calls ``str.split`` on)
+    or a list, and trims surrounding whitespace from every entry. Empty
+    entries are dropped.
     """
     if not value:
         return []
@@ -135,6 +137,78 @@ def _parse_tools(value: Any) -> list[str]:
     else:
         return []
     return [str(item).strip() for item in items if str(item).strip()]
+
+
+def _format_csv(value: Any) -> str:
+    """Render a list / tuple / string into the comma-separated yaml form.
+
+    The runtime expects ``tools``, ``mcp``, and the ``scoped_context`` path
+    fields (``catalogs``, ``subjects``, ``tables``, …) as comma-separated
+    strings — ``GenSQLAgenticNode.setup_tools`` and ``ScopedContext.as_lists``
+    both rely on ``str.split(",")`` to recover the entries. Persisting these
+    as yaml lists silently breaks both call sites, so the API normalizes on
+    write.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        items = value.split(",")
+    elif isinstance(value, (list, tuple)):
+        items = value
+    else:
+        return ""
+    cleaned = [str(item).strip() for item in items if str(item) and str(item).strip()]
+    return ", ".join(cleaned)
+
+
+def _parse_csv(value: Any) -> list[str]:
+    """Inverse of :func:`_format_csv` — split the yaml form back into a list."""
+    return _parse_tools(value)
+
+
+def _strip_leading_slashes(value: Any) -> list[str]:
+    """Trim and drop leading ``/`` from each entry in a path list.
+
+    Catalog / subject entries arrive from the editor as absolute-style paths
+    (``/Commerce/Orders/Average_Gross_Order_Value``), but the runtime stores
+    them without the leading slash so ``ScopedContext.as_lists`` and the
+    downstream lookups don't treat the slash as a separator. Normalizing on
+    write keeps both the API contract and the on-disk shape consistent —
+    ``["/A/B", "C"]`` → ``["A/B", "C"]``.
+    """
+    return [token.lstrip("/") for token in _parse_csv(value) if token.lstrip("/")]
+
+
+def _build_scoped_context(
+    base: Optional[dict],
+    *,
+    catalogs: Any = None,
+    subjects: Any = None,
+) -> Optional[dict]:
+    """Merge API-level ``catalogs`` / ``subjects`` into a ``scoped_context`` dict.
+
+    ``base`` carries any existing scoped_context payload (yaml-loaded for
+    edits, an explicit ``request.scoped_context`` for inputs that send one);
+    ``catalogs`` and ``subjects`` are the API top-level fields that this
+    helper folds into the same dict using the comma-separated yaml form.
+    Path entries are normalized via :func:`_strip_leading_slashes` so the
+    on-disk shape never carries a leading ``/``. Returns ``None`` when the
+    result would be empty so ``scoped_context`` is omitted from the on-disk
+    entry rather than persisting a useless empty block.
+
+    Passing ``None`` for ``catalogs`` / ``subjects`` leaves the corresponding
+    key untouched on ``base``; passing an empty list explicitly clears it.
+    """
+    merged: dict = dict(base) if isinstance(base, dict) else {}
+    for key, value in (("catalogs", catalogs), ("subjects", subjects)):
+        if value is None:
+            continue
+        rendered = _format_csv(_strip_leading_slashes(value))
+        if rendered:
+            merged[key] = rendered
+        else:
+            merged.pop(key, None)
+    return merged or None
 
 
 def _utc_now_iso() -> str:
@@ -283,6 +357,17 @@ class AgentService:
 
             created_at = _file_mtime_iso(configuration_manager().config_path)
 
+        # ``catalogs`` / ``subjects`` are persisted under ``scoped_context``;
+        # the read path lifts them back to the top level so the editor sees
+        # the same shape it sent on save. Legacy entries that still carry the
+        # arrays at the top level keep working until the next edit migrates
+        # them into ``scoped_context``. Leading slashes are stripped on the
+        # way out so older entries written before this normalization land in
+        # the canonical form too.
+        scoped_ctx = agent.get("scoped_context") if isinstance(agent.get("scoped_context"), dict) else {}
+        catalogs = _strip_leading_slashes(scoped_ctx.get("catalogs")) or _strip_leading_slashes(agent.get("catalogs"))
+        subjects = _strip_leading_slashes(scoped_ctx.get("subjects")) or _strip_leading_slashes(agent.get("subjects"))
+
         return Result(
             success=True,
             data={
@@ -294,8 +379,8 @@ class AgentService:
                     "created_at": created_at,
                     "tools": _parse_tools(agent.get("tools")),
                     "rules": agent.get("rules") or [],
-                    "catalogs": agent.get("catalogs") or [],
-                    "subjects": agent.get("subjects") or [],
+                    "catalogs": catalogs,
+                    "subjects": subjects,
                 }
             },
         )
@@ -367,15 +452,24 @@ class AgentService:
         # API field ``description`` is persisted as ``agent_description`` to
         # match what the runtime reads (sub_agent_task_tool / agentic_node /
         # the wizard all look up ``agent_description`` from agentic_nodes).
+        # ``tools`` is rendered as the comma-separated yaml form expected by
+        # ``GenSQLAgenticNode.setup_tools``; ``catalogs`` / ``subjects`` are
+        # nested under ``scoped_context`` so a single block describes the
+        # subagent's full reference scope.
         agent_entry = {
             "type": request.type or "gen_sql",
             "agent_description": request.description or "",
-            "tools": request.tools or [],
-            "catalogs": request.catalogs or [],
-            "subjects": request.subjects or [],
+            "tools": _format_csv(request.tools),
             "rules": request.rules or [],
             "created_at": _utc_now_iso(),
         }
+        scoped_ctx = _build_scoped_context(
+            base=None,
+            catalogs=request.catalogs,
+            subjects=request.subjects,
+        )
+        if scoped_ctx:
+            agent_entry["scoped_context"] = scoped_ctx
         if request.prompt_template:
             agent_entry["prompt_template"] = request.prompt_template
         if request.prompt_version:
@@ -505,6 +599,40 @@ class AgentService:
         if "description" in update_data:
             update_data["agent_description"] = update_data.pop("description")
             agent.pop("description", None)
+
+        # ``tools`` is persisted as the comma-separated yaml form expected by
+        # ``GenSQLAgenticNode.setup_tools`` (which calls ``str.split(",")``).
+        if "tools" in update_data:
+            update_data["tools"] = _format_csv(update_data["tools"])
+
+        # ``catalogs`` / ``subjects`` are folded into ``scoped_context`` so the
+        # whole reference scope lives in a single nested block. The merge
+        # preserves yaml-loaded keys (``tables`` / ``metrics`` / ``sqls`` /
+        # ``ext_knowledge``) and any explicit ``scoped_context`` payload the
+        # caller sent. Top-level ``catalogs`` / ``subjects`` from older edits
+        # are also dropped so the read path doesn't see two competing copies.
+        catalogs_input = update_data.pop("catalogs", None)
+        subjects_input = update_data.pop("subjects", None)
+        if catalogs_input is not None or subjects_input is not None or "scoped_context" in update_data:
+            base_ctx: dict = {}
+            existing = agent.get("scoped_context")
+            if isinstance(existing, dict):
+                base_ctx.update(existing)
+            request_ctx = update_data.pop("scoped_context", None)
+            if isinstance(request_ctx, dict):
+                base_ctx.update(request_ctx)
+            merged = _build_scoped_context(
+                base=base_ctx,
+                catalogs=catalogs_input,
+                subjects=subjects_input,
+            )
+            if merged:
+                update_data["scoped_context"] = merged
+            else:
+                agent.pop("scoped_context", None)
+            agent.pop("catalogs", None)
+            agent.pop("subjects", None)
+
         if not update_data and prompt_content is None:
             return Result(success=True, data={"name": request.id, "id": request.id})
 

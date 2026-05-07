@@ -12,8 +12,12 @@ from datus.api.services.agent_service import (
     VALID_TOOL_CATEGORIES,
     VALID_TOOL_METHODS,
     AgentService,
+    _build_scoped_context,
+    _format_csv,
     _normalize_created_at,
+    _parse_csv,
     _parse_tools,
+    _strip_leading_slashes,
     _utc_now_iso,
     _validate_tools,
     sanitize_agentic_node_name,
@@ -879,3 +883,315 @@ class TestEditAgent:
         # Legacy key must be cleared so downstream readers can't pick up
         # the old text.
         assert "description" not in entry
+
+
+class TestFormatAndParseCsv:
+    """Tests for _format_csv / _parse_csv — list ↔ comma-separated string."""
+
+    def test_list_renders_with_separator(self):
+        """A list is joined with ``", "`` so it matches the documented yaml form."""
+        rendered = _format_csv(["semantic_tools.*", "db_tools.*", "context_search_tools.list_subject_tree"])
+        assert rendered == "semantic_tools.*, db_tools.*, context_search_tools.list_subject_tree"
+
+    def test_string_input_is_normalized(self):
+        """A pre-formatted string is re-rendered with the canonical spacing."""
+        assert _format_csv("a,  b , c") == "a, b, c"
+
+    def test_empty_inputs_render_empty_string(self):
+        """``None`` / empty list / empty string all collapse to ``""``."""
+        assert _format_csv(None) == ""
+        assert _format_csv([]) == ""
+        assert _format_csv("") == ""
+
+    def test_blank_entries_are_dropped(self):
+        """Whitespace-only entries don't pollute the rendered string."""
+        assert _format_csv(["a", "", "  ", "b"]) == "a, b"
+
+    def test_round_trip_through_parse(self):
+        """``_parse_csv(_format_csv(items)) == items`` for trimmed entries."""
+        items = ["/Commerce/Orders/Average_Gross_Order_Value", "/Commerce/Sales"]
+        assert _parse_csv(_format_csv(items)) == items
+
+
+class TestStripLeadingSlashes:
+    """Tests for _strip_leading_slashes — normalize subject/catalog path entries."""
+
+    def test_each_entry_loses_leading_slash(self):
+        """A leading ``/`` is removed from every entry in the list."""
+        assert _strip_leading_slashes(["/Commerce/Orders/Avg", "/Commerce/Sales"]) == [
+            "Commerce/Orders/Avg",
+            "Commerce/Sales",
+        ]
+
+    def test_string_input_is_split_and_stripped(self):
+        """A pre-formatted comma-separated string is split before stripping."""
+        assert _strip_leading_slashes("/A/B, /C") == ["A/B", "C"]
+
+    def test_no_leading_slash_passes_through(self):
+        """Entries without a leading slash are preserved unchanged."""
+        assert _strip_leading_slashes(["A/B", "C/D"]) == ["A/B", "C/D"]
+
+    def test_inner_slashes_are_kept(self):
+        """Only the leading slash is trimmed — path separators are preserved."""
+        assert _strip_leading_slashes(["/Commerce/Orders/Avg"]) == ["Commerce/Orders/Avg"]
+
+    def test_slash_only_entry_is_dropped(self):
+        """A bare ``/`` collapses to nothing and is filtered out."""
+        assert _strip_leading_slashes(["/", "/A"]) == ["A"]
+
+
+class TestBuildScopedContext:
+    """Tests for _build_scoped_context — fold catalogs/subjects into scoped_context."""
+
+    def test_only_catalogs_returns_dict_with_csv_value(self):
+        """Catalogs alone yields a single-key dict with a comma-separated string."""
+        result = _build_scoped_context(None, catalogs=["/A", "/B"])
+        assert result == {"catalogs": "A, B"}
+
+    def test_both_keys_are_merged_into_one_dict(self):
+        """Catalogs + subjects produce one scoped_context with both keys set."""
+        result = _build_scoped_context(None, catalogs=["/A"], subjects=["/X", "/Y"])
+        assert result == {"catalogs": "A", "subjects": "X, Y"}
+
+    def test_base_keys_are_preserved(self):
+        """Existing scoped_context keys (tables/metrics/sqls) survive the merge."""
+        base = {"tables": "orders", "metrics": "revenue"}
+        result = _build_scoped_context(base, catalogs=["/A"])
+        assert result == {"tables": "orders", "metrics": "revenue", "catalogs": "A"}
+
+    def test_explicit_empty_list_clears_existing_value(self):
+        """Sending ``catalogs=[]`` removes the key from a base scoped_context."""
+        base = {"catalogs": "old", "tables": "t1"}
+        result = _build_scoped_context(base, catalogs=[])
+        assert result == {"tables": "t1"}
+
+    def test_none_value_preserves_existing_key(self):
+        """``None`` for catalogs/subjects leaves the base value intact."""
+        base = {"catalogs": "keep"}
+        result = _build_scoped_context(base, catalogs=None, subjects=["/new"])
+        assert result == {"catalogs": "keep", "subjects": "new"}
+
+    def test_empty_result_returns_none(self):
+        """When the merged dict ends up empty, return ``None`` so callers omit the block."""
+        assert _build_scoped_context(None) is None
+        assert _build_scoped_context({}, catalogs=[]) is None
+
+
+@pytest.mark.asyncio
+class TestSubagentScopedContextRoundTrip:
+    """End-to-end checks for the create/edit/get pipeline.
+
+    The contract documented in
+    ``docs/subagent/customized_subagent.zh.md``: ``tools`` is persisted as a
+    comma-separated string (the runtime calls ``str.split(",")``), and
+    ``catalogs`` / ``subjects`` live under ``scoped_context`` so a single
+    block describes the subagent's reference scope.
+    """
+
+    async def test_create_persists_tools_as_csv_string(self, real_agent_config, agent_yml_with_singleton):
+        """Tools list is rendered as the comma-separated yaml form on disk."""
+        import yaml
+
+        from datus.api.models.agent_models import CreateAgentInput
+
+        svc = AgentService()
+        result = await svc.create_agent(
+            CreateAgentInput(
+                name="csv_tools_agent",
+                type="gen_sql",
+                tools=["semantic_tools.*", "db_tools.*", "context_search_tools.list_subject_tree"],
+            ),
+            real_agent_config,
+        )
+        assert result.success is True
+
+        with open(agent_yml_with_singleton) as f:
+            raw = yaml.safe_load(f)
+        entry = raw["agent"]["agentic_nodes"]["csv_tools_agent"]
+        assert entry["tools"] == "semantic_tools.*, db_tools.*, context_search_tools.list_subject_tree"
+
+    async def test_create_folds_catalogs_and_subjects_under_scoped_context(
+        self, real_agent_config, agent_yml_with_singleton
+    ):
+        """API top-level catalogs/subjects land inside ``scoped_context`` on save.
+
+        Leading slashes from the editor's path form are stripped so the
+        on-disk shape matches what the runtime stores natively.
+        """
+        import yaml
+
+        from datus.api.models.agent_models import CreateAgentInput
+
+        svc = AgentService()
+        result = await svc.create_agent(
+            CreateAgentInput(
+                name="scoped_create_agent",
+                type="gen_sql",
+                catalogs=["/Commerce/Orders/Average_Gross_Order_Value", "/Commerce/Sales"],
+                subjects=["/Finance/Revenue/Daily"],
+            ),
+            real_agent_config,
+        )
+        assert result.success is True
+
+        with open(agent_yml_with_singleton) as f:
+            raw = yaml.safe_load(f)
+        entry = raw["agent"]["agentic_nodes"]["scoped_create_agent"]
+        # catalogs / subjects must NOT remain at the top level — that was the
+        # legacy shape before this change.
+        assert "catalogs" not in entry
+        assert "subjects" not in entry
+        scoped = entry.get("scoped_context")
+        assert isinstance(scoped, dict)
+        assert scoped["catalogs"] == "Commerce/Orders/Average_Gross_Order_Value, Commerce/Sales"
+        assert scoped["subjects"] == "Finance/Revenue/Daily"
+
+    async def test_edit_migrates_tools_and_scoped_context(self, real_agent_config, agent_yml_with_singleton):
+        """An edit normalizes tools to CSV and moves catalogs/subjects into scoped_context."""
+        import yaml
+
+        from datus.api.models.agent_models import EditAgentInput
+
+        # Seed a legacy-shape entry: list-form tools and top-level catalogs/subjects.
+        real_agent_config.agentic_nodes["legacy_scope"] = {
+            "type": "gen_sql",
+            "tools": ["db_tools.*"],
+            "catalogs": ["/Old/Catalog"],
+            "subjects": ["/Old/Subject"],
+        }
+
+        svc = AgentService()
+        result = await svc.edit_agent(
+            EditAgentInput(
+                id="legacy_scope",
+                name="legacy_scope",
+                tools=["semantic_tools.*", "db_tools.*"],
+                catalogs=["/Commerce/Orders/Avg"],
+                subjects=["/Sales/Region"],
+            ),
+            real_agent_config,
+        )
+        assert result.success is True
+
+        with open(agent_yml_with_singleton) as f:
+            raw = yaml.safe_load(f)
+        entry = raw["agent"]["agentic_nodes"]["legacy_scope"]
+        assert entry["tools"] == "semantic_tools.*, db_tools.*"
+        # Top-level legacy keys must be cleared so the read path can't see two copies.
+        assert "catalogs" not in entry
+        assert "subjects" not in entry
+        scoped = entry["scoped_context"]
+        # Leading slashes are stripped so the on-disk form is canonical.
+        assert scoped["catalogs"] == "Commerce/Orders/Avg"
+        assert scoped["subjects"] == "Sales/Region"
+
+    async def test_edit_preserves_existing_scoped_context_keys(self, real_agent_config, agent_yml_with_singleton):
+        """Editing catalogs must not wipe pre-existing tables/metrics/sqls keys."""
+        import yaml
+
+        from datus.api.models.agent_models import EditAgentInput
+
+        real_agent_config.agentic_nodes["preserve_scope"] = {
+            "type": "gen_sql",
+            "scoped_context": {
+                "tables": "orders, customers",
+                "metrics": "revenue.daily",
+                "sqls": "finance.region_rollup",
+            },
+        }
+
+        svc = AgentService()
+        result = await svc.edit_agent(
+            EditAgentInput(
+                id="preserve_scope",
+                name="preserve_scope",
+                catalogs=["/Commerce/Orders"],
+            ),
+            real_agent_config,
+        )
+        assert result.success is True
+
+        with open(agent_yml_with_singleton) as f:
+            raw = yaml.safe_load(f)
+        scoped = raw["agent"]["agentic_nodes"]["preserve_scope"]["scoped_context"]
+        assert scoped["tables"] == "orders, customers"
+        assert scoped["metrics"] == "revenue.daily"
+        assert scoped["sqls"] == "finance.region_rollup"
+        assert scoped["catalogs"] == "Commerce/Orders"
+
+    async def test_get_returns_tools_as_list_and_extracts_scoped_paths(self, real_agent_config):
+        """The read path inverts the storage format the editor expects.
+
+        Catalog / subject entries are returned without the leading slash
+        regardless of whether they were stored with or without it — older
+        entries written before the normalization land in the canonical form.
+        """
+        real_agent_config.agentic_nodes["roundtrip_get"] = {
+            "type": "gen_sql",
+            "tools": "semantic_tools.*, db_tools.*, context_search_tools.list_subject_tree",
+            "scoped_context": {
+                "catalogs": "/Commerce/Orders/Avg, /Commerce/Sales",
+                "subjects": "/Finance/Revenue/Daily",
+                "tables": "orders",
+            },
+            "created_at": "2026-04-30T09:20:31.545000Z",
+        }
+
+        svc = AgentService()
+        result = await svc.get_agent("roundtrip_get", real_agent_config)
+        assert result.success is True
+        agent = result.data["agent"]
+        assert agent["tools"] == [
+            "semantic_tools.*",
+            "db_tools.*",
+            "context_search_tools.list_subject_tree",
+        ]
+        assert agent["catalogs"] == ["Commerce/Orders/Avg", "Commerce/Sales"]
+        assert agent["subjects"] == ["Finance/Revenue/Daily"]
+
+    async def test_get_falls_back_to_top_level_catalogs_for_legacy_entries(self, real_agent_config):
+        """Legacy entries written before the migration still surface catalogs/subjects.
+
+        Older yaml files persisted catalogs and subjects at the top level. The
+        read path must keep working for them until the next edit migrates the
+        keys into scoped_context — otherwise existing configs would lose the
+        scope information after an upgrade.
+        """
+        real_agent_config.agentic_nodes["legacy_top_level"] = {
+            "type": "gen_sql",
+            "tools": "db_tools.*",
+            "catalogs": ["/Legacy/Catalog"],
+            "subjects": ["/Legacy/Subject"],
+            "created_at": "2026-04-30T09:20:31.545000Z",
+        }
+
+        svc = AgentService()
+        result = await svc.get_agent("legacy_top_level", real_agent_config)
+        assert result.success is True
+        agent = result.data["agent"]
+        # Even on the legacy fallback path, leading slashes are stripped.
+        assert agent["catalogs"] == ["Legacy/Catalog"]
+        assert agent["subjects"] == ["Legacy/Subject"]
+
+    async def test_round_trip_create_then_get(self, real_agent_config, agent_yml_with_singleton):
+        """Saving and re-reading yields the canonical (slash-stripped) path form."""
+        from datus.api.models.agent_models import CreateAgentInput
+
+        svc = AgentService()
+        await svc.create_agent(
+            CreateAgentInput(
+                name="full_round_trip",
+                type="gen_sql",
+                tools=["semantic_tools.*", "db_tools.*"],
+                catalogs=["/Commerce/Orders/Avg"],
+                subjects=["/Sales/Region"],
+            ),
+            real_agent_config,
+        )
+
+        result = await svc.get_agent("full_round_trip", real_agent_config)
+        assert result.success is True
+        agent = result.data["agent"]
+        assert agent["tools"] == ["semantic_tools.*", "db_tools.*"]
+        assert agent["catalogs"] == ["Commerce/Orders/Avg"]
+        assert agent["subjects"] == ["Sales/Region"]
