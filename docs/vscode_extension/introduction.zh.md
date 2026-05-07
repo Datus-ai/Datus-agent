@@ -18,7 +18,7 @@
 
 1. 下载最新版本：[https://cdn.studio.datus.ai/vsc/release/datus-studio-vsix.zip](https://cdn.studio.datus.ai/vsc/release/datus-studio-vsix.zip)，解压 zip 得到 .vsix 文件。
 2. 在 VSCode 中打开命令面板（`Cmd/Ctrl + Shift + P`），执行 **Extensions: Install from VSIX...**，选择刚下载的 `.vsix` 文件。
-3. 安装完成后，活动栏会出现 Datus Studio 图标，并新增三个面板：左侧 **Datus: Object Explorer**、左侧主面板 **Datus Studio**（Chat）、底部 **Datus Studio**（SQL / Chart）。
+3. 安装完成后，活动栏会出现 Datus Studio 图标，并新增三个面板：左侧 **Datus: Object Explorer**、主面板 **Datus Studio**（Chat，你可以手动拖拽到右侧）、底部 **Datus Studio**（SQL / Chart）。
 
 !!! tip "升级"
     重新下载 `latest.vsix` 后再次执行 *Install from VSIX* 即可覆盖安装。
@@ -71,7 +71,7 @@ http://localhost:8501
 
 ## 核心功能
 
-整个插件按 VSCode 习惯划分为 **左侧 Catalog Tree/Context Tree/Subagent Explorer**、**右侧侧 Datus Studio Chat**、**底部 Datus Studio (SQL / Chart)** 三块。
+整个插件按 VSCode 习惯划分为 **左侧 Catalog Tree/Context Tree/Subagent Explorer**、**右侧 Datus Studio Chat**、**底部 Datus Studio (SQL / Chart)** 三块。
 
 ### 1. Catalog Tree 与 Context Tree
 
