@@ -58,6 +58,7 @@ def _make_agent_config(scheduler_config=None, project_root="/tmp/datus_test_proj
     # ``FilesystemFuncTool``). MagicMock would otherwise return a child mock
     # that ``Path()`` cannot consume.
     cfg.project_root = project_root
+    cfg.project_name = "unit-test-workspace"
     # Match CLI default: ``filesystem_strict`` is False unless a test opts in.
     # Without this an auto-attribute MagicMock would be truthy, flipping
     # SchedulerTools into strict mode and breaking existing EXTERNAL-path tests.
@@ -623,6 +624,52 @@ class TestSubmitSqlJob:
         assert result.result["job_id"] == "sql_job_1"
         payload = mock_adapter.submit_job.call_args[0][0]
         assert payload.db_connection == {"conn_id": "starrocks_default"}
+        assert result.result["conn_id"] == "starrocks_default"
+
+    def test_submit_uses_default_sql_connection_when_conn_id_omitted(self, tmp_path):
+        sql_file = tmp_path / "query.sql"
+        sql_file.write_text("SELECT 1")
+
+        cfg = _make_agent_config()
+        cfg.scheduler_config["connections"] = {
+            "lakehouse_demo": {
+                "description": "Shared lakehouse",
+                "type": "duckdb_iceberg",
+                "default": True,
+                "capabilities": ["sql", "lakehouse"],
+            }
+        }
+        mock_job = _make_scheduled_job("sql_job_1")
+        mock_adapter = MagicMock()
+        mock_adapter.submit_job.return_value = mock_job
+        tools = SchedulerTools(cfg)
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.submit_sql_job(job_name="sql_job_1", sql_file_path=str(sql_file))
+
+        assert result.success == 1
+        assert result.result["conn_id"] == "lakehouse_demo"
+        payload = mock_adapter.submit_job.call_args[0][0]
+        assert payload.db_connection == {"conn_id": "lakehouse_demo"}
+
+    def test_submit_without_conn_id_errors_when_multiple_defaults(self, tmp_path):
+        sql_file = tmp_path / "query.sql"
+        sql_file.write_text("SELECT 1")
+
+        cfg = _make_agent_config()
+        cfg.scheduler_config["connections"] = {
+            "a": {"description": "A", "default": True, "capabilities": ["sql"]},
+            "b": {"description": "B", "default": True, "capabilities": ["sql"]},
+        }
+        mock_adapter = MagicMock()
+        tools = SchedulerTools(cfg)
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.submit_sql_job(job_name="sql_job_1", sql_file_path=str(sql_file))
+
+        assert result.success == 0
+        assert "multiple default" in (result.error or "")
+        mock_adapter.submit_job.assert_not_called()
 
     def test_missing_sql_file(self, tmp_path):
         tools = SchedulerTools(_make_agent_config())
@@ -853,6 +900,66 @@ class TestUpdateJob:
         payload = mock_adapter.update_job.call_args[0][1]
         assert payload.db_connection == {"conn_id": "starrocks_default"}
 
+    def test_update_uses_default_sql_connection_when_conn_id_omitted(self, tmp_path):
+        sql_file = tmp_path / "updated.sql"
+        sql_file.write_text("SELECT 2")
+
+        cfg = _make_agent_config()
+        cfg.scheduler_config["connections"] = {
+            "lakehouse_demo": {
+                "description": "Shared lakehouse",
+                "type": "duckdb_iceberg",
+                "default": True,
+                "capabilities": ["sql", "lakehouse"],
+            }
+        }
+        mock_job = _make_scheduled_job("dag_to_update")
+        mock_adapter = MagicMock()
+        mock_adapter.update_job.return_value = mock_job
+        tools = SchedulerTools(cfg)
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.update_job(
+                job_id="dag_to_update",
+                sql_file_path=str(sql_file),
+                job_name="DAG To Update",
+            )
+
+        assert result.success == 1
+        assert result.result["conn_id"] == "lakehouse_demo"
+        payload = mock_adapter.update_job.call_args[0][1]
+        assert payload.db_connection == {"conn_id": "lakehouse_demo"}
+
+    def test_update_uses_default_sql_connection_with_scalar_capability(self, tmp_path):
+        sql_file = tmp_path / "updated.sql"
+        sql_file.write_text("SELECT 2")
+
+        cfg = _make_agent_config()
+        cfg.scheduler_config["connections"] = {
+            "lakehouse_demo": {
+                "description": "Shared lakehouse",
+                "type": "duckdb_iceberg",
+                "default": True,
+                "capabilities": "sql",
+            }
+        }
+        mock_job = _make_scheduled_job("dag_to_update")
+        mock_adapter = MagicMock()
+        mock_adapter.update_job.return_value = mock_job
+        tools = SchedulerTools(cfg)
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.update_job(
+                job_id="dag_to_update",
+                sql_file_path=str(sql_file),
+                job_name="DAG To Update",
+            )
+
+        assert result.success == 1
+        assert result.result["conn_id"] == "lakehouse_demo"
+        payload = mock_adapter.update_job.call_args[0][1]
+        assert payload.db_connection == {"conn_id": "lakehouse_demo"}
+
     def test_update_missing_sql_file(self, tmp_path):
         tools = SchedulerTools(_make_agent_config())
         result = tools.update_job(
@@ -996,6 +1103,27 @@ class TestListSchedulerConnections:
         conn_ids = [c["conn_id"] for c in result.result["connections"]]
         assert "starrocks_default" in conn_ids
         assert "pg_conn" in conn_ids
+
+    def test_returns_structured_connection_metadata(self):
+        cfg = _make_agent_config()
+        cfg.scheduler_config["connections"] = {
+            "lakehouse_demo": {
+                "description": "Shared lakehouse",
+                "type": "duckdb_iceberg",
+                "default": True,
+                "capabilities": ["sql", "lakehouse"],
+            }
+        }
+        tools = SchedulerTools(cfg)
+        result = tools.list_scheduler_connections()
+
+        assert result.success == 1
+        conn = result.result["connections"][0]
+        assert conn["conn_id"] == "lakehouse_demo"
+        assert conn["description"] == "Shared lakehouse"
+        assert conn["type"] == "duckdb_iceberg"
+        assert conn["default"] is True
+        assert conn["capabilities"] == ["sql", "lakehouse"]
 
     def test_empty_connections(self):
         cfg = _make_agent_config()

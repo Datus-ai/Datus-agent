@@ -1342,6 +1342,129 @@ class DBFuncTool:
     # Maximum rows allowed in a single transfer (v1 memory constraint)
     _TRANSFER_MAX_ROWS = 1_000_000
 
+    @staticmethod
+    def _identifier_quote_char(dialect: str) -> str:
+        backtick_dialects = ("mysql", "starrocks", "hive", "spark", "bigquery", "clickhouse")
+        return "`" if dialect in backtick_dialects else '"'
+
+    @classmethod
+    def _quote_column_identifier(cls, name: Any, dialect: str) -> str:
+        text = str(name)
+        if not text or "\x00" in text:
+            raise ValueError(f"Invalid column name: {text!r}")
+        quote_char = cls._identifier_quote_char(dialect)
+        escaped = text.replace(quote_char, quote_char * 2)
+        return f"{quote_char}{escaped}{quote_char}"
+
+    @staticmethod
+    def _is_missing_target_table_error(error: Any) -> bool:
+        text = str(error or "").lower()
+        missing_markers = (
+            "does not exist",
+            "doesn't exist",
+            "no such table",
+            "not found",
+            "undefinedtable",
+            "unknown table",
+            "table_not_exists",
+        )
+        object_markers = ("table", "relation", "object", "catalog", "schema")
+        return any(marker in text for marker in missing_markers) and any(marker in text for marker in object_markers)
+
+    @classmethod
+    def _infer_transfer_column_type(cls, series: Any, dialect: str) -> str:
+        from datetime import date, datetime, time
+        from decimal import Decimal
+
+        from pandas.api import types as pd_types
+
+        dialect = str(dialect or "").lower()
+
+        def choose(default: str, *, sqlite: str = "", postgres: str = "", duckdb: str = "") -> str:
+            if dialect == DBType.SQLITE:
+                return sqlite or default
+            if dialect in ("postgresql", "postgres"):
+                return postgres or default
+            if dialect == DBType.DUCKDB:
+                return duckdb or default
+            return default
+
+        if pd_types.is_bool_dtype(series):
+            return choose("BOOLEAN", sqlite="INTEGER")
+        if pd_types.is_integer_dtype(series):
+            return choose("BIGINT", sqlite="INTEGER")
+        if pd_types.is_float_dtype(series):
+            return choose("DOUBLE", sqlite="REAL", postgres="DOUBLE PRECISION")
+        if pd_types.is_datetime64_any_dtype(series):
+            return choose("TIMESTAMP", sqlite="TEXT")
+        if pd_types.is_timedelta64_dtype(series):
+            return choose("TEXT", duckdb="INTERVAL")
+
+        non_null = series.dropna()
+        if not non_null.empty:
+            value = non_null.iloc[0]
+            if isinstance(value, bool):
+                return choose("BOOLEAN", sqlite="INTEGER")
+            if isinstance(value, int):
+                return choose("BIGINT", sqlite="INTEGER")
+            if isinstance(value, float):
+                return choose("DOUBLE", sqlite="REAL", postgres="DOUBLE PRECISION")
+            if isinstance(value, Decimal):
+                return "NUMERIC"
+            if isinstance(value, datetime):
+                return choose("TIMESTAMP", sqlite="TEXT")
+            if isinstance(value, date):
+                return choose("DATE", sqlite="TEXT")
+            if isinstance(value, time):
+                return choose("TIME", sqlite="TEXT")
+            if isinstance(value, (bytes, bytearray, memoryview)):
+                return choose("TEXT", duckdb="VARCHAR")
+            if isinstance(value, (dict, list, tuple)):
+                return choose("TEXT", duckdb="VARCHAR")
+
+        return choose("TEXT", duckdb="VARCHAR")
+
+    def _create_transfer_target_table(self, target_conn: Any, target_table: str, df: Any) -> FuncToolResult:
+        if not hasattr(target_conn, "execute_ddl"):
+            return FuncToolResult(success=0, error="Target datasource connector does not support DDL operations")
+
+        columns = list(df.columns)
+        if not columns:
+            return FuncToolResult(
+                success=0, error="Cannot create target table because the source query returned no columns"
+            )
+
+        dialect = str(getattr(target_conn, "dialect", "") or "").lower()
+        seen_columns = set()
+        column_defs = []
+        try:
+            for column in columns:
+                column_key = str(column).casefold()
+                if column_key in seen_columns:
+                    return FuncToolResult(
+                        success=0,
+                        error=f"Cannot create target table because source query returned duplicate column '{column}'",
+                    )
+                seen_columns.add(column_key)
+                column_defs.append(
+                    f"  {self._quote_column_identifier(column, dialect)} "
+                    f"{self._infer_transfer_column_type(df[column], dialect)}"
+                )
+        except Exception as e:
+            return FuncToolResult(success=0, error=f"Failed to infer target table schema: {str(e)}")
+
+        create_sql = f"CREATE TABLE {target_table} (\n" + ",\n".join(column_defs) + "\n)"
+        try:
+            create_result = target_conn.execute_ddl(create_sql)
+            if not create_result.success:
+                return FuncToolResult(success=0, error=f"Failed to create target table: {create_result.error}")
+            if hasattr(target_conn, "connection") and hasattr(target_conn.connection, "commit"):
+                target_conn.connection.commit()
+        except Exception as e:
+            return FuncToolResult(success=0, error=f"Failed to create target table: {str(e)}")
+
+        return FuncToolResult(result={"sql": create_sql})
+
     def transfer_query_result(
         self,
         source_sql: str,
@@ -1362,7 +1485,8 @@ class DBFuncTool:
             source_datasource: Source datasource name. Uses default datasource if empty.
             target_table: Fully qualified target table name.
             target_datasource: Target datasource name. Uses default datasource if empty.
-            mode: Transfer mode - 'replace' (TRUNCATE + INSERT) or 'append' (INSERT only).
+            mode: Transfer mode - 'replace' (TRUNCATE + INSERT, creating the target table if missing)
+                  or 'append' (INSERT only).
             batch_size: Number of rows per INSERT batch.
 
         Returns:
@@ -1475,32 +1599,56 @@ class DBFuncTool:
                 "Please add WHERE conditions to transfer in smaller batches.",
             )
 
-        # TRUNCATE for replace mode BEFORE empty check — mode="replace" must clear old data
+        # TRUNCATE for replace mode BEFORE empty check - mode="replace" must clear old data.
+        # If the target table does not exist yet, create it from the source result schema so
+        # first-time transfers do not require a separate hand-written DDL step.
+        target_table_created = False
+        target_table_create_sql = None
         if mode == "replace":
             try:
                 truncate_result = target_conn.execute_ddl(f"TRUNCATE TABLE {target_table}")
                 if not truncate_result.success:
-                    return FuncToolResult(
-                        success=0,
-                        error=f"Failed to truncate target table: {truncate_result.error}",
-                    )
+                    if self._is_missing_target_table_error(truncate_result.error):
+                        create_result = self._create_transfer_target_table(target_conn, target_table, df)
+                        if not create_result.success:
+                            return create_result
+                        target_table_created = True
+                        target_table_create_sql = create_result.result["sql"]
+                    else:
+                        return FuncToolResult(
+                            success=0,
+                            error=f"Failed to truncate target table: {truncate_result.error}",
+                        )
             except Exception as e:
-                return FuncToolResult(success=0, error=f"Failed to truncate target table: {str(e)}")
+                if self._is_missing_target_table_error(e):
+                    create_result = self._create_transfer_target_table(target_conn, target_table, df)
+                    if not create_result.success:
+                        return create_result
+                    target_table_created = True
+                    target_table_create_sql = create_result.result["sql"]
+                else:
+                    return FuncToolResult(success=0, error=f"Failed to truncate target table: {str(e)}")
 
         # Handle empty result (after truncate so replace mode still clears old data)
         if row_count == 0:
             logger.info(f"Source query returned 0 rows, nothing to transfer to {target_table}")
+            if target_table_created:
+                message = "Transfer completed (empty result set - target table created)"
+            elif mode == "replace":
+                message = "Transfer completed (empty result set - target table truncated)"
+            else:
+                message = "Transfer completed (empty result set)"
             return FuncToolResult(
                 result={
-                    "message": "Transfer completed (empty result set — target table truncated)"
-                    if mode == "replace"
-                    else "Transfer completed (empty result set)",
+                    "message": message,
                     "source_sql": source_sql,
                     "source_datasource": source_datasource,
                     "target_table": target_table,
                     "target_datasource": target_datasource or self._default_datasource,
                     "mode": mode,
                     "rows_transferred": 0,
+                    "target_table_created": target_table_created,
+                    "target_table_create_sql": target_table_create_sql,
                     # Leave as None when the pre-count failed; 0 is a legitimate
                     # verified value (empty source). See _build_transfer_target.
                     "source_row_count": source_row_count,
@@ -1527,10 +1675,8 @@ class DBFuncTool:
         # Quote column names to handle reserved words (e.g., status, order, select).
         # Use dialect-appropriate quoting: backticks for MySQL/StarRocks, double quotes for others.
         columns = list(df.columns)
-        dialect = getattr(target_conn, "dialect", "")
-        backtick_dialects = ("mysql", "starrocks", "hive", "spark", "bigquery", "clickhouse")
-        quote_char = "`" if dialect in backtick_dialects else '"'
-        col_names = ", ".join(f"{quote_char}{c}{quote_char}" for c in columns)
+        dialect = str(getattr(target_conn, "dialect", "") or "").lower()
+        col_names = ", ".join(self._quote_column_identifier(c, dialect) for c in columns)
 
         rows_written = 0
         try:
@@ -1593,6 +1739,8 @@ class DBFuncTool:
                 "target_datasource": target_datasource or self._default_datasource,
                 "mode": mode,
                 "rows_transferred": rows_written,
+                "target_table_created": target_table_created,
+                "target_table_create_sql": target_table_create_sql,
                 "source_row_count": source_row_count,
                 "source_row_count_verified": source_row_count is not None,
                 "transferred_row_count": rows_written,

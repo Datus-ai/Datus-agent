@@ -294,6 +294,13 @@ class DBManager:
         db_type = _normalize_dialect_name(db_config.type)
         timeout_seconds = 30  # Default timeout
 
+        def _bool_extra(value, default: bool = False) -> bool:
+            if value is None:
+                return default
+            if isinstance(value, bool):
+                return value
+            return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
         if db_type == DBType.SQLITE:
             # SQLite uses file path - prioritize uri over database field
             db_path = db_config.uri or db_config.database
@@ -310,10 +317,15 @@ class DBManager:
             db_path = db_config.uri or db_config.database
             if db_path.startswith("duckdb:///"):
                 db_path = db_path.replace("duckdb:///", "")
+            extra = db_config.extra or {}
             return DuckDBConfig(
                 db_path=db_path,
                 timeout_seconds=timeout_seconds,
                 database_name=None,  # Let connector extract from file path
+                read_only=_bool_extra(extra.get("read_only"), False),
+                enable_external_access=_bool_extra(extra.get("enable_external_access"), True),
+                memory_limit=extra.get("memory_limit"),
+                iceberg=extra.get("iceberg"),
             )
 
         else:
@@ -350,13 +362,25 @@ class DBManager:
     def close(self):
         """Close all database connections."""
         for name, conn in list(self._conn_dict.items()):
-            if conn is not None:
-                try:
+            if conn is None:
+                continue
+            try:
+                if isinstance(conn, dict):
+                    for db_name, sub_conn in list(conn.items()):
+                        if sub_conn is None:
+                            continue
+                        try:
+                            sub_conn.close()
+                        except Exception as e:
+                            logger.warning(f"Error closing connection {name}.{db_name}: {str(e)}")
+                        finally:
+                            conn[db_name] = None
+                else:
                     conn.close()
-                except Exception as e:
-                    logger.warning(f"Error closing connection {name}: {str(e)}")
-                finally:
-                    self._conn_dict[name] = None
+            except Exception as e:
+                logger.warning(f"Error closing connection {name}: {str(e)}")
+            finally:
+                self._conn_dict[name] = None
 
     def __enter__(self):
         """Context manager entry point."""

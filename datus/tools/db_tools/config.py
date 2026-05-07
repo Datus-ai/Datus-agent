@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from datus_db_core import ConnectionConfig
 from pydantic import ConfigDict, Field
@@ -31,3 +31,4 @@ class DuckDBConfig(FileConnectionConfig):
     enable_external_access: bool = Field(default=True, description="Enable external file access")
     memory_limit: Optional[str] = Field(default=None, description="Memory limit (e.g., '2GB')")
     database_name: Optional[str] = Field(default=None, description="Optional database name override")
+    iceberg: Optional[Dict[str, Any]] = Field(default=None, description="DuckDB Iceberg REST catalog configuration")

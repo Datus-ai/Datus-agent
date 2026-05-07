@@ -140,7 +140,7 @@ transfer_query_result(
     source_database="local_duckdb",
     target_table="public.users_copy",
     target_database="greenplum",
-    mode="replace"        # replace（TRUNCATE+INSERT）或 append
+    mode="replace"        # replace（目标表不存在则创建，否则 TRUNCATE+INSERT）或 append
 )
 ```
 

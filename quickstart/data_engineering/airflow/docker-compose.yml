@@ -34,24 +34,27 @@ services:
       _AIRFLOW_WWW_USER_LASTNAME: User
       _AIRFLOW_WWW_USER_EMAIL: admin@example.com
       _AIRFLOW_WWW_USER_ROLE: Admin
-      # Preload the DuckDB connection used in the quickstart scheduler walkthrough.
-      AIRFLOW_CONN_DUCKDB_DACOMP_LEVER: duckdb:////workspace/lever_workbench.duckdb
+      # Shared lakehouse connection used in the quickstart scheduler walkthrough.
+      # The Airflow adapter detects extra.datus_executor=duckdb_iceberg and runs
+      # SQL through an in-memory DuckDB engine attached to the Iceberg REST catalog.
+      AIRFLOW_CONN_LAKEHOUSE_DEMO: >-
+        {"conn_type":"generic","extra":{"datus_executor":"duckdb_iceberg","catalog_alias":"lake","iceberg_catalog_uri":"http://iceberg-rest:8181","warehouse":"s3://warehouse/","authorization_type":"none","access_delegation_mode":"none","s3_region":"us-east-1","s3_endpoint":"http://minio:9000","s3_access_key_id":"admin","s3_secret_access_key":"password","s3_url_style":"path"}}
 
     volumes:
       # DAG files written by the adapter land here
       - ./dags:/opt/airflow/dags
-      # Mount the local DAComp workspace so scheduled SQL jobs can reach the DuckDB file.
-      - ${DACOMP_HOME:?Set DACOMP_HOME to the DAComp workspace path}:/workspace
 
     ports:
       - "8080:8080"
+    networks:
+      - datus-data-engineering
 
     command:
       - bash
       - -lc
       - >
         python -m pip install --no-cache-dir
-        "duckdb>=1.2.0,<2.0.0"
+        "duckdb>=1.5.2,<2.0.0"
         "duckdb-engine>=0.17.0"
         &&
         exec airflow standalone
@@ -62,3 +65,8 @@ services:
       timeout: 10s
       retries: 30
       start_period: 60s
+
+networks:
+  datus-data-engineering:
+    name: datus-data-engineering
+    external: true

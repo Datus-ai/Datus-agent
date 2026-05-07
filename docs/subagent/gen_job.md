@@ -142,7 +142,7 @@ transfer_query_result(
     source_database="local_duckdb",
     target_table="public.users_copy",
     target_database="greenplum",
-    mode="replace"        # replace (TRUNCATE+INSERT) or append
+    mode="replace"        # replace (create if missing, otherwise TRUNCATE+INSERT) or append
 )
 ```
 

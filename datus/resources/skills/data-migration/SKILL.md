@@ -63,7 +63,7 @@ Activate when you need to:
 ### Phase 4: Transfer Data
 
 - Use `transfer_query_result(source_sql, source_database, target_table, target_database, mode)` to move data
-- For fresh migration use `mode='replace'` (truncates target first)
+- For fresh migration use `mode='replace'` (creates the target table if missing; otherwise truncates it first)
 - For incremental load use `mode='append'`
 - Verify the transfer result (rows_transferred count)
 

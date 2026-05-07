@@ -15,23 +15,22 @@ mkdir -p ~/datus-quickstart-data
 cd ~/datus-quickstart-data
 ```
 
-Then run the bash block below — it downloads and unpacks the quickstart data
-and local Docker stack, exports `DACOMP_HOME` / `DATUS_QUICKSTART_STACK`,
-creates a writable DuckDB workbench, and finally prints the two `export`
-statements so you can paste them into another shell:
+Run the bash block below — it downloads and unpacks the quickstart data and
+local Docker stack, exports `DACOMP_HOME` / `DATUS_QUICKSTART_STACK`, and
+finally prints the two `export` statements so you can paste them into another
+shell:
 
 ```bash
-curl -L -o datus-de-lever-quickstart-v1.zip \
-  https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v1/datus-de-lever-quickstart-v1.zip
-curl -L -o datus-data-engineering-quickstart-stack-v1.zip \
-  https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v1/datus-data-engineering-quickstart-stack-v1.zip
+curl -L -o datus-de-lever-quickstart-v2.zip \
+  https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v2/datus-de-lever-quickstart-v2.zip
+curl -L -o datus-data-engineering-quickstart-stack-v2.zip \
+  https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v2/datus-data-engineering-quickstart-stack-v2.zip
 
-unzip -o datus-de-lever-quickstart-v1.zip
-unzip -o datus-data-engineering-quickstart-stack-v1.zip
+unzip -o datus-de-lever-quickstart-v2.zip
+unzip -o datus-data-engineering-quickstart-stack-v2.zip
 
 export DACOMP_HOME="$(pwd)/datus-de-lever-quickstart"
 export DATUS_QUICKSTART_STACK="$(pwd)/datus-data-engineering-quickstart-stack"
-cp "$DACOMP_HOME/lever_start.duckdb" "$DACOMP_HOME/lever_workbench.duckdb"
 cd "$DACOMP_HOME"
 
 echo "export DACOMP_HOME=$DACOMP_HOME"
@@ -63,7 +62,7 @@ Read those first so the prompts you give to the agent stay aligned with the inte
 
 ## Step 2: Start the Local Quickstart Stack
 
-The downloaded stack includes the two local demo environments used by this walkthrough.
+The downloaded stack includes the local demo services used by this walkthrough.
 
 Start Superset:
 
@@ -72,7 +71,21 @@ cd "$DATUS_QUICKSTART_STACK/superset"
 docker compose up -d
 ```
 
-Start Airflow:
+Start the local lakehouse stack used by both Datus and Airflow:
+
+```bash
+cd "$DATUS_QUICKSTART_STACK/lakehouse"
+docker compose up -d
+docker logs datus-quickstart-lakehouse-seed
+```
+
+The seed log should end with:
+
+```text
+Seeded lake.demo_raw tables: requisition, user, requisition_posting, requisition_offer
+```
+
+Start Airflow after the lakehouse network exists:
 
 ```bash
 cd "$DATUS_QUICKSTART_STACK/airflow"
@@ -83,13 +96,31 @@ Default local endpoints:
 
 - Superset: `http://127.0.0.1:8088`, username `admin`, password `admin`
 - Airflow: `http://127.0.0.1:8080`, username `admin`, password `admin`
+- MinIO Console: `http://127.0.0.1:9001`, username `admin`, password `password`
+- Iceberg REST catalog: `http://127.0.0.1:8181`
 
 For this quickstart, the Superset compose file uses local demo defaults for the
 metadata database and admin user.
 
-The Airflow compose file mounts `${DACOMP_HOME}` into the container and exposes
-an Airflow connection named `duckdb_dacomp_lever`, which points to
-`/workspace/lever_workbench.duckdb`.
+The lakehouse compose file seeds the required Lever source tables into the
+shared demo raw namespace `lake.demo_raw`. Airflow exposes a shared connection named
+`lakehouse_demo`; scheduled jobs use in-memory DuckDB attached to the same
+Iceberg REST catalog, so Datus and Airflow no longer compete for a local
+`.duckdb` file lock.
+
+In production or SaaS deployments, initialize `lake.demo_raw` with a system account
+that can write raw data, and run Datus/Airflow with a separate account that can
+read `lake.demo_raw` and write non-raw workspace namespaces such as
+`lake.ws_lever_demo`. Datus does not enforce namespace-specific rules itself;
+the Iceberg catalog and storage permissions are the boundary.
+
+If you need to reset the raw demo tables, rerun only the seed service:
+
+```bash
+cd "$DATUS_QUICKSTART_STACK/lakehouse"
+docker compose up -d --force-recreate seed-demo-raw
+docker logs datus-quickstart-lakehouse-seed
+```
 
 ## Step 3: Configure `agent.yml`
 
@@ -100,12 +131,25 @@ environment variables from Step 0.
 
 ```yaml
 agent:
+  project_name: lever_demo
+
   services:
     datasources:
-      lever_duckdb:
+      demo_lakehouse:
         type: duckdb
-        uri: "duckdb:///${DACOMP_HOME}/lever_workbench.duckdb"
+        uri: "duckdb:///:memory:"
         default: true
+        iceberg:
+          catalog_alias: lake
+          catalog_uri: http://127.0.0.1:8181
+          warehouse: s3://warehouse/
+          s3_region: us-east-1
+          s3_endpoint: http://127.0.0.1:9000
+          s3_access_key_id: admin
+          s3_secret_access_key: password
+          s3_url_style: path
+          authorization_type: none
+          access_delegation_mode: none
       superset_serving:
         type: postgresql
         host: 127.0.0.1
@@ -133,7 +177,13 @@ agent:
         password: admin
         dags_folder: "${DATUS_QUICKSTART_STACK}/airflow/dags"
         connections:
-          duckdb_dacomp_lever: DAComp Lever DuckDB
+          lakehouse_demo:
+            description: Shared DuckDB Iceberg demo lakehouse
+            type: duckdb_iceberg
+            default: true
+            capabilities:
+              - sql
+              - lakehouse
 
     semantic_layer:
       metricflow:
@@ -146,12 +196,25 @@ agent:
       scheduler_service: airflow_prod
 ```
 
-Then start Datus with the `lever_duckdb` datasource, which points at the
-workbench DuckDB file:
+The YAML above is for the local demo stack, whose Iceberg REST catalog does not
+authenticate. For a shared public catalog, use the runtime account credentials
+instead, for example `client_id`, `client_secret`, `oauth2_server_uri`, and
+`access_delegation_mode: vended_credentials`. Configure the Airflow connection
+with the same runtime account; reserve the system/admin account for raw-data
+initialization outside Datus.
+
+Then start Datus with the `demo_lakehouse` datasource:
 
 ```bash
 cd "$DACOMP_HOME"
-datus-cli --datasource lever_duckdb
+datus-cli --datasource demo_lakehouse
+```
+
+If this workspace was used with an older version of the quickstart, update
+`./.datus/config.yml` before starting Datus:
+
+```yaml
+default_datasource: demo_lakehouse
 ```
 
 If the CLI says no model is configured, configure one before continuing:
@@ -166,20 +229,33 @@ writes the active provider/model for this project to `./.datus/config.yml`.
 
 Here `dags_folder` is the host-side directory where Datus writes generated DAG files. The Airflow compose file mounts that directory into the Airflow container as `/opt/airflow/dags`, so newly generated DAGs are picked up automatically.
 
+Before continuing, verify that Datus can read the seeded lakehouse data:
+
+```sql
+SELECT COUNT(*) FROM lake.demo_raw.requisition;
+```
+
+The quickstart data should return `200` rows for `requisition`.
+
 ## Step 4: Create the Required Staging Tables
 
 For natural-language agent tasks, avoid starting the message with a raw SQL verb
 such as `CREATE` or `COPY`; the CLI uses those leading keywords to detect direct
 SQL.
 
-Ask the agent to create the target schemas:
+This quickstart uses:
+
+- shared demo source namespace: `lake.demo_raw`
+- current workspace output namespace: `lake.ws_lever_demo`
+
+Ask the agent to create the workspace output schema:
 
 ```text
-Please set up the target schemas staging, intermediate, and marts in the current DuckDB database. Keep the existing raw schema unchanged.
+Please set up the current workspace output schema lake.ws_lever_demo. Treat lake.demo_raw as read-only source data.
 ```
 
 This walkthrough builds a narrow but complete dependency chain for
-`marts.lever__requisition_enhanced`. Use `docs/data_contract.yaml` as the source
+`marts_lever__requisition_enhanced`. Use `docs/data_contract.yaml` as the source
 of truth for field selection, renames, and business logic.
 
 Ask the agent to create the staging tables required by the `source_models`
@@ -188,7 +264,7 @@ listed for `lever__requisition_enhanced` and
 the table-generation workflow:
 
 ```text
-Read ./docs/data_contract.yaml and create the staging tables needed for marts.lever__requisition_enhanced: staging.stg_lever__requisition from raw.requisition, staging.stg_lever__user from raw.user, staging.stg_lever__requisition_posting from raw.requisition_posting, and staging.stg_lever__requisition_offer from raw.requisition_offer. Use the field design and source-to-target mapping from the contract.
+Read ./docs/data_contract.yaml and create the staging tables needed for marts_lever__requisition_enhanced in lake.ws_lever_demo: stg_lever__requisition from lake.demo_raw.requisition, stg_lever__user from lake.demo_raw.user, stg_lever__requisition_posting from lake.demo_raw.requisition_posting, and stg_lever__requisition_offer from lake.demo_raw.requisition_offer. Use the field design and source-to-target mapping from the contract.
 ```
 
 These four staging tables are the minimum raw-to-staging inputs for the
@@ -203,21 +279,21 @@ user fields according to the `int_lever__requisition_users` entry in
 Create the intermediate table:
 
 ```text
-Read ./docs/data_contract.yaml and create intermediate.int_lever__requisition_users from staging.stg_lever__requisition and staging.stg_lever__user. Use the contract's field design, joins, and source-to-target mapping.
+Read ./docs/data_contract.yaml and create lake.ws_lever_demo.int_lever__requisition_users from lake.ws_lever_demo.stg_lever__requisition and lake.ws_lever_demo.stg_lever__user. Use the contract's field design, joins, and source-to-target mapping.
 ```
 
 Then create the marts table that is ready for downstream analytics. The contract
-defines `marts.lever__requisition_enhanced` as one row per `requisition_id`,
+defines `marts_lever__requisition_enhanced` as one row per `requisition_id`,
 using:
 
-- `intermediate.int_lever__requisition_users`
-- `staging.stg_lever__requisition_posting`
-- `staging.stg_lever__requisition_offer`
+- `lake.ws_lever_demo.int_lever__requisition_users`
+- `lake.ws_lever_demo.stg_lever__requisition_posting`
+- `lake.ws_lever_demo.stg_lever__requisition_offer`
 
 Create the marts table:
 
 ```text
-Read ./docs/data_contract.yaml and create marts.lever__requisition_enhanced from intermediate.int_lever__requisition_users, staging.stg_lever__requisition_posting, and staging.stg_lever__requisition_offer. Use the contract's business logic: keep all base requisition rows, count posting and offer links by requisition_id, fill missing counts with 0, and add has_posting and has_offer flags.
+Read ./docs/data_contract.yaml and create lake.ws_lever_demo.marts_lever__requisition_enhanced from lake.ws_lever_demo.int_lever__requisition_users, lake.ws_lever_demo.stg_lever__requisition_posting, and lake.ws_lever_demo.stg_lever__requisition_offer. Use the contract's business logic: keep all base requisition rows, count posting and offer links by requisition_id, fill missing counts with 0, and add has_posting and has_offer flags.
 ```
 
 The intended order is always:
@@ -229,17 +305,17 @@ staging -> intermediate -> marts
 After the marts table is built, validate it directly:
 
 ```sql
-SELECT COUNT(*) FROM marts.lever__requisition_enhanced;
+SELECT COUNT(*) FROM lake.ws_lever_demo.marts_lever__requisition_enhanced;
 ```
 
 ## Step 6: Submit a Daily Airflow Job
 
-Ask the agent to operationalize a daily marts refresh. The Airflow quickstart environment already exposes the `duckdb_dacomp_lever` connection.
+Ask the agent to operationalize a daily marts refresh. The Airflow quickstart environment already exposes the `lakehouse_demo` connection.
 
 Submit a daily SQL job at 8 AM that rebuilds the same contract-derived chain:
 
 ```text
-Submit a daily SQL job named daily_lever_requisition_enhanced that refreshes staging.stg_lever__requisition, staging.stg_lever__user, staging.stg_lever__requisition_posting, staging.stg_lever__requisition_offer, intermediate.int_lever__requisition_users, and marts.lever__requisition_enhanced at 8am every day using the duckdb_dacomp_lever connection. Use the SQL generated and validated from docs/data_contract.yaml in the previous steps.
+Submit a daily SQL job named daily_lever_requisition_enhanced that refreshes lake.ws_lever_demo.stg_lever__requisition, lake.ws_lever_demo.stg_lever__user, lake.ws_lever_demo.stg_lever__requisition_posting, lake.ws_lever_demo.stg_lever__requisition_offer, lake.ws_lever_demo.int_lever__requisition_users, and lake.ws_lever_demo.marts_lever__requisition_enhanced at 8am every day using the lakehouse_demo connection. Use the SQL generated and validated from docs/data_contract.yaml in the previous steps.
 ```
 
 Then trigger it once for validation:
@@ -257,15 +333,18 @@ What to expect:
 
 ## Step 7: Promote the Marts Table to the Superset Serving DB
 
-The marts table above was built through the `lever_duckdb` datasource. Before
+The marts table above was built through the `demo_lakehouse` datasource. Before
 dashboard generation can create Superset assets, copy that table into the
 BI-registered `superset_serving` Postgres datasource referenced by
 `dataset_db.datasource_ref`. These names are Datus datasource names from
 `agent.yml`, not physical database or catalog names inside DuckDB or Postgres.
 
 ```text
-Please copy the source table marts.lever__requisition_enhanced from the lever_duckdb datasource into the superset_serving datasource as public.lever__requisition_enhanced, replacing the target table if it already exists. Then verify the source and target row counts.
+Please copy the source table lake.ws_lever_demo.marts_lever__requisition_enhanced from the demo_lakehouse datasource into the superset_serving datasource as public.lever__requisition_enhanced, replacing the target table if it already exists. Then verify the source and target row counts.
 ```
+
+The transfer tool creates `public.lever__requisition_enhanced` from the source
+result columns if it does not already exist.
 
 After this step, the table exists in the same database Superset knows as
 `bi_database_name: examples`.
@@ -286,7 +365,7 @@ database.
 
 You should now have:
 
-- `staging`, `intermediate`, and `marts` schemas in `lever_workbench.duckdb`
-- `marts.lever__requisition_enhanced` built from raw data through staging and intermediate layers
+- `lake.demo_raw` seeded as the shared demo source namespace
+- `lake.ws_lever_demo.marts_lever__requisition_enhanced` built from raw data through staging and intermediate tables
 - a daily Airflow job visible in the scheduler UI
 - a Superset dashboard URL returned by the dashboard generation flow

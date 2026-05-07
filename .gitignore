@@ -64,6 +64,7 @@ test.py
 evaluation_details.json
 conf/agent.yml.bak
 .gstack/
+/quickstart/data_engineering/airflow/dags/*.py
 /.datus_test_data
 /subject/
 build/

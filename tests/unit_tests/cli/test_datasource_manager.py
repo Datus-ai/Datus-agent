@@ -111,6 +111,10 @@ class TestDatasourceManagerAdd:
             "test_duckdb",  # datasource name
             "duckdb",  # database type
             "/path/to/test.db",  # connection string
+            "False",  # read_only
+            "True",  # enable_external_access
+            "",  # memory_limit
+            "",  # iceberg
         ]
 
         nm = DatasourceManager(config_path)

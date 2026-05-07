@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import re
 from typing import Any, Dict, List, Literal, Optional, Set, override
 
 import duckdb
@@ -54,6 +55,8 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         self.connection: Optional[duckdb.DuckDBPyConnection] = None
         self.enable_external_access = config.enable_external_access
         self.memory_limit = config.memory_limit
+        self.read_only = config.read_only
+        self.iceberg_config = config.iceberg or {}
 
         if config.database_name:
             self.database_name = config.database_name
@@ -78,9 +81,9 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
                 from duckdb_engine import __version__ as _de_ver
 
                 config = {"custom_user_agent": f"duckdb_engine/{_de_ver}(sqlalchemy/{_sa.__version__})"}
-                self.connection = duckdb.connect(self.db_path, config=config)
+                self.connection = duckdb.connect(self.db_path, read_only=self.read_only, config=config)
             except ImportError:
-                self.connection = duckdb.connect(self.db_path)
+                self.connection = duckdb.connect(self.db_path, read_only=self.read_only)
 
             # Per-session settings — kept as post-connect SET so they don't enter
             # DuckDB's instance-config equality check.
@@ -90,11 +93,227 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
             if not self.enable_external_access:
                 self.connection.execute("SET enable_external_access=false")
 
+            if self.iceberg_config:
+                self._setup_iceberg()
+
         except Exception as e:
             raise DatusException(
                 ErrorCode.DB_CONNECTION_FAILED,
                 message_args={"error_message": str(e)},
             ) from e
+
+    @staticmethod
+    def _sql_literal(value: Any) -> str:
+        return "'" + str(value).replace("'", "''") + "'"
+
+    @staticmethod
+    def _safe_identifier(value: Any, field_name: str) -> str:
+        text = str(value)
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", text):
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_INVALID,
+                message_args={
+                    "field_name": field_name,
+                    "except_values": "SQL identifier matching [A-Za-z_][A-Za-z0-9_]*",
+                    "your_value": text,
+                },
+            )
+        return text
+
+    @staticmethod
+    def _bool_value(value: Any, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+    @classmethod
+    def _s3_use_ssl(cls, cfg: Dict[str, Any], endpoint: Any) -> bool:
+        configured = cfg.get("s3_use_ssl")
+        if configured is not None and configured != "":
+            return cls._bool_value(configured)
+        if not endpoint:
+            return True
+        endpoint_text = str(endpoint).strip().lower()
+        return endpoint_text.startswith("https://")
+
+    def _load_extension(self, name: str) -> None:
+        try:
+            self.connection.execute(f"LOAD {name}")
+        except Exception as load_error:
+            try:
+                self.connection.execute(f"INSTALL {name}")
+                self.connection.execute(f"LOAD {name}")
+            except Exception as retry_error:
+                raise RuntimeError(
+                    f"Failed to load DuckDB extension {name}; "
+                    f"initial LOAD error: {load_error}; INSTALL/LOAD retry error: {retry_error}"
+                ) from retry_error
+
+    @classmethod
+    def _sql_option(cls, name: str, value: Any) -> Optional[str]:
+        if value is None or value == "":
+            return None
+        if isinstance(value, bool):
+            return f"{name} " + ("true" if value else "false")
+        return f"{name} {cls._sql_literal(value)}"
+
+    @staticmethod
+    def _rewrite_iceberg_create_or_replace_table(sql: str) -> Optional[str]:
+        quoted_identifier = r'"(?:[^"]|"")+"'
+        identifier = rf"(?:[A-Za-z_][A-Za-z0-9_]*|{quoted_identifier})"
+        match = re.match(
+            r"^\s*CREATE\s+OR\s+REPLACE\s+TABLE\s+"
+            rf"({identifier}(?:\s*\.\s*{identifier})*)\s+(.*)\Z",
+            sql,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if not match:
+            return None
+        table_name = match.group(1)
+        remainder = match.group(2)
+        return f"DROP TABLE IF EXISTS {table_name};\nCREATE TABLE {table_name} {remainder}"
+
+    def _create_iceberg_secret_if_needed(self, cfg: Dict[str, Any]) -> Optional[str]:
+        """Create a DuckDB Iceberg catalog secret when auth credentials are supplied."""
+        if not self.connection:
+            return None
+
+        secret_name = cfg.get("iceberg_secret_name") or cfg.get("catalog_secret_name") or cfg.get("secret_name")
+        create_secret = self._bool_value(cfg.get("create_iceberg_secret"), default=True)
+        credential_keys = {
+            "client_id",
+            "client_secret",
+            "oauth2_server_uri",
+            "oauth2_scope",
+            "oauth2_grant_type",
+            "token",
+        }
+        has_credentials = any(cfg.get(key) for key in credential_keys)
+        if not secret_name and has_credentials and create_secret:
+            secret_name = "datus_iceberg"
+        if not secret_name:
+            return None
+
+        secret_name = self._safe_identifier(secret_name, "iceberg_secret_name")
+        if not create_secret:
+            return secret_name
+
+        secret_option_map = {
+            "client_id": "CLIENT_ID",
+            "client_secret": "CLIENT_SECRET",
+            "oauth2_server_uri": "OAUTH2_SERVER_URI",
+            "oauth2_scope": "OAUTH2_SCOPE",
+            "oauth2_grant_type": "OAUTH2_GRANT_TYPE",
+            "token": "TOKEN",
+        }
+        secret_parts = ["TYPE iceberg"]
+        for cfg_key, sql_name in secret_option_map.items():
+            option = self._sql_option(sql_name, cfg.get(cfg_key))
+            if option:
+                secret_parts.append(option)
+        if len(secret_parts) == 1:
+            return secret_name
+
+        self.connection.execute("CREATE OR REPLACE SECRET " + secret_name + " (" + ", ".join(secret_parts) + ")")
+        return secret_name
+
+    def _setup_iceberg(self) -> None:
+        """Attach an Iceberg REST catalog for DuckDB-as-query-engine mode."""
+        if not self.connection:
+            return
+
+        cfg = self.iceberg_config
+        catalog_alias = self._safe_identifier(cfg.get("catalog_alias") or "lake", "catalog_alias")
+        catalog_uri = cfg.get("catalog_uri") or cfg.get("iceberg_catalog_uri") or cfg.get("endpoint")
+        warehouse = cfg.get("warehouse")
+        if not catalog_uri:
+            raise DatusException(
+                ErrorCode.DB_CONNECTION_FAILED,
+                message_args={"error_message": "DuckDB iceberg config requires catalog_uri"},
+            )
+        if not warehouse:
+            raise DatusException(
+                ErrorCode.DB_CONNECTION_FAILED,
+                message_args={"error_message": "DuckDB iceberg config requires warehouse"},
+            )
+
+        self._load_extension("httpfs")
+        self._load_extension("iceberg")
+
+        iceberg_secret_name = self._create_iceberg_secret_if_needed(cfg)
+
+        key_id = cfg.get("s3_access_key_id") or cfg.get("aws_access_key_id")
+        secret = cfg.get("s3_secret_access_key") or cfg.get("aws_secret_access_key")
+        region = cfg.get("s3_region") or cfg.get("aws_region") or "us-east-1"
+        provider = str(cfg.get("s3_provider") or cfg.get("aws_provider") or "").strip().lower()
+        endpoint = cfg.get("s3_endpoint")
+        url_style = cfg.get("s3_url_style") or cfg.get("url_style")
+        use_ssl = self._s3_use_ssl(cfg, endpoint)
+
+        if provider:
+            provider = self._safe_identifier(provider, "s3_provider")
+            secret_parts = [
+                "TYPE s3",
+                f"PROVIDER {provider}",
+                f"REGION {self._sql_literal(region)}",
+            ]
+            if endpoint:
+                endpoint_value = str(endpoint).removeprefix("http://").removeprefix("https://")
+                secret_parts.append(f"ENDPOINT {self._sql_literal(endpoint_value)}")
+            if url_style:
+                secret_parts.append(f"URL_STYLE {self._sql_literal(url_style)}")
+            secret_parts.append("USE_SSL " + ("true" if use_ssl else "false"))
+            self.connection.execute("CREATE OR REPLACE SECRET datus_s3 (" + ", ".join(secret_parts) + ")")
+        elif key_id and secret:
+            secret_parts = [
+                "TYPE s3",
+                f"KEY_ID {self._sql_literal(key_id)}",
+                f"SECRET {self._sql_literal(secret)}",
+                f"REGION {self._sql_literal(region)}",
+            ]
+            if endpoint:
+                endpoint_value = str(endpoint).removeprefix("http://").removeprefix("https://")
+                secret_parts.append(f"ENDPOINT {self._sql_literal(endpoint_value)}")
+            if url_style:
+                secret_parts.append(f"URL_STYLE {self._sql_literal(url_style)}")
+            secret_parts.append("USE_SSL " + ("true" if use_ssl else "false"))
+            self.connection.execute("CREATE OR REPLACE SECRET datus_s3 (" + ", ".join(secret_parts) + ")")
+
+        attach_options = [
+            "TYPE iceberg",
+            f"ENDPOINT {self._sql_literal(catalog_uri)}",
+        ]
+        if iceberg_secret_name:
+            attach_options.append(f"SECRET {iceberg_secret_name}")
+
+        option_aliases = {
+            "endpoint_type": "ENDPOINT_TYPE",
+            "default_region": "DEFAULT_REGION",
+            "authorization_type": "AUTHORIZATION_TYPE",
+            "access_delegation_mode": "ACCESS_DELEGATION_MODE",
+            "support_nested_namespaces": "SUPPORT_NESTED_NAMESPACES",
+            "support_stage_create": "SUPPORT_STAGE_CREATE",
+            "max_table_staleness": "MAX_TABLE_STALENESS",
+            "purge_requested": "PURGE_REQUESTED",
+        }
+        has_catalog_auth = bool(iceberg_secret_name or cfg.get("authorization_type") or cfg.get("endpoint_type"))
+        if not has_catalog_auth:
+            if not cfg.get("authorization_type"):
+                attach_options.append("AUTHORIZATION_TYPE none")
+            if not cfg.get("access_delegation_mode"):
+                attach_options.append("ACCESS_DELEGATION_MODE none")
+        for cfg_key, sql_name in option_aliases.items():
+            option = self._sql_option(sql_name, cfg.get(cfg_key))
+            if option:
+                attach_options.append(option)
+        attach_options.append(
+            "READ_ONLY " + ("true" if self._bool_value(cfg.get("read_only"), default=False) else "false")
+        )
+        self.connection.execute(
+            f"ATTACH {self._sql_literal(warehouse)} AS {catalog_alias} (" + ", ".join(attach_options) + ")"
+        )
 
     @override
     def close(self):
@@ -244,7 +463,15 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         """Execute a DDL SQL statement."""
         try:
             self.connect()
-            self.connection.execute(sql)
+            try:
+                self.connection.execute(sql)
+            except Exception as e:
+                rewritten_sql = None
+                if self.iceberg_config and "create or replace not supported in duckdb-iceberg" in str(e).lower():
+                    rewritten_sql = self._rewrite_iceberg_create_or_replace_table(sql)
+                if rewritten_sql is None:
+                    raise
+                self.connection.execute(rewritten_sql)
             return ExecuteSQLResult(
                 success=True,
                 sql_query=sql,
@@ -278,12 +505,12 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
                     result_format=result_format,
                 )
             elif result_format == "arrow":
-                arrow_table = result.arrow()
+                arrow_table = result.fetch_arrow_table()
                 return ExecuteSQLResult(
                     success=True,
                     sql_query=sql,
                     sql_return=arrow_table,
-                    row_count=len(arrow_table),
+                    row_count=arrow_table.num_rows,
                     result_format=result_format,
                 )
             elif result_format == "pandas":

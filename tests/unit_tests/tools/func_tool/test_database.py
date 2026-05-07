@@ -886,6 +886,119 @@ class TestTransferQueryResult:
         target.execute_ddl.assert_called_once()
         assert "TRUNCATE" in target.execute_ddl.call_args[0][0].upper()
 
+    def test_transfer_replace_creates_missing_target_table(self):
+        import pandas as pd
+
+        df = pd.DataFrame({"id": [1, 2], "name": ["a", "b"], "is_open": [True, False]})
+        source = self._make_source_connector(df)
+        target, _ = self._make_target_connector()
+        target.execute_ddl.side_effect = [
+            Mock(success=False, error='relation "tgt.users" does not exist'),
+            Mock(success=True),
+        ]
+
+        tool = self._make_multi_tool(source, target)
+        result = tool.transfer_query_result(
+            source_sql="SELECT id, name, is_open FROM users",
+            source_datasource="source_db",
+            target_table="tgt.users",
+            target_datasource="target_db",
+            mode="replace",
+        )
+
+        assert result.success == 1
+        assert result.result["rows_transferred"] == 2
+        assert result.result["target_table_created"] is True
+        ddl_calls = [call.args[0] for call in target.execute_ddl.call_args_list]
+        assert ddl_calls[0] == "TRUNCATE TABLE tgt.users"
+        assert ddl_calls[1].startswith("CREATE TABLE tgt.users")
+        assert '"id" BIGINT' in ddl_calls[1]
+        assert '"name" TEXT' in ddl_calls[1]
+        assert '"is_open" BOOLEAN' in ddl_calls[1]
+        assert "INSERT INTO tgt.users" in target.execute_insert.call_args.args[0]
+
+    def test_transfer_replace_creates_missing_target_table_for_mysql_contraction(self):
+        import pandas as pd
+
+        df = pd.DataFrame({"id": [1], "name": ["a"]})
+        source = self._make_source_connector(df)
+        target, _ = self._make_target_connector()
+        target.execute_ddl.side_effect = [
+            Mock(success=False, error="Table 'tgt.users' doesn't exist"),
+            Mock(success=True),
+        ]
+
+        tool = self._make_multi_tool(source, target)
+        result = tool.transfer_query_result(
+            source_sql="SELECT id, name FROM users",
+            source_datasource="source_db",
+            target_table="tgt.users",
+            target_datasource="target_db",
+            mode="replace",
+        )
+
+        assert result.success == 1
+        assert result.result["target_table_created"] is True
+        assert target.execute_ddl.call_args_list[1].args[0].startswith("CREATE TABLE tgt.users")
+
+    def test_transfer_create_target_keeps_complex_values_text_compatible(self):
+        import pandas as pd
+
+        df = pd.DataFrame(
+            {
+                "payload": [{"a": 1}],
+                "raw_bytes": [b"abc"],
+            }
+        )
+        source = self._make_source_connector(df)
+        target, _ = self._make_target_connector()
+        target.execute_ddl.side_effect = [
+            Mock(success=False, error='relation "tgt.events" does not exist'),
+            Mock(success=True),
+        ]
+
+        tool = self._make_multi_tool(source, target)
+        result = tool.transfer_query_result(
+            source_sql="SELECT payload, raw_bytes FROM events",
+            source_datasource="source_db",
+            target_table="tgt.events",
+            target_datasource="target_db",
+            mode="replace",
+        )
+
+        assert result.success == 1
+        create_sql = target.execute_ddl.call_args_list[1].args[0]
+        assert '"payload" TEXT' in create_sql
+        assert '"raw_bytes" TEXT' in create_sql
+        assert "JSONB" not in create_sql
+        assert "BYTEA" not in create_sql
+
+    def test_transfer_replace_creates_missing_target_for_empty_result(self):
+        import pandas as pd
+
+        df = pd.DataFrame(columns=["id", "name"])
+        source = self._make_source_connector(df)
+        target, _ = self._make_target_connector()
+        target.execute_ddl.side_effect = [
+            Mock(success=False, error="no such table: tgt.users"),
+            Mock(success=True),
+        ]
+
+        tool = self._make_multi_tool(source, target)
+        result = tool.transfer_query_result(
+            source_sql="SELECT id, name FROM users WHERE 1 = 0",
+            source_datasource="source_db",
+            target_table="tgt.users",
+            target_datasource="target_db",
+            mode="replace",
+        )
+
+        assert result.success == 1
+        assert result.result["rows_transferred"] == 0
+        assert result.result["target_table_created"] is True
+        assert result.result["target_table_create_sql"].startswith("CREATE TABLE tgt.users")
+        target.execute_insert.assert_not_called()
+
     def test_transfer_append_mode_no_truncate(self):
         import pandas as pd
 

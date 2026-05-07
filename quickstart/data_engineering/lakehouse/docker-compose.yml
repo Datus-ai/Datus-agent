@@ -1,0 +1,160 @@
+name: datus-data-engineering-lakehouse
+
+# Local S3-compatible object store plus Iceberg REST catalog for the Datus
+# data-engineering quickstart. This replaces sharing a writable DuckDB file
+# between Datus and Airflow at runtime.
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: datus-quickstart-iceberg-postgres
+    environment:
+      POSTGRES_DB: iceberg
+      POSTGRES_USER: iceberg
+      POSTGRES_PASSWORD: iceberg
+    volumes:
+      - iceberg_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iceberg"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    networks:
+      - datus-data-engineering
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: datus-quickstart-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    networks:
+      - datus-data-engineering
+
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    container_name: datus-quickstart-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 admin password &&
+      mc mb -p local/warehouse || true
+      "
+    networks:
+      - datus-data-engineering
+
+  iceberg-rest:
+    image: tabulario/iceberg-rest:1.6.0
+    container_name: datus-quickstart-iceberg-rest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: password
+      CATALOG_WAREHOUSE: s3://warehouse/
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://minio:9000
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+      CATALOG_URI: jdbc:postgresql://postgres:5432/iceberg
+      CATALOG_JDBC_USER: iceberg
+      CATALOG_JDBC_PASSWORD: iceberg
+    ports:
+      - "8181:8181"
+    networks:
+      - datus-data-engineering
+
+  seed-demo-raw:
+    image: python:3.12-slim
+    container_name: datus-quickstart-lakehouse-seed
+    depends_on:
+      iceberg-rest:
+        condition: service_started
+    volumes:
+      - ${DACOMP_HOME:?Set DACOMP_HOME to the DAComp workspace path}:/workspace:ro
+    command:
+      - bash
+      - -lc
+      - |
+        python -m pip install --no-cache-dir "duckdb>=1.5.2,<2.0.0" &&
+        python - <<'PY'
+        import time
+        import duckdb
+
+        tables = [
+            "requisition",
+            "user",
+            "requisition_posting",
+            "requisition_offer",
+        ]
+
+        con = duckdb.connect(":memory:")
+        for ext in ("httpfs", "iceberg"):
+            try:
+                con.execute(f"LOAD {ext}")
+            except Exception:
+                con.execute(f"INSTALL {ext}")
+                con.execute(f"LOAD {ext}")
+
+        con.execute("""
+            CREATE OR REPLACE SECRET datus_s3 (
+                TYPE s3,
+                KEY_ID 'admin',
+                SECRET 'password',
+                REGION 'us-east-1',
+                ENDPOINT 'minio:9000',
+                URL_STYLE 'path',
+                USE_SSL false
+            )
+        """)
+        for attempt in range(30):
+            try:
+                con.execute("""
+                    ATTACH 's3://warehouse/' AS lake (
+                        TYPE iceberg,
+                        ENDPOINT 'http://iceberg-rest:8181',
+                        AUTHORIZATION_TYPE none,
+                        ACCESS_DELEGATION_MODE none,
+                        READ_ONLY false
+                    )
+                """)
+                break
+            except Exception:
+                if attempt == 29:
+                    raise
+                time.sleep(2)
+        con.execute("ATTACH '/workspace/lever_start.duckdb' AS src (READ_ONLY)")
+        con.execute("CREATE SCHEMA IF NOT EXISTS lake.demo_raw")
+        for table in tables:
+            con.execute(f"DROP TABLE IF EXISTS lake.demo_raw.{table}")
+            con.execute(f"CREATE TABLE lake.demo_raw.{table} AS SELECT * FROM src.raw.{table}")
+        print("Seeded lake.demo_raw tables:", ", ".join(tables))
+        PY
+    networks:
+      - datus-data-engineering
+
+volumes:
+  minio_data:
+  iceberg_pg_data:
+
+networks:
+  datus-data-engineering:
+    name: datus-data-engineering

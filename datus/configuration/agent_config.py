@@ -130,7 +130,7 @@ class DbConfig:
                 # Store unknown fields in extra for adapter-specific config
                 # Skip internal fields that are handled separately
                 if v is not None and v != "" and k not in internal_fields:
-                    extra_params[k] = resolve_env(v) if isinstance(v, str) else v
+                    extra_params[k] = _resolve_nested_value(v)
                 continue
             if not v:
                 params[k] = v
@@ -484,6 +484,12 @@ DEFAULT_REFLECTION_NODES = {
 
 def _parse_single_file_db(db_config: Dict[str, Any], dialect: str) -> DbConfig:
     uri = resolve_env(str(db_config["uri"]))
+    known_fields = {"uri", "name", "type", "schema", "default"}
+    extra = {
+        key: _resolve_nested_value(value)
+        for key, value in db_config.items()
+        if key not in known_fields and value is not None and value != ""
+    }
     if "name" in db_config:
         login_name = db_config["name"]
         db_name = file_stem_from_uri(uri)
@@ -492,7 +498,14 @@ def _parse_single_file_db(db_config: Dict[str, Any], dialect: str) -> DbConfig:
         db_name = login_name
     if not uri.startswith(dialect):
         uri = f"{dialect}:///{os.path.expanduser(uri)}"
-    return DbConfig(type=dialect, uri=uri, database=db_name, schema=db_config.get("schema", ""), logic_name=login_name)
+    return DbConfig(
+        type=dialect,
+        uri=uri,
+        database=db_name,
+        schema=db_config.get("schema", ""),
+        logic_name=login_name,
+        extra=extra or None,
+    )
 
 
 @dataclass
@@ -2041,6 +2054,8 @@ def _resolve_nested_value(value: Any) -> Any:
         return {k: _resolve_nested_value(v) for k, v in value.items()}
     if isinstance(value, list):
         return [_resolve_nested_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_resolve_nested_value(item) for item in value)
     return value
 
 

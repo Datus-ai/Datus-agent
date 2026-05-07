@@ -27,6 +27,7 @@ from datus.configuration.agent_config import (
     NodeConfig,
     ServicesConfig,
     ValidationConfig,
+    _parse_single_file_db,
     file_stem_from_uri,
     load_model_config,
     resolve_env,
@@ -73,6 +74,29 @@ class TestResolveEnv:
 
     def test_no_placeholder_unchanged(self):
         assert resolve_env("plain/path/no/vars") == "plain/path/no/vars"
+
+    def test_file_db_extra_resolves_nested_env_values(self, monkeypatch):
+        monkeypatch.setenv("ICEBERG_URI", "http://iceberg-rest:8181")
+        monkeypatch.setenv("WAREHOUSE", "s3://warehouse/")
+        monkeypatch.setenv("REGION", "us-east-1")
+
+        cfg = _parse_single_file_db(
+            {
+                "uri": ":memory:",
+                "iceberg": {
+                    "catalog_uri": "${ICEBERG_URI}",
+                    "warehouse": "${WAREHOUSE}",
+                    "regions": ["${REGION}"],
+                    "tuple_value": ("${REGION}",),
+                },
+            },
+            "duckdb",
+        )
+
+        assert cfg.extra["iceberg"]["catalog_uri"] == "http://iceberg-rest:8181"
+        assert cfg.extra["iceberg"]["warehouse"] == "s3://warehouse/"
+        assert cfg.extra["iceberg"]["regions"] == ["us-east-1"]
+        assert cfg.extra["iceberg"]["tuple_value"] == ("us-east-1",)
 
 
 # ---------------------------------------------------------------------------
@@ -527,6 +551,34 @@ class TestAgentConfigServiceSelectors:
         )
         with pytest.raises(DatusException, match="No semantic layer configured"):
             cfg.build_semantic_adapter_config()
+
+    def test_file_datasource_preserves_adapter_specific_extra_fields(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {
+                    "demo_lakehouse": {
+                        "type": "duckdb",
+                        "uri": "duckdb:///:memory:",
+                        "default": True,
+                        "iceberg": {
+                            "catalog_alias": "lake",
+                            "catalog_uri": "http://127.0.0.1:8181",
+                            "warehouse": "s3://warehouse/",
+                        },
+                    }
+                }
+            },
+        )
+
+        datasource = cfg.services.datasources["demo_lakehouse"]
+        assert datasource.extra == {
+            "iceberg": {
+                "catalog_alias": "lake",
+                "catalog_uri": "http://127.0.0.1:8181",
+                "warehouse": "s3://warehouse/",
+            }
+        }
 
     def test_resolve_semantic_adapter_requires_explicit_choice_for_multiple_entries(self, tmp_path):
         cfg = self._make(

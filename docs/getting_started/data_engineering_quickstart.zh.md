@@ -15,21 +15,19 @@ cd ~/datus-quickstart-data
 ```
 
 然后直接执行下面这段 bash，会下载并解压 quickstart 数据包和本地 Docker
-stack，导出 `DACOMP_HOME` / `DATUS_QUICKSTART_STACK`，复制一份可写的 DuckDB
-工作库，最后打印两个环境变量供后续步骤使用：
+stack，导出 `DACOMP_HOME` / `DATUS_QUICKSTART_STACK`，最后打印两个环境变量供后续步骤使用：
 
 ```bash
-curl -L -o datus-de-lever-quickstart-v1.zip \
-  https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v1/datus-de-lever-quickstart-v1.zip
-curl -L -o datus-data-engineering-quickstart-stack-v1.zip \
-  https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v1/datus-data-engineering-quickstart-stack-v1.zip
+curl -L -o datus-de-lever-quickstart-v2.zip \
+  https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v2/datus-de-lever-quickstart-v2.zip
+curl -L -o datus-data-engineering-quickstart-stack-v2.zip \
+  https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v2/datus-data-engineering-quickstart-stack-v2.zip
 
-unzip -o datus-de-lever-quickstart-v1.zip
-unzip -o datus-data-engineering-quickstart-stack-v1.zip
+unzip -o datus-de-lever-quickstart-v2.zip
+unzip -o datus-data-engineering-quickstart-stack-v2.zip
 
 export DACOMP_HOME="$(pwd)/datus-de-lever-quickstart"
 export DATUS_QUICKSTART_STACK="$(pwd)/datus-data-engineering-quickstart-stack"
-cp "$DACOMP_HOME/lever_start.duckdb" "$DACOMP_HOME/lever_workbench.duckdb"
 cd "$DACOMP_HOME"
 
 echo "export DACOMP_HOME=$DACOMP_HOME"
@@ -61,7 +59,7 @@ echo "export DATUS_QUICKSTART_STACK=$DATUS_QUICKSTART_STACK"
 
 ## 步骤 2：启动本地 quickstart 环境
 
-下载的 stack 中已经包含本文真正会用到的两套本地 demo 环境。
+下载的 stack 中已经包含本文会用到的本地 demo 服务。
 
 启动 Superset：
 
@@ -70,7 +68,21 @@ cd "$DATUS_QUICKSTART_STACK/superset"
 docker compose up -d
 ```
 
-启动 Airflow：
+启动本地 lakehouse stack。Datus 和 Airflow 都会访问这套共享存储：
+
+```bash
+cd "$DATUS_QUICKSTART_STACK/lakehouse"
+docker compose up -d
+docker logs datus-quickstart-lakehouse-seed
+```
+
+seed 日志最后应该看到：
+
+```text
+Seeded lake.demo_raw tables: requisition, user, requisition_posting, requisition_offer
+```
+
+lakehouse 网络创建完成后，再启动 Airflow：
 
 ```bash
 cd "$DATUS_QUICKSTART_STACK/airflow"
@@ -81,11 +93,28 @@ docker compose up -d
 
 - Superset：`http://127.0.0.1:8088`，用户名 `admin`，密码 `admin`
 - Airflow：`http://127.0.0.1:8080`，用户名 `admin`，密码 `admin`
+- MinIO Console：`http://127.0.0.1:9001`，用户名 `admin`，密码 `password`
+- Iceberg REST catalog：`http://127.0.0.1:8181`
 
 这套 quickstart 的 Superset compose 已经带了本地演示用的元数据库和管理员默认值。
 
-Airflow 的 compose 文件会挂载 `${DACOMP_HOME}`，并暴露一个名为
-`duckdb_dacomp_lever` 的连接，指向 `/workspace/lever_workbench.duckdb`。
+lakehouse compose 会把需要的 Lever 源表写入共享 demo raw namespace
+`lake.demo_raw`。Airflow 暴露一个名为 `lakehouse_demo` 的共享连接；调度任务会用
+in-memory DuckDB 连接同一个 Iceberg REST catalog，因此 Datus 和 Airflow 不再争抢本地
+`.duckdb` 文件锁。
+
+在生产或 SaaS 部署里，用能写 raw 数据的系统账号初始化 `lake.demo_raw`；Datus 和
+Airflow 运行时使用另一个账号，这个账号可以读 `lake.demo_raw`，并能写非 raw 的
+workspace namespace，比如 `lake.ws_lever_demo`。Datus 本身不做 namespace
+特判，真正的边界由 Iceberg catalog 和存储权限负责。
+
+如果需要重置原始 demo 表，只重跑 seed service：
+
+```bash
+cd "$DATUS_QUICKSTART_STACK/lakehouse"
+docker compose up -d --force-recreate seed-demo-raw
+docker logs datus-quickstart-lakehouse-seed
+```
 
 ## 步骤 3：配置 `agent.yml`
 
@@ -95,12 +124,25 @@ Airflow 的 compose 文件会挂载 `${DACOMP_HOME}`，并暴露一个名为
 
 ```yaml
 agent:
+  project_name: lever_demo
+
   services:
     datasources:
-      lever_duckdb:
+      demo_lakehouse:
         type: duckdb
-        uri: "duckdb:///${DACOMP_HOME}/lever_workbench.duckdb"
+        uri: "duckdb:///:memory:"
         default: true
+        iceberg:
+          catalog_alias: lake
+          catalog_uri: http://127.0.0.1:8181
+          warehouse: s3://warehouse/
+          s3_region: us-east-1
+          s3_endpoint: http://127.0.0.1:9000
+          s3_access_key_id: admin
+          s3_secret_access_key: password
+          s3_url_style: path
+          authorization_type: none
+          access_delegation_mode: none
       superset_serving:
         type: postgresql
         host: 127.0.0.1
@@ -128,7 +170,13 @@ agent:
         password: admin
         dags_folder: "${DATUS_QUICKSTART_STACK}/airflow/dags"
         connections:
-          duckdb_dacomp_lever: DAComp Lever DuckDB
+          lakehouse_demo:
+            description: Shared DuckDB Iceberg demo lakehouse
+            type: duckdb_iceberg
+            default: true
+            capabilities:
+              - sql
+              - lakehouse
 
     semantic_layer:
       metricflow:
@@ -141,11 +189,24 @@ agent:
       scheduler_service: airflow_prod
 ```
 
-然后使用 `lever_duckdb` datasource 启动 Datus；它指向上面的 DuckDB 工作库：
+上面的 YAML 是本地 demo stack 配置；本地 Iceberg REST catalog 不启用认证。
+如果连接共享公共 catalog，请换成运行账号凭据，例如 `client_id`、
+`client_secret`、`oauth2_server_uri` 和
+`access_delegation_mode: vended_credentials`。Airflow connection 也要配置同一个
+运行账号；系统/admin 账号只用于 Datus 之外的 raw 数据初始化。
+
+然后使用 `demo_lakehouse` datasource 启动 Datus：
 
 ```bash
 cd "$DACOMP_HOME"
-datus-cli --datasource lever_duckdb
+datus-cli --datasource demo_lakehouse
+```
+
+如果这个 workspace 之前跑过旧版 quickstart，启动前先把 `./.datus/config.yml`
+里的默认 datasource 改成：
+
+```yaml
+default_datasource: demo_lakehouse
 ```
 
 如果 CLI 提示还没有配置模型，继续之前先在 CLI 内运行：
@@ -160,18 +221,31 @@ provider/model 写入 `./.datus/config.yml`。
 
 这里的 `dags_folder` 是 Datus 在主机上写入 DAG 文件的目录。Airflow compose 会把这个目录挂载到 Airflow 容器内的 `/opt/airflow/dags`，所以 Datus 生成的新 DAG 会被 Airflow 自动发现。
 
+继续之前，先确认 Datus 能读到已经 seed 好的 lakehouse 数据：
+
+```sql
+SELECT COUNT(*) FROM lake.demo_raw.requisition;
+```
+
+quickstart 数据中，`requisition` 应该返回 `200` 行。
+
 ## 步骤 4：创建必要的 staging 表
 
 自然语言 agent 任务不要以 `CREATE`、`COPY` 这类 SQL 动词开头；CLI 会根据这些
 开头关键字判断是否直接执行 SQL。
 
-先要求 agent 创建目标 schema：
+这套 quickstart 使用：
+
+- 共享 demo 源 namespace：`lake.demo_raw`
+- 当前 workspace 输出 namespace：`lake.ws_lever_demo`
+
+先要求 agent 创建当前 workspace 的输出 schema：
 
 ```text
-Please set up the target schemas staging, intermediate, and marts in the current DuckDB database. Keep the existing raw schema unchanged.
+Please set up the current workspace output schema lake.ws_lever_demo. Treat lake.demo_raw as read-only source data.
 ```
 
-这条教程只构建一条窄但完整的依赖链：`marts.lever__requisition_enhanced`。
+这条教程只构建一条窄但完整的依赖链：`marts_lever__requisition_enhanced`。
 字段选择、字段重命名和业务逻辑以 `docs/data_contract.yaml` 为准。
 
 再要求 agent 根据 `lever__requisition_enhanced` 和
@@ -179,7 +253,7 @@ Please set up the target schemas staging, intermediate, and marts in the current
 staging 表。agent 会把任务分发到建表流程：
 
 ```text
-Read ./docs/data_contract.yaml and create the staging tables needed for marts.lever__requisition_enhanced: staging.stg_lever__requisition from raw.requisition, staging.stg_lever__user from raw.user, staging.stg_lever__requisition_posting from raw.requisition_posting, and staging.stg_lever__requisition_offer from raw.requisition_offer. Use the field design and source-to-target mapping from the contract.
+Read ./docs/data_contract.yaml and create the staging tables needed for marts_lever__requisition_enhanced in lake.ws_lever_demo: stg_lever__requisition from lake.demo_raw.requisition, stg_lever__user from lake.demo_raw.user, stg_lever__requisition_posting from lake.demo_raw.requisition_posting, and stg_lever__requisition_offer from lake.demo_raw.requisition_offer. Use the field design and source-to-target mapping from the contract.
 ```
 
 这四张 staging 表就是 requisition enhanced 示例需要的最小 raw-to-staging 输入。
@@ -192,20 +266,20 @@ Read ./docs/data_contract.yaml and create the staging tables needed for marts.le
 创建 intermediate 表：
 
 ```text
-Read ./docs/data_contract.yaml and create intermediate.int_lever__requisition_users from staging.stg_lever__requisition and staging.stg_lever__user. Use the contract's field design, joins, and source-to-target mapping.
+Read ./docs/data_contract.yaml and create lake.ws_lever_demo.int_lever__requisition_users from lake.ws_lever_demo.stg_lever__requisition and lake.ws_lever_demo.stg_lever__user. Use the contract's field design, joins, and source-to-target mapping.
 ```
 
-再生成面向分析的 marts 表。契约中定义 `marts.lever__requisition_enhanced`
+再生成面向分析的 marts 表。契约中定义 `marts_lever__requisition_enhanced`
 是一张按 `requisition_id` 一行的表，依赖：
 
-- `intermediate.int_lever__requisition_users`
-- `staging.stg_lever__requisition_posting`
-- `staging.stg_lever__requisition_offer`
+- `lake.ws_lever_demo.int_lever__requisition_users`
+- `lake.ws_lever_demo.stg_lever__requisition_posting`
+- `lake.ws_lever_demo.stg_lever__requisition_offer`
 
 创建 marts 表：
 
 ```text
-Read ./docs/data_contract.yaml and create marts.lever__requisition_enhanced from intermediate.int_lever__requisition_users, staging.stg_lever__requisition_posting, and staging.stg_lever__requisition_offer. Use the contract's business logic: keep all base requisition rows, count posting and offer links by requisition_id, fill missing counts with 0, and add has_posting and has_offer flags.
+Read ./docs/data_contract.yaml and create lake.ws_lever_demo.marts_lever__requisition_enhanced from lake.ws_lever_demo.int_lever__requisition_users, lake.ws_lever_demo.stg_lever__requisition_posting, and lake.ws_lever_demo.stg_lever__requisition_offer. Use the contract's business logic: keep all base requisition rows, count posting and offer links by requisition_id, fill missing counts with 0, and add has_posting and has_offer flags.
 ```
 
 这条链路的基本顺序始终是：
@@ -217,17 +291,17 @@ staging -> intermediate -> marts
 生成完成后，可以直接验证 marts 表：
 
 ```sql
-SELECT COUNT(*) FROM marts.lever__requisition_enhanced;
+SELECT COUNT(*) FROM lake.ws_lever_demo.marts_lever__requisition_enhanced;
 ```
 
 ## 步骤 6：提交天级 Airflow 任务
 
-现在可以要求 agent 把 marts 刷新过程提交给 scheduler。quickstart 自带的 Airflow 已经预置好了 `duckdb_dacomp_lever` 连接。
+现在可以要求 agent 把 marts 刷新过程提交给 scheduler。quickstart 自带的 Airflow 已经预置好了 `lakehouse_demo` 连接。
 
 提交一个每天早上 8 点运行的 SQL 任务，刷新同一条从契约生成的链路：
 
 ```text
-Submit a daily SQL job named daily_lever_requisition_enhanced that refreshes staging.stg_lever__requisition, staging.stg_lever__user, staging.stg_lever__requisition_posting, staging.stg_lever__requisition_offer, intermediate.int_lever__requisition_users, and marts.lever__requisition_enhanced at 8am every day using the duckdb_dacomp_lever connection. Use the SQL generated and validated from docs/data_contract.yaml in the previous steps.
+Submit a daily SQL job named daily_lever_requisition_enhanced that refreshes lake.ws_lever_demo.stg_lever__requisition, lake.ws_lever_demo.stg_lever__user, lake.ws_lever_demo.stg_lever__requisition_posting, lake.ws_lever_demo.stg_lever__requisition_offer, lake.ws_lever_demo.int_lever__requisition_users, and lake.ws_lever_demo.marts_lever__requisition_enhanced at 8am every day using the lakehouse_demo connection. Use the SQL generated and validated from docs/data_contract.yaml in the previous steps.
 ```
 
 再手动触发一次做验证：
@@ -245,14 +319,16 @@ Trigger daily_lever_requisition_enhanced once now and show me the latest run sta
 
 ## 步骤 7：把 marts 表同步到 Superset serving DB
 
-上面的 marts 表是通过 `lever_duckdb` datasource 生成的。创建仪表盘之前，需要先把它复制到
+上面的 marts 表是通过 `demo_lakehouse` datasource 生成的。创建仪表盘之前，需要先把它复制到
 `dataset_db.datasource_ref` 指向的 BI 注册数据库 `superset_serving`（Postgres）。
-这里的 `lever_duckdb` 和 `superset_serving` 都是 `agent.yml` 里的 Datus
+这里的 `demo_lakehouse` 和 `superset_serving` 都是 `agent.yml` 里的 Datus
 datasource 名称，不是 DuckDB 或 Postgres 内部真实的 database/catalog 名。
 
 ```text
-Please copy the source table marts.lever__requisition_enhanced from the lever_duckdb datasource into the superset_serving datasource as public.lever__requisition_enhanced, replacing the target table if it already exists. Then verify the source and target row counts.
+Please copy the source table lake.ws_lever_demo.marts_lever__requisition_enhanced from the demo_lakehouse datasource into the superset_serving datasource as public.lever__requisition_enhanced, replacing the target table if it already exists. Then verify the source and target row counts.
 ```
+
+如果 `public.lever__requisition_enhanced` 还不存在，传输工具会根据源查询结果列自动创建目标表。
 
 完成后，这张表就位于 Superset 通过 `bi_database_name: examples` 识别的数据库中。
 
@@ -271,7 +347,7 @@ SQL dataset 已经存在于 BI 已注册的数据库中。
 
 走完整条链路后，你应该能确认：
 
-- `lever_workbench.duckdb` 里已经有 `staging`、`intermediate`、`marts` 三层 schema
-- `marts.lever__requisition_enhanced` 是从 raw 数据经 staging 和 intermediate 逐层加工得到的
+- `lake.demo_raw` 已作为共享 demo 源 namespace 完成初始化
+- `lake.ws_lever_demo.marts_lever__requisition_enhanced` 是从 raw 数据经 staging 和 intermediate 表逐层加工得到的
 - Airflow 中能看到日常调度任务
 - 仪表盘生成流程返回了 Superset dashboard URL

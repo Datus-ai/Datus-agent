@@ -7,6 +7,7 @@ import pytest
 from datus_db_core import BaseSqlConnector, DatusDbException
 from datus_db_core import ErrorCode as DbErrorCode
 
+from datus.tools.db_tools.config import DuckDBConfig
 from datus.tools.db_tools.db_manager import (
     DBManager,
     _clean_str,
@@ -310,6 +311,44 @@ class TestDBManager:
         mgr = DBManager(configs)
         uris = mgr.get_db_uris("ns")
         assert uris["db1"] == "sqlite:///test.db"
+
+    def test_duckdb_config_includes_extra_runtime_options(self):
+        mgr = DBManager({})
+        cfg = _cfg(
+            type="duckdb",
+            uri="duckdb:///:memory:",
+            extra={
+                "read_only": "true",
+                "enable_external_access": "false",
+                "memory_limit": "2GB",
+                "iceberg": {
+                    "catalog_alias": "lake",
+                    "catalog_uri": "http://127.0.0.1:8181",
+                    "warehouse": "s3://warehouse/",
+                },
+            },
+        )
+
+        result = mgr._db_config_to_connection_config(cfg)
+
+        assert isinstance(result, DuckDBConfig)
+        assert result.db_path == ":memory:"
+        assert result.read_only is True
+        assert result.enable_external_access is False
+        assert result.memory_limit == "2GB"
+        assert result.iceberg == cfg.extra["iceberg"]
+
+    def test_close_closes_nested_multi_db_connections(self):
+        mgr = DBManager({})
+        first = MagicMock()
+        second = MagicMock()
+        mgr._conn_dict["analytics"] = {"raw": first, "mart": second}
+
+        mgr.close()
+
+        first.close.assert_called_once()
+        second.close.assert_called_once()
+        assert mgr._conn_dict["analytics"] is None
 
 
 # ---------------------------------------------------------------------------

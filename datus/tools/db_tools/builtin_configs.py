@@ -4,6 +4,8 @@
 
 """Configuration classes for built-in database adapters."""
 
+from typing import Any, Dict, Optional
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -32,3 +34,7 @@ class DuckDBConfig(BaseModel):
             "default_sample": "duckdb-demo.duckdb",
         },
     )
+    read_only: bool = Field(default=False, description="Whether to open the DuckDB database in read-only mode")
+    enable_external_access: bool = Field(default=True, description="Enable DuckDB external file access")
+    memory_limit: Optional[str] = Field(default=None, description="DuckDB memory limit, e.g. '2GB'")
+    iceberg: Optional[Dict[str, Any]] = Field(default=None, description="DuckDB Iceberg REST catalog configuration")
