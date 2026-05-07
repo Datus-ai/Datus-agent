@@ -258,6 +258,13 @@ class TestBuildTaskDescription:
         desc = task_tool._build_task_description()
         assert "Guidelines" in desc
 
+    def test_description_routes_by_deliverable_ownership(self, task_tool):
+        desc = task_tool._build_task_description()
+        assert "requested deliverable" in desc
+        assert "owning workflow" in desc
+        assert "Task complexity is not the deciding factor" in desc
+        assert "For simple questions, handle directly" not in desc
+
     def test_contains_custom_description(self, task_tool):
         desc = task_tool._build_task_description()
         assert "Sales data specialist" in desc

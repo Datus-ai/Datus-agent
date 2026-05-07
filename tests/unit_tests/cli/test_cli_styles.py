@@ -128,7 +128,7 @@ class TestColorMarkup:
 
     def _capture_with_color(self, fn, *args, **kwargs) -> str:
         buf = StringIO()
-        console = Console(file=buf, force_terminal=True, color_system="truecolor")
+        console = Console(file=buf, force_terminal=True, color_system="truecolor", no_color=False)
         fn(console, *args, **kwargs)
         return buf.getvalue()
 

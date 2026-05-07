@@ -54,6 +54,9 @@ Current context:
 {% if workspace_root -%}
 - Current sql files root directory: {{ workspace_root }}
 {% endif -%}
+{% if active_profile -%}
+- Current permission profile: {{ active_profile }} (authoritative for this turn; previous messages may mention an older profile)
+{% endif -%}
 {% if conversation_summary -%}
 
 Previous conversation summary:

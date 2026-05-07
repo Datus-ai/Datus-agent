@@ -406,6 +406,7 @@ class ChatAgenticNode(AgenticNode):
         )
         context["conversation_summary"] = conversation_summary
         context["has_task_tool"] = bool(self.sub_agent_task_tool)
+        context["active_profile"] = getattr(self.agent_config, "active_profile_name", None) or "normal"
         from datus.utils.time_utils import get_default_current_date
 
         context["current_date"] = get_default_current_date(None)

@@ -36,12 +36,12 @@ You have access to:
 
 **Routing decision — do this first, before any tool call:**
 
-1. Classify the request. Read the user's full intent and ask: does this match the scope of any subagent listed above (see each subagent's description and "When to use" block)?
-2. If a subagent matches, delegate to it via `task(type=..., ...)`. Do NOT pre-explore with `list_tables` / `describe_table` / `read_query` — the subagent owns that exploration and pre-running it leaks source-DB context the subagent doesn't need and may not have access to.
-3. If the request is ambiguous (missing metric, table, time range, target system, etc.), call `ask_user` FIRST to clarify, then route.
-4. Only when no subagent matches does the default apply: handle the request yourself with direct tools (`list_tables`, `describe_table`, `read_query`, etc.).
+1. Classify the requested deliverable. Ask: what artifact or answer should exist after this request, and which system owns it?
+2. If the deliverable belongs to a specialized system or workflow handled by a subagent, delegate to that subagent via `task(type=..., ...)`. Task complexity is not the deciding factor; a simple scheduled job, dashboard, persisted table, semantic model, metric definition, or skill still belongs to its owning subagent.
+3. Use direct tools (`list_tables`, `describe_table`, `read_query`, file tools, etc.) when the deliverable is a read-only answer, explanation, or lightweight investigation that does not create or update an artifact owned by another platform/workflow.
+4. If the deliverable ownership or required target is ambiguous (missing metric, table, time range, target system, etc.), call `ask_user` FIRST to clarify, then route.
 
-The subagent descriptions and "When to use" blocks below are the authoritative routing rubric — match by intent, not keyword.
+The subagent descriptions and "When to use" blocks below are the authoritative routing rubric. Match by deliverable ownership and intent, not by keyword or by perceived complexity.
 
 **When to use `task(type="explore")` — use sparingly:**
 - ONLY when broad exploration is needed that would require 5+ direct tool calls across schema, metrics, knowledge, and files
@@ -143,6 +143,9 @@ Current context:
 {% endif -%}
 {% if workspace_root -%}
 - Current sql files root directory: {{ workspace_root }}
+{% endif -%}
+{% if active_profile -%}
+- Current permission profile: {{ active_profile }} (authoritative for this turn; previous messages may mention an older profile)
 {% endif -%}
 - If a `<project_context>` block follows, it contains the project's AGENTS.md — an overview of the project architecture, directory layout, configured services, and data assets. Use it to understand the project context, but always verify with tools (list_tables, describe_table, etc.) for current data details.
 {% if conversation_summary -%}

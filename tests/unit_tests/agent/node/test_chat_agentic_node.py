@@ -569,6 +569,23 @@ class TestChatAgenticNodeSystemPrompt:
         assert isinstance(prompt, str)
         assert len(prompt) > 0
 
+    def test_get_system_prompt_contains_active_permission_profile(self, real_agent_config, mock_llm_create):
+        """Runtime /profile changes must be visible to the next LLM turn."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        real_agent_config.active_profile_name = "dangerous"
+        node = ChatAgenticNode(
+            node_id="test_prompt_profile",
+            description="Test active permission profile in prompt",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+
+        prompt = node._get_system_prompt()
+
+        assert "Current permission profile: dangerous" in prompt
+        assert "authoritative for this turn" in prompt
+
     def test_get_system_prompt_fallback_on_missing_template(self, real_agent_config, mock_llm_create):
         """_get_system_prompt falls back to chat_system when configured template is missing."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode

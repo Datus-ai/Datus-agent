@@ -912,9 +912,13 @@ class SubAgentTaskTool:
         available = self._get_available_types()
 
         lines = [
-            "Delegate a complex task to a specialized subagent. "
-            "Only use this for questions that require deep exploration or multi-step SQL reasoning. "
-            "For simple/direct questions, use your own tools (list_tables, describe_table, read_query, etc.) instead.",
+            "Delegate work to a specialized subagent when the requested deliverable belongs to that "
+            "subagent's owning workflow or platform. Task complexity is not the deciding factor: "
+            "a simple scheduled job, dashboard, persisted table, semantic model, metric definition, "
+            "or skill should still be handled by its specialized subagent. Use your own tools "
+            "(list_tables, describe_table, read_query, etc.) for read-only answers, explanations, "
+            "or lightweight investigations that do not create or update an artifact owned by another "
+            "platform/workflow.",
             "",
             "Available types:",
         ]
@@ -935,7 +939,8 @@ class SubAgentTaskTool:
             [
                 "",
                 "Guidelines:",
-                "- For simple questions, handle directly with your own tools — no need to launch subagents",
+                "- First classify the deliverable and its owning workflow/platform; delegate when it matches a subagent",
+                "- For read-only answers, explanations, and lightweight investigations, handle directly with your own tools",
                 '- For complex questions requiring deep exploration, call multiple task(type="explore") '
                 "in PARALLEL, each with a direction-specific prompt (schema+sample, knowledge, file)",
                 '- For quick single-direction lookups, call one task(type="explore") with a focused prompt',
