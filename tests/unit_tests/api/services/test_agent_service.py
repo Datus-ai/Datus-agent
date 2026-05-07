@@ -1424,3 +1424,64 @@ class TestSubagentScopedContextRoundTrip:
         assert agent["tools"] == ["semantic_tools.*", "db_tools.*"]
         assert agent["catalogs"] == ["Commerce/Orders/Avg"]
         assert agent["subjects"] == ["Commerce.Orders.Average_Order_Value.average_gross_order_value"]
+
+    async def test_edit_clearing_scope_persists_to_yaml(self, real_agent_config, agent_yml_with_singleton):
+        """Clearing the entire scope must reach disk, not just the in-memory dict.
+
+        When the only thing the user changes is to wipe their scope
+        (``catalogs=[]`` and ``subjects=[]``), ``_build_scoped_context``
+        returns ``None`` and ``edit_agent`` removes ``scoped_context`` from
+        the live agent dict. The subsequent ``not update_data`` short-circuit
+        used to skip ``_save_agentic_nodes``, so the deletion was lost on
+        the next config reload — this test pins the fix in place.
+        """
+        import yaml
+
+        from datus.api.models.agent_models import EditAgentInput
+
+        # Seed an entry that already has a scope on disk. ``datasource`` is
+        # intentionally omitted so clearing catalogs/subjects fully empties
+        # the scoped_context dict — that's the path where merged is ``None``
+        # and the early-return previously skipped the save.
+        real_agent_config.agentic_nodes["clear_scope_agent"] = {
+            "type": "gen_sql",
+            "scoped_context": {
+                "tables": "orders",
+                "metrics": "Finance.Revenue.Daily",
+            },
+        }
+        agent_yml_with_singleton.write_text(
+            yaml.safe_dump(
+                {
+                    "agent": {
+                        "agentic_nodes": {
+                            "clear_scope_agent": real_agent_config.agentic_nodes["clear_scope_agent"],
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        # Reset the active datasource so the helper doesn't re-bind a fresh
+        # datasource value into scoped_context — that would leave the dict
+        # non-empty and avoid the bug entirely.
+        real_agent_config.current_datasource = ""
+
+        svc = AgentService()
+        result = await svc.edit_agent(
+            EditAgentInput(
+                id="clear_scope_agent",
+                name="clear_scope_agent",
+                catalogs=[],
+                subjects=[],
+            ),
+            real_agent_config,
+        )
+        assert result.success is True
+
+        with open(agent_yml_with_singleton) as f:
+            raw = yaml.safe_load(f)
+        entry = raw["agent"]["agentic_nodes"]["clear_scope_agent"]
+        # The whole scoped_context block is gone on disk, not just in memory.
+        assert "scoped_context" not in entry

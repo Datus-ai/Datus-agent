@@ -790,6 +790,12 @@ class AgentService:
         catalogs_input = update_data.pop("catalogs", None)
         subjects_input = update_data.pop("subjects", None)
         scope_touched = catalogs_input is not None or subjects_input is not None or "scoped_context" in update_data
+        # Tracks deletions applied directly to ``agent`` (the live yaml dict)
+        # rather than through ``update_data``. ``agent.update(update_data)``
+        # below can't represent a key removal, so we have to bypass the
+        # ``not update_data`` short-circuit and force ``_save_agentic_nodes``
+        # to run when the only mutation was a pop.
+        agent_dict_mutated = False
         if scope_touched:
             base_ctx: dict = {}
             existing = agent.get("scoped_context")
@@ -813,12 +819,17 @@ class AgentService:
             )
             if merged:
                 update_data["scoped_context"] = merged
-            else:
-                agent.pop("scoped_context", None)
-            agent.pop("catalogs", None)
-            agent.pop("subjects", None)
+            elif agent.pop("scoped_context", None) is not None:
+                # Scope was fully cleared — record the deletion so the
+                # subsequent save persists it instead of leaving the old
+                # block on disk.
+                agent_dict_mutated = True
+            if agent.pop("catalogs", None) is not None:
+                agent_dict_mutated = True
+            if agent.pop("subjects", None) is not None:
+                agent_dict_mutated = True
 
-        if not update_data and prompt_content is None:
+        if not update_data and prompt_content is None and not agent_dict_mutated:
             return Result(success=True, data={"name": request.id, "id": request.id})
 
         # Merge update data into the agent entry
