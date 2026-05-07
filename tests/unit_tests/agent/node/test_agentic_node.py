@@ -67,7 +67,6 @@ def _make_node(agent_config=None, context_length=_UNSET, **overrides):
     node._pinned_model = None
     node._node_model_name = None
     node._session = None
-    node.ephemeral = False
     node.session_id = None
     node.tools = []
     node.mcp_servers = {}
@@ -302,39 +301,30 @@ class TestUpdateContextAgenticNode:
 
 
 class TestClearSession:
-    def test_clear_session_ephemeral(self):
+    def test_clear_session(self):
         node = _make_node()
-        node.ephemeral = True
-        node._session = MagicMock()
-        node.session_id = "ephemeral_session_1"
-        node.clear_session()
-        assert node._session is None
-
-    def test_clear_session_non_ephemeral(self):
-        node = _make_node()
-        node.ephemeral = False
         node.session_id = "real_session_1"
-        mock_model = MagicMock()
-        node.model = mock_model
+        mock_sm = MagicMock()
+        node._session_manager = mock_sm
         node._session = MagicMock()
         node.clear_session()
-        mock_model.clear_session.assert_called_once_with("real_session_1")
+        mock_sm.clear_session.assert_called_once_with("real_session_1")
         assert node._session is None
 
-    def test_clear_session_no_model(self):
-        """Non-ephemeral clear with ``model=None`` is a no-op: ``_session`` and
-        ``session_id`` must survive untouched so the caller can reuse the node
-        after reattaching a model later.
+    def test_clear_session_no_session_id(self):
+        """Without a session_id, clear_session is a no-op: nothing has been created
+        on disk yet so there is nothing to clear. ``_session`` and
+        ``session_id`` survive untouched.
         """
         node = _make_node()
-        node.ephemeral = False
-        node.model = None
-        node.session_id = "some_id"
+        node.session_id = None
         sentinel_session = MagicMock()
         node._session = sentinel_session
+        node._session_manager = MagicMock()
         node.clear_session()
         assert node._session is sentinel_session
-        assert node.session_id == "some_id"
+        assert node.session_id is None
+        node._session_manager.clear_session.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -343,24 +333,14 @@ class TestClearSession:
 
 
 class TestDeleteSession:
-    def test_delete_session_ephemeral(self):
+    def test_delete_session(self):
         node = _make_node()
-        node.ephemeral = True
-        node._session = MagicMock()
-        node.session_id = "eph_1"
-        node.delete_session()
-        assert node._session is None
-        assert node.session_id is None
-
-    def test_delete_session_non_ephemeral(self):
-        node = _make_node()
-        node.ephemeral = False
         node.session_id = "real_1"
-        mock_model = MagicMock()
-        node.model = mock_model
+        mock_sm = MagicMock()
+        node._session_manager = mock_sm
         node._session = MagicMock()
         node.delete_session()
-        mock_model.delete_session.assert_called_once_with("real_1")
+        mock_sm.delete_session.assert_called_once_with("real_1")
         assert node._session is None
         assert node.session_id is None
 
@@ -600,17 +580,8 @@ class TestGetSessionInfo:
 
 class TestManualCompact:
     @pytest.mark.asyncio
-    async def test_manual_compact_ephemeral_returns_failure(self):
-        node = _make_node()
-        node.ephemeral = True
-        node._session = MagicMock()
-        result = await node._manual_compact()
-        assert result["success"] is False
-
-    @pytest.mark.asyncio
     async def test_manual_compact_no_model_returns_failure(self):
         node = _make_node()
-        node.ephemeral = False
         node.model = None
         node._session = MagicMock()
         result = await node._manual_compact()
@@ -619,7 +590,6 @@ class TestManualCompact:
     @pytest.mark.asyncio
     async def test_manual_compact_no_session_returns_failure(self):
         node = _make_node()
-        node.ephemeral = False
         node.model = MagicMock()
         node._session = None
         result = await node._manual_compact()
@@ -628,10 +598,11 @@ class TestManualCompact:
     @pytest.mark.asyncio
     async def test_manual_compact_success(self):
         node = _make_node()
-        node.ephemeral = False
         node.session_id = "compact_test"
         mock_session = _make_async_session_mock()
         node._session = mock_session
+        mock_sm = MagicMock()
+        node._session_manager = mock_sm
         mock_model = MagicMock()
         mock_model.generate_with_tools = AsyncMock(
             return_value={"content": "Summary of conversation", "usage": {"output_tokens": 100}}
@@ -648,7 +619,8 @@ class TestManualCompact:
         assert node.session_id == "compact_test"
         mock_session.clear_session.assert_awaited_once()
         mock_session.add_items.assert_awaited_once()
-        mock_model.delete_session.assert_not_called()
+        # Manual compact preserves the session — no delete on the session_manager.
+        mock_sm.delete_session.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_manual_compact_lazy_loads_session_after_resume(self):
@@ -659,22 +631,24 @@ class TestManualCompact:
         eagerly open the SQLite session.
         """
         node = _make_node()
-        node.ephemeral = False
         node.session_id = "resumed_session"
         node._session = None  # Simulate post-resume state
         mock_model = MagicMock()
         mock_model.generate_with_tools = AsyncMock(
             return_value={"content": "Resumed summary", "usage": {"output_tokens": 50}}
         )
-        # create_session is what _get_or_create_session will call via self.model.
-        # Return a session whose async methods can be awaited by the persist step.
-        mock_model.create_session = MagicMock(return_value=_make_async_session_mock())
         node.model = mock_model
+        # create_session is what _get_or_create_session will call via the
+        # node-owned session_manager. Return a session whose async methods can
+        # be awaited by the persist step.
+        mock_sm = MagicMock()
+        mock_sm.create_session = MagicMock(return_value=_make_async_session_mock())
+        node._session_manager = mock_sm
 
         result = await node._manual_compact()
 
         # _get_or_create_session should have been invoked to materialize the session.
-        mock_model.create_session.assert_called_once_with("resumed_session")
+        mock_sm.create_session.assert_called_once_with("resumed_session")
         assert result["success"] is True
         assert result["summary"] == "Resumed summary"
         # Session id is preserved so the same .db keeps holding the summary.
@@ -686,7 +660,6 @@ class TestManualCompact:
         must be appended to the SAME session via add_items so subsequent LLM
         turns and history reads see the summary."""
         node = _make_node()
-        node.ephemeral = False
         node.session_id = "persist_test"
         mock_session = _make_async_session_mock()
         node._session = mock_session
@@ -717,7 +690,6 @@ class TestManualCompact:
         """If add_items raises after clear_session succeeds, surface a
         failure result without rolling back (simple-fail strategy)."""
         node = _make_node()
-        node.ephemeral = False
         node.session_id = "fail_test"
         mock_session = _make_async_session_mock()
         mock_session.add_items.side_effect = RuntimeError("write failed")
@@ -903,7 +875,6 @@ def _make_simple_node(context_length=_UNSET, **overrides):
     node._pinned_model = None
     node._node_model_name = None
     node._session = None
-    node.ephemeral = False
     node.session_id = None
     node.tools = []
     node.mcp_servers = {}
@@ -1087,49 +1058,37 @@ class TestResolveWorkspaceRootExtended:
 
 
 class TestSessionManagement:
-    def test_clear_session_ephemeral(self):
-        node = _make_simple_node(ephemeral=True, session_id="sess_1")
-        mock_session = MagicMock()
-        node._session = mock_session
-        node.clear_session()
-        assert node._session is None
-
     def test_clear_session_normal(self):
         node = _make_simple_node()
-        mock_model = MagicMock()
-        node.model = mock_model
+        mock_sm = MagicMock()
+        node._session_manager = mock_sm
         node.session_id = "sess_2"
         node._session = MagicMock()
         node.clear_session()
-        mock_model.clear_session.assert_called_once_with("sess_2")
+        mock_sm.clear_session.assert_called_once_with("sess_2")
         assert node._session is None
 
-    def test_clear_session_no_model(self):
-        """No-op path: without a model, clear_session leaves session state
-        alone so the node is reusable once a model is later assigned."""
+    def test_clear_session_no_session_id(self):
+        """No-op path: without a session_id, clear_session leaves state
+        alone so the node is reusable once a session is materialized later."""
         node = _make_simple_node()
         sentinel_session = MagicMock()
         node._session = sentinel_session
-        node.session_id = "sess_3"
+        node.session_id = None
+        node._session_manager = MagicMock()
         node.clear_session()
         assert node._session is sentinel_session
-        assert node.session_id == "sess_3"
-
-    def test_delete_session_ephemeral(self):
-        node = _make_simple_node(ephemeral=True, session_id="sess_4")
-        node._session = MagicMock()
-        node.delete_session()
-        assert node._session is None
         assert node.session_id is None
+        node._session_manager.clear_session.assert_not_called()
 
     def test_delete_session_normal(self):
         node = _make_simple_node()
-        mock_model = MagicMock()
-        node.model = mock_model
+        mock_sm = MagicMock()
+        node._session_manager = mock_sm
         node.session_id = "sess_5"
         node._session = MagicMock()
         node.delete_session()
-        mock_model.delete_session.assert_called_once_with("sess_5")
+        mock_sm.delete_session.assert_called_once_with("sess_5")
         assert node._session is None
         assert node.session_id is None
 
@@ -1184,51 +1143,37 @@ class TestGetOrCreateSession:
 
     def test_creates_new_session_when_none(self):
         node = _make_simple_node()
-        mock_model = MagicMock()
+        mock_sm = MagicMock()
         mock_session = MagicMock()
-        mock_model.create_session.return_value = mock_session
-        node.model = mock_model
+        mock_sm.create_session.return_value = mock_session
+        node._session_manager = mock_sm
         node.session_id = "my_session"
 
         session, summary = node._get_or_create_session()
         assert session is mock_session
-        mock_model.create_session.assert_called_once_with("my_session")
+        mock_sm.create_session.assert_called_once_with("my_session")
 
     def test_generates_session_id_when_none(self):
         node = _make_simple_node()
-        mock_model = MagicMock()
+        mock_sm = MagicMock()
         mock_session = MagicMock()
-        mock_model.create_session.return_value = mock_session
-        node.model = mock_model
+        mock_sm.create_session.return_value = mock_session
+        node._session_manager = mock_sm
         # session_id is None - should be generated
 
         session, _ = node._get_or_create_session()
         assert node.session_id is not None
         assert "_session_" in node.session_id
 
-    def test_ephemeral_creates_in_memory_session(self):
-        node = _make_simple_node(ephemeral=True)
-        mock_model = MagicMock()
-        node.model = mock_model
-        node.session_id = "eph_sess"
-
-        with patch("datus.agent.node.agentic_node.AdvancedSQLiteSession") as mock_sqlite_cls:
-            mock_sqlite_cls.return_value = MagicMock()
-            session, _ = node._get_or_create_session()
-
-        mock_sqlite_cls.assert_called_once()
-        call_kwargs = mock_sqlite_cls.call_args
-        assert call_kwargs[1].get("db_path") == ":memory:" or ":memory:" in str(call_kwargs)
-
     def test_summary_is_no_longer_returned_via_get_or_create_session(self):
         """Compacted summary now lives inside the session history itself, not
         on a node attribute. _get_or_create_session must always return None
         for the summary slot."""
         node = _make_simple_node()
-        mock_model = MagicMock()
+        mock_sm = MagicMock()
         mock_session = MagicMock()
-        mock_model.create_session.return_value = mock_session
-        node.model = mock_model
+        mock_sm.create_session.return_value = mock_session
+        node._session_manager = mock_sm
         node.session_id = "s"
 
         _, summary = node._get_or_create_session()
@@ -1355,11 +1300,6 @@ class TestExecuteSync:
 
 
 class TestManualCompactExtended:
-    def test_ephemeral_returns_failure(self):
-        node = _make_simple_node(ephemeral=True)
-        result = asyncio.run(node._manual_compact())
-        assert result["success"] is False
-
     def test_no_model_returns_failure(self):
         node = _make_simple_node()
         result = asyncio.run(node._manual_compact())

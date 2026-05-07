@@ -389,8 +389,11 @@ class TestStatusBarProviderTokens:
     def test_cumulative_and_cached_tokens_read_from_session_manager(self):
         session_manager = MagicMock()
         session_manager.get_detailed_usage.return_value = {"total": {"total_tokens": 98_765, "cached_tokens": 20_480}}
+        # session_manager is now owned by AgenticNode (not the model). The
+        # status bar reads it directly off the node.
         node = SimpleNamespace(
-            model=SimpleNamespace(session_manager=session_manager, model_config=SimpleNamespace(model="m")),
+            session_manager=session_manager,
+            model=SimpleNamespace(model_config=SimpleNamespace(model="m")),
             session_id="sess-1",
             actions=[],
             context_length=0,
@@ -404,7 +407,8 @@ class TestStatusBarProviderTokens:
         session_manager = MagicMock()
         session_manager.get_detailed_usage.return_value = {"total": {"total_tokens": 4096}}
         node = SimpleNamespace(
-            model=SimpleNamespace(session_manager=session_manager, model_config=SimpleNamespace(model="m")),
+            session_manager=session_manager,
+            model=SimpleNamespace(model_config=SimpleNamespace(model="m")),
             session_id="sess-nocache",
             actions=[],
             context_length=0,
@@ -423,7 +427,8 @@ class TestStatusBarProviderTokens:
         session_manager = MagicMock()
         session_manager.get_detailed_usage.side_effect = RuntimeError("db missing")
         node = SimpleNamespace(
-            model=SimpleNamespace(session_manager=session_manager, model_config=SimpleNamespace(model="m")),
+            session_manager=session_manager,
+            model=SimpleNamespace(model_config=SimpleNamespace(model="m")),
             session_id="sess-err",
             actions=[],
             context_length=0,

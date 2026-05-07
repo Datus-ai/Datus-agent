@@ -2575,7 +2575,6 @@ def _make_gensql_node(node_config=None, agent_config=None):
         node = GenSQLAgenticNode.__new__(GenSQLAgenticNode)
 
     node._session = None
-    node.ephemeral = False
     node.session_id = None
     node.model = None
     node.tools = []

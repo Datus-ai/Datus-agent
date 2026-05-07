@@ -73,8 +73,9 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
     def __init__(self, model_config: ModelConfig, **kwargs):
         """Initialize model with configuration and parameters"""
         self.model_config = model_config  # Model configuration
-        # Initialize session manager for all models
-        self._session_manager = None
+        # Session storage location passed through to AgenticNode-owned SessionManager.
+        # The model itself no longer owns session state — these attributes remain
+        # only because LLMBaseModel.create_model still forwards them on construction.
         self.session_dir = kwargs.get("session_dir")
         self.session_scope = kwargs.get("session_scope")
 
@@ -277,28 +278,3 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
             return False, f"Timed out after {timeout}s"
         except Exception as e:
             return False, str(e)
-
-    @property
-    def session_manager(self):
-        """Lazy initialization of session manager."""
-        if self._session_manager is None:
-            from datus.models.session_manager import SessionManager
-
-            self._session_manager = SessionManager(session_dir=self.session_dir, scope=self.session_scope)
-        return self._session_manager
-
-    def create_session(self, session_id: str) -> SQLiteSession:
-        """Create or get a session for multi-turn conversations."""
-        return self.session_manager.create_session(session_id)
-
-    def clear_session(self, session_id: str) -> None:
-        """Clear conversation history for a session."""
-        self.session_manager.clear_session(session_id)
-
-    def delete_session(self, session_id: str) -> None:
-        """Delete a session completely."""
-        self.session_manager.delete_session(session_id)
-
-    def list_sessions(self) -> List[str]:
-        """List all available sessions."""
-        return self.session_manager.list_sessions()

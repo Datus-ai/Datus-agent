@@ -239,6 +239,16 @@ class SubAgentTaskTool:
                     "type": "string",
                     "description": "A short one-line summary of the task goal (shown in compact display)",
                 },
+                "session_id": {
+                    "type": "string",
+                    "description": (
+                        "Optional. Pass back a session_id from a previous task() result to "
+                        "CONTINUE the same subagent's conversation with full prior context. "
+                        "Use for iterative refinement (e.g. 'rewrite the previous SQL using "
+                        "INNER JOIN' or 'narrow the report to the EU region'). Must belong "
+                        "to a subagent of the SAME `type`. Omit to start a fresh session."
+                    ),
+                },
             },
             "required": ["type", "prompt", "description"],
         }
@@ -264,16 +274,27 @@ class SubAgentTaskTool:
         ]
 
     async def task(
-        self, type: str = "", prompt: str = "", description: str = "", call_id: Optional[str] = None
+        self,
+        type: str = "",
+        prompt: str = "",
+        description: str = "",
+        call_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> FuncToolResult:
-        """Execute a subagent task of the given *type*."""
+        """Execute a subagent task of the given *type*.
+
+        When ``session_id`` is provided the subagent resumes that prior session
+        from disk so the new ``prompt`` is appended to existing turn history.
+        """
         if not type:
             return FuncToolResult(success=0, error="Missing required parameter: type")
         if not prompt:
             return FuncToolResult(success=0, error="Missing required parameter: prompt")
 
         try:
-            return await self._execute_node(type, prompt, description=description, call_id=call_id)
+            return await self._execute_node(
+                type, prompt, description=description, call_id=call_id, session_id=session_id
+            )
         except Exception as e:
             logger.error(f"Task tool execution error (type={type}): {e}")
             return FuncToolResult(success=0, error=f"Task execution failed: {str(e)}")
@@ -517,7 +538,12 @@ class SubAgentTaskTool:
     # ── execution via execute_stream ───────────────────────────────────
 
     async def _execute_node(
-        self, subagent_type: str, prompt: str, description: str = "", call_id: Optional[str] = None
+        self,
+        subagent_type: str,
+        prompt: str,
+        description: str = "",
+        call_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> FuncToolResult:
         """Execute a subagent by running an AgenticNode's execute_stream."""
         # Validate subagent type against the allowlist to prevent privilege escalation.
@@ -547,9 +573,60 @@ class SubAgentTaskTool:
 
         effective_cfg = self._resolve_effective_sub_agent_config(subagent_type)
 
+        # Validate the session_id format up-front (path-injection defence) so
+        # we fail fast before paying the node-construction cost.
+        from datus.models.session_manager import SessionManager, extract_agent_from_session_id
+
+        if session_id is not None:
+            try:
+                SessionManager._validate_session_id(session_id)
+            except ValueError as e:
+                return FuncToolResult(success=0, error=f"Invalid session_id format: {e}")
+
         with effective_subagent(subagent_type, effective_cfg):
             node = self._create_node(subagent_type)
-            node.ephemeral = True  # Use in-memory session — no SQLite persistence for sub-agents
+
+            # Nest this subagent's session under the launching main session so the
+            # parent LLM can later resume by passing back the returned session_id.
+            # Path: {sessions_dir}/{user_scope}/{parent_session_id}/{subagent_session_id}.db
+            parent_sid = getattr(self._parent_node, "session_id", None)
+            if isinstance(parent_sid, str) and parent_sid:
+                try:
+                    SessionManager._validate_session_id(parent_sid)
+                    node.session_subdir = parent_sid
+                except ValueError:
+                    logger.warning(
+                        "Parent session_id %r failed validation; falling back to flat layout",
+                        parent_sid,
+                    )
+
+            # Resume an existing session when caller provides a session_id of the SAME type.
+            if session_id is not None:
+                actual_owner = extract_agent_from_session_id(session_id)
+                expected_owner = node.get_node_name()
+                # Accept gen_sql/gensql alias (resolved per agent_config.agentic_nodes)
+                allowed_owners = {expected_owner}
+                if expected_owner in ("gen_sql", "gensql"):
+                    allowed_owners |= {"gen_sql", "gensql"}
+                if actual_owner not in allowed_owners:
+                    return FuncToolResult(
+                        success=0,
+                        error=(
+                            f"session_id {session_id!r} belongs to subagent type {actual_owner!r} "
+                            f"but task requested type {subagent_type!r}. Each session is bound "
+                            "to one subagent type."
+                        ),
+                    )
+                if not node.session_manager.session_exists(session_id):
+                    return FuncToolResult(
+                        success=0,
+                        error=(
+                            f"session_id {session_id!r} not found on disk under the current "
+                            "main session. It may have been cleaned up or never existed."
+                        ),
+                    )
+                # Pre-set so AgenticNode._get_or_create_session loads from disk
+                node.session_id = session_id
 
             # Set input on the node
             node.input = self._build_node_input(node, prompt)
@@ -626,13 +703,16 @@ class SubAgentTaskTool:
                 raise
             finally:
                 self._emit_complete_action(subagent_type, call_id, stream_start_time, tool_count, subagent_status)
-                # Cleanup node resources (MCP connections, sessions, file handles)
+                # Release in-memory handles WITHOUT deleting the .db file — the parent
+                # LLM may resume this session_id on a later turn.
                 try:
-                    node.delete_session()
+                    if node._session_manager is not None:
+                        node._session_manager.close_all_sessions()
+                    node._session = None
                 except Exception:
-                    logger.debug("Failed to cleanup sub-agent node session", exc_info=True)
+                    logger.debug("Failed to release sub-agent session handle", exc_info=True)
 
-        return self._convert_to_func_result(final_output)
+        return self._convert_to_func_result(final_output, session_id=node.session_id)
 
     def _resolve_effective_sub_agent_config(self, subagent_type: str) -> SubAgentConfig:
         """Build an effective SubAgentConfig that inherits parent scoped_context when child has none."""
@@ -787,8 +867,14 @@ class SubAgentTaskTool:
 
     # ── result conversion ──────────────────────────────────────────────
 
-    def _convert_to_func_result(self, output) -> FuncToolResult:
-        """Convert AgenticNode output to FuncToolResult."""
+    def _convert_to_func_result(self, output, *, session_id: Optional[str] = None) -> FuncToolResult:
+        """Convert AgenticNode output to FuncToolResult.
+
+        ``session_id`` is the subagent's session_id; when provided, it is
+        injected into every successful result dict so the parent LLM can
+        pass it back on a later task() call to resume the conversation.
+        Failure envelopes intentionally omit it.
+        """
         if not output or not isinstance(output, dict):
             return FuncToolResult(success=0, error="No result from subagent")
 
@@ -802,6 +888,11 @@ class SubAgentTaskTool:
         response = output.get("response", "")
         tokens = output.get("tokens_used", 0)
 
+        def _wrap(d: Dict[str, Any]) -> FuncToolResult:
+            if session_id:
+                d["session_id"] = session_id
+            return FuncToolResult(result=d)
+
         # File-based SQL result: sql_file_path present
         sql_file_path = output.get("sql_file_path")
         if sql_file_path:
@@ -814,13 +905,13 @@ class SubAgentTaskTool:
             sql_diff = output.get("sql_diff")
             if sql_diff:
                 result_dict["sql_diff"] = sql_diff
-            return FuncToolResult(result=result_dict)
+            return _wrap(result_dict)
 
         # Inline SQL result: has 'sql' key
         sql = output.get("sql")
         if sql is not None:
-            return FuncToolResult(
-                result={
+            return _wrap(
+                {
                     "sql": sql,
                     "response": response,
                     "tokens_used": tokens,
@@ -830,8 +921,8 @@ class SubAgentTaskTool:
         # Semantic model result: has 'semantic_models' key
         semantic_models = output.get("semantic_models")
         if semantic_models is not None:
-            return FuncToolResult(
-                result={
+            return _wrap(
+                {
                     "response": response,
                     "semantic_models": semantic_models,
                     "tokens_used": tokens,
@@ -841,8 +932,8 @@ class SubAgentTaskTool:
         # SQL summary result: has 'sql_summary_file' key
         sql_summary_file = output.get("sql_summary_file")
         if sql_summary_file is not None:
-            return FuncToolResult(
-                result={
+            return _wrap(
+                {
                     "response": response,
                     "sql_summary_file": sql_summary_file,
                     "tokens_used": tokens,
@@ -852,8 +943,8 @@ class SubAgentTaskTool:
         # External knowledge result: has 'ext_knowledge_file' key
         ext_knowledge_file = output.get("ext_knowledge_file")
         if ext_knowledge_file is not None:
-            return FuncToolResult(
-                result={
+            return _wrap(
+                {
                     "response": response,
                     "ext_knowledge_file": ext_knowledge_file,
                     "tokens_used": tokens,
@@ -863,8 +954,8 @@ class SubAgentTaskTool:
         # Report result: has 'report_result' key
         report_result = output.get("report_result")
         if report_result is not None:
-            return FuncToolResult(
-                result={
+            return _wrap(
+                {
                     "response": response,
                     "report_result": report_result,
                     "tokens_used": tokens,
@@ -874,8 +965,8 @@ class SubAgentTaskTool:
         # Skill creator result: has 'skill_path' key
         skill_path = output.get("skill_path")
         if skill_path is not None:
-            return FuncToolResult(
-                result={
+            return _wrap(
+                {
                     "response": response,
                     "skill_name": output.get("skill_name", ""),
                     "skill_path": skill_path,
@@ -886,8 +977,8 @@ class SubAgentTaskTool:
         # Dashboard result: has 'dashboard_result' key
         dashboard_result = output.get("dashboard_result")
         if dashboard_result is not None:
-            return FuncToolResult(
-                result={
+            return _wrap(
+                {
                     "response": response,
                     "dashboard_result": dashboard_result,
                     "tokens_used": tokens,
@@ -897,8 +988,8 @@ class SubAgentTaskTool:
         # Scheduler result: has 'scheduler_result' key
         scheduler_result = output.get("scheduler_result")
         if scheduler_result is not None:
-            return FuncToolResult(
-                result={
+            return _wrap(
+                {
                     "response": response,
                     "scheduler_result": scheduler_result,
                     "tokens_used": tokens,
@@ -908,8 +999,8 @@ class SubAgentTaskTool:
         # Feedback result: has 'items_saved' key
         items_saved = output.get("items_saved")
         if items_saved is not None:
-            return FuncToolResult(
-                result={
+            return _wrap(
+                {
                     "response": response,
                     "items_saved": items_saved,
                     "storage_summary": output.get("storage_summary"),
@@ -918,8 +1009,8 @@ class SubAgentTaskTool:
             )
 
         # Generic format
-        return FuncToolResult(
-            result={
+        return _wrap(
+            {
                 "response": response or output.get("content", ""),
                 "tokens_used": tokens,
             }
@@ -964,6 +1055,19 @@ class SubAgentTaskTool:
                 '- For complex questions requiring deep exploration, call multiple task(type="explore") '
                 "in PARALLEL, each with a direction-specific prompt (schema+sample, knowledge, file)",
                 '- For quick single-direction lookups, call one task(type="explore") with a focused prompt',
+                "- Each successful task() result includes a 'session_id'. To CONTINUE refining a "
+                "prior subagent answer with full prior context (its previous SQL, schema "
+                "discoveries, reasoning), pass that session_id back as the task's 'session_id' "
+                "argument and put ONLY the diff/clarification in 'prompt' — do not re-state the "
+                "original problem. The session_id MUST be reused with the SAME 'type'.",
+                "- Iterate-on-gen_sql example:",
+                '    Turn 1: task(type="gen_sql", prompt="Top 10 customers by revenue last quarter",',
+                '              description="customer revenue ranking")',
+                '          → returns {sql, response, tokens_used, session_id: "gen_sql_session_ab12cd34"}',
+                '    Turn 2: task(type="gen_sql", session_id="gen_sql_session_ab12cd34",',
+                "              prompt=\"Exclude internal test accounts (account_type='test') and group",
+                '                      monthly instead of the quarterly total",',
+                '              description="refine: exclude tests, monthly granularity")',
             ]
         )
 

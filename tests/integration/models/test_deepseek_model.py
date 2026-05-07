@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 
 from datus.configuration.agent_config import AgentConfig
 from datus.models.deepseek_model import DeepSeekModel
+from datus.models.session_manager import SessionManager
 from datus.tools.func_tool import db_function_tools
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -314,8 +315,10 @@ class TestDeepSeekModel:
         """Test MCP integration with session management."""
         session_id = f"test_mcp_session_{uuid.uuid4().hex[:8]}"
 
-        # Create session
-        session = self.model.create_session(session_id)
+        # Create session via the standalone SessionManager (sessions are no
+        # longer owned by the model — see SessionManager / AgenticNode.session_manager).
+        session_manager = SessionManager(session_dir=self.model.session_dir, scope=self.model.session_scope)
+        session = session_manager.create_session(session_id)
 
         instructions = """You are a SQLite expert working with the SSB database.
         Answer questions about the database schema and data."""
@@ -369,12 +372,12 @@ class TestDeepSeekModel:
         # Verify session persistence with multiple interactions
 
         # Verify session persistence
-        session_info = self.model.session_manager.get_session_info(session_id)
+        session_info = session_manager.get_session_info(session_id)
         assert session_info["exists"] is True
         assert session_info["item_count"] > 0
 
         # Cleanup
-        self.model.delete_session(session_id)
+        session_manager.delete_session(session_id)
 
         logger.debug(f"MCP session Q1: {result1.get('content', '')[:100]}...")
         logger.debug(f"MCP session Q2: {result2.get('content', '')[:100]}...")
@@ -384,8 +387,9 @@ class TestDeepSeekModel:
         """Test MCP streaming with session management."""
         session_id = f"test_stream_session_{uuid.uuid4().hex[:8]}"
 
-        # Create session
-        session = self.model.create_session(session_id)
+        # Create session via the standalone SessionManager.
+        session_manager = SessionManager(session_dir=self.model.session_dir, scope=self.model.session_scope)
+        session = session_manager.create_session(session_id)
 
         instructions = """You are a SQLite expert working with the SSB database.
         Provide clear and concise answers about the database."""
@@ -429,10 +433,10 @@ class TestDeepSeekModel:
         assert action_count2 > 0
 
         # Verify session management
-        assert self.model.session_manager.session_exists(session_id)
+        assert session_manager.session_exists(session_id)
 
         # Cleanup
-        self.model.delete_session(session_id)
+        session_manager.delete_session(session_id)
 
         logger.debug(f"MCP stream session: {action_count1} + {action_count2} total actions")
 
@@ -582,8 +586,9 @@ class TestDeepSeekModel:
         """Acceptance test for MCP streaming with session management."""
         session_id = f"test_acceptance_session_{uuid.uuid4().hex[:8]}"
 
-        # Create session
-        session = self.model.create_session(session_id)
+        # Create session via the standalone SessionManager.
+        session_manager = SessionManager(session_dir=self.model.session_dir, scope=self.model.session_scope)
+        session = session_manager.create_session(session_id)
 
         instructions = """You are a SQLite expert working with the SSB database.
         Provide concise answers about database schema and simple queries."""
@@ -620,11 +625,11 @@ class TestDeepSeekModel:
             logger.debug(f"Acceptance scenario {i + 1} completed with {action_count} actions")
 
         # Verify session management
-        session_info = self.model.session_manager.get_session_info(session_id)
+        session_info = session_manager.get_session_info(session_id)
         assert session_info["exists"] is True
         assert session_info["item_count"] > 0
 
         # Cleanup
-        self.model.delete_session(session_id)
+        session_manager.delete_session(session_id)
 
         logger.debug(f"Acceptance test completed: {total_actions} total actions across {len(scenarios)} scenarios")

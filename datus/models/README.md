@@ -202,21 +202,32 @@ export LANGSMITH_PROJECT="datus-agent"
 
 ### Session Management
 
-```python
-# Create session for multi-turn conversation
-session = model.create_session("user_123")
+Session storage is owned by `AgenticNode`, not by the model. Models are
+stateless compute resources; nodes carry the conversation. For ad-hoc use
+outside an AgenticNode, instantiate `SessionManager` directly.
 
-# Use session in tool calls
+```python
+from datus.models.session_manager import SessionManager
+
+# Create session for multi-turn conversation
+session_manager = SessionManager(session_dir=agent_config.session_dir, scope=user_id)
+session = session_manager.create_session("user_123")
+
+# Use session in tool calls — session is passed explicitly to the model.
 result = await model.generate_with_tools(
     prompt="What tables are available?",
     mcp_servers=mcp_servers,
-    session=session  # Maintains conversation context
+    session=session,  # Maintains conversation context
 )
 
 # List and manage sessions
-sessions = model.list_sessions()
-model.clear_session("user_123")
-model.delete_session("user_123")
+sessions = session_manager.list_sessions()
+session_manager.clear_session("user_123")
+session_manager.delete_session("user_123")
+
+# Inside an AgenticNode, prefer the node-owned manager:
+#   node.session_manager.create_session(node.session_id)
+# which automatically nests under {scope}/{session_subdir}/ when set.
 ```
 
 ## How to contribute to this module

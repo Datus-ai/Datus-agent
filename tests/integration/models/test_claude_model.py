@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.models.claude_model import ClaudeModel
+from datus.models.session_manager import SessionManager
 from datus.tools.func_tool import db_function_tools
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -160,8 +161,10 @@ class TestClaudeModel:
         """Test MCP integration with session management."""
         session_id = f"test_mcp_session_{uuid.uuid4().hex[:8]}"
 
-        # Create session
-        session = self.model.create_session(session_id)
+        # Create session via the standalone SessionManager (sessions are no
+        # longer owned by the model — see SessionManager / AgenticNode.session_manager).
+        session_manager = SessionManager(session_dir=self.model.session_dir, scope=self.model.session_scope)
+        session = session_manager.create_session(session_id)
 
         instructions = """You are a SQLite expert working with the SSB database.
         Answer questions about the database schema and data."""
@@ -213,12 +216,12 @@ class TestClaudeModel:
         assert "sql_contexts" in result3
 
         # Verify session persistence
-        session_info = self.model.session_manager.get_session_info(session_id)
+        session_info = session_manager.get_session_info(session_id)
         assert session_info["exists"] is True
         assert session_info["item_count"] > 0
 
         # Cleanup
-        self.model.delete_session(session_id)
+        session_manager.delete_session(session_id)
 
         logger.debug(f"MCP session Q1: {result1.get('content', '')[:100]}...")
         logger.debug(f"MCP session Q2: {result2.get('content', '')[:100]}...")

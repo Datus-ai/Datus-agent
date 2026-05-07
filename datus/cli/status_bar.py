@@ -294,13 +294,12 @@ class StatusBarProvider:
         session_id = getattr(node, "session_id", None)
         if not session_id:
             return 0, 0
-        model = getattr(node, "model", None)
-        if model is None:
-            return 0, 0
         try:
-            session_manager = model.session_manager
+            session_manager = node.session_manager
         except Exception as e:
             logger.debug(f"status_bar: session_manager unavailable: {e}")
+            return 0, 0
+        if session_manager is None:
             return 0, 0
         try:
             usage = session_manager.get_detailed_usage(session_id)

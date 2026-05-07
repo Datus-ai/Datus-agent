@@ -1995,3 +1995,186 @@ class TestProxyToolPropagation:
 
         mock_apply.assert_called_once_with(mock_node, parent_node.proxy_tool_patterns, channel=parent_node.tool_channel)
         assert result.success == 1
+
+
+# ── session persistence + resume ───────────────────────────────────
+
+
+def _build_persistent_mock_node(
+    *,
+    node_name: str = "gen_sql",
+    session_id_to_assign: str = "gen_sql_session_abc12345",
+    output: dict = None,
+    status: ActionStatus = ActionStatus.SUCCESS,
+    role: ActionRole = ActionRole.TOOL,
+):
+    """Construct a MagicMock that behaves like an AgenticNode for task-tool tests.
+
+    The mock yields one action through ``execute_stream_with_interactions`` and
+    exposes the AgenticNode surface that ``_execute_node`` touches:
+    ``session_id``, ``session_subdir``, ``_session``, ``_session_manager``,
+    ``session_manager.session_exists``, ``get_node_name``.
+    """
+    if output is None:
+        output = {"sql": "SELECT 1", "response": "ok", "tokens_used": 10}
+
+    mock_action = Mock(spec=ActionHistory)
+    mock_action.status = status
+    mock_action.role = role
+    mock_action.output = output
+
+    mock_node = MagicMock()
+    mock_node.session_id = session_id_to_assign
+    mock_node.session_subdir = None
+    mock_node._session = None
+    mock_node._session_manager = MagicMock()
+    mock_node.session_manager = mock_node._session_manager
+    mock_node.session_manager.session_exists.return_value = True
+    mock_node.get_node_name.return_value = node_name
+
+    async def _mock_stream(ahm):
+        yield mock_action
+
+    mock_node.execute_stream_with_interactions = _mock_stream
+    mock_node.execute_stream = _mock_stream
+    return mock_node
+
+
+@pytest.mark.ci
+class TestSessionPersistence:
+    @pytest.mark.asyncio
+    async def test_returns_session_id_in_result(self, task_tool):
+        """A successful task() result must include the subagent's session_id."""
+        node = _build_persistent_mock_node(session_id_to_assign="gen_sql_session_abc12345")
+        with patch.object(task_tool, "_create_node", return_value=node):
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                result = await task_tool.task(type="gen_sql", prompt="show tables", description="explore schema")
+        assert result.success == 1
+        assert result.result["session_id"] == "gen_sql_session_abc12345"
+        # Existing keys still intact
+        assert result.result["sql"] == "SELECT 1"
+
+    @pytest.mark.asyncio
+    async def test_disk_path_includes_parent_session_id(self, task_tool):
+        """When the parent has a session_id, node.session_subdir is set so the
+        subagent .db nests under {sessions_dir}/{user_scope}/{parent_id}/."""
+        parent = MagicMock()
+        parent.session_id = "chat_session_parent01"
+        parent.proxy_tool_patterns = None
+        task_tool.set_parent_node(parent)
+
+        node = _build_persistent_mock_node()
+        with patch.object(task_tool, "_create_node", return_value=node):
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                result = await task_tool.task(type="gen_sql", prompt="test")
+
+        assert result.success == 1
+        assert node.session_subdir == "chat_session_parent01"
+
+    @pytest.mark.asyncio
+    async def test_no_parent_session_falls_back_to_flat_path(self, task_tool):
+        """Parent without a session_id falls back to a flat layout (no nesting)."""
+        # task_tool fixture has no parent_node set by default.
+        node = _build_persistent_mock_node()
+        with patch.object(task_tool, "_create_node", return_value=node):
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                result = await task_tool.task(type="gen_sql", prompt="test")
+        assert result.success == 1
+        # Without a parent session_id, session_subdir stays None.
+        assert node.session_subdir is None
+        # The returned session_id is still valid so the caller can resume later.
+        assert result.result["session_id"] == "gen_sql_session_abc12345"
+
+    @pytest.mark.asyncio
+    async def test_resume_loads_prior_session(self, task_tool):
+        """A valid session_id passes through and is set on the node before
+        _get_or_create_session runs (so AgenticNode loads from disk)."""
+        node = _build_persistent_mock_node(session_id_to_assign="gen_sql_session_resume01")
+        with patch.object(task_tool, "_create_node", return_value=node):
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                result = await task_tool.task(
+                    type="gen_sql",
+                    prompt="refine: use INNER JOIN",
+                    description="refinement",
+                    session_id="gen_sql_session_resume01",
+                )
+        # session_exists was consulted on the node-owned manager
+        node.session_manager.session_exists.assert_called_once_with("gen_sql_session_resume01")
+        # The pre-existing id was assigned (caller-supplied wins over auto-gen)
+        assert node.session_id == "gen_sql_session_resume01"
+        assert result.success == 1
+        assert result.result["session_id"] == "gen_sql_session_resume01"
+
+    @pytest.mark.asyncio
+    async def test_resume_prefix_mismatch_returns_error(self, task_tool):
+        """type='gen_sql' with a session_id from gen_report must be rejected."""
+        node = _build_persistent_mock_node()
+        with patch.object(task_tool, "_create_node", return_value=node):
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                result = await task_tool.task(type="gen_sql", prompt="x", session_id="gen_report_session_xx123456")
+        assert result.success == 0
+        assert "belongs to subagent type" in result.error
+        assert "gen_report" in result.error
+
+    @pytest.mark.asyncio
+    async def test_resume_invalid_format_returns_error(self, task_tool):
+        """Path-traversal / illegal characters fail the session_id format check."""
+        result = await task_tool.task(type="gen_sql", prompt="x", session_id="../etc/passwd")
+        assert result.success == 0
+        assert "Invalid session_id format" in result.error
+
+    @pytest.mark.asyncio
+    async def test_resume_missing_file_returns_error(self, task_tool):
+        """A well-formed, prefix-matching session_id whose .db is absent on disk
+        is rejected with a clear 'not found' error rather than silently starting fresh."""
+        node = _build_persistent_mock_node()
+        node.session_manager.session_exists.return_value = False
+        with patch.object(task_tool, "_create_node", return_value=node):
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                result = await task_tool.task(type="gen_sql", prompt="x", session_id="gen_sql_session_missing1")
+        assert result.success == 0
+        assert "not found on disk" in result.error
+
+    @pytest.mark.asyncio
+    async def test_failure_envelope_omits_session_id(self, task_tool):
+        """Subagent failures return a clean error envelope without session_id —
+        callers know which id they sent and the failed run still leaves a (partial)
+        .db on disk should they wish to retry."""
+        node = _build_persistent_mock_node(
+            output={"success": False, "error": "broken"},
+            status=ActionStatus.FAILED,
+        )
+        with patch.object(task_tool, "_create_node", return_value=node):
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                result = await task_tool.task(type="gen_sql", prompt="x")
+        assert result.success == 0
+        # Failure envelope: result is None, session_id never injected.
+        assert result.result is None
+
+    @pytest.mark.asyncio
+    async def test_finally_does_not_delete_session(self, task_tool):
+        """The finally block must NOT call delete_session — the .db is kept
+        alive for resume on later turns."""
+        node = _build_persistent_mock_node()
+        with patch.object(task_tool, "_create_node", return_value=node):
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                await task_tool.task(type="gen_sql", prompt="test")
+        # delete_session must never have been called on either the node or its manager.
+        node.delete_session.assert_not_called()
+        node._session_manager.delete_session.assert_not_called()
+        # close_all_sessions IS expected — we release the in-memory handle.
+        node._session_manager.close_all_sessions.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_schema_advertises_session_id_parameter(self, task_tool):
+        """The LLM-facing schema must expose `session_id` (optional) so models
+        learn they can resume a prior subagent conversation."""
+        tools = task_tool.available_tools()
+        schema = tools[0].params_json_schema
+        assert "session_id" in schema["properties"]
+        # Optional — must not be in required list.
+        assert "session_id" not in schema.get("required", [])
+        # Description guides the LLM to the iterative-refinement use case.
+        desc = schema["properties"]["session_id"]["description"]
+        assert "CONTINUE" in desc or "continue" in desc.lower()
+        assert "type" in desc.lower()  # callout that types must match
