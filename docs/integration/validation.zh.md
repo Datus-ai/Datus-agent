@@ -61,7 +61,7 @@ Validator 子 agent 只能使用只读工具：
 ```yaml
 agent:
   validation:
-    # 只关闭 Layer B validator skill。Layer A 仍然会运行。
+    # 设为 false 时，只关闭 Layer B validator skill；Layer A 仍然会运行。
     skill_validators_enabled: true
 
     # 主 agent 总尝试次数，包含第一次尝试。

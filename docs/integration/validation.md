@@ -79,7 +79,7 @@ In `agent.yml`:
 ```yaml
 agent:
   validation:
-    # Disable only Layer B validator skills. Layer A still runs.
+    # Set to false to disable Layer B validator skills. Layer A still runs.
     skill_validators_enabled: true
 
     # Number of main-agent attempts including the first attempt.
@@ -228,4 +228,3 @@ null ratios, accepted value sets, duplicate-key checks, sample diffs, or
 business thresholds. The bundled `table-validation` skill deliberately stays
 limited to explicit schema contracts; object existence and basic row-count
 invariants belong to Layer A.
-
