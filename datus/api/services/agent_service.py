@@ -326,30 +326,54 @@ def _merge_subjects_from_scoped_context(scoped_ctx: Optional[dict]) -> list[str]
 def _build_scoped_context(
     base: Optional[dict],
     *,
+    datasource: Optional[str] = None,
     catalogs: Any = None,
     subject_buckets: Optional[dict[str, list[str]]] = None,
 ) -> Optional[dict]:
-    """Merge API-level ``catalogs`` / classified subject buckets into ``scoped_context``.
+    """Merge API-level fields into a runtime-shaped ``scoped_context`` dict.
 
     ``base`` carries any existing scoped_context payload (yaml-loaded for
     edits, an explicit ``request.scoped_context`` for inputs that send one).
-    ``catalogs`` is folded in as a comma-separated string. ``subject_buckets``
-    — pre-classified by :func:`_classify_subject_paths` — are written to the
-    runtime-visible ``metrics`` / ``sqls`` / ``ext_knowledge`` keys; passing
-    a non-``None`` ``subject_buckets`` rewrites all three bucket keys (an
-    empty bucket clears its key), so the API contract is "the caller's
-    ``subjects`` list is the new full scope."
+
+    ``ScopedContext`` (``datus/schemas/agent_models.py``) only defines
+    ``datasource`` / ``tables`` / ``metrics`` / ``sqls`` / ``ext_knowledge``;
+    the API's ``catalogs`` array is the editor's name for the same scope as
+    runtime ``tables`` (catalog/database/schema/table identifiers consumed by
+    ``ScopedFilterBuilder.build_table_filter``), so this helper writes
+    ``catalogs`` into ``scoped_context.tables`` and never persists a
+    non-runtime ``catalogs`` key. Stale ``catalogs`` keys from earlier
+    versions of this API are dropped on write.
+
+    ``datasource`` mirrors the wizard's behavior — saving a subagent always
+    binds it to the active datasource so ``SubAgentConfig.is_in_datasource``
+    can gate at runtime. Passing an empty string clears the binding;
+    ``None`` leaves the existing value intact.
+
+    ``subject_buckets`` (pre-classified by :func:`_classify_subject_paths`)
+    are written to the runtime-visible ``metrics`` / ``sqls`` /
+    ``ext_knowledge`` keys; passing a non-``None`` ``subject_buckets``
+    rewrites all three bucket keys (an empty bucket clears its key), so the
+    API contract is "the caller's ``subjects`` list is the new full scope."
 
     Returns ``None`` when the merged dict would be empty.
     """
     merged: dict = dict(base) if isinstance(base, dict) else {}
 
+    if datasource is not None:
+        if datasource:
+            merged["datasource"] = datasource
+        else:
+            merged.pop("datasource", None)
+
     if catalogs is not None:
+        # Drop any non-runtime ``catalogs`` key written by earlier API versions —
+        # only ``tables`` is honored by ``ScopedFilterBuilder.build_table_filter``.
+        merged.pop("catalogs", None)
         rendered = _format_csv(_strip_leading_slashes(catalogs))
         if rendered:
-            merged["catalogs"] = rendered
+            merged["tables"] = rendered
         else:
-            merged.pop("catalogs", None)
+            merged.pop("tables", None)
 
     if subject_buckets is not None:
         for key in _SUBJECT_BUCKET_KEYS:
@@ -508,17 +532,23 @@ class AgentService:
 
             created_at = _file_mtime_iso(configuration_manager().config_path)
 
-        # ``catalogs`` is persisted under ``scoped_context.catalogs``;
+        # The API ``catalogs`` field maps to ``scoped_context.tables`` (the
+        # runtime-honored key consumed by ``ScopedFilterBuilder.build_table_filter``).
         # ``subjects`` is recomposed from the three runtime buckets
         # (``metrics`` / ``sqls`` / ``ext_knowledge``) — the inverse of the
         # save-side classification. Legacy entries that still carry the
-        # arrays at the top level (older API writes) keep working until the
-        # next edit migrates them. Leading slashes are stripped so older
-        # entries written before this normalization land in the canonical
-        # form too, and stored dot-form (wizard convention) is converted to
-        # the API's slash-form on the way out.
+        # arrays at the top level (older API writes) or under a non-runtime
+        # ``scoped_context.catalogs`` key (intermediate API versions) keep
+        # working until the next edit migrates them. Leading slashes are
+        # stripped so older entries land in the canonical form too, and
+        # stored dot-form (wizard convention) is converted to the API's
+        # slash-form on the way out.
         scoped_ctx = agent.get("scoped_context") if isinstance(agent.get("scoped_context"), dict) else {}
-        catalogs = _strip_leading_slashes(scoped_ctx.get("catalogs")) or _strip_leading_slashes(agent.get("catalogs"))
+        catalogs = (
+            _strip_leading_slashes(scoped_ctx.get("tables"))
+            or _strip_leading_slashes(scoped_ctx.get("catalogs"))
+            or _strip_leading_slashes(agent.get("catalogs"))
+        )
         subjects = _merge_subjects_from_scoped_context(scoped_ctx)
         if not subjects:
             subjects = [_path_to_slash_form(t) for t in _strip_leading_slashes(agent.get("subjects"))]
@@ -619,17 +649,23 @@ class AgentService:
             "rules": request.rules or [],
             "created_at": _utc_now_iso(),
         }
+        # Bind the subagent to the active datasource (mirrors the wizard so
+        # ``SubAgentConfig.is_in_datasource`` can gate task delegation at runtime).
+        # ``request.datasource_id`` wins when set; otherwise fall back to the
+        # AgentConfig's current datasource.
+        datasource = request.datasource_id or getattr(agent_config, "current_datasource", "") or ""
         subject_buckets = (
             _classify_subject_paths(
                 agent_config,
                 _strip_leading_slashes(request.subjects),
-                datasource_id=request.datasource_id or None,
+                datasource_id=datasource or None,
             )
             if request.subjects
             else None
         )
         scoped_ctx = _build_scoped_context(
             base=None,
+            datasource=datasource,
             catalogs=request.catalogs,
             subject_buckets=subject_buckets,
         )
@@ -770,18 +806,21 @@ class AgentService:
         if "tools" in update_data:
             update_data["tools"] = _format_csv(update_data["tools"])
 
-        # ``catalogs`` is folded in as a single ``scoped_context.catalogs`` key.
-        # ``subjects`` is *classified* (via the metric / reference-sql /
-        # ext-knowledge stores) and split across the runtime-visible
-        # ``metrics`` / ``sqls`` / ``ext_knowledge`` keys, since
-        # ``ScopedContext`` doesn't have a flat ``subjects`` field — each
-        # store owns its own scope filter. Pre-existing keys (``tables`` and
-        # any other yaml-loaded scoped_context payload) survive the merge.
-        # Top-level ``catalogs`` / ``subjects`` from older edits are dropped
-        # so the read path can't see two competing copies.
+        # The API ``catalogs`` field maps to ``scoped_context.tables`` — that's
+        # the runtime-honored key consumed by
+        # ``ScopedFilterBuilder.build_table_filter``. ``subjects`` is *classified*
+        # (via the metric / reference-sql / ext-knowledge stores) and split
+        # across the runtime-visible ``metrics`` / ``sqls`` / ``ext_knowledge``
+        # keys, since ``ScopedContext`` has no flat ``subjects`` field. Editing
+        # any scope-related field also rewrites ``scoped_context.datasource`` to
+        # the active datasource so ``SubAgentConfig.is_in_datasource`` agrees
+        # with the saved binding. Pre-existing yaml-loaded scoped_context keys
+        # survive the merge; top-level ``catalogs`` / ``subjects`` from older
+        # edits are dropped so the read path can't see two competing copies.
         catalogs_input = update_data.pop("catalogs", None)
         subjects_input = update_data.pop("subjects", None)
-        if catalogs_input is not None or subjects_input is not None or "scoped_context" in update_data:
+        scope_touched = catalogs_input is not None or subjects_input is not None or "scoped_context" in update_data
+        if scope_touched:
             base_ctx: dict = {}
             existing = agent.get("scoped_context")
             if isinstance(existing, dict):
@@ -795,8 +834,10 @@ class AgentService:
                     agent_config,
                     _strip_leading_slashes(subjects_input),
                 )
+            datasource = getattr(agent_config, "current_datasource", "") or base_ctx.get("datasource") or ""
             merged = _build_scoped_context(
                 base=base_ctx,
+                datasource=datasource,
                 catalogs=catalogs_input,
                 subject_buckets=subject_buckets,
             )

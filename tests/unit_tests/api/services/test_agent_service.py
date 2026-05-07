@@ -946,10 +946,16 @@ class TestStripLeadingSlashes:
 class TestBuildScopedContext:
     """Tests for _build_scoped_context — fold catalogs/subject buckets into scoped_context."""
 
-    def test_only_catalogs_returns_dict_with_csv_value(self):
-        """Catalogs alone yields a single-key dict with a comma-separated string."""
+    def test_catalogs_writes_runtime_tables_key(self):
+        """API ``catalogs`` lands on the runtime-honored ``tables`` key.
+
+        ``ScopedContext`` has no ``catalogs`` field; the runtime's table-scope
+        filter (``ScopedFilterBuilder.build_table_filter``) reads ``tables``,
+        so the editor's ``catalogs`` array is the same scope under a
+        different surface name.
+        """
         result = _build_scoped_context(None, catalogs=["/A", "/B"])
-        assert result == {"catalogs": "A, B"}
+        assert result == {"tables": "A, B"}
 
     def test_subject_buckets_write_runtime_keys(self):
         """``subject_buckets`` writes to ``metrics`` / ``sqls`` / ``ext_knowledge``."""
@@ -963,13 +969,35 @@ class TestBuildScopedContext:
             },
         )
         # ext_knowledge is empty, so its key is omitted; subjects key never appears.
-        assert result == {"catalogs": "A", "metrics": "M1, M2", "sqls": "S1"}
+        assert result == {"tables": "A", "metrics": "M1, M2", "sqls": "S1"}
 
-    def test_base_keys_are_preserved(self):
-        """Existing scoped_context keys (tables) survive a catalogs-only update."""
-        base = {"tables": "orders", "metrics": "revenue"}
+    def test_datasource_is_written_when_provided(self):
+        """A non-empty datasource is recorded under ``scoped_context.datasource``."""
+        result = _build_scoped_context(None, datasource="finance", catalogs=["/A"])
+        assert result == {"datasource": "finance", "tables": "A"}
+
+    def test_empty_datasource_clears_existing_binding(self):
+        """An empty-string ``datasource`` removes a stale binding from ``base``."""
+        base = {"datasource": "old_ds", "tables": "orders"}
+        result = _build_scoped_context(base, datasource="")
+        assert result == {"tables": "orders"}
+
+    def test_none_datasource_preserves_existing_binding(self):
+        """``datasource=None`` leaves any existing binding intact."""
+        base = {"datasource": "keep_me"}
         result = _build_scoped_context(base, catalogs=["/A"])
-        assert result == {"tables": "orders", "metrics": "revenue", "catalogs": "A"}
+        assert result == {"datasource": "keep_me", "tables": "A"}
+
+    def test_catalogs_overwrites_tables_and_drops_legacy_catalogs_key(self):
+        """Catalogs fully rewrites ``tables`` and clears any non-runtime ``catalogs`` key.
+
+        Earlier API versions wrote ``scoped_context.catalogs`` directly. Once
+        the editor calls edit_agent again with catalogs the helper migrates
+        them under ``tables`` so the read path can't see two competing copies.
+        """
+        base = {"tables": "old_table", "catalogs": "stale_legacy", "metrics": "revenue"}
+        result = _build_scoped_context(base, catalogs=["/Commerce/Orders"])
+        assert result == {"tables": "Commerce/Orders", "metrics": "revenue"}
 
     def test_subject_buckets_overwrite_existing_bucket_keys(self):
         """Passing subject_buckets fully rewrites the three bucket keys.
@@ -989,17 +1017,17 @@ class TestBuildScopedContext:
         # tables survives; the three subject keys are rewritten — empty buckets clear.
         assert result == {"tables": "orders", "metrics": "new_metric"}
 
-    def test_explicit_empty_catalogs_clears_existing_value(self):
-        """Sending ``catalogs=[]`` removes the catalogs key from a base scoped_context."""
-        base = {"catalogs": "old", "tables": "t1"}
+    def test_explicit_empty_catalogs_clears_existing_tables(self):
+        """Sending ``catalogs=[]`` removes the ``tables`` key from a base scoped_context."""
+        base = {"tables": "old", "metrics": "m"}
         result = _build_scoped_context(base, catalogs=[])
-        assert result == {"tables": "t1"}
+        assert result == {"metrics": "m"}
 
     def test_none_subject_buckets_preserves_existing_keys(self):
         """``subject_buckets=None`` leaves any existing metrics/sqls/ext_knowledge intact."""
         base = {"metrics": "keep_me", "sqls": "also_keep"}
         result = _build_scoped_context(base, catalogs=["/A"], subject_buckets=None)
-        assert result == {"metrics": "keep_me", "sqls": "also_keep", "catalogs": "A"}
+        assert result == {"metrics": "keep_me", "sqls": "also_keep", "tables": "A"}
 
     def test_empty_result_returns_none(self):
         """When the merged dict ends up empty, return ``None`` so callers omit the block."""
@@ -1201,11 +1229,14 @@ class TestSubagentScopedContextRoundTrip:
     ):
         """API top-level catalogs/subjects land inside ``scoped_context`` on save.
 
-        Leading slashes from the editor's path form are stripped, and
-        ``subjects`` is *classified* into metrics / sqls / ext_knowledge —
-        no flat ``subjects`` key ever appears on disk because the runtime
-        ``ScopedContext`` doesn't have one (each store owns its own filter).
-        Without pre-populated KB stores the classifier falls back to metrics.
+        ``catalogs`` writes through to the runtime-honored ``tables`` key (no
+        ``catalogs`` key persists, since ``ScopedContext`` doesn't define one).
+        Leading slashes from the editor's path form are stripped. ``subjects``
+        is *classified* into metrics / sqls / ext_knowledge — no flat
+        ``subjects`` key ever appears on disk because each store owns its
+        own scope filter. Without pre-populated KB stores the classifier
+        falls back to metrics. ``scoped_context.datasource`` is bound to the
+        active datasource so ``SubAgentConfig.is_in_datasource`` agrees.
         """
         import yaml
 
@@ -1232,7 +1263,11 @@ class TestSubagentScopedContextRoundTrip:
         assert "subjects" not in entry
         scoped = entry.get("scoped_context")
         assert isinstance(scoped, dict)
-        assert scoped["catalogs"] == "Commerce/Orders/Average_Gross_Order_Value, Commerce/Sales"
+        # Active datasource binding is recorded.
+        assert scoped["datasource"] == real_agent_config.current_datasource
+        # No non-runtime ``catalogs`` key — catalogs write through to ``tables``.
+        assert "catalogs" not in scoped
+        assert scoped["tables"] == "Commerce/Orders/Average_Gross_Order_Value, Commerce/Sales"
         # Subjects route to ``metrics`` (the fallback bucket) because the
         # KB stores have no entry named "Daily" under "Finance/Revenue".
         # No flat ``subjects`` key is persisted.
@@ -1280,15 +1315,25 @@ class TestSubagentScopedContextRoundTrip:
         assert "catalogs" not in entry
         assert "subjects" not in entry
         scoped = entry["scoped_context"]
-        # Leading slashes are stripped so the on-disk form is canonical.
-        assert scoped["catalogs"] == "Commerce/Orders/Avg"
+        # Leading slashes are stripped, and catalogs lands on ``tables`` —
+        # no non-runtime ``catalogs`` key persists.
+        assert "catalogs" not in scoped
+        assert scoped["tables"] == "Commerce/Orders/Avg"
         # No flat ``subjects`` key — subjects are classified into runtime buckets.
         assert "subjects" not in scoped
         # Without pre-populated KB stores the classifier defaults to metrics.
         assert scoped["metrics"] == "Sales/Region"
+        # The active datasource is rebound on every scope-touching edit.
+        assert scoped["datasource"] == real_agent_config.current_datasource
 
     async def test_edit_preserves_existing_scoped_context_keys(self, real_agent_config, agent_yml_with_singleton):
-        """Editing catalogs must not wipe pre-existing tables/metrics/sqls keys."""
+        """Editing catalogs rewrites ``tables`` but leaves metrics/sqls intact.
+
+        Catalogs maps to the runtime ``tables`` key, so an edit that touches
+        catalogs is expected to overwrite that field. The other scope keys
+        (``metrics`` / ``sqls`` / ``ext_knowledge``) must survive when
+        ``subjects`` is not part of the request.
+        """
         import yaml
 
         from datus.api.models.agent_models import EditAgentInput
@@ -1316,16 +1361,17 @@ class TestSubagentScopedContextRoundTrip:
         with open(agent_yml_with_singleton) as f:
             raw = yaml.safe_load(f)
         scoped = raw["agent"]["agentic_nodes"]["preserve_scope"]["scoped_context"]
-        assert scoped["tables"] == "orders, customers"
+        # ``tables`` was rewritten by catalogs — there's no separate
+        # ``catalogs`` key in ``ScopedContext``. Other scope fields survive.
+        assert scoped["tables"] == "Commerce/Orders"
         assert scoped["metrics"] == "revenue.daily"
         assert scoped["sqls"] == "finance.region_rollup"
-        assert scoped["catalogs"] == "Commerce/Orders"
 
     async def test_get_returns_tools_as_list_and_extracts_scoped_paths(self, real_agent_config):
         """The read path inverts the storage format the editor expects.
 
-        Catalog entries are returned without the leading slash; subjects are
-        recomposed by merging the three runtime buckets (metrics / sqls /
+        Catalog entries are recovered from the runtime ``tables`` key; subjects
+        are recomposed by merging the three runtime buckets (metrics / sqls /
         ext_knowledge) into a single flat list. Stored dot-form entries
         (wizard convention) are normalized to slash-form on the way out.
         """
@@ -1333,11 +1379,11 @@ class TestSubagentScopedContextRoundTrip:
             "type": "gen_sql",
             "tools": "semantic_tools.*, db_tools.*, context_search_tools.list_subject_tree",
             "scoped_context": {
-                "catalogs": "/Commerce/Orders/Avg, /Commerce/Sales",
+                "datasource": "finance",
+                "tables": "/Commerce/Orders/Avg, /Commerce/Sales",
                 "metrics": "Finance/Revenue/Daily, finance.revenue.weekly",
                 "sqls": "Sales/region_query",
                 "ext_knowledge": "Docs/handbook",
-                "tables": "orders",
             },
             "created_at": "2026-04-30T09:20:31.545000Z",
         }
@@ -1351,6 +1397,8 @@ class TestSubagentScopedContextRoundTrip:
             "db_tools.*",
             "context_search_tools.list_subject_tree",
         ]
+        # Catalogs come back from ``scoped_context.tables`` (the runtime key);
+        # leading slashes are stripped on the way out.
         assert agent["catalogs"] == ["Commerce/Orders/Avg", "Commerce/Sales"]
         # Subjects merge across all three buckets in probe order; the dot-form
         # entry "finance.revenue.weekly" is normalized to slash-form.
@@ -1360,6 +1408,27 @@ class TestSubagentScopedContextRoundTrip:
             "Sales/region_query",
             "Docs/handbook",
         ]
+
+    async def test_get_falls_back_to_legacy_scoped_catalogs_key(self, real_agent_config):
+        """Older API versions wrote ``scoped_context.catalogs`` directly.
+
+        Until the next edit migrates that key into ``tables``, the read path
+        must surface those entries so the editor doesn't appear to lose the
+        scope after an upgrade.
+        """
+        real_agent_config.agentic_nodes["legacy_scoped_catalogs"] = {
+            "type": "gen_sql",
+            "tools": "db_tools.*",
+            "scoped_context": {
+                "catalogs": "/Legacy/Scoped/Catalog",
+            },
+            "created_at": "2026-04-30T09:20:31.545000Z",
+        }
+
+        svc = AgentService()
+        result = await svc.get_agent("legacy_scoped_catalogs", real_agent_config)
+        assert result.success is True
+        assert result.data["agent"]["catalogs"] == ["Legacy/Scoped/Catalog"]
 
     async def test_get_falls_back_to_top_level_catalogs_for_legacy_entries(self, real_agent_config):
         """Legacy entries written before the migration still surface catalogs/subjects.
