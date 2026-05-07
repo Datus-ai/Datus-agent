@@ -804,13 +804,22 @@ class AgentService:
             request_ctx = update_data.pop("scoped_context", None)
             if isinstance(request_ctx, dict):
                 base_ctx.update(request_ctx)
+            # Resolve the effective datasource *before* classification: if
+            # ``agent_config.current_datasource`` is unset but the agent
+            # already has a saved binding under ``scoped_context.datasource``,
+            # the classifier must use the saved DS to look up entries in the
+            # right metric / sql / ext_knowledge stores. Otherwise it would
+            # fall back to "no datasource → all metrics" and silently
+            # mis-bucket subjects against a binding that's about to be
+            # re-persisted by ``_build_scoped_context``.
+            datasource = getattr(agent_config, "current_datasource", "") or base_ctx.get("datasource") or ""
             subject_buckets = None
             if subjects_input is not None:
                 subject_buckets = _classify_subject_paths(
                     agent_config,
                     list(subjects_input),
+                    datasource_id=datasource or None,
                 )
-            datasource = getattr(agent_config, "current_datasource", "") or base_ctx.get("datasource") or ""
             merged = _build_scoped_context(
                 base=base_ctx,
                 datasource=datasource,

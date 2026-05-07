@@ -1527,3 +1527,90 @@ class TestSubagentScopedContextRoundTrip:
         entry = raw["agent"]["agentic_nodes"]["clear_scope_agent"]
         # The whole scoped_context block is gone on disk, not just in memory.
         assert "scoped_context" not in entry
+
+    async def test_edit_classifies_subjects_under_saved_datasource(
+        self, real_agent_config, agent_yml_with_singleton, monkeypatch
+    ):
+        """Classification uses the saved DS binding when ``current_datasource`` is unset.
+
+        Without the fix, ``_classify_subject_paths`` ran with
+        ``datasource_id=None`` and fell back to ``agent_config.current_datasource``
+        — which is empty in this scenario — so every subject was bucketed to
+        ``metrics`` regardless of which store actually owned it. With the fix,
+        ``edit_agent`` resolves the effective datasource from the saved
+        ``scoped_context.datasource`` first, so the SQL/knowledge stores are
+        actually probed and ownership wins.
+        """
+        from datus.api.models.agent_models import EditAgentInput
+        from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
+        from datus.storage.metric.store import MetricRAG
+        from datus.storage.reference_sql.store import ReferenceSqlRAG
+
+        # Capture which datasource_id flows into the classifier so we can
+        # assert against the resolution rule directly.
+        captured: dict = {}
+
+        class _StubStore:
+            def __init__(self, owns: set[str]):
+                self._owns = owns
+
+            def list_entries(self, node_id, name=None, limit=None):
+                return [{"name": name}] if name in self._owns else []
+
+        class _StubTree:
+            def get_node_by_path(self, path):
+                return {"node_id": 1}
+
+        def fake_metric_init(self, agent_config, datasource_id=None):
+            captured["metric_ds"] = datasource_id
+            self.storage = _StubStore({"my_metric"})
+
+        def fake_sql_init(self, agent_config, datasource_id=None):
+            self.reference_sql_storage = _StubStore({"my_sql"})
+
+        def fake_knowledge_init(self, agent_config, datasource_id=None):
+            self.store = _StubStore({"my_doc"})
+
+        monkeypatch.setattr(MetricRAG, "__init__", fake_metric_init)
+        monkeypatch.setattr(ReferenceSqlRAG, "__init__", fake_sql_init)
+        monkeypatch.setattr(ExtKnowledgeRAG, "__init__", fake_knowledge_init)
+        monkeypatch.setattr(
+            "datus.storage.registry.get_subject_tree_store",
+            lambda project: _StubTree(),
+        )
+
+        # Seed an entry already bound to "finance" via scoped_context, then
+        # blank out the runtime's current_datasource so the only available
+        # binding is the saved one.
+        real_agent_config.agentic_nodes["edit_with_saved_ds"] = {
+            "type": "gen_sql",
+            "scoped_context": {
+                "datasource": "finance",
+                "tables": "default_catalog.mart.raw_orders",
+            },
+        }
+        real_agent_config.current_datasource = ""
+
+        svc = AgentService()
+        result = await svc.edit_agent(
+            EditAgentInput(
+                id="edit_with_saved_ds",
+                name="edit_with_saved_ds",
+                subjects=["Finance.SQL.my_sql", "Docs.handbook.my_doc", "Sales.unknown"],
+            ),
+            real_agent_config,
+        )
+        assert result.success is True
+        # The classifier must have been invoked with the saved datasource —
+        # without the fix it received None and fell back to the
+        # "no datasource → all metrics" branch.
+        assert captured.get("metric_ds") == "finance"
+
+        # SQL and knowledge entries land in their owning buckets; only the
+        # truly unmatched name falls back to metrics.
+        scoped = real_agent_config.agentic_nodes["edit_with_saved_ds"]["scoped_context"]
+        assert scoped["sqls"] == "Finance.SQL.my_sql"
+        assert scoped["ext_knowledge"] == "Docs.handbook.my_doc"
+        assert scoped["metrics"] == "Sales.unknown"
+        # Saved datasource binding survives the edit.
+        assert scoped["datasource"] == "finance"
