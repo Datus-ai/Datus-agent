@@ -87,6 +87,7 @@ nav:
       - Overview: develop/README.md
       - Architecture: develop/Architecture.md
       - Contributing: develop/Contributing.md
+    - VSCode Extension: vscode_extension/introduction.md
 
   - Release Notes: release_notes.md
 
@@ -165,6 +166,7 @@ plugins:
             Skills: Skills
             Validation: 校验
             Auto Memory: 自动记忆
+            VSCode Extension: VSCode 插件
             Release Notes: 发布说明
 
 theme:
