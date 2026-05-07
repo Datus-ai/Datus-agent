@@ -16,7 +16,7 @@
 
 当前发布渠道为 VSIX 直装：
 
-1. 下载最新版本：[https://cdn.datus.ai/vsc/release/latest.vsix](https://cdn.datus.ai/vsc/release/latest.vsix)
+1. 下载最新版本：[https://cdn.studio.datus.ai/vsc/release/datus-studio-vsix.zip](https://cdn.studio.datus.ai/vsc/release/datus-studio-vsix.zip)，解压 zip 得到 .vsix 文件。
 2. 在 VSCode 中打开命令面板（`Cmd/Ctrl + Shift + P`），执行 **Extensions: Install from VSIX...**，选择刚下载的 `.vsix` 文件。
 3. 安装完成后，活动栏会出现 Datus Studio 图标，并新增三个面板：左侧 **Datus: Object Explorer**、左侧主面板 **Datus Studio**（Chat）、底部 **Datus Studio**（SQL / Chart）。
 

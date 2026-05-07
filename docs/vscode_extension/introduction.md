@@ -16,7 +16,7 @@ Target scenarios:
 
 The current release channel is direct VSIX install:
 
-1. Download the latest build: [https://cdn.datus.ai/vsc/release/latest.vsix](https://cdn.datus.ai/vsc/release/latest.vsix)
+1. Download the latest build: [https://cdn.studio.datus.ai/vsc/release/datus-studio-vsix.zip](https://cdn.studio.datus.ai/vsc/release/datus-studio-vsix.zip), Unzip the zip file to get the .vsix file.
 2. In VSCode, open the command palette (`Cmd/Ctrl + Shift + P`) and run **Extensions: Install from VSIX...**, then pick the file you just downloaded.
 3. After installation, a Datus Studio icon appears in the Activity Bar, along with three new panels: **Datus: Object Explorer** on the left, the main **Datus Studio** (Chat) panel on the left, and the bottom **Datus Studio** panel (SQL / Chart).
 
