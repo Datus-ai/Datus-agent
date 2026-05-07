@@ -471,14 +471,16 @@ class AgenticNode(Node):
     def _inject_memory_context(self, base_prompt: str, override_node_name: Optional[str] = None) -> str:
         """Inject memory context into the system prompt.
 
-        Injection rules:
-        - When ``override_node_name`` is provided (feedback path): inject
-          unconditionally, targeting that node's memory directory. Feedback
-          uses this to attach the caller's memory even when the caller itself
-          would not have memory enabled by default.
-        - Otherwise: inject only if ``self.memory_enabled`` is True. Built-in
-          subagents (gen_sql, gen_report, etc.) default to disabled so their
-          prompts stay focused; ``chat`` and custom subagents default to enabled.
+        Injection rules (resolved in order):
+        1. ``override_node_name`` provided (feedback path) → unconditional
+           injection of that node's memory, writable.
+        2. ``self.memory_enabled`` True (chat / custom subagents) → own memory,
+           writable.
+        3. ``inherited_memory`` contextvar set by ``SubAgentTaskTool`` for this
+           node name → render the parent's memory in **read-only** mode. Built-in
+           subagents launched via ``task`` see their originating parent's memory
+           for context but cannot modify it.
+        4. None of the above → no memory section is appended.
 
         Args:
             base_prompt: The prompt to append memory context to.
@@ -486,19 +488,29 @@ class AgenticNode(Node):
                 ``self.get_node_name()``. Enables injecting another node's memory (e.g. the
                 feedback node injects its caller's memory).
         """
+        from datus.configuration.inherited_memory_overrides import get_inherited_memory
         from datus.utils.memory_loader import get_memory_dir, load_memory_context
 
+        read_only = False
         if override_node_name:
             node_name = override_node_name
-        else:
-            if not self.memory_enabled:
-                return base_prompt
+        elif self.memory_enabled:
             node_name = self.get_node_name()
+        else:
+            inherited = get_inherited_memory(self.get_node_name())
+            if not inherited:
+                return base_prompt
+            node_name = inherited
+            read_only = True
 
         try:
             workspace_root = self._resolve_workspace_root()
 
             memory_content = load_memory_context(workspace_root, node_name)
+            if read_only and not memory_content.strip():
+                # Parent has no memory worth inheriting; skip the read-only block
+                # entirely so we do not waste prompt budget on an empty notice.
+                return base_prompt
             memory_dir = get_memory_dir(workspace_root, node_name)
 
             memory_section = get_prompt_manager(agent_config=self.agent_config).render_template(
@@ -507,6 +519,8 @@ class AgenticNode(Node):
                 has_memory=True,
                 memory_content=memory_content,
                 memory_dir=memory_dir,
+                read_only=read_only,
+                originating_agent=node_name,
             )
 
             if memory_section.strip():
@@ -1526,6 +1540,7 @@ class AgenticNode(Node):
         ``agent_config.filesystem_strict`` so API / gateway can opt out of
         interactive EXTERNAL prompts.
         """
+        from datus.configuration.inherited_memory_overrides import get_inherited_memory
         from datus.tools.func_tool import FilesystemFuncTool
 
         root_path = kwargs.pop("root_path", None) or self._resolve_workspace_root()
@@ -1540,11 +1555,16 @@ class AgenticNode(Node):
         strict = kwargs.pop("strict", None)
         if strict is None:
             strict = self._resolve_filesystem_strict()
+        current_node = kwargs.pop("current_node", None) or self.get_node_name()
+        inherited_memory_node = kwargs.pop("inherited_memory_node", None)
+        if inherited_memory_node is None:
+            inherited_memory_node = get_inherited_memory(current_node)
         return FilesystemFuncTool(
             root_path=root_path,
-            current_node=kwargs.pop("current_node", None) or self.get_node_name(),
+            current_node=current_node,
             datus_home=datus_home,
             strict=strict,
+            inherited_memory_node=inherited_memory_node,
             **kwargs,
         )
 

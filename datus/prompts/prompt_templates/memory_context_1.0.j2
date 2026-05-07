@@ -1,5 +1,24 @@
 {# Memory context injected into system prompts when memory is enabled #}
 {% if has_memory %}
+{% if read_only %}
+## Memory (read-only inheritance from {{ originating_agent }})
+
+{{ originating_agent }}'s persistent memory at `{{ memory_dir }}/MEMORY.md` is inlined below as read-only background about the user's preferences, project decisions, and external references gathered by the parent agent. The MEMORY.md index may reference sibling topic files in the same directory — you may use `Read`, `Glob`, or `Grep` against `{{ memory_dir }}/**` to inspect those topic files when an entry is relevant.
+
+**Read-only**: do NOT use `Write`, `Edit`, `str_replace`, or shell commands to modify any path under `{{ memory_dir }}/` (or any other `.datus/memory/` subtree). Write attempts there are rejected by the path policy. If you discover something the user would want remembered, mention it in your response so the parent agent can persist it.
+
+### Current memory
+
+<memory>
+{% if memory_content %}
+{{ memory_content }}
+{% else %}
+(empty)
+{% endif %}
+</memory>
+
+**Access**: apply these facts when they are relevant to the current task. Verify file/function/flag claims against current code before acting — trust what you observe now. If the user asks to ignore memory, treat it as empty.
+{% else %}
 ## Memory
 
 Persistent memory at `{{ memory_dir }}/MEMORY.md`. Build it over time so future sessions know the user's preferences, project context, and external references.
@@ -23,4 +42,5 @@ Persistent memory at `{{ memory_dir }}/MEMORY.md`. Build it over time so future 
 **Access**: when memories seem relevant or user references past work; must access when user asks to recall. Verify file/function/flag claims against current code before acting — trust what you observe now and update stale entries. For current repo state, prefer `git log`/code. If user says ignore memory, treat it as empty.
 
 Use **plans** for implementation alignment, **tasks** for current work tracking — not memory.
+{% endif %}
 {% endif %}

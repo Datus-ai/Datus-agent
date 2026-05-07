@@ -48,12 +48,16 @@ class ResolvedPath:
         display: Human/LLM-friendly rendering. Relative to ``root_path`` for
             ``INTERNAL``/``WHITELIST``-in-project, ``~``-prefixed for home
             whitelist, absolute for ``EXTERNAL``/``HIDDEN``.
+        read_only: True when the path is whitelisted only because the calling
+            node inherited a parent's memory directory. Reads are allowed but
+            writes/edits must be rejected at the tool layer.
     """
 
     raw: str
     resolved: Path
     zone: PathZone
     display: str
+    read_only: bool = False
 
 
 def _is_relative_to(candidate: Path, anchor: Path) -> bool:
@@ -81,6 +85,7 @@ def classify_path(
     root_path: Path,
     current_node: Optional[str],
     datus_home: Optional[Path] = None,
+    inherited_memory_node: Optional[str] = None,
 ) -> ResolvedPath:
     """Classify ``path`` into a ``PathZone`` relative to ``root_path``.
 
@@ -98,6 +103,11 @@ def classify_path(
             which demotes every ``.datus/memory/**`` path to ``HIDDEN``.
         datus_home: Override for ``~/.datus``. Primarily a test hook; when
             ``None`` the classifier uses the real home directory.
+        inherited_memory_node: When a built-in sub-agent inherits its parent's
+            memory (read-only), the parent's
+            ``{root_path}/.datus/memory/{inherited_memory_node}/**`` subtree
+            also qualifies as ``WHITELIST``, but the resulting ``ResolvedPath``
+            carries ``read_only=True`` so the tool layer can deny writes.
 
     Returns:
         A ``ResolvedPath`` with the computed zone and display form. Never
@@ -128,20 +138,32 @@ def classify_path(
         project_memory_node = (project_dot_datus / "memory" / current_node).resolve(strict=False)
     global_skills = (home_resolved / "skills").resolve(strict=False)
 
-    whitelist_anchors = [project_skills]
+    inherited_memory_dir: Optional[Path] = None
+    if inherited_memory_node and inherited_memory_node != current_node:
+        inherited_memory_dir = (project_dot_datus / "memory" / inherited_memory_node).resolve(strict=False)
+
+    # Owned (writable) anchors first; the inherited anchor is checked last and
+    # tagged ``read_only=True`` so the tool layer can deny writes there.
+    writable_whitelist = [project_skills]
     if project_memory_node is not None:
-        whitelist_anchors.append(project_memory_node)
-    whitelist_anchors.append(global_skills)
+        writable_whitelist.append(project_memory_node)
+    writable_whitelist.append(global_skills)
 
     zone: PathZone
     display: str
+    read_only = False
     # Relative displays use ``.as_posix()`` instead of ``str()`` so the forward-
     # slash-shaped scope globs used downstream (e.g. ``subject/**`` matched
     # with ``wcmatch.globmatch``) still work on Windows. ``str(Path)`` yields
     # backslashes on Windows, which ``wcmatch`` does not normalize — it would
     # silently reject valid writes.
-    if any(_is_relative_to(resolved, anchor) for anchor in whitelist_anchors):
+    matched_writable = any(_is_relative_to(resolved, anchor) for anchor in writable_whitelist)
+    matched_inherited = inherited_memory_dir is not None and _is_relative_to(resolved, inherited_memory_dir)
+    if matched_writable or matched_inherited:
         zone = PathZone.WHITELIST
+        # Owned matches always win; the read-only flag is only set when the
+        # path is exclusively reachable via the inherited anchor.
+        read_only = matched_inherited and not matched_writable
         if _is_relative_to(resolved, root_resolved):
             display = resolved.relative_to(root_resolved).as_posix()
         elif _is_relative_to(resolved, home_resolved):
@@ -165,7 +187,7 @@ def classify_path(
         zone = PathZone.EXTERNAL
         display = str(resolved)
 
-    return ResolvedPath(raw=raw, resolved=resolved, zone=zone, display=display)
+    return ResolvedPath(raw=raw, resolved=resolved, zone=zone, display=display, read_only=read_only)
 
 
 def whitelist_anchors(
@@ -173,13 +195,16 @@ def whitelist_anchors(
     root_path: Path,
     current_node: Optional[str],
     datus_home: Optional[Path] = None,
+    inherited_memory_node: Optional[str] = None,
 ) -> list[Path]:
     """Return the resolved whitelist anchor directories for a given node.
 
     Used by walkers that need to answer "is there a whitelisted subtree
     underneath this HIDDEN directory?" without re-running ``classify_path``
     for every descendant. The order mirrors ``classify_path`` (project-side
-    first) so longer prefixes win.
+    first) so longer prefixes win. ``inherited_memory_node`` adds the parent
+    sub-agent's memory dir so a built-in child can ``Read``/``Glob`` it; write
+    enforcement is the tool layer's job.
     """
     root_resolved = Path(root_path).expanduser().resolve(strict=False)
     home_resolved = _resolve_home(datus_home)
@@ -187,6 +212,8 @@ def whitelist_anchors(
     anchors = [(project_dot_datus / "skills").resolve(strict=False)]
     if current_node:
         anchors.append((project_dot_datus / "memory" / current_node).resolve(strict=False))
+    if inherited_memory_node and inherited_memory_node != current_node:
+        anchors.append((project_dot_datus / "memory" / inherited_memory_node).resolve(strict=False))
     anchors.append((home_resolved / "skills").resolve(strict=False))
     return anchors
 
@@ -195,6 +222,7 @@ def build_walk_patterns(
     *,
     root_path: Path,
     current_node: Optional[str],
+    inherited_memory_node: Optional[str] = None,
 ) -> tuple[list[str], list[str]]:
     """Build the (exclude, re-include) glob pattern pair used by the walker.
 
@@ -209,6 +237,9 @@ def build_walk_patterns(
             patterns don't need to change signature).
         current_node: Same semantics as ``classify_path``; ``None`` leaves
             the memory subtree excluded.
+        inherited_memory_node: When set and distinct from ``current_node``,
+            the parent's memory subtree is also re-included so ``Glob`` /
+            ``Grep`` can surface inherited topic files (read-only).
 
     Returns:
         ``(excludes, re_includes)`` — both are glob patterns rooted at
@@ -219,4 +250,6 @@ def build_walk_patterns(
     re_includes = [".datus/skills/**"]
     if current_node:
         re_includes.append(f".datus/memory/{current_node}/**")
+    if inherited_memory_node and inherited_memory_node != current_node:
+        re_includes.append(f".datus/memory/{inherited_memory_node}/**")
     return excludes, re_includes

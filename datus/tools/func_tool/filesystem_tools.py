@@ -72,6 +72,7 @@ class FilesystemFuncTool(BaseTool):
         current_node: Optional[str] = None,
         datus_home: Optional[str] = None,
         strict: bool = False,
+        inherited_memory_node: Optional[str] = None,
         **kwargs,
     ):
         """
@@ -84,6 +85,11 @@ class FilesystemFuncTool(BaseTool):
                 closed instead of ever touching the host filesystem.
                 ``False`` (the CLI default) lets ``PermissionHooks`` prompt
                 the user.
+            inherited_memory_node: When set, the path policy treats
+                ``.datus/memory/{inherited_memory_node}/**`` as a read-only
+                whitelisted subtree so the calling node can ``Read``/``Glob``
+                its parent's memory. Writes/edits to that subtree are rejected
+                at the tool layer with a clear error message.
         """
         super().__init__(**kwargs)
         self.root_path = root_path or os.getcwd()
@@ -92,6 +98,7 @@ class FilesystemFuncTool(BaseTool):
         self._datus_home = Path(datus_home).expanduser().resolve(strict=False) if datus_home else None
         self._root_resolved = Path(self.root_path).expanduser().resolve(strict=False)
         self._strict = strict
+        self._inherited_memory_node = inherited_memory_node
 
     @property
     def strict(self) -> bool:
@@ -122,6 +129,17 @@ class FilesystemFuncTool(BaseTool):
             root_path=self._root_resolved,
             current_node=self._current_node,
             datus_home=self._datus_home,
+            inherited_memory_node=self._inherited_memory_node,
+        )
+
+    def _read_only_reject(self, resolved: ResolvedPath) -> FuncToolResult:
+        """Reject writes to a read-only whitelist (inherited parent memory)."""
+        return FuncToolResult(
+            success=0,
+            error=(
+                f"Read-only path: {resolved.display} is inherited from the parent "
+                "agent's memory and cannot be modified by this sub-agent."
+            ),
         )
 
     def _not_found(self, resolved: ResolvedPath) -> FuncToolResult:
@@ -253,6 +271,8 @@ class FilesystemFuncTool(BaseTool):
                 return self._not_found(resolved)
             if self._strict and resolved.zone == PathZone.EXTERNAL:
                 return self._strict_reject(resolved)
+            if resolved.read_only:
+                return self._read_only_reject(resolved)
 
             target_path = resolved.resolved
             if not self._is_allowed_file(target_path):
@@ -293,6 +313,8 @@ class FilesystemFuncTool(BaseTool):
                 return self._not_found(resolved)
             if self._strict and resolved.zone == PathZone.EXTERNAL:
                 return self._strict_reject(resolved)
+            if resolved.read_only:
+                return self._read_only_reject(resolved)
 
             target_path = resolved.resolved
             if not target_path.exists():
@@ -413,6 +435,7 @@ class FilesystemFuncTool(BaseTool):
             root_path=self._root_resolved,
             current_node=self._current_node,
             datus_home=self._datus_home,
+            inherited_memory_node=self._inherited_memory_node,
         )
 
         def has_whitelisted_descendant(directory: Path) -> bool:
@@ -478,6 +501,7 @@ class FilesystemFuncTool(BaseTool):
                                 root_path=self._root_resolved,
                                 current_node=self._current_node,
                                 datus_home=self._datus_home,
+                                inherited_memory_node=self._inherited_memory_node,
                             ).zone
                             if item_zone == PathZone.EXTERNAL:
                                 # Symlink escape from project tree; skip.
@@ -686,6 +710,12 @@ def filesystem_function_tools(
     *,
     current_node: Optional[str] = None,
     strict: bool = False,
+    inherited_memory_node: Optional[str] = None,
 ) -> List[Tool]:
     """Get filesystem function tools"""
-    return FilesystemFuncTool(root_path=root_path, current_node=current_node, strict=strict).available_tools()
+    return FilesystemFuncTool(
+        root_path=root_path,
+        current_node=current_node,
+        strict=strict,
+        inherited_memory_node=inherited_memory_node,
+    ).available_tools()

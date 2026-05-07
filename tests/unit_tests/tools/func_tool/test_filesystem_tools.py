@@ -240,6 +240,67 @@ class TestWriteFile:
         assert f.read_text() == "new content"
 
 
+class TestInheritedMemoryReadOnly:
+    """When a built-in sub-agent inherits its parent's memory, it must be able
+    to ``read_file`` / ``glob`` topic files in the parent's directory but writes
+    and edits there must be rejected with a clear error."""
+
+    def _make_inheriting_tool(self, root: Path) -> FilesystemFuncTool:
+        # Pre-create both memory dirs so reads see real content.
+        (root / ".datus" / "memory" / "chat").mkdir(parents=True)
+        (root / ".datus" / "memory" / "chat" / "MEMORY.md").write_text(
+            "## Profile\n- inherited fact\n", encoding="utf-8"
+        )
+        (root / ".datus" / "memory" / "chat" / "user_role.md").write_text("user is a data engineer", encoding="utf-8")
+        return FilesystemFuncTool(
+            root_path=str(root),
+            current_node="gen_sql",
+            inherited_memory_node="chat",
+        )
+
+    def test_read_inherited_memory_file_succeeds(self, tmp_path):
+        tool = self._make_inheriting_tool(tmp_path)
+        result = tool.read_file(".datus/memory/chat/MEMORY.md")
+        assert result.success == 1
+        assert "inherited fact" in str(result.result)
+
+    def test_read_inherited_topic_file_succeeds(self, tmp_path):
+        tool = self._make_inheriting_tool(tmp_path)
+        result = tool.read_file(".datus/memory/chat/user_role.md")
+        assert result.success == 1
+        assert "data engineer" in str(result.result)
+
+    def test_write_to_inherited_memory_rejected(self, tmp_path):
+        tool = self._make_inheriting_tool(tmp_path)
+        result = tool.write_file(".datus/memory/chat/MEMORY.md", "tampered")
+        assert result.success == 0
+        assert "read-only" in result.error.lower()
+        # The original content survived the rejected write.
+        assert (tmp_path / ".datus" / "memory" / "chat" / "MEMORY.md").read_text().strip().startswith("## Profile")
+
+    def test_edit_inherited_memory_rejected(self, tmp_path):
+        tool = self._make_inheriting_tool(tmp_path)
+        result = tool.edit_file(".datus/memory/chat/MEMORY.md", "inherited fact", "tampered")
+        assert result.success == 0
+        assert "read-only" in result.error.lower()
+
+    def test_write_to_own_memory_still_allowed_when_inheriting(self, tmp_path):
+        """Inheriting chat's memory must NOT block writes to gen_sql's own dir."""
+        tool = self._make_inheriting_tool(tmp_path)
+        result = tool.write_file(".datus/memory/gen_sql/MEMORY.md", "## My memory\n- mine\n")
+        assert result.success == 1
+        assert (tmp_path / ".datus" / "memory" / "gen_sql" / "MEMORY.md").read_text().startswith("## My memory")
+
+    def test_other_unrelated_memory_dir_still_hidden(self, tmp_path):
+        """Inheriting chat does NOT open up an unrelated agent's dir."""
+        (tmp_path / ".datus" / "memory" / "feedback").mkdir(parents=True)
+        (tmp_path / ".datus" / "memory" / "feedback" / "MEMORY.md").write_text("secret", encoding="utf-8")
+        tool = self._make_inheriting_tool(tmp_path)
+        result = tool.read_file(".datus/memory/feedback/MEMORY.md")
+        assert result.success == 0
+        assert "not found" in result.error.lower()
+
+
 # ---------------------------------------------------------------------------
 # FilesystemFuncTool - edit_file
 # ---------------------------------------------------------------------------

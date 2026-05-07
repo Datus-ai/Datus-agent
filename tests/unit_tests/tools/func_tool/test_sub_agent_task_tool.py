@@ -259,6 +259,54 @@ class TestResolveNodeType:
         # Whole-segment override: child wins
         assert effective.scoped_context.tables == "public.products"
 
+    def test_resolve_inherited_memory_returns_parent_for_chat(self, task_tool):
+        """Built-in child + chat parent → inherit chat's memory."""
+        parent = MagicMock()
+        parent.get_node_name.return_value = "chat"
+        task_tool._parent_node = parent
+        assert task_tool._resolve_inherited_memory_node("gen_sql") == "chat"
+
+    def test_resolve_inherited_memory_returns_parent_for_custom_subagent(self, task_tool):
+        """Built-in child + custom subagent parent → inherit custom's memory."""
+        parent = MagicMock()
+        parent.get_node_name.return_value = "sales_analyst"
+        task_tool._parent_node = parent
+        # 'sales_analyst' is a custom subagent → has_memory() is True → inherit
+        assert task_tool._resolve_inherited_memory_node("gen_sql") == "sales_analyst"
+
+    def test_resolve_inherited_memory_returns_none_for_feedback(self, task_tool):
+        """feedback has its own caller-memory mechanism; never inherit via this path."""
+        parent = MagicMock()
+        parent.get_node_name.return_value = "chat"
+        task_tool._parent_node = parent
+        assert task_tool._resolve_inherited_memory_node("feedback") is None
+
+    def test_resolve_inherited_memory_returns_none_for_custom_child(self, task_tool):
+        """Custom subagents already have their own memory and should not be overridden."""
+        parent = MagicMock()
+        parent.get_node_name.return_value = "chat"
+        task_tool._parent_node = parent
+        # 'sales_analyst' is a custom subagent (not in built-in set) → has_memory=True
+        assert task_tool._resolve_inherited_memory_node("sales_analyst") is None
+
+    def test_resolve_inherited_memory_returns_none_when_no_parent(self, task_tool):
+        task_tool._parent_node = None
+        assert task_tool._resolve_inherited_memory_node("gen_sql") is None
+
+    def test_resolve_inherited_memory_returns_none_when_parent_has_no_memory(self, task_tool):
+        """Defensive: if parent itself is a no-memory built-in, do not propagate."""
+        parent = MagicMock()
+        parent.get_node_name.return_value = "gen_report"  # built-in, no memory
+        task_tool._parent_node = parent
+        assert task_tool._resolve_inherited_memory_node("gen_sql") is None
+
+    def test_resolve_inherited_memory_swallows_parent_exceptions(self, task_tool):
+        """If the parent's get_node_name() raises, fall back to no inheritance."""
+        parent = MagicMock()
+        parent.get_node_name.side_effect = RuntimeError("parent broken")
+        task_tool._parent_node = parent
+        assert task_tool._resolve_inherited_memory_node("gen_sql") is None
+
     def test_node_class_map_coverage(self):
         """NODE_CLASS_MAP contains exactly the expected key→NodeType mappings."""
         expected_map = {

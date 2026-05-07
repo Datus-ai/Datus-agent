@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import json
 import uuid
+from contextlib import nullcontext
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
 from agents import FunctionTool, Tool
 
 from datus.configuration.agent_config import AgentConfig
+from datus.configuration.inherited_memory_overrides import inherited_memory
 from datus.configuration.node_type import NodeType
 from datus.configuration.scoped_context_overrides import effective_subagent
 from datus.schemas.action_history import (
@@ -34,6 +36,7 @@ from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 from datus.tools.func_tool.base import FuncToolResult
 from datus.utils.constants import SYS_SUB_AGENTS
 from datus.utils.loggings import get_logger
+from datus.utils.memory_loader import has_memory
 
 if TYPE_CHECKING:
     from datus.agent.node.agentic_node import AgenticNode
@@ -572,6 +575,8 @@ class SubAgentTaskTool:
             )
 
         effective_cfg = self._resolve_effective_sub_agent_config(subagent_type)
+        inherited_parent = self._resolve_inherited_memory_node(subagent_type)
+        inherited_cm = inherited_memory(subagent_type, inherited_parent) if inherited_parent else nullcontext()
 
         # Validate the session_id format up-front (path-injection defence) so
         # we fail fast before paying the node-construction cost.
@@ -583,7 +588,7 @@ class SubAgentTaskTool:
             except ValueError as e:
                 return FuncToolResult(success=0, error=f"Invalid session_id format: {e}")
 
-        with effective_subagent(subagent_type, effective_cfg):
+        with effective_subagent(subagent_type, effective_cfg), inherited_cm:
             node = self._create_node(subagent_type)
 
             # Nest this subagent's session under the launching main session so the
@@ -713,6 +718,29 @@ class SubAgentTaskTool:
                     logger.debug("Failed to release sub-agent session handle", exc_info=True)
 
         return self._convert_to_func_result(final_output, session_id=node.session_id)
+
+    def _resolve_inherited_memory_node(self, subagent_type: str) -> Optional[str]:
+        """Pick the parent memory node name that a built-in child should inherit (read-only).
+
+        Returns ``None`` (no inheritance) when:
+        - the child has its own memory (custom subagent or ``chat``);
+        - the child is ``feedback`` — already injects the caller's memory via
+          ``override_node_name`` and would double-render;
+        - no parent node is registered, or the parent itself has no memory.
+        """
+        if subagent_type == "feedback":
+            return None
+        if has_memory(subagent_type):
+            return None
+        if self._parent_node is None:
+            return None
+        try:
+            parent_name = self._parent_node.get_node_name()
+        except Exception:
+            return None
+        if not parent_name or not has_memory(parent_name):
+            return None
+        return parent_name
 
     def _resolve_effective_sub_agent_config(self, subagent_type: str) -> SubAgentConfig:
         """Build an effective SubAgentConfig that inherits parent scoped_context when child has none."""

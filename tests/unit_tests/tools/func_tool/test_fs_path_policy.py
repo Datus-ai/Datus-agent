@@ -84,6 +84,65 @@ class TestClassifyWhitelist:
         assert r.display.startswith("~/.datus/skills/")
 
 
+class TestClassifyInheritedMemory:
+    """A built-in sub-agent passing ``inherited_memory_node`` should be able to
+    READ the parent's memory tree (zone=WHITELIST, read_only=True) while its
+    OWN memory subtree remains writable."""
+
+    def test_inherited_dir_is_readonly_whitelist(self, project):
+        r = classify_path(
+            ".datus/memory/chat/MEMORY.md",
+            root_path=project,
+            current_node="gen_sql",
+            inherited_memory_node="chat",
+        )
+        assert r.zone == PathZone.WHITELIST
+        assert r.read_only is True
+
+    def test_inherited_topic_file_is_readonly_whitelist(self, project):
+        r = classify_path(
+            ".datus/memory/chat/feedback_testing.md",
+            root_path=project,
+            current_node="gen_sql",
+            inherited_memory_node="chat",
+        )
+        assert r.zone == PathZone.WHITELIST
+        assert r.read_only is True
+
+    def test_own_memory_remains_writable_when_inheriting(self, project):
+        """Owning a self memory dir AND inheriting another should leave self writable."""
+        r = classify_path(
+            ".datus/memory/gen_sql/MEMORY.md",
+            root_path=project,
+            current_node="gen_sql",
+            inherited_memory_node="chat",
+        )
+        assert r.zone == PathZone.WHITELIST
+        assert r.read_only is False
+
+    def test_unrelated_memory_dir_still_hidden(self, project):
+        """Inheriting from chat does NOT open up some_other_node's memory."""
+        r = classify_path(
+            ".datus/memory/feedback/MEMORY.md",
+            root_path=project,
+            current_node="gen_sql",
+            inherited_memory_node="chat",
+        )
+        assert r.zone == PathZone.HIDDEN
+
+    def test_inherited_same_as_current_node_collapses_to_writable(self, project):
+        """Defensive: when the inherited name equals current_node, do not
+        spuriously demote that subtree to read-only."""
+        r = classify_path(
+            ".datus/memory/chat/MEMORY.md",
+            root_path=project,
+            current_node="chat",
+            inherited_memory_node="chat",
+        )
+        assert r.zone == PathZone.WHITELIST
+        assert r.read_only is False
+
+
 class TestClassifyExternal:
     def test_relative_escape_goes_external(self, project):
         r = classify_path("../other/secret.txt", root_path=project, current_node="chat")
@@ -138,6 +197,16 @@ class TestWhitelistAnchors:
         seen = {(a.parent.name, a.name) for a in anchors}
         assert seen == expected_suffixes
 
+    def test_anchors_include_inherited_memory_dir(self, project, fake_home):
+        anchors = whitelist_anchors(
+            root_path=project,
+            current_node="gen_sql",
+            datus_home=fake_home,
+            inherited_memory_node="chat",
+        )
+        assert (project / ".datus" / "memory" / "gen_sql").resolve(strict=False) in anchors
+        assert (project / ".datus" / "memory" / "chat").resolve(strict=False) in anchors
+
 
 class TestBuildWalkPatterns:
     """The walker relies on these patterns to prune ``HIDDEN`` subtrees cheaply
@@ -164,6 +233,26 @@ class TestBuildWalkPatterns:
         # Skills stays first (longest-prefix-wins isn't used here, but the
         # downstream walker iterates in list order for determinism).
         assert re_includes == [".datus/skills/**", ".datus/memory/gen_sql/**"]
+
+    def test_re_includes_add_inherited_memory(self, project):
+        _, re_includes = build_walk_patterns(
+            root_path=project,
+            current_node="gen_sql",
+            inherited_memory_node="chat",
+        )
+        assert re_includes == [
+            ".datus/skills/**",
+            ".datus/memory/gen_sql/**",
+            ".datus/memory/chat/**",
+        ]
+
+    def test_inherited_same_as_current_does_not_duplicate(self, project):
+        _, re_includes = build_walk_patterns(
+            root_path=project,
+            current_node="chat",
+            inherited_memory_node="chat",
+        )
+        assert re_includes == [".datus/skills/**", ".datus/memory/chat/**"]
 
     def test_patterns_are_posix_for_wcmatch(self, project):
         """All generated patterns are POSIX slashes; wcmatch does not normalize
