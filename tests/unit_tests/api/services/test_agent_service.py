@@ -1409,52 +1409,6 @@ class TestSubagentScopedContextRoundTrip:
             "Docs/handbook",
         ]
 
-    async def test_get_falls_back_to_legacy_scoped_catalogs_key(self, real_agent_config):
-        """Older API versions wrote ``scoped_context.catalogs`` directly.
-
-        Until the next edit migrates that key into ``tables``, the read path
-        must surface those entries so the editor doesn't appear to lose the
-        scope after an upgrade.
-        """
-        real_agent_config.agentic_nodes["legacy_scoped_catalogs"] = {
-            "type": "gen_sql",
-            "tools": "db_tools.*",
-            "scoped_context": {
-                "catalogs": "/Legacy/Scoped/Catalog",
-            },
-            "created_at": "2026-04-30T09:20:31.545000Z",
-        }
-
-        svc = AgentService()
-        result = await svc.get_agent("legacy_scoped_catalogs", real_agent_config)
-        assert result.success is True
-        assert result.data["agent"]["catalogs"] == ["Legacy/Scoped/Catalog"]
-
-    async def test_get_falls_back_to_top_level_catalogs_for_legacy_entries(self, real_agent_config):
-        """Legacy entries written before the migration still surface catalogs/subjects.
-
-        Older yaml files persisted catalogs and subjects at the top level. The
-        read path must keep working for them until the next edit migrates the
-        keys into scoped_context — otherwise existing configs would lose the
-        scope information after an upgrade.
-        """
-        real_agent_config.agentic_nodes["legacy_top_level"] = {
-            "type": "gen_sql",
-            "tools": "db_tools.*",
-            "catalogs": ["/Legacy/Catalog"],
-            "subjects": ["/Legacy/Subject"],
-            "created_at": "2026-04-30T09:20:31.545000Z",
-        }
-
-        svc = AgentService()
-        result = await svc.get_agent("legacy_top_level", real_agent_config)
-        assert result.success is True
-        agent = result.data["agent"]
-        # Even on the legacy fallback path, leading slashes are stripped and
-        # subjects are returned as slash-form paths.
-        assert agent["catalogs"] == ["Legacy/Catalog"]
-        assert agent["subjects"] == ["Legacy/Subject"]
-
     async def test_round_trip_create_then_get(self, real_agent_config, agent_yml_with_singleton):
         """Saving and re-reading yields the canonical (slash-stripped) path form.
 

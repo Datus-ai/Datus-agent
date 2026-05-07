@@ -536,23 +536,11 @@ class AgentService:
         # runtime-honored key consumed by ``ScopedFilterBuilder.build_table_filter``).
         # ``subjects`` is recomposed from the three runtime buckets
         # (``metrics`` / ``sqls`` / ``ext_knowledge``) — the inverse of the
-        # save-side classification. Legacy entries that still carry the
-        # arrays at the top level (older API writes) or under a non-runtime
-        # ``scoped_context.catalogs`` key (intermediate API versions) keep
-        # working until the next edit migrates them. Leading slashes are
-        # stripped so older entries land in the canonical form too, and
-        # stored dot-form (wizard convention) is converted to the API's
-        # slash-form on the way out.
+        # save-side classification. Stored dot-form (wizard convention) is
+        # converted to the API's slash-form on the way out.
         scoped_ctx = agent.get("scoped_context") if isinstance(agent.get("scoped_context"), dict) else {}
-        catalogs = (
-            _strip_leading_slashes(scoped_ctx.get("tables"))
-            or _strip_leading_slashes(scoped_ctx.get("catalogs"))
-            or _strip_leading_slashes(agent.get("catalogs"))
-        )
+        catalogs = _strip_leading_slashes(scoped_ctx.get("tables"))
         subjects = _merge_subjects_from_scoped_context(scoped_ctx)
-        if not subjects:
-            subjects = [_path_to_slash_form(t) for t in _strip_leading_slashes(agent.get("subjects"))]
-            subjects = [s for s in subjects if s]
 
         return Result(
             success=True,
