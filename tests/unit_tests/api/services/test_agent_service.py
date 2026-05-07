@@ -911,35 +911,41 @@ class TestFormatAndParseCsv:
 
     def test_round_trip_through_parse(self):
         """``_parse_csv(_format_csv(items)) == items`` for trimmed entries."""
-        items = ["/Commerce/Orders/Average_Gross_Order_Value", "/Commerce/Sales"]
+        items = ["default_catalog.mart.mf_time_spine", "default_catalog.mart.raw_orders"]
         assert _parse_csv(_format_csv(items)) == items
 
 
 class TestStripLeadingSlashes:
-    """Tests for _strip_leading_slashes — normalize subject/catalog path entries."""
+    """Tests for _strip_leading_slashes — defensive normalizer for catalog inputs.
+
+    Catalogs in the API contract are dot-separated (e.g.
+    ``default_catalog.mart.raw_orders``), so the strip is normally a
+    no-op. The helper still runs for defensive normalization, and the
+    cases here pin down its mechanical behavior on path-style strings.
+    """
 
     def test_each_entry_loses_leading_slash(self):
         """A leading ``/`` is removed from every entry in the list."""
-        assert _strip_leading_slashes(["/Commerce/Orders/Avg", "/Commerce/Sales"]) == [
-            "Commerce/Orders/Avg",
-            "Commerce/Sales",
-        ]
+        assert _strip_leading_slashes(["/foo/bar", "/baz"]) == ["foo/bar", "baz"]
 
     def test_string_input_is_split_and_stripped(self):
         """A pre-formatted comma-separated string is split before stripping."""
-        assert _strip_leading_slashes("/A/B, /C") == ["A/B", "C"]
+        assert _strip_leading_slashes("/foo/bar, /baz") == ["foo/bar", "baz"]
 
     def test_no_leading_slash_passes_through(self):
-        """Entries without a leading slash are preserved unchanged."""
-        assert _strip_leading_slashes(["A/B", "C/D"]) == ["A/B", "C/D"]
+        """Dot-form catalog entries (no leading slash) survive unchanged."""
+        assert _strip_leading_slashes(["default_catalog.mart.mf_time_spine", "default_catalog.mart.raw_orders"]) == [
+            "default_catalog.mart.mf_time_spine",
+            "default_catalog.mart.raw_orders",
+        ]
 
     def test_inner_slashes_are_kept(self):
-        """Only the leading slash is trimmed — path separators are preserved."""
-        assert _strip_leading_slashes(["/Commerce/Orders/Avg"]) == ["Commerce/Orders/Avg"]
+        """Only the leading slash is trimmed — inner separators are preserved."""
+        assert _strip_leading_slashes(["/foo/bar"]) == ["foo/bar"]
 
     def test_slash_only_entry_is_dropped(self):
         """A bare ``/`` collapses to nothing and is filtered out."""
-        assert _strip_leading_slashes(["/", "/A"]) == ["A"]
+        assert _strip_leading_slashes(["/", "/foo"]) == ["foo"]
 
 
 class TestBuildScopedContext:
@@ -951,10 +957,15 @@ class TestBuildScopedContext:
         ``ScopedContext`` has no ``catalogs`` field; the runtime's table-scope
         filter (``ScopedFilterBuilder.build_table_filter``) reads ``tables``,
         so the editor's ``catalogs`` array is the same scope under a
-        different surface name.
+        different surface name. Catalog entries are dot-separated table
+        identifiers (``catalog.schema.table``) consumed by the right-aligned
+        token parser in ``ScopedFilterBuilder.build_table_filter``.
         """
-        result = _build_scoped_context(None, catalogs=["/A", "/B"])
-        assert result == {"tables": "A, B"}
+        result = _build_scoped_context(
+            None,
+            catalogs=["default_catalog.mart.mf_time_spine", "default_catalog.mart.raw_orders"],
+        )
+        assert result == {"tables": "default_catalog.mart.mf_time_spine, default_catalog.mart.raw_orders"}
 
     def test_subject_buckets_write_runtime_keys(self):
         """``subject_buckets`` writes to ``metrics`` / ``sqls`` / ``ext_knowledge``.
@@ -964,7 +975,7 @@ class TestBuildScopedContext:
         """
         result = _build_scoped_context(
             None,
-            catalogs=["/A"],
+            catalogs=["default_catalog.mart.mf_time_spine"],
             subject_buckets={
                 "metrics": ["Finance.Revenue.M1", "Sales.M2"],
                 "sqls": ["Finance.SQL.s1"],
@@ -973,27 +984,34 @@ class TestBuildScopedContext:
         )
         # ext_knowledge is empty, so its key is omitted; subjects key never appears.
         assert result == {
-            "tables": "A",
+            "tables": "default_catalog.mart.mf_time_spine",
             "metrics": "Finance.Revenue.M1, Sales.M2",
             "sqls": "Finance.SQL.s1",
         }
 
     def test_datasource_is_written_when_provided(self):
         """A non-empty datasource is recorded under ``scoped_context.datasource``."""
-        result = _build_scoped_context(None, datasource="finance", catalogs=["/A"])
-        assert result == {"datasource": "finance", "tables": "A"}
+        result = _build_scoped_context(
+            None,
+            datasource="finance",
+            catalogs=["default_catalog.mart.mf_time_spine"],
+        )
+        assert result == {
+            "datasource": "finance",
+            "tables": "default_catalog.mart.mf_time_spine",
+        }
 
     def test_empty_datasource_clears_existing_binding(self):
         """An empty-string ``datasource`` removes a stale binding from ``base``."""
-        base = {"datasource": "old_ds", "tables": "orders"}
+        base = {"datasource": "old_ds", "tables": "default_catalog.mart.raw_orders"}
         result = _build_scoped_context(base, datasource="")
-        assert result == {"tables": "orders"}
+        assert result == {"tables": "default_catalog.mart.raw_orders"}
 
     def test_none_datasource_preserves_existing_binding(self):
         """``datasource=None`` leaves any existing binding intact."""
         base = {"datasource": "keep_me"}
-        result = _build_scoped_context(base, catalogs=["/A"])
-        assert result == {"datasource": "keep_me", "tables": "A"}
+        result = _build_scoped_context(base, catalogs=["default_catalog.mart.mf_time_spine"])
+        assert result == {"datasource": "keep_me", "tables": "default_catalog.mart.mf_time_spine"}
 
     def test_catalogs_overwrites_tables_and_drops_legacy_catalogs_key(self):
         """Catalogs fully rewrites ``tables`` and clears any non-runtime ``catalogs`` key.
@@ -1002,9 +1020,16 @@ class TestBuildScopedContext:
         the editor calls edit_agent again with catalogs the helper migrates
         them under ``tables`` so the read path can't see two competing copies.
         """
-        base = {"tables": "old_table", "catalogs": "stale_legacy", "metrics": "revenue"}
-        result = _build_scoped_context(base, catalogs=["/Commerce/Orders"])
-        assert result == {"tables": "Commerce/Orders", "metrics": "revenue"}
+        base = {
+            "tables": "default_catalog.mart.legacy_table",
+            "catalogs": "stale_legacy_pattern.*",
+            "metrics": "Finance.Revenue.daily_revenue",
+        }
+        result = _build_scoped_context(base, catalogs=["default_catalog.mart.raw_orders"])
+        assert result == {
+            "tables": "default_catalog.mart.raw_orders",
+            "metrics": "Finance.Revenue.daily_revenue",
+        }
 
     def test_subject_buckets_overwrite_existing_bucket_keys(self):
         """Passing subject_buckets fully rewrites the three bucket keys.
@@ -1012,29 +1037,45 @@ class TestBuildScopedContext:
         Empty bucket entries clear their key (rule: the editor's subjects array
         is the new full scope for the agent).
         """
-        base = {"tables": "orders", "metrics": "old", "sqls": "stale", "ext_knowledge": "stale_kb"}
+        base = {
+            "tables": "default_catalog.mart.raw_orders",
+            "metrics": "Finance.Revenue.old_metric",
+            "sqls": "Sales.stale_query",
+            "ext_knowledge": "Docs.stale_kb",
+        }
         result = _build_scoped_context(
             base,
             subject_buckets={
-                "metrics": ["new_metric"],
+                "metrics": ["Finance.Revenue.daily_revenue"],
                 "sqls": [],
                 "ext_knowledge": [],
             },
         )
         # tables survives; the three subject keys are rewritten — empty buckets clear.
-        assert result == {"tables": "orders", "metrics": "new_metric"}
+        assert result == {
+            "tables": "default_catalog.mart.raw_orders",
+            "metrics": "Finance.Revenue.daily_revenue",
+        }
 
     def test_explicit_empty_catalogs_clears_existing_tables(self):
         """Sending ``catalogs=[]`` removes the ``tables`` key from a base scoped_context."""
-        base = {"tables": "old", "metrics": "m"}
+        base = {"tables": "default_catalog.mart.raw_orders", "metrics": "Finance.Revenue.daily_revenue"}
         result = _build_scoped_context(base, catalogs=[])
-        assert result == {"metrics": "m"}
+        assert result == {"metrics": "Finance.Revenue.daily_revenue"}
 
     def test_none_subject_buckets_preserves_existing_keys(self):
         """``subject_buckets=None`` leaves any existing metrics/sqls/ext_knowledge intact."""
-        base = {"metrics": "keep_me", "sqls": "also_keep"}
-        result = _build_scoped_context(base, catalogs=["/A"], subject_buckets=None)
-        assert result == {"metrics": "keep_me", "sqls": "also_keep", "tables": "A"}
+        base = {"metrics": "Finance.Revenue.daily_revenue", "sqls": "Sales.region_query"}
+        result = _build_scoped_context(
+            base,
+            catalogs=["default_catalog.mart.mf_time_spine"],
+            subject_buckets=None,
+        )
+        assert result == {
+            "metrics": "Finance.Revenue.daily_revenue",
+            "sqls": "Sales.region_query",
+            "tables": "default_catalog.mart.mf_time_spine",
+        }
 
     def test_empty_result_returns_none(self):
         """When the merged dict ends up empty, return ``None`` so callers omit the block."""
@@ -1218,10 +1259,9 @@ class TestSubagentScopedContextRoundTrip:
 
         ``catalogs`` writes through to the runtime-honored ``tables`` key (no
         ``catalogs`` key persists, since ``ScopedContext`` doesn't define one).
-        Leading slashes from the editor's path form are stripped. ``subjects``
-        is *classified* into metrics / sqls / ext_knowledge — no flat
-        ``subjects`` key ever appears on disk because each store owns its
-        own scope filter. Without pre-populated KB stores the classifier
+        ``subjects`` is *classified* into metrics / sqls / ext_knowledge — no
+        flat ``subjects`` key ever appears on disk because each store owns
+        its own scope filter. Without pre-populated KB stores the classifier
         falls back to metrics. ``scoped_context.datasource`` is bound to the
         active datasource so ``SubAgentConfig.is_in_datasource`` agrees.
         """
@@ -1234,7 +1274,7 @@ class TestSubagentScopedContextRoundTrip:
             CreateAgentInput(
                 name="scoped_create_agent",
                 type="gen_sql",
-                catalogs=["/Commerce/Orders/Average_Gross_Order_Value", "/Commerce/Sales"],
+                catalogs=["default_catalog.mart.mf_time_spine", "default_catalog.mart.raw_orders"],
                 subjects=["Finance.Revenue.Daily"],
             ),
             real_agent_config,
@@ -1254,7 +1294,7 @@ class TestSubagentScopedContextRoundTrip:
         assert scoped["datasource"] == real_agent_config.current_datasource
         # No non-runtime ``catalogs`` key — catalogs write through to ``tables``.
         assert "catalogs" not in scoped
-        assert scoped["tables"] == "Commerce/Orders/Average_Gross_Order_Value, Commerce/Sales"
+        assert scoped["tables"] == "default_catalog.mart.mf_time_spine, default_catalog.mart.raw_orders"
         # Subjects route to ``metrics`` (the fallback bucket) because the
         # KB stores have no entry named "Daily" under "Finance.Revenue".
         # No flat ``subjects`` key is persisted.
@@ -1277,8 +1317,8 @@ class TestSubagentScopedContextRoundTrip:
         real_agent_config.agentic_nodes["legacy_scope"] = {
             "type": "gen_sql",
             "tools": ["db_tools.*"],
-            "catalogs": ["/Old/Catalog"],
-            "subjects": ["/Old/Subject"],
+            "catalogs": ["default_catalog.mart.legacy_table"],
+            "subjects": ["Legacy.Subject"],
         }
 
         svc = AgentService()
@@ -1287,7 +1327,7 @@ class TestSubagentScopedContextRoundTrip:
                 id="legacy_scope",
                 name="legacy_scope",
                 tools=["semantic_tools.*", "db_tools.*"],
-                catalogs=["/Commerce/Orders/Avg"],
+                catalogs=["default_catalog.mart.raw_orders"],
                 subjects=["Sales.Region"],
             ),
             real_agent_config,
@@ -1302,10 +1342,9 @@ class TestSubagentScopedContextRoundTrip:
         assert "catalogs" not in entry
         assert "subjects" not in entry
         scoped = entry["scoped_context"]
-        # Leading slashes on catalogs are stripped, and catalogs lands on
-        # ``tables`` — no non-runtime ``catalogs`` key persists.
+        # Catalogs lands on ``tables`` — no non-runtime ``catalogs`` key persists.
         assert "catalogs" not in scoped
-        assert scoped["tables"] == "Commerce/Orders/Avg"
+        assert scoped["tables"] == "default_catalog.mart.raw_orders"
         # No flat ``subjects`` key — subjects are classified into runtime buckets.
         assert "subjects" not in scoped
         # Without pre-populated KB stores the classifier defaults to metrics.
@@ -1328,9 +1367,9 @@ class TestSubagentScopedContextRoundTrip:
         real_agent_config.agentic_nodes["preserve_scope"] = {
             "type": "gen_sql",
             "scoped_context": {
-                "tables": "orders, customers",
-                "metrics": "revenue.daily",
-                "sqls": "finance.region_rollup",
+                "tables": "default_catalog.mart.legacy_table",
+                "metrics": "Finance.Revenue.daily_revenue",
+                "sqls": "Finance.Revenue.region_rollup",
             },
         }
 
@@ -1339,7 +1378,7 @@ class TestSubagentScopedContextRoundTrip:
             EditAgentInput(
                 id="preserve_scope",
                 name="preserve_scope",
-                catalogs=["/Commerce/Orders"],
+                catalogs=["default_catalog.mart.raw_orders"],
             ),
             real_agent_config,
         )
@@ -1350,9 +1389,9 @@ class TestSubagentScopedContextRoundTrip:
         scoped = raw["agent"]["agentic_nodes"]["preserve_scope"]["scoped_context"]
         # ``tables`` was rewritten by catalogs — there's no separate
         # ``catalogs`` key in ``ScopedContext``. Other scope fields survive.
-        assert scoped["tables"] == "Commerce/Orders"
-        assert scoped["metrics"] == "revenue.daily"
-        assert scoped["sqls"] == "finance.region_rollup"
+        assert scoped["tables"] == "default_catalog.mart.raw_orders"
+        assert scoped["metrics"] == "Finance.Revenue.daily_revenue"
+        assert scoped["sqls"] == "Finance.Revenue.region_rollup"
 
     async def test_get_returns_tools_as_list_and_extracts_scoped_paths(self, real_agent_config):
         """The read path inverts the storage format the editor expects.
@@ -1367,7 +1406,7 @@ class TestSubagentScopedContextRoundTrip:
             "tools": "semantic_tools.*, db_tools.*, context_search_tools.list_subject_tree",
             "scoped_context": {
                 "datasource": "finance",
-                "tables": "/Commerce/Orders/Avg, /Commerce/Sales",
+                "tables": "default_catalog.mart.mf_time_spine, default_catalog.mart.raw_orders",
                 "metrics": "Finance.Revenue.Daily, finance.revenue.weekly",
                 "sqls": "Sales.region_query",
                 "ext_knowledge": "Docs.handbook",
@@ -1384,9 +1423,12 @@ class TestSubagentScopedContextRoundTrip:
             "db_tools.*",
             "context_search_tools.list_subject_tree",
         ]
-        # Catalogs come back from ``scoped_context.tables`` (the runtime key);
-        # leading slashes are stripped on the way out.
-        assert agent["catalogs"] == ["Commerce/Orders/Avg", "Commerce/Sales"]
+        # Catalogs come back from ``scoped_context.tables`` (the runtime key)
+        # in their canonical dot-separated form.
+        assert agent["catalogs"] == [
+            "default_catalog.mart.mf_time_spine",
+            "default_catalog.mart.raw_orders",
+        ]
         # Subjects merge across all three buckets in probe order; entries
         # surface verbatim in their stored dot-form.
         assert agent["subjects"] == [
@@ -1397,12 +1439,12 @@ class TestSubagentScopedContextRoundTrip:
         ]
 
     async def test_round_trip_create_then_get(self, real_agent_config, agent_yml_with_singleton):
-        """Saving and re-reading yields the canonical (slash-stripped) path form.
+        """Saving and re-reading yields the canonical dot-separated form.
 
         Even though the on-disk shape changes (subjects gets split into
         ``metrics`` / ``sqls`` / ``ext_knowledge``), the API contract round-
-        trips: the editor sees ``subjects`` come back as the same flat list
-        it sent.
+        trips: the editor sees ``subjects`` and ``catalogs`` come back as
+        the same flat lists it sent.
         """
         from datus.api.models.agent_models import CreateAgentInput
 
@@ -1412,7 +1454,7 @@ class TestSubagentScopedContextRoundTrip:
                 name="full_round_trip",
                 type="gen_sql",
                 tools=["semantic_tools.*", "db_tools.*"],
-                catalogs=["/Commerce/Orders/Avg"],
+                catalogs=["default_catalog.mart.raw_orders"],
                 subjects=["Commerce.Orders.Average_Order_Value.average_gross_order_value"],
             ),
             real_agent_config,
@@ -1422,7 +1464,7 @@ class TestSubagentScopedContextRoundTrip:
         assert result.success is True
         agent = result.data["agent"]
         assert agent["tools"] == ["semantic_tools.*", "db_tools.*"]
-        assert agent["catalogs"] == ["Commerce/Orders/Avg"]
+        assert agent["catalogs"] == ["default_catalog.mart.raw_orders"]
         assert agent["subjects"] == ["Commerce.Orders.Average_Order_Value.average_gross_order_value"]
 
     async def test_edit_clearing_scope_persists_to_yaml(self, real_agent_config, agent_yml_with_singleton):
@@ -1446,7 +1488,7 @@ class TestSubagentScopedContextRoundTrip:
         real_agent_config.agentic_nodes["clear_scope_agent"] = {
             "type": "gen_sql",
             "scoped_context": {
-                "tables": "orders",
+                "tables": "default_catalog.mart.raw_orders",
                 "metrics": "Finance.Revenue.Daily",
             },
         }
