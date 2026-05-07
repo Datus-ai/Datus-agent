@@ -221,6 +221,44 @@ class TestResolveNodeType:
         with pytest.raises(ValueError, match="Unknown subagent type"):
             task_tool._resolve_node_type("nonexistent")
 
+    def test_resolve_effective_inherits_parent_when_child_empty(self, task_tool):
+        parent = MagicMock()
+        parent.node_config = {"scoped_context": {"tables": "public.users"}}
+        task_tool._parent_node = parent
+        # 'sales_analyst' yaml has no scoped_context → child empty → inherit parent
+        effective = task_tool._resolve_effective_sub_agent_config("sales_analyst")
+        assert effective.scoped_context is not None
+        assert effective.scoped_context.tables == "public.users"
+
+    def test_resolve_effective_accepts_parent_scoped_context_instance(self, task_tool):
+        from datus.schemas.agent_models import ScopedContext
+
+        parent = MagicMock()
+        parent.node_config = {"scoped_context": ScopedContext(tables="public.orders")}
+        task_tool._parent_node = parent
+        effective = task_tool._resolve_effective_sub_agent_config("sales_analyst")
+        assert effective.scoped_context.tables == "public.orders"
+
+    def test_resolve_effective_no_parent_returns_child_only(self, task_tool):
+        # No parent → child config drives everything; sales_analyst has no scope → empty
+        task_tool._parent_node = None
+        effective = task_tool._resolve_effective_sub_agent_config("sales_analyst")
+        assert effective.scoped_context is None or effective.scoped_context.is_empty
+
+    def test_resolve_effective_child_overrides_parent(self, task_tool, mock_agent_config):
+        # Add a child with its own scoped_context to the agentic_nodes fixture
+        mock_agent_config.agentic_nodes["scoped_child"] = {
+            "model": "default",
+            "node_class": "gen_sql",
+            "scoped_context": {"tables": "public.products"},
+        }
+        parent = MagicMock()
+        parent.node_config = {"scoped_context": {"tables": "public.users"}}
+        task_tool._parent_node = parent
+        effective = task_tool._resolve_effective_sub_agent_config("scoped_child")
+        # Whole-segment override: child wins
+        assert effective.scoped_context.tables == "public.products"
+
     def test_node_class_map_coverage(self):
         """NODE_CLASS_MAP contains exactly the expected key→NodeType mappings."""
         expected_map = {

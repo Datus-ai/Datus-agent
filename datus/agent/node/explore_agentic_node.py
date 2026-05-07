@@ -143,7 +143,10 @@ class ExploreAgenticNode(AgenticNode):
     def _setup_context_search_tools(self):
         """Setup context search tools."""
         try:
-            self.context_search_tools = ContextSearchTools(self.agent_config)
+            self.context_search_tools = ContextSearchTools(
+                self.agent_config,
+                sub_agent_name=self.get_node_name(),
+            )
             self.tools.extend(self.context_search_tools.available_tools())
         except Exception as e:
             logger.warning(f"Failed to setup context search tools, continuing without: {e}")

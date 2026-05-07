@@ -252,11 +252,11 @@ class GenSQLAgenticNode(AgenticNode):
             return
 
         self.tools = []
-        config_value = self.node_config.get("tools")
-        if config_value is None:
-            config_value = self.DEFAULT_TOOLS
+        tools_str = self.node_config.get("tools")
+        if not tools_str:
+            tools_str = self.DEFAULT_TOOLS
 
-        tool_patterns = [p.strip() for p in config_value.split(",") if p.strip()]
+        tool_patterns = [p.strip() for p in tools_str.split(",") if p.strip()]
         for pattern in tool_patterns:
             self._setup_tool_pattern(pattern)
 
@@ -296,7 +296,7 @@ class GenSQLAgenticNode(AgenticNode):
         """Setup context search tools."""
         try:
             self.context_search_tools = ContextSearchTools(
-                self.agent_config, sub_agent_name=self.node_config["system_prompt"]
+                self.agent_config, sub_agent_name=self.get_node_name()
             )
             self.tools.extend(self.context_search_tools.available_tools())
         except Exception as e:

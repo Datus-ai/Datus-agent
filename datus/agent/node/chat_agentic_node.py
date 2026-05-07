@@ -138,8 +138,9 @@ class ChatAgenticNode(AgenticNode):
 
     def setup_tools(self):
         """Initialize all tools with default database connection."""
-        self.db_func_tool = DBFuncTool(agent_config=self.agent_config)
-        self.context_search_tools = ContextSearchTools(self.agent_config)
+        node_name = self.get_node_name()
+        self.db_func_tool = DBFuncTool(agent_config=self.agent_config, sub_agent_name=node_name)
+        self.context_search_tools = ContextSearchTools(self.agent_config, sub_agent_name=node_name)
         self.reference_template_tools = ReferenceTemplateTools(self.agent_config, db_func_tool=self.db_func_tool)
         self._setup_date_parsing_tools()
         self._setup_filesystem_tools()
@@ -288,7 +289,11 @@ class ChatAgenticNode(AgenticNode):
 
     def _update_database_connection(self, database_name: str):
         """Update database connection to a different database."""
-        self.db_func_tool = DBFuncTool(agent_config=self.agent_config, default_datasource=database_name)
+        self.db_func_tool = DBFuncTool(
+            agent_config=self.agent_config,
+            sub_agent_name=self.get_node_name(),
+            default_datasource=database_name,
+        )
         self._rebuild_tools()
 
     # ── Permission Helpers ──────────────────────────────────────────────

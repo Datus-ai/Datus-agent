@@ -1889,6 +1889,11 @@ class AgentConfig:
         )
 
     def sub_agent_config(self, sub_agent_name: str) -> Dict[str, Any]:
+        from datus.configuration.scoped_context_overrides import get_override
+
+        override = get_override(sub_agent_name)
+        if override is not None:
+            return override.model_dump()
         return self.agentic_nodes.get(sub_agent_name, {})
 
     def benchmark_config(self, benchmark_platform) -> BenchmarkConfig:

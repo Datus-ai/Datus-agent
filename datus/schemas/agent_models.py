@@ -50,6 +50,18 @@ class ScopedContext(BaseModel):
             ext_knowledge=_split(self.ext_knowledge),
         )
 
+    def merge_with(self, child: Optional["ScopedContext"]) -> "ScopedContext":
+        return merge_scoped_contexts(self, child)
+
+
+def merge_scoped_contexts(parent: Optional[ScopedContext], child: Optional[ScopedContext]) -> ScopedContext:
+    """Whole-segment override: child wins iff it declares any KB field; otherwise inherit parent."""
+    if child is not None and not child.is_empty:
+        return child.model_copy()
+    if parent is not None:
+        return parent.model_copy()
+    return ScopedContext()
+
 
 class SubAgentConfig(BaseModel):
     system_prompt: str = Field("", init=True, description="Name of sub agent")
@@ -116,6 +128,10 @@ class SubAgentConfig(BaseModel):
 
     def is_in_datasource(self, datasource: str) -> bool:
         return self.has_scoped_context() and datasource == self.scoped_context.datasource
+
+    def with_effective_scoped_context(self, parent_sc: Optional[ScopedContext]) -> "SubAgentConfig":
+        merged = merge_scoped_contexts(parent_sc, self.scoped_context)
+        return self.model_copy(update={"scoped_context": merged})
 
     def as_payload(self, datasource: Optional[str] = None) -> Dict[str, Any]:
         payload: Dict[str, Any] = {

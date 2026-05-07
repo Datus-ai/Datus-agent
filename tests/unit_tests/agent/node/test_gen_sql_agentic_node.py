@@ -2754,6 +2754,50 @@ class TestGenSQLParseNodeConfig:
         result = node._parse_node_config(mock_config, "gensql")
         assert result == {}
 
+    def test_runtime_override_layered_on_yaml_entry(self):
+        """When effective_subagent pushes an override, _parse_node_config picks it up."""
+        from datus.configuration.scoped_context_overrides import effective_subagent
+        from datus.schemas.agent_models import ScopedContext, SubAgentConfig
+
+        node = _make_gensql_node()
+        mock_config = MagicMock()
+        mock_config.agentic_nodes = {
+            "gensql": {
+                "system_prompt": "yaml_prompt",
+                "scoped_context": {"tables": "yaml_tables"},
+            }
+        }
+        override = SubAgentConfig(
+            system_prompt="effective",
+            scoped_context=ScopedContext(tables="override_tables"),
+        )
+        with effective_subagent("gensql", override):
+            result = node._parse_node_config(mock_config, "gensql")
+        sc = result.get("scoped_context")
+        if isinstance(sc, dict):
+            assert sc.get("tables") == "override_tables"
+        else:
+            assert sc.tables == "override_tables"
+
+    def test_runtime_override_creates_entry_when_yaml_missing(self):
+        """Builtin subagent (no yaml entry) still gets config when override is pushed."""
+        from datus.configuration.scoped_context_overrides import effective_subagent
+        from datus.schemas.agent_models import ScopedContext, SubAgentConfig
+
+        node = _make_gensql_node()
+        mock_config = MagicMock()
+        mock_config.agentic_nodes = {}
+        override = SubAgentConfig(
+            system_prompt="builtin",
+            scoped_context=ScopedContext(tables="parent_tables"),
+        )
+        with effective_subagent("gen_metrics", override):
+            result = node._parse_node_config(mock_config, "gen_metrics")
+        assert result != {}
+        sc = result.get("scoped_context")
+        tables = sc.get("tables") if isinstance(sc, dict) else sc.tables
+        assert tables == "parent_tables"
+
 
 # ---------------------------------------------------------------------------
 # execute_stream with mocked model

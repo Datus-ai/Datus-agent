@@ -147,7 +147,10 @@ class SkillCreatorAgenticNode(AgenticNode):
     def _setup_db_tools(self):
         """Setup database tools (optional, for understanding schema when creating data-related skills)."""
         try:
-            self.db_func_tool = DBFuncTool(agent_config=self.agent_config)
+            self.db_func_tool = DBFuncTool(
+                agent_config=self.agent_config,
+                sub_agent_name=self.get_node_name(),
+            )
             self.tools.extend(self.db_func_tool.available_tools())
         except Exception as e:
             logger.warning(f"Failed to setup database tools, continuing without: {e}")

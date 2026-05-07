@@ -86,7 +86,10 @@ class CompareAgenticNode(AgenticNode):
             return
 
         try:
-            self.db_func_tool = DBFuncTool(agent_config=self.agent_config)
+            self.db_func_tool = DBFuncTool(
+                agent_config=self.agent_config,
+                sub_agent_name=self.get_node_name(),
+            )
 
             self.tools = self.db_func_tool.available_tools()
             logger.debug(

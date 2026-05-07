@@ -22,6 +22,7 @@ from agents import FunctionTool, Tool
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
+from datus.configuration.scoped_context_overrides import effective_subagent
 from datus.schemas.action_history import (
     SUBAGENT_COMPLETE_ACTION_TYPE,
     ActionHistory,
@@ -29,7 +30,7 @@ from datus.schemas.action_history import (
     ActionRole,
     ActionStatus,
 )
-from datus.schemas.agent_models import SubAgentConfig
+from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 from datus.tools.func_tool.base import FuncToolResult
 from datus.utils.constants import SYS_SUB_AGENTS
 from datus.utils.loggings import get_logger
@@ -544,91 +545,110 @@ class SubAgentTaskTool:
                 ),
             )
 
-        node = self._create_node(subagent_type)
-        node.ephemeral = True  # Use in-memory session — no SQLite persistence for sub-agents
+        effective_cfg = self._resolve_effective_sub_agent_config(subagent_type)
 
-        # Set input on the node
-        node.input = self._build_node_input(node, prompt)
+        with effective_subagent(subagent_type, effective_cfg):
+            node = self._create_node(subagent_type)
+            node.ephemeral = True  # Use in-memory session — no SQLite persistence for sub-agents
 
-        # Inject parent's InteractionBroker so that sub-agent INTERACTION
-        # actions are routed through the parent's broker queue.  When injected,
-        # we call execute_stream() (not execute_stream_with_interactions()) to
-        # avoid dual-consuming the same broker.fetch() stream.
-        if self._interaction_broker is not None:
-            self._inject_broker(node, self._interaction_broker)
+            # Set input on the node
+            node.input = self._build_node_input(node, prompt)
 
-        # Propagate proxy tool config from parent node so sub-agent tools are
-        # also proxied.  Uses the parent's tool_channel so stdin dispatch can
-        # resolve futures for both parent and sub-agent tools.
-        # Note: apply_proxy_tools internally detects fs-dependent nodes and
-        # excludes their filesystem_tools category from proxying.
-        if self._parent_node and self._parent_node.proxy_tool_patterns:
-            from datus.tools.proxy.proxy_tool import apply_proxy_tools
+            # Inject parent's InteractionBroker so that sub-agent INTERACTION
+            # actions are routed through the parent's broker queue.  When injected,
+            # we call execute_stream() (not execute_stream_with_interactions()) to
+            # avoid dual-consuming the same broker.fetch() stream.
+            if self._interaction_broker is not None:
+                self._inject_broker(node, self._interaction_broker)
 
-            apply_proxy_tools(node, self._parent_node.proxy_tool_patterns, channel=self._parent_node.tool_channel)
+            # Propagate proxy tool config from parent node so sub-agent tools are
+            # also proxied.  Uses the parent's tool_channel so stdin dispatch can
+            # resolve futures for both parent and sub-agent tools.
+            # Note: apply_proxy_tools internally detects fs-dependent nodes and
+            # excludes their filesystem_tools category from proxying.
+            if self._parent_node and self._parent_node.proxy_tool_patterns:
+                from datus.tools.proxy.proxy_tool import apply_proxy_tools
 
-        # Iterate the async generator directly (we're already in async context)
-        action_history_manager = ActionHistoryManager()
-        final_output = None
+                apply_proxy_tools(node, self._parent_node.proxy_tool_patterns, channel=self._parent_node.tool_channel)
 
-        # When parent broker is injected, INTERACTION actions flow through the
-        # parent's broker.fetch() → parent merge → CLI.  We only need
-        # execute_stream() here; otherwise fall back to the full merge.
-        if self._interaction_broker is not None:
-            stream = node.execute_stream(action_history_manager)
-        else:
-            stream = node.execute_stream_with_interactions(action_history_manager)
+            # Iterate the async generator directly (we're already in async context)
+            action_history_manager = ActionHistoryManager()
+            final_output = None
 
-        stream_start_time = datetime.now()
-        tool_count = 0
-        subagent_status = ActionStatus.SUCCESS
-        first_user_seen = False
+            # When parent broker is injected, INTERACTION actions flow through the
+            # parent's broker.fetch() → parent merge → CLI.  We only need
+            # execute_stream() here; otherwise fall back to the full merge.
+            if self._interaction_broker is not None:
+                stream = node.execute_stream(action_history_manager)
+            else:
+                stream = node.execute_stream_with_interactions(action_history_manager)
 
-        try:
-            async for action in stream:
-                # Inject _task_description into the first USER action for display
-                if not first_user_seen and action.role == ActionRole.USER:
-                    if description:
-                        if action.input is None:
-                            action.input = {}
-                        if isinstance(action.input, dict):
-                            action.input["_task_description"] = description
-                    first_user_seen = True
+            stream_start_time = datetime.now()
+            tool_count = 0
+            subagent_status = ActionStatus.SUCCESS
+            first_user_seen = False
 
-                # Forward sub-action to the ActionBus (real-time CoT streaming)
-                if self._action_bus is not None:
-                    action.depth = 1
-                    if call_id:
-                        action.parent_action_id = call_id
-                    logger.debug(
-                        "SubAgentTaskTool bus.put",
-                        action_type=action.action_type,
-                        role=str(action.role),
-                        status=str(action.status),
-                    )
-                    self._action_bus.put(action)
-
-                if action.role == ActionRole.TOOL:
-                    tool_count += 1
-
-                if action.status == ActionStatus.FAILED:
-                    subagent_status = ActionStatus.FAILED
-                    if action.output:
-                        final_output = action.output
-                elif action.status == ActionStatus.SUCCESS and action.output:
-                    final_output = action.output
-        except Exception:
-            subagent_status = ActionStatus.FAILED
-            raise
-        finally:
-            self._emit_complete_action(subagent_type, call_id, stream_start_time, tool_count, subagent_status)
-            # Cleanup node resources (MCP connections, sessions, file handles)
             try:
-                node.delete_session()
+                async for action in stream:
+                    # Inject _task_description into the first USER action for display
+                    if not first_user_seen and action.role == ActionRole.USER:
+                        if description:
+                            if action.input is None:
+                                action.input = {}
+                            if isinstance(action.input, dict):
+                                action.input["_task_description"] = description
+                        first_user_seen = True
+
+                    # Forward sub-action to the ActionBus (real-time CoT streaming)
+                    if self._action_bus is not None:
+                        action.depth = 1
+                        if call_id:
+                            action.parent_action_id = call_id
+                        logger.debug(
+                            "SubAgentTaskTool bus.put",
+                            action_type=action.action_type,
+                            role=str(action.role),
+                            status=str(action.status),
+                        )
+                        self._action_bus.put(action)
+
+                    if action.role == ActionRole.TOOL:
+                        tool_count += 1
+
+                    if action.status == ActionStatus.FAILED:
+                        subagent_status = ActionStatus.FAILED
+                        if action.output:
+                            final_output = action.output
+                    elif action.status == ActionStatus.SUCCESS and action.output:
+                        final_output = action.output
             except Exception:
-                logger.debug("Failed to cleanup sub-agent node session", exc_info=True)
+                subagent_status = ActionStatus.FAILED
+                raise
+            finally:
+                self._emit_complete_action(subagent_type, call_id, stream_start_time, tool_count, subagent_status)
+                # Cleanup node resources (MCP connections, sessions, file handles)
+                try:
+                    node.delete_session()
+                except Exception:
+                    logger.debug("Failed to cleanup sub-agent node session", exc_info=True)
 
         return self._convert_to_func_result(final_output)
+
+    def _resolve_effective_sub_agent_config(self, subagent_type: str) -> SubAgentConfig:
+        """Build an effective SubAgentConfig that inherits parent scoped_context when child has none."""
+        parent_sc: Optional[ScopedContext] = None
+        parent_cfg = getattr(self._parent_node, "node_config", None)
+        if isinstance(parent_cfg, dict):
+            raw = parent_cfg.get("scoped_context")
+            if isinstance(raw, ScopedContext):
+                parent_sc = raw
+            elif isinstance(raw, dict):
+                parent_sc = ScopedContext.model_validate(raw)
+
+        raw_child = self.agent_config.sub_agent_config(subagent_type)
+        child_dict = raw_child if isinstance(raw_child, dict) else {}
+        child_cfg = SubAgentConfig.model_validate(child_dict)
+        return child_cfg.with_effective_scoped_context(parent_sc)
 
     def _emit_complete_action(
         self,
@@ -944,17 +964,6 @@ class SubAgentTaskTool:
                 '- For complex questions requiring deep exploration, call multiple task(type="explore") '
                 "in PARALLEL, each with a direction-specific prompt (schema+sample, knowledge, file)",
                 '- For quick single-direction lookups, call one task(type="explore") with a focused prompt',
-                '- Use task(type="gen_sql") for SQL generation requiring multi-step reasoning, '
-                "complex joins, or domain-specific logic",
-                '- Use task(type="gen_report") for metric attribution, root cause analysis, '
-                "or analyzing why a metric/reference_sql result changed",
-                '- Use task(type="gen_skill") when the user wants to create a new skill or optimize an existing skill',
-                '- Use task(type="gen_dashboard") for creating/updating/inspecting BI dashboards, '
-                "charts, and datasets on Superset or Grafana",
-                '- Use task(type="scheduler") for submitting, monitoring, updating, '
-                "and troubleshooting scheduled jobs on Airflow",
-                "- In plan mode, use task() for each SQL sub-step",
-                "- Always provide a short 'description' summarizing the task goal",
             ]
         )
 

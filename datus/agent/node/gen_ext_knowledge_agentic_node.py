@@ -159,8 +159,9 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
         # Hardcoded tool configuration: specific methods from generation_tools and filesystem_tools
         # filesystem_tools: read_file, write_file, edit_file
         # Chat node uses all available tools by default
-        self.db_func_tool = DBFuncTool(agent_config=self.agent_config)
-        self.context_search_tools = ContextSearchTools(self.agent_config)
+        node_name = self.get_node_name()
+        self.db_func_tool = DBFuncTool(agent_config=self.agent_config, sub_agent_name=node_name)
+        self.context_search_tools = ContextSearchTools(self.agent_config, sub_agent_name=node_name)
         if self.db_func_tool:
             self.tools.extend(self.db_func_tool.available_tools())
         if self.context_search_tools:

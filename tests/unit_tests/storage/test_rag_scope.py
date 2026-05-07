@@ -97,3 +97,76 @@ class TestBuildSubAgentFilter:
         )
         result = _build_sub_agent_filter(config, "team_a", _mock_storage(), "tables")
         assert result is None
+
+
+class TestRuntimeOverrideIntegration:
+    """Verify ``AgentConfig.sub_agent_config`` consults the ContextVar override.
+
+    These tests exercise the real ``AgentConfig.sub_agent_config`` method (not the
+    test mock above) so the runtime override path is covered end-to-end.
+    """
+
+    def _real_config(self, agentic_nodes):
+        # Bypass __init__ to avoid loading agent.yml; only the method we test is needed.
+        from datus.configuration.agent_config import AgentConfig
+
+        config = AgentConfig.__new__(AgentConfig)
+        config.agentic_nodes = agentic_nodes
+        return config
+
+    def test_yaml_path_when_no_override(self):
+        config = self._real_config({"team_a": {"scoped_context": {"tables": "public.users"}}})
+        result = _build_sub_agent_filter(config, "team_a", _mock_storage(), "tables")
+        assert result is not None
+        assert "users" in build_where(result)
+
+    def test_runtime_override_takes_precedence_over_yaml(self):
+        from datus.configuration.scoped_context_overrides import effective_subagent
+        from datus.schemas.agent_models import ScopedContext, SubAgentConfig
+
+        config = self._real_config({"team_a": {"scoped_context": {"tables": "public.users"}}})
+        override_cfg = SubAgentConfig(
+            system_prompt="x",
+            scoped_context=ScopedContext(tables="public.orders"),
+        )
+        with effective_subagent("team_a", override_cfg):
+            result = _build_sub_agent_filter(config, "team_a", _mock_storage(), "tables")
+        assert result is not None
+        clause = build_where(result)
+        assert "orders" in clause
+        assert "users" not in clause
+
+    def test_override_supplies_scope_when_yaml_has_none(self):
+        from datus.configuration.scoped_context_overrides import effective_subagent
+        from datus.schemas.agent_models import ScopedContext, SubAgentConfig
+
+        # Builtin subagent: no yaml entry; parent inheritance should still produce a filter.
+        config = self._real_config({})
+        override_cfg = SubAgentConfig(
+            system_prompt="x",
+            scoped_context=ScopedContext(tables="public.users"),
+        )
+        with effective_subagent("gen_metrics", override_cfg):
+            result = _build_sub_agent_filter(config, "gen_metrics", _mock_storage(), "tables")
+        assert result is not None
+        assert "users" in build_where(result)
+
+    @pytest.mark.asyncio
+    async def test_override_isolated_per_asyncio_task(self):
+        import asyncio
+
+        from datus.configuration.scoped_context_overrides import effective_subagent
+        from datus.schemas.agent_models import ScopedContext, SubAgentConfig
+
+        config = self._real_config({"team_a": {"scoped_context": {"tables": "public.users"}}})
+
+        async def run(table: str) -> str:
+            cfg = SubAgentConfig(system_prompt="x", scoped_context=ScopedContext(tables=table))
+            with effective_subagent("team_a", cfg):
+                await asyncio.sleep(0.01)
+                result = _build_sub_agent_filter(config, "team_a", _mock_storage(), "tables")
+            return build_where(result)
+
+        c1, c2 = await asyncio.gather(run("table_one"), run("table_two"))
+        assert "table_one" in c1 and "table_two" not in c1
+        assert "table_two" in c2 and "table_one" not in c2

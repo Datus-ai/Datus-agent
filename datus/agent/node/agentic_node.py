@@ -736,11 +736,23 @@ class AgenticNode(Node):
             return {}
 
         nodes_config = agent_config.agentic_nodes
-        if node_name not in nodes_config:
+        from datus.configuration.scoped_context_overrides import get_override
+
+        override = get_override(node_name)
+        if node_name not in nodes_config and override is None:
             logger.debug(f"Node configuration '{node_name}' not found in agent.yml, using default configuration")
             return {}
 
-        node_config = nodes_config[node_name]
+        if override is not None:
+            # Layer the runtime override (with parent-merged scoped_context) on top
+            # of any yaml entry, so child node __init__ sees the effective context.
+            base = nodes_config.get(node_name) if node_name in nodes_config else {}
+            base_dict = (
+                dict(base) if isinstance(base, dict) else (base.model_dump() if hasattr(base, "model_dump") else {})
+            )
+            node_config = {**base_dict, **override.model_dump(exclude_unset=True)}
+        else:
+            node_config = nodes_config[node_name]
 
         # Extract configuration attributes
         config = {}
