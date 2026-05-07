@@ -33,6 +33,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.node_models import SQLContext
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
@@ -243,6 +244,7 @@ class ClaudeModel(OpenAICompatibleModel):
 
         return system_message if system_message else anthropic.NOT_GIVEN
 
+    @optional_traceable(name="anthropic_messages_create", run_type="llm")
     def _anthropic_messages_create(self, **kwargs):
         """Call the correct Anthropic Messages endpoint for the current auth mode."""
         if self._is_oauth_token:

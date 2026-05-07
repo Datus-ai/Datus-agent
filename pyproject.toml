@@ -180,6 +180,9 @@ dev = [
     "twine>=6.1.0",
     "langsmith>=0.7.0",
     "langsmith-fetch>=0.1.0",
+    "langfuse>=3.0.0",
+    "openinference-instrumentation-openai-agents>=1.0.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
     "pytest-cov>=7.0.0",
     "diff-cover>=10.2.0",
 ]

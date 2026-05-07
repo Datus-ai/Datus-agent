@@ -23,8 +23,27 @@ from unittest.mock import patch
 
 import pytest
 
-from datus.configuration.agent_config import AgentConfig, NodeConfig
-from tests.unit_tests.mock_llm_model import MockLLMModel
+# Clear Langfuse env vars BEFORE any test module imports trigger setup_tracing().
+# Session-scoped fixtures run too late (after collection), so we use pytest_configure.
+_LANGFUSE_ENV_KEYS = ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_HOST", "LANGFUSE_BASE_URL")
+_saved_langfuse_env = {}
+
+
+def pytest_configure(config):
+    for key in _LANGFUSE_ENV_KEYS:
+        _saved_langfuse_env[key] = os.environ.pop(key, None)
+
+
+def pytest_unconfigure(config):
+    for key, val in _saved_langfuse_env.items():
+        if val is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = val
+
+
+from datus.configuration.agent_config import AgentConfig, NodeConfig  # noqa: E402
+from tests.unit_tests.mock_llm_model import MockLLMModel  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -72,9 +91,22 @@ def _disable_langsmith_tracing():
             "LANGSMITH_ENDPOINT",
             "LANGSMITH_TRACING",
             "LANGCHAIN_TRACING_V2",
+            "LANGFUSE_PUBLIC_KEY",
+            "LANGFUSE_SECRET_KEY",
+            "LANGFUSE_HOST",
+            "LANGFUSE_BASE_URL",
         )
     }
-    for key in ("LANGCHAIN_API_KEY", "LANGSMITH_API_KEY", "LANGCHAIN_ENDPOINT", "LANGSMITH_ENDPOINT"):
+    for key in (
+        "LANGCHAIN_API_KEY",
+        "LANGSMITH_API_KEY",
+        "LANGCHAIN_ENDPOINT",
+        "LANGSMITH_ENDPOINT",
+        "LANGFUSE_PUBLIC_KEY",
+        "LANGFUSE_SECRET_KEY",
+        "LANGFUSE_HOST",
+        "LANGFUSE_BASE_URL",
+    ):
         os.environ.pop(key, None)
     os.environ["LANGSMITH_TRACING"] = "false"
     os.environ["LANGCHAIN_TRACING_V2"] = "false"

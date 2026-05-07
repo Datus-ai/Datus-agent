@@ -16,26 +16,73 @@ try:
 except ImportError:
     RUN_TYPE_T = Literal["tool", "chain", "llm", "retriever", "embedding", "prompt", "parser"]
 
+HAS_LANGFUSE = False
+try:
+    import langfuse as _langfuse_mod  # noqa: F401
+
+    HAS_LANGFUSE = True
+except ImportError:
+    pass
+
+_LANGFUSE_TYPE_MAP = {
+    "chain": "span",
+    "tool": "tool",
+    "llm": "generation",
+    "retriever": "span",
+    "embedding": "span",
+    "agent": "span",
+    "prompt": "span",
+    "parser": "span",
+}
+
+_langfuse_enabled = False
+
 
 def optional_traceable(name: str = "", run_type: RUN_TYPE_T = "chain"):
     """
-    Optional traceable decorator that wraps functions with LangSmith tracing.
+    Optional traceable decorator that wraps functions with LangSmith and/or Langfuse tracing.
+
+    LangSmith wrapping is applied eagerly at decoration time (import-time).
+    Langfuse wrapping is deferred to the first call so that credentials loaded
+    via load_dotenv() after module import are honoured.
 
     Args:
         name: The name of the trace. Defaults to the function name.
         run_type: The type of run (e.g., "chain", "llm", "tool").
     """
+    import functools
 
     def decorator(func):
-        if not HAS_LANGSMITH:
-            return func
-        try:
-            from langsmith import traceable
+        wrapped = func
 
-            trace_name = name or getattr(func, "__name__", "agent_operation")
-            return traceable(name=trace_name, run_type=run_type)(func)
-        except ImportError:
-            return func
+        if HAS_LANGSMITH:
+            try:
+                from langsmith import traceable
+
+                trace_name = name or getattr(func, "__name__", "agent_operation")
+                wrapped = traceable(name=trace_name, run_type=run_type)(wrapped)
+            except ImportError:
+                pass
+
+        if HAS_LANGFUSE:
+            _inner = wrapped
+            _observed = None
+
+            @functools.wraps(_inner)
+            def _langfuse_lazy(*args, **kwargs):
+                nonlocal _observed
+                if _langfuse_enabled:
+                    if _observed is None:
+                        from langfuse import observe
+
+                        t = name or getattr(func, "__name__", "agent_operation")
+                        _observed = observe(name=t, as_type=_LANGFUSE_TYPE_MAP.get(run_type, "span"))(_inner)
+                    return _observed(*args, **kwargs)
+                return _inner(*args, **kwargs)
+
+            wrapped = _langfuse_lazy
+
+        return wrapped
 
     return decorator
 
@@ -56,14 +103,72 @@ def _is_tracing_enabled() -> bool:
     return tracing_enabled and has_api_key
 
 
-def setup_tracing():
-    """Set up LangSmith tracing with DatusTracingProcessor.
+def _is_langfuse_enabled() -> bool:
+    """Check if Langfuse tracing is enabled via environment variables."""
+    import os
 
-    Creates a DatusTracingProcessor (subclass of OpenAIAgentsTracingProcessor)
+    if not HAS_LANGFUSE:
+        return False
+    return bool(os.environ.get("LANGFUSE_PUBLIC_KEY")) and bool(os.environ.get("LANGFUSE_SECRET_KEY"))
+
+
+def _disable_sdk_tracing(reason: str) -> None:
+    """Disable the OpenAI Agents SDK's default tracing to avoid atexit deadlock."""
+    try:
+        from agents import set_tracing_disabled
+
+        set_tracing_disabled(True)
+        logger.debug(f"OpenAI Agents SDK tracing disabled: {reason}")
+    except ImportError:
+        pass
+
+
+def _setup_langfuse_tracing() -> None:
+    """Configure Langfuse tracing via OpenAI Agents SDK instrumentor or LiteLLM callback.
+
+    Prefers OpenInference instrumentor (captures full agent/tool/generation tree).
+    Falls back to LiteLLM callback (captures LLM calls only) when OpenInference
+    is not installed.  The two are NOT combined because OpenInference already
+    captures LLM generations, and adding LiteLLM would duplicate every call.
+    """
+    global _langfuse_enabled
+    import os
+
+    if not os.environ.get("LANGFUSE_OTEL_HOST"):
+        base_url = os.environ.get("LANGFUSE_HOST", os.environ.get("LANGFUSE_BASE_URL", "https://us.cloud.langfuse.com"))
+        os.environ["LANGFUSE_OTEL_HOST"] = base_url
+
+    try:
+        from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
+
+        OpenAIAgentsInstrumentor().instrument(exclusive_processor=False)
+        logger.info("Langfuse tracing enabled (OpenAI Agents SDK instrumentor)")
+    except ImportError:
+        import litellm
+
+        callback_name = "langfuse_otel"
+        if callback_name not in (litellm.success_callback or []):
+            litellm.success_callback = litellm.success_callback or []
+            litellm.success_callback.append(callback_name)
+        if callback_name not in (litellm.failure_callback or []):
+            litellm.failure_callback = litellm.failure_callback or []
+            litellm.failure_callback.append(callback_name)
+
+        if not (HAS_LANGSMITH and _is_tracing_enabled()):
+            _disable_sdk_tracing("openinference not installed and no LangSmith, only LiteLLM callbacks active")
+        logger.info("Langfuse tracing enabled (LiteLLM callback only, openinference not installed)")
+
+    _langfuse_enabled = True
+
+
+def setup_tracing():
+    """Set up tracing with LangSmith and/or Langfuse.
+
+    LangSmith: Creates a DatusTracingProcessor (subclass of OpenAIAgentsTracingProcessor)
     that captures trace URLs on trace end, and registers it via set_trace_processors.
 
-    Requires both a tracing env var (LANGSMITH_TRACING=true or LANGCHAIN_TRACING_V2=true)
-    and a valid API key (LANGCHAIN_API_KEY or LANGSMITH_API_KEY) to be set.
+    Langfuse: Registers LiteLLM callbacks and OpenAI Agents SDK instrumentor (additive,
+    coexists with LangSmith).
 
     Safe to call multiple times; initialization only happens once.
     """
@@ -72,58 +177,70 @@ def setup_tracing():
         return
     _tracing_initialized = True
 
-    def _disable_sdk_tracing(reason: str) -> None:
-        # The OpenAI Agents SDK's DefaultTraceProvider spawns a background worker
-        # whose atexit shutdown can deadlock under Ctrl+C. Disable it when we are
-        # not actively forwarding traces to LangSmith.
+    langsmith_enabled = HAS_LANGSMITH and _is_tracing_enabled()
+    langfuse_enabled = _is_langfuse_enabled()
+
+    if not langsmith_enabled and not langfuse_enabled:
+        if not HAS_LANGSMITH:
+            _disable_sdk_tracing("langsmith not installed")
+        else:
+            logger.debug("LangSmith tracing not enabled (set LANGSMITH_TRACING=true and LANGCHAIN_API_KEY to enable)")
+            _disable_sdk_tracing("LANGSMITH_TRACING/api key not set")
+        return
+
+    if langsmith_enabled:
         try:
-            from agents import set_tracing_disabled
+            from agents import set_trace_processors
+            from langsmith.wrappers import OpenAIAgentsTracingProcessor
 
-            set_tracing_disabled(True)
-            logger.debug(f"OpenAI Agents SDK tracing disabled: {reason}")
+            class DatusTracingProcessor(OpenAIAgentsTracingProcessor):
+                """Extended tracing processor that captures trace URLs."""
+
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, **kwargs)
+                    self._last_trace_url: str | None = None
+
+                def on_trace_end(self, trace) -> None:
+                    run = self._runs.get(trace.trace_id)
+                    if run:
+                        try:
+                            self._last_trace_url = run.get_url()
+                            logger.info(f"LangSmith Trace: {self._last_trace_url}")
+                        except Exception as e:
+                            logger.debug(f"Failed to get trace URL: {e}")
+                    super().on_trace_end(trace)
+
+            _tracing_processor = DatusTracingProcessor()
+            set_trace_processors([_tracing_processor])
+            logger.info("LangSmith DatusTracingProcessor enabled for SDK tracing")
         except ImportError:
-            pass
+            logger.warning("OpenAIAgentsTracingProcessor not available")
+    if langfuse_enabled:
+        _setup_langfuse_tracing()
 
-    if not HAS_LANGSMITH:
-        _disable_sdk_tracing("langsmith not installed")
-        return
 
-    if not _is_tracing_enabled():
-        logger.debug("LangSmith tracing not enabled (set LANGSMITH_TRACING=true and LANGCHAIN_API_KEY to enable)")
-        _disable_sdk_tracing("LANGSMITH_TRACING/api key not set")
-        return
-
+def _get_langfuse_trace_url() -> str | None:
+    """Get trace URL from Langfuse using the SDK helper (includes project segment)."""
     try:
-        from agents import set_trace_processors
-        from langsmith.wrappers import OpenAIAgentsTracingProcessor
+        from langfuse import get_client
 
-        class DatusTracingProcessor(OpenAIAgentsTracingProcessor):
-            """Extended tracing processor that captures trace URLs."""
-
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args, **kwargs)
-                self._last_trace_url: str | None = None
-
-            def on_trace_end(self, trace) -> None:
-                # Capture trace URL from RunTree before super() pops it
-                run = self._runs.get(trace.trace_id)
-                if run:
-                    try:
-                        self._last_trace_url = run.get_url()
-                        logger.info(f"LangSmith Trace: {self._last_trace_url}")
-                    except Exception as e:
-                        logger.debug(f"Failed to get trace URL: {e}")
-                super().on_trace_end(trace)
-
-        _tracing_processor = DatusTracingProcessor()
-        set_trace_processors([_tracing_processor])
-        logger.info("LangSmith DatusTracingProcessor enabled for SDK tracing")
-    except ImportError:
-        logger.warning("OpenAIAgentsTracingProcessor not available")
+        lf = get_client()
+        trace_id = lf.get_current_trace_id()
+        if trace_id:
+            return lf.get_trace_url(trace_id=trace_id)
+    except Exception as e:
+        logger.debug(f"Failed to get Langfuse trace URL: {e}")
+    return None
 
 
 def get_trace_url() -> str | None:
-    """Return the last captured LangSmith trace URL, or None."""
+    """Return the last captured trace URL (LangSmith or Langfuse), or None."""
     if _tracing_processor is not None:
-        return getattr(_tracing_processor, "_last_trace_url", None)
+        url = getattr(_tracing_processor, "_last_trace_url", None)
+        if url:
+            return url
+
+    if _langfuse_enabled:
+        return _get_langfuse_trace_url()
+
     return None
