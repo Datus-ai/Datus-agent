@@ -79,6 +79,7 @@ nav:
     - Integration:
       - MCP: integration/mcp.md
       - Skills: integration/skills.md
+      - Validation: integration/validation.md
       - Auto Memory: integration/memory.md
     - Training:
       - LLM Trace Usage: training/llm_trace_usage.md
@@ -162,6 +163,7 @@ plugins:
             Integration: 集成
             MCP: MCP
             Skills: Skills
+            Validation: 校验
             Auto Memory: 自动记忆
             Release Notes: 发布说明
 
