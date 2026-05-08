@@ -34,6 +34,83 @@ def _action_status_value(action: Any) -> Optional[str]:
     return status.value if hasattr(status, "value") else str(status)
 
 
+DEFAULT_METRICS_BATCH_SIZE = 1
+
+
+async def _generate_metrics_batch(
+    batch_queries: list[str],
+    batch_idx: int,
+    agent_config: AgentConfig,
+    subject_tree: Optional[list],
+    extra_instructions: Optional[str],
+    event_helper: BatchEventHelper,
+    action_callback: Optional[Callable[["ActionHistory"], None]],
+) -> tuple[bool, str, Optional[dict[str, Any]]]:
+    """Process a single batch of SQL queries for metrics extraction."""
+    batch_message = "Analyze the following SQL queries and extract core metrics:\n\n" + "\n\n---\n\n".join(
+        batch_queries
+    )
+
+    if extra_instructions:
+        batch_message = f"{batch_message}\n\n## Additional Instructions\n{extra_instructions}"
+
+    current_db_config = agent_config.current_db_config()
+    latest_prompt_version = get_prompt_manager(agent_config=agent_config).get_latest_version("gen_metrics_system")
+
+    metrics_input = SemanticNodeInput(
+        user_message=batch_message,
+        catalog=current_db_config.catalog,
+        database=current_db_config.database,
+        db_schema=current_db_config.schema,
+        prompt_version=latest_prompt_version,
+    )
+
+    metrics_node = GenMetricsAgenticNode(
+        agent_config=agent_config,
+        execution_mode="workflow",
+        subject_tree=subject_tree,
+    )
+
+    action_history_manager = ActionHistoryManager()
+    metrics_node.input = metrics_input
+
+    batch_id = f"batch-{batch_idx}"
+
+    try:
+        final_result = None
+        terminal_error = None
+        async for action in metrics_node.execute_stream(action_history_manager):
+            if action_callback is not None:
+                try:
+                    action_callback(action)
+                except Exception as cb_exc:  # pragma: no cover - defensive
+                    logger.debug("metric action_callback raised: %s", cb_exc)
+            if event_helper:
+                event_helper.item_processing(
+                    item_id=batch_id,
+                    action_name="gen_metrics",
+                    status=_action_status_value(action),
+                    messages=action.messages,
+                    output=action.output,
+                )
+            action_type = getattr(action, "action_type", "")
+            if action.status == ActionStatus.FAILED and action_type == "error":
+                terminal_error = action.messages or "Metrics extraction failed"
+                logger.error(terminal_error)
+                continue
+            if action.status == ActionStatus.SUCCESS and action_type == "metrics_response" and action.output:
+                final_result = action.output
+                logger.debug(f"Metrics generation action (batch {batch_idx}): {action.messages}")
+        if terminal_error:
+            return False, terminal_error, None
+        if final_result is None:
+            return False, "Metrics extraction completed but produced no output", None
+        return True, "", final_result
+    except Exception as e:
+        logger.error(f"Error in metrics extraction (batch {batch_idx}): {e}")
+        return False, str(e), None
+
+
 async def init_success_story_metrics_async(
     agent_config: AgentConfig,
     success_story: str,
@@ -43,12 +120,15 @@ async def init_success_story_metrics_async(
     *,
     build_mode: str = "overwrite",
     action_callback: Optional[Callable[["ActionHistory"], None]] = None,
+    batch_size: int = DEFAULT_METRICS_BATCH_SIZE,
 ) -> tuple[bool, str, Optional[dict[str, Any]]]:
     """
     Async version: Initialize metrics from success story CSV by batch processing.
 
-    This reads all SQL queries from the CSV and processes them as a batch
+    This reads all SQL queries from the CSV and processes them in batches
     to extract core unique metrics (deduplicating aggregation patterns).
+    Each batch is processed independently so that one failure does not
+    block the rest.
 
     Args:
         agent_config: Agent configuration
@@ -59,6 +139,7 @@ async def init_success_story_metrics_async(
         build_mode: ``"overwrite"`` (default) regenerates unconditionally;
             ``"incremental"`` skips the LLM call when the metric store
             already contains entries.
+        batch_size: Number of SQL queries per batch (default 1).
     """
     event_helper = BatchEventHelper(BIZ_NAME, emit)
 
@@ -99,7 +180,7 @@ async def init_success_story_metrics_async(
     if all_tables:
         logger.info(f"Found {len(all_tables)} tables in success story SQL: {all_tables}")
 
-        # Check and create missing semantic models
+        # Check and create missing semantic models (per-table, partial failures tolerated)
         success, error, created_tables = await ensure_semantic_models_exist(all_tables, agent_config, emit=None)
 
         if not success:
@@ -110,91 +191,76 @@ async def init_success_story_metrics_async(
 
         if created_tables:
             logger.info(f"Created semantic models for tables: {created_tables}")
+        if error:
+            logger.warning(f"Semantic model generation had partial failures: {error}")
 
-    # Build batch message with all SQL queries
-    sql_queries = []
+    # Build query strings for all rows
+    all_query_strings = []
     for idx, row in df.iterrows():
         sql = row["sql"]
         question = row["question"]
-        sql_queries.append(f"Query {idx + 1}:\nQuestion: {question}\nSQL:\n{sql}")
+        all_query_strings.append(f"Query {idx + 1}:\nQuestion: {question}\nSQL:\n{sql}")
 
-    batch_message = "Analyze the following SQL queries and extract core metrics:\n\n" + "\n\n---\n\n".join(sql_queries)
+    # Split into batches
+    batches = [all_query_strings[i : i + batch_size] for i in range(0, len(all_query_strings), batch_size)]
+    total_batches = len(batches)
 
-    # Append extra instructions if provided
-    if extra_instructions:
-        batch_message = f"{batch_message}\n\n## Additional Instructions\n{extra_instructions}"
-
-    logger.info(f"Processing {len(df)} SQL queries as batch for core metrics extraction")
-
-    # Get database context
-    current_db_config = agent_config.current_db_config()
-    latest_prompt_version = get_prompt_manager(agent_config=agent_config).get_latest_version("gen_metrics_system")
-
-    metrics_input = SemanticNodeInput(
-        user_message=batch_message,
-        catalog=current_db_config.catalog,
-        database=current_db_config.database,
-        db_schema=current_db_config.schema,
-        prompt_version=latest_prompt_version,
+    logger.info(
+        f"Processing {len(df)} SQL queries in {total_batches} batch(es) (batch_size={batch_size}) for metrics extraction"
     )
 
-    metrics_node = GenMetricsAgenticNode(
-        agent_config=agent_config,
-        execution_mode="workflow",
-        subject_tree=subject_tree,
-    )
+    event_helper.task_processing(total_items=total_batches)
 
-    action_history_manager = ActionHistoryManager()
-    metrics_node.input = metrics_input
+    completed_batches = 0
+    failed_batches: list[tuple[int, str]] = []
+    merged_result: Optional[dict[str, Any]] = None
 
-    # Emit task processing
-    event_helper.task_processing(total_items=1)
+    for batch_idx, batch_queries in enumerate(batches):
+        logger.info(f"Processing batch {batch_idx + 1}/{total_batches} ({len(batch_queries)} queries)")
 
-    try:
-        final_result = None
-        terminal_error = None
-        async for action in metrics_node.execute_stream(action_history_manager):
-            if action_callback is not None:
-                try:
-                    action_callback(action)
-                except Exception as cb_exc:  # pragma: no cover - defensive
-                    logger.debug("metric action_callback raised: %s", cb_exc)
-            if event_helper:
-                event_helper.item_processing(
-                    item_id="batch",
-                    action_name="gen_metrics",
-                    status=_action_status_value(action),
-                    messages=action.messages,
-                    output=action.output,
-                )
-            action_type = getattr(action, "action_type", "")
-            if action.status == ActionStatus.FAILED and action_type == "error":
-                terminal_error = action.messages or "Metrics extraction failed"
-                logger.error(terminal_error)
-                continue
-            if action.status == ActionStatus.SUCCESS and action_type == "metrics_response" and action.output:
-                final_result = action.output
-                logger.debug(f"Metrics generation action: {action.messages}")
-        if terminal_error:
-            event_helper.task_failed(error=terminal_error)
-            return False, terminal_error, None
-        if final_result is None:
-            error_msg = "Metrics extraction completed but produced no output"
-            logger.warning(error_msg)
-            event_helper.task_failed(error=error_msg)
-            return False, error_msg, None
-        logger.info("Batch metrics extraction completed successfully")
-        event_helper.task_completed(
-            total_items=1,
-            completed_items=1,
-            failed_items=0,
+        success, error, batch_result = await _generate_metrics_batch(
+            batch_queries,
+            batch_idx,
+            agent_config,
+            subject_tree,
+            extra_instructions,
+            event_helper,
+            action_callback,
         )
-        return True, "", final_result
-    except Exception as e:
-        logger.error(f"Error in batch metrics extraction: {e}")
-        error = str(e)
-        event_helper.task_failed(error=error)
-        return False, error, None
+
+        if success and batch_result is not None:
+            completed_batches += 1
+            if merged_result is None:
+                merged_result = batch_result
+            elif isinstance(merged_result, dict) and isinstance(batch_result, dict):
+                for key, value in batch_result.items():
+                    if key in merged_result and isinstance(merged_result[key], list) and isinstance(value, list):
+                        merged_result[key].extend(value)
+                    elif key not in merged_result:
+                        merged_result[key] = value
+            logger.info(f"Batch {batch_idx + 1}/{total_batches} completed successfully")
+        else:
+            failed_batches.append((batch_idx, error))
+            logger.warning(f"Batch {batch_idx + 1}/{total_batches} failed: {error}, continuing with remaining batches")
+
+    if completed_batches == 0:
+        error_summary = "; ".join(f"batch {i + 1}: {e}" for i, e in failed_batches)
+        error_msg = f"All {total_batches} batch(es) failed: {error_summary}"
+        logger.error(error_msg)
+        event_helper.task_failed(error=error_msg)
+        return False, error_msg, None
+
+    if failed_batches:
+        failed_summary = "; ".join(f"batch {i + 1}: {e}" for i, e in failed_batches)
+        logger.warning(f"Metrics extraction partially succeeded: {failed_summary}")
+
+    logger.info(f"Metrics extraction completed: {completed_batches}/{total_batches} batch(es) succeeded")
+    event_helper.task_completed(
+        total_items=total_batches,
+        completed_items=completed_batches,
+        failed_items=len(failed_batches),
+    )
+    return True, "", merged_result
 
 
 def init_success_story_metrics(
@@ -205,6 +271,7 @@ def init_success_story_metrics(
     extra_instructions: Optional[str] = None,
     *,
     build_mode: str = "overwrite",
+    batch_size: int = DEFAULT_METRICS_BATCH_SIZE,
 ) -> tuple[bool, str, Optional[dict[str, Any]]]:
     """
     Sync wrapper: Initialize metrics from success story CSV by batch processing.
@@ -216,6 +283,7 @@ def init_success_story_metrics(
         emit: Optional callback to stream BatchEvent progress events
         extra_instructions: Optional extra instructions for the LLM
         build_mode: Forwarded to :func:`init_success_story_metrics_async`.
+        batch_size: Number of SQL queries per batch (default 1).
     """
     with suppress_keyboard_input():
         return asyncio.run(
@@ -226,6 +294,7 @@ def init_success_story_metrics(
                 emit,
                 extra_instructions,
                 build_mode=build_mode,
+                batch_size=batch_size,
             )
         )
 

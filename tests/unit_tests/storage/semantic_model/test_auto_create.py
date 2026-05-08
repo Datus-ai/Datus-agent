@@ -195,22 +195,12 @@ class TestFindMissingSemanticModels:
 
 
 # ---------------------------------------------------------------------------
-# create_semantic_models_for_tables (async, lines 111-147)
+# create_semantic_model_for_table (single-table async)
 # ---------------------------------------------------------------------------
 
 
-class TestCreateSemanticModelsForTables:
-    """Tests for create_semantic_models_for_tables async function."""
-
-    @pytest.mark.asyncio
-    async def test_empty_tables_returns_true(self):
-        """Empty table list should return (True, '') immediately without calling node."""
-        from datus.storage.semantic_model.auto_create import create_semantic_models_for_tables
-
-        config = MagicMock()
-        success, error = await create_semantic_models_for_tables([], config)
-        assert success is True
-        assert error == ""
+class TestCreateSemanticModelForTable:
+    """Tests for create_semantic_model_for_table async function."""
 
     @pytest.mark.asyncio
     async def test_success_path(self):
@@ -219,7 +209,7 @@ class TestCreateSemanticModelsForTables:
         from unittest.mock import patch
 
         from datus.schemas.action_history import ActionStatus
-        from datus.storage.semantic_model.auto_create import create_semantic_models_for_tables
+        from datus.storage.semantic_model.auto_create import create_semantic_model_for_table
 
         mock_config = MagicMock()
         mock_db_config = MagicMock()
@@ -233,8 +223,7 @@ class TestCreateSemanticModelsForTables:
                 self.input = None
 
             async def execute_stream(self, ahm):
-                action = SimpleNamespace(status=ActionStatus.SUCCESS, messages="ok")
-                yield action
+                yield SimpleNamespace(status=ActionStatus.SUCCESS, messages="ok")
 
         with (
             patch(
@@ -246,7 +235,7 @@ class TestCreateSemanticModelsForTables:
                 MagicMock(return_value=MagicMock()),
             ),
         ):
-            success, error = await create_semantic_models_for_tables(["users", "orders"], mock_config)
+            success, error = await create_semantic_model_for_table("users", mock_config)
         assert success is True
         assert error == ""
 
@@ -257,7 +246,7 @@ class TestCreateSemanticModelsForTables:
         from unittest.mock import patch
 
         from datus.schemas.action_history import ActionStatus
-        from datus.storage.semantic_model.auto_create import create_semantic_models_for_tables
+        from datus.storage.semantic_model.auto_create import create_semantic_model_for_table
 
         mock_config = MagicMock()
         mock_db_config = MagicMock()
@@ -271,8 +260,7 @@ class TestCreateSemanticModelsForTables:
                 self.input = None
 
             async def execute_stream(self, ahm):
-                action = SimpleNamespace(status=ActionStatus.FAILED, action_type="error", messages="Generation failed")
-                yield action
+                yield SimpleNamespace(status=ActionStatus.FAILED, action_type="error", messages="Generation failed")
 
         with (
             patch(
@@ -284,7 +272,7 @@ class TestCreateSemanticModelsForTables:
                 MagicMock(return_value=MagicMock()),
             ),
         ):
-            success, error = await create_semantic_models_for_tables(["users"], mock_config)
+            success, error = await create_semantic_model_for_table("users", mock_config)
         assert success is False
         assert "Generation failed" in error
 
@@ -295,7 +283,7 @@ class TestCreateSemanticModelsForTables:
         from unittest.mock import patch
 
         from datus.schemas.action_history import ActionStatus
-        from datus.storage.semantic_model.auto_create import create_semantic_models_for_tables
+        from datus.storage.semantic_model.auto_create import create_semantic_model_for_table
 
         mock_config = MagicMock()
         mock_db_config = MagicMock()
@@ -309,8 +297,7 @@ class TestCreateSemanticModelsForTables:
                 self.input = None
 
             async def execute_stream(self, ahm):
-                action = SimpleNamespace(status=ActionStatus.FAILED, action_type="error", messages=None)
-                yield action
+                yield SimpleNamespace(status=ActionStatus.FAILED, action_type="error", messages=None)
 
         with (
             patch(
@@ -322,7 +309,7 @@ class TestCreateSemanticModelsForTables:
                 MagicMock(return_value=MagicMock()),
             ),
         ):
-            success, error = await create_semantic_models_for_tables(["users"], mock_config)
+            success, error = await create_semantic_model_for_table("users", mock_config)
         assert success is False
         assert error != ""
 
@@ -333,7 +320,7 @@ class TestCreateSemanticModelsForTables:
         from unittest.mock import patch
 
         from datus.schemas.action_history import ActionStatus
-        from datus.storage.semantic_model.auto_create import create_semantic_models_for_tables
+        from datus.storage.semantic_model.auto_create import create_semantic_model_for_table
 
         mock_config = MagicMock()
         mock_db_config = MagicMock()
@@ -364,7 +351,7 @@ class TestCreateSemanticModelsForTables:
                 MagicMock(return_value=MagicMock()),
             ),
         ):
-            success, error = await create_semantic_models_for_tables(["users"], mock_config)
+            success, error = await create_semantic_model_for_table("users", mock_config)
         assert success is True
         assert error == ""
 
@@ -373,7 +360,7 @@ class TestCreateSemanticModelsForTables:
         """execute_stream raises → returns (False, error_str)."""
         from unittest.mock import patch
 
-        from datus.storage.semantic_model.auto_create import create_semantic_models_for_tables
+        from datus.storage.semantic_model.auto_create import create_semantic_model_for_table
 
         mock_config = MagicMock()
         mock_db_config = MagicMock()
@@ -400,7 +387,7 @@ class TestCreateSemanticModelsForTables:
                 MagicMock(return_value=MagicMock()),
             ),
         ):
-            success, error = await create_semantic_models_for_tables(["users"], mock_config)
+            success, error = await create_semantic_model_for_table("users", mock_config)
         assert success is False
         assert "connection lost" in error
 
@@ -411,7 +398,7 @@ class TestCreateSemanticModelsForTables:
         from unittest.mock import patch
 
         from datus.schemas.action_history import ActionStatus
-        from datus.storage.semantic_model.auto_create import create_semantic_models_for_tables
+        from datus.storage.semantic_model.auto_create import create_semantic_model_for_table
 
         mock_config = MagicMock()
         mock_db_config = MagicMock()
@@ -426,8 +413,7 @@ class TestCreateSemanticModelsForTables:
 
             async def execute_stream(self, ahm):
                 for _ in range(3):
-                    action = SimpleNamespace(status=ActionStatus.SUCCESS, messages="step")
-                    yield action
+                    yield SimpleNamespace(status=ActionStatus.SUCCESS, messages="step")
 
         emit_count = []
         with (
@@ -440,27 +426,95 @@ class TestCreateSemanticModelsForTables:
                 MagicMock(return_value=MagicMock()),
             ),
         ):
-            success, error = await create_semantic_models_for_tables(["users"], mock_config, emit=emit_count.append)
+            success, error = await create_semantic_model_for_table("users", mock_config, emit=emit_count.append)
         assert success is True
         assert len(emit_count) == 3
 
 
 # ---------------------------------------------------------------------------
-# create_semantic_models_for_tables_sync (line 166)
+# create_semantic_models_for_tables (batch with per-table isolation)
+# ---------------------------------------------------------------------------
+
+
+class TestCreateSemanticModelsForTables:
+    """Tests for create_semantic_models_for_tables async function."""
+
+    @pytest.mark.asyncio
+    async def test_empty_tables_returns_empty(self):
+        """Empty table list should return ([], []) immediately."""
+        from datus.storage.semantic_model.auto_create import create_semantic_models_for_tables
+
+        config = MagicMock()
+        succeeded, failed = await create_semantic_models_for_tables([], config)
+        assert succeeded == []
+        assert failed == []
+
+    @pytest.mark.asyncio
+    async def test_all_succeed(self, monkeypatch):
+        """All tables succeed → succeeded=[all], failed=[]."""
+        from datus.storage.semantic_model import auto_create
+
+        async def mock_single(table, config, emit=None):
+            return True, ""
+
+        monkeypatch.setattr(auto_create, "create_semantic_model_for_table", mock_single)
+
+        succeeded, failed = await auto_create.create_semantic_models_for_tables(["users", "orders"], MagicMock())
+        assert succeeded == ["users", "orders"]
+        assert failed == []
+
+    @pytest.mark.asyncio
+    async def test_all_fail(self, monkeypatch):
+        """All tables fail → succeeded=[], failed=[all]."""
+        from datus.storage.semantic_model import auto_create
+
+        async def mock_single(table, config, emit=None):
+            return False, f"{table} error"
+
+        monkeypatch.setattr(auto_create, "create_semantic_model_for_table", mock_single)
+
+        succeeded, failed = await auto_create.create_semantic_models_for_tables(["t1", "t2"], MagicMock())
+        assert succeeded == []
+        assert len(failed) == 2
+        assert failed[0] == ("t1", "t1 error")
+        assert failed[1] == ("t2", "t2 error")
+
+    @pytest.mark.asyncio
+    async def test_partial_failure_continues(self, monkeypatch):
+        """One table fails, others succeed — failure does not block the rest."""
+        from datus.storage.semantic_model import auto_create
+
+        async def mock_single(table, config, emit=None):
+            if table == "bad_table":
+                return False, "Max turns exceeded"
+            return True, ""
+
+        monkeypatch.setattr(auto_create, "create_semantic_model_for_table", mock_single)
+
+        succeeded, failed = await auto_create.create_semantic_models_for_tables(
+            ["good1", "bad_table", "good2"], MagicMock()
+        )
+        assert succeeded == ["good1", "good2"]
+        assert len(failed) == 1
+        assert failed[0] == ("bad_table", "Max turns exceeded")
+
+
+# ---------------------------------------------------------------------------
+# create_semantic_models_for_tables_sync
 # ---------------------------------------------------------------------------
 
 
 class TestCreateSemanticModelsForTablesSync:
     """Tests for create_semantic_models_for_tables_sync sync wrapper."""
 
-    def test_empty_tables_returns_true(self):
-        """Sync wrapper: empty list returns (True, '')."""
+    def test_empty_tables_returns_empty(self):
+        """Sync wrapper: empty list returns ([], [])."""
         from datus.storage.semantic_model.auto_create import create_semantic_models_for_tables_sync
 
         config = MagicMock()
-        success, error = create_semantic_models_for_tables_sync([], config)
-        assert success is True
-        assert error == ""
+        succeeded, failed = create_semantic_models_for_tables_sync([], config)
+        assert succeeded == []
+        assert failed == []
 
     def test_wraps_async_function(self, monkeypatch):
         """Sync wrapper delegates to async create_semantic_models_for_tables."""
@@ -470,17 +524,17 @@ class TestCreateSemanticModelsForTablesSync:
 
         async def mock_async(tables, config, emit=None):
             calls.append(tables)
-            return True, ""
+            return ["users"], []
 
         monkeypatch.setattr(auto_create, "create_semantic_models_for_tables", mock_async)
 
-        success, error = auto_create.create_semantic_models_for_tables_sync(["users"], MagicMock())
-        assert success is True
+        succeeded, failed = auto_create.create_semantic_models_for_tables_sync(["users"], MagicMock())
+        assert succeeded == ["users"]
         assert calls == [["users"]]
 
 
 # ---------------------------------------------------------------------------
-# ensure_semantic_models_exist (lines 185-200)
+# ensure_semantic_models_exist
 # ---------------------------------------------------------------------------
 
 
@@ -507,7 +561,7 @@ class TestEnsureSemanticModelsExist:
         monkeypatch.setattr(auto_create, "find_missing_semantic_models", lambda tables, config: ["orders"])
 
         async def mock_create(tables, config, emit=None):
-            return True, ""
+            return ["orders"], []
 
         monkeypatch.setattr(auto_create, "create_semantic_models_for_tables", mock_create)
 
@@ -517,21 +571,39 @@ class TestEnsureSemanticModelsExist:
         assert "orders" in created
 
     @pytest.mark.asyncio
-    async def test_creation_failure_propagated(self, monkeypatch):
-        """When creation fails, returns (False, error, missing_tables)."""
+    async def test_all_creation_fails(self, monkeypatch):
+        """When all tables fail, returns (False, error_summary, [])."""
         from datus.storage.semantic_model import auto_create
 
         monkeypatch.setattr(auto_create, "find_missing_semantic_models", lambda tables, config: ["bad_table"])
 
         async def mock_create(tables, config, emit=None):
-            return False, "Schema not found"
+            return [], [("bad_table", "Schema not found")]
 
         monkeypatch.setattr(auto_create, "create_semantic_models_for_tables", mock_create)
 
         success, error, created = await auto_create.ensure_semantic_models_exist({"bad_table"}, MagicMock())
         assert success is False
         assert "Schema not found" in error
-        assert "bad_table" in created
+        assert created == []
+
+    @pytest.mark.asyncio
+    async def test_partial_failure_returns_success_with_warning(self, monkeypatch):
+        """Some tables succeed, some fail → success=True, error has partial info."""
+        from datus.storage.semantic_model import auto_create
+
+        monkeypatch.setattr(auto_create, "find_missing_semantic_models", lambda tables, config: ["good", "bad"])
+
+        async def mock_create(tables, config, emit=None):
+            return ["good"], [("bad", "Max turns exceeded")]
+
+        monkeypatch.setattr(auto_create, "create_semantic_models_for_tables", mock_create)
+
+        success, error, created = await auto_create.ensure_semantic_models_exist({"good", "bad"}, MagicMock())
+        assert success is True
+        assert "Partial failures" in error
+        assert "good" in created
+        assert "bad" not in created
 
     @pytest.mark.asyncio
     async def test_empty_tables_no_creation(self, monkeypatch):
@@ -544,7 +616,7 @@ class TestEnsureSemanticModelsExist:
 
         async def mock_create(tables, config, emit=None):
             create_calls.append(tables)
-            return True, ""
+            return tables, []
 
         monkeypatch.setattr(auto_create, "create_semantic_models_for_tables", mock_create)
 

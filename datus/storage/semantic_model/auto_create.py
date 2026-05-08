@@ -92,18 +92,13 @@ def find_missing_semantic_models(
     return missing
 
 
-async def create_semantic_models_for_tables(
-    tables: List[str],
+async def create_semantic_model_for_table(
+    table: str,
     agent_config: AgentConfig,
     emit: Optional[Callable] = None,
 ) -> tuple[bool, str]:
     """
-    Create semantic models for the specified tables.
-
-    Args:
-        tables: List of table names to create semantic models for
-        agent_config: Agent configuration
-        emit: Optional progress callback
+    Create a semantic model for a single table.
 
     Returns:
         (success, error_message)
@@ -111,12 +106,7 @@ async def create_semantic_models_for_tables(
     from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
     from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 
-    if not tables:
-        return True, ""
-
-    # Build user message
-    tables_str = ", ".join(tables)
-    user_message = f"Generate semantic models for the following tables: {tables_str}"
+    user_message = f"Generate semantic models for the following tables: {table}"
 
     current_db_config = agent_config.current_db_config()
     semantic_input = SemanticNodeInput(
@@ -126,7 +116,6 @@ async def create_semantic_models_for_tables(
         db_schema=current_db_config.schema,
     )
 
-    # Use workflow mode to auto-save to DB
     semantic_node = GenSemanticModelAgenticNode(
         agent_config=agent_config,
         execution_mode="workflow",
@@ -138,7 +127,6 @@ async def create_semantic_models_for_tables(
         terminal_error = None
         async for action in semantic_node.execute_stream(action_history_manager):
             if emit:
-                # Emit progress event
                 emit(action)
             action_type = getattr(action, "action_type", "")
             if action.status == ActionStatus.FAILED and action_type == "error":
@@ -149,17 +137,18 @@ async def create_semantic_models_for_tables(
             return False, terminal_error
         return True, ""
     except Exception as e:
-        logger.error(f"Error creating semantic models: {e}", exc_info=True)
+        logger.error(f"Error creating semantic model for table {table}: {e}", exc_info=True)
         return False, str(e)
 
 
-def create_semantic_models_for_tables_sync(
+async def create_semantic_models_for_tables(
     tables: List[str],
     agent_config: AgentConfig,
     emit: Optional[Callable] = None,
-) -> tuple[bool, str]:
+) -> tuple[List[str], List[tuple[str, str]]]:
     """
-    Synchronous wrapper for create_semantic_models_for_tables.
+    Create semantic models for the specified tables, processing each table
+    independently so that one failure does not block others.
 
     Args:
         tables: List of table names to create semantic models for
@@ -167,7 +156,40 @@ def create_semantic_models_for_tables_sync(
         emit: Optional progress callback
 
     Returns:
-        (success, error_message)
+        (succeeded_tables, failed_tables) where failed_tables is a list of
+        (table_name, error_message) tuples.
+    """
+    if not tables:
+        return [], []
+
+    succeeded: List[str] = []
+    failed: List[tuple[str, str]] = []
+
+    for table in tables:
+        logger.info(f"Creating semantic model for table: {table}")
+        success, error = await create_semantic_model_for_table(table, agent_config, emit)
+        if success:
+            succeeded.append(table)
+            logger.info(f"Successfully created semantic model for table: {table}")
+        else:
+            failed.append((table, error))
+            logger.warning(
+                f"Failed to create semantic model for table {table}: {error}, continuing with remaining tables"
+            )
+
+    return succeeded, failed
+
+
+def create_semantic_models_for_tables_sync(
+    tables: List[str],
+    agent_config: AgentConfig,
+    emit: Optional[Callable] = None,
+) -> tuple[List[str], List[tuple[str, str]]]:
+    """
+    Synchronous wrapper for create_semantic_models_for_tables.
+
+    Returns:
+        (succeeded_tables, failed_tables)
     """
     return asyncio.run(create_semantic_models_for_tables(tables, agent_config, emit))
 
@@ -178,7 +200,8 @@ async def ensure_semantic_models_exist(
     emit: Optional[Callable] = None,
 ) -> tuple[bool, str, List[str]]:
     """
-    Check and create missing semantic models.
+    Check and create missing semantic models. Processes each table independently
+    so that failures on individual tables do not block the rest.
 
     Args:
         tables: Set of table names to check
@@ -186,7 +209,9 @@ async def ensure_semantic_models_exist(
         emit: Optional progress callback
 
     Returns:
-        (success, error_message, created_tables)
+        (success, error_message, created_tables) — success is True when at
+        least one table was created or none were missing; error_message
+        summarises any per-table failures.
     """
     missing_tables = find_missing_semantic_models(tables, agent_config)
 
@@ -196,11 +221,20 @@ async def ensure_semantic_models_exist(
 
     logger.info(f"Found {len(missing_tables)} tables without semantic models: {missing_tables}")
 
-    success, error = await create_semantic_models_for_tables(missing_tables, agent_config, emit)
+    succeeded, failed = await create_semantic_models_for_tables(missing_tables, agent_config, emit)
 
-    if success:
-        logger.info(f"Successfully created semantic models for: {missing_tables}")
-    else:
-        logger.error(f"Failed to create semantic models: {error}")
+    if succeeded:
+        logger.info(f"Successfully created semantic models for: {succeeded}")
+    if failed:
+        failed_summary = "; ".join(f"{t}: {e}" for t, e in failed)
+        logger.warning(f"Failed to create semantic models for some tables: {failed_summary}")
 
-    return success, error, missing_tables
+    if not succeeded and failed:
+        error_msg = "; ".join(f"{t}: {e}" for t, e in failed)
+        return False, error_msg, []
+
+    error_msg = ""
+    if failed:
+        error_msg = "Partial failures: " + "; ".join(f"{t}: {e}" for t, e in failed)
+
+    return True, error_msg, succeeded

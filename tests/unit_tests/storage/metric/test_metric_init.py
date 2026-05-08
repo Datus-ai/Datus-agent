@@ -9,7 +9,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from datus.storage.metric.metric_init import BIZ_NAME, _action_status_value, init_semantic_yaml_metrics
+from datus.storage.metric.metric_init import (
+    BIZ_NAME,
+    DEFAULT_METRICS_BATCH_SIZE,
+    _action_status_value,
+    _generate_metrics_batch,
+    init_semantic_yaml_metrics,
+)
 
 # ---------------------------------------------------------------------------
 # _action_status_value
@@ -509,3 +515,347 @@ class TestInitSuccessStoryMetricsAsyncOverwriteTruncate:
         assert success is True
         fake_rag_instance.truncate.assert_not_called()
         mock_exists.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# DEFAULT_METRICS_BATCH_SIZE constant
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ci
+class TestDefaultMetricsBatchSize:
+    def test_default_batch_size(self):
+        assert DEFAULT_METRICS_BATCH_SIZE == 1
+
+
+# ---------------------------------------------------------------------------
+# _generate_metrics_batch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ci
+class TestGenerateMetricsBatch:
+    """Tests for the _generate_metrics_batch helper."""
+
+    @pytest.mark.asyncio
+    async def test_success_returns_result(self):
+        from unittest.mock import patch
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.schemas.batch_events import BatchEventHelper
+
+        mock_node = MagicMock()
+
+        async def fake_stream(_ahm):
+            action = MagicMock()
+            action.status = ActionStatus.SUCCESS
+            action.action_type = "metrics_response"
+            action.output = {"metrics": ["revenue"]}
+            action.messages = "ok"
+            yield action
+
+        mock_node.execute_stream = fake_stream
+
+        mock_config = MagicMock()
+        mock_config.current_db_config.return_value = MagicMock(catalog="", database="db", schema="")
+        mock_pm = MagicMock()
+        mock_pm.get_latest_version.return_value = "1.0"
+
+        with (
+            patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_pm),
+            patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", return_value=mock_node),
+        ):
+            ok, err, result = await _generate_metrics_batch(
+                ["Query 1:\nQuestion: rev?\nSQL:\nSELECT 1"],
+                0,
+                mock_config,
+                None,
+                None,
+                BatchEventHelper("test", None),
+                None,
+            )
+
+        assert ok is True
+        assert err == ""
+        assert result == {"metrics": ["revenue"]}
+
+    @pytest.mark.asyncio
+    async def test_terminal_error_returns_failure(self):
+        from unittest.mock import patch
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.schemas.batch_events import BatchEventHelper
+
+        mock_node = MagicMock()
+
+        async def fake_stream(_ahm):
+            action = MagicMock()
+            action.status = ActionStatus.FAILED
+            action.action_type = "error"
+            action.output = None
+            action.messages = "Max turns exceeded"
+            yield action
+
+        mock_node.execute_stream = fake_stream
+
+        mock_config = MagicMock()
+        mock_config.current_db_config.return_value = MagicMock(catalog="", database="db", schema="")
+        mock_pm = MagicMock()
+        mock_pm.get_latest_version.return_value = "1.0"
+
+        with (
+            patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_pm),
+            patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", return_value=mock_node),
+        ):
+            ok, err, result = await _generate_metrics_batch(
+                ["Query 1:\nQuestion: q?\nSQL:\nSELECT 1"],
+                0,
+                mock_config,
+                None,
+                None,
+                BatchEventHelper("test", None),
+                None,
+            )
+
+        assert ok is False
+        assert "Max turns" in err
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_exception_returns_failure(self):
+        from unittest.mock import patch
+
+        from datus.schemas.batch_events import BatchEventHelper
+
+        mock_node = MagicMock()
+
+        async def fake_stream(_ahm):
+            raise RuntimeError("connection lost")
+            yield  # noqa: F841 - async generator marker
+
+        mock_node.execute_stream = fake_stream
+
+        mock_config = MagicMock()
+        mock_config.current_db_config.return_value = MagicMock(catalog="", database="db", schema="")
+        mock_pm = MagicMock()
+        mock_pm.get_latest_version.return_value = "1.0"
+
+        with (
+            patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_pm),
+            patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", return_value=mock_node),
+        ):
+            ok, err, result = await _generate_metrics_batch(
+                ["Query 1:\nQuestion: q?\nSQL:\nSELECT 1"],
+                0,
+                mock_config,
+                None,
+                None,
+                BatchEventHelper("test", None),
+                None,
+            )
+
+        assert ok is False
+        assert "connection lost" in err
+
+
+# ---------------------------------------------------------------------------
+# init_success_story_metrics_async — batch splitting & partial failure
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ci
+class TestBatchSplitting:
+    """Tests for batch splitting and partial failure tolerance."""
+
+    def _make_node_factory(self, fail_on_batches=None):
+        """Return a mock GenMetricsAgenticNode factory.
+
+        Args:
+            fail_on_batches: set of batch indices (0-based) that should fail.
+        """
+        from datus.schemas.action_history import ActionStatus
+
+        fail_on_batches = fail_on_batches or set()
+        call_count = {"n": 0}
+
+        class MockNode:
+            def __init__(self, *args, **kwargs):
+                self.input = None
+                self._batch_idx = call_count["n"]
+                call_count["n"] += 1
+
+            async def execute_stream(self, _ahm):
+                if self._batch_idx in fail_on_batches:
+                    action = MagicMock()
+                    action.status = ActionStatus.FAILED
+                    action.action_type = "error"
+                    action.output = None
+                    action.messages = f"Batch {self._batch_idx} failed"
+                    yield action
+                else:
+                    action = MagicMock()
+                    action.status = ActionStatus.SUCCESS
+                    action.action_type = "metrics_response"
+                    action.output = {"metrics": [f"m{self._batch_idx}"]}
+                    action.messages = "ok"
+                    yield action
+
+        return MockNode
+
+    @pytest.mark.asyncio
+    async def test_queries_split_into_batches(self):
+        """15 queries with batch_size=5 → 3 batches, 3 node instantiations."""
+        from unittest.mock import patch
+
+        import pandas as pd
+
+        from datus.storage.metric.metric_init import init_success_story_metrics_async
+
+        MockNode = self._make_node_factory()
+
+        mock_config = MagicMock()
+        mock_config.project_name = "test"
+        mock_config.current_db_config.return_value = MagicMock(catalog="", database="db", schema="")
+        mock_pm = MagicMock()
+        mock_pm.get_latest_version.return_value = "1.0"
+
+        rows = [{"question": f"q{i}", "sql": f"SELECT {i}"} for i in range(15)]
+
+        with (
+            patch("datus.storage.metric.store.MetricRAG", MagicMock()),
+            patch("datus.storage.metric.metric_init.extract_tables_from_sql_list", return_value=[]),
+            patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_pm),
+            patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", MockNode),
+            patch("datus.storage.metric.metric_init.pd.read_csv", return_value=pd.DataFrame(rows)),
+        ):
+            ok, err, result = await init_success_story_metrics_async(
+                agent_config=mock_config,
+                success_story="dummy.csv",
+                batch_size=5,
+            )
+
+        assert ok is True
+        assert err == ""
+        assert result is not None
+        assert len(result["metrics"]) == 3
+
+    @pytest.mark.asyncio
+    async def test_partial_batch_failure_continues(self):
+        """3 batches, middle one fails → success=True, 2 batches of results merged."""
+        from unittest.mock import patch
+
+        import pandas as pd
+
+        from datus.storage.metric.metric_init import init_success_story_metrics_async
+
+        MockNode = self._make_node_factory(fail_on_batches={1})
+
+        mock_config = MagicMock()
+        mock_config.project_name = "test"
+        mock_config.current_db_config.return_value = MagicMock(catalog="", database="db", schema="")
+        mock_pm = MagicMock()
+        mock_pm.get_latest_version.return_value = "1.0"
+
+        rows = [{"question": f"q{i}", "sql": f"SELECT {i}"} for i in range(15)]
+
+        with (
+            patch("datus.storage.metric.store.MetricRAG", MagicMock()),
+            patch("datus.storage.metric.metric_init.extract_tables_from_sql_list", return_value=[]),
+            patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_pm),
+            patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", MockNode),
+            patch("datus.storage.metric.metric_init.pd.read_csv", return_value=pd.DataFrame(rows)),
+        ):
+            ok, err, result = await init_success_story_metrics_async(
+                agent_config=mock_config,
+                success_story="dummy.csv",
+                batch_size=5,
+            )
+
+        assert ok is True
+        assert result is not None
+        assert len(result["metrics"]) == 2
+        assert "m0" in result["metrics"]
+        assert "m2" in result["metrics"]
+
+    @pytest.mark.asyncio
+    async def test_all_batches_fail(self):
+        """All batches fail → success=False."""
+        from unittest.mock import patch
+
+        import pandas as pd
+
+        from datus.storage.metric.metric_init import init_success_story_metrics_async
+
+        MockNode = self._make_node_factory(fail_on_batches={0, 1})
+
+        mock_config = MagicMock()
+        mock_config.project_name = "test"
+        mock_config.current_db_config.return_value = MagicMock(catalog="", database="db", schema="")
+        mock_pm = MagicMock()
+        mock_pm.get_latest_version.return_value = "1.0"
+
+        rows = [{"question": f"q{i}", "sql": f"SELECT {i}"} for i in range(10)]
+
+        with (
+            patch("datus.storage.metric.store.MetricRAG", MagicMock()),
+            patch("datus.storage.metric.metric_init.extract_tables_from_sql_list", return_value=[]),
+            patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_pm),
+            patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", MockNode),
+            patch("datus.storage.metric.metric_init.pd.read_csv", return_value=pd.DataFrame(rows)),
+        ):
+            ok, err, result = await init_success_story_metrics_async(
+                agent_config=mock_config,
+                success_story="dummy.csv",
+                batch_size=5,
+            )
+
+        assert ok is False
+        assert "All" in err
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_single_row_single_batch(self):
+        """1 query → 1 batch, no splitting overhead."""
+        from unittest.mock import patch
+
+        import pandas as pd
+
+        from datus.storage.metric.metric_init import init_success_story_metrics_async
+
+        MockNode = self._make_node_factory()
+
+        mock_config = MagicMock()
+        mock_config.project_name = "test"
+        mock_config.current_db_config.return_value = MagicMock(catalog="", database="db", schema="")
+        mock_pm = MagicMock()
+        mock_pm.get_latest_version.return_value = "1.0"
+
+        with (
+            patch("datus.storage.metric.store.MetricRAG", MagicMock()),
+            patch("datus.storage.metric.metric_init.extract_tables_from_sql_list", return_value=[]),
+            patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_pm),
+            patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", MockNode),
+            patch(
+                "datus.storage.metric.metric_init.pd.read_csv",
+                return_value=pd.DataFrame([{"question": "q1", "sql": "SELECT 1"}]),
+            ),
+        ):
+            ok, err, result = await init_success_story_metrics_async(
+                agent_config=mock_config,
+                success_story="dummy.csv",
+                batch_size=10,
+            )
+
+        assert ok is True
+        assert result == {"metrics": ["m0"]}
+
+    @pytest.mark.asyncio
+    async def test_batch_size_parameter_passed_through_sync(self):
+        """Sync wrapper forwards batch_size to async function."""
+        import inspect
+
+        from datus.storage.metric.metric_init import init_success_story_metrics
+
+        sig = inspect.signature(init_success_story_metrics)
+        assert "batch_size" in sig.parameters
+        assert sig.parameters["batch_size"].default == DEFAULT_METRICS_BATCH_SIZE
