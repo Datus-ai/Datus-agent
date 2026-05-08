@@ -772,6 +772,7 @@ class TestBatchSplitting:
             )
 
         assert ok is True
+        assert "batch 2" in err
         assert result is not None
         assert len(result["metrics"]) == 2
         assert "m0" in result["metrics"]

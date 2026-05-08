@@ -454,7 +454,7 @@ class TestCreateSemanticModelsForTables:
         """All tables succeed → succeeded=[all], failed=[]."""
         from datus.storage.semantic_model import auto_create
 
-        async def mock_single(table, config, emit=None):
+        async def mock_single(table, config, emit=None, related_tables=None):
             return True, ""
 
         monkeypatch.setattr(auto_create, "create_semantic_model_for_table", mock_single)
@@ -468,7 +468,7 @@ class TestCreateSemanticModelsForTables:
         """All tables fail → succeeded=[], failed=[all]."""
         from datus.storage.semantic_model import auto_create
 
-        async def mock_single(table, config, emit=None):
+        async def mock_single(table, config, emit=None, related_tables=None):
             return False, f"{table} error"
 
         monkeypatch.setattr(auto_create, "create_semantic_model_for_table", mock_single)
@@ -484,7 +484,7 @@ class TestCreateSemanticModelsForTables:
         """One table fails, others succeed — failure does not block the rest."""
         from datus.storage.semantic_model import auto_create
 
-        async def mock_single(table, config, emit=None):
+        async def mock_single(table, config, emit=None, related_tables=None):
             if table == "bad_table":
                 return False, "Max turns exceeded"
             return True, ""

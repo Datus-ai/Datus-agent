@@ -250,9 +250,10 @@ async def init_success_story_metrics_async(
         event_helper.task_failed(error=error_msg)
         return False, error_msg, None
 
+    partial_error = ""
     if failed_batches:
-        failed_summary = "; ".join(f"batch {i + 1}: {e}" for i, e in failed_batches)
-        logger.warning(f"Metrics extraction partially succeeded: {failed_summary}")
+        partial_error = "; ".join(f"batch {i + 1}: {e}" for i, e in failed_batches)
+        logger.warning(f"Metrics extraction partially succeeded: {partial_error}")
 
     logger.info(f"Metrics extraction completed: {completed_batches}/{total_batches} batch(es) succeeded")
     event_helper.task_completed(
@@ -260,7 +261,7 @@ async def init_success_story_metrics_async(
         completed_items=completed_batches,
         failed_items=len(failed_batches),
     )
-    return True, "", merged_result
+    return True, partial_error, merged_result
 
 
 def init_success_story_metrics(

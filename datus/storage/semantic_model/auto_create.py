@@ -96,9 +96,17 @@ async def create_semantic_model_for_table(
     table: str,
     agent_config: AgentConfig,
     emit: Optional[Callable] = None,
+    related_tables: Optional[List[str]] = None,
 ) -> tuple[bool, str]:
     """
     Create a semantic model for a single table.
+
+    Args:
+        table: Table to generate the semantic model for.
+        agent_config: Agent configuration.
+        emit: Optional progress callback.
+        related_tables: Other tables being processed in the same batch.
+            Passed as context so the LLM can infer join relationships.
 
     Returns:
         (success, error_message)
@@ -107,6 +115,10 @@ async def create_semantic_model_for_table(
     from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 
     user_message = f"Generate semantic models for the following tables: {table}"
+    if related_tables:
+        others = [t for t in related_tables if t != table]
+        if others:
+            user_message += f"\n\nRelated tables (for join context): {', '.join(others)}"
 
     current_db_config = agent_config.current_db_config()
     semantic_input = SemanticNodeInput(
@@ -167,7 +179,7 @@ async def create_semantic_models_for_tables(
 
     for table in tables:
         logger.info(f"Creating semantic model for table: {table}")
-        success, error = await create_semantic_model_for_table(table, agent_config, emit)
+        success, error = await create_semantic_model_for_table(table, agent_config, emit, related_tables=tables)
         if success:
             succeeded.append(table)
             logger.info(f"Successfully created semantic model for table: {table}")
