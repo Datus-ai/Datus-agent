@@ -4,15 +4,56 @@
 
 """Tests for datus.utils.traceable_utils — LangSmith and Langfuse tracing integration."""
 
+import sys
 from unittest.mock import MagicMock, patch
 
 from datus.utils.traceable_utils import (
+    _disable_sdk_tracing,
+    _get_langfuse_trace_url,
     _is_langfuse_enabled,
     _is_tracing_enabled,
     get_trace_url,
     optional_traceable,
     setup_tracing,
 )
+
+
+def _clear_all_tracing_envvars(monkeypatch):
+    """Helper to clear all tracing-related environment variables."""
+    for var in (
+        "LANGSMITH_TRACING",
+        "LANGCHAIN_TRACING_V2",
+        "LANGCHAIN_API_KEY",
+        "LANGSMITH_API_KEY",
+        "LANGFUSE_PUBLIC_KEY",
+        "LANGFUSE_SECRET_KEY",
+        "LANGFUSE_HOST",
+        "LANGFUSE_BASE_URL",
+        "LANGFUSE_OTEL_HOST",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+
+def _ensure_langfuse_module():
+    """Inject a mock langfuse module into sys.modules if the real one is not installed.
+
+    Returns the saved module (or None) so callers can restore it in a finally block.
+    This allows patch("langfuse.observe") etc. to work in CI without the real package.
+    """
+    saved = sys.modules.get("langfuse")
+    if saved is None or not hasattr(saved, "observe"):
+        mock_mod = MagicMock()
+        mock_mod.observe = MagicMock(side_effect=lambda *a, **kw: lambda fn: fn)
+        mock_mod.get_client = MagicMock()
+        sys.modules["langfuse"] = mock_mod
+    return saved
+
+
+def _restore_langfuse_module(saved):
+    if saved is None:
+        sys.modules.pop("langfuse", None)
+    else:
+        sys.modules["langfuse"] = saved
 
 
 class TestIsTracingEnabled:
@@ -52,15 +93,12 @@ class TestSetupTracing:
         monkeypatch.delenv("LANGCHAIN_TRACING_V2", raising=False)
         monkeypatch.delenv("LANGCHAIN_API_KEY", raising=False)
         monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
-        # Reset the initialization flag to allow re-entry
         monkeypatch.setattr(module, "_tracing_initialized", False)
         monkeypatch.setattr(module, "_tracing_processor", None)
 
         setup_tracing()
 
-        # After calling, it should be initialized
         assert module._tracing_initialized is True
-        # But no processor since tracing is not enabled
         assert module._tracing_processor is None
 
     def test_setup_tracing_idempotent(self, monkeypatch):
@@ -75,9 +113,33 @@ class TestSetupTracing:
         monkeypatch.setattr(module, "_tracing_processor", None)
 
         setup_tracing()
-        setup_tracing()  # second call should be no-op
+        setup_tracing()
 
         assert module._tracing_initialized is True
+
+    def test_disables_sdk_when_langsmith_not_installed(self, monkeypatch):
+        """setup_tracing disables SDK tracing when HAS_LANGSMITH is False."""
+        import datus.utils.traceable_utils as module
+
+        _clear_all_tracing_envvars(monkeypatch)
+        monkeypatch.setattr(module, "_tracing_initialized", False)
+        monkeypatch.setattr(module, "_tracing_processor", None)
+        monkeypatch.setattr(module, "HAS_LANGSMITH", False)
+        monkeypatch.setattr(module, "HAS_LANGFUSE", False)
+
+        with patch.object(module, "_disable_sdk_tracing") as mock_disable:
+            setup_tracing()
+            mock_disable.assert_called_once_with("langsmith not installed")
+
+
+class TestDisableSdkTracing:
+    """Tests for _disable_sdk_tracing."""
+
+    def test_calls_set_tracing_disabled(self):
+        """_disable_sdk_tracing calls agents.set_tracing_disabled(True)."""
+        with patch("agents.set_tracing_disabled") as mock_disable:
+            _disable_sdk_tracing("test reason")
+            mock_disable.assert_called_once_with(True)
 
 
 class TestOptionalTraceable:
@@ -113,20 +175,30 @@ class TestGetTraceUrl:
         monkeypatch.setattr(module, "_langfuse_enabled", False)
         assert get_trace_url() is None
 
+    def test_returns_langsmith_url_when_available(self, monkeypatch):
+        """Returns LangSmith URL from processor when available."""
+        import datus.utils.traceable_utils as module
 
-def _clear_all_tracing_envvars(monkeypatch):
-    """Helper to clear all tracing-related environment variables."""
-    for var in (
-        "LANGSMITH_TRACING",
-        "LANGCHAIN_TRACING_V2",
-        "LANGCHAIN_API_KEY",
-        "LANGSMITH_API_KEY",
-        "LANGFUSE_PUBLIC_KEY",
-        "LANGFUSE_SECRET_KEY",
-        "LANGFUSE_HOST",
-        "LANGFUSE_BASE_URL",
-    ):
-        monkeypatch.delenv(var, raising=False)
+        mock_processor = MagicMock()
+        mock_processor._last_trace_url = "https://smith.langchain.com/o/org/projects/p/proj/r/run123"
+        monkeypatch.setattr(module, "_tracing_processor", mock_processor)
+        monkeypatch.setattr(module, "_langfuse_enabled", False)
+
+        url = get_trace_url()
+        assert url == "https://smith.langchain.com/o/org/projects/p/proj/r/run123"
+
+    def test_falls_through_to_langfuse_when_langsmith_url_empty(self, monkeypatch):
+        """Falls through to Langfuse when LangSmith processor has no URL."""
+        import datus.utils.traceable_utils as module
+
+        mock_processor = MagicMock()
+        mock_processor._last_trace_url = None
+        monkeypatch.setattr(module, "_tracing_processor", mock_processor)
+        monkeypatch.setattr(module, "_langfuse_enabled", True)
+
+        with patch.object(module, "_get_langfuse_trace_url", return_value="https://langfuse/trace/123"):
+            url = get_trace_url()
+            assert url == "https://langfuse/trace/123"
 
 
 class TestIsLangfuseEnabled:
@@ -184,9 +256,7 @@ class TestSetupLangfuseTracing:
         monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-fake")
 
     def test_registers_litellm_callbacks(self, monkeypatch):
-        """setup_tracing registers langfuse_otel in litellm callbacks when Langfuse is configured."""
-        import sys
-
+        """setup_tracing registers langfuse_otel in litellm callbacks when openinference is absent."""
         import litellm
 
         import datus.utils.traceable_utils as module
@@ -196,11 +266,9 @@ class TestSetupLangfuseTracing:
         original_success = litellm.success_callback.copy() if litellm.success_callback else []
         original_failure = litellm.failure_callback.copy() if litellm.failure_callback else []
 
-        # Hide openinference so _setup_langfuse_tracing hits the ImportError branch.
-        # This works even in CI where the package is not installed.
         oi_key = "openinference.instrumentation.openai_agents"
         saved_mod = sys.modules.get(oi_key)
-        sys.modules[oi_key] = None  # force ImportError on import
+        sys.modules[oi_key] = None
         try:
             setup_tracing()
 
@@ -217,8 +285,6 @@ class TestSetupLangfuseTracing:
 
     def test_instrumentor_called_with_exclusive_false(self, monkeypatch):
         """OpenAIAgentsInstrumentor is called with exclusive_processor=False."""
-        import sys
-
         import litellm
 
         self._setup_langfuse_env(monkeypatch)
@@ -226,8 +292,6 @@ class TestSetupLangfuseTracing:
         original_success = litellm.success_callback.copy() if litellm.success_callback else []
         original_failure = litellm.failure_callback.copy() if litellm.failure_callback else []
 
-        # Inject a mock module so the import inside _setup_langfuse_tracing succeeds
-        # even in CI where openinference is not installed.
         mock_instrumentor_instance = MagicMock()
         mock_instrumentor_cls = MagicMock(return_value=mock_instrumentor_instance)
         mock_oi_module = MagicMock()
@@ -248,6 +312,34 @@ class TestSetupLangfuseTracing:
             litellm.success_callback = original_success
             litellm.failure_callback = original_failure
 
+    def test_sets_langfuse_otel_host_from_langfuse_host(self, monkeypatch):
+        """LANGFUSE_OTEL_HOST is derived from LANGFUSE_HOST when not explicitly set."""
+        import litellm
+
+        self._setup_langfuse_env(monkeypatch)
+        monkeypatch.setenv("LANGFUSE_HOST", "https://eu.langfuse.example.com")
+        monkeypatch.delenv("LANGFUSE_OTEL_HOST", raising=False)
+
+        original_success = litellm.success_callback.copy() if litellm.success_callback else []
+        original_failure = litellm.failure_callback.copy() if litellm.failure_callback else []
+
+        oi_key = "openinference.instrumentation.openai_agents"
+        saved_mod = sys.modules.get(oi_key)
+        sys.modules[oi_key] = None
+        try:
+            setup_tracing()
+            import os
+
+            assert os.environ.get("LANGFUSE_OTEL_HOST") == "https://eu.langfuse.example.com"
+        finally:
+            if saved_mod is None:
+                sys.modules.pop(oi_key, None)
+            else:
+                sys.modules[oi_key] = saved_mod
+            litellm.success_callback = original_success
+            litellm.failure_callback = original_failure
+            os.environ.pop("LANGFUSE_OTEL_HOST", None)
+
 
 class TestOptionalTraceableLangfuse:
     """Tests for optional_traceable when Langfuse is active."""
@@ -259,15 +351,19 @@ class TestOptionalTraceableLangfuse:
         monkeypatch.setattr(module, "HAS_LANGFUSE", True)
         monkeypatch.setattr(module, "_langfuse_enabled", True)
 
-        mock_observe = MagicMock(side_effect=lambda *a, **kw: lambda fn: fn)
-        with patch("langfuse.observe", mock_observe):
+        saved = _ensure_langfuse_module()
+        try:
+            mock_observe = MagicMock(side_effect=lambda *a, **kw: lambda fn: fn)
+            with patch("langfuse.observe", mock_observe):
 
-            @optional_traceable(name="test_langfuse_op")
-            def multiply(a, b):
-                return a * b
+                @optional_traceable(name="test_langfuse_op")
+                def multiply(a, b):
+                    return a * b
 
-            assert multiply(3, 4) == 12
-            mock_observe.assert_called_once()
+                assert multiply(3, 4) == 12
+                mock_observe.assert_called_once()
+        finally:
+            _restore_langfuse_module(saved)
 
     def test_langfuse_not_applied_when_disabled(self, monkeypatch):
         """Langfuse observe is not applied when _langfuse_enabled is False."""
@@ -276,45 +372,72 @@ class TestOptionalTraceableLangfuse:
         monkeypatch.setattr(module, "HAS_LANGFUSE", True)
         monkeypatch.setattr(module, "_langfuse_enabled", False)
 
-        with patch("langfuse.observe") as mock_observe:
+        saved = _ensure_langfuse_module()
+        try:
+            with patch("langfuse.observe") as mock_observe:
 
-            @optional_traceable(name="test_op")
-            def add(a, b):
-                return a + b
+                @optional_traceable(name="test_op")
+                def add(a, b):
+                    return a + b
 
-            assert add(1, 2) == 3
-            mock_observe.assert_not_called()
+                assert add(1, 2) == 3
+                mock_observe.assert_not_called()
+        finally:
+            _restore_langfuse_module(saved)
+
+
+class TestGetLangfuseTraceUrl:
+    """Tests for _get_langfuse_trace_url."""
+
+    def test_returns_none_when_no_trace(self):
+        """Returns None when no active trace."""
+        saved = _ensure_langfuse_module()
+        try:
+            mock_client = MagicMock()
+            mock_client.get_current_trace_id.return_value = None
+            with patch("langfuse.get_client", return_value=mock_client):
+                assert _get_langfuse_trace_url() is None
+        finally:
+            _restore_langfuse_module(saved)
+
+    def test_returns_url_when_trace_active(self):
+        """Returns SDK-constructed URL when a trace is active."""
+        saved = _ensure_langfuse_module()
+        try:
+            mock_client = MagicMock()
+            mock_client.get_current_trace_id.return_value = "trace-abc-123"
+            mock_client.get_trace_url.return_value = (
+                "https://us.cloud.langfuse.com/project/proj-123/traces/trace-abc-123"
+            )
+            with patch("langfuse.get_client", return_value=mock_client):
+                url = _get_langfuse_trace_url()
+                assert url == "https://us.cloud.langfuse.com/project/proj-123/traces/trace-abc-123"
+                mock_client.get_trace_url.assert_called_once_with(trace_id="trace-abc-123")
+        finally:
+            _restore_langfuse_module(saved)
+
+    def test_returns_none_on_exception(self):
+        """Returns None gracefully when Langfuse client raises."""
+        saved = _ensure_langfuse_module()
+        try:
+            with patch("langfuse.get_client", side_effect=RuntimeError("no client")):
+                assert _get_langfuse_trace_url() is None
+        finally:
+            _restore_langfuse_module(saved)
 
 
 class TestGetTraceUrlLangfuse:
     """Tests for get_trace_url with Langfuse backend."""
 
-    def test_returns_none_when_no_trace(self, monkeypatch):
-        """Returns None when Langfuse is enabled but no active trace."""
+    def test_returns_langfuse_url(self, monkeypatch):
+        """Returns Langfuse URL when enabled and no LangSmith processor."""
         import datus.utils.traceable_utils as module
 
         monkeypatch.setattr(module, "_tracing_processor", None)
         monkeypatch.setattr(module, "_langfuse_enabled", True)
 
-        mock_client = MagicMock()
-        mock_client.get_current_trace_id.return_value = None
-        with patch("langfuse.get_client", return_value=mock_client):
-            assert get_trace_url() is None
-
-    def test_returns_url_when_trace_active(self, monkeypatch):
-        """Returns SDK-constructed URL when Langfuse has an active trace."""
-        import datus.utils.traceable_utils as module
-
-        monkeypatch.setattr(module, "_tracing_processor", None)
-        monkeypatch.setattr(module, "_langfuse_enabled", True)
-
-        mock_client = MagicMock()
-        mock_client.get_current_trace_id.return_value = "trace-abc-123"
-        mock_client.get_trace_url.return_value = "https://us.cloud.langfuse.com/project/proj-123/traces/trace-abc-123"
-        with patch("langfuse.get_client", return_value=mock_client):
-            url = get_trace_url()
-            assert url == "https://us.cloud.langfuse.com/project/proj-123/traces/trace-abc-123"
-            mock_client.get_trace_url.assert_called_once_with(trace_id="trace-abc-123")
+        with patch.object(module, "_get_langfuse_trace_url", return_value="https://langfuse/trace/abc"):
+            assert get_trace_url() == "https://langfuse/trace/abc"
 
 
 class TestLangsmithUnchanged:
