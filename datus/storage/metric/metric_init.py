@@ -141,6 +141,13 @@ async def init_success_story_metrics_async(
             already contains entries.
         batch_size: Number of SQL queries per batch (default 1).
     """
+    if batch_size <= 0:
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        raise DatusException(
+            ErrorCode.STORAGE_INVALID_ARGUMENT, error_message=f"batch_size must be > 0, got {batch_size}"
+        )
+
     event_helper = BatchEventHelper(BIZ_NAME, emit)
 
     if build_mode == "overwrite":
