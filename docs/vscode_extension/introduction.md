@@ -21,7 +21,7 @@ The current release channel is direct VSIX install:
 3. After installation, a Datus Studio icon appears in the Activity Bar, along with three new panels: **Datus: Object Explorer** on the left, the main **Datus Studio** (Chat) panel (You can drag it to the right manually), and the bottom **Datus Studio** panel (SQL / Chart).
 
 !!! tip "Upgrading"
-    Re-download `latest.vsix` and run *Install from VSIX* again to overwrite the existing installation.
+    Re-download latest `.vsix` file and run *Install from VSIX* again to overwrite the existing installation.
 
 ## Launch Steps
 
@@ -33,13 +33,13 @@ Any launch command that includes `--web` works; the key is to expose the HTTP se
 
 ```bash
 # Specify a datasource directly
-datus --web --datasource <your_datasource>
+datus-cli --web --datasource <your_datasource>
 
 # Use a config file + datasource (recommended for project-scoped setups)
-uv run datus --web --config /path/to/conf/agent.yml --datasource <your_datasource>
+datus-cli --web --config /path/to/conf/agent.yml --datasource <your_datasource>
 
 # Custom port and bind address
-datus --web --port 8080 --host 0.0.0.0
+datus-cli --web --port 8080 --host 0.0.0.0
 ```
 
 After startup, the terminal prints the actual service URL, for example:
@@ -55,7 +55,7 @@ Note this URL — you will plug it into the extension's Settings in the next ste
 
 ### 2. Configure the Endpoint in VSCode
 
-1. Open **Datus Studio** in the Activity Bar and click the gear icon in the top-right corner to open **Datus · Settings**.
+1. Open **Datus Studio** chat panel in the Activity Bar and click the gear icon in the top-right corner to open **Datus · Settings**.
 2. Switch to the **General** tab and paste the URL from the previous step into **Endpoint**, e.g. `http://localhost:8501`.
 3. The same page also exposes:
     - **Language**: extension UI language (Chinese / English).
