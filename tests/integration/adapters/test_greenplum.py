@@ -14,7 +14,7 @@ Opt-in (all required):
 Env overrides (defaults match the adapter's docker-compose.yml):
   GREENPLUM_HOST=localhost  GREENPLUM_PORT=15432
   GREENPLUM_USER=gpadmin    GREENPLUM_PASSWORD=pivotal
-  GREENPLUM_DATABASE=test   GREENPLUM_SCHEMA=public
+  GREENPLUM_DATABASE=postgres  GREENPLUM_SCHEMA=public
 
 See `tests/integration/adapters/README.md`.
 """
@@ -88,7 +88,7 @@ def gp_config() -> GreenplumConfig:
         port=int(os.getenv("GREENPLUM_PORT", "15432")),
         username=os.getenv("GREENPLUM_USER", "gpadmin"),
         password=os.getenv("GREENPLUM_PASSWORD", "pivotal"),
-        database=os.getenv("GREENPLUM_DATABASE", "test"),
+        database=os.getenv("GREENPLUM_DATABASE", "postgres"),
         schema_name=SCHEMA,
     )
 

@@ -1,0 +1,34 @@
+version: 1
+entries:
+  - id: kimi-mcp-provider-529
+    type: test
+    nodeid: tests/integration/models/test_other_models.py::TestKimiModel::test_generate_with_mcp
+    owner: agent-runtime
+    layer: product_e2e
+    reason: Moonshot/Kimi provider returned HTTP 529 overload during nightly; rerun passed.
+    allowed_until: 2026-06-05
+    allowed_in:
+      - nightly
+    action: rerun_only
+
+  - id: litellm-async-pending-task-teardown
+    type: log_pattern
+    pattern: "Task was destroyed but it is pending"
+    owner: agent-runtime
+    layer: product_e2e
+    reason: Async teardown warning observed after real LLM/tool streaming; classify until root cause is fixed.
+    allowed_until: 2026-06-05
+    allowed_in:
+      - nightly
+    action: classify_warning
+
+  - id: lance-fts-cleanup-warning
+    type: log_pattern
+    pattern: "(Cannot delete directory|FileDoesNotExist).*(_indices/fts|fieldnorm)"
+    owner: storage
+    layer: nightly
+    reason: LanceDB FTS cleanup warning observed during nightly storage cleanup.
+    allowed_until: 2026-06-05
+    allowed_in:
+      - nightly
+    action: classify_warning

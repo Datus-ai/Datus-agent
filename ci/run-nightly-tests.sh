@@ -1,0 +1,427 @@
+#!/usr/bin/env bash
+set -u
+set -o pipefail
+
+REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+cd "$REPO_ROOT"
+
+LOG_FILE="${NIGHTLY_LOG_FILE:-test_output_nightly_$(date +%Y%m%d_%H%M%S).log}"
+test_exit_code=0
+NIGHTLY_GROUP_FILTER="${NIGHTLY_GROUP_FILTER:-}"
+AGENT_TEST_CONFIG="${AGENT_TEST_CONFIG:-tests/conf/agent.yml}"
+
+WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(cd "${REPO_ROOT}/.." && pwd)}"
+EXTERNAL_REPOS_ROOT="${EXTERNAL_REPOS_ROOT:-${REPO_ROOT}/external}"
+NIGHTLY_HOME="${DATUS_TEST_HOME:-${REPO_ROOT}/.datus_test_data}"
+NIGHTLY_PROJECT_ROOT="${NIGHTLY_PROJECT_ROOT:-${NIGHTLY_HOME}/workspace}"
+UNIT_TEST_HOME="${NIGHTLY_UNIT_TEST_HOME:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-agent-nightly-unit-${GITHUB_RUN_ID:-$$}}"
+UNIT_TEST_PROJECT_ROOT="${NIGHTLY_UNIT_TEST_PROJECT_ROOT:-${UNIT_TEST_HOME}/workspace}"
+AGENT_TEST_CONFIG_BACKUP=""
+
+default_repo_root() {
+  local explicit_root="$1"
+  local repo_name="$2"
+
+  if [ -n "$explicit_root" ]; then
+    echo "$explicit_root"
+  elif [ -d "${EXTERNAL_REPOS_ROOT}/${repo_name}" ]; then
+    echo "${EXTERNAL_REPOS_ROOT}/${repo_name}"
+  elif [ -d "${WORKSPACE_ROOT}/${repo_name}" ]; then
+    echo "${WORKSPACE_ROOT}/${repo_name}"
+  else
+    echo "${EXTERNAL_REPOS_ROOT}/${repo_name}"
+  fi
+}
+
+DB_ADAPTERS_ROOT="$(default_repo_root "${DB_ADAPTERS_ROOT:-}" datus-db-adapters)"
+BI_ADAPTERS_ROOT="$(default_repo_root "${BI_ADAPTERS_ROOT:-}" datus-bi-adapters)"
+SCHEDULER_ADAPTERS_ROOT="$(default_repo_root "${SCHEDULER_ADAPTERS_ROOT:-}" datus-scheduler-adapters)"
+
+POSTGRES_COMPOSE="${POSTGRES_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-postgresql/docker-compose.yml}"
+MYSQL_COMPOSE="${MYSQL_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-mysql/docker-compose.yml}"
+CLICKHOUSE_COMPOSE="${CLICKHOUSE_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-clickhouse/docker-compose.yml}"
+STARROCKS_COMPOSE="${STARROCKS_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-starrocks/docker-compose.yml}"
+TRINO_COMPOSE="${TRINO_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-trino/docker-compose.yml}"
+GREENPLUM_COMPOSE="${GREENPLUM_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-greenplum/docker-compose.yml}"
+HIVE_COMPOSE="${HIVE_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-hive/docker-compose.yml}"
+SPARK_COMPOSE="${SPARK_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-spark/docker-compose.yml}"
+SUPERSET_COMPOSE="${SUPERSET_COMPOSE:-${BI_ADAPTERS_ROOT}/datus-bi-superset/tests/integration/docker-compose.yml}"
+AIRFLOW_COMPOSE="${AIRFLOW_COMPOSE:-${SCHEDULER_ADAPTERS_ROOT}/datus-scheduler-airflow/tests/integration/docker-compose.yml}"
+
+COMPOSE_FILES=(
+  "$POSTGRES_COMPOSE"
+  "$MYSQL_COMPOSE"
+  "$CLICKHOUSE_COMPOSE"
+  "$STARROCKS_COMPOSE"
+  "$TRINO_COMPOSE"
+  "$GREENPLUM_COMPOSE"
+  "$HIVE_COMPOSE"
+  "$SPARK_COMPOSE"
+  "$SUPERSET_COMPOSE"
+  "$AIRFLOW_COMPOSE"
+)
+
+log() {
+  echo "$@" | tee -a "$LOG_FILE"
+}
+
+should_run_group() {
+  local group_name="$1"
+
+  if [ -z "$NIGHTLY_GROUP_FILTER" ]; then
+    return 0
+  fi
+
+  [[ "$group_name" =~ $NIGHTLY_GROUP_FILTER ]]
+}
+
+has_docker_compose() {
+  docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1
+}
+
+docker_compose() {
+  if docker compose version >/dev/null 2>&1; then
+    docker compose "$@"
+  elif command -v docker-compose >/dev/null 2>&1; then
+    docker-compose "$@"
+  else
+    echo "Docker Compose is not available" >&2
+    return 127
+  fi
+}
+
+compose_down() {
+  local compose_file="$1"
+  docker_compose -f "$compose_file" down -v --remove-orphans >/dev/null 2>&1 || true
+}
+
+cleanup_all_compose() {
+  set +e
+  if ! has_docker_compose; then
+    echo "Docker Compose is not available; skipping compose cleanup"
+    return 0
+  fi
+  local compose_file
+  for compose_file in "${COMPOSE_FILES[@]}"; do
+    if [ -f "$compose_file" ]; then
+      echo "Stopping services from $compose_file"
+      docker_compose -f "$compose_file" down -v --remove-orphans || true
+    fi
+  done
+}
+
+backup_agent_test_config() {
+  if [ -z "$AGENT_TEST_CONFIG_BACKUP" ]; then
+    AGENT_TEST_CONFIG_BACKUP="$(mktemp "${TMPDIR:-/tmp}/datus-agent-nightly-config.XXXXXX")"
+    cp "$AGENT_TEST_CONFIG" "$AGENT_TEST_CONFIG_BACKUP"
+  fi
+}
+
+restore_agent_test_config() {
+  if [ -n "$AGENT_TEST_CONFIG_BACKUP" ] && [ -f "$AGENT_TEST_CONFIG_BACKUP" ]; then
+    cp "$AGENT_TEST_CONFIG_BACKUP" "$AGENT_TEST_CONFIG"
+  fi
+}
+
+set_agent_test_config_paths() {
+  local home="$1"
+  local project_root="$2"
+
+  python3 - "$AGENT_TEST_CONFIG" "$home" "$project_root" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+home = sys.argv[2]
+project_root = sys.argv[3]
+
+updated = []
+for line in path.read_text(encoding="utf-8").splitlines():
+    stripped = line.strip()
+    if line.startswith("  home: ") and stripped.startswith("home:"):
+        updated.append(f"  home: {home}")
+    elif line.startswith("  project_root: ") and stripped.startswith("project_root:"):
+        updated.append(f"  project_root: {project_root}")
+    else:
+        updated.append(line)
+
+path.write_text("\n".join(updated) + "\n", encoding="utf-8")
+PY
+}
+
+run_with_agent_home() {
+  local home="$1"
+  local project_root="$2"
+  shift 2
+
+  backup_agent_test_config
+  mkdir -p "$home" "$project_root"
+  set_agent_test_config_paths "$home" "$project_root"
+  DATUS_TEST_HOME="$home" "$@"
+  local status=$?
+  restore_agent_test_config
+  return "$status"
+}
+
+cleanup_all() {
+  set +e
+  restore_agent_test_config
+  cleanup_all_compose
+}
+
+if [ "${1:-}" = "--cleanup-only" ]; then
+  cleanup_all_compose
+  exit 0
+fi
+
+handle_interrupt() {
+  cleanup_all
+  exit 130
+}
+
+trap cleanup_all EXIT
+trap handle_interrupt INT TERM
+
+export DATUS_STRICT_NIGHTLY_REQUIREMENTS="${DATUS_STRICT_NIGHTLY_REQUIREMENTS:-1}"
+export ADAPTERS_PG="${ADAPTERS_PG:-1}"
+export ADAPTERS_MYSQL="${ADAPTERS_MYSQL:-1}"
+export ADAPTERS_CH="${ADAPTERS_CH:-1}"
+export ADAPTERS_SR="${ADAPTERS_SR:-1}"
+export ADAPTERS_TRINO="${ADAPTERS_TRINO:-1}"
+export ADAPTERS_GP="${ADAPTERS_GP:-1}"
+export ADAPTERS_HIVE="${ADAPTERS_HIVE:-1}"
+export ADAPTERS_SPARK="${ADAPTERS_SPARK:-1}"
+export SUPERSET_PORT="${SUPERSET_PORT:-18088}"
+export SUPERSET_POSTGRES_HOST="${SUPERSET_POSTGRES_HOST:-127.0.0.1}"
+export SUPERSET_POSTGRES_PORT="${SUPERSET_POSTGRES_PORT:-15433}"
+export SUPERSET_URL="${SUPERSET_URL:-http://127.0.0.1:${SUPERSET_PORT}}"
+export SUPERSET_USER="${SUPERSET_USER:-admin}"
+export SUPERSET_PASS="${SUPERSET_PASS:-admin}"
+export AIRFLOW_HOST_PORT="${AIRFLOW_HOST_PORT:-18080}"
+export AIRFLOW_URL="${AIRFLOW_URL:-http://127.0.0.1:${AIRFLOW_HOST_PORT}/api/v1}"
+export AIRFLOW_USER="${AIRFLOW_USER:-admin}"
+export AIRFLOW_USERNAME="${AIRFLOW_USERNAME:-$AIRFLOW_USER}"
+export AIRFLOW_PASSWORD="${AIRFLOW_PASSWORD:-admin}"
+
+if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then
+  export POSTGRESQL_HOST=localhost
+  export POSTGRESQL_PORT=5432
+  export POSTGRESQL_USER=test_user
+  export POSTGRESQL_PASSWORD=test_password
+  export POSTGRESQL_DATABASE=test
+  export POSTGRESQL_SCHEMA=public
+
+  export MYSQL_HOST=localhost
+  export MYSQL_PORT=3306
+  export MYSQL_USER=test_user
+  export MYSQL_PASSWORD=test_password
+  export MYSQL_DATABASE=test
+
+  export CLICKHOUSE_HTTP_HOST_PORT="${CLICKHOUSE_HTTP_HOST_PORT:-28123}"
+  export CLICKHOUSE_NATIVE_HOST_PORT="${CLICKHOUSE_NATIVE_HOST_PORT:-29000}"
+  export CLICKHOUSE_HOST=127.0.0.1
+  export CLICKHOUSE_PORT="$CLICKHOUSE_HTTP_HOST_PORT"
+  export CLICKHOUSE_USER=default_user
+  export CLICKHOUSE_PASSWORD=default_test
+  export CLICKHOUSE_DATABASE=default_test
+
+  export STARROCKS_QUERY_HOST_PORT="${STARROCKS_QUERY_HOST_PORT:-29030}"
+  export STARROCKS_HTTP_HOST_PORT="${STARROCKS_HTTP_HOST_PORT:-28030}"
+  export STARROCKS_HOST=127.0.0.1
+  export STARROCKS_PORT="$STARROCKS_QUERY_HOST_PORT"
+  export STARROCKS_USER=root
+  export STARROCKS_PASSWORD=
+  export STARROCKS_CATALOG=default_catalog
+  export STARROCKS_DATABASE=test
+
+  export TRINO_HOST_PORT="${TRINO_HOST_PORT:-28080}"
+  export TRINO_HOST=127.0.0.1
+  export TRINO_PORT="$TRINO_HOST_PORT"
+  export TRINO_USER=trino
+  export TRINO_PASSWORD=
+  export TRINO_HTTP_SCHEME=http
+
+  export GREENPLUM_HOST=localhost
+  export GREENPLUM_PORT=15432
+  export GREENPLUM_USER=gpadmin
+  export GREENPLUM_PASSWORD=pivotal
+  export GREENPLUM_DATABASE=postgres
+  export GREENPLUM_SCHEMA=public
+
+  export HIVE_HOST=localhost
+  export HIVE_PORT=10000
+  export HIVE_USERNAME=hive
+  export HIVE_PASSWORD=
+  export HIVE_DATABASE=default
+
+  export SPARK_HOST=localhost
+  export SPARK_PORT=10000
+  export SPARK_USER=spark
+  export SPARK_PASSWORD=
+  export SPARK_DATABASE=default
+  export SPARK_AUTH_MECHANISM=NONE
+fi
+
+run_logged() {
+  local group_name="$1"
+  shift
+  if ! should_run_group "$group_name"; then
+    log ""
+    log "=== Skipping ${group_name} (NIGHTLY_GROUP_FILTER=${NIGHTLY_GROUP_FILTER}) ==="
+    return 0
+  fi
+  log ""
+  log "=== ${group_name} ==="
+  "$@" 2>&1 | tee -a "$LOG_FILE"
+  local cmd_status=${PIPESTATUS[0]}
+  if [ "$cmd_status" -ne 0 ]; then
+    test_exit_code="$cmd_status"
+  fi
+  return 0
+}
+
+compose_up() {
+  local compose_file="$1"
+  shift
+  if [ ! -f "$compose_file" ]; then
+    echo "Missing compose file: $compose_file" | tee -a "$LOG_FILE" >&2
+    test_exit_code=1
+    return 1
+  fi
+  docker_compose -f "$compose_file" up -d --build "$@" 2>&1 | tee -a "$LOG_FILE"
+  local cmd_status=${PIPESTATUS[0]}
+  if [ "$cmd_status" -ne 0 ]; then
+    test_exit_code="$cmd_status"
+    return 1
+  fi
+  return 0
+}
+
+wait_for_service_health() {
+  local compose_file="$1"
+  local service_name="$2"
+  local timeout_seconds="$3"
+  local container_id=""
+  local status=""
+  local deadline=$((SECONDS + timeout_seconds))
+
+  container_id="$(docker_compose -f "$compose_file" ps -q "$service_name")"
+  if [ -z "$container_id" ]; then
+    echo "No container found for service '$service_name' in $compose_file" | tee -a "$LOG_FILE" >&2
+    docker_compose -f "$compose_file" ps 2>&1 | tee -a "$LOG_FILE" || true
+    test_exit_code=1
+    return 1
+  fi
+
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || echo unknown)"
+    if [ "$status" = "healthy" ] || [ "$status" = "running" ]; then
+      log "Service '$service_name' is $status"
+      return 0
+    fi
+    sleep 5
+  done
+
+  echo "Timed out waiting for service '$service_name' from $compose_file" | tee -a "$LOG_FILE" >&2
+  docker_compose -f "$compose_file" ps 2>&1 | tee -a "$LOG_FILE" || true
+  docker_compose -f "$compose_file" logs --tail=200 2>&1 | tee -a "$LOG_FILE" || true
+  test_exit_code=1
+  return 1
+}
+
+run_compose_suite() {
+  local group_name="$1"
+  local compose_file="$2"
+  shift 2
+  local service_specs=()
+
+  while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+    service_specs+=("$1")
+    shift
+  done
+  if [ "${1:-}" != "--" ]; then
+    echo "Internal error: missing -- before command for ${group_name}" | tee -a "$LOG_FILE" >&2
+    test_exit_code=1
+    return 0
+  fi
+  shift
+
+  if ! should_run_group "$group_name"; then
+    log ""
+    log "=== Skipping ${group_name} (NIGHTLY_GROUP_FILTER=${NIGHTLY_GROUP_FILTER}) ==="
+    return 0
+  fi
+
+  log ""
+  log "=== Starting ${group_name} Services ==="
+  compose_down "$compose_file"
+  if ! compose_up "$compose_file"; then
+    compose_down "$compose_file"
+    return 0
+  fi
+
+  local spec
+  for spec in "${service_specs[@]}"; do
+    local service_name="${spec%%:*}"
+    local timeout_seconds="${spec##*:}"
+    if ! wait_for_service_health "$compose_file" "$service_name" "$timeout_seconds"; then
+      compose_down "$compose_file"
+      return 0
+    fi
+  done
+
+  run_logged "$group_name" "$@"
+
+  log ""
+  log "=== Stopping ${group_name} Services ==="
+  compose_down "$compose_file"
+  return 0
+}
+
+log "Nightly log: $LOG_FILE"
+log "DB_ADAPTERS_ROOT=$DB_ADAPTERS_ROOT"
+log "BI_ADAPTERS_ROOT=$BI_ADAPTERS_ROOT"
+log "SCHEDULER_ADAPTERS_ROOT=$SCHEDULER_ADAPTERS_ROOT"
+log "NIGHTLY_HOME=$NIGHTLY_HOME"
+log "UNIT_TEST_HOME=$UNIT_TEST_HOME"
+log "SUPERSET_URL=$SUPERSET_URL SUPERSET_PORT=$SUPERSET_PORT SUPERSET_POSTGRES_HOST=$SUPERSET_POSTGRES_HOST SUPERSET_POSTGRES_PORT=$SUPERSET_POSTGRES_PORT"
+log "AIRFLOW_URL=$AIRFLOW_URL AIRFLOW_HOST_PORT=$AIRFLOW_HOST_PORT"
+log "CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-} CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-} CLICKHOUSE_NATIVE_HOST_PORT=${CLICKHOUSE_NATIVE_HOST_PORT:-}"
+log "STARROCKS_HOST=${STARROCKS_HOST:-} STARROCKS_PORT=${STARROCKS_PORT:-} STARROCKS_HTTP_HOST_PORT=${STARROCKS_HTTP_HOST_PORT:-}"
+log "TRINO_HOST=${TRINO_HOST:-} TRINO_PORT=${TRINO_PORT:-}"
+if [ -n "$NIGHTLY_GROUP_FILTER" ]; then
+  log "NIGHTLY_GROUP_FILTER=$NIGHTLY_GROUP_FILTER"
+fi
+
+run_logged "Flaky Registry Check" uv run python ci/check_flaky_registry.py --registry ci/flaky-registry.yml --strict
+
+rm -rf "$UNIT_TEST_HOME"
+run_logged "Full Unit Tests" run_with_agent_home "$UNIT_TEST_HOME" "$UNIT_TEST_PROJECT_ROOT" uv run pytest tests/unit_tests/ -m "not nightly" --tb=short --verbose --timeout=300 --dist=loadscope -n auto
+
+run_logged "MCP Server Tests" uv run pytest -m nightly tests/integration/tools/test_mcp_server.py --tb=short --verbose --timeout=60
+
+run_logged "Gen Agent Tests" uv run pytest -m nightly tests/integration/agent/test_gen_semantic_model_agentic.py tests/integration/agent/test_gen_metrics_agentic.py tests/integration/agent/test_gen_ext_knowledge_agentic.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
+
+run_logged "Main Nightly Tests" uv run pytest -m nightly tests/ --deselect tests/integration/tools/test_mcp_server.py --deselect tests/integration/agent/test_gen_semantic_model_agentic.py --deselect tests/integration/agent/test_gen_metrics_agentic.py --deselect tests/integration/agent/test_gen_ext_knowledge_agentic.py --deselect tests/integration/agent/test_gen_dashboard_agentic.py --deselect tests/integration/agent/test_scheduler_agentic.py --deselect tests/integration/tools/test_bi_dashboard.py --deselect tests/integration/adapters/test_postgresql.py --deselect tests/integration/adapters/test_mysql.py --deselect tests/integration/adapters/test_clickhouse.py --deselect tests/integration/adapters/test_starrocks.py --deselect tests/integration/adapters/test_trino.py --deselect tests/integration/adapters/test_greenplum.py --deselect tests/integration/adapters/test_hive.py --deselect tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300 --reruns 1 --reruns-delay 5 --dist=loadscope -n auto
+
+run_compose_suite "Superset Nightly Tests" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- uv run pytest -m nightly tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
+
+run_compose_suite "Airflow Nightly Tests" "$AIRFLOW_COMPOSE" "airflow:900" -- uv run pytest -m nightly tests/integration/agent/test_scheduler_agentic.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
+
+run_compose_suite "PostgreSQL Adapter Tests" "$POSTGRES_COMPOSE" "postgres:300" -- uv run pytest -m nightly tests/integration/adapters/test_postgresql.py --tb=short --verbose --timeout=300
+run_compose_suite "MySQL Adapter Tests" "$MYSQL_COMPOSE" "mysql:300" -- uv run pytest -m nightly tests/integration/adapters/test_mysql.py --tb=short --verbose --timeout=300
+run_compose_suite "ClickHouse Adapter Tests" "$CLICKHOUSE_COMPOSE" "clickhouse:300" -- uv run pytest -m nightly tests/integration/adapters/test_clickhouse.py --tb=short --verbose --timeout=300
+run_compose_suite "StarRocks Adapter Tests" "$STARROCKS_COMPOSE" "starrocks:600" -- uv run pytest -m nightly tests/integration/adapters/test_starrocks.py --tb=short --verbose --timeout=300
+run_compose_suite "Trino Adapter Tests" "$TRINO_COMPOSE" "trino:300" -- uv run pytest -m nightly tests/integration/adapters/test_trino.py --tb=short --verbose --timeout=300
+run_compose_suite "Greenplum Adapter Tests" "$GREENPLUM_COMPOSE" "greenplum:600" -- uv run pytest -m nightly tests/integration/adapters/test_greenplum.py --tb=short --verbose --timeout=300
+run_compose_suite "Hive Adapter Tests" "$HIVE_COMPOSE" "hive-metastore:600" "hive-server:900" -- uv run pytest -m nightly tests/integration/adapters/test_hive.py --tb=short --verbose --timeout=300
+run_compose_suite "Spark Adapter Tests" "$SPARK_COMPOSE" "spark-thrift:900" -- uv run pytest -m nightly tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300
+
+run_logged "Flaky Log Classification" uv run python ci/check_flaky_registry.py --registry ci/flaky-registry.yml --log-file "$LOG_FILE"
+
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+  echo "log_file=$LOG_FILE" >> "$GITHUB_OUTPUT"
+  echo "test_exit_code=$test_exit_code" >> "$GITHUB_OUTPUT"
+fi
+
+exit "$test_exit_code"

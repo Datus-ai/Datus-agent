@@ -630,8 +630,9 @@ class TestDiagnoseOAuth401:
 
         original_error = Exception("401 Unauthorized")
         with patch("datus.models.claude_model.Path.home", return_value=tmp_path):
-            with pytest.raises(DatusException) as exc_info:
-                model._diagnose_oauth_401(original_error)
+            with patch("datus.auth.claude_credential._read_keychain_credentials", return_value=None):
+                with pytest.raises(DatusException) as exc_info:
+                    model._diagnose_oauth_401(original_error)
             assert exc_info.value.code == ErrorCode.CLAUDE_SUBSCRIPTION_AUTH_FAILED
 
     def test_no_credentials_file_raises_auth_failed(self, tmp_path):
@@ -643,8 +644,9 @@ class TestDiagnoseOAuth401:
 
         original_error = Exception("401 Unauthorized")
         with patch("datus.models.claude_model.Path.home", return_value=tmp_path):
-            with pytest.raises(DatusException) as exc_info:
-                model._diagnose_oauth_401(original_error)
+            with patch("datus.auth.claude_credential._read_keychain_credentials", return_value=None):
+                with pytest.raises(DatusException) as exc_info:
+                    model._diagnose_oauth_401(original_error)
             assert exc_info.value.code == ErrorCode.CLAUDE_SUBSCRIPTION_AUTH_FAILED
 
     def test_malformed_credentials_file_raises_auth_failed(self, tmp_path):
@@ -661,8 +663,9 @@ class TestDiagnoseOAuth401:
 
         original_error = Exception("401 Unauthorized")
         with patch("datus.models.claude_model.Path.home", return_value=tmp_path):
-            with pytest.raises(DatusException) as exc_info:
-                model._diagnose_oauth_401(original_error)
+            with patch("datus.auth.claude_credential._read_keychain_credentials", return_value=None):
+                with pytest.raises(DatusException) as exc_info:
+                    model._diagnose_oauth_401(original_error)
             assert exc_info.value.code == ErrorCode.CLAUDE_SUBSCRIPTION_AUTH_FAILED
 
     def test_preserves_original_error_as_cause(self, tmp_path):

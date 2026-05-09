@@ -5,28 +5,10 @@
 
 - input:
     platform: superset
-    dashboard_url: http://127.0.0.1:8088/superset/dashboard/world_health/
+    dashboard_url: http://127.0.0.1:8088/superset/dashboard/datus-nightly-placeholder/
     api_base_url: http://127.0.0.1:8088
     dialect: postgresql
+    seed_dashboard: true
     valid_charts:
-      - name: "Growth Rate"  # Chart Title
-        sql: >
-          SELECT year AS __timestamp, country_name AS country_name, sum("SP_POP_TOTL") AS "sum__SP_POP_TOTL"
-          FROM public.wb_health_population JOIN (SELECT country_name AS country_name__, sum("SP_POP_TOTL") AS mme_inner__
-          FROM public.wb_health_population
-          WHERE year >= TO_TIMESTAMP('1960-01-01 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND year < TO_TIMESTAMP('2014-01-02 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') GROUP BY country_name ORDER BY mme_inner__ DESC
-           LIMIT 25) AS series_limit ON country_name = country_name__
-          WHERE year >= TO_TIMESTAMP('1960-01-01 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND year < TO_TIMESTAMP('2014-01-02 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') GROUP BY country_name, year ORDER BY "sum__SP_POP_TOTL" DESC
-           LIMIT 50000;
-      - name: "% Rural"
-        sql: >
-          SELECT country_code AS country_code, sum("SP_RUR_TOTL_ZS") AS "sum__SP_RUR_TOTL_ZS", sum("SP_RUR_TOTL") AS "Rural Population"
-          FROM public.wb_health_population
-          WHERE year >= TO_TIMESTAMP('2014-01-01 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND year < TO_TIMESTAMP('2014-01-02 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') GROUP BY country_code
-          LIMIT 50000;
-      - name: "Rural Breakdown"
-        sql: >
-          SELECT region AS region, country_name AS country_name, sum("SP_POP_TOTL") AS "sum__SP_POP_TOTL", sum("SP_RUR_TOTL") AS "Rural Population"
-          FROM public.wb_health_population
-          WHERE year >= TO_TIMESTAMP('2011-01-01 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') AND year < TO_TIMESTAMP('2011-01-02 00:00:00.000000', 'YYYY-MM-DD HH24:MI:SS.US') GROUP BY region, country_name
-           LIMIT 50000;
+      - name: "Datus Revenue by Region"
+      - name: "Datus Orders by Channel"

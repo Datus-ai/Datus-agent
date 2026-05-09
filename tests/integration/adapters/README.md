@@ -45,7 +45,7 @@ docker compose down -v
 | clickhouse | `ADAPTERS_CH=1` | `CLICKHOUSE_HOST/PORT/USER/PASSWORD/DATABASE` | `localhost:8123 default_user/default_test/default_test` |
 | starrocks | `ADAPTERS_SR=1` | `STARROCKS_HOST/PORT/USER/PASSWORD/CATALOG/DATABASE` | `127.0.0.1:9030 root//default_catalog/test` |
 | trino | `ADAPTERS_TRINO=1` | `TRINO_HOST/PORT/USER` | `localhost:8080 trino` (uses built-in `tpch.tiny`, no seeding) |
-| greenplum | `ADAPTERS_GP=1` | `GREENPLUM_HOST/PORT/USER/PASSWORD/DATABASE/SCHEMA` | `localhost:15432 gpadmin/pivotal/test/public` |
+| greenplum | `ADAPTERS_GP=1` | `GREENPLUM_HOST/PORT/USER/PASSWORD/DATABASE/SCHEMA` | `localhost:15432 gpadmin/pivotal/postgres/public` |
 | hive | `ADAPTERS_HIVE=1` | `HIVE_HOST/PORT/USERNAME/PASSWORD/DATABASE` | `localhost:10000 hive//default` |
 | spark | `ADAPTERS_SPARK=1` | `SPARK_HOST/PORT/USER/PASSWORD/DATABASE/AUTH_MECHANISM` | `localhost:10000 spark//default/NONE` |
 

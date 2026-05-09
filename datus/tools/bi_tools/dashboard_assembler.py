@@ -20,6 +20,15 @@ from datus.utils.sql_utils import extract_table_names, metadata_identifier, norm
 logger = get_logger(__name__)
 
 
+def _items_from_adapter_result(result: Any) -> List[Any]:
+    """Return list items from either a PaginatedResult envelope or a plain sequence."""
+    if result is None:
+        return []
+    if hasattr(result, "items"):
+        return list(result.items or [])
+    return list(result)
+
+
 @dataclass(slots=True)
 class SelectedSqlCandidate:
     chart_id: Union[int, str]
@@ -96,7 +105,7 @@ class DashboardAssembler:
             raise ValueError(f"Dashboard {dashboard_id} not found")
 
         charts = self._load_charts(dashboard_id, dashboard)
-        datasets = self.adapter.list_datasets(dashboard_id)
+        datasets = _items_from_adapter_result(self.adapter.list_datasets(dashboard_id))
 
         return DashboardExtraction(
             dashboard_id=dashboard_id,
@@ -184,7 +193,7 @@ class DashboardAssembler:
         return result
 
     def _load_charts(self, dashboard_id: Union[int, str], dashboard: DashboardInfo) -> List[ChartInfo]:
-        chart_metas = self.adapter.list_charts(dashboard_id)
+        chart_metas = _items_from_adapter_result(self.adapter.list_charts(dashboard_id))
         chart_meta_map = {str(chart.id): chart for chart in chart_metas}
 
         chart_ids = list(dashboard.chart_ids or [])

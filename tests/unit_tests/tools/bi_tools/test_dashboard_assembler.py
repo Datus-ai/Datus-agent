@@ -24,6 +24,11 @@ from datus.tools.db_tools import connector_registry  # noqa: E402
 from datus.utils.constants import DBType  # noqa: E402
 
 
+class _PaginatedResult:
+    def __init__(self, items):
+        self.items = items
+
+
 @pytest.fixture(autouse=True)
 def _register_test_capabilities():
     """Register external dialect capabilities needed by tests."""
@@ -524,6 +529,20 @@ class TestExtractDashboard:
         result = assembler.extract_dashboard("http://localhost/dashboard/1")
         assert result.dashboard_id == 1
         assert len(result.charts) == 1
+
+    def test_extract_dashboard_accepts_paginated_results(self, assembler, mock_adapter):
+        dashboard = DashboardInfo(id=1, name="D", chart_ids=[10])
+        mock_adapter.parse_dashboard_id.return_value = 1
+        mock_adapter.get_dashboard_info.return_value = dashboard
+        mock_adapter.list_charts.return_value = _PaginatedResult([make_chart(10, "C")])
+        mock_adapter.get_chart.return_value = make_chart(10, "C")
+        mock_adapter.list_datasets.return_value = _PaginatedResult([make_dataset(1, "sales")])
+
+        result = assembler.extract_dashboard("http://localhost/dashboard/1")
+
+        assert result.dashboard_id == 1
+        assert len(result.charts) == 1
+        assert len(result.datasets) == 1
 
     def test_extract_dashboard_not_found_raises(self, assembler, mock_adapter):
         mock_adapter.parse_dashboard_id.return_value = 999

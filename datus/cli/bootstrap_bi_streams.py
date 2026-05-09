@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, List, Optional, Sequence
 
 import yaml
@@ -139,7 +140,13 @@ def _collect_ref_sqls_from_summary_files(
     for relative in summary_files:
         if not relative:
             continue
-        path = sql_summary_root / relative
+        candidate = Path(relative)
+        if candidate.is_absolute():
+            path = candidate
+        elif len(candidate.parts) >= 2 and candidate.parts[0:2] == ("subject", "sql_summaries"):
+            path = sql_summary_root.joinpath(*candidate.parts[2:])
+        else:
+            path = sql_summary_root / candidate
         try:
             with open(path, "r", encoding="utf-8") as fh:
                 doc = yaml.safe_load(fh) or {}

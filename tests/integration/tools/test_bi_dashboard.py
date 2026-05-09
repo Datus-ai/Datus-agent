@@ -9,12 +9,13 @@ Contains two test classes at different verification levels:
 - TestE2EIntegration: Full end-to-end with zero mocks (nightly only)
 """
 
+import os
 import re
 from typing import Any, Dict, List, Tuple
 
 import pytest
 import yaml
-from datus_bi_core import AuthParam
+from datus_bi_core import AuthParam, ChartSpec, DashboardSpec, DatasetInfo, DatasetSpec
 from rich.console import Console
 
 from datus.cli.bootstrap_bi_commands import BootstrapBiCommands
@@ -132,6 +133,20 @@ def agent_config(tmp_path_factory) -> AgentConfig:
     tmp_cfg.write_text(content)
 
     config = load_agent_config(config=str(tmp_cfg), datasource="superset", reload=True, force=True, yes=True)
+
+    # Keep this suite hermetic to the Superset compose environment.  The
+    # checked-in test config historically pointed at 15432, which collides
+    # with the Greenplum adapter service in the nightly runner.
+    superset_db = config.services.datasources.get("superset")
+    if superset_db is None:
+        raise AssertionError("agent.yml must define services.datasources.superset")
+    superset_db.host = os.environ.get("SUPERSET_POSTGRES_HOST", superset_db.host)
+    superset_db.port = os.environ.get("SUPERSET_POSTGRES_PORT", "5433")
+    superset_db.username = "superset"
+    superset_db.password = "superset"
+    superset_db.database = "superset_examples"
+    superset_db.schema = "public"
+
     return config
 
 
@@ -154,14 +169,26 @@ def input_data() -> List[Dict[str, Any]]:
     """Load test data from YAML file."""
     yaml_path = TEST_DATA_DIR / "BIDashboardInput.yaml"
     with open(yaml_path, "r") as f:
+        superset_url = os.environ.get("SUPERSET_URL")
         data = yaml.safe_load(f)
         if isinstance(data, list):
-            return [item["input"] for item in data]
+            items = [item["input"] for item in data]
         elif isinstance(data, dict) and "input" in data:
-            return [data]
+            items = [data]
         else:
             pytest.fail(reason=f"Unexpected data type: {type(data)}")
             return []
+
+        if superset_url:
+            for item in items:
+                if item.get("platform") == "superset":
+                    item["api_base_url"] = superset_url
+                    if item.get("dashboard_url"):
+                        item["dashboard_url"] = (
+                            f"{superset_url.rstrip('/')}/superset/dashboard/datus-nightly-placeholder/"
+                        )
+
+        return items
 
 
 # ============================================================================
@@ -192,6 +219,109 @@ def _create_adapter(bi_picker, agent_config, dashboard_item):
     )
 
 
+def _items_from_adapter_result(result: Any) -> List[Any]:
+    """Return list items from either a PaginatedResult envelope or a plain sequence."""
+    if result is None:
+        return []
+    if hasattr(result, "items"):
+        return list(result.items or [])
+    return list(result)
+
+
+def _find_superset_database_id(bi_adapter, db_name: str) -> int | None:
+    for db in bi_adapter.list_bi_databases():
+        if db.get("name") == db_name:
+            db_id = db.get("id")
+            return int(db_id) if db_id is not None else None
+    return None
+
+
+def _ensure_superset_test_database(bi_adapter) -> int:
+    db_name = "datus_test_examples"
+    existing_id = _find_superset_database_id(bi_adapter, db_name)
+    if existing_id is not None:
+        return existing_id
+
+    created = bi_adapter.register_database(
+        db_name,
+        "postgresql+psycopg2://superset:superset@postgres:5432/superset_examples",
+    )
+    created_id = created.get("id")
+    if created_id is not None:
+        return int(created_id)
+
+    # Superset 4.x can return a creation success payload without echoing the
+    # id. Re-query to keep first-run behavior deterministic instead of relying
+    # on pytest-rerun.
+    existing_id = _find_superset_database_id(bi_adapter, db_name)
+    if existing_id is None:
+        raise AssertionError(f"Failed to resolve Superset database id for '{db_name}' after creation")
+    return existing_id
+
+
+def _get_or_create_sales_dataset(bi_adapter, db_id: int) -> DatasetInfo:
+    table_name = "datus_nightly_bi_sales"
+    try:
+        data = bi_adapter._request_json("GET", "dataset/")
+        for item in data.get("result", []):
+            if item.get("table_name") == table_name and item.get("schema") == "public":
+                return DatasetInfo(
+                    id=item["id"],
+                    name=table_name,
+                    dialect="postgresql",
+                )
+    except Exception:
+        pass
+
+    return bi_adapter.create_dataset(
+        DatasetSpec(
+            name=table_name,
+            database_id=db_id,
+            db_schema="public",
+        )
+    )
+
+
+def _ensure_seed_dashboard(bi_adapter, dashboard_item) -> None:
+    """Create a deterministic dashboard when the fixture asks for one.
+
+    This keeps the Superset nightly hermetic: no dependency on
+    ``superset load-examples`` or live downloads from the examples repository.
+    """
+    if not dashboard_item.get("seed_dashboard") or dashboard_item.get("_seeded_dashboard_url"):
+        if dashboard_item.get("_seeded_dashboard_url"):
+            dashboard_item["dashboard_url"] = dashboard_item["_seeded_dashboard_url"]
+        return
+
+    db_id = _ensure_superset_test_database(bi_adapter)
+    dataset = _get_or_create_sales_dataset(bi_adapter, db_id)
+    dashboard = bi_adapter.create_dashboard(DashboardSpec(title="Datus Nightly BI Dashboard"))
+
+    chart_specs = [
+        ChartSpec(
+            chart_type="table",
+            title="Datus Revenue by Region",
+            dataset_id=dataset.id,
+            metrics=["SUM(revenue)"],
+            dimensions=["region"],
+        ),
+        ChartSpec(
+            chart_type="table",
+            title="Datus Orders by Channel",
+            dataset_id=dataset.id,
+            metrics=["SUM(orders)"],
+            dimensions=["channel"],
+        ),
+    ]
+    for spec in chart_specs:
+        chart = bi_adapter.create_chart(spec)
+        bi_adapter.add_chart_to_dashboard(dashboard.id, chart.id)
+
+    dashboard_url = f"{dashboard_item['api_base_url'].rstrip('/')}/superset/dashboard/{dashboard.id}/"
+    dashboard_item["dashboard_url"] = dashboard_url
+    dashboard_item["_seeded_dashboard_url"] = dashboard_url
+
+
 def _extract_and_select_charts(
     bi_picker,
     bi_adapter,
@@ -202,19 +332,22 @@ def _extract_and_select_charts(
     Returns:
         (dashboard, chart_selections, charts, datasets)
     """
+    _ensure_seed_dashboard(bi_adapter, dashboard_item)
     dashboard_url = dashboard_item["dashboard_url"]
 
     dashboard_id = bi_adapter.parse_dashboard_id(dashboard_url)
     dashboard = bi_adapter.get_dashboard_info(dashboard_id)
-    assert dashboard is not None, "Failed to get dashboard"
-    assert dashboard.name, "Dashboard should have name"
+    if dashboard is None:
+        raise AssertionError("Failed to get dashboard")
+    if not isinstance(dashboard.name, str) or dashboard.name.strip() == "":
+        raise AssertionError("Dashboard should have a non-empty name")
 
-    chart_metas = bi_adapter.list_charts(dashboard_id)
-    assert len(chart_metas) > 0, "Dashboard should have charts"
+    chart_metas = _items_from_adapter_result(bi_adapter.list_charts(dashboard_id))
+    assert len(chart_metas) >= 1, "Dashboard should have charts"
 
     charts = bi_picker._hydrate_charts(bi_adapter, dashboard_id, chart_metas)
     charts_with_sql = [c for c in charts if c.query and c.query.sql]
-    assert len(charts_with_sql) > 0, "Should have charts with SQL"
+    assert len(charts_with_sql) >= 1, "Should have charts with SQL"
 
     # Verify expected charts if provided
     if "valid_charts" in dashboard_item:
@@ -243,9 +376,9 @@ def _extract_and_select_charts(
             ChartSelection(chart=c, sql_indices=list(range(len(c.query.sql)))) for c in charts_with_sql[:2]
         ]
 
-    assert len(chart_selections) > 0, "Should have at least one chart selected"
+    assert len(chart_selections) >= 1, "Should have at least one chart selected"
 
-    datasets = bi_adapter.list_datasets(dashboard_id)
+    datasets = _items_from_adapter_result(bi_adapter.list_datasets(dashboard_id))
 
     return dashboard, chart_selections, charts, datasets
 
@@ -255,9 +388,9 @@ def _assemble(bi_adapter, dashboard, chart_selections, datasets, dialect):
     assembler = DashboardAssembler(bi_adapter, default_dialect=dialect)
     result = assembler.assemble(dashboard, chart_selections, chart_selections, datasets)
 
-    assert len(result.reference_sqls) > 0, "Should have reference SQLs"
-    assert len(result.metric_sqls) > 0, "Should have metric SQLs"
-    assert len(result.tables) > 0, "Should have tables"
+    assert len(result.reference_sqls) >= 1, "Should have reference SQLs"
+    assert len(result.metric_sqls) >= 1, "Should have metric SQLs"
+    assert len(result.tables) >= 1, "Should have tables"
 
     return result
 
@@ -503,9 +636,9 @@ class TestE2EIntegration:
                 # Verify file artifacts
                 sql_dir = agent_config.path_manager.dashboard_path() / platform
                 sql_files = list(sql_dir.glob("*.sql"))
-                assert len(sql_files) > 0, "SQL files should exist"
+                assert len(sql_files) >= 1, "SQL files should exist"
                 csv_files = list(sql_dir.glob("*.csv"))
-                assert len(csv_files) > 0, "CSV files should exist"
+                assert len(csv_files) >= 1, "CSV files should exist"
 
                 # Update test result
                 test_result["dashboard_name"] = dashboard.name
