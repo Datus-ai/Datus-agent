@@ -41,6 +41,34 @@ jobs:
           find "$GITHUB_WORKSPACE" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
           echo "Disk usage: $(df -h /tmp | tail -1 | awk '{print $5, $4}')"
 
+      - name: Compute knowledge base cache key
+        id: kb-cache-key
+        run: |
+          set -euo pipefail
+          digest="$(
+            {
+              for file in \
+                build_scripts/build_test_data.sh \
+                tests/conf/agent.yml \
+                tests/data/SSB.db \
+                datus/cli/bootstrap_streams.py \
+                datus/main.py; do
+                if [ -f "$file" ]; then
+                  sha256sum "$file"
+                fi
+              done
+
+              for dir in datus/sample_data datus/storage; do
+                if [ -d "$dir" ]; then
+                  find "$dir" -type f -print0 | sort -z | while IFS= read -r -d '' file; do
+                    sha256sum "$file"
+                  done
+                fi
+              done
+            } | sha256sum | awk '{print $1}'
+          )"
+          echo "key=${RUNNER_OS}-kb-v3-datus_agent_nightly-${digest}" >> "$GITHUB_OUTPUT"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -131,9 +159,39 @@ jobs:
       - name: Isolate test data directory
         run: |
           DATUS_TEST_HOME="${GITHUB_WORKSPACE}/.datus_test_data"
+          DATUS_TEST_PROJECT_NAME="datus_agent_nightly"
           echo "DATUS_TEST_HOME=$DATUS_TEST_HOME" >> $GITHUB_ENV
-          sed -i "s|home: .datus_test_data|home: $DATUS_TEST_HOME|g" tests/conf/agent.yml
-          sed -i "s|project_root: .datus_test_data/workspace|project_root: $DATUS_TEST_HOME/workspace|g" tests/conf/agent.yml
+          echo "DATUS_TEST_PROJECT_NAME=$DATUS_TEST_PROJECT_NAME" >> $GITHUB_ENV
+          python3 - tests/conf/agent.yml "$DATUS_TEST_HOME" "$DATUS_TEST_HOME/workspace" "$DATUS_TEST_PROJECT_NAME" <<'PY'
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          home = sys.argv[2]
+          project_root = sys.argv[3]
+          project_name = sys.argv[4]
+
+          updated = []
+          inserted_project_name = False
+          for line in path.read_text(encoding="utf-8").splitlines():
+              stripped = line.strip()
+              if line == "agent:":
+                  updated.append(line)
+                  updated.append(f"  project_name: {project_name}")
+                  inserted_project_name = True
+                  continue
+              if line.startswith("  project_name: ") and inserted_project_name:
+                  continue
+              if line.startswith("  home: ") and stripped.startswith("home:"):
+                  updated.append(f"  home: {home}")
+                  continue
+              if line.startswith("  project_root: ") and stripped.startswith("project_root:"):
+                  updated.append(f"  project_root: {project_root}")
+                  continue
+              updated.append(line)
+
+          path.write_text("\n".join(updated) + "\n", encoding="utf-8")
+          PY
 
       - name: Load environment variables
         run: |
@@ -170,16 +228,34 @@ jobs:
         id: kb-cache
         uses: actions/cache/restore@v4
         with:
-          path: |
-            ${{ github.workspace }}/.datus_test_data/data/datus_db_bird_school
-            ${{ github.workspace }}/.datus_test_data/data/datus_db_ssb_sqlite
-          key: ${{ runner.os }}-kb-${{ hashFiles('build_scripts/build_test_data.sh', 'sample_data/**', 'datus/storage/**/*.py') }}
-          restore-keys: |
-            ${{ runner.os }}-kb-
+          path: ${{ github.workspace }}/.datus_test_data/data
+          key: ${{ steps.kb-cache-key.outputs.key }}
+
+      - name: Validate knowledge base cache
+        id: kb-cache-state
+        run: |
+          set -euo pipefail
+          KB_DATA_DIR="${DATUS_TEST_HOME}/data"
+          KB_READY_DIR="$KB_DATA_DIR"
+          if [ -n "${DATUS_TEST_PROJECT_NAME:-}" ]; then
+            KB_READY_DIR="$KB_DATA_DIR/$DATUS_TEST_PROJECT_NAME/datus_db"
+          fi
+
+          if [ "${{ steps.kb-cache.outputs.cache-hit }}" = "true" ] \
+            && [ -d "$KB_READY_DIR" ] \
+            && find "$KB_READY_DIR" -mindepth 1 -maxdepth 5 -print -quit | grep -q .; then
+            echo "Restored knowledge base cache from $KB_READY_DIR"
+            echo "needs-build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Knowledge base cache is missing or empty; rebuilding test data"
+          rm -rf "$KB_DATA_DIR"
+          echo "needs-build=true" >> "$GITHUB_OUTPUT"
 
       - name: Build test data
         id: build-test-data
-        if: steps.kb-cache.outputs.cache-hit != 'true'
+        if: steps.kb-cache-state.outputs.needs-build == 'true'
         run: |
           echo "Building test data before running nightly tests..."
           chmod +x build_scripts/build_test_data.sh
@@ -187,13 +263,11 @@ jobs:
           echo "Test data build completed"
 
       - name: Save knowledge base cache
-        if: steps.build-test-data.outcome == 'success'
+        if: steps.kb-cache-state.outputs.needs-build == 'true' && steps.build-test-data.outcome == 'success'
         uses: actions/cache/save@v4
         with:
-          path: |
-            ${{ github.workspace }}/.datus_test_data/data/datus_db_bird_school
-            ${{ github.workspace }}/.datus_test_data/data/datus_db_ssb_sqlite
-          key: ${{ runner.os }}-kb-${{ hashFiles('build_scripts/build_test_data.sh', 'sample_data/**', 'datus/storage/**/*.py') }}
+          path: ${{ github.workspace }}/.datus_test_data/data
+          key: ${{ steps.kb-cache-key.outputs.key }}
 
       - name: Verify FEISHU_WEBHOOK_URL
         env:
