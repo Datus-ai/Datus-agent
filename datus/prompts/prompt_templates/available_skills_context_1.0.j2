@@ -14,7 +14,8 @@ Skills can be loaded on-demand to get detailed instructions for specific tasks.
 1. Review the available skills above to find one that matches your current task
 2. Call `load_skill(skill_name="<skill_name>")` to load the full skill content
 3. Follow the instructions in the loaded skill to complete the task
-4. Some skills may include script execution capabilities (allowed commands will be specified)
+4. Use `skill_execute_command` only for skill-owned scripts explicitly permitted by that skill's `allowed_commands`
+5. If loaded skill instructions mention a tool that is already available as a native tool, call the native tool directly instead of routing it through `skill_execute_command`
 
 ### When to Use Skills
 

@@ -219,6 +219,8 @@ class SkillFuncTool:
         Commands are restricted to patterns defined in the skill's allowed_commands.
         For example, if a skill allows "python:scripts/*.py", only Python scripts
         in the scripts/ directory can be executed.
+        This tool is not a proxy for native tools named in skill instructions; call
+        available native tools directly.
 
         Args:
             skill_name: Name of the loaded skill (must have been loaded via load_skill)
@@ -243,7 +245,13 @@ class SkillFuncTool:
                 if not skill.has_scripts():
                     return FuncToolResult(
                         success=0,
-                        error=f"Skill '{skill_name}' does not have any allowed_commands defined",
+                        error=(
+                            f"Skill '{skill_name}' does not have any allowed_commands defined. "
+                            "This skill cannot execute shell commands through skill_execute_command. "
+                            "Use skill_execute_command only for skill-owned scripts explicitly permitted by "
+                            "allowed_commands; if the skill mentions an available native tool, call the native "
+                            "tool directly."
+                        ),
                     )
                 return FuncToolResult(
                     success=0,

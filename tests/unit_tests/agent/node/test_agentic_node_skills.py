@@ -182,6 +182,8 @@ class TestFinalizeSystemPrompt:
         assert result.startswith(base_prompt)
         assert "<available_skills>" in result
         assert "sql-analysis" in result
+        assert "skill-owned scripts" in result
+        assert "native tool directly" in result
 
     def test_with_skill_func_tool_empty_xml_appends_explicit_none_block(
         self, mock_agent_config, skill_manager, monkeypatch

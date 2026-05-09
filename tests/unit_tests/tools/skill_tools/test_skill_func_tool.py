@@ -361,6 +361,8 @@ class TestSkillExecuteCommand:
 
         assert result.success == 0
         assert "allowed_commands" in result.error
+        assert "native tool" in result.error
+        assert "skill-owned scripts" in result.error
 
     def test_execute_command_after_load(self, skill_func_tool):
         """Test executing command after loading skill with scripts."""

@@ -270,7 +270,12 @@ class SkillManager:
                 "are not in the list — not in ``ask_user`` prompts, not in plans, not "
                 "in explanations. If the needed skill is absent, delegate to a "
                 "subagent via ``sub_agent_tools.task(type=<subagent>, ...)`` and let "
-                "the subagent load its own skills."
+                "the subagent load its own skills.\n"
+                "  5. Use ``skill_execute_command`` only for skill-owned scripts "
+                "explicitly permitted by that skill's ``allowed_commands``.\n"
+                "  6. If loaded skill instructions mention a tool that is available "
+                "as a native tool in the current run, call that native tool directly "
+                "instead of routing it through ``skill_execute_command``."
             )
         else:
             lines.append(
