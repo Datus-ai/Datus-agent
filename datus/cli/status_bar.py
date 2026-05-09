@@ -267,18 +267,31 @@ class StatusBarProvider:
             logger.debug(f"status_bar: failed to read db name: {e}")
 
         db_type = ""
+        # Prefer the configured datasource type so dialect-sharing connectors
+        # (e.g. Greenplum reusing the PostgreSQL connector) still surface the
+        # user-facing type rather than the underlying dialect.
         try:
-            connector = getattr(self._cli, "db_connector", None)
-            if connector is not None:
-                dialect = getattr(connector, "dialect", None)
-                if dialect:
-                    # For Enum values (e.g. DBType.SQLITE), str(...) yields
-                    # "DBType.SQLITE" on Python 3.11+; prefer .value so we get
-                    # the canonical lowercase name ("sqlite").
-                    raw = getattr(dialect, "value", dialect)
-                    db_type = str(raw).lower()
+            agent_config = getattr(self._cli, "agent_config", None)
+            if agent_config is not None:
+                configured = getattr(agent_config, "db_type", None)
+                if configured:
+                    db_type = str(configured).lower()
         except Exception as e:
-            logger.debug(f"status_bar: failed to read db dialect: {e}")
+            logger.debug(f"status_bar: failed to read agent_config.db_type: {e}")
+
+        if not db_type:
+            try:
+                connector = getattr(self._cli, "db_connector", None)
+                if connector is not None:
+                    dialect = getattr(connector, "dialect", None)
+                    if dialect:
+                        # For Enum values (e.g. DBType.SQLITE), str(...) yields
+                        # "DBType.SQLITE" on Python 3.11+; prefer .value so we get
+                        # the canonical lowercase name ("sqlite").
+                        raw = getattr(dialect, "value", dialect)
+                        db_type = str(raw).lower()
+            except Exception as e:
+                logger.debug(f"status_bar: failed to read db dialect: {e}")
 
         if not db_name:
             return ""

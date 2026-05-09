@@ -502,15 +502,32 @@ class TestStatusBarProviderNoNode:
 
 class TestStatusBarProviderConnector:
     @staticmethod
-    def _make_cli(cli_context=None, db_connector=None):
+    def _make_cli(cli_context=None, db_connector=None, agent_config=None):
         return SimpleNamespace(
             chat_commands=SimpleNamespace(current_subagent_name=None, current_node=None),
             default_agent="",
-            agent_config=None,
+            agent_config=agent_config,
             plan_mode_active=False,
             cli_context=cli_context,
             db_connector=db_connector,
         )
+
+    def test_agent_config_db_type_wins_over_connector_dialect(self):
+        # GreenplumConnector reuses PostgreSQLConnector and exposes
+        # dialect="postgresql"; the user-facing datasource type
+        # (agent_config.db_type) must win so the status bar shows "greenplum".
+        ctx = SimpleNamespace(current_logic_db_name="warehouse", current_db_name=None)
+        connector = SimpleNamespace(dialect="postgresql")
+        agent_config = SimpleNamespace(db_type="greenplum")
+        state = StatusBarProvider(self._make_cli(ctx, connector, agent_config)).current_state()
+        assert state.connector == "greenplum: warehouse"
+
+    def test_falls_back_to_dialect_when_agent_config_db_type_blank(self):
+        ctx = SimpleNamespace(current_logic_db_name="benchmark", current_db_name=None)
+        connector = SimpleNamespace(dialect="starrocks")
+        agent_config = SimpleNamespace(db_type="")
+        state = StatusBarProvider(self._make_cli(ctx, connector, agent_config)).current_state()
+        assert state.connector == "starrocks: benchmark"
 
     def test_returns_type_and_name_when_both_present(self):
         ctx = SimpleNamespace(current_logic_db_name="benchmark", current_db_name="benchmark_raw")
