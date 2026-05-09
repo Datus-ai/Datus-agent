@@ -364,7 +364,7 @@ class TestSetupLangfuseTracing:
             litellm.failure_callback = original_failure
 
     def test_instrumentor_called_with_exclusive_false(self, monkeypatch):
-        """OpenAIAgentsInstrumentor is called with exclusive_processor=False."""
+        """OpenAIAgentsInstrumentor is called with exclusive_processor=True (Langfuse-only)."""
         import litellm
 
         self._setup_langfuse_env(monkeypatch)
@@ -383,7 +383,7 @@ class TestSetupLangfuseTracing:
         try:
             setup_tracing()
 
-            mock_instrumentor_instance.instrument.assert_called_once_with(exclusive_processor=False)
+            mock_instrumentor_instance.instrument.assert_called_once_with(exclusive_processor=True)
         finally:
             if saved_mod is None:
                 sys.modules.pop(oi_key, None)

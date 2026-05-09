@@ -123,13 +123,17 @@ def _disable_sdk_tracing(reason: str) -> None:
         pass
 
 
-def _setup_langfuse_tracing() -> None:
+def _setup_langfuse_tracing(*, langsmith_active: bool = False) -> None:
     """Configure Langfuse tracing via OpenAI Agents SDK instrumentor or LiteLLM callback.
 
     Prefers OpenInference instrumentor (captures full agent/tool/generation tree).
     Falls back to LiteLLM callback (captures LLM calls only) when OpenInference
     is not installed.  The two are NOT combined because OpenInference already
     captures LLM generations, and adding LiteLLM would duplicate every call.
+
+    Args:
+        langsmith_active: True when DatusTracingProcessor was already installed
+            via set_trace_processors (which removes the SDK default exporter).
     """
     global _langfuse_enabled
     import os
@@ -141,8 +145,13 @@ def _setup_langfuse_tracing() -> None:
     try:
         from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
 
-        OpenAIAgentsInstrumentor().instrument(exclusive_processor=False)
-        logger.info("Langfuse tracing enabled (OpenAI Agents SDK instrumentor)")
+        # When LangSmith is active, set_trace_processors already replaced the
+        # SDK default exporter → use exclusive_processor=False to add alongside.
+        # Otherwise use exclusive_processor=True to replace the default exporter
+        # and prevent traces from also going to OpenAI's dashboard.
+        exclusive = not langsmith_active
+        OpenAIAgentsInstrumentor().instrument(exclusive_processor=exclusive)
+        logger.info("Langfuse tracing enabled (OpenAI Agents SDK instrumentor, exclusive=%s)", exclusive)
     except ImportError:
         import litellm
 
@@ -216,7 +225,7 @@ def setup_tracing():
         except ImportError:
             logger.warning("OpenAIAgentsTracingProcessor not available")
     if langfuse_enabled:
-        _setup_langfuse_tracing()
+        _setup_langfuse_tracing(langsmith_active=langsmith_enabled)
 
 
 def _get_langfuse_trace_url() -> str | None:
