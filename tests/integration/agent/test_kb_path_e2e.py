@@ -98,7 +98,7 @@ class TestKnowledgeBaseHomeE2E:
         assert actions[-1].status == ActionStatus.SUCCESS, f"Run did not succeed: {actions[-1].output}"
 
         # --- Disk layout assertions ---
-        expected_dir = kb_home_tmp / "semantic_models"
+        expected_dir = kb_home_tmp / "semantic_models" / nightly_agent_config.current_datasource
         produced = list(expected_dir.glob("*.yml")) + list(expected_dir.glob("*.yaml"))
         assert produced, (
             f"No YAML produced under {expected_dir}. Tree contents: "

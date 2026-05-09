@@ -69,7 +69,39 @@ jobs:
             ./external/datus-bi-adapters/datus-bi-superset \
             ./external/datus-scheduler-adapters/datus-scheduler-core \
             ./external/datus-scheduler-adapters/datus-scheduler-airflow
-          uv run playwright install chromium
+          uv run playwright install --with-deps chromium
+
+      - name: Ensure Docker runtime
+        env:
+          DOCKER_COMPOSE_FALLBACK_VERSION: v2.29.7
+        run: |
+          set -euo pipefail
+          docker --version
+          docker info >/dev/null
+
+          if ! docker compose version >/dev/null 2>&1; then
+            os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+            arch="$(uname -m)"
+            case "$arch" in
+              x86_64 | amd64) arch="x86_64" ;;
+              arm64 | aarch64) arch="aarch64" ;;
+              *)
+                echo "::error::Unsupported Docker Compose architecture: $arch"
+                exit 1
+                ;;
+            esac
+            version="$(curl -fsSL https://api.github.com/repos/docker/compose/releases/latest \
+              | sed -n 's/.*"tag_name": "\(v[^"]*\)".*/\1/p' \
+              | head -1 || true)"
+            version="${version:-$DOCKER_COMPOSE_FALLBACK_VERSION}"
+            mkdir -p "$HOME/.docker/cli-plugins"
+            curl -fsSL \
+              "https://github.com/docker/compose/releases/download/${version}/docker-compose-${os}-${arch}" \
+              -o "$HOME/.docker/cli-plugins/docker-compose"
+            chmod +x "$HOME/.docker/cli-plugins/docker-compose"
+          fi
+
+          docker compose version
 
       - name: Setup config file
         run: |

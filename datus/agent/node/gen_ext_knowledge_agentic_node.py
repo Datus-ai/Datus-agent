@@ -560,7 +560,11 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
 
         context = {}
 
-        context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
+        tool_names = [tool.name for tool in self.tools] if self.tools else []
+        context["native_tools"] = ", ".join(tool_names) if tool_names else "None"
+        context["tool_names"] = tool_names
+        context["has_search_knowledge_tool"] = "search_knowledge" in tool_names
+        context["has_get_knowledge_tool"] = "get_knowledge" in tool_names
         context["ext_knowledge_dir"] = self.ext_knowledge_dir
         context["knowledge_base_dir"] = self.knowledge_base_dir
         # Filesystem tool is rooted at project_root; full path required.

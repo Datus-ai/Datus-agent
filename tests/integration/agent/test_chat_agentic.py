@@ -17,8 +17,8 @@ class TestChatAgentic:
 
         with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt:
             mock_prompt.side_effect = [
-                f"/{question1}",
-                f"/{question2}",
+                question1,
+                question2,
                 EOFError,
             ]
             with (
@@ -45,7 +45,7 @@ class TestChatAgentic:
         question = "What is the average SAT reading score for schools in Fresno county?"
 
         with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt:
-            mock_prompt.side_effect = [f"/{question}", EOFError]
+            mock_prompt.side_effect = [question, EOFError]
             with (
                 patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal,
                 patch("datus.cli.repl.AtReferenceCompleter.parse_at_context") as at_data,
@@ -72,7 +72,7 @@ class TestChatAgentic:
         question = "How many schools are there in Los Angeles county?"
 
         with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt:
-            mock_prompt.side_effect = [f"/{question}", ".chat_info", EOFError]
+            mock_prompt.side_effect = [question, ".chat_info", EOFError]
             with (
                 patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal,
                 patch("datus.cli.repl.AtReferenceCompleter.parse_at_context") as at_data,
@@ -104,7 +104,7 @@ class TestChatAgentic:
         question = "List all schools in Fresno county"
 
         with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt:
-            mock_prompt.side_effect = [f"/{question}", EOFError]
+            mock_prompt.side_effect = [question, EOFError]
             with (
                 patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal,
                 patch("datus.cli.repl.AtReferenceCompleter.parse_at_context") as at_data,

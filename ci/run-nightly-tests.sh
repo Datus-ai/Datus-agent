@@ -64,6 +64,19 @@ COMPOSE_FILES=(
   "$AIRFLOW_COMPOSE"
 )
 
+COMPOSE_GROUPS=(
+  "Superset Nightly Tests"
+  "Airflow Nightly Tests"
+  "PostgreSQL Adapter Tests"
+  "MySQL Adapter Tests"
+  "ClickHouse Adapter Tests"
+  "StarRocks Adapter Tests"
+  "Trino Adapter Tests"
+  "Greenplum Adapter Tests"
+  "Hive Adapter Tests"
+  "Spark Adapter Tests"
+)
+
 log() {
   echo "$@" | tee -a "$LOG_FILE"
 }
@@ -136,6 +149,40 @@ validate_unit_test_home() {
 
 has_docker_compose() {
   docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1
+}
+
+will_run_any_compose_suite() {
+  local group_name
+  for group_name in "${COMPOSE_GROUPS[@]}"; do
+    if should_run_group "$group_name"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+require_docker_runtime() {
+  if ! will_run_any_compose_suite; then
+    return 0
+  fi
+
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "Docker is required for nightly compose-backed suites" | tee -a "$LOG_FILE" >&2
+    test_exit_code=127
+    return 1
+  fi
+
+  if ! docker info >/dev/null 2>&1; then
+    echo "Docker daemon is not available for nightly compose-backed suites" | tee -a "$LOG_FILE" >&2
+    test_exit_code=127
+    return 1
+  fi
+
+  if ! has_docker_compose; then
+    echo "Docker Compose is required for nightly compose-backed suites" | tee -a "$LOG_FILE" >&2
+    test_exit_code=127
+    return 1
+  fi
 }
 
 docker_compose() {
@@ -481,6 +528,7 @@ if [ -n "$NIGHTLY_GROUP_FILTER" ]; then
 fi
 
 validate_nightly_group_filter || exit 1
+require_docker_runtime || exit "$test_exit_code"
 
 run_logged_unfiltered "Flaky Registry Check" uv run python ci/check_flaky_registry.py --registry ci/flaky-registry.yml --strict
 

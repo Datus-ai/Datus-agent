@@ -166,7 +166,7 @@ def test_tables_command(mock_args, capsys):
 @pytest.mark.nightly
 def test_chat_command(mock_args, capsys, gen_sql_input: List[Dict[str, Any]]):
     """
-    Tests the '/<chat>' command for multi-turn conversation and context memory.
+    Tests bare chat input for multi-turn conversation and context memory.
     """
     input_data = gen_sql_input[0]["input"]
     sql_task = input_data["sql_task"]
@@ -177,7 +177,7 @@ def test_chat_command(mock_args, capsys, gen_sql_input: List[Dict[str, Any]]):
 
     with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt:
         mock_prompt.side_effect = [
-            f"/{sql_task['task']}",
+            sql_task["task"],
             "/chat_info",
             EOFError,
         ]
@@ -208,7 +208,7 @@ def test_chat_command(mock_args, capsys, gen_sql_input: List[Dict[str, Any]]):
 @pytest.mark.nightly
 def test_chat_command_with_ext_knowledge(mock_args):
     """
-    Tests the '/<chat>' command with ext_knowledge context.
+    Tests bare chat input with ext_knowledge context.
     Verifies that the query with 'consider all knowledge' triggers knowledge search
     and generates SQL correctly.
     """

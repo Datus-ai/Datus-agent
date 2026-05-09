@@ -23,8 +23,7 @@ class TestInitKimiConnectivity:
         with tempfile.TemporaryDirectory() as tmpdir:
             init = InteractiveInit(user_home=tmpdir)
 
-            init.config["agent"]["target"] = "kimi"
-            init.config["agent"]["models"]["kimi"] = {
+            init._pending_probe = {
                 "type": "kimi",
                 "base_url": "https://api.moonshot.cn/v1",
                 "api_key": os.getenv("KIMI_API_KEY"),
@@ -47,8 +46,7 @@ class TestInitKimiConnectivity:
             init = InteractiveInit(user_home=tmpdir)
 
             # Deliberately omit temperature/top_p to trigger the 400 error
-            init.config["agent"]["target"] = "kimi"
-            init.config["agent"]["models"]["kimi"] = {
+            init._pending_probe = {
                 "type": "kimi",
                 "base_url": "https://api.moonshot.cn/v1",
                 "api_key": os.getenv("KIMI_API_KEY"),
