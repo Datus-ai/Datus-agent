@@ -35,11 +35,11 @@ def vector_store_path():
 
 
 @pytest.fixture
-def agent_config():
+def agent_config(tmp_path):
     """Fixture to create a minimal AgentConfig for testing"""
     from tests.conftest import load_acceptance_config
 
-    config = load_acceptance_config(datasource="snowflake")
+    config = load_acceptance_config(datasource="snowflake", home=str(tmp_path / "datus_home"))
     return config
 
 

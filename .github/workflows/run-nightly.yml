@@ -73,6 +73,9 @@ jobs:
 
       - name: Ensure Docker runtime
         env:
+          # Keep this fallback pinned and refresh it periodically when Docker Compose
+          # releases a newer stable version. The workflow prefers the live latest
+          # release when the GitHub API is reachable.
           DOCKER_COMPOSE_FALLBACK_VERSION: v2.29.7
         run: |
           set -euo pipefail
@@ -90,15 +93,29 @@ jobs:
                 exit 1
                 ;;
             esac
-            version="$(curl -fsSL https://api.github.com/repos/docker/compose/releases/latest \
-              | sed -n 's/.*"tag_name": "\(v[^"]*\)".*/\1/p' \
-              | head -1 || true)"
+            version="$(curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 60 \
+              https://api.github.com/repos/docker/compose/releases/latest \
+              | python3 -c 'import json, sys; print(json.load(sys.stdin).get("tag_name", ""))' \
+              || true)"
             version="${version:-$DOCKER_COMPOSE_FALLBACK_VERSION}"
+            binary_name="docker-compose-${os}-${arch}"
+            compose_url="https://github.com/docker/compose/releases/download/${version}/${binary_name}"
+            plugin_path="$HOME/.docker/cli-plugins/docker-compose"
+            checksum_file="$(mktemp)"
             mkdir -p "$HOME/.docker/cli-plugins"
-            curl -fsSL \
-              "https://github.com/docker/compose/releases/download/${version}/docker-compose-${os}-${arch}" \
-              -o "$HOME/.docker/cli-plugins/docker-compose"
-            chmod +x "$HOME/.docker/cli-plugins/docker-compose"
+            curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 300 \
+              "$compose_url" \
+              -o "$plugin_path"
+            curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 60 \
+              "${compose_url}.sha256" \
+              -o "$checksum_file"
+            expected_sha="$(awk '{print $1}' "$checksum_file")"
+            actual_sha="$(sha256sum "$plugin_path" | awk '{print $1}')"
+            if [ -z "$expected_sha" ] || [ "$actual_sha" != "$expected_sha" ]; then
+              echo "::error::Docker Compose checksum verification failed for ${binary_name}"
+              exit 1
+            fi
+            chmod +x "$plugin_path"
           fi
 
           docker compose version
