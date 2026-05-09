@@ -26,7 +26,7 @@ entries:
     type: log_pattern
     pattern: "(Cannot delete directory|FileDoesNotExist).*(_indices/fts|fieldnorm)"
     owner: storage
-    layer: nightly
+    layer: product_e2e
     reason: LanceDB FTS cleanup warning observed during nightly storage cleanup.
     allowed_until: 2026-06-05
     allowed_in:

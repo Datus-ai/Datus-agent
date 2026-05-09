@@ -15,7 +15,16 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_REGISTRY = REPO_ROOT / "ci" / "flaky-registry.yml"
 VALID_TYPES = {"test", "log_pattern"}
-VALID_LAYERS = {"harness_correctness", "provider_health", "product_e2e", "nightly", "adapter", "benchmark"}
+VALID_LAYERS = {
+    "adapter",
+    "benchmark",
+    "component",
+    "harness_correctness",
+    "known_flaky",
+    "llm_harness",
+    "product_e2e",
+    "provider_health",
+}
 REQUIRED_FIELDS = {"id", "type", "owner", "layer", "reason", "allowed_until"}
 RERUN_RE = re.compile(r"\bRERUN\b\s+(?P<nodeid>tests/[^\s]+)")
 

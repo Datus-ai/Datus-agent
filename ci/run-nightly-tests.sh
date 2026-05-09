@@ -3,7 +3,10 @@ set -u
 set -o pipefail
 
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || {
+  echo "Failed to enter repository root: $REPO_ROOT" >&2
+  exit 1
+}
 
 LOG_FILE="${NIGHTLY_LOG_FILE:-test_output_nightly_$(date +%Y%m%d_%H%M%S).log}"
 test_exit_code=0
@@ -136,14 +139,27 @@ home = sys.argv[2]
 project_root = sys.argv[3]
 
 updated = []
+updated_home = False
+updated_project_root = False
 for line in path.read_text(encoding="utf-8").splitlines():
     stripped = line.strip()
     if line.startswith("  home: ") and stripped.startswith("home:"):
         updated.append(f"  home: {home}")
+        updated_home = True
     elif line.startswith("  project_root: ") and stripped.startswith("project_root:"):
         updated.append(f"  project_root: {project_root}")
+        updated_project_root = True
     else:
         updated.append(line)
+
+if not updated_home or not updated_project_root:
+    missing = []
+    if not updated_home:
+        missing.append("home")
+    if not updated_project_root:
+        missing.append("project_root")
+    print(f"Failed to rewrite required keys in {path}: {', '.join(missing)}", file=sys.stderr)
+    sys.exit(1)
 
 path.write_text("\n".join(updated) + "\n", encoding="utf-8")
 PY
@@ -155,8 +171,11 @@ run_with_agent_home() {
   shift 2
 
   backup_agent_test_config
-  mkdir -p "$home" "$project_root"
-  set_agent_test_config_paths "$home" "$project_root"
+  mkdir -p "$home" "$project_root" || return 1
+  if ! set_agent_test_config_paths "$home" "$project_root"; then
+    restore_agent_test_config
+    return 1
+  fi
   DATUS_TEST_HOME="$home" "$@"
   local status=$?
   restore_agent_test_config
@@ -398,24 +417,24 @@ run_logged "Flaky Registry Check" uv run python ci/check_flaky_registry.py --reg
 rm -rf "$UNIT_TEST_HOME"
 run_logged "Full Unit Tests" run_with_agent_home "$UNIT_TEST_HOME" "$UNIT_TEST_PROJECT_ROOT" uv run pytest tests/unit_tests/ -m "not nightly" --tb=short --verbose --timeout=300 --dist=loadscope -n auto
 
-run_logged "MCP Server Tests" uv run pytest -m nightly tests/integration/tools/test_mcp_server.py --tb=short --verbose --timeout=60
+run_logged "MCP Server Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/tools/test_mcp_server.py --tb=short --verbose --timeout=60
 
-run_logged "Gen Agent Tests" uv run pytest -m nightly tests/integration/agent/test_gen_semantic_model_agentic.py tests/integration/agent/test_gen_metrics_agentic.py tests/integration/agent/test_gen_ext_knowledge_agentic.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
+run_logged "Gen Agent Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/agent/test_gen_semantic_model_agentic.py tests/integration/agent/test_gen_metrics_agentic.py tests/integration/agent/test_gen_ext_knowledge_agentic.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
 
-run_logged "Main Nightly Tests" uv run pytest -m nightly tests/ --deselect tests/integration/tools/test_mcp_server.py --deselect tests/integration/agent/test_gen_semantic_model_agentic.py --deselect tests/integration/agent/test_gen_metrics_agentic.py --deselect tests/integration/agent/test_gen_ext_knowledge_agentic.py --deselect tests/integration/agent/test_gen_dashboard_agentic.py --deselect tests/integration/agent/test_scheduler_agentic.py --deselect tests/integration/tools/test_bi_dashboard.py --deselect tests/integration/adapters/test_postgresql.py --deselect tests/integration/adapters/test_mysql.py --deselect tests/integration/adapters/test_clickhouse.py --deselect tests/integration/adapters/test_starrocks.py --deselect tests/integration/adapters/test_trino.py --deselect tests/integration/adapters/test_greenplum.py --deselect tests/integration/adapters/test_hive.py --deselect tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300 --reruns 1 --reruns-delay 5 --dist=loadscope -n auto
+run_logged "Main Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/ --deselect tests/integration/tools/test_mcp_server.py --deselect tests/integration/agent/test_gen_semantic_model_agentic.py --deselect tests/integration/agent/test_gen_metrics_agentic.py --deselect tests/integration/agent/test_gen_ext_knowledge_agentic.py --deselect tests/integration/agent/test_gen_dashboard_agentic.py --deselect tests/integration/agent/test_scheduler_agentic.py --deselect tests/integration/tools/test_bi_dashboard.py --deselect tests/integration/adapters/test_postgresql.py --deselect tests/integration/adapters/test_mysql.py --deselect tests/integration/adapters/test_clickhouse.py --deselect tests/integration/adapters/test_starrocks.py --deselect tests/integration/adapters/test_trino.py --deselect tests/integration/adapters/test_greenplum.py --deselect tests/integration/adapters/test_hive.py --deselect tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300 --reruns 1 --reruns-delay 5 --dist=loadscope -n auto
 
-run_compose_suite "Superset Nightly Tests" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- uv run pytest -m nightly tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
+run_compose_suite "Superset Nightly Tests" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
 
-run_compose_suite "Airflow Nightly Tests" "$AIRFLOW_COMPOSE" "airflow:900" -- uv run pytest -m nightly tests/integration/agent/test_scheduler_agentic.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
+run_compose_suite "Airflow Nightly Tests" "$AIRFLOW_COMPOSE" "airflow:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/agent/test_scheduler_agentic.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
 
-run_compose_suite "PostgreSQL Adapter Tests" "$POSTGRES_COMPOSE" "postgres:300" -- uv run pytest -m nightly tests/integration/adapters/test_postgresql.py --tb=short --verbose --timeout=300
-run_compose_suite "MySQL Adapter Tests" "$MYSQL_COMPOSE" "mysql:300" -- uv run pytest -m nightly tests/integration/adapters/test_mysql.py --tb=short --verbose --timeout=300
-run_compose_suite "ClickHouse Adapter Tests" "$CLICKHOUSE_COMPOSE" "clickhouse:300" -- uv run pytest -m nightly tests/integration/adapters/test_clickhouse.py --tb=short --verbose --timeout=300
-run_compose_suite "StarRocks Adapter Tests" "$STARROCKS_COMPOSE" "starrocks:600" -- uv run pytest -m nightly tests/integration/adapters/test_starrocks.py --tb=short --verbose --timeout=300
-run_compose_suite "Trino Adapter Tests" "$TRINO_COMPOSE" "trino:300" -- uv run pytest -m nightly tests/integration/adapters/test_trino.py --tb=short --verbose --timeout=300
-run_compose_suite "Greenplum Adapter Tests" "$GREENPLUM_COMPOSE" "greenplum:600" -- uv run pytest -m nightly tests/integration/adapters/test_greenplum.py --tb=short --verbose --timeout=300
-run_compose_suite "Hive Adapter Tests" "$HIVE_COMPOSE" "hive-metastore:600" "hive-server:900" -- uv run pytest -m nightly tests/integration/adapters/test_hive.py --tb=short --verbose --timeout=300
-run_compose_suite "Spark Adapter Tests" "$SPARK_COMPOSE" "spark-thrift:900" -- uv run pytest -m nightly tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300
+run_compose_suite "PostgreSQL Adapter Tests" "$POSTGRES_COMPOSE" "postgres:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/adapters/test_postgresql.py --tb=short --verbose --timeout=300
+run_compose_suite "MySQL Adapter Tests" "$MYSQL_COMPOSE" "mysql:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/adapters/test_mysql.py --tb=short --verbose --timeout=300
+run_compose_suite "ClickHouse Adapter Tests" "$CLICKHOUSE_COMPOSE" "clickhouse:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/adapters/test_clickhouse.py --tb=short --verbose --timeout=300
+run_compose_suite "StarRocks Adapter Tests" "$STARROCKS_COMPOSE" "starrocks:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/adapters/test_starrocks.py --tb=short --verbose --timeout=300
+run_compose_suite "Trino Adapter Tests" "$TRINO_COMPOSE" "trino:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/adapters/test_trino.py --tb=short --verbose --timeout=300
+run_compose_suite "Greenplum Adapter Tests" "$GREENPLUM_COMPOSE" "greenplum:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/adapters/test_greenplum.py --tb=short --verbose --timeout=300
+run_compose_suite "Hive Adapter Tests" "$HIVE_COMPOSE" "hive-metastore:600" "hive-server:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/adapters/test_hive.py --tb=short --verbose --timeout=300
+run_compose_suite "Spark Adapter Tests" "$SPARK_COMPOSE" "spark-thrift:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300
 
 run_logged "Flaky Log Classification" uv run python ci/check_flaky_registry.py --registry ci/flaky-registry.yml --log-file "$LOG_FILE"
 
