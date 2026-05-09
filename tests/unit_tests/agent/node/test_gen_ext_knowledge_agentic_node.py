@@ -562,6 +562,19 @@ class TestGenExtKnowledgeFilesystemRootPath:
 class TestGenExtKnowledgeTemplateContext:
     """has_gold_sql must flow into the rendered prompt to gate PHASE 2."""
 
+    @pytest.mark.acceptance
+    def test_prepare_template_context_exposes_registered_tool_flags(self, real_agent_config, mock_llm_create):
+        node = _create_node(real_agent_config)
+        user_input = ExtKnowledgeNodeInput(user_message="x", question="x")
+
+        ctx = node._prepare_template_context(user_input, gold_sql=None)
+
+        tool_names = [tool.name for tool in node.tools]
+        assert ctx["tool_names"] == tool_names
+        assert ctx["native_tools"] == ", ".join(tool_names)
+        assert ctx["has_search_knowledge_tool"] == ("search_knowledge" in tool_names)
+        assert ctx["has_get_knowledge_tool"] == ("get_knowledge" in tool_names)
+
     def test_prepare_template_context_has_gold_sql_true(self, real_agent_config, mock_llm_create):
         node = _create_node(real_agent_config)
         user_input = ExtKnowledgeNodeInput(user_message="x", question="x")

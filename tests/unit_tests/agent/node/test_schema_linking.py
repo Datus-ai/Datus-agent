@@ -3,7 +3,9 @@ import shutil
 import tempfile
 
 import pytest
+import yaml
 
+from datus.configuration.agent_config_loader import load_agent_config
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 from datus.tools.db_tools.config import SQLiteConfig
 from datus.tools.db_tools.sqlite_connector import SQLiteConnector
@@ -37,10 +39,22 @@ def vector_store_path():
 @pytest.fixture
 def agent_config(tmp_path):
     """Fixture to create a minimal AgentConfig for testing"""
-    from tests.conftest import load_acceptance_config
+    from tests.conftest import TEST_CONF_DIR
 
-    config = load_acceptance_config(datasource="snowflake", home=str(tmp_path / "datus_home"))
-    return config
+    config_data = yaml.safe_load((TEST_CONF_DIR / "agent.yml").read_text(encoding="utf-8"))
+    config_data["agent"]["home"] = str(tmp_path / "datus_home")
+    config_data["agent"]["project_root"] = str(tmp_path / "workspace")
+
+    config_path = tmp_path / "agent.yml"
+    config_path.write_text(yaml.safe_dump(config_data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+    return load_agent_config(
+        config=str(config_path),
+        datasource="snowflake",
+        reload=True,
+        force=True,
+        yes=True,
+    )
 
 
 @pytest.fixture
@@ -126,12 +140,9 @@ def test_invalid_input(schema_lineage_tool):
     assert result["value_count"] == 0
 
 
-def test_schema_linking_no_exist():
+def test_schema_linking_no_exist(agent_config):
     """Test schema linking with non-existent database"""
-    from tests.conftest import load_acceptance_config
-
-    test_config = load_acceptance_config(datasource="snowflake")
-    tool = SchemaLineageTool(agent_config=test_config)
+    tool = SchemaLineageTool(agent_config=agent_config)
     res = tool.execute(
         SchemaLinkingInput(
             input_text="test query",
