@@ -19,7 +19,7 @@ NIGHTLY_HOME="${DATUS_TEST_HOME:-${REPO_ROOT}/.datus_test_data}"
 NIGHTLY_PROJECT_ROOT="${NIGHTLY_PROJECT_ROOT:-${NIGHTLY_HOME}/workspace}"
 UNIT_TEST_HOME="${NIGHTLY_UNIT_TEST_HOME:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-agent-nightly-unit-${GITHUB_RUN_ID:-$$}}"
 UNIT_TEST_PROJECT_ROOT="${NIGHTLY_UNIT_TEST_PROJECT_ROOT:-${UNIT_TEST_HOME}/workspace}"
-AGENT_TEST_CONFIG_BACKUP=""
+AGENT_TEST_CONFIG_BACKUP="${AGENT_TEST_CONFIG_BACKUP:-${TMPDIR:-/tmp}/datus-agent-nightly-config-${GITHUB_RUN_ID:-$$}.bak}"
 
 default_repo_root() {
   local explicit_root="$1"
@@ -114,8 +114,7 @@ cleanup_all_compose() {
 }
 
 backup_agent_test_config() {
-  if [ -z "$AGENT_TEST_CONFIG_BACKUP" ]; then
-    AGENT_TEST_CONFIG_BACKUP="$(mktemp "${TMPDIR:-/tmp}/datus-agent-nightly-config.XXXXXX")"
+  if [ ! -f "$AGENT_TEST_CONFIG_BACKUP" ]; then
     cp "$AGENT_TEST_CONFIG" "$AGENT_TEST_CONFIG_BACKUP"
   fi
 }
@@ -185,6 +184,7 @@ run_with_agent_home() {
 cleanup_all() {
   set +e
   restore_agent_test_config
+  rm -f "$AGENT_TEST_CONFIG_BACKUP"
   cleanup_all_compose
 }
 
@@ -200,6 +200,7 @@ handle_interrupt() {
 
 trap cleanup_all EXIT
 trap handle_interrupt INT TERM
+rm -f "$AGENT_TEST_CONFIG_BACKUP"
 
 export DATUS_STRICT_NIGHTLY_REQUIREMENTS="${DATUS_STRICT_NIGHTLY_REQUIREMENTS:-1}"
 export ADAPTERS_PG="${ADAPTERS_PG:-1}"
