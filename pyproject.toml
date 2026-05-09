@@ -109,6 +109,7 @@ exclude = ["benchmark*", "docs*"]
     "sample_data/california_schools/reference_template/*",
     "sample_data/superset/*",
 ]
+"datus.cli.web" = ["templates/*.html"]
 "datus.prompts" = ["*.txt", "*.md", "*.j2"]
 "datus.prompts.prompt_templates" = ["*.j2"]
 
