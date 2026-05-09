@@ -124,45 +124,62 @@ def _disable_sdk_tracing(reason: str) -> None:
 
 
 def _setup_langfuse_tracing(*, langsmith_active: bool = False) -> None:
-    """Configure Langfuse tracing via OpenAI Agents SDK instrumentor or LiteLLM callback.
+    """Configure Langfuse tracing via LiteLLM callback and optionally OpenAI Agents SDK instrumentor.
 
-    Prefers OpenInference instrumentor (captures full agent/tool/generation tree).
-    Falls back to LiteLLM callback (captures LLM calls only) when OpenInference
-    is not installed.  The two are NOT combined because OpenInference already
-    captures LLM generations, and adding LiteLLM would duplicate every call.
+    LiteLLM callback is always registered to capture direct litellm.completion()
+    calls (used by non-agentic nodes).  When OpenInference is available, the Agents
+    SDK instrumentor is added for full agent/tool/handoff tracing.
 
     Args:
         langsmith_active: True when DatusTracingProcessor was already installed
             via set_trace_processors (which removes the SDK default exporter).
     """
     global _langfuse_enabled
+    import base64
     import os
+
+    import litellm
 
     if not os.environ.get("LANGFUSE_OTEL_HOST"):
         base_url = os.environ.get("LANGFUSE_HOST", os.environ.get("LANGFUSE_BASE_URL", "https://us.cloud.langfuse.com"))
         os.environ["LANGFUSE_OTEL_HOST"] = base_url
 
+    callback_name = "langfuse_otel"
+    if callback_name not in (litellm.success_callback or []):
+        litellm.success_callback = litellm.success_callback or []
+        litellm.success_callback.append(callback_name)
+    if callback_name not in (litellm.failure_callback or []):
+        litellm.failure_callback = litellm.failure_callback or []
+        litellm.failure_callback.append(callback_name)
+
     try:
         from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+        otel_host = os.environ["LANGFUSE_OTEL_HOST"]
+        auth = base64.b64encode(
+            f"{os.environ['LANGFUSE_PUBLIC_KEY']}:{os.environ['LANGFUSE_SECRET_KEY']}".encode()
+        ).decode()
+        exporter = OTLPSpanExporter(
+            endpoint=f"{otel_host}/api/public/otel/v1/traces",
+            headers={
+                "Authorization": f"Basic {auth}",
+                "x-langfuse-ingestion-version": "4",
+            },
+        )
+        tracer_provider = TracerProvider()
+        tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
 
         # When LangSmith is active, set_trace_processors already replaced the
         # SDK default exporter → use exclusive_processor=False to add alongside.
         # Otherwise use exclusive_processor=True to replace the default exporter
         # and prevent traces from also going to OpenAI's dashboard.
         exclusive = not langsmith_active
-        OpenAIAgentsInstrumentor().instrument(exclusive_processor=exclusive)
-        logger.info("Langfuse tracing enabled (OpenAI Agents SDK instrumentor, exclusive=%s)", exclusive)
+        OpenAIAgentsInstrumentor().instrument(tracer_provider=tracer_provider, exclusive_processor=exclusive)
+        logger.info("Langfuse tracing enabled (LiteLLM callback + OpenAI Agents SDK instrumentor)")
     except ImportError:
-        import litellm
-
-        callback_name = "langfuse_otel"
-        if callback_name not in (litellm.success_callback or []):
-            litellm.success_callback = litellm.success_callback or []
-            litellm.success_callback.append(callback_name)
-        if callback_name not in (litellm.failure_callback or []):
-            litellm.failure_callback = litellm.failure_callback or []
-            litellm.failure_callback.append(callback_name)
-
         if not (HAS_LANGSMITH and _is_tracing_enabled()):
             _disable_sdk_tracing("openinference not installed and no LangSmith, only LiteLLM callbacks active")
         logger.info("Langfuse tracing enabled (LiteLLM callback only, openinference not installed)")

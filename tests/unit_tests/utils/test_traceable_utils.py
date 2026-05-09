@@ -377,18 +377,35 @@ class TestSetupLangfuseTracing:
         mock_oi_module = MagicMock()
         mock_oi_module.OpenAIAgentsInstrumentor = mock_instrumentor_cls
 
+        # Also mock OTel modules that are imported in the same try block
+        mock_otel_exporter = MagicMock()
+        mock_otel_trace = MagicMock()
+        mock_otel_export = MagicMock()
+
         oi_key = "openinference.instrumentation.openai_agents"
-        saved_mod = sys.modules.get(oi_key)
-        sys.modules[oi_key] = mock_oi_module
+        otel_keys = {
+            oi_key: mock_oi_module,
+            "opentelemetry.exporter.otlp.proto.http.trace_exporter": mock_otel_exporter,
+            "opentelemetry.sdk.trace": mock_otel_trace,
+            "opentelemetry.sdk.trace.export": mock_otel_export,
+        }
+        saved_mods = {k: sys.modules.get(k) for k in otel_keys}
+        for k, v in otel_keys.items():
+            sys.modules[k] = v
         try:
             setup_tracing()
 
-            mock_instrumentor_instance.instrument.assert_called_once_with(exclusive_processor=True)
+            mock_instrumentor_instance.instrument.assert_called_once()
+            call_kwargs = mock_instrumentor_instance.instrument.call_args[1]
+            assert call_kwargs["exclusive_processor"] is True
+            assert "tracer_provider" in call_kwargs
+            assert "langfuse_otel" in litellm.success_callback
         finally:
-            if saved_mod is None:
-                sys.modules.pop(oi_key, None)
-            else:
-                sys.modules[oi_key] = saved_mod
+            for k, saved in saved_mods.items():
+                if saved is None:
+                    sys.modules.pop(k, None)
+                else:
+                    sys.modules[k] = saved
             litellm.success_callback = original_success
             litellm.failure_callback = original_failure
 
