@@ -78,6 +78,62 @@ should_run_group() {
   [[ "$group_name" =~ $NIGHTLY_GROUP_FILTER ]]
 }
 
+validate_nightly_group_filter() {
+  if [ -z "$NIGHTLY_GROUP_FILTER" ]; then
+    return 0
+  fi
+
+  [[ "__datus_filter_probe__" =~ $NIGHTLY_GROUP_FILTER ]]
+  local status=$?
+  if [ "$status" -eq 2 ]; then
+    echo "Invalid NIGHTLY_GROUP_FILTER regex: $NIGHTLY_GROUP_FILTER" | tee -a "$LOG_FILE" >&2
+    return 1
+  fi
+  return 0
+}
+
+is_under_dir() {
+  local path="${1%/}"
+  local parent="${2%/}"
+
+  if [ -z "$parent" ] || [ "$parent" = "/" ]; then
+    return 1
+  fi
+
+  [[ "$path" == "$parent"/* ]]
+}
+
+validate_unit_test_home() {
+  local path="${1%/}"
+  local user_home="${HOME:-}"
+  local tmp_root="${TMPDIR:-/tmp}"
+  tmp_root="${tmp_root%/}"
+  local runner_temp="${RUNNER_TEMP:-}"
+  runner_temp="${runner_temp%/}"
+
+  case "$path" in
+    "" | "." | "/" | "$user_home" | "$REPO_ROOT" | "$WORKSPACE_ROOT" | *"/.."* | *"/../"* | "../"* | *"/."* | *"/./"*)
+      echo "Refusing to remove unsafe UNIT_TEST_HOME: $UNIT_TEST_HOME" | tee -a "$LOG_FILE" >&2
+      return 1
+      ;;
+  esac
+
+  case "$path" in
+    /*) ;;
+    *)
+      echo "Refusing to remove non-absolute UNIT_TEST_HOME: $UNIT_TEST_HOME" | tee -a "$LOG_FILE" >&2
+      return 1
+      ;;
+  esac
+
+  if is_under_dir "$path" "$runner_temp" || is_under_dir "$path" "$tmp_root" || is_under_dir "$path" "/tmp"; then
+    return 0
+  fi
+
+  echo "Refusing to remove UNIT_TEST_HOME outside temp directories: $UNIT_TEST_HOME" | tee -a "$LOG_FILE" >&2
+  return 1
+}
+
 has_docker_compose() {
   docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1
 }
@@ -169,7 +225,10 @@ run_with_agent_home() {
   local project_root="$2"
   shift 2
 
-  backup_agent_test_config
+  if ! backup_agent_test_config; then
+    echo "Failed to back up $AGENT_TEST_CONFIG to $AGENT_TEST_CONFIG_BACKUP" >&2
+    return 1
+  fi
   mkdir -p "$home" "$project_root" || return 1
   if ! set_agent_test_config_paths "$home" "$project_root"; then
     restore_agent_test_config
@@ -282,14 +341,10 @@ if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then
   export SPARK_AUTH_MECHANISM=NONE
 fi
 
-run_logged() {
+run_logged_unfiltered() {
   local group_name="$1"
   shift
-  if ! should_run_group "$group_name"; then
-    log ""
-    log "=== Skipping ${group_name} (NIGHTLY_GROUP_FILTER=${NIGHTLY_GROUP_FILTER}) ==="
-    return 0
-  fi
+
   log ""
   log "=== ${group_name} ==="
   "$@" 2>&1 | tee -a "$LOG_FILE"
@@ -298,6 +353,18 @@ run_logged() {
     test_exit_code="$cmd_status"
   fi
   return 0
+}
+
+run_logged() {
+  local group_name="$1"
+  shift
+  if ! should_run_group "$group_name"; then
+    log ""
+    log "=== Skipping ${group_name} (NIGHTLY_GROUP_FILTER=${NIGHTLY_GROUP_FILTER}) ==="
+    return 0
+  fi
+
+  run_logged_unfiltered "$group_name" "$@"
 }
 
 compose_up() {
@@ -413,8 +480,11 @@ if [ -n "$NIGHTLY_GROUP_FILTER" ]; then
   log "NIGHTLY_GROUP_FILTER=$NIGHTLY_GROUP_FILTER"
 fi
 
-run_logged "Flaky Registry Check" uv run python ci/check_flaky_registry.py --registry ci/flaky-registry.yml --strict
+validate_nightly_group_filter || exit 1
 
+run_logged_unfiltered "Flaky Registry Check" uv run python ci/check_flaky_registry.py --registry ci/flaky-registry.yml --strict
+
+validate_unit_test_home "$UNIT_TEST_HOME" || exit 1
 rm -rf "$UNIT_TEST_HOME"
 run_logged "Full Unit Tests" run_with_agent_home "$UNIT_TEST_HOME" "$UNIT_TEST_PROJECT_ROOT" uv run pytest tests/unit_tests/ -m "not nightly" --tb=short --verbose --timeout=300 --dist=loadscope -n auto
 
@@ -437,7 +507,7 @@ run_compose_suite "Greenplum Adapter Tests" "$GREENPLUM_COMPOSE" "greenplum:600"
 run_compose_suite "Hive Adapter Tests" "$HIVE_COMPOSE" "hive-metastore:600" "hive-server:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/adapters/test_hive.py --tb=short --verbose --timeout=300
 run_compose_suite "Spark Adapter Tests" "$SPARK_COMPOSE" "spark-thrift:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300
 
-run_logged "Flaky Log Classification" uv run python ci/check_flaky_registry.py --registry ci/flaky-registry.yml --log-file "$LOG_FILE"
+run_logged_unfiltered "Flaky Log Classification" uv run python ci/check_flaky_registry.py --registry ci/flaky-registry.yml --log-file "$LOG_FILE"
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   echo "log_file=$LOG_FILE" >> "$GITHUB_OUTPUT"
