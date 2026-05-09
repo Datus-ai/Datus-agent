@@ -131,6 +131,86 @@ class TestSetupTracing:
             setup_tracing()
             mock_disable.assert_called_once_with("langsmith not installed")
 
+    def _setup_langsmith_with_fake_processor(self, monkeypatch):
+        """Set up LangSmith path with a fake base processor class."""
+        import datus.utils.traceable_utils as module
+
+        _clear_all_tracing_envvars(monkeypatch)
+        monkeypatch.setattr(module, "_tracing_initialized", False)
+        monkeypatch.setattr(module, "_tracing_processor", None)
+        monkeypatch.setattr(module, "HAS_LANGSMITH", True)
+        monkeypatch.setattr(module, "HAS_LANGFUSE", False)
+        monkeypatch.setenv("LANGSMITH_TRACING", "true")
+        monkeypatch.setenv("LANGCHAIN_API_KEY", "fake-key")
+
+        class FakeBaseProcessor:
+            """Minimal stand-in for OpenAIAgentsTracingProcessor."""
+
+            def __init__(self):
+                self._runs = {}
+
+            def on_trace_end(self, trace):
+                pass
+
+        return module, FakeBaseProcessor
+
+    def test_langsmith_enabled_installs_processor(self, monkeypatch):
+        """setup_tracing installs DatusTracingProcessor when LangSmith is configured."""
+        module, FakeBase = self._setup_langsmith_with_fake_processor(monkeypatch)
+        mock_set = MagicMock()
+
+        with (
+            patch("langsmith.wrappers.OpenAIAgentsTracingProcessor", FakeBase),
+            patch("agents.set_trace_processors", mock_set),
+        ):
+            setup_tracing()
+
+            assert module._tracing_processor is not None
+            mock_set.assert_called_once()
+
+    def test_datus_tracing_processor_captures_trace_url(self, monkeypatch):
+        """DatusTracingProcessor.on_trace_end captures the trace URL."""
+        module, FakeBase = self._setup_langsmith_with_fake_processor(monkeypatch)
+
+        with (
+            patch("langsmith.wrappers.OpenAIAgentsTracingProcessor", FakeBase),
+            patch("agents.set_trace_processors"),
+        ):
+            setup_tracing()
+
+        processor = module._tracing_processor
+
+        mock_trace = MagicMock()
+        mock_trace.trace_id = "trace-123"
+        mock_run = MagicMock()
+        mock_run.get_url.return_value = "https://smith.langchain.com/trace/123"
+        processor._runs = {"trace-123": mock_run}
+
+        processor.on_trace_end(mock_trace)
+
+        assert processor._last_trace_url == "https://smith.langchain.com/trace/123"
+
+    def test_datus_tracing_processor_handles_url_error(self, monkeypatch):
+        """DatusTracingProcessor.on_trace_end handles get_url failures gracefully."""
+        module, FakeBase = self._setup_langsmith_with_fake_processor(monkeypatch)
+
+        with (
+            patch("langsmith.wrappers.OpenAIAgentsTracingProcessor", FakeBase),
+            patch("agents.set_trace_processors"),
+        ):
+            setup_tracing()
+
+        processor = module._tracing_processor
+        mock_trace = MagicMock()
+        mock_trace.trace_id = "trace-456"
+        mock_run = MagicMock()
+        mock_run.get_url.side_effect = RuntimeError("network error")
+        processor._runs = {"trace-456": mock_run}
+
+        processor.on_trace_end(mock_trace)
+
+        assert processor._last_trace_url is None
+
 
 class TestDisableSdkTracing:
     """Tests for _disable_sdk_tracing."""
