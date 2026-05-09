@@ -912,6 +912,11 @@ class DBFuncTool:
             )
             logger.debug(f"Got {len(column_result)} columns from connector")
 
+            if not column_result:
+                error_msg = f"Table '{table_name}' does not exist or has no columns."
+                logger.warning(error_msg)
+                return FuncToolResult(success=0, error=error_msg)
+
             # 2. Normalize columns to ensure required fields
             columns = []
             for col in column_result:
