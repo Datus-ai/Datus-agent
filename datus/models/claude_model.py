@@ -341,7 +341,7 @@ class ClaudeModel(OpenAICompatibleModel):
                 model=self.model_name,
                 messages=filtered_messages,
                 system=self._build_system_param(system_message),
-                max_tokens=kwargs.get("max_tokens", 4096),
+                max_tokens=kwargs.get("max_tokens") or self.max_tokens() or 20480,
                 temperature=kwargs.get("temperature", anthropic.NOT_GIVEN),
             )
 
@@ -474,7 +474,7 @@ class ClaudeModel(OpenAICompatibleModel):
                         system=self._build_system_param(instruction),
                         messages=wrap_prompt_cache(messages),
                         tools=tools,
-                        max_tokens=kwargs.get("max_tokens", 20480),
+                        max_tokens=kwargs.get("max_tokens") or self.max_tokens() or 20480,
                         temperature=kwargs.get("temperature", anthropic.NOT_GIVEN),
                     )
 

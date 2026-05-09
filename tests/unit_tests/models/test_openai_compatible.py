@@ -288,6 +288,58 @@ class TestGenerate:
         call_kwargs = mock_lit.call_args[1]
         assert call_kwargs["max_tokens"] == 512
 
+    def test_max_tokens_fallback_from_model_specs(self):
+        """When kwargs lacks max_tokens, fall back to model_specs."""
+        model = _make_model()
+        mock_resp = self._mock_litellm_response("ok")
+        with (
+            patch.object(model, "max_tokens", return_value=4096),
+            patch("datus.models.openai_compatible.litellm.completion", return_value=mock_resp) as mock_lit,
+        ):
+            model.generate("prompt")
+        call_kwargs = mock_lit.call_args[1]
+        assert call_kwargs["max_tokens"] == 4096
+        assert "max_completion_tokens" not in call_kwargs
+
+    def test_max_tokens_omitted_when_specs_unknown(self):
+        """Omit the field when model_specs has no entry — let provider decide."""
+        model = _make_model()
+        mock_resp = self._mock_litellm_response("ok")
+        with (
+            patch.object(model, "max_tokens", return_value=None),
+            patch("datus.models.openai_compatible.litellm.completion", return_value=mock_resp) as mock_lit,
+        ):
+            model.generate("prompt")
+        call_kwargs = mock_lit.call_args[1]
+        assert "max_tokens" not in call_kwargs
+        assert "max_completion_tokens" not in call_kwargs
+
+    def test_explicit_kwargs_override_fallback(self):
+        """Explicit max_tokens in kwargs wins over model_specs fallback."""
+        model = _make_model()
+        mock_resp = self._mock_litellm_response("ok")
+        with (
+            patch.object(model, "max_tokens", return_value=4096),
+            patch("datus.models.openai_compatible.litellm.completion", return_value=mock_resp) as mock_lit,
+        ):
+            model.generate("prompt", max_tokens=100)
+        call_kwargs = mock_lit.call_args[1]
+        assert call_kwargs["max_tokens"] == 100
+
+    def test_max_tokens_fallback_routes_to_completion_tokens_for_reasoning(self):
+        """Reasoning models (o-series) must receive max_completion_tokens, not max_tokens."""
+        model = _make_model()
+        mock_resp = self._mock_litellm_response("ok")
+        model._uses_completion_tokens_parameter = lambda: True
+        with (
+            patch.object(model, "max_tokens", return_value=2048),
+            patch("datus.models.openai_compatible.litellm.completion", return_value=mock_resp) as mock_lit,
+        ):
+            model.generate("prompt")
+        call_kwargs = mock_lit.call_args[1]
+        assert call_kwargs["max_completion_tokens"] == 2048
+        assert "max_tokens" not in call_kwargs
+
     def test_base_url_added_when_set(self):
         cfg = _make_model_config(base_url="https://myapi.com/v1")
         model = _make_model(cfg)
@@ -1465,6 +1517,22 @@ class TestBuildAgent:
         _, call_args = self._call_build_agent(model)
         ms = call_args[1]["model_settings"]
         assert ms.extra_headers == {"X-Custom": "value"}
+
+    def test_max_tokens_from_model_specs_applied_to_model_settings(self):
+        """Streaming/tool path: model_specs.max_tokens flows into ModelSettings."""
+        model = _make_model()
+        with patch.object(model, "max_tokens", return_value=4096):
+            _, call_args = self._call_build_agent(model)
+        ms = call_args[1]["model_settings"]
+        assert ms.max_tokens == 4096
+
+    def test_max_tokens_omitted_in_model_settings_when_specs_unknown(self):
+        """When spec is unknown, leave ModelSettings.max_tokens at its default (None)."""
+        model = _make_model()
+        with patch.object(model, "max_tokens", return_value=None):
+            _, call_args = self._call_build_agent(model)
+        ms = call_args[1]["model_settings"]
+        assert ms.max_tokens is None
 
     def test_thinking_model_gets_reasoning(self):
         model = _make_model()

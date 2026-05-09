@@ -496,11 +496,25 @@ class OpenAICompatibleModel(LLMBaseModel):
                 # Add default top_p only for non-reasoning models
                 params["top_p"] = 1.0
 
-            # Handle both max_tokens and max_completion_tokens parameters (only if explicitly provided)
-            if "max_tokens" in kwargs:
-                params["max_tokens"] = kwargs["max_tokens"]
-            if "max_completion_tokens" in kwargs:
-                params["max_completion_tokens"] = kwargs["max_completion_tokens"]
+            # Resolve max_tokens / max_completion_tokens.
+            # Priority: kwargs > model_specs.max_tokens. If neither is set, omit
+            # the parameter so the provider's own default applies.
+            explicit_max_tokens = kwargs.get("max_tokens")
+            explicit_max_completion = kwargs.get("max_completion_tokens")
+            if explicit_max_tokens is not None:
+                params["max_tokens"] = explicit_max_tokens
+            if explicit_max_completion is not None:
+                params["max_completion_tokens"] = explicit_max_completion
+            if explicit_max_tokens is None and explicit_max_completion is None:
+                spec_max_tokens = self.max_tokens()
+                if isinstance(spec_max_tokens, int) and spec_max_tokens > 0:
+                    uses_completion = (
+                        hasattr(self, "_uses_completion_tokens_parameter") and self._uses_completion_tokens_parameter()
+                    )
+                    if uses_completion:
+                        params["max_completion_tokens"] = spec_max_tokens
+                    else:
+                        params["max_tokens"] = spec_max_tokens
 
             # Filter out handled parameters from remaining kwargs
             excluded_params = ["temperature", "top_p", "max_tokens", "max_completion_tokens"]
@@ -754,6 +768,13 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         if self.model_config.top_p is not None:
             model_settings_kwargs["top_p"] = self.model_config.top_p
+
+        # Apply model_specs.max_tokens as a fallback so streaming/tool calls
+        # don't silently rely on each provider's server-side default. If the
+        # spec is unknown, omit the field and let the provider decide.
+        spec_max_tokens = self.max_tokens()
+        if isinstance(spec_max_tokens, int) and spec_max_tokens > 0:
+            model_settings_kwargs["max_tokens"] = spec_max_tokens
 
         if self.default_headers:
             model_settings_kwargs["extra_headers"] = self.default_headers
