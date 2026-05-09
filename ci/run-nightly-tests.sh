@@ -189,7 +189,7 @@ cleanup_all() {
 }
 
 if [ "${1:-}" = "--cleanup-only" ]; then
-  cleanup_all_compose
+  cleanup_all
   exit 0
 fi
 
