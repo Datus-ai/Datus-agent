@@ -7,10 +7,10 @@ export DATUS_TEST_HOME
 validate_test_home() {
   local path="${DATUS_TEST_HOME%/}"
   local home="${HOME:-}"
-  local runner_temp="${RUNNER_TEMP:-}"
+  local github_workspace="${GITHUB_WORKSPACE:-}"
 
   case "$path" in
-    "" | "." | "/" | "~" | "$home" | "$PWD" | *"/.."* | *"/../"* | "../"* | *"/." | *"/./"*)
+    "" | "." | "/" | "~" | "$home" | "$PWD" | ".." | "../"* | *"/.." | *"/../"* | "./"* | *"/." | *"/./"*)
       echo "Refusing to remove unsafe DATUS_TEST_HOME: '$DATUS_TEST_HOME'" >&2
       exit 1
       ;;
@@ -24,13 +24,13 @@ validate_test_home() {
       ;;
   esac
 
-  if [ "$path" = "$home/.datus/tests" ] || [[ "$path" == */.datus_test_data ]]; then
+  if [ "$path" = "$home/.datus/tests" ] || [ "$path" = "$home/.datus_test_data" ]; then
     DATUS_TEST_HOME="$path"
     export DATUS_TEST_HOME
     return
   fi
 
-  if [ -n "$runner_temp" ] && [[ "$path" == "${runner_temp%/}"/* ]]; then
+  if [ -n "$github_workspace" ] && [ "$path" = "${github_workspace%/}/.datus_test_data" ]; then
     DATUS_TEST_HOME="$path"
     export DATUS_TEST_HOME
     return
