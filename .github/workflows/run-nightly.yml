@@ -49,7 +49,6 @@ jobs:
             {
               for file in \
                 build_scripts/build_test_data.sh \
-                tests/conf/agent.yml \
                 tests/data/SSB.db \
                 datus/cli/bootstrap_streams.py \
                 datus/main.py; do
@@ -243,7 +242,7 @@ jobs:
 
           if [ "${{ steps.kb-cache.outputs.cache-hit }}" = "true" ] \
             && [ -d "$KB_READY_DIR" ] \
-            && find "$KB_READY_DIR" -mindepth 1 -maxdepth 5 -print -quit | grep -q .; then
+            && find "$KB_READY_DIR" -mindepth 1 -maxdepth 5 -type f -size +0 -print -quit | grep -q .; then
             echo "Restored knowledge base cache from $KB_READY_DIR"
             echo "needs-build=false" >> "$GITHUB_OUTPUT"
             exit 0

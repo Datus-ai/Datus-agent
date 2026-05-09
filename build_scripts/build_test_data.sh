@@ -4,6 +4,42 @@ set -euo pipefail
 DATUS_TEST_HOME="${DATUS_TEST_HOME:-$HOME/.datus/tests}"
 export DATUS_TEST_HOME
 
+validate_test_home() {
+  local path="${DATUS_TEST_HOME%/}"
+  local home="${HOME:-}"
+  local runner_temp="${RUNNER_TEMP:-}"
+
+  case "$path" in
+    "" | "." | "/" | "~" | "$home" | "$PWD" | *"/.."* | *"/../"* | "../"* | *"/." | *"/./"*)
+      echo "Refusing to remove unsafe DATUS_TEST_HOME: '$DATUS_TEST_HOME'" >&2
+      exit 1
+      ;;
+  esac
+
+  case "$path" in
+    /*) ;;
+    *)
+      echo "Refusing to remove non-absolute DATUS_TEST_HOME: '$DATUS_TEST_HOME'" >&2
+      exit 1
+      ;;
+  esac
+
+  if [ "$path" = "$home/.datus/tests" ] || [[ "$path" == */.datus_test_data ]]; then
+    DATUS_TEST_HOME="$path"
+    export DATUS_TEST_HOME
+    return
+  fi
+
+  if [ -n "$runner_temp" ] && [[ "$path" == "${runner_temp%/}"/* ]]; then
+    DATUS_TEST_HOME="$path"
+    export DATUS_TEST_HOME
+    return
+  fi
+
+  echo "Refusing to remove DATUS_TEST_HOME outside expected test roots: '$DATUS_TEST_HOME'" >&2
+  exit 1
+}
+
 run_bootstrap_kb() {
   uv run python - "$@" <<'PY'
 from agents import set_tracing_disabled
@@ -17,6 +53,7 @@ PY
 }
 
 # Clean old data before creating a cacheable, deterministic fixture set.
+validate_test_home
 rm -rf "$DATUS_TEST_HOME"
 mkdir -p "$DATUS_TEST_HOME"
 
@@ -37,7 +74,7 @@ if [ -n "${DATUS_TEST_PROJECT_NAME:-}" ]; then
   CACHE_READY_DIR="$CACHE_READY_DIR/$DATUS_TEST_PROJECT_NAME/datus_db"
 fi
 
-if [ ! -d "$CACHE_READY_DIR" ] || ! find "$CACHE_READY_DIR" -mindepth 1 -maxdepth 5 -print -quit | grep -q .; then
+if [ ! -d "$CACHE_READY_DIR" ] || ! find "$CACHE_READY_DIR" -mindepth 1 -maxdepth 5 -type f -size +0 -print -quit | grep -q .; then
   echo "Expected test data under $CACHE_READY_DIR, but no cacheable data was produced" >&2
   exit 1
 fi
