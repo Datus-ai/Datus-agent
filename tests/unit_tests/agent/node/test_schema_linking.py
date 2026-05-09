@@ -59,10 +59,6 @@ def sqlite_connector(db_path):
     connector.close()
 
 
-def test_storage():
-    pass
-
-
 def test_store_and_search_schema(schema_lineage_tool, sqlite_connector):
     """Test storing and searching schema"""
     log.info("Creating test tables in SQLite")
