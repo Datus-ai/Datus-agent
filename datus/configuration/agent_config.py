@@ -567,6 +567,10 @@ class AgentConfig:
     services: ServicesConfig
     scheduler_services: Dict[str, Dict[str, Any]]
     semantic_layer_configs: Dict[str, Dict[str, Any]]
+    # Free-form sidecar metadata for ``agent.models`` entries, keyed by
+    # the same name used in ``models``. Lets hosts attach extra context
+    # to a model without extending the strongly-typed ``ModelConfig``.
+    model_extras: Dict[str, Dict[str, Any]]
 
     def __init__(self, nodes: Dict[str, NodeConfig], **kwargs):
         """
@@ -594,6 +598,14 @@ class AgentConfig:
         models_raw = kwargs.get("models", {}) or {}
         self.target = kwargs.get("target", "") or ""
         self.models = {name: load_model_config(cfg) for name, cfg in models_raw.items()}
+        # Normalize to plain ``dict`` so ``dataclasses.asdict`` serializes
+        # cleanly into the AgentConfig fingerprint — host-side mutations
+        # are picked up on the next service-cache miss.
+        model_extras_raw = kwargs.get("model_extras") or {}
+        self.model_extras = {
+            str(name): dict(extras) if isinstance(extras, dict) else {}
+            for name, extras in model_extras_raw.items()
+        }
         # Provider-level credentials (new schema). Empty when the user has not
         # migrated to the ``agent.providers`` section; legacy ``agent.models``
         # still works via :meth:`active_model` fallback.
@@ -1520,6 +1532,33 @@ class AgentConfig:
             code=ErrorCode.COMMON_UNSUPPORTED,
             message=f"Datasource '{db_name}' not found. Available: {list(datasources.keys())}",
         )
+
+    def get_model_extra(self, model: Optional[str]) -> Dict[str, Any]:
+        """Look up ``model_extras`` for the request's ``model`` string.
+
+        Accepts ``"custom/<name>"``, bare ``"<name>"``, or empty/``None``
+        (which falls back to ``self.target``). Non-custom providers
+        return an empty dict — only ``custom`` models can carry extras.
+        Always returns a dict so callers can ``.get()`` without guarding.
+        """
+        if not self.model_extras:
+            return {}
+
+        name: Optional[str] = None
+        if model:
+            if "/" in model:
+                provider, _, key = model.partition("/")
+                if provider != "custom":
+                    return {}
+                name = key
+            else:
+                name = model
+        if not name:
+            name = self.target or None
+        if not name:
+            return {}
+        extras = self.model_extras.get(name)
+        return dict(extras) if isinstance(extras, dict) else {}
 
     def active_model(self) -> ModelConfig:
         """Return the currently active :class:`ModelConfig`.

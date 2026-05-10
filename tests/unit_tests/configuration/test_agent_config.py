@@ -1756,3 +1756,71 @@ class TestValidationConfigFromDict:
     def test_non_numeric_retries_falls_back_to_default(self):
         cfg = ValidationConfig.from_dict({"max_retries": "oops"})
         assert cfg.max_retries == 3
+
+
+class TestAgentConfigModelExtras:
+    """``AgentConfig.model_extras`` + ``get_model_extra`` resolution."""
+
+    def _make(self, tmp_path, *, model_extras=None, target="primary"):
+        return AgentConfig(
+            nodes={"chat": NodeConfig(model="primary", input=None)},
+            home=str(tmp_path / "h"),
+            target=target,
+            models={
+                "primary": {"type": "openai", "api_key": "k", "model": "m", "base_url": "http://x"},
+                "secondary": {"type": "openai", "api_key": "k2", "model": "m2", "base_url": "http://y"},
+            },
+            model_extras=model_extras,
+            services={"datasources": {}},
+            skip_init_dirs=True,
+        )
+
+    def test_default_extras_is_empty_dict(self, tmp_path):
+        cfg = self._make(tmp_path)
+        assert cfg.model_extras == {}
+
+    def test_extras_normalized_to_plain_dict(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            model_extras={"primary": {"foo": "bar", "n": 1}},
+        )
+        assert cfg.model_extras == {"primary": {"foo": "bar", "n": 1}}
+
+    def test_get_extra_for_custom_model_string(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            model_extras={"primary": {"foo": "bar"}},
+        )
+        assert cfg.get_model_extra("custom/primary") == {"foo": "bar"}
+
+    def test_get_extra_falls_back_to_target_when_model_blank(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            target="secondary",
+            model_extras={"secondary": {"foo": "baz"}},
+        )
+        assert cfg.get_model_extra(None) == {"foo": "baz"}
+        assert cfg.get_model_extra("") == {"foo": "baz"}
+
+    def test_get_extra_skips_non_custom_provider(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            model_extras={"primary": {"foo": "bar"}},
+        )
+        # Only ``custom/<name>`` carries sidecar extras; provider models
+        # come from providers.yml so we must return {} there.
+        assert cfg.get_model_extra("openai/gpt-4o-mini") == {}
+
+    def test_get_extra_returns_copy_not_alias(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            model_extras={"primary": {"foo": "bar"}},
+        )
+        out = cfg.get_model_extra("custom/primary")
+        out["mutated"] = True
+        # Mutating the returned dict must not leak into the cached state.
+        assert "mutated" not in cfg.model_extras["primary"]
+
+    def test_get_extra_unknown_name_returns_empty(self, tmp_path):
+        cfg = self._make(tmp_path, model_extras={"primary": {"foo": "bar"}})
+        assert cfg.get_model_extra("custom/unknown") == {}
