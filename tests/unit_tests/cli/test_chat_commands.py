@@ -3290,7 +3290,7 @@ def _make_console():
 
 class MinimalAtCompleterExtended:
     def parse_at_context(self, user_input):
-        return ([], [], [])
+        return ([], [], [], None)
 
 
 class MinimalCLIExtended:

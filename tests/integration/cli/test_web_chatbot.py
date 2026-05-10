@@ -98,7 +98,7 @@ class TestChatExecutorIntegration:
         ):
             mock_prompt.side_effect = [EOFError]
             mock_internal.side_effect = ["n"]
-            at_data.return_value = [], [], []
+            at_data.return_value = [], [], [], None
             cli = DatusCLI(args=mock_args)
             wait_for_agent(cli)
 

@@ -19,6 +19,10 @@ def _make_tool():
     return DateParserTool(language="en")
 
 
+def _make_zh_tool():
+    return DateParserTool(language="zh")
+
+
 # ---------------------------------------------------------------------------
 # TestExecute
 # ---------------------------------------------------------------------------
@@ -129,6 +133,53 @@ class TestParseTemporalExpression:
             result = tool.parse_temporal_expression(expression, reference_date, mock_model)
 
         assert result is None
+
+    def test_zh_previous_week_uses_calendar_rule_without_llm(self):
+        tool = _make_zh_tool()
+        mock_model = MagicMock()
+        reference_date = datetime(2025, 2, 15)
+        expression = {"original_text": "上周的会议记录", "date_type": "relative", "confidence": 0.9}
+
+        with patch.object(tool, "parse_with_llm") as mock_parse:
+            result = tool.parse_temporal_expression(expression, reference_date, mock_model)
+
+        mock_parse.assert_not_called()
+        assert result is not None
+        assert result.start_date == "2025-02-03"
+        assert result.end_date == "2025-02-09"
+        assert result.date_type == "range"
+
+    def test_zh_next_week_uses_calendar_rule_without_llm(self):
+        tool = _make_zh_tool()
+        mock_model = MagicMock()
+        reference_date = datetime(2025, 2, 15)
+        expression = {"original_text": "下周的计划", "date_type": "relative", "confidence": 0.9}
+
+        with patch.object(tool, "parse_with_llm") as mock_parse:
+            result = tool.parse_temporal_expression(expression, reference_date, mock_model)
+
+        mock_parse.assert_not_called()
+        assert result is not None
+        assert result.start_date == "2025-02-17"
+        assert result.end_date == "2025-02-23"
+        assert result.date_type == "range"
+
+    def test_zh_compound_week_expression_falls_back_to_llm(self):
+        tool = _make_zh_tool()
+        mock_model = MagicMock()
+        reference_date = datetime(2025, 2, 15)
+        expression = {"original_text": "从上周到下周", "date_type": "range", "confidence": 0.9}
+        start = datetime(2025, 2, 3)
+        end = datetime(2025, 2, 23)
+
+        with patch.object(tool, "parse_with_llm", return_value=(start, end)) as mock_parse:
+            result = tool.parse_temporal_expression(expression, reference_date, mock_model)
+
+        mock_parse.assert_called_once_with("从上周到下周", reference_date, mock_model)
+        assert result is not None
+        assert result.start_date == "2025-02-03"
+        assert result.end_date == "2025-02-23"
+        assert result.date_type == "range"
 
 
 # ---------------------------------------------------------------------------

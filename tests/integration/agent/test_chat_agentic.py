@@ -25,7 +25,7 @@ class TestChatAgentic:
                 patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal,
                 patch("datus.cli.repl.AtReferenceCompleter.parse_at_context") as at_data,
             ):
-                at_data.return_value = [], [], []
+                at_data.return_value = [], [], [], None
                 mock_internal.side_effect = ["n", "n"]
                 cli = DatusCLI(args=mock_args)
 
@@ -50,7 +50,7 @@ class TestChatAgentic:
                 patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal,
                 patch("datus.cli.repl.AtReferenceCompleter.parse_at_context") as at_data,
             ):
-                at_data.return_value = [], [], []
+                at_data.return_value = [], [], [], None
                 mock_internal.side_effect = ["n"]
                 cli = DatusCLI(args=mock_args)
 
@@ -77,7 +77,7 @@ class TestChatAgentic:
                 patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal,
                 patch("datus.cli.repl.AtReferenceCompleter.parse_at_context") as at_data,
             ):
-                at_data.return_value = [], [], []
+                at_data.return_value = [], [], [], None
                 mock_internal.side_effect = ["n"]
                 cli = DatusCLI(args=mock_args)
 
@@ -109,7 +109,7 @@ class TestChatAgentic:
                 patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal,
                 patch("datus.cli.repl.AtReferenceCompleter.parse_at_context") as at_data,
             ):
-                at_data.return_value = [], [], []
+                at_data.return_value = [], [], [], None
                 mock_internal.side_effect = ["n"]
                 cli = DatusCLI(args=mock_args)
 

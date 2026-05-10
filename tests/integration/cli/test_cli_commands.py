@@ -185,7 +185,7 @@ def test_chat_command(mock_args, capsys, gen_sql_input: List[Dict[str, Any]]):
             patch("datus.cli.repl.DatusCLI.prompt_input") as mock_internal_prompt,
             patch("datus.cli.repl.AtReferenceCompleter.parse_at_context") as at_data,
         ):
-            at_data.return_value = table_schemas, [], []
+            at_data.return_value = table_schemas, [], [], None
             mock_internal_prompt.side_effect = ["n"]
             cli = DatusCLI(args=mock_args)
 

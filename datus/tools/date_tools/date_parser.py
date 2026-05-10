@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from datus.models.base import LLMBaseModel
@@ -116,6 +116,11 @@ class DateParserTool(BaseTool):
         date_type = expression.get("date_type", "relative")
         confidence = expression.get("confidence", 1.0)
 
+        deterministic_result = self._parse_deterministic_period(original_text, reference_date)
+        if deterministic_result:
+            start_date, end_date = deterministic_result
+            return self.create_extracted_date(original_text, date_type, confidence, start_date, end_date)
+
         logger.debug(f"Parsing '{original_text}' using LLM")
 
         result = self.parse_with_llm(original_text, reference_date, model)
@@ -124,6 +129,30 @@ class DateParserTool(BaseTool):
             return self.create_extracted_date(original_text, date_type, confidence, start_date, end_date)
 
         logger.warning(f"LLM parsing failed for: '{original_text}'")
+        return None
+
+    def _parse_deterministic_period(self, text: str, reference_date: datetime) -> Optional[Tuple[datetime, datetime]]:
+        """Resolve simple period expressions that have strict calendar rules."""
+        if self.language != "zh":
+            return None
+
+        current_week_start = reference_date - timedelta(days=reference_date.weekday())
+        previous_week_tokens = ("上周", "上星期", "上个星期", "上一周")
+        next_week_tokens = ("下周", "下星期", "下个星期", "下一周")
+        has_previous_period = any(token in text for token in previous_week_tokens)
+        has_next_period = any(token in text for token in next_week_tokens)
+
+        if has_previous_period and has_next_period:
+            return None
+
+        if has_previous_period:
+            start_date = current_week_start - timedelta(days=7)
+            return start_date, start_date + timedelta(days=6)
+
+        if has_next_period:
+            start_date = current_week_start + timedelta(days=7)
+            return start_date, start_date + timedelta(days=6)
+
         return None
 
     def parse_with_llm(

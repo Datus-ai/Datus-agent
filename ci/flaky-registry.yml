@@ -11,6 +11,39 @@ entries:
       - nightly
     action: rerun_only
 
+  - id: api-source-proxy-tool-call-llm-rerun
+    type: test
+    nodeid: tests/integration/api/test_api_chat.py::TestAPIChatN9::test_source_proxy_tool_result
+    owner: agent-runtime
+    layer: product_e2e
+    reason: Real LLM source-proxy filesystem tool-call flow reran once during nightly; rerun passed.
+    allowed_until: 2026-06-05
+    allowed_in:
+      - nightly
+    action: rerun_only
+
+  - id: deepseek-mcp-session-rerun
+    type: test
+    nodeid: tests/integration/models/test_deepseek_model.py::TestDeepSeekModel::test_generate_with_mcp_session
+    owner: agent-runtime
+    layer: provider_health
+    reason: DeepSeek MCP session call reran once during nightly; rerun passed.
+    allowed_until: 2026-06-05
+    allowed_in:
+      - nightly
+    action: rerun_only
+
+  - id: superset-bi-complete-workflow-provider-disconnect
+    type: test
+    nodeid: tests/integration/tools/test_bi_dashboard.py::TestE2EIntegration::test_complete_workflow
+    owner: bi-agent
+    layer: product_e2e
+    reason: DeepSeek provider disconnected during Superset BI metric generation; rerun passed.
+    allowed_until: 2026-06-05
+    allowed_in:
+      - nightly
+    action: rerun_only
+
   - id: litellm-async-pending-task-teardown
     type: log_pattern
     pattern: "Task was destroyed but it is pending"

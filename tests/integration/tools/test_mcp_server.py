@@ -553,18 +553,13 @@ class TestMCPClient:
             assert len(data["error"]) > 0, "Error message should not be empty"
 
     async def test_error_handling_nonexistent_table_describe(self):
-        """N10-07b: describe_table for nonexistent table returns empty columns."""
+        """N10-07b: describe_table for nonexistent table returns a clear failure."""
         async with mcp_http_session(self.url) as session:
             result = await session.call_tool("describe_table", {"table_name": "nonexistent_xyz_table"})
             data = parse_tool_result(result)
 
-            # SQLite returns success with 0 columns for nonexistent tables
-            assert data["success"] == 1, (
-                f"describe_table should return a valid response, got error: {data.get('error')}"
-            )
-            assert isinstance(data["result"], dict), f"Result should be a dict, got {type(data['result'])}"
-            columns = data["result"].get("columns", [])
-            assert len(columns) == 0, f"Nonexistent table should have 0 columns, got {len(columns)}"
+            assert data["success"] == 0, "describe_table with nonexistent table should return success=0"
+            assert "does not exist or has no columns" in data.get("error", "")
 
     async def test_large_result_set(self):
         """N10-08: Large query result is properly handled (compressed/truncated)."""

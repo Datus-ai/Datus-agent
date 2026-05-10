@@ -367,8 +367,9 @@ if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then
   export TRINO_PASSWORD=
   export TRINO_HTTP_SCHEME=http
 
+  export GREENPLUM_HOST_PORT="${GREENPLUM_HOST_PORT:-15434}"
   export GREENPLUM_HOST=localhost
-  export GREENPLUM_PORT=15432
+  export GREENPLUM_PORT="$GREENPLUM_HOST_PORT"
   export GREENPLUM_USER=gpadmin
   export GREENPLUM_PASSWORD=pivotal
   export GREENPLUM_DATABASE=postgres
@@ -523,6 +524,7 @@ log "AIRFLOW_URL=$AIRFLOW_URL AIRFLOW_HOST_PORT=$AIRFLOW_HOST_PORT"
 log "CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-} CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-} CLICKHOUSE_NATIVE_HOST_PORT=${CLICKHOUSE_NATIVE_HOST_PORT:-}"
 log "STARROCKS_HOST=${STARROCKS_HOST:-} STARROCKS_PORT=${STARROCKS_PORT:-} STARROCKS_HTTP_HOST_PORT=${STARROCKS_HTTP_HOST_PORT:-}"
 log "TRINO_HOST=${TRINO_HOST:-} TRINO_PORT=${TRINO_PORT:-}"
+log "GREENPLUM_HOST=${GREENPLUM_HOST:-} GREENPLUM_PORT=${GREENPLUM_PORT:-} GREENPLUM_HOST_PORT=${GREENPLUM_HOST_PORT:-}"
 if [ -n "$NIGHTLY_GROUP_FILTER" ]; then
   log "NIGHTLY_GROUP_FILTER=$NIGHTLY_GROUP_FILTER"
 fi
@@ -540,7 +542,9 @@ run_logged "MCP Server Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJ
 
 run_logged "Gen Agent Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/agent/test_gen_semantic_model_agentic.py tests/integration/agent/test_gen_metrics_agentic.py tests/integration/agent/test_gen_ext_knowledge_agentic.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
 
-run_logged "Main Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/ --deselect tests/integration/tools/test_mcp_server.py --deselect tests/integration/agent/test_gen_semantic_model_agentic.py --deselect tests/integration/agent/test_gen_metrics_agentic.py --deselect tests/integration/agent/test_gen_ext_knowledge_agentic.py --deselect tests/integration/agent/test_gen_dashboard_agentic.py --deselect tests/integration/agent/test_scheduler_agentic.py --deselect tests/integration/tools/test_bi_dashboard.py --deselect tests/integration/adapters/test_postgresql.py --deselect tests/integration/adapters/test_mysql.py --deselect tests/integration/adapters/test_clickhouse.py --deselect tests/integration/adapters/test_starrocks.py --deselect tests/integration/adapters/test_trino.py --deselect tests/integration/adapters/test_greenplum.py --deselect tests/integration/adapters/test_hive.py --deselect tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300 --reruns 1 --reruns-delay 5 --dist=loadscope -n auto
+run_logged "Reference Template Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/tools/test_reference_template.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
+
+run_logged "Main Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/ --deselect tests/integration/tools/test_mcp_server.py --deselect tests/integration/agent/test_gen_semantic_model_agentic.py --deselect tests/integration/agent/test_gen_metrics_agentic.py --deselect tests/integration/agent/test_gen_ext_knowledge_agentic.py --deselect tests/integration/agent/test_gen_dashboard_agentic.py --deselect tests/integration/agent/test_scheduler_agentic.py --deselect tests/integration/tools/test_bi_dashboard.py --deselect tests/integration/tools/test_reference_template.py --deselect tests/integration/adapters/test_postgresql.py --deselect tests/integration/adapters/test_mysql.py --deselect tests/integration/adapters/test_clickhouse.py --deselect tests/integration/adapters/test_starrocks.py --deselect tests/integration/adapters/test_trino.py --deselect tests/integration/adapters/test_greenplum.py --deselect tests/integration/adapters/test_hive.py --deselect tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300 --reruns 1 --reruns-delay 5 --dist=loadscope -n auto
 
 run_compose_suite "Superset Nightly Tests" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
 
