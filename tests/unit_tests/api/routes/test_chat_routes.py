@@ -176,7 +176,7 @@ class TestStreamChat404Gate:
         request = StreamChatInput(message="hi", subagent_id="nonexistent_xyz")
 
         with pytest.raises(HTTPException) as exc_info:
-            await stream_chat(request, svc, ctx)
+            await stream_chat(request, svc, ctx, MagicMock())
 
         assert exc_info.value.status_code == 404
         assert "nonexistent_xyz" in exc_info.value.detail
@@ -190,7 +190,7 @@ class TestStreamChat404Gate:
         request = StreamChatInput(message="hi", subagent_id=None)
 
         # Should not raise — returns a StreamingResponse.
-        response = await stream_chat(request, svc, ctx)
+        response = await stream_chat(request, svc, ctx, MagicMock())
         assert response is not None
 
     @pytest.mark.asyncio
@@ -200,5 +200,5 @@ class TestStreamChat404Gate:
         ctx = MagicMock(user_id="u1")
         request = StreamChatInput(message="hi", subagent_id="gen_sql")
 
-        response = await stream_chat(request, svc, ctx)
+        response = await stream_chat(request, svc, ctx, MagicMock())
         assert response is not None

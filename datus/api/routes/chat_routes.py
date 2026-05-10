@@ -10,13 +10,20 @@ DatusService.task_manager) to run the agentic loop in a background
 asyncio.Task so that client disconnects do not cancel the computation.
 """
 
-from typing import Annotated, Optional
+import asyncio
+from typing import Annotated, AsyncGenerator, Optional
 
-from fastapi import APIRouter, HTTPException, Path, Query
+from fastapi import APIRouter, HTTPException, Path, Query, Request
 from fastapi.responses import StreamingResponse
 
 from datus.api.constants import BUILTIN_SUBAGENTS
 from datus.api.deps import AppContextDep, ServiceDep
+from datus.api.hooks import (
+    ChatHooks,
+    ChatPostUsageContext,
+    ChatPreCheckOutcome,
+    get_chat_hooks,
+)
 from datus.api.models.base_models import Result
 from datus.api.models.chat_models import (
     ResumeChatInput,
@@ -30,10 +37,16 @@ from datus.api.models.cli_models import (
     CompactSessionData,
     CompactSessionInput,
     FeedbackChatInput,
+    SSEErrorData,
+    SSEEvent,
     StreamChatInput,
     UserInteractionInput,
 )
 from datus.utils.feedback_prompt import build_reaction_feedback_prompt
+from datus.utils.loggings import get_logger
+from datus.utils.time_utils import now_utc_iso
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
@@ -74,6 +87,7 @@ async def stream_chat(
     request: StreamChatInput,
     svc: ServiceDep,
     ctx: AppContextDep,
+    http_request: Request,
 ):
     sub_agent_id = request.subagent_id
     if sub_agent_id and not _is_valid_subagent_id(svc, sub_agent_id):
@@ -82,9 +96,27 @@ async def stream_chat(
             detail=f"Subagent '{sub_agent_id}' not found",
         )
 
+    hooks = get_chat_hooks()
+    pre_outcome = await _run_pre_chat_hook(hooks, http_request, request, ctx.user_id)
+    if pre_outcome and not pre_outcome.allow:
+        return StreamingResponse(
+            _emit_pre_check_denial(request, pre_outcome),
+            media_type="text/event-stream",
+            headers=_sse_headers(),
+        )
+
+    pre_extra = pre_outcome.extra if pre_outcome else {}
+
     async def generate_sse():
-        async for event in svc.chat.stream_chat(request, sub_agent_id=sub_agent_id, user_id=ctx.user_id):
-            yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
+        async for chunk in _stream_with_post_hook(
+            svc.chat.stream_chat(request, sub_agent_id=sub_agent_id, user_id=ctx.user_id),
+            http_request=http_request,
+            request=request,
+            user_id=ctx.user_id,
+            hooks=hooks,
+            pre_extra=pre_extra,
+        ):
+            yield chunk
 
     return StreamingResponse(generate_sse(), media_type="text/event-stream", headers=_sse_headers())
 
@@ -331,3 +363,120 @@ def _sse_headers() -> dict:
         "Access-Control-Allow-Origin": "*",
         "Content-Type": "text/event-stream; charset=utf-8",
     }
+
+
+# --------------------------------------------------------------------
+# Hook integration helpers
+# --------------------------------------------------------------------
+
+
+async def _run_pre_chat_hook(
+    hooks: Optional[ChatHooks],
+    http_request: Request,
+    request: StreamChatInput,
+    user_id: Optional[str],
+) -> Optional[ChatPreCheckOutcome]:
+    """Invoke the pre-chat hook and translate exceptions into a denial.
+
+    A hook that raises is treated as a server-error denial; we never
+    fail-open here, because the host registered the hook precisely to
+    gate access (e.g. credit balance).
+    """
+    if hooks is None:
+        return None
+    try:
+        outcome = await hooks.pre_chat(http_request, request, user_id)
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.error("pre_chat hook failed: %s", exc, exc_info=True)
+        return ChatPreCheckOutcome(
+            allow=False,
+            error="Server error, please try again later.",
+            error_type="PRE_CHAT_HOOK_ERROR",
+        )
+    if outcome is None:
+        return ChatPreCheckOutcome(allow=True)
+    return outcome
+
+
+async def _emit_pre_check_denial(
+    request: StreamChatInput,
+    outcome: ChatPreCheckOutcome,
+) -> AsyncGenerator[str, None]:
+    """Emit a single SSE error event reflecting a pre-check denial."""
+    error_payload = SSEErrorData(
+        error=outcome.error or "Request denied",
+        error_type=outcome.error_type or "PRE_CHAT_DENIED",
+        session_id=request.session_id,
+    )
+    event = SSEEvent(id=1, event="error", data=error_payload, timestamp=now_utc_iso())
+    yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
+
+
+async def _stream_with_post_hook(
+    upstream: AsyncGenerator[SSEEvent, None],
+    *,
+    http_request: Request,
+    request: StreamChatInput,
+    user_id: Optional[str],
+    hooks: Optional[ChatHooks],
+    pre_extra: dict,
+) -> AsyncGenerator[str, None]:
+    """Forward SSE events while capturing usage for the post-chat hook.
+
+    The post hook is dispatched as a background task in ``finally`` so the
+    response stream is never blocked waiting for billing to acknowledge.
+    """
+    last_end_event: Optional[SSEEvent] = None
+    captured_error: Optional[BaseException] = None
+
+    try:
+        async for event in upstream:
+            if event.event == "end":
+                last_end_event = event
+            yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
+    except BaseException as exc:
+        captured_error = exc
+        raise
+    finally:
+        if hooks is not None:
+            usage_dict: dict = {}
+            session_id_value: Optional[str] = request.session_id
+            if last_end_event is not None:
+                # SSEEndData fields cover requests / *_tokens / duration.
+                usage_dict = last_end_event.data.model_dump()
+                session_id_value = usage_dict.get("session_id") or session_id_value
+
+            ctx = ChatPostUsageContext(
+                user_id=user_id,
+                session_id=session_id_value,
+                model=request.model,
+                usage=usage_dict,
+                error=str(captured_error) if captured_error else None,
+                pre_check_extra=dict(pre_extra),
+            )
+
+            try:
+                asyncio.create_task(
+                    _safe_post_chat(hooks, http_request, request, ctx),
+                    name=f"chat-post-hook:{session_id_value or '-'}",
+                )
+            except Exception:  # pragma: no cover — defensive
+                logger.error("Failed to schedule post_chat hook", exc_info=True)
+
+
+async def _safe_post_chat(
+    hooks: ChatHooks,
+    http_request: Request,
+    request: StreamChatInput,
+    ctx: ChatPostUsageContext,
+) -> None:
+    """Run the post-chat hook and swallow exceptions.
+
+    The hook is owned by the host and is responsible for its own retry
+    policy; we only ensure that a misbehaving hook never crashes the
+    background task in a way that propagates uncaught.
+    """
+    try:
+        await hooks.post_chat(http_request, request, ctx)
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.error("post_chat hook raised: %s", exc, exc_info=True)
