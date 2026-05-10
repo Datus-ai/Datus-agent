@@ -6,12 +6,11 @@ hook integration in ``datus.api.routes.chat_routes.stream_chat``."""
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
 from datus.api.hooks import (
-    ChatHooks,
     ChatPostUsageContext,
     ChatPreCheckOutcome,
     get_chat_hooks,
@@ -58,17 +57,28 @@ class TestRegistry:
         assert outcome.allow is True
 
     def test_make_chat_hooks_default_post_is_noop(self):
+        """The default post hook returns ``None`` and never touches its inputs.
+
+        Sentinel asserts that the no-op default doesn't accidentally read from
+        or mutate the supplied request / payload — anything else here would
+        be a regression in ``make_chat_hooks``'s default branch.
+        """
         hooks = make_chat_hooks()
+        sentinel: list[str] = []
+        request = MagicMock()
+        # Mark the request as "untouched" — if the default branch ever
+        # decides to introspect headers / call methods, the assertion below
+        # against ``mock_calls`` would catch it.
+        ctx = ChatPostUsageContext(user_id="u1", session_id="s1", model=None, usage={})
 
         async def _run():
-            await hooks.post_chat(
-                MagicMock(),
-                StreamChatInput(message="hi"),
-                ChatPostUsageContext(user_id="u1", session_id="s1", model=None, usage={}),
-            )
+            return await hooks.post_chat(request, StreamChatInput(message="hi"), ctx)
 
-        # Just confirm it does not raise.
-        asyncio.run(_run())
+        result = asyncio.run(_run())
+
+        assert result is None
+        assert sentinel == []
+        assert request.mock_calls == []
 
 
 class TestStreamChatPreHookDenial:

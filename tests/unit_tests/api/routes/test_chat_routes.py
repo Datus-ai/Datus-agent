@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
+from fastapi.responses import StreamingResponse
 
 from datus.api.models.cli_models import StreamChatInput, UserInteractionInput
 from datus.api.routes.chat_routes import (
@@ -189,9 +190,11 @@ class TestStreamChat404Gate:
         ctx = MagicMock(user_id="u1")
         request = StreamChatInput(message="hi", subagent_id=None)
 
-        # Should not raise — returns a StreamingResponse.
         response = await stream_chat(request, svc, ctx, MagicMock())
-        assert response is not None
+
+        assert isinstance(response, StreamingResponse)
+        assert response.status_code == 200
+        assert response.media_type == "text/event-stream"
 
     @pytest.mark.asyncio
     async def test_valid_builtin_passes_gate(self):
@@ -201,4 +204,7 @@ class TestStreamChat404Gate:
         request = StreamChatInput(message="hi", subagent_id="gen_sql")
 
         response = await stream_chat(request, svc, ctx, MagicMock())
-        assert response is not None
+
+        assert isinstance(response, StreamingResponse)
+        assert response.status_code == 200
+        assert response.media_type == "text/event-stream"
