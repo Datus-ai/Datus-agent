@@ -603,8 +603,7 @@ class AgentConfig:
         # are picked up on the next service-cache miss.
         model_extras_raw = kwargs.get("model_extras") or {}
         self.model_extras = {
-            str(name): dict(extras) if isinstance(extras, dict) else {}
-            for name, extras in model_extras_raw.items()
+            str(name): dict(extras) if isinstance(extras, dict) else {} for name, extras in model_extras_raw.items()
         }
         # Provider-level credentials (new schema). Empty when the user has not
         # migrated to the ``agent.providers`` section; legacy ``agent.models``
