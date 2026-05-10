@@ -142,6 +142,9 @@ class DateParserTool(BaseTool):
         has_previous_period = any(token in text for token in previous_week_tokens)
         has_next_period = any(token in text for token in next_week_tokens)
 
+        if self._has_weekday_specific_period(text, previous_week_tokens + next_week_tokens):
+            return None
+
         if has_previous_period and has_next_period:
             return None
 
@@ -154,6 +157,41 @@ class DateParserTool(BaseTool):
             return start_date, start_date + timedelta(days=6)
 
         return None
+
+    def _has_weekday_specific_period(self, text: str, period_tokens: Tuple[str, ...]) -> bool:
+        weekday_suffixes = ("一", "二", "三", "四", "五", "六", "日", "天")
+        weekday_prefixes = ("周", "星期")
+
+        for token in period_tokens:
+            search_start = 0
+            while True:
+                token_index = text.find(token, search_start)
+                if token_index == -1:
+                    break
+
+                remainder = text[token_index + len(token) :].lstrip()
+                if remainder.startswith(weekday_suffixes):
+                    return True
+
+                if any(
+                    remainder.startswith(f"{prefix}{suffix}")
+                    for prefix in weekday_prefixes
+                    for suffix in weekday_suffixes
+                ):
+                    return True
+
+                if remainder.startswith("的"):
+                    after_possessive = remainder[1:].lstrip()
+                    if any(
+                        after_possessive.startswith(f"{prefix}{suffix}")
+                        for prefix in weekday_prefixes
+                        for suffix in weekday_suffixes
+                    ):
+                        return True
+
+                search_start = token_index + len(token)
+
+        return False
 
     def parse_with_llm(
         self, text: str, reference_date: datetime, model: LLMBaseModel

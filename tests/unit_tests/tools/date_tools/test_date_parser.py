@@ -181,6 +181,24 @@ class TestParseTemporalExpression:
         assert result.end_date == "2025-02-23"
         assert result.date_type == "range"
 
+    def test_zh_weekday_specific_week_expression_falls_back_to_llm(self):
+        tool = _make_zh_tool()
+        mock_model = MagicMock()
+        reference_date = datetime(2025, 2, 15)
+        start = datetime(2025, 2, 17)
+        end = datetime(2025, 2, 17)
+
+        for original_text in ("下周一的会议", "上星期三的记录", "下周的周一计划"):
+            expression = {"original_text": original_text, "date_type": "relative", "confidence": 0.9}
+            with patch.object(tool, "parse_with_llm", return_value=(start, end)) as mock_parse:
+                result = tool.parse_temporal_expression(expression, reference_date, mock_model)
+
+            mock_parse.assert_called_once_with(original_text, reference_date, mock_model)
+            assert result is not None
+            assert result.parsed_date == "2025-02-17"
+            assert result.start_date is None
+            assert result.end_date is None
+
 
 # ---------------------------------------------------------------------------
 # TestParseWithLlm
