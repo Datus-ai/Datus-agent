@@ -2136,11 +2136,11 @@ class TestSessionPersistence:
         assert "not found on disk" in result.error
 
     @pytest.mark.asyncio
-    async def test_failure_envelope_omits_session_id(self, task_tool):
-        """Subagent failures return a clean error envelope without session_id —
-        callers know which id they sent and the failed run still leaves a (partial)
-        .db on disk should they wish to retry."""
+    async def test_failure_envelope_carries_session_id(self, task_tool):
+        """Subagent failures still expose session_id under `result` so the parent
+        can resume the partial subagent session (its .db is kept alive on disk)."""
         node = _build_persistent_mock_node(
+            session_id_to_assign="gen_sql_session_failed01",
             output={"success": False, "error": "broken"},
             status=ActionStatus.FAILED,
         )
@@ -2148,7 +2148,46 @@ class TestSessionPersistence:
             with patch.object(task_tool, "_build_node_input", return_value=Mock()):
                 result = await task_tool.task(type="gen_sql", prompt="x")
         assert result.success == 0
-        # Failure envelope: result is None, session_id never injected.
+        assert result.error  # subagent error surfaced
+        assert result.result == {"session_id": "gen_sql_session_failed01"}
+
+    @pytest.mark.asyncio
+    async def test_stream_exception_returns_session_id(self, task_tool):
+        """Mid-stream exceptions (e.g. MaxTurnsExceeded) must NOT propagate out
+        of the task tool. They are converted into a failure envelope that still
+        carries the subagent's session_id so the parent can resume the partial
+        run with `task(session_id=..., prompt=...)`."""
+        node = _build_persistent_mock_node(session_id_to_assign="gen_sql_session_maxturn1")
+
+        async def _exploding_stream(_ahm):
+            # Yield nothing — raise immediately, the way Runner propagates
+            # MaxTurnsExceeded wrapped as DatusException upward.
+            raise RuntimeError("Max turns exceeded: 30")
+            yield  # pragma: no cover — make this a generator function
+
+        node.execute_stream = _exploding_stream
+        node.execute_stream_with_interactions = _exploding_stream
+
+        with patch.object(task_tool, "_create_node", return_value=node):
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                result = await task_tool.task(type="gen_sql", prompt="long task")
+
+        assert result.success == 0
+        assert "Subagent stream failed" in result.error
+        assert "Max turns exceeded" in result.error
+        assert result.result == {"session_id": "gen_sql_session_maxturn1"}
+        # Session handle release still ran in finally — partial .db survives on disk.
+        node._session_manager.close_all_sessions.assert_called_once()
+        node._session_manager.delete_session.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_node_creation_failure_omits_session_id(self, task_tool):
+        """When the node never gets created (e.g. _create_node raises), there is
+        no session_id to surface — the failure envelope's `result` stays None."""
+        with patch.object(task_tool, "_create_node", side_effect=RuntimeError("init boom")):
+            result = await task_tool.task(type="gen_sql", prompt="x")
+        assert result.success == 0
+        assert "Task execution failed" in result.error
         assert result.result is None
 
     @pytest.mark.asyncio

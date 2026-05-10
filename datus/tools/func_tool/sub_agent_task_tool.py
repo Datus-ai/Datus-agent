@@ -698,9 +698,20 @@ class SubAgentTaskTool:
                             final_output = action.output
                     elif action.status == ActionStatus.SUCCESS and action.output:
                         final_output = action.output
-            except Exception:
+            except Exception as e:
+                # Surface the failure as an envelope (not a re-raise) so the
+                # parent agent can resume the partial subagent session via
+                # the returned session_id — e.g. when MaxTurnsExceeded
+                # interrupts a long workflow mid-task.
                 subagent_status = ActionStatus.FAILED
-                raise
+                logger.error(
+                    "Subagent stream error (type=%s, session_id=%s): %s",
+                    subagent_type,
+                    getattr(node, "session_id", None),
+                    e,
+                    exc_info=True,
+                )
+                final_output = {"success": False, "error": f"Subagent stream failed: {e}"}
             finally:
                 self._emit_complete_action(subagent_type, call_id, stream_start_time, tool_count, subagent_status)
                 # Release in-memory handles WITHOUT deleting the .db file — the parent
@@ -871,19 +882,26 @@ class SubAgentTaskTool:
         """Convert AgenticNode output to FuncToolResult.
 
         ``session_id`` is the subagent's session_id; when provided, it is
-        injected into every successful result dict so the parent LLM can
-        pass it back on a later task() call to resume the conversation.
-        Failure envelopes intentionally omit it.
+        injected into every result envelope — successful results carry it
+        inline alongside the payload, and failure envelopes carry it under
+        ``result`` so the parent LLM can resume the partial session
+        (e.g. after a MaxTurnsExceeded interruption) by passing it back
+        to a later task() call.
         """
+
+        def _failure(error_msg: str) -> FuncToolResult:
+            # Carry session_id under `result` so the parent can resume the
+            # partial subagent session. ``result`` is None when no session
+            # was created (e.g. errors raised before node construction).
+            result_payload = {"session_id": session_id} if session_id else None
+            return FuncToolResult(success=0, error=error_msg, result=result_payload)
+
         if not output or not isinstance(output, dict):
-            return FuncToolResult(success=0, error="No result from subagent")
+            return _failure("No result from subagent")
 
         # Check for explicit failure from subagent
         if output.get("success") is False:
-            return FuncToolResult(
-                success=0,
-                error=output.get("error") or output.get("response") or output.get("content", "Subagent failed"),
-            )
+            return _failure(output.get("error") or output.get("response") or output.get("content", "Subagent failed"))
 
         response = output.get("response", "")
         tokens = output.get("tokens_used", 0)
@@ -1055,11 +1073,14 @@ class SubAgentTaskTool:
                 '- For complex questions requiring deep exploration, call multiple task(type="explore") '
                 "in PARALLEL, each with a direction-specific prompt (schema+sample, knowledge, file)",
                 '- For quick single-direction lookups, call one task(type="explore") with a focused prompt',
-                "- Each successful task() result includes a 'session_id'. To CONTINUE refining a "
-                "prior subagent answer with full prior context (its previous SQL, schema "
-                "discoveries, reasoning), pass that session_id back as the task's 'session_id' "
-                "argument and put ONLY the diff/clarification in 'prompt' — do not re-state the "
-                "original problem. The session_id MUST be reused with the SAME 'type'.",
+                "- Each task() result — successful OR failed — includes a 'session_id' once the "
+                "subagent has started running. On success the id sits at top level of 'result'; "
+                "on failure (including MaxTurnsExceeded mid-run) it sits at 'result.session_id' "
+                "alongside the error. To CONTINUE refining a prior answer or to RESUME a "
+                "partial run with full prior context (its previous SQL, schema discoveries, "
+                "reasoning), pass that session_id back as the task's 'session_id' argument and "
+                "put ONLY the diff/clarification in 'prompt' — do not re-state the original "
+                "problem. The session_id MUST be reused with the SAME 'type'.",
                 "- Iterate-on-gen_sql example:",
                 '    Turn 1: task(type="gen_sql", prompt="Top 10 customers by revenue last quarter",',
                 '              description="customer revenue ranking")',
