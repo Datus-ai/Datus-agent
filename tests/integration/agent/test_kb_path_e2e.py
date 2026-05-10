@@ -17,6 +17,7 @@ Configured via tests/conf/agent.yml + datasource=bird_school. Auto-skips when th
 required SQLite database or DEEPSEEK_API_KEY is missing.
 """
 
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -53,9 +54,8 @@ def kb_home_tmp(nightly_agent_config, tmp_path):
 
 @pytest.mark.nightly
 class TestKnowledgeBaseHomeE2E:
-    @pytest.mark.asyncio
     @pytest.mark.timeout(600)
-    async def test_semantic_model_lands_under_typed_subdir(self, nightly_agent_config, kb_home_tmp, caplog):
+    def test_semantic_model_lands_under_typed_subdir(self, nightly_agent_config, kb_home_tmp, caplog):
         """
         Real LLM runs the gen_semantic_model workflow; we then walk the KB tree
         and verify the produced YAMLs are under semantic_models/<db>/, not at
@@ -75,8 +75,10 @@ class TestKnowledgeBaseHomeE2E:
         # ``subject/``) so the LLM can navigate all three KB subfolders via
         # ``subject/<kind>/…`` relative paths. ``kb_home_tmp`` equals
         # ``{project_root}/subject`` — the parent is the filesystem sandbox.
-        assert node.filesystem_func_tool is not None
-        assert node.filesystem_func_tool.config.root_path == str(kb_home_tmp.parent)
+        filesystem_tool = node.filesystem_func_tool
+        if filesystem_tool is None:
+            raise AssertionError("Gen semantic model node should expose a filesystem tool")
+        assert filesystem_tool.config.root_path == str(kb_home_tmp.parent)
 
         node.input = SemanticNodeInput(
             user_message=(
@@ -88,10 +90,15 @@ class TestKnowledgeBaseHomeE2E:
         )
 
         action_manager = ActionHistoryManager()
-        with caplog.at_level(logging.INFO):
+
+        async def _collect_actions():
             actions = []
             async for action in node.execute_stream(action_manager):
                 actions.append(action)
+            return actions
+
+        with caplog.at_level(logging.INFO):
+            actions = asyncio.run(_collect_actions())
 
         assert len(actions) >= 2, f"Expected at least 2 actions, got {len(actions)}"
         assert actions[0].role == ActionRole.USER
