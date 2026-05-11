@@ -5,6 +5,10 @@ on:
     - cron: '0 20 * * *' # 20:00 UTC daily (offset from integration at 18:00 UTC)
   workflow_dispatch: # Allow manual trigger
 
+concurrency:
+  group: datus-agent-nightly
+  cancel-in-progress: false
+
 jobs:
   run-nightly:
     runs-on: self-hosted
@@ -219,6 +223,28 @@ jobs:
           echo "ADAPTERS_GP=1" >> $GITHUB_ENV
           echo "ADAPTERS_HIVE=1" >> $GITHUB_ENV
           echo "ADAPTERS_SPARK=1" >> $GITHUB_ENV
+
+          # Use dedicated high host ports so nightly compose suites do not
+          # collide with long-running services on the shared self-hosted runner.
+          echo "NIGHTLY_COMPOSE_PROJECT_PREFIX=datus-nightly-" >> $GITHUB_ENV
+          echo "SUPERSET_PORT=18088" >> $GITHUB_ENV
+          echo "SUPERSET_POSTGRES_PORT=15433" >> $GITHUB_ENV
+          echo "SUPERSET_URL=http://127.0.0.1:18088" >> $GITHUB_ENV
+          echo "AIRFLOW_HOST_PORT=18080" >> $GITHUB_ENV
+          echo "AIRFLOW_URL=http://127.0.0.1:18080/api/v1" >> $GITHUB_ENV
+          echo "POSTGRESQL_HOST_PORT=25432" >> $GITHUB_ENV
+          echo "MYSQL_HOST_PORT=23306" >> $GITHUB_ENV
+          echo "CLICKHOUSE_HTTP_HOST_PORT=28123" >> $GITHUB_ENV
+          echo "CLICKHOUSE_NATIVE_HOST_PORT=29000" >> $GITHUB_ENV
+          echo "STARROCKS_QUERY_HOST_PORT=29030" >> $GITHUB_ENV
+          echo "STARROCKS_HTTP_HOST_PORT=28030" >> $GITHUB_ENV
+          echo "TRINO_HOST_PORT=28080" >> $GITHUB_ENV
+          echo "GREENPLUM_HOST_PORT=15434" >> $GITHUB_ENV
+          echo "HIVE_METASTORE_HOST_PORT=29083" >> $GITHUB_ENV
+          echo "HIVE_THRIFT_HOST_PORT=21000" >> $GITHUB_ENV
+          echo "HIVE_WEBUI_HOST_PORT=21002" >> $GITHUB_ENV
+          echo "SPARK_THRIFT_HOST_PORT=31000" >> $GITHUB_ENV
+          echo "SPARK_UI_HOST_PORT=24040" >> $GITHUB_ENV
 
       - name: Set up Node.js
         uses: actions/setup-node@v6

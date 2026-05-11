@@ -15,6 +15,7 @@ NIGHTLY_GROUP_FILTER="${NIGHTLY_GROUP_FILTER:-}"
 AGENT_TEST_CONFIG="${AGENT_TEST_CONFIG:-tests/conf/agent.yml}"
 DATUS_TEST_PROJECT_NAME="${DATUS_TEST_PROJECT_NAME:-datus_agent_nightly}"
 export DATUS_TEST_PROJECT_NAME
+NIGHTLY_COMPOSE_PROJECT_PREFIX="${NIGHTLY_COMPOSE_PROJECT_PREFIX:-datus-nightly-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-}"
 
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(cd "${REPO_ROOT}/.." && pwd)}"
 EXTERNAL_REPOS_ROOT="${EXTERNAL_REPOS_ROOT:-${REPO_ROOT}/external}"
@@ -199,9 +200,49 @@ docker_compose() {
   fi
 }
 
+compose_project_slug() {
+  local group_name="$1"
+
+  case "$group_name" in
+    "Superset Nightly Tests") echo "superset" ;;
+    "Airflow Nightly Tests") echo "airflow" ;;
+    "PostgreSQL Adapter Tests") echo "postgresql" ;;
+    "MySQL Adapter Tests") echo "mysql" ;;
+    "ClickHouse Adapter Tests") echo "clickhouse" ;;
+    "StarRocks Adapter Tests") echo "starrocks" ;;
+    "Trino Adapter Tests") echo "trino" ;;
+    "Greenplum Adapter Tests") echo "greenplum" ;;
+    "Hive Adapter Tests") echo "hive" ;;
+    "Spark Adapter Tests") echo "spark" ;;
+    *)
+      echo "$group_name" \
+        | tr '[:upper:]' '[:lower:]' \
+        | sed -E 's/[^a-z0-9_-]+/-/g; s/^-+//; s/-+$//'
+      ;;
+  esac
+}
+
+compose_project_name() {
+  local group_name="$1"
+  local project_name="${NIGHTLY_COMPOSE_PROJECT_PREFIX}$(compose_project_slug "$group_name")"
+
+  echo "$project_name" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9_-]+/-/g; s/^-+//'
+}
+
+compose_cmd() {
+  local project_name="$1"
+  local compose_file="$2"
+  shift 2
+
+  docker_compose -p "$project_name" -f "$compose_file" "$@"
+}
+
 compose_down() {
   local compose_file="$1"
-  docker_compose -f "$compose_file" down -v --remove-orphans >/dev/null 2>&1 || true
+  local project_name="$2"
+  compose_cmd "$project_name" "$compose_file" down -v --remove-orphans >/dev/null 2>&1 || true
 }
 
 cleanup_all_compose() {
@@ -210,11 +251,27 @@ cleanup_all_compose() {
     echo "Docker Compose is not available; skipping compose cleanup"
     return 0
   fi
+  local group_name
   local compose_file
-  for compose_file in "${COMPOSE_FILES[@]}"; do
+  local project_name
+  for group_name in "${COMPOSE_GROUPS[@]}"; do
+    case "$group_name" in
+      "Superset Nightly Tests") compose_file="$SUPERSET_COMPOSE" ;;
+      "Airflow Nightly Tests") compose_file="$AIRFLOW_COMPOSE" ;;
+      "PostgreSQL Adapter Tests") compose_file="$POSTGRES_COMPOSE" ;;
+      "MySQL Adapter Tests") compose_file="$MYSQL_COMPOSE" ;;
+      "ClickHouse Adapter Tests") compose_file="$CLICKHOUSE_COMPOSE" ;;
+      "StarRocks Adapter Tests") compose_file="$STARROCKS_COMPOSE" ;;
+      "Trino Adapter Tests") compose_file="$TRINO_COMPOSE" ;;
+      "Greenplum Adapter Tests") compose_file="$GREENPLUM_COMPOSE" ;;
+      "Hive Adapter Tests") compose_file="$HIVE_COMPOSE" ;;
+      "Spark Adapter Tests") compose_file="$SPARK_COMPOSE" ;;
+      *) continue ;;
+    esac
     if [ -f "$compose_file" ]; then
-      echo "Stopping services from $compose_file"
-      docker_compose -f "$compose_file" down -v --remove-orphans || true
+      project_name="$(compose_project_name "$group_name")"
+      echo "Stopping services from $compose_file (project=$project_name)"
+      compose_cmd "$project_name" "$compose_file" down -v --remove-orphans || true
     fi
   done
 }
@@ -397,13 +454,13 @@ export ADAPTERS_TRINO="${ADAPTERS_TRINO:-1}"
 export ADAPTERS_GP="${ADAPTERS_GP:-1}"
 export ADAPTERS_HIVE="${ADAPTERS_HIVE:-1}"
 export ADAPTERS_SPARK="${ADAPTERS_SPARK:-1}"
-export SUPERSET_PORT="${SUPERSET_PORT:-8088}"
+export SUPERSET_PORT="${SUPERSET_PORT:-18088}"
 export SUPERSET_POSTGRES_HOST="${SUPERSET_POSTGRES_HOST:-127.0.0.1}"
-export SUPERSET_POSTGRES_PORT="${SUPERSET_POSTGRES_PORT:-5433}"
+export SUPERSET_POSTGRES_PORT="${SUPERSET_POSTGRES_PORT:-15433}"
 export SUPERSET_URL="${SUPERSET_URL:-http://127.0.0.1:${SUPERSET_PORT}}"
 export SUPERSET_USER="${SUPERSET_USER:-admin}"
 export SUPERSET_PASS="${SUPERSET_PASS:-admin}"
-export AIRFLOW_HOST_PORT="${AIRFLOW_HOST_PORT:-8080}"
+export AIRFLOW_HOST_PORT="${AIRFLOW_HOST_PORT:-18080}"
 export AIRFLOW_URL="${AIRFLOW_URL:-http://127.0.0.1:${AIRFLOW_HOST_PORT}/api/v1}"
 export AIRFLOW_USER="${AIRFLOW_USER:-admin}"
 export AIRFLOW_USERNAME="${AIRFLOW_USERNAME:-$AIRFLOW_USER}"
@@ -411,28 +468,30 @@ export AIRFLOW_PASSWORD="${AIRFLOW_PASSWORD:-admin}"
 
 if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then
   export POSTGRESQL_HOST=localhost
-  export POSTGRESQL_PORT=5432
+  export POSTGRESQL_HOST_PORT="${POSTGRESQL_HOST_PORT:-25432}"
+  export POSTGRESQL_PORT="$POSTGRESQL_HOST_PORT"
   export POSTGRESQL_USER=test_user
   export POSTGRESQL_PASSWORD=test_password
   export POSTGRESQL_DATABASE=test
   export POSTGRESQL_SCHEMA=public
 
   export MYSQL_HOST=localhost
-  export MYSQL_PORT=3306
+  export MYSQL_HOST_PORT="${MYSQL_HOST_PORT:-23306}"
+  export MYSQL_PORT="$MYSQL_HOST_PORT"
   export MYSQL_USER=test_user
   export MYSQL_PASSWORD=test_password
   export MYSQL_DATABASE=test
 
-  export CLICKHOUSE_HTTP_HOST_PORT="${CLICKHOUSE_HTTP_HOST_PORT:-8123}"
-  export CLICKHOUSE_NATIVE_HOST_PORT="${CLICKHOUSE_NATIVE_HOST_PORT:-9000}"
+  export CLICKHOUSE_HTTP_HOST_PORT="${CLICKHOUSE_HTTP_HOST_PORT:-28123}"
+  export CLICKHOUSE_NATIVE_HOST_PORT="${CLICKHOUSE_NATIVE_HOST_PORT:-29000}"
   export CLICKHOUSE_HOST=127.0.0.1
   export CLICKHOUSE_PORT="$CLICKHOUSE_HTTP_HOST_PORT"
   export CLICKHOUSE_USER=default_user
   export CLICKHOUSE_PASSWORD=default_test
   export CLICKHOUSE_DATABASE=default_test
 
-  export STARROCKS_QUERY_HOST_PORT="${STARROCKS_QUERY_HOST_PORT:-9030}"
-  export STARROCKS_HTTP_HOST_PORT="${STARROCKS_HTTP_HOST_PORT:-8030}"
+  export STARROCKS_QUERY_HOST_PORT="${STARROCKS_QUERY_HOST_PORT:-29030}"
+  export STARROCKS_HTTP_HOST_PORT="${STARROCKS_HTTP_HOST_PORT:-28030}"
   export STARROCKS_HOST=127.0.0.1
   export STARROCKS_PORT="$STARROCKS_QUERY_HOST_PORT"
   export STARROCKS_USER=root
@@ -447,7 +506,7 @@ if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then
   export TRINO_PASSWORD=
   export TRINO_HTTP_SCHEME=http
 
-  export GREENPLUM_HOST_PORT="${GREENPLUM_HOST_PORT:-15432}"
+  export GREENPLUM_HOST_PORT="${GREENPLUM_HOST_PORT:-15434}"
   export GREENPLUM_HOST=localhost
   export GREENPLUM_PORT="$GREENPLUM_HOST_PORT"
   export GREENPLUM_USER=gpadmin
@@ -455,14 +514,19 @@ if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then
   export GREENPLUM_DATABASE=postgres
   export GREENPLUM_SCHEMA=public
 
+  export HIVE_METASTORE_HOST_PORT="${HIVE_METASTORE_HOST_PORT:-29083}"
+  export HIVE_THRIFT_HOST_PORT="${HIVE_THRIFT_HOST_PORT:-21000}"
+  export HIVE_WEBUI_HOST_PORT="${HIVE_WEBUI_HOST_PORT:-21002}"
   export HIVE_HOST=localhost
-  export HIVE_PORT=10000
+  export HIVE_PORT="$HIVE_THRIFT_HOST_PORT"
   export HIVE_USERNAME=hive
   export HIVE_PASSWORD=
   export HIVE_DATABASE=default
 
+  export SPARK_THRIFT_HOST_PORT="${SPARK_THRIFT_HOST_PORT:-31000}"
+  export SPARK_UI_HOST_PORT="${SPARK_UI_HOST_PORT:-24040}"
   export SPARK_HOST=localhost
-  export SPARK_PORT=10000
+  export SPARK_PORT="$SPARK_THRIFT_HOST_PORT"
   export SPARK_USER=spark
   export SPARK_PASSWORD=
   export SPARK_DATABASE=default
@@ -526,14 +590,15 @@ run_logged_warn_only() {
 }
 
 compose_up() {
-  local compose_file="$1"
-  shift
+  local project_name="$1"
+  local compose_file="$2"
+  shift 2
   if [ ! -f "$compose_file" ]; then
     echo "Missing compose file: $compose_file" | tee -a "$LOG_FILE" >&2
     test_exit_code=1
     return 1
   fi
-  docker_compose -f "$compose_file" up -d --build "$@" 2>&1 | tee -a "$LOG_FILE"
+  compose_cmd "$project_name" "$compose_file" up -d --build "$@" 2>&1 | tee -a "$LOG_FILE"
   local cmd_status=${PIPESTATUS[0]}
   if [ "$cmd_status" -ne 0 ]; then
     test_exit_code="$cmd_status"
@@ -543,18 +608,19 @@ compose_up() {
 }
 
 wait_for_service_health() {
-  local compose_file="$1"
-  local service_name="$2"
-  local timeout_seconds="$3"
+  local project_name="$1"
+  local compose_file="$2"
+  local service_name="$3"
+  local timeout_seconds="$4"
   local container_id=""
   local has_health=""
   local status=""
   local deadline=$((SECONDS + timeout_seconds))
 
-  container_id="$(docker_compose -f "$compose_file" ps -q "$service_name")"
+  container_id="$(compose_cmd "$project_name" "$compose_file" ps -q "$service_name")"
   if [ -z "$container_id" ]; then
-    echo "No container found for service '$service_name' in $compose_file" | tee -a "$LOG_FILE" >&2
-    docker_compose -f "$compose_file" ps 2>&1 | tee -a "$LOG_FILE" || true
+    echo "No container found for service '$service_name' in $compose_file (project=$project_name)" | tee -a "$LOG_FILE" >&2
+    compose_cmd "$project_name" "$compose_file" ps 2>&1 | tee -a "$LOG_FILE" || true
     test_exit_code=1
     return 1
   fi
@@ -573,21 +639,118 @@ wait_for_service_health() {
     sleep 5
   done
 
-  echo "Timed out waiting for service '$service_name' from $compose_file" | tee -a "$LOG_FILE" >&2
-  docker_compose -f "$compose_file" ps 2>&1 | tee -a "$LOG_FILE" || true
-  docker_compose -f "$compose_file" logs --tail=200 2>&1 | tee -a "$LOG_FILE" || true
+  echo "Timed out waiting for service '$service_name' from $compose_file (project=$project_name)" | tee -a "$LOG_FILE" >&2
+  compose_cmd "$project_name" "$compose_file" ps 2>&1 | tee -a "$LOG_FILE" || true
+  compose_cmd "$project_name" "$compose_file" logs --tail=200 2>&1 | tee -a "$LOG_FILE" || true
   test_exit_code=1
   return 1
 }
 
 dump_compose_diagnostics() {
-  local compose_file="$1"
-  local group_name="$2"
+  local project_name="$1"
+  local compose_file="$2"
+  local group_name="$3"
 
   log ""
-  log "=== ${group_name} Service Diagnostics ==="
-  docker_compose -f "$compose_file" ps 2>&1 | tee -a "$LOG_FILE" || true
-  docker_compose -f "$compose_file" logs --tail=200 2>&1 | tee -a "$LOG_FILE" || true
+  log "=== ${group_name} Service Diagnostics (project=${project_name}) ==="
+  compose_cmd "$project_name" "$compose_file" ps 2>&1 | tee -a "$LOG_FILE" || true
+  compose_cmd "$project_name" "$compose_file" logs --tail=200 2>&1 | tee -a "$LOG_FILE" || true
+}
+
+can_bind_host_port() {
+  local port="$1"
+
+  python3 - "$port" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("0.0.0.0", port))
+finally:
+    sock.close()
+PY
+}
+
+log_host_port_owner() {
+  local port="$1"
+
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>&1 | tee -a "$LOG_FILE" || true
+  fi
+  if command -v ss >/dev/null 2>&1; then
+    ss -H -ltnp "sport = :$port" 2>&1 | tee -a "$LOG_FILE" || true
+  fi
+  if ! command -v lsof >/dev/null 2>&1 && ! command -v ss >/dev/null 2>&1; then
+    netstat -an 2>/dev/null | grep "[.:]${port}[[:space:]].*LISTEN" | tee -a "$LOG_FILE" || true
+  fi
+}
+
+compose_host_port_specs() {
+  local group_name="$1"
+
+  case "$group_name" in
+    "Superset Nightly Tests")
+      printf 'Superset web:%s\nSuperset PostgreSQL:%s\n' "${SUPERSET_PORT:-8088}" "${SUPERSET_POSTGRES_PORT:-5433}"
+      ;;
+    "Airflow Nightly Tests")
+      printf 'Airflow web:%s\n' "${AIRFLOW_HOST_PORT:-8080}"
+      ;;
+    "PostgreSQL Adapter Tests")
+      printf 'PostgreSQL:%s\n' "${POSTGRESQL_HOST_PORT:-${POSTGRESQL_PORT:-5432}}"
+      ;;
+    "MySQL Adapter Tests")
+      printf 'MySQL:%s\n' "${MYSQL_HOST_PORT:-${MYSQL_PORT:-3306}}"
+      ;;
+    "ClickHouse Adapter Tests")
+      printf 'ClickHouse HTTP:%s\nClickHouse native:%s\n' "${CLICKHOUSE_HTTP_HOST_PORT:-8123}" "${CLICKHOUSE_NATIVE_HOST_PORT:-9000}"
+      ;;
+    "StarRocks Adapter Tests")
+      printf 'StarRocks query:%s\nStarRocks HTTP:%s\n' "${STARROCKS_QUERY_HOST_PORT:-9030}" "${STARROCKS_HTTP_HOST_PORT:-8030}"
+      ;;
+    "Trino Adapter Tests")
+      printf 'Trino HTTP:%s\n' "${TRINO_HOST_PORT:-8080}"
+      ;;
+    "Greenplum Adapter Tests")
+      printf 'Greenplum:%s\n' "${GREENPLUM_HOST_PORT:-15432}"
+      ;;
+    "Hive Adapter Tests")
+      printf 'Hive metastore:%s\nHive thrift:%s\nHive web UI:%s\n' "${HIVE_METASTORE_HOST_PORT:-9083}" "${HIVE_THRIFT_HOST_PORT:-10000}" "${HIVE_WEBUI_HOST_PORT:-10002}"
+      ;;
+    "Spark Adapter Tests")
+      printf 'Spark thrift:%s\nSpark UI:%s\n' "${SPARK_THRIFT_HOST_PORT:-10000}" "${SPARK_UI_HOST_PORT:-4040}"
+      ;;
+  esac
+}
+
+check_compose_host_ports_available() {
+  local group_name="$1"
+  local failed=0
+  local spec
+  local label
+  local port
+
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    label="${spec%%:*}"
+    port="${spec##*:}"
+    if [ -z "$port" ]; then
+      continue
+    fi
+    if ! can_bind_host_port "$port"; then
+      echo "Host port is already in use for ${group_name}: ${label} port ${port}" | tee -a "$LOG_FILE" >&2
+      log_host_port_owner "$port"
+      failed=1
+    fi
+  done < <(compose_host_port_specs "$group_name")
+
+  if [ "$failed" -ne 0 ]; then
+    test_exit_code=1
+    return 1
+  fi
+  return 0
 }
 
 wait_for_tcp_readiness() {
@@ -752,6 +915,7 @@ run_compose_suite() {
   local compose_file="$2"
   shift 2
   local service_specs=()
+  local project_name
 
   while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
     service_specs+=("$1")
@@ -770,11 +934,21 @@ run_compose_suite() {
     return 0
   fi
 
+  project_name="$(compose_project_name "$group_name")"
   log ""
-  log "=== Starting ${group_name} Services ==="
-  compose_down "$compose_file"
-  if ! compose_up "$compose_file"; then
-    compose_down "$compose_file"
+  log "=== Starting ${group_name} Services (project=${project_name}) ==="
+  log "Compose file: ${compose_file}"
+  log "Host ports:"
+  compose_host_port_specs "$group_name" | sed 's/^/  /' | tee -a "$LOG_FILE"
+
+  compose_down "$compose_file" "$project_name"
+  if ! check_compose_host_ports_available "$group_name"; then
+    log "Skipping ${group_name} startup because required host ports are unavailable"
+    return 0
+  fi
+
+  if ! compose_up "$project_name" "$compose_file"; then
+    compose_down "$compose_file" "$project_name"
     return 0
   fi
 
@@ -782,26 +956,26 @@ run_compose_suite() {
   for spec in "${service_specs[@]}"; do
     local service_name="${spec%%:*}"
     local timeout_seconds="${spec##*:}"
-    if ! wait_for_service_health "$compose_file" "$service_name" "$timeout_seconds"; then
-      compose_down "$compose_file"
+    if ! wait_for_service_health "$project_name" "$compose_file" "$service_name" "$timeout_seconds"; then
+      compose_down "$compose_file" "$project_name"
       return 0
     fi
   done
 
   if ! wait_for_compose_client_readiness "$group_name"; then
-    dump_compose_diagnostics "$compose_file" "$group_name"
-    compose_down "$compose_file"
+    dump_compose_diagnostics "$project_name" "$compose_file" "$group_name"
+    compose_down "$compose_file" "$project_name"
     return 0
   fi
 
   run_logged "$group_name" "$@"
   if [ "$last_command_exit_code" -ne 0 ]; then
-    dump_compose_diagnostics "$compose_file" "$group_name"
+    dump_compose_diagnostics "$project_name" "$compose_file" "$group_name"
   fi
 
   log ""
-  log "=== Stopping ${group_name} Services ==="
-  compose_down "$compose_file"
+  log "=== Stopping ${group_name} Services (project=${project_name}) ==="
+  compose_down "$compose_file" "$project_name"
   return 0
 }
 
@@ -812,12 +986,17 @@ log "SCHEDULER_ADAPTERS_ROOT=$SCHEDULER_ADAPTERS_ROOT"
 log "NIGHTLY_HOME=$NIGHTLY_HOME"
 log "DATUS_TEST_PROJECT_NAME=$DATUS_TEST_PROJECT_NAME"
 log "UNIT_TEST_HOME=$UNIT_TEST_HOME"
+log "NIGHTLY_COMPOSE_PROJECT_PREFIX=$NIGHTLY_COMPOSE_PROJECT_PREFIX"
 log "SUPERSET_URL=$SUPERSET_URL SUPERSET_PORT=$SUPERSET_PORT SUPERSET_POSTGRES_HOST=$SUPERSET_POSTGRES_HOST SUPERSET_POSTGRES_PORT=$SUPERSET_POSTGRES_PORT"
 log "AIRFLOW_URL=$AIRFLOW_URL AIRFLOW_HOST_PORT=$AIRFLOW_HOST_PORT"
-log "CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-} CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-} CLICKHOUSE_NATIVE_HOST_PORT=${CLICKHOUSE_NATIVE_HOST_PORT:-}"
-log "STARROCKS_HOST=${STARROCKS_HOST:-} STARROCKS_PORT=${STARROCKS_PORT:-} STARROCKS_HTTP_HOST_PORT=${STARROCKS_HTTP_HOST_PORT:-}"
+log "POSTGRESQL_HOST=${POSTGRESQL_HOST:-} POSTGRESQL_PORT=${POSTGRESQL_PORT:-} POSTGRESQL_HOST_PORT=${POSTGRESQL_HOST_PORT:-}"
+log "MYSQL_HOST=${MYSQL_HOST:-} MYSQL_PORT=${MYSQL_PORT:-} MYSQL_HOST_PORT=${MYSQL_HOST_PORT:-}"
+log "CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-} CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-} CLICKHOUSE_HTTP_HOST_PORT=${CLICKHOUSE_HTTP_HOST_PORT:-} CLICKHOUSE_NATIVE_HOST_PORT=${CLICKHOUSE_NATIVE_HOST_PORT:-}"
+log "STARROCKS_HOST=${STARROCKS_HOST:-} STARROCKS_PORT=${STARROCKS_PORT:-} STARROCKS_QUERY_HOST_PORT=${STARROCKS_QUERY_HOST_PORT:-} STARROCKS_HTTP_HOST_PORT=${STARROCKS_HTTP_HOST_PORT:-}"
 log "TRINO_HOST=${TRINO_HOST:-} TRINO_PORT=${TRINO_PORT:-}"
 log "GREENPLUM_HOST=${GREENPLUM_HOST:-} GREENPLUM_PORT=${GREENPLUM_PORT:-} GREENPLUM_HOST_PORT=${GREENPLUM_HOST_PORT:-}"
+log "HIVE_HOST=${HIVE_HOST:-} HIVE_PORT=${HIVE_PORT:-} HIVE_METASTORE_HOST_PORT=${HIVE_METASTORE_HOST_PORT:-} HIVE_THRIFT_HOST_PORT=${HIVE_THRIFT_HOST_PORT:-} HIVE_WEBUI_HOST_PORT=${HIVE_WEBUI_HOST_PORT:-}"
+log "SPARK_HOST=${SPARK_HOST:-} SPARK_PORT=${SPARK_PORT:-} SPARK_THRIFT_HOST_PORT=${SPARK_THRIFT_HOST_PORT:-} SPARK_UI_HOST_PORT=${SPARK_UI_HOST_PORT:-}"
 if [ -n "$NIGHTLY_GROUP_FILTER" ]; then
   log "NIGHTLY_GROUP_FILTER=$NIGHTLY_GROUP_FILTER"
 fi
