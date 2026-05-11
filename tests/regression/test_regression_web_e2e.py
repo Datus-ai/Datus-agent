@@ -39,7 +39,7 @@ pytestmark = [pytest.mark.regression, pytest.mark.nightly]
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 
-def _free_local_port() -> int:
+def _candidate_local_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
@@ -72,60 +72,56 @@ def web_server(tmp_path_factory):
     log_path = log_dir / "server.log"
     log_file = log_path.open("w", encoding="utf-8")
     proc = None
-    web_url = None
+    last_failure = "server was not started"
 
-    for _attempt in range(3):
-        web_port = _free_local_port()
-        candidate_url = f"http://127.0.0.1:{web_port}"
-        proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "datus.cli.main",
-                "--web",
-                "--port",
-                str(web_port),
-                "--host",
-                "127.0.0.1",
-                "--config",
-                str(PROJECT_ROOT / "tests" / "conf" / "agent.yml"),
-                "--datasource",
-                "ssb_sqlite",
-            ],
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-        )
-        time.sleep(0.5)
-        if proc.poll() is None:
-            web_url = candidate_url
-            break
-
-    if proc is None or web_url is None:
-        log_file.close()
-        pytest.fail(f"Failed to launch web server after retries.\nServer log:\n{_tail(log_path)}")
-
-    # Poll until ready (max 30s)
     try:
-        for _ in range(30):
-            if proc.poll() is not None:
-                pytest.fail(
-                    f"Web server exited before becoming ready with code {proc.returncode}.\n"
-                    f"Server log:\n{_tail(log_path)}"
-                )
-            try:
-                resp = requests.get(f"{web_url}/health", timeout=2)
-                if resp.status_code == 200:
-                    break
-            except (requests.ConnectionError, requests.Timeout):
-                pass
-            time.sleep(1)
-        else:
-            _terminate_process(proc)
-            pytest.fail(f"Web server did not start within 30 seconds at {web_url}.\nServer log:\n{_tail(log_path)}")
+        for attempt in range(3):
+            web_port = _candidate_local_port()
+            web_url = f"http://127.0.0.1:{web_port}"
+            proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "datus.cli.main",
+                    "--web",
+                    "--port",
+                    str(web_port),
+                    "--host",
+                    "127.0.0.1",
+                    "--config",
+                    str(PROJECT_ROOT / "tests" / "conf" / "agent.yml"),
+                    "--datasource",
+                    "ssb_sqlite",
+                ],
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+            )
 
-        yield web_url
+            for _ in range(30):
+                if proc.poll() is not None:
+                    last_failure = (
+                        f"attempt {attempt + 1}: server exited before becoming ready "
+                        f"with code {proc.returncode} at {web_url}"
+                    )
+                    break
+                try:
+                    resp = requests.get(f"{web_url}/health", timeout=2)
+                    if resp.status_code == 200:
+                        yield web_url
+                        return
+                except (requests.ConnectionError, requests.Timeout):
+                    pass
+                time.sleep(1)
+            else:
+                last_failure = f"attempt {attempt + 1}: server did not start within 30 seconds at {web_url}"
+
+            _terminate_process(proc)
+            proc = None
+
+        pytest.fail(f"Failed to launch web server after retries: {last_failure}.\nServer log:\n{_tail(log_path)}")
     finally:
-        _terminate_process(proc, timeout=10)
+        if proc is not None:
+            _terminate_process(proc, timeout=10)
         log_file.close()
 
 
