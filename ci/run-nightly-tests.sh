@@ -224,7 +224,9 @@ compose_project_slug() {
 
 compose_project_name() {
   local group_name="$1"
-  local project_name="${NIGHTLY_COMPOSE_PROJECT_PREFIX}$(compose_project_slug "$group_name")"
+  local slug
+  slug="$(compose_project_slug "$group_name")"
+  local project_name="${NIGHTLY_COMPOSE_PROJECT_PREFIX}${slug}"
 
   echo "$project_name" \
     | tr '[:upper:]' '[:lower:]' \
@@ -693,34 +695,34 @@ compose_host_port_specs() {
 
   case "$group_name" in
     "Superset Nightly Tests")
-      printf 'Superset web:%s\nSuperset PostgreSQL:%s\n' "${SUPERSET_PORT:-8088}" "${SUPERSET_POSTGRES_PORT:-5433}"
+      printf 'Superset web:%s\nSuperset PostgreSQL:%s\n' "${SUPERSET_PORT:-18088}" "${SUPERSET_POSTGRES_PORT:-15433}"
       ;;
     "Airflow Nightly Tests")
-      printf 'Airflow web:%s\n' "${AIRFLOW_HOST_PORT:-8080}"
+      printf 'Airflow web:%s\n' "${AIRFLOW_HOST_PORT:-18080}"
       ;;
     "PostgreSQL Adapter Tests")
-      printf 'PostgreSQL:%s\n' "${POSTGRESQL_HOST_PORT:-${POSTGRESQL_PORT:-5432}}"
+      printf 'PostgreSQL:%s\n' "${POSTGRESQL_HOST_PORT:-${POSTGRESQL_PORT:-25432}}"
       ;;
     "MySQL Adapter Tests")
-      printf 'MySQL:%s\n' "${MYSQL_HOST_PORT:-${MYSQL_PORT:-3306}}"
+      printf 'MySQL:%s\n' "${MYSQL_HOST_PORT:-${MYSQL_PORT:-23306}}"
       ;;
     "ClickHouse Adapter Tests")
-      printf 'ClickHouse HTTP:%s\nClickHouse native:%s\n' "${CLICKHOUSE_HTTP_HOST_PORT:-8123}" "${CLICKHOUSE_NATIVE_HOST_PORT:-9000}"
+      printf 'ClickHouse HTTP:%s\nClickHouse native:%s\n' "${CLICKHOUSE_HTTP_HOST_PORT:-28123}" "${CLICKHOUSE_NATIVE_HOST_PORT:-29000}"
       ;;
     "StarRocks Adapter Tests")
-      printf 'StarRocks query:%s\nStarRocks HTTP:%s\n' "${STARROCKS_QUERY_HOST_PORT:-9030}" "${STARROCKS_HTTP_HOST_PORT:-8030}"
+      printf 'StarRocks query:%s\nStarRocks HTTP:%s\n' "${STARROCKS_QUERY_HOST_PORT:-29030}" "${STARROCKS_HTTP_HOST_PORT:-28030}"
       ;;
     "Trino Adapter Tests")
-      printf 'Trino HTTP:%s\n' "${TRINO_HOST_PORT:-8080}"
+      printf 'Trino HTTP:%s\n' "${TRINO_HOST_PORT:-28080}"
       ;;
     "Greenplum Adapter Tests")
-      printf 'Greenplum:%s\n' "${GREENPLUM_HOST_PORT:-15432}"
+      printf 'Greenplum:%s\n' "${GREENPLUM_HOST_PORT:-15434}"
       ;;
     "Hive Adapter Tests")
-      printf 'Hive metastore:%s\nHive thrift:%s\nHive web UI:%s\n' "${HIVE_METASTORE_HOST_PORT:-9083}" "${HIVE_THRIFT_HOST_PORT:-10000}" "${HIVE_WEBUI_HOST_PORT:-10002}"
+      printf 'Hive metastore:%s\nHive thrift:%s\nHive web UI:%s\n' "${HIVE_METASTORE_HOST_PORT:-29083}" "${HIVE_THRIFT_HOST_PORT:-21000}" "${HIVE_WEBUI_HOST_PORT:-21002}"
       ;;
     "Spark Adapter Tests")
-      printf 'Spark thrift:%s\nSpark UI:%s\n' "${SPARK_THRIFT_HOST_PORT:-10000}" "${SPARK_UI_HOST_PORT:-4040}"
+      printf 'Spark thrift:%s\nSpark UI:%s\n' "${SPARK_THRIFT_HOST_PORT:-31000}" "${SPARK_UI_HOST_PORT:-24040}"
       ;;
   esac
 }

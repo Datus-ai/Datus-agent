@@ -6,6 +6,9 @@ on:
   workflow_dispatch: # Allow manual trigger
 
 concurrency:
+  # Keep nightly runs serialized because the workflow intentionally uses the
+  # stable datus-nightly-* compose project names below. Per-suite startup runs
+  # compose down first to clean leftovers from force-cancelled runs.
   group: datus-agent-nightly
   cancel-in-progress: false
 
