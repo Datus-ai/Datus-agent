@@ -17,7 +17,6 @@ Configured via tests/conf/agent.yml + datasource=bird_school. Auto-skips when th
 required SQLite database or DEEPSEEK_API_KEY is missing.
 """
 
-import asyncio
 import logging
 import os
 from pathlib import Path
@@ -54,8 +53,9 @@ def kb_home_tmp(nightly_agent_config, tmp_path):
 
 @pytest.mark.nightly
 class TestKnowledgeBaseHomeE2E:
+    @pytest.mark.asyncio
     @pytest.mark.timeout(600)
-    def test_semantic_model_lands_under_typed_subdir(self, nightly_agent_config, kb_home_tmp, caplog):
+    async def test_semantic_model_lands_under_typed_subdir(self, nightly_agent_config, kb_home_tmp, caplog):
         """
         Real LLM runs the gen_semantic_model workflow; we then walk the KB tree
         and verify the produced YAMLs are under semantic_models/<db>/, not at
@@ -91,14 +91,10 @@ class TestKnowledgeBaseHomeE2E:
 
         action_manager = ActionHistoryManager()
 
-        async def _collect_actions():
-            actions = []
+        actions = []
+        with caplog.at_level(logging.INFO):
             async for action in node.execute_stream(action_manager):
                 actions.append(action)
-            return actions
-
-        with caplog.at_level(logging.INFO):
-            actions = asyncio.run(_collect_actions())
 
         assert len(actions) >= 2, f"Expected at least 2 actions, got {len(actions)}"
         assert actions[0].role == ActionRole.USER
