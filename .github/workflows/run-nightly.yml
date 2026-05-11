@@ -48,31 +48,24 @@ jobs:
           digest="$(
             {
               for file in \
-                build_scripts/build_test_data.sh \
-                tests/conf/agent.yml \
-                tests/data/SSB.db \
-                pyproject.toml \
-                uv.lock; do
+                build_scripts/build_test_data.sh; do
                 if [ -f "$file" ]; then
                   sha256sum "$file"
                 fi
               done
 
-              for dir in \
-                datus/agent \
-                datus/api/models \
-                datus/api/services \
-                datus/cli \
-                datus/configuration \
-                datus/prompts \
-                datus/sample_data \
-                datus/storage; do
+              for dir in datus/sample_data; do
                 if [ -d "$dir" ]; then
                   find "$dir" -type f -print0 | sort -z | while IFS= read -r -d '' file; do
                     sha256sum "$file"
                   done
                 fi
               done
+              if [ -d "datus/storage" ]; then
+                find "datus/storage" -type f -name '*.py' -print0 | sort -z | while IFS= read -r -d '' file; do
+                  sha256sum "$file"
+                done
+              fi
             } | sha256sum | awk '{print $1}'
           )"
           echo "key=${RUNNER_OS}-kb-v4-datus_agent_nightly-${digest}" >> "$GITHUB_OUTPUT"
