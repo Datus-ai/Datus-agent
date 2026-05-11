@@ -144,6 +144,24 @@ class TestReadFile:
         assert result.success == 0
         assert "too large" in result.error.lower()
 
+    def test_read_large_file_with_limit_succeeds(self, tmp_path):
+        f = tmp_path / "big.txt"
+        f.write_text("\n".join(f"line{i}" for i in range(1, 101)))
+        tool = _make_tool(str(tmp_path))
+        tool.config.max_file_size = 20
+        result = tool.read_file("big.txt", offset=1, limit=1)
+        assert result.success == 1
+        assert result.result == "1: line1"
+
+    def test_read_slice_too_large(self, tmp_path):
+        f = tmp_path / "big.txt"
+        f.write_text("\n".join(f"line{i}" for i in range(1, 101)))
+        tool = _make_tool(str(tmp_path))
+        tool.config.max_file_size = 20
+        result = tool.read_file("big.txt", offset=1, limit=50)
+        assert result.success == 0
+        assert "too large" in result.error.lower()
+
     def test_read_file_unicode_error(self, tmp_path):
         f = tmp_path / "data.txt"
         f.write_bytes(b"\xff\xfe\x00\x01")

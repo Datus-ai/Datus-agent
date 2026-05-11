@@ -178,6 +178,10 @@ class FilesystemFuncTool(BaseTool):
             offset: Line number to start reading from (1-based). 0 means start from beginning.
             limit: Maximum number of lines to read. 0 means read all lines.
 
+        ``config.max_file_size`` bounds a single read: when neither ``offset``
+        nor ``limit`` is set it caps the whole-file size; otherwise it caps the
+        sliced output, so large files can still be read in chunks.
+
         Returns:
             dict: A dictionary with the execution result, containing these keys:
                   - 'success' (int): 1 for success, 0 for failure.
@@ -202,20 +206,41 @@ class FilesystemFuncTool(BaseTool):
             if not self._is_allowed_file(target_path):
                 return FuncToolResult(success=0, error=f"File type not allowed: {resolved.display}")
 
-            if target_path.stat().st_size > self.config.max_file_size:
-                return FuncToolResult(success=0, error=f"File too large: {resolved.display}")
+            max_bytes = self.config.max_file_size
+            use_slice = offset > 0 or limit > 0
 
             try:
-                content = target_path.read_text(encoding="utf-8")
-
-                if offset > 0 or limit > 0:
-                    lines = content.split("\n")
+                if use_slice:
                     start = max(0, offset - 1) if offset > 0 else 0
-                    end = start + limit if limit > 0 else len(lines)
-                    selected = lines[start:end]
+                    with target_path.open("r", encoding="utf-8") as fh:
+                        selected: List[str] = []
+                        for idx, line in enumerate(fh):
+                            if idx < start:
+                                continue
+                            if limit > 0 and len(selected) >= limit:
+                                break
+                            selected.append(line.rstrip("\n"))
                     numbered = [f"{start + i + 1}: {line}" for i, line in enumerate(selected)]
-                    return FuncToolResult(result="\n".join(numbered))
+                    result = "\n".join(numbered)
+                    if len(result.encode("utf-8")) > max_bytes:
+                        return FuncToolResult(
+                            success=0,
+                            error=(
+                                f"Read slice too large: {resolved.display} "
+                                f"(limit={max_bytes} bytes; reduce 'limit' to read a smaller range)"
+                            ),
+                        )
+                    return FuncToolResult(result=result)
 
+                if target_path.stat().st_size > max_bytes:
+                    return FuncToolResult(
+                        success=0,
+                        error=(
+                            f"File too large: {resolved.display} "
+                            f"(limit={max_bytes} bytes; use 'offset'/'limit' to read in chunks)"
+                        ),
+                    )
+                content = target_path.read_text(encoding="utf-8")
                 return FuncToolResult(result=content)
             except UnicodeDecodeError:
                 return FuncToolResult(success=0, error=f"Cannot read binary file: {resolved.display}")
