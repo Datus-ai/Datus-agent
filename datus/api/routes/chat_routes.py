@@ -425,17 +425,57 @@ async def _stream_with_post_hook(
 
     The post hook is dispatched as a background task in ``finally`` so the
     response stream is never blocked waiting for billing to acknowledge.
+
+    If the upstream generator raises before the stream completes, we log
+    the error and emit a synthetic ``event: error`` to the client so the
+    UI can surface a real reason instead of an opaque "network error".
+    ``asyncio.CancelledError`` (client disconnect / shutdown) is treated
+    as expected and skips the error event.
     """
     last_end_event: Optional[SSEEvent] = None
     captured_error: Optional[BaseException] = None
+    last_event_id: int = 0
 
     try:
         async for event in upstream:
             if event.event == "end":
                 last_end_event = event
+            if isinstance(event.id, int):
+                last_event_id = event.id
             yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
+    except asyncio.CancelledError:
+        # Client disconnected or the server is shutting down. The HTTP
+        # response is already gone — nothing to yield, nothing to log
+        # as error.
+        raise
     except BaseException as exc:
         captured_error = exc
+        logger.error(
+            "stream_chat generator failed for session=%s user=%s subagent=%s: %s",
+            request.session_id,
+            user_id,
+            request.subagent_id,
+            exc,
+            exc_info=True,
+        )
+        try:
+            error_event = SSEEvent(
+                id=last_event_id + 1,
+                event="error",
+                data=SSEErrorData(
+                    error=str(exc) or type(exc).__name__,
+                    error_type=type(exc).__name__,
+                    session_id=request.session_id,
+                ),
+                timestamp=now_utc_iso(),
+            )
+            yield (
+                f"id: {error_event.id}\n"
+                f"event: {error_event.event}\n"
+                f"data: {error_event.data.model_dump_json()}\n\n"
+            )
+        except Exception:  # pragma: no cover — defensive
+            logger.error("Failed to emit terminal SSE error event", exc_info=True)
         raise
     finally:
         if hooks is not None:

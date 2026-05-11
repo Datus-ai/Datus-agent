@@ -205,3 +205,73 @@ class TestStreamChatPostHookSchedule:
         assert ctx_seen.usage.get("total_tokens") == 30
         assert ctx_seen.pre_check_extra == {"trace_id": "abc"}
         assert ctx_seen.error is None
+
+
+class TestStreamChatGeneratorError:
+    """If the upstream stream raises, the route must emit a terminal SSE
+    ``event: error`` instead of letting the connection die silently."""
+
+    @pytest.mark.asyncio
+    async def test_upstream_exception_emits_error_event(self):
+        from datus.api.models.cli_models import SSEMessageData, SSEEvent
+        from datus.api.models.cli_models import SSEDataType, SSEMessagePayload
+
+        first_event = SSEEvent(
+            id=7,
+            event="message",
+            data=SSEMessageData(
+                type=SSEDataType.CREATE_MESSAGE,
+                payload=SSEMessagePayload(message_id="m1", role="assistant", content=[]),
+            ),
+            timestamp="2026-01-01T00:00:00Z",
+        )
+
+        async def _upstream(*_args, **_kwargs):
+            yield first_event
+            raise RuntimeError("boom from tool runner")
+
+        svc = _mock_svc_with_nodes()
+        svc.chat.stream_chat = _upstream
+        ctx = MagicMock(user_id="u1")
+        request = StreamChatInput(message="hi", session_id="sess-err")
+
+        response = await chat_routes.stream_chat(request, svc, ctx, MagicMock())
+
+        body_chunks: list[str] = []
+        with pytest.raises(RuntimeError):
+            async for chunk in response.body_iterator:
+                body_chunks.append(chunk)
+
+        # First chunk was forwarded; second chunk is the synthetic error.
+        assert any("event: message" in c for c in body_chunks)
+        error_chunks = [c for c in body_chunks if "event: error" in c]
+        assert len(error_chunks) == 1
+        data_line = next(
+            line for line in error_chunks[0].splitlines() if line.startswith("data: ")
+        )
+        payload = json.loads(data_line[len("data: ") :])
+        assert payload["error_type"] == "RuntimeError"
+        assert "boom from tool runner" in payload["error"]
+        assert payload["session_id"] == "sess-err"
+
+    @pytest.mark.asyncio
+    async def test_cancelled_error_is_not_swallowed(self):
+        async def _upstream(*_args, **_kwargs):
+            if False:  # pragma: no cover — make this an async generator
+                yield None
+            raise asyncio.CancelledError()
+
+        svc = _mock_svc_with_nodes()
+        svc.chat.stream_chat = _upstream
+        ctx = MagicMock(user_id="u1")
+        request = StreamChatInput(message="hi", session_id="sess-cancel")
+
+        response = await chat_routes.stream_chat(request, svc, ctx, MagicMock())
+
+        body_chunks: list[str] = []
+        with pytest.raises(asyncio.CancelledError):
+            async for chunk in response.body_iterator:
+                body_chunks.append(chunk)
+
+        # Cancellation must not produce a synthetic SSE error event.
+        assert all("event: error" not in c for c in body_chunks)
