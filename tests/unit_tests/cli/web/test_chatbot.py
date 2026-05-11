@@ -75,7 +75,6 @@ class TestReadTemplate:
         assert "{{ user_name_json }}" in html
         assert "{{ chatbot_js }}" in html
         assert "{{ chatbot_css }}" in html
-        assert "{{ react_js }}" in html
 
     def test_returns_string(self):
         from datus.cli.web.chatbot import _read_template
@@ -154,7 +153,7 @@ class TestCreateWebApp:
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
-        from datus.cli.web.chatbot import _CDN_CHATBOT_JS, _CDN_REACT_JS, create_web_app
+        from datus.cli.web.chatbot import _CDN_CHATBOT_CSS, _CDN_CHATBOT_JS, create_web_app
 
         args = argparse.Namespace(
             datasource="test",
@@ -180,7 +179,7 @@ class TestCreateWebApp:
             resp = client.get("/")
             assert resp.status_code == 200
             assert _CDN_CHATBOT_JS in resp.text
-            assert _CDN_REACT_JS in resp.text
+            assert _CDN_CHATBOT_CSS in resp.text
 
     def test_warns_when_dist_missing(self):
         """Should warn and fall back to CDN when dist path doesn't exist."""
@@ -392,8 +391,6 @@ class TestTemplateFile:
         assert "chatbot-root" in content
         assert "{{ chatbot_js }}" in content
         assert "{{ chatbot_css }}" in content
-        assert "{{ react_js }}" in content
-        assert "{{ react_dom_js }}" in content
         assert "{{ request_origin_json }}" in content
         assert "{{ user_name_json }}" in content
 
