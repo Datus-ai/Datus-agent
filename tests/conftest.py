@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -15,6 +16,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 PROJECT_ROOT = Path(__file__).parent.parent
 TEST_DATA_DIR = Path(__file__).parent / "data"
 TEST_CONF_DIR = Path(__file__).parent / "conf"
+RERUN_LOG_MAX_LINES = int(os.getenv("DATUS_RERUN_LOG_MAX_LINES", "80"))
+RERUN_CAPTURE_LOG_MAX_LINES = int(os.getenv("DATUS_RERUN_CAPTURE_LOG_MAX_LINES", "40"))
+_DATUS_RERUN_REPORTS: list[dict[str, object]] = []
 
 
 @pytest.fixture
@@ -142,3 +146,67 @@ def load_acceptance_config(datasource: str = "snowflake", home: str = "") -> Age
     return load_agent_config(
         config=str(TEST_CONF_DIR / "agent.yml"), datasource=datasource, home=home, reload=True, force=True, yes=True
     )
+
+
+def _tail_lines(text: str, max_lines: int) -> list[str]:
+    lines = text.splitlines()
+    if len(lines) <= max_lines:
+        return lines
+    omitted = len(lines) - max_lines
+    return [f"... omitted {omitted} earlier line(s) ...", *lines[-max_lines:]]
+
+
+def _format_report_sections(sections: Iterable[tuple[str, str]]) -> list[str]:
+    formatted: list[str] = []
+    for name, content in sections:
+        if not content:
+            continue
+        formatted.append(f"-- {name} --")
+        formatted.extend(_tail_lines(content, RERUN_CAPTURE_LOG_MAX_LINES))
+    return formatted
+
+
+def pytest_configure(config) -> None:
+    _DATUS_RERUN_REPORTS.clear()
+
+
+def pytest_runtest_logreport(report) -> None:
+    if report.outcome != "rerun":
+        return
+
+    longrepr_text = getattr(report, "longreprtext", "") or str(report.longrepr or "")
+    _DATUS_RERUN_REPORTS.append(
+        {
+            "nodeid": report.nodeid,
+            "when": report.when,
+            "duration": report.duration,
+            "rerun": getattr(report, "rerun", "?"),
+            "worker": getattr(report, "worker_id", os.getenv("PYTEST_XDIST_WORKER", "main")),
+            "longrepr": _tail_lines(longrepr_text, RERUN_LOG_MAX_LINES),
+            "sections": _format_report_sections(getattr(report, "sections", [])),
+        }
+    )
+
+
+def pytest_terminal_summary(terminalreporter) -> None:
+    if not _DATUS_RERUN_REPORTS:
+        return
+
+    terminalreporter.section("Datus rerun diagnostics", sep="=")
+    for report in _DATUS_RERUN_REPORTS:
+        terminalreporter.write_line(
+            "RERUN "
+            f"{report['nodeid']} "
+            f"when={report['when']} "
+            f"attempt={report['rerun']} "
+            f"worker={report['worker']} "
+            f"duration={report['duration']:.2f}s"
+        )
+        if report["longrepr"]:
+            terminalreporter.write_line("First failure traceback summary:")
+            for line in report["longrepr"]:
+                terminalreporter.write_line(f"  {line}")
+        if report["sections"]:
+            terminalreporter.write_line("Captured output summary:")
+            for line in report["sections"]:
+                terminalreporter.write_line(f"  {line}")

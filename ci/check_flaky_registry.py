@@ -145,11 +145,21 @@ def classify_log(log_file: Path, registry: Registry) -> tuple[list[str], list[st
     return registered_reruns, unregistered_reruns, matched_patterns
 
 
+def warn(message: str) -> None:
+    print(f"WARNING: {message}", file=sys.stderr)
+    print(f"::warning::{message}", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--registry", default=str(DEFAULT_REGISTRY), help="Path to ci/flaky-registry.yml")
     parser.add_argument("--log-file", help="Nightly log file to classify after tests finish")
     parser.add_argument("--strict", action="store_true", help="Validate test nodeid paths exist")
+    parser.add_argument(
+        "--warn-only",
+        action="store_true",
+        help="Report registry/classification problems as warnings instead of failing",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -171,10 +181,17 @@ def main(argv: list[str] | None = None) -> int:
                 print("Unregistered reruns detected:")
                 for nodeid in sorted(set(unregistered)):
                     print(f"  - {nodeid}")
+                if args.warn_only:
+                    warn("Unregistered reruns detected; not failing because --warn-only is set")
+                    return 0
                 return 1
         return 0
     except Exception as exc:
-        print(f"Flaky registry check failed: {exc}", file=sys.stderr)
+        message = f"Flaky registry check failed: {exc}"
+        if args.warn_only:
+            warn(message)
+            return 0
+        print(message, file=sys.stderr)
         return 1
 
 

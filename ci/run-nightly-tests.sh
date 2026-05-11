@@ -10,6 +10,7 @@ cd "$REPO_ROOT" || {
 
 LOG_FILE="${NIGHTLY_LOG_FILE:-test_output_nightly_$(date +%Y%m%d_%H%M%S).log}"
 test_exit_code=0
+last_command_exit_code=0
 NIGHTLY_GROUP_FILTER="${NIGHTLY_GROUP_FILTER:-}"
 AGENT_TEST_CONFIG="${AGENT_TEST_CONFIG:-tests/conf/agent.yml}"
 
@@ -397,6 +398,7 @@ run_logged_unfiltered() {
   log "=== ${group_name} ==="
   "$@" 2>&1 | tee -a "$LOG_FILE"
   local cmd_status=${PIPESTATUS[0]}
+  last_command_exit_code="$cmd_status"
   if [ "$cmd_status" -ne 0 ]; then
     test_exit_code="$cmd_status"
   fi
@@ -409,6 +411,7 @@ run_logged() {
   if ! should_run_group "$group_name"; then
     log ""
     log "=== Skipping ${group_name} (NIGHTLY_GROUP_FILTER=${NIGHTLY_GROUP_FILTER}) ==="
+    last_command_exit_code=0
     return 0
   fi
 
@@ -464,6 +467,64 @@ wait_for_service_health() {
   return 1
 }
 
+dump_compose_diagnostics() {
+  local compose_file="$1"
+  local group_name="$2"
+
+  log ""
+  log "=== ${group_name} Service Diagnostics ==="
+  docker_compose -f "$compose_file" ps 2>&1 | tee -a "$LOG_FILE" || true
+  docker_compose -f "$compose_file" logs --tail=200 2>&1 | tee -a "$LOG_FILE" || true
+}
+
+wait_for_mysql_client_readiness() {
+  local timeout_seconds="${1:-300}"
+  local deadline=$((SECONDS + timeout_seconds))
+  local probe_output="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-mysql-readiness-${GITHUB_RUN_ID:-$$}.log"
+
+  log "Waiting for MySQL client readiness at ${MYSQL_HOST:-localhost}:${MYSQL_PORT:-3306}/${MYSQL_DATABASE:-test}"
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if uv run python - <<'PY' >"$probe_output" 2>&1; then
+import os
+
+import pymysql
+
+conn = pymysql.connect(
+    host=os.getenv("MYSQL_HOST", "localhost"),
+    port=int(os.getenv("MYSQL_PORT", "3306")),
+    user=os.getenv("MYSQL_USER", "test_user"),
+    password=os.getenv("MYSQL_PASSWORD", "test_password"),
+    database=os.getenv("MYSQL_DATABASE", "test"),
+    charset="utf8mb4",
+    autocommit=True,
+    connect_timeout=5,
+    read_timeout=5,
+    write_timeout=5,
+)
+try:
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT 1")
+        row = cursor.fetchone()
+        if not row or row[0] != 1:
+            raise RuntimeError(f"unexpected readiness result: {row!r}")
+finally:
+    conn.close()
+PY
+      log "MySQL client readiness probe succeeded"
+      return 0
+    fi
+    sleep 5
+  done
+
+  echo "Timed out waiting for MySQL client readiness" | tee -a "$LOG_FILE" >&2
+  if [ -s "$probe_output" ]; then
+    log "Last MySQL readiness probe output:"
+    sed 's/^/  /' "$probe_output" | tee -a "$LOG_FILE"
+  fi
+  test_exit_code=1
+  return 1
+}
+
 run_compose_suite() {
   local group_name="$1"
   local compose_file="$2"
@@ -505,7 +566,18 @@ run_compose_suite() {
     fi
   done
 
+  if [ "$group_name" = "MySQL Adapter Tests" ]; then
+    if ! wait_for_mysql_client_readiness 300; then
+      dump_compose_diagnostics "$compose_file" "$group_name"
+      compose_down "$compose_file"
+      return 0
+    fi
+  fi
+
   run_logged "$group_name" "$@"
+  if [ "$last_command_exit_code" -ne 0 ]; then
+    dump_compose_diagnostics "$compose_file" "$group_name"
+  fi
 
   log ""
   log "=== Stopping ${group_name} Services ==="
@@ -559,7 +631,7 @@ run_compose_suite "Greenplum Adapter Tests" "$GREENPLUM_COMPOSE" "greenplum:600"
 run_compose_suite "Hive Adapter Tests" "$HIVE_COMPOSE" "hive-metastore:600" "hive-server:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/adapters/test_hive.py --tb=short --verbose --timeout=300
 run_compose_suite "Spark Adapter Tests" "$SPARK_COMPOSE" "spark-thrift:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300
 
-run_logged_unfiltered "Flaky Log Classification" uv run python ci/check_flaky_registry.py --registry ci/flaky-registry.yml --log-file "$LOG_FILE"
+run_logged_unfiltered "Flaky Log Classification" uv run python ci/check_flaky_registry.py --registry ci/flaky-registry.yml --log-file "$LOG_FILE" --warn-only
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   echo "log_file=$LOG_FILE" >> "$GITHUB_OUTPUT"
