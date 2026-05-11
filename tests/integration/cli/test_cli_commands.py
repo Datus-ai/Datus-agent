@@ -27,6 +27,14 @@ def gen_sql_input() -> List[Dict[str, Any]]:
         return yaml.safe_load(f)
 
 
+def _assert_stdout_contains_exactly_one(stdout: str, expected_messages: tuple[str, ...], context: str) -> None:
+    matched_messages = [message for message in expected_messages if message in stdout]
+    assert len(matched_messages) == 1, (
+        f"Expected exactly one {context} message from {expected_messages}, "
+        f"matched {matched_messages}. stdout: {stdout[:500]}"
+    )
+
+
 # This is now a true integration test
 @pytest.mark.acceptance
 def test_schema_linking(mock_args, capsys, schema_linking_input: List[Dict[str, Any]]):
@@ -85,7 +93,11 @@ def test_search_reference_sql(mock_args, capsys, schema_linking_input: List[Dict
     stdout = captured.out
 
     assert "Search Reference SQL" in stdout
-    assert "Reference SQL Search Results" in stdout or "No reference SQL queries found." in stdout
+    _assert_stdout_contains_exactly_one(
+        stdout,
+        ("Reference SQL Search Results", "No reference SQL queries found."),
+        "reference SQL result",
+    )
     assert "Error searching reference sql:" not in stdout
     assert "Traceback" not in stdout
 
@@ -197,7 +209,7 @@ def test_chat_command(mock_args, capsys, gen_sql_input: List[Dict[str, Any]]):
     stdout = captured.out
 
     # Check chat info is present
-    assert "Chat Session Info:" in stdout or "Session Info:" in stdout, "Should have chat session info"
+    assert "Chat Session Info:" in stdout, "Should have chat session info"
 
     # Check that actions were performed (tool calls happened)
     action_match = re.search(r"Action Count:\s*(\d+)", stdout)
@@ -208,8 +220,7 @@ def test_chat_command(mock_args, capsys, gen_sql_input: List[Dict[str, Any]]):
 
 @pytest.mark.nightly
 @pytest.mark.product_e2e
-@pytest.mark.asyncio
-async def test_chat_command_with_ext_knowledge(mock_args):
+def test_chat_command_with_ext_knowledge(mock_args):
     """
     Tests bare chat input with ext_knowledge context.
     Verifies that the query with 'consider all knowledge' still completes through
@@ -224,7 +235,6 @@ async def test_chat_command_with_ext_knowledge(mock_args):
     with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt:
         mock_prompt.side_effect = [
             question,
-            "/chat_info",
             EOFError,
         ]
         with (
@@ -242,7 +252,10 @@ async def test_chat_command_with_ext_knowledge(mock_args):
 
     # Find the final chat_response action which contains execution_stats
     chat_response = [a for a in actions if a.action_type == "chat_response"]
-    assert len(chat_response) == 1, "Should have exactly one chat_response action."
+    assert len(chat_response) == 1, (
+        "Should have exactly one chat_response action. "
+        f"Recent actions: {[(a.action_type, str(a.status), a.output) for a in actions[-5:]]}"
+    )
 
     response_output = chat_response[0].output
     assert response_output.get("success") is True, "Chat response should be successful."
@@ -269,7 +282,11 @@ async def test_chat_command_with_ext_knowledge(mock_args):
     current_node = cli.chat_commands.current_node
     if current_node is None:
         raise AssertionError("Should have an active chat node.")
-    session_info = await current_node.get_session_info()
+    tool_names = {tool.name for tool in (getattr(current_node, "tools", None) or [])}
+    assert "search_knowledge" in tool_names, (
+        f"Nightly ext_knowledge fixture did not register search_knowledge. Available tools: {sorted(tool_names)}"
+    )
+    session_info = cli.run_on_bg_loop(current_node.get_session_info())
     assert session_info.get("session_id", "").startswith("chat_session_")
     assert session_info.get("action_count") == exec_stats.get("total_actions")
 
@@ -331,7 +348,7 @@ def test_save_command(mock_args, capsys):
     stdout = captured.out
 
     assert "Save Output" in stdout
-    assert "saved to" in stdout or "test_output" in stdout
+    assert "/tmp/test_output.json" in stdout
 
 
 # ── Search edge case tests (merged from test_cli_search.py) ──
@@ -414,8 +431,10 @@ class TestCLISearch:
         # Command should execute
         assert "Search Reference SQL" in stdout, f"Should show search header, got: {stdout[:200]}"
         # Should have results or no-results message
-        assert "Reference SQL Search Results" in stdout or "No reference SQL" in stdout, (
-            f"Should show results or no-results message, got: {stdout[:300]}"
+        _assert_stdout_contains_exactly_one(
+            stdout,
+            ("Reference SQL Search Results", "No reference SQL"),
+            "reference SQL result",
         )
         # Should not have errors
         assert "Error searching reference sql:" not in stdout, "Should not have error message"
@@ -445,6 +464,8 @@ class TestCLISearch:
         # Should handle gracefully
         assert "Traceback" not in stdout, "Should not have Python traceback"
         # Should show results or appropriate message
-        assert "Metrics Search Results" in stdout or "No metrics found" in stdout or "Found" in stdout, (
-            f"Should show results or no-results message, got: {stdout[:300]}"
+        _assert_stdout_contains_exactly_one(
+            stdout,
+            ("Metrics Search Results", "No metrics found"),
+            "metrics result",
         )

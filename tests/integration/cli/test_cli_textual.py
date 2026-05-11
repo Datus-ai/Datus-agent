@@ -137,41 +137,41 @@ async def exec_domains_textual(pilot, tree_id: str):
     tree = subject_screen.query_one(tree_id, Tree)
     pilot.app.set_focus(tree)
     domain_nodes = tree.cursor_node.children
-    assert len(domain_nodes) > 0
+    if len(domain_nodes) == 0:
+        pytest.fail("Expected the subject tree to contain 2 top-level domains")
 
-    assert domain_nodes[0].data["type"] == "subject_node"
+    queue = list(domain_nodes)
+    seen_node_ids = set()
+    first_entry_node = None
+    while queue:
+        node = queue.pop(0)
+        node_id = id(node)
+        if node_id in seen_node_ids:
+            continue
+        seen_node_ids.add(node_id)
 
-    tree.select_node(domain_nodes[0])
-    await pilot.pause()
-    await pilot.press("enter")
-    await pilot.pause()
+        node_type = node.data.get("type")
+        if node_type == "subject_entry":
+            first_entry_node = node
+            break
 
-    layer1_nodes = tree.cursor_node.children
-    assert len(layer1_nodes) > 0
+        if node_type != "subject_node":
+            continue
 
-    assert layer1_nodes[0].data["type"] == "subject_node"
-    tree.select_node(layer1_nodes[0])
-    await pilot.pause()
-    await pilot.press("enter")
-    await pilot.pause()
+        tree.select_node(node)
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause(1)
+        queue.extend(node.children)
 
-    layer2_nodes = tree.cursor_node.children
+    if first_entry_node is None:
+        pytest.fail("Could not find any subject entry after expanding the subject tree")
 
-    assert len(layer2_nodes) > 0
-
-    assert layer2_nodes[0].data["type"] == "subject_node"
-
-    tree.select_node(layer2_nodes[0])
+    first_entry = first_entry_node.data
+    assert first_entry.get("type") == "subject_entry"
+    assert first_entry.get("entry_type") in ("metric", "sql", "ext_knowledge", "reference_template")
+    tree.select_node(first_entry_node)
     await pilot.pause()
     await pilot.press("enter")
     await pilot.pause(1)
-
-    table_nodes = tree.cursor_node.children
-    first_table_node = table_nodes[0].data
-    assert first_table_node.get("type") == "subject_entry"
-    assert first_table_node.get("entry_type") in ("metric", "sql", "ext_knowledge", "reference_template")
-    tree.select_node(table_nodes[0])
-    await pilot.pause()
-    await pilot.press("enter")
-    await pilot.pause(1)
-    return first_table_node
+    return first_entry

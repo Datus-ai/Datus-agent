@@ -30,6 +30,7 @@ _NAME_GET_SQL = "context_search_tools.get_reference_sql"
 _NAME_SEMANTIC = "context_search_tools.search_semantic_objects"
 _NAME_KNOWLEDGE = "context_search_tools.search_knowledge"
 _NAME_GET_KNOWLEDGE = "context_search_tools.get_knowledge"
+_NAME_TEMPLATE = "reference_template_tools"
 _NAME_TEMPLATE_SEARCH = "reference_template_tools.search_reference_template"
 _NAME_TEMPLATE_GET = "reference_template_tools.get_reference_template"
 _NAME_TEMPLATE_RENDER = "reference_template_tools.render_reference_template"
@@ -86,8 +87,9 @@ class ContextSearchTools:
         # Initialize SubjectTreeStore for domain hierarchy
         self.subject_tree = self.metric_rag.storage.subject_tree
 
-        if sub_agent_name:
-            self.sub_agent_config = SubAgentConfig.model_validate(self.agent_config.sub_agent_config(sub_agent_name))
+        raw_sub_agent_config = self.agent_config.sub_agent_config(sub_agent_name) if sub_agent_name else None
+        if raw_sub_agent_config:
+            self.sub_agent_config = SubAgentConfig.model_validate(raw_sub_agent_config)
         else:
             self.sub_agent_config = None
         self.has_metrics = self.metric_rag.get_metrics_size() > 0
@@ -96,49 +98,57 @@ class ContextSearchTools:
         self.has_knowledge = self.ext_knowledge_rag.get_knowledge_size() > 0
         self.has_reference_templates = self.reference_template_store.get_reference_template_size() > 0
 
+    def _has_tool_permission(self, tool_namespace: str, *tool_names: str) -> bool:
+        if not self.sub_agent_config:
+            return True
+
+        tool_list = self.sub_agent_config.tool_list
+        return (
+            tool_namespace in tool_list
+            or f"{tool_namespace}.*" in tool_list
+            or any(tool_name in tool_list for tool_name in tool_names)
+        )
+
+    def _has_context_tool_permission(self, *tool_names: str) -> bool:
+        return self._has_tool_permission(_NAME, *tool_names)
+
     def _show_metrics(self):
-        return self.has_metrics and (
-            not self.sub_agent_config
-            or _NAME in self.sub_agent_config.tool_list
-            or _NAME_LIST_SUBJECT_TREE in self.sub_agent_config.tool_list
-            or _NAME_METRICS in self.sub_agent_config.tool_list
-            or _NAME_GET_METRICS in self.sub_agent_config.tool_list
+        return self.has_metrics and self._has_context_tool_permission(
+            _NAME_METRICS,
+            _NAME_GET_METRICS,
         )
 
     def _show_sql(self):
-        return self.has_reference_sql and (
-            not self.sub_agent_config
-            or _NAME in self.sub_agent_config.tool_list
-            or _NAME_LIST_SUBJECT_TREE in self.sub_agent_config.tool_list
-            or _NAME_SQL in self.sub_agent_config.tool_list
-            or _NAME_GET_SQL in self.sub_agent_config.tool_list
+        return self.has_reference_sql and self._has_context_tool_permission(
+            _NAME_SQL,
+            _NAME_GET_SQL,
         )
 
     def _show_knowledge(self):
-        return self.has_knowledge and (
-            not self.sub_agent_config
-            or _NAME in self.sub_agent_config.tool_list
-            or _NAME_LIST_SUBJECT_TREE in self.sub_agent_config.tool_list
-            or _NAME_KNOWLEDGE in self.sub_agent_config.tool_list
-            or _NAME_GET_KNOWLEDGE in self.sub_agent_config.tool_list
+        return self.has_knowledge and self._has_context_tool_permission(
+            _NAME_KNOWLEDGE,
+            _NAME_GET_KNOWLEDGE,
         )
 
     def _show_template(self):
         return self.has_reference_templates and (
-            not self.sub_agent_config
-            or _NAME in self.sub_agent_config.tool_list
-            or _NAME_LIST_SUBJECT_TREE in self.sub_agent_config.tool_list
-            or _NAME_TEMPLATE_SEARCH in self.sub_agent_config.tool_list
-            or _NAME_TEMPLATE_GET in self.sub_agent_config.tool_list
-            or _NAME_TEMPLATE_RENDER in self.sub_agent_config.tool_list
+            self._has_context_tool_permission(_NAME_LIST_SUBJECT_TREE)
+            or self._has_tool_permission(
+                _NAME_TEMPLATE,
+                _NAME_TEMPLATE_SEARCH,
+                _NAME_TEMPLATE_GET,
+                _NAME_TEMPLATE_RENDER,
+            )
         )
 
     def _show_semantic_objects(self):
-        return self.has_semantic_objects and (
-            not self.sub_agent_config
-            or _NAME in self.sub_agent_config.tool_list
-            or _NAME_SEMANTIC in self.sub_agent_config.tool_list
+        return self.has_semantic_objects and self._has_context_tool_permission(_NAME_SEMANTIC)
+
+    def _show_subject_tree(self):
+        has_subject_entries = (
+            self.has_metrics or self.has_reference_sql or self.has_knowledge or self.has_reference_templates
         )
+        return has_subject_entries and self._has_context_tool_permission(_NAME_LIST_SUBJECT_TREE)
 
     @staticmethod
     def all_tools_name() -> List[str]:
@@ -155,12 +165,18 @@ class ContextSearchTools:
         tools = []
         has_subject_tree = False
 
-        if self.has_metrics:
-            for tool in (self.list_subject_tree, self.search_metrics, self.get_metrics):
-                tools.append(trans_to_function_tool(tool))
+        if self._show_subject_tree():
+            tools.append(trans_to_function_tool(self.list_subject_tree))
             has_subject_tree = True
 
-        if self.has_reference_sql:
+        if self._show_metrics():
+            if not has_subject_tree:
+                tools.append(trans_to_function_tool(self.list_subject_tree))
+                has_subject_tree = True
+            for tool in (self.search_metrics, self.get_metrics):
+                tools.append(trans_to_function_tool(tool))
+
+        if self._show_sql():
             if not has_subject_tree:
                 tools.append(trans_to_function_tool(self.list_subject_tree))
                 has_subject_tree = True
