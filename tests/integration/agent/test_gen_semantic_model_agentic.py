@@ -20,6 +20,7 @@ logger = get_logger(__name__)
 
 
 @pytest.mark.nightly
+@pytest.mark.product_e2e
 class TestGenSemanticModelAgentic:
     """Integration tests for GenSemanticModelAgenticNode with real LLM."""
 

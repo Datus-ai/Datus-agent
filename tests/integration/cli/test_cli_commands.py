@@ -27,6 +27,12 @@ def gen_sql_input() -> List[Dict[str, Any]]:
         return yaml.safe_load(f)
 
 
+@pytest.fixture(autouse=True)
+def disable_tui_for_prompt_session_tests(monkeypatch):
+    """Keep these PromptSession-based CLI tests deterministic under a PTY."""
+    monkeypatch.setenv("DATUS_TUI", "0")
+
+
 def _assert_stdout_contains_exactly_one(stdout: str, expected_messages: tuple[str, ...], context: str) -> None:
     matched_messages = [message for message in expected_messages if message in stdout]
     assert len(matched_messages) == 1, (
@@ -265,7 +271,10 @@ def test_chat_command_with_ext_knowledge(mock_args):
     # knowledge tools here makes the real-LLM test nondeterministic.
     exec_stats = response_output.get("execution_stats", {})
     tools_used = exec_stats.get("tools_used", [])
-    assert "read_query" in tools_used, f"Should ground the answer with database reads. Got: {tools_used}"
+    database_grounding_tools = {"read_query", "execute_reference_template"}
+    assert database_grounding_tools & set(tools_used), (
+        f"Should ground the answer with a database-backed tool. Got: {tools_used}"
+    )
 
     # Check that the response includes query-derived content.
     # The CLI now routes bare text to chat, and the final answer may summarize

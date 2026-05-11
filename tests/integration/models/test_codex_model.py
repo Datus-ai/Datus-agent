@@ -25,6 +25,7 @@ load_dotenv()
 
 pytestmark = [
     pytest.mark.nightly,
+    pytest.mark.provider_health,
     pytest.mark.skipif(not os.getenv("CODEX_OAUTH_TOKEN"), reason="CODEX_OAUTH_TOKEN not set"),
 ]
 

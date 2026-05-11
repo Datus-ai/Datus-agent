@@ -52,6 +52,7 @@ def kb_home_tmp(nightly_agent_config, tmp_path):
 
 
 @pytest.mark.nightly
+@pytest.mark.product_e2e
 class TestKnowledgeBaseHomeE2E:
     @pytest.mark.asyncio
     @pytest.mark.timeout(600)

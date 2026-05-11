@@ -59,6 +59,7 @@ class TestFeedbackAgentic:
         assert isinstance(node, FeedbackAgenticNode)
         assert node.execution_mode == "workflow"
 
+    @pytest.mark.product_e2e
     @pytest.mark.asyncio
     async def test_execute_stream_completes(self, nightly_agent_config):
         """Running execute_stream with a short prompt returns a successful result.

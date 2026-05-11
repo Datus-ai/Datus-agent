@@ -7,7 +7,7 @@ from datus.tools.date_tools.date_parser import DateParserTool
 from datus.utils.loggings import get_logger
 from tests.conftest import load_acceptance_config
 
-pytestmark = pytest.mark.nightly
+pytestmark = [pytest.mark.nightly, pytest.mark.product_e2e]
 
 logger = get_logger(__name__)
 

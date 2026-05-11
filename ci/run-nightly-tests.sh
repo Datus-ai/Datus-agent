@@ -297,7 +297,7 @@ run_with_agent_home() {
     restore_agent_test_config
     return 1
   fi
-  DATUS_TEST_HOME="$home" DATUS_TEST_PROJECT_NAME="$DATUS_TEST_PROJECT_NAME" "$@"
+  DATUS_TEST_HOME="$home" DATUS_TEST_PROJECT_NAME="$DATUS_TEST_PROJECT_NAME" DATUS_TUI=0 "$@"
   local status=$?
   restore_agent_test_config
   return "$status"
@@ -326,7 +326,12 @@ nightly_kb_data_ready() {
 
 will_run_kb_dependent_suite() {
   local group_name
-  for group_name in "Gen Agent Tests" "Reference Template Nightly Tests" "Main Nightly Tests"; do
+  for group_name in \
+    "Gen Agent Tests" \
+    "Reference Template Nightly Tests" \
+    "Web UI Nightly Tests" \
+    "Main Nightly Tests" \
+    "Product E2E Nightly Tests"; do
     if should_run_group "$group_name"; then
       return 0
     fi
@@ -392,13 +397,13 @@ export ADAPTERS_TRINO="${ADAPTERS_TRINO:-1}"
 export ADAPTERS_GP="${ADAPTERS_GP:-1}"
 export ADAPTERS_HIVE="${ADAPTERS_HIVE:-1}"
 export ADAPTERS_SPARK="${ADAPTERS_SPARK:-1}"
-export SUPERSET_PORT="${SUPERSET_PORT:-18088}"
+export SUPERSET_PORT="${SUPERSET_PORT:-8088}"
 export SUPERSET_POSTGRES_HOST="${SUPERSET_POSTGRES_HOST:-127.0.0.1}"
-export SUPERSET_POSTGRES_PORT="${SUPERSET_POSTGRES_PORT:-15433}"
+export SUPERSET_POSTGRES_PORT="${SUPERSET_POSTGRES_PORT:-5433}"
 export SUPERSET_URL="${SUPERSET_URL:-http://127.0.0.1:${SUPERSET_PORT}}"
 export SUPERSET_USER="${SUPERSET_USER:-admin}"
 export SUPERSET_PASS="${SUPERSET_PASS:-admin}"
-export AIRFLOW_HOST_PORT="${AIRFLOW_HOST_PORT:-18080}"
+export AIRFLOW_HOST_PORT="${AIRFLOW_HOST_PORT:-8080}"
 export AIRFLOW_URL="${AIRFLOW_URL:-http://127.0.0.1:${AIRFLOW_HOST_PORT}/api/v1}"
 export AIRFLOW_USER="${AIRFLOW_USER:-admin}"
 export AIRFLOW_USERNAME="${AIRFLOW_USERNAME:-$AIRFLOW_USER}"
@@ -418,16 +423,16 @@ if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then
   export MYSQL_PASSWORD=test_password
   export MYSQL_DATABASE=test
 
-  export CLICKHOUSE_HTTP_HOST_PORT="${CLICKHOUSE_HTTP_HOST_PORT:-28123}"
-  export CLICKHOUSE_NATIVE_HOST_PORT="${CLICKHOUSE_NATIVE_HOST_PORT:-29000}"
+  export CLICKHOUSE_HTTP_HOST_PORT="${CLICKHOUSE_HTTP_HOST_PORT:-8123}"
+  export CLICKHOUSE_NATIVE_HOST_PORT="${CLICKHOUSE_NATIVE_HOST_PORT:-9000}"
   export CLICKHOUSE_HOST=127.0.0.1
   export CLICKHOUSE_PORT="$CLICKHOUSE_HTTP_HOST_PORT"
   export CLICKHOUSE_USER=default_user
   export CLICKHOUSE_PASSWORD=default_test
   export CLICKHOUSE_DATABASE=default_test
 
-  export STARROCKS_QUERY_HOST_PORT="${STARROCKS_QUERY_HOST_PORT:-29030}"
-  export STARROCKS_HTTP_HOST_PORT="${STARROCKS_HTTP_HOST_PORT:-28030}"
+  export STARROCKS_QUERY_HOST_PORT="${STARROCKS_QUERY_HOST_PORT:-9030}"
+  export STARROCKS_HTTP_HOST_PORT="${STARROCKS_HTTP_HOST_PORT:-8030}"
   export STARROCKS_HOST=127.0.0.1
   export STARROCKS_PORT="$STARROCKS_QUERY_HOST_PORT"
   export STARROCKS_USER=root
@@ -442,7 +447,7 @@ if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then
   export TRINO_PASSWORD=
   export TRINO_HTTP_SCHEME=http
 
-  export GREENPLUM_HOST_PORT="${GREENPLUM_HOST_PORT:-15434}"
+  export GREENPLUM_HOST_PORT="${GREENPLUM_HOST_PORT:-15432}"
   export GREENPLUM_HOST=localhost
   export GREENPLUM_PORT="$GREENPLUM_HOST_PORT"
   export GREENPLUM_USER=gpadmin
@@ -492,6 +497,34 @@ run_logged() {
   run_logged_unfiltered "$group_name" "$@"
 }
 
+run_logged_warn_only_unfiltered() {
+  local group_name="$1"
+  shift
+
+  log ""
+  log "=== ${group_name} (warn-only) ==="
+  "$@" 2>&1 | tee -a "$LOG_FILE"
+  local cmd_status=${PIPESTATUS[0]}
+  last_command_exit_code="$cmd_status"
+  if [ "$cmd_status" -ne 0 ]; then
+    log "WARNING: ${group_name} failed with exit code ${cmd_status}; continuing because this group is non-blocking."
+  fi
+  return 0
+}
+
+run_logged_warn_only() {
+  local group_name="$1"
+  shift
+  if ! should_run_group "$group_name"; then
+    log ""
+    log "=== Skipping ${group_name} (NIGHTLY_GROUP_FILTER=${NIGHTLY_GROUP_FILTER}) ==="
+    last_command_exit_code=0
+    return 0
+  fi
+
+  run_logged_warn_only_unfiltered "$group_name" "$@"
+}
+
 compose_up() {
   local compose_file="$1"
   shift
@@ -514,6 +547,7 @@ wait_for_service_health() {
   local service_name="$2"
   local timeout_seconds="$3"
   local container_id=""
+  local has_health=""
   local status=""
   local deadline=$((SECONDS + timeout_seconds))
 
@@ -524,11 +558,16 @@ wait_for_service_health() {
     test_exit_code=1
     return 1
   fi
+  has_health="$(docker inspect --format '{{if .State.Health}}1{{else}}0{{end}}' "$container_id" 2>/dev/null || echo 0)"
 
   while [ "$SECONDS" -lt "$deadline" ]; do
     status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || echo unknown)"
-    if [ "$status" = "healthy" ] || [ "$status" = "running" ]; then
+    if [ "$status" = "healthy" ]; then
       log "Service '$service_name' is $status"
+      return 0
+    fi
+    if [ "$has_health" != "1" ] && [ "$status" = "running" ]; then
+      log "Service '$service_name' is running and has no container healthcheck"
       return 0
     fi
     sleep 5
@@ -549,6 +588,75 @@ dump_compose_diagnostics() {
   log "=== ${group_name} Service Diagnostics ==="
   docker_compose -f "$compose_file" ps 2>&1 | tee -a "$LOG_FILE" || true
   docker_compose -f "$compose_file" logs --tail=200 2>&1 | tee -a "$LOG_FILE" || true
+}
+
+wait_for_tcp_readiness() {
+  local label="$1"
+  local host="$2"
+  local port="$3"
+  local timeout_seconds="${4:-300}"
+  local deadline=$((SECONDS + timeout_seconds))
+  local probe_output="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-${label//[^A-Za-z0-9_-]/_}-tcp-readiness-${GITHUB_RUN_ID:-$$}.log"
+
+  log "Waiting for ${label} TCP readiness at ${host}:${port}"
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if python3 - "$host" "$port" >"$probe_output" 2>&1 <<'PY'; then
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+with socket.create_connection((host, port), timeout=5):
+    pass
+PY
+      log "${label} TCP readiness probe succeeded"
+      return 0
+    fi
+    sleep 5
+  done
+
+  echo "Timed out waiting for ${label} TCP readiness at ${host}:${port}" | tee -a "$LOG_FILE" >&2
+  if [ -s "$probe_output" ]; then
+    log "Last ${label} TCP readiness probe output:"
+    sed 's/^/  /' "$probe_output" | tee -a "$LOG_FILE"
+  fi
+  test_exit_code=1
+  return 1
+}
+
+wait_for_http_readiness() {
+  local label="$1"
+  local url="$2"
+  local timeout_seconds="${3:-300}"
+  local deadline=$((SECONDS + timeout_seconds))
+  local probe_output="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-${label//[^A-Za-z0-9_-]/_}-http-readiness-${GITHUB_RUN_ID:-$$}.log"
+
+  log "Waiting for ${label} HTTP readiness at ${url}"
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if python3 - "$url" >"$probe_output" 2>&1 <<'PY'; then
+import sys
+import urllib.request
+
+url = sys.argv[1]
+request = urllib.request.Request(url, headers={"User-Agent": "datus-nightly-readiness"})
+with urllib.request.urlopen(request, timeout=10) as response:
+    status = response.getcode()
+    if status < 200 or status >= 400:
+        raise RuntimeError(f"unexpected HTTP status {status}")
+PY
+      log "${label} HTTP readiness probe succeeded"
+      return 0
+    fi
+    sleep 5
+  done
+
+  echo "Timed out waiting for ${label} HTTP readiness at ${url}" | tee -a "$LOG_FILE" >&2
+  if [ -s "$probe_output" ]; then
+    log "Last ${label} HTTP readiness probe output:"
+    sed 's/^/  /' "$probe_output" | tee -a "$LOG_FILE"
+  fi
+  test_exit_code=1
+  return 1
 }
 
 wait_for_mysql_client_readiness() {
@@ -599,6 +707,46 @@ PY
   return 1
 }
 
+wait_for_compose_client_readiness() {
+  local group_name="$1"
+  local airflow_base
+
+  case "$group_name" in
+    "Superset Nightly Tests")
+      wait_for_http_readiness "Superset" "${SUPERSET_URL%/}/health" 300
+      ;;
+    "Airflow Nightly Tests")
+      airflow_base="${AIRFLOW_URL%/}"
+      airflow_base="${airflow_base%/api/v1}"
+      wait_for_http_readiness "Airflow" "${airflow_base}/api/v1/health" 300
+      ;;
+    "PostgreSQL Adapter Tests")
+      wait_for_tcp_readiness "PostgreSQL" "${POSTGRESQL_HOST:-localhost}" "${POSTGRESQL_PORT:-5432}" 300
+      ;;
+    "MySQL Adapter Tests")
+      wait_for_mysql_client_readiness 300
+      ;;
+    "ClickHouse Adapter Tests")
+      wait_for_tcp_readiness "ClickHouse" "${CLICKHOUSE_HOST:-127.0.0.1}" "${CLICKHOUSE_PORT:-8123}" 300
+      ;;
+    "StarRocks Adapter Tests")
+      wait_for_tcp_readiness "StarRocks" "${STARROCKS_HOST:-127.0.0.1}" "${STARROCKS_PORT:-9030}" 300
+      ;;
+    "Trino Adapter Tests")
+      wait_for_http_readiness "Trino" "http://${TRINO_HOST:-127.0.0.1}:${TRINO_PORT:-8080}/v1/info" 300
+      ;;
+    "Greenplum Adapter Tests")
+      wait_for_tcp_readiness "Greenplum" "${GREENPLUM_HOST:-localhost}" "${GREENPLUM_PORT:-5432}" 300
+      ;;
+    "Hive Adapter Tests")
+      wait_for_tcp_readiness "HiveServer2" "${HIVE_HOST:-localhost}" "${HIVE_PORT:-10000}" 300
+      ;;
+    "Spark Adapter Tests")
+      wait_for_tcp_readiness "Spark Thrift" "${SPARK_HOST:-localhost}" "${SPARK_PORT:-10000}" 300
+      ;;
+  esac
+}
+
 run_compose_suite() {
   local group_name="$1"
   local compose_file="$2"
@@ -640,12 +788,10 @@ run_compose_suite() {
     fi
   done
 
-  if [ "$group_name" = "MySQL Adapter Tests" ]; then
-    if ! wait_for_mysql_client_readiness 300; then
-      dump_compose_diagnostics "$compose_file" "$group_name"
-      compose_down "$compose_file"
-      return 0
-    fi
+  if ! wait_for_compose_client_readiness "$group_name"; then
+    dump_compose_diagnostics "$compose_file" "$group_name"
+    compose_down "$compose_file"
+    return 0
   fi
 
   run_logged "$group_name" "$@"
@@ -693,7 +839,34 @@ run_logged "Gen Agent Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJE
 
 run_logged "Reference Template Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/tools/test_reference_template.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
 
-run_logged "Main Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/ --deselect tests/integration/tools/test_mcp_server.py --deselect tests/integration/agent/test_gen_semantic_model_agentic.py --deselect tests/integration/agent/test_gen_metrics_agentic.py --deselect tests/integration/agent/test_gen_ext_knowledge_agentic.py --deselect tests/integration/agent/test_gen_dashboard_agentic.py --deselect tests/integration/agent/test_scheduler_agentic.py --deselect tests/integration/tools/test_bi_dashboard.py --deselect tests/integration/tools/test_reference_template.py --deselect tests/integration/adapters/test_postgresql.py --deselect tests/integration/adapters/test_mysql.py --deselect tests/integration/adapters/test_clickhouse.py --deselect tests/integration/adapters/test_starrocks.py --deselect tests/integration/adapters/test_trino.py --deselect tests/integration/adapters/test_greenplum.py --deselect tests/integration/adapters/test_hive.py --deselect tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300 --reruns 1 --reruns-delay 5 --dist=loadscope -n auto
+run_logged "Web UI Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/regression/test_regression_web_e2e.py --tb=short --verbose --timeout=300 --reruns 1 --reruns-delay 5
+
+# These suites are not skipped. They are run by dedicated groups above/below
+# so the broad "tests/" collection used by Main/Product E2E does not duplicate
+# them before their required server/compose setup is ready.
+NIGHTLY_DEDICATED_SUITE_DESELECTS=(
+  --deselect tests/integration/tools/test_mcp_server.py
+  --deselect tests/integration/agent/test_gen_semantic_model_agentic.py
+  --deselect tests/integration/agent/test_gen_metrics_agentic.py
+  --deselect tests/integration/agent/test_gen_ext_knowledge_agentic.py
+  --deselect tests/integration/agent/test_gen_dashboard_agentic.py
+  --deselect tests/integration/agent/test_scheduler_agentic.py
+  --deselect tests/integration/tools/test_bi_dashboard.py
+  --deselect tests/integration/tools/test_reference_template.py
+  --deselect tests/integration/adapters/test_postgresql.py
+  --deselect tests/integration/adapters/test_mysql.py
+  --deselect tests/integration/adapters/test_clickhouse.py
+  --deselect tests/integration/adapters/test_starrocks.py
+  --deselect tests/integration/adapters/test_trino.py
+  --deselect tests/integration/adapters/test_greenplum.py
+  --deselect tests/integration/adapters/test_hive.py
+  --deselect tests/integration/adapters/test_spark.py
+  --deselect tests/regression/test_regression_web_e2e.py
+)
+
+run_logged "Main Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m "nightly and not provider_health and not product_e2e" tests/ "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" --tb=short --verbose --timeout=300 --reruns 1 --reruns-delay 5 --dist=loadscope -n auto
+
+run_logged "Product E2E Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m "nightly and product_e2e and not provider_health" tests/ "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
 
 run_compose_suite "Superset Nightly Tests" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
 
@@ -707,6 +880,8 @@ run_compose_suite "Trino Adapter Tests" "$TRINO_COMPOSE" "trino:300" -- run_with
 run_compose_suite "Greenplum Adapter Tests" "$GREENPLUM_COMPOSE" "greenplum:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/adapters/test_greenplum.py --tb=short --verbose --timeout=300
 run_compose_suite "Hive Adapter Tests" "$HIVE_COMPOSE" "hive-metastore:600" "hive-server:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/adapters/test_hive.py --tb=short --verbose --timeout=300
 run_compose_suite "Spark Adapter Tests" "$SPARK_COMPOSE" "spark-thrift:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300
+
+run_logged_warn_only "Provider Health Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m "nightly and provider_health" tests/ --tb=short --verbose --timeout=300 --reruns 1 --reruns-delay 5
 
 run_logged_unfiltered "Flaky Log Classification" uv run python ci/check_flaky_registry.py --registry ci/flaky-registry.yml --log-file "$LOG_FILE" --warn-only
 

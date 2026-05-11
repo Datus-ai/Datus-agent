@@ -49,15 +49,24 @@ jobs:
             {
               for file in \
                 build_scripts/build_test_data.sh \
+                tests/conf/agent.yml \
                 tests/data/SSB.db \
-                datus/cli/bootstrap_streams.py \
-                datus/main.py; do
+                pyproject.toml \
+                uv.lock; do
                 if [ -f "$file" ]; then
                   sha256sum "$file"
                 fi
               done
 
-              for dir in datus/sample_data datus/storage; do
+              for dir in \
+                datus/agent \
+                datus/api/models \
+                datus/api/services \
+                datus/cli \
+                datus/configuration \
+                datus/prompts \
+                datus/sample_data \
+                datus/storage; do
                 if [ -d "$dir" ]; then
                   find "$dir" -type f -print0 | sort -z | while IFS= read -r -d '' file; do
                     sha256sum "$file"
@@ -66,7 +75,7 @@ jobs:
               done
             } | sha256sum | awk '{print $1}'
           )"
-          echo "key=${RUNNER_OS}-kb-v3-datus_agent_nightly-${digest}" >> "$GITHUB_OUTPUT"
+          echo "key=${RUNNER_OS}-kb-v4-datus_agent_nightly-${digest}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -240,9 +249,35 @@ jobs:
             KB_READY_DIR="$KB_DATA_DIR/$DATUS_TEST_PROJECT_NAME/datus_db"
           fi
 
-          if [ "${{ steps.kb-cache.outputs.cache-hit }}" = "true" ] \
-            && [ -d "$KB_READY_DIR" ] \
-            && find "$KB_READY_DIR" -mindepth 1 -maxdepth 5 -type f -size +0 -print -quit | grep -q .; then
+          CACHE_KEY="${{ steps.kb-cache-key.outputs.key }}"
+          MANIFEST_FILE="$KB_READY_DIR/.nightly_kb_cache_key"
+          required_datasets=(
+            schema_metadata.lance
+            schema_value.lance
+            metrics.lance
+            reference_sql.lance
+            ext_knowledge.lance
+            reference_template.lance
+          )
+
+          cache_ready=true
+          if [ "${{ steps.kb-cache.outputs.cache-hit }}" != "true" ] || [ ! -d "$KB_READY_DIR" ]; then
+            cache_ready=false
+          elif [ ! -f "$MANIFEST_FILE" ] || [ "$(cat "$MANIFEST_FILE")" != "$CACHE_KEY" ]; then
+            echo "Knowledge base cache manifest is missing or stale"
+            cache_ready=false
+          else
+            for dataset in "${required_datasets[@]}"; do
+              dataset_dir="$KB_READY_DIR/$dataset/data"
+              if [ ! -d "$dataset_dir" ] || ! find "$dataset_dir" -type f -size +0 -print -quit | grep -q .; then
+                echo "Knowledge base cache dataset is missing or empty: $dataset"
+                cache_ready=false
+                break
+              fi
+            done
+          fi
+
+          if [ "$cache_ready" = "true" ]; then
             echo "Restored knowledge base cache from $KB_READY_DIR"
             echo "needs-build=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -259,6 +294,23 @@ jobs:
           echo "Building test data before running nightly tests..."
           chmod +x build_scripts/build_test_data.sh
           ./build_scripts/build_test_data.sh || exit 1
+          KB_READY_DIR="${DATUS_TEST_HOME}/data/${DATUS_TEST_PROJECT_NAME}/datus_db"
+          required_datasets=(
+            schema_metadata.lance
+            schema_value.lance
+            metrics.lance
+            reference_sql.lance
+            ext_knowledge.lance
+            reference_template.lance
+          )
+          for dataset in "${required_datasets[@]}"; do
+            dataset_dir="$KB_READY_DIR/$dataset/data"
+            if [ ! -d "$dataset_dir" ] || ! find "$dataset_dir" -type f -size +0 -print -quit | grep -q .; then
+              echo "::error::Knowledge base dataset is missing or empty after build: $dataset"
+              exit 1
+            fi
+          done
+          echo "${{ steps.kb-cache-key.outputs.key }}" > "$KB_READY_DIR/.nightly_kb_cache_key"
           echo "Test data build completed"
 
       - name: Save knowledge base cache

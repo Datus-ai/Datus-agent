@@ -126,6 +126,26 @@ async def stop_uvicorn(uvi_server, task, timeout: float = 10.0):
     finally:
         AppStatus.should_exit = False
         AppStatus.should_exit_event = None
+        await drain_sse_shutdown_watchers()
+
+
+async def drain_sse_shutdown_watchers():
+    """Cancel sse-starlette process-global shutdown watchers before loop teardown."""
+    current_task = asyncio.current_task()
+    watchers = []
+    for task in asyncio.all_tasks():
+        if task is current_task or task.done():
+            continue
+        qualname = getattr(task.get_coro(), "__qualname__", "")
+        if qualname.endswith("_shutdown_watcher"):
+            watchers.append(task)
+
+    if not watchers:
+        return
+
+    for task in watchers:
+        task.cancel()
+    await asyncio.gather(*watchers, return_exceptions=True)
 
 
 @asynccontextmanager
@@ -422,32 +442,15 @@ class TestStaticModeStdio(StaticModeTestBase):
             env=os.environ.copy(),
         )
 
-    @pytest.fixture(autouse=True)
-    def verify_subprocess(self):
-        """Pre-flight check: verify the MCP server subprocess can start."""
-        import subprocess
-
-        params = self._server_params()
-        proc = subprocess.Popen(
-            [params.command] + list(params.args),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=params.env,
-        )
-        import time
-
-        time.sleep(2)
-        exit_code = proc.poll()
-        if exit_code is not None:
-            stderr = proc.stderr.read().decode(errors="replace")
-            stdout = proc.stdout.read().decode(errors="replace")
-            pytest.fail(
-                f"MCP stdio subprocess exited with code {exit_code}.\nstderr: {stderr[:1000]}\nstdout: {stdout[:500]}"
-            )
-        proc.stdin.close()
-        proc.terminate()
-        proc.wait(timeout=5)
+    @pytest_asyncio.fixture(autouse=True)
+    async def verify_subprocess(self):
+        """Pre-flight check: verify stdio reaches the MCP initialized state."""
+        try:
+            async with mcp_stdio_session(self._server_params()) as session:
+                result = await session.list_tools()
+                assert result.tools, "MCP stdio readiness probe returned no tools"
+        except Exception as exc:
+            pytest.fail(f"MCP stdio readiness probe failed: {exc!r}")
 
     def _session(self):
         return mcp_stdio_session(self._server_params())

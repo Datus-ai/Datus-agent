@@ -20,6 +20,7 @@ logger = get_logger(__name__)
 
 
 @pytest.mark.nightly
+@pytest.mark.product_e2e
 class TestSqlSummaryAgentic:
     """Integration tests for SqlSummaryAgenticNode with real LLM."""
 

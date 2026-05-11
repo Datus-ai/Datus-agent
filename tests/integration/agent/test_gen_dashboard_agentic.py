@@ -123,6 +123,7 @@ class TestGenDashboardAgenticInit:
 
 
 @pytest.mark.nightly
+@pytest.mark.product_e2e
 class TestGenDashboardAgenticExecution:
     """Integration tests for GenDashboardAgenticNode execute_stream with real Superset + LLM."""
 

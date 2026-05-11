@@ -86,6 +86,7 @@ class TestChatExecutorIntegration:
         assert isinstance(results[0], str)
         assert "Error" in results[0]
 
+    @pytest.mark.product_e2e
     def test_execute_chat_stream_produces_actions(self, mock_args):
         """W2-02: ChatExecutor produces actions with real DatusCLI + real LLM."""
         from datus.cli.repl import DatusCLI

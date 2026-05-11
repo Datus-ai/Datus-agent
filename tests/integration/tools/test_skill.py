@@ -149,6 +149,7 @@ class TestAgenticNodeSkillFiltering:
 
 
 @pytest.mark.nightly
+@pytest.mark.product_e2e
 class TestRealLLMSkillIntegration:
     """Real LLM integration test: ChatAgenticNode + Skills + california_schools.
 

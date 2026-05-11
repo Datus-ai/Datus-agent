@@ -10,7 +10,7 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 set_tracing_disabled(True)
 
-pytestmark = pytest.mark.nightly
+pytestmark = [pytest.mark.nightly, pytest.mark.provider_health]
 
 
 class TestInitKimiConnectivity:
