@@ -22,6 +22,7 @@ import asyncio
 import json
 import shutil
 import sys
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -66,6 +67,10 @@ def find_events(events: list[dict], event_type: str) -> list[dict]:
 def find_event(events: list[dict], event_type: str) -> Optional[dict]:
     matches = find_events(events, event_type)
     return matches[0] if matches else None
+
+
+def unique_session_id(prefix: str) -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:10]}"
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +195,7 @@ async def _cleanup_task(svc, task):
 
 
 @pytest.mark.nightly
+@pytest.mark.product_e2e
 class TestAPIChatN9:
     """N9: Chat API integration tests with real LLM."""
 
@@ -233,7 +239,8 @@ class TestAPIChatN9:
     @pytest.mark.asyncio
     async def test_resume_from_cursor(self, chat_client, chat_datus_service):
         """start task → wait for events → resume from cursor 0."""
-        task = await _start_task(chat_datus_service, "How many charter schools are there?", "resume_sess")
+        session_id = unique_session_id("resume_sess")
+        task = await _start_task(chat_datus_service, "How many charter schools are there?", session_id)
         try:
             resp = await chat_client.post(
                 "/api/v1/chat/resume",
@@ -297,10 +304,11 @@ class TestAPIChatN9:
     @pytest.mark.asyncio
     async def test_stop_running_chat(self, chat_client, chat_datus_service):
         """start a chat, stop it, verify task terminates."""
+        session_id = unique_session_id("stop_sess")
         task = await _start_task(
             chat_datus_service,
             "List all distinct counties, their school counts, and average enrollment",
-            "stop_sess",
+            session_id,
         )
         try:
             # If the task is still running when we arrive, send /stop and wait
@@ -309,7 +317,7 @@ class TestAPIChatN9:
             # state assert below still fires, so the test never silently passes.
             stop_success: bool | None = None
             if task.status == "running":
-                body = (await chat_client.post("/api/v1/chat/stop", json={"session_id": "stop_sess"})).json()
+                body = (await chat_client.post("/api/v1/chat/stop", json={"session_id": session_id})).json()
                 stop_success = body["success"]
                 for _ in range(20):
                     await asyncio.sleep(0.5)
@@ -333,16 +341,19 @@ class TestAPIChatN9:
         from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 
         fs_tool = FilesystemFuncTool(root_path=str(tmp_path))
+        session_id = unique_session_id("proxy_sess")
+        target_relpath = "test_output_dir/placeholder.txt"
 
         task = await _start_task(
             chat_datus_service,
-            "Create a new directory called 'test_output_dir' for me.",
-            "proxy_sess",
+            "Do not ask any follow-up question. Use the filesystem write_file tool exactly once "
+            f"to create {target_relpath} with content 'nightly-ok'.",
+            session_id,
             source="vscode",
         )
         try:
             if task.node is None:
-                pytest.skip("Node not created in time")
+                pytest.fail(f"Node not created in time for session {session_id}; status={task.status}")
 
             # Poll task events for call-tool events and respond until task completes
             responded_ids = set()
@@ -368,17 +379,19 @@ class TestAPIChatN9:
 
                         # Execute the tool locally via FilesystemFuncTool
                         handler = getattr(fs_tool, tool_name, None)
-                        if handler:
-                            result = handler(**tool_params)
-                            tool_result = result.model_dump()
-                        else:
-                            tool_result = {"success": 0, "error": f"Unknown tool: {tool_name}", "result": None}
+                        if handler is None:
+                            pytest.fail(
+                                f"Unexpected proxied tool call: {tool_name!r} params={tool_params!r}; "
+                                "expected a filesystem tool exposed by FilesystemFuncTool"
+                            )
+                        result = handler(**tool_params)
+                        tool_result = result.model_dump()
 
                         # Submit result via REST API
                         resp = await chat_client.post(
                             "/api/v1/chat/tool_result",
                             json={
-                                "session_id": "proxy_sess",
+                                "session_id": session_id,
                                 "call_tool_id": call_tool_id,
                                 "tool_result": tool_result,
                             },
@@ -386,7 +399,8 @@ class TestAPIChatN9:
                         assert resp.json()["success"] is True
 
             assert len(responded_ids) >= 1, "Expected at least one proxied tool call"
-            assert task.status in ("completed", "error")
+            assert task.status == "completed", f"source proxy task should complete after tool result, got {task.status}"
+            assert (tmp_path / target_relpath).read_text(encoding="utf-8") == "nightly-ok"
         finally:
             await _cleanup_task(chat_datus_service, task)
 
@@ -395,13 +409,14 @@ class TestAPIChatN9:
     @pytest.mark.asyncio
     async def test_ask_user_interaction(self, chat_client, chat_datus_service):
         """prompt instructs LLM to call ask_user, submit via REST, agent completes."""
+        session_id = unique_session_id("askuser_sess")
         task = await _start_task(
             chat_datus_service,
             "I want to know about schools in a specific county. "
             "Use the ask_user tool to ask me which county I'm interested in. "
             "Provide these options: Los Angeles, San Francisco, San Diego. "
             "After I answer, count the schools in that county.",
-            "askuser_sess",
+            session_id,
         )
         try:
             # Poll for user-interaction event
@@ -425,13 +440,13 @@ class TestAPIChatN9:
                     break
 
             if interaction_key is None:
-                pytest.skip(f"LLM did not call ask_user (status={task.status}, events={len(task.events)})")
+                pytest.fail(f"LLM did not call ask_user (status={task.status}, events={len(task.events)})")
 
             # Submit choice
             body = (
                 await chat_client.post(
                     "/api/v1/chat/user_interaction",
-                    json={"session_id": "askuser_sess", "interaction_key": interaction_key, "input": ["Los Angeles"]},
+                    json={"session_id": session_id, "interaction_key": interaction_key, "input": ["Los Angeles"]},
                 )
             ).json()
             assert body["success"] is True
@@ -442,7 +457,7 @@ class TestAPIChatN9:
                 await asyncio.sleep(1)
                 if task.status != "running":
                     break
-            assert task.status in ("completed", "error")
+            assert task.status == "completed", f"ask_user task should complete after submitted input, got {task.status}"
 
             # Response should mention Los Angeles
             dump = json.dumps(

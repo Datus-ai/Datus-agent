@@ -160,7 +160,8 @@ class TestFeedbackAgenticNodeInit:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.nightly
+@pytest.mark.component
+@pytest.mark.llm_harness
 class TestFeedbackAgenticNodeExecution:
     """Tests for FeedbackAgenticNode streaming execution."""
 

@@ -100,7 +100,8 @@ class TestCompareAgenticNodeInit:
 # ===========================================================================
 
 
-@pytest.mark.nightly
+@pytest.mark.component
+@pytest.mark.llm_harness
 class TestCompareAgenticNodeExecution:
     """Tests for CompareAgenticNode.execute_stream() with real tools."""
 

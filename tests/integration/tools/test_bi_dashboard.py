@@ -408,7 +408,8 @@ class TestPartialIntegration:
     """
 
     @pytest.mark.nightly
-    def test_workflow_without_llm(
+    @pytest.mark.asyncio
+    async def test_workflow_without_llm(
         self,
         bi_picker: BootstrapBiPicker,
         bi_commands: BootstrapBiCommands,
@@ -424,7 +425,6 @@ class TestPartialIntegration:
         gating, ScopedContext assembly, sub-agent persistence) without
         burning LLM tokens.
         """
-        import asyncio
         from unittest.mock import patch
 
         for dashboard_item in input_data:
@@ -490,7 +490,7 @@ class TestPartialIntegration:
                     patch("datus.cli.bootstrap_bi_commands.configuration_manager"),
                     patch("datus.cli.bootstrap_bi_commands.qualify_table_names", return_value=list(result.tables)),
                 ):
-                    asyncio.run(bi_commands._run_plan(plan, actions))
+                    await bi_commands._run_plan(plan, actions)
 
                 # Verify the orchestrator gated correctly: metrics ran (semantic_ok was True),
                 # so we expect both ref_sqls and metric identifiers in the resulting actions.
@@ -526,8 +526,10 @@ class TestE2EIntegration:
     """
 
     @pytest.mark.nightly
+    @pytest.mark.product_e2e
     @pytest.mark.timeout(600)
-    def test_complete_workflow(
+    @pytest.mark.asyncio
+    async def test_complete_workflow(
         self,
         bi_picker: BootstrapBiPicker,
         bi_commands: BootstrapBiCommands,
@@ -540,8 +542,6 @@ class TestE2EIntegration:
         (home: redirected to tmp_path_factory), so no cleanup is needed here —
         the storage starts empty for every test module run.
         """
-        import asyncio
-
         test_results = []
 
         for dashboard_item in input_data:
@@ -591,7 +591,7 @@ class TestE2EIntegration:
                     pool_size=2,
                 )
                 actions: list = []
-                asyncio.run(bi_commands._run_plan(plan, actions))
+                await bi_commands._run_plan(plan, actions)
 
                 # Verify 2 sub-agents created
                 assert sub_agent_name in agent_config.agentic_nodes, (

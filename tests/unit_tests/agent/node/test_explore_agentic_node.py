@@ -217,7 +217,8 @@ class TestExploreAgenticNodeTools:
         assert "`get_knowledge" not in prompt
 
 
-@pytest.mark.nightly
+@pytest.mark.component
+@pytest.mark.llm_harness
 class TestExploreAgenticNodeExecution:
     """Tests for ExploreAgenticNode execute_stream."""
 

@@ -7,6 +7,7 @@ from tests.integration.conftest import wait_for_agent
 
 
 @pytest.mark.nightly
+@pytest.mark.product_e2e
 class TestChatAgentic:
     """N5: Chat agentic workflow tests."""
 
@@ -67,7 +68,8 @@ class TestChatAgentic:
         tools_used = response.output.get("execution_stats", {}).get("tools_used", [])
         assert len(tools_used) >= 2, f"Should use multiple tools, got: {tools_used}"
 
-    def test_streaming_response(self, mock_args):
+    @pytest.mark.asyncio
+    async def test_streaming_response(self, mock_args):
         """N5-05: Streaming response generates action sequence."""
         question = "How many schools are there in Los Angeles county?"
 
@@ -93,9 +95,7 @@ class TestChatAgentic:
 
         # Verify session info
         assert cli.chat_commands.current_node is not None, "Should have an active chat node"
-        import asyncio
-
-        session_info = asyncio.run(cli.chat_commands.current_node.get_session_info())
+        session_info = await cli.chat_commands.current_node.get_session_info()
         assert session_info.get("session_id"), "Should have a valid session ID"
         assert session_info.get("action_count", 0) > 0, "Session should have recorded actions"
 

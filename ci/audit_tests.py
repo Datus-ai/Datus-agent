@@ -121,6 +121,8 @@ RULE_TIERS: dict[str, set[str]] = {
     "sleep_based_wait": {"integration"},
     "try_except_pass_in_test": {"integration"},
     "empty_test_subdir": {"integration"},
+    "asyncio_run_in_integration": {"integration"},
+    "nightly_marker_in_unit": {"unit"},
 }
 
 
@@ -443,6 +445,18 @@ class _AstChecker(ast.NodeVisitor):
                     suggestion="Remove the sleep; use a deterministic clock or mock the timing dependency.",
                 )
             )
+        if _is_asyncio_run_call(node) and self._in_test_or_fixture[-1]:
+            self._emit(
+                Issue(
+                    file=self.path,
+                    line=node.lineno,
+                    severity="P0",
+                    check="asyncio_run_in_integration",
+                    message="asyncio.run() inside an integration test breaks under pytest-managed event loops",
+                    quote=self._quote(node.lineno),
+                    suggestion="Make the test async with @pytest.mark.asyncio and await the coroutine directly.",
+                )
+            )
         self.generic_visit(node)
 
     @staticmethod
@@ -512,6 +526,16 @@ def _is_time_sleep_call(node: ast.Call) -> bool:
         if isinstance(func.value, ast.Name) and func.value.id == "time":
             return True
     return False
+
+
+def _is_asyncio_run_call(node: ast.Call) -> bool:
+    func = node.func
+    return (
+        isinstance(func, ast.Attribute)
+        and func.attr == "run"
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "asyncio"
+    )
 
 
 def _is_long_sleep(node: ast.Call) -> float | None:
@@ -835,6 +859,7 @@ _REAL_IO_PATTERNS: list[re.Pattern[str]] = [
 _LAMBDA_THROW = re.compile(r"lambda\s+[^:]*:\s*\(\s*_\s+for\s+_\s+in\s+\(\s*\)\s*\)\s*\.\s*throw")
 
 _PATCH_BUILTINS_OPEN = re.compile(r"""patch(?:\.object)?\s*\(\s*["'](?:builtins|__builtins__)\.open["']""")
+_UNIT_NIGHTLY_MARKER = re.compile(r"^\s*(?:@pytest\.mark\.nightly\b|pytestmark\s*=.*pytest\.mark\.nightly\b)")
 
 # Match hardcoded localhost connections in three flavors:
 #  1. URL / host:port literal:   "localhost:15432" / "postgresql://127.0.0.1:6379/"
@@ -940,6 +965,25 @@ def regex_scan(path: Path, required_packages: set[str], tier: str) -> list[Issue
                     message="`patch('builtins.open')` globally intercepts every open() in the with-block — flaky + may hide production bugs",
                     quote=stripped[:120],
                     suggestion="Patch the specific module path, e.g. `patch('datus.module.path.open')`, not builtins.",
+                    tier=tier,
+                )
+            )
+
+        if (
+            tier == "unit"
+            and _UNIT_NIGHTLY_MARKER.search(line)
+            and not noqa_match
+            and rule_applies("nightly_marker_in_unit", tier)
+        ):
+            issues.append(
+                Issue(
+                    file=rel,
+                    line=lineno,
+                    severity="P0",
+                    check="nightly_marker_in_unit",
+                    message="Unit/component tests must not be routed through nightly; use component/llm_harness or quarantine",
+                    quote=stripped[:120],
+                    suggestion="Replace @pytest.mark.nightly with @pytest.mark.component/@pytest.mark.llm_harness, or quarantine with an owner and expiry.",
                     tier=tier,
                 )
             )

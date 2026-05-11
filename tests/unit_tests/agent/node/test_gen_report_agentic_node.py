@@ -207,7 +207,8 @@ class TestGenReportAgenticNodeExecutionMode:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.nightly
+@pytest.mark.component
+@pytest.mark.llm_harness
 class TestGenReportAgenticNodeExecution:
     """Tests for GenReportAgenticNode streaming execution."""
 

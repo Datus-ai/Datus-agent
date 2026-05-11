@@ -150,6 +150,40 @@ def test_run_tests_treats_empty_impacted_collection_as_success(tmp_path, monkeyp
     ]
 
 
+def test_pr_harness_marker_expressions_route_component_tests():
+    assert run_pr_tests.PR_HARNESS_MARK_EXPR == "acceptance or component or llm_harness"
+    assert run_pr_tests.IMPACTED_UNIT_MARK_EXPR == (
+        "not acceptance and not component and not llm_harness and not nightly and not quarantine"
+    )
+
+
+def test_resolve_explicit_compare_ref_prefers_origin_for_branch_name(monkeypatch):
+    monkeypatch.setattr(run_pr_tests, "_git_ref_exists", lambda ref: ref == "origin/main")
+
+    assert run_pr_tests._resolve_explicit_compare_ref("main") == "origin/main"
+
+
+def test_resolve_explicit_compare_ref_accepts_remote_ref(monkeypatch):
+    monkeypatch.setattr(run_pr_tests, "_git_ref_exists", lambda ref: ref == "upstream/main")
+
+    assert run_pr_tests._resolve_explicit_compare_ref("upstream/main") == "upstream/main"
+
+
+def test_find_compare_branch_caches_resolved_explicit_base_ref(monkeypatch):
+    monkeypatch.setattr(run_pr_tests, "_COMPARE_BRANCH_CACHE", {})
+    calls = []
+
+    def fake_ref_exists(ref):
+        calls.append(ref)
+        return ref == "upstream/main"
+
+    monkeypatch.setattr(run_pr_tests, "_git_ref_exists", fake_ref_exists)
+
+    assert run_pr_tests.find_compare_branch("upstream/main") == "upstream/main"
+    assert run_pr_tests.find_compare_branch("upstream/main") == "upstream/main"
+    assert calls == ["upstream/main"]
+
+
 def test_main_returns_test_exit_code(monkeypatch):
     monkeypatch.setattr(
         run_pr_tests.argparse.ArgumentParser, "parse_args", lambda self: type("Args", (), {"base_ref": "main"})()

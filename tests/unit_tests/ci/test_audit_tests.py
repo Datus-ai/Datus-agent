@@ -1,0 +1,71 @@
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+
+MODULE_PATH = Path(__file__).resolve().parents[3] / "ci" / "audit_tests.py"
+
+
+def _load_audit_tests():
+    module_spec = importlib.util.spec_from_file_location("audit_tests", MODULE_PATH)
+    assert module_spec is not None
+    assert module_spec.loader is not None
+    audit_tests = importlib.util.module_from_spec(module_spec)
+    sys.modules[module_spec.name] = audit_tests
+    module_spec.loader.exec_module(audit_tests)
+    return audit_tests
+
+
+def test_audit_flags_asyncio_run_in_integration_test(tmp_path):
+    audit_tests = _load_audit_tests()
+    original_root = audit_tests.REPO_ROOT
+    try:
+        test_file = tmp_path / "tests" / "integration" / "test_asyncio_run.py"
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text(
+            """
+import asyncio
+
+async def do_work():
+    return 1
+
+def test_nested_loop_smell():
+    result = asyncio.run(do_work())
+    assert result == 1
+""",
+            encoding="utf-8",
+        )
+        audit_tests.configure_repo_root(tmp_path)
+
+        issues = audit_tests.scan_file(test_file, required_packages=set())
+
+        assert any(issue.check == "asyncio_run_in_integration" for issue in issues)
+    finally:
+        audit_tests.configure_repo_root(original_root)
+
+
+def test_audit_flags_nightly_marker_in_unit_test(tmp_path):
+    audit_tests = _load_audit_tests()
+    original_root = audit_tests.REPO_ROOT
+    try:
+        test_file = tmp_path / "tests" / "unit_tests" / "test_marker.py"
+        test_file.parent.mkdir(parents=True)
+        nightly_marker = "@pytest.mark." + "nightly"
+        test_file.write_text(
+            f"""
+import pytest
+
+{nightly_marker}
+def test_component_case():
+    assert 1 == 1
+""",
+            encoding="utf-8",
+        )
+        audit_tests.configure_repo_root(tmp_path)
+
+        issues = audit_tests.scan_file(test_file, required_packages=set())
+
+        assert any(issue.check == "nightly_marker_in_unit" for issue in issues)
+    finally:
+        audit_tests.configure_repo_root(original_root)

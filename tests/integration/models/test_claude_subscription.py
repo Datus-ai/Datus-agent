@@ -24,6 +24,7 @@ set_tracing_disabled(True)
 
 pytestmark = [
     pytest.mark.nightly,
+    pytest.mark.provider_health,
     pytest.mark.skipif(not os.getenv("CLAUDE_CODE_OAUTH_TOKEN"), reason="CLAUDE_CODE_OAUTH_TOKEN not set"),
 ]
 
@@ -140,6 +141,7 @@ class TestClaudeSubscriptionModel:
 
 
 @pytest.mark.nightly
+@pytest.mark.provider_health
 @pytest.mark.skipif(not os.getenv("CLAUDE_CODE_OAUTH_TOKEN"), reason="CLAUDE_CODE_OAUTH_TOKEN not set")
 class TestClaudeSubscriptionMultiModel:
     """Test that subscription token works with different Claude model variants."""

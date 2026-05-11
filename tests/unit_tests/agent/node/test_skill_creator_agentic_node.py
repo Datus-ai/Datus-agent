@@ -298,7 +298,8 @@ class TestSkillCreatorSystemPrompt:
         assert "ask_user" in prompt
 
 
-@pytest.mark.nightly
+@pytest.mark.component
+@pytest.mark.llm_harness
 class TestSkillCreatorExecution:
     """Tests for SkillCreatorAgenticNode execute_stream."""
 

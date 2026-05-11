@@ -131,7 +131,8 @@ class TestGenMetricsAgenticNodeInit:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.nightly
+@pytest.mark.component
+@pytest.mark.llm_harness
 class TestGenMetricsAgenticNodeExecution:
     """Tests for GenMetricsAgenticNode streaming execution."""
 

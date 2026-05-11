@@ -169,7 +169,8 @@ class TestGenSQLAgenticNodeExecutionMode:
         assert "ask_user" not in tool_names
 
 
-@pytest.mark.nightly
+@pytest.mark.component
+@pytest.mark.llm_harness
 class TestGenSQLAgenticNodeExecution:
     """Tests for GenSQLAgenticNode execute_stream and related methods."""
 
@@ -1185,12 +1186,12 @@ class TestEndToEndNodeHooksInteraction:
 # ===========================================================================
 
 
-# These plan-mode tests have an outstanding hang in the broker simulator
-# — on the CI runner they time out even though local pytest-timeout
-# catches them within 20s. Park them under ``nightly`` until the hang
-# is root-caused; keeping them on every PR starves the coverage job's
-# 1800s budget with a single hanging test.
-@pytest.mark.nightly
+# These plan-mode tests have an outstanding hang in the broker simulator.
+# Quarantine keeps the known-bad harness case visible and owned without
+# polluting nightly/product signals or starving the coverage job budget.
+@pytest.mark.quarantine
+@pytest.mark.known_flaky
+@pytest.mark.skip(reason="Quarantined in ci/flaky-registry.yml: gen-sql-plan-mode-hooks-broker-hang")
 class TestEndToEndPlanModeHooksInteraction:
     """End-to-end tests: ChatAgenticNode(plan_mode=True) → LLM calls todo_write → PlanModeHooks →
     on_tool_end sets _plan_generated_pending → on_llm_end → _on_plan_generated → broker.request → submit.

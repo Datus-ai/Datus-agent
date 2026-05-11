@@ -8,7 +8,7 @@ These methods are pure routing — no setup needed beyond hand-stubbed
 attributes. Covering them at this tier keeps the regression surface
 for ``db_tools.*`` / ``filesystem_tools.*`` / ``scheduler_tools.*``
 profile rules under unit tests that finish in milliseconds, instead of
-only through ``@pytest.mark.nightly`` flows that spin up real DB
+only through nightly-marked flows that spin up real DB
 connectors and drive the OpenAI Agents SDK tool loop.
 
 ``trans_to_function_tool`` (the OpenAI Agents SDK wrapper) introspects

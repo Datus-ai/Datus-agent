@@ -133,7 +133,8 @@ class TestGenJobAgenticNodeInit:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.nightly
+@pytest.mark.component
+@pytest.mark.llm_harness
 class TestGenJobExecution:
     """Test execute_stream error paths and basic workflow."""
 

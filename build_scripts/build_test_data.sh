@@ -3,6 +3,7 @@ set -euo pipefail
 
 DATUS_TEST_HOME="${DATUS_TEST_HOME:-$HOME/.datus/tests}"
 export DATUS_TEST_HOME
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 validate_test_home() {
   local path="${DATUS_TEST_HOME%/}"
@@ -25,6 +26,12 @@ validate_test_home() {
   esac
 
   if [ "$path" = "$home/.datus/tests" ] || [ "$path" = "$home/.datus_test_data" ]; then
+    DATUS_TEST_HOME="$path"
+    export DATUS_TEST_HOME
+    return
+  fi
+
+  if [ "$path" = "${REPO_ROOT%/}/.datus_test_data" ]; then
     DATUS_TEST_HOME="$path"
     export DATUS_TEST_HOME
     return

@@ -13,6 +13,8 @@ test_exit_code=0
 last_command_exit_code=0
 NIGHTLY_GROUP_FILTER="${NIGHTLY_GROUP_FILTER:-}"
 AGENT_TEST_CONFIG="${AGENT_TEST_CONFIG:-tests/conf/agent.yml}"
+DATUS_TEST_PROJECT_NAME="${DATUS_TEST_PROJECT_NAME:-datus_agent_nightly}"
+export DATUS_TEST_PROJECT_NAME
 
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(cd "${REPO_ROOT}/.." && pwd)}"
 EXTERNAL_REPOS_ROOT="${EXTERNAL_REPOS_ROOT:-${REPO_ROOT}/external}"
@@ -232,21 +234,32 @@ restore_agent_test_config() {
 set_agent_test_config_paths() {
   local home="$1"
   local project_root="$2"
+  local project_name="${3:-$DATUS_TEST_PROJECT_NAME}"
 
-  python3 - "$AGENT_TEST_CONFIG" "$home" "$project_root" <<'PY'
+  python3 - "$AGENT_TEST_CONFIG" "$home" "$project_root" "$project_name" <<'PY'
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
 home = sys.argv[2]
 project_root = sys.argv[3]
+project_name = sys.argv[4]
 
 updated = []
 updated_home = False
 updated_project_root = False
+updated_project_name = False
 for line in path.read_text(encoding="utf-8").splitlines():
     stripped = line.strip()
-    if line.startswith("  home: ") and stripped.startswith("home:"):
+    if line == "agent:":
+        updated.append(line)
+        updated.append(f"  project_name: {project_name}")
+        updated_project_name = True
+    elif line.startswith("  project_name: ") and stripped.startswith("project_name:"):
+        if not updated_project_name:
+            updated.append(f"  project_name: {project_name}")
+            updated_project_name = True
+    elif line.startswith("  home: ") and stripped.startswith("home:"):
         updated.append(f"  home: {home}")
         updated_home = True
     elif line.startswith("  project_root: ") and stripped.startswith("project_root:"):
@@ -255,12 +268,14 @@ for line in path.read_text(encoding="utf-8").splitlines():
     else:
         updated.append(line)
 
-if not updated_home or not updated_project_root:
+if not updated_home or not updated_project_root or not updated_project_name:
     missing = []
     if not updated_home:
         missing.append("home")
     if not updated_project_root:
         missing.append("project_root")
+    if not updated_project_name:
+        missing.append("project_name")
     print(f"Failed to rewrite required keys in {path}: {', '.join(missing)}", file=sys.stderr)
     sys.exit(1)
 
@@ -278,14 +293,73 @@ run_with_agent_home() {
     return 1
   fi
   mkdir -p "$home" "$project_root" || return 1
-  if ! set_agent_test_config_paths "$home" "$project_root"; then
+  if ! set_agent_test_config_paths "$home" "$project_root" "$DATUS_TEST_PROJECT_NAME"; then
     restore_agent_test_config
     return 1
   fi
-  DATUS_TEST_HOME="$home" "$@"
+  DATUS_TEST_HOME="$home" DATUS_TEST_PROJECT_NAME="$DATUS_TEST_PROJECT_NAME" "$@"
   local status=$?
   restore_agent_test_config
   return "$status"
+}
+
+nightly_kb_ready_dir() {
+  echo "${NIGHTLY_HOME}/data/${DATUS_TEST_PROJECT_NAME}/datus_db"
+}
+
+nightly_kb_dataset_ready() {
+  local dataset_dir="$1"
+
+  [ -d "${dataset_dir}/data" ] || return 1
+  find "${dataset_dir}/data" -type f -size +0 -print -quit | grep -q .
+}
+
+nightly_kb_data_ready() {
+  local ready_dir
+  ready_dir="$(nightly_kb_ready_dir)"
+
+  local dataset
+  for dataset in schema_metadata.lance schema_value.lance metrics.lance reference_sql.lance ext_knowledge.lance reference_template.lance; do
+    nightly_kb_dataset_ready "${ready_dir}/${dataset}" || return 1
+  done
+}
+
+will_run_kb_dependent_suite() {
+  local group_name
+  for group_name in "Gen Agent Tests" "Reference Template Nightly Tests" "Main Nightly Tests"; do
+    if should_run_group "$group_name"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+ensure_nightly_kb_data() {
+  if ! will_run_kb_dependent_suite; then
+    return 0
+  fi
+
+  local ready_dir
+  ready_dir="$(nightly_kb_ready_dir)"
+  if nightly_kb_data_ready; then
+    log "Knowledge base test data ready: ${ready_dir}"
+    return 0
+  fi
+
+  log "Knowledge base test data missing or incomplete at ${ready_dir}; rebuilding before nightly tests"
+  run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" bash ./build_scripts/build_test_data.sh 2>&1 | tee -a "$LOG_FILE"
+  local status=${PIPESTATUS[0]}
+  if [ "$status" -ne 0 ]; then
+    test_exit_code="$status"
+    return "$status"
+  fi
+
+  if ! nightly_kb_data_ready; then
+    echo "Knowledge base test data build completed but required datasets are still missing under ${ready_dir}" | tee -a "$LOG_FILE" >&2
+    test_exit_code=1
+    return 1
+  fi
+  return 0
 }
 
 cleanup_all() {
@@ -590,6 +664,7 @@ log "DB_ADAPTERS_ROOT=$DB_ADAPTERS_ROOT"
 log "BI_ADAPTERS_ROOT=$BI_ADAPTERS_ROOT"
 log "SCHEDULER_ADAPTERS_ROOT=$SCHEDULER_ADAPTERS_ROOT"
 log "NIGHTLY_HOME=$NIGHTLY_HOME"
+log "DATUS_TEST_PROJECT_NAME=$DATUS_TEST_PROJECT_NAME"
 log "UNIT_TEST_HOME=$UNIT_TEST_HOME"
 log "SUPERSET_URL=$SUPERSET_URL SUPERSET_PORT=$SUPERSET_PORT SUPERSET_POSTGRES_HOST=$SUPERSET_POSTGRES_HOST SUPERSET_POSTGRES_PORT=$SUPERSET_POSTGRES_PORT"
 log "AIRFLOW_URL=$AIRFLOW_URL AIRFLOW_HOST_PORT=$AIRFLOW_HOST_PORT"
@@ -608,7 +683,9 @@ run_logged_unfiltered "Flaky Registry Check" uv run python ci/check_flaky_regist
 
 validate_unit_test_home "$UNIT_TEST_HOME" || exit 1
 rm -rf "$UNIT_TEST_HOME"
-run_logged "Full Unit Tests" run_with_agent_home "$UNIT_TEST_HOME" "$UNIT_TEST_PROJECT_ROOT" uv run pytest tests/unit_tests/ -m "not nightly" --tb=short --verbose --timeout=300 --dist=loadscope -n auto
+run_logged "Full Unit Tests" run_with_agent_home "$UNIT_TEST_HOME" "$UNIT_TEST_PROJECT_ROOT" uv run pytest tests/unit_tests/ -m "not nightly and not quarantine" --tb=short --verbose --timeout=300 --dist=loadscope -n auto
+
+ensure_nightly_kb_data
 
 run_logged "MCP Server Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/tools/test_mcp_server.py --tb=short --verbose --timeout=60
 

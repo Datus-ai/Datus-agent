@@ -164,6 +164,7 @@ def test_tables_command(mock_args, capsys):
 
 
 @pytest.mark.nightly
+@pytest.mark.product_e2e
 def test_chat_command(mock_args, capsys, gen_sql_input: List[Dict[str, Any]]):
     """
     Tests bare chat input for multi-turn conversation and context memory.
@@ -206,14 +207,14 @@ def test_chat_command(mock_args, capsys, gen_sql_input: List[Dict[str, Any]]):
 
 
 @pytest.mark.nightly
-def test_chat_command_with_ext_knowledge(mock_args):
+@pytest.mark.product_e2e
+@pytest.mark.asyncio
+async def test_chat_command_with_ext_knowledge(mock_args):
     """
     Tests bare chat input with ext_knowledge context.
     Verifies that the query with 'consider all knowledge' still completes through
     the real CLI chat path and produces a database-grounded answer.
     """
-    import asyncio
-
     # bird california_schools q2
     question = (
         "Please list the zip code of all the charter schools "
@@ -268,7 +269,7 @@ def test_chat_command_with_ext_knowledge(mock_args):
     current_node = cli.chat_commands.current_node
     if current_node is None:
         raise AssertionError("Should have an active chat node.")
-    session_info = asyncio.run(current_node.get_session_info())
+    session_info = await current_node.get_session_info()
     assert session_info.get("session_id", "").startswith("chat_session_")
     assert session_info.get("action_count") == exec_stats.get("total_actions")
 

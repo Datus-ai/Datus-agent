@@ -46,6 +46,8 @@ DEFAULT_COVERAGE_XML = os.path.join(OUT_DIR, "coverage.xml")
 DEFAULT_COVERAGE_HTML = os.path.join(OUT_DIR, "htmlcov")
 DEFAULT_COVERAGE_DB = os.path.join(OUT_DIR, ".coverage")
 DEFAULT_PYTEST_LOG = os.path.join(OUT_DIR, "pytest-coverage.txt")
+PR_HARNESS_MARK_EXPR = "acceptance or component or llm_harness"
+IMPACTED_UNIT_MARK_EXPR = "not acceptance and not component and not llm_harness and not nightly and not quarantine"
 PR_ACCEPTANCE_TARGETS = [
     "tests/unit_tests/agent/node/test_chat_agentic_node.py",
     "tests/unit_tests/agent/node/test_gen_sql_agentic_node.py",
@@ -321,14 +323,61 @@ def _filter_existing_paths(paths: list[str]) -> list[str]:
     return existing
 
 
+def _git_ref_exists(ref: str) -> bool:
+    result = _run_cmd(
+        ["git", "rev-parse", "--verify", "--quiet", ref],
+        GIT_CMD_TIMEOUT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    return bool(result and result.returncode == 0)
+
+
+def _resolve_explicit_compare_ref(base_ref: str) -> str | None:
+    """Resolve a user/GitHub-provided base ref into a git ref diff-cover accepts."""
+    ref = base_ref.strip()
+    if not ref:
+        return None
+
+    candidates: list[str] = []
+
+    def add(candidate: str) -> None:
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+
+    if ref.startswith("refs/heads/"):
+        branch = ref.removeprefix("refs/heads/")
+        add(f"origin/{branch}")
+        add(f"upstream/{branch}")
+        add(branch)
+        add(ref)
+    elif ref.startswith("refs/remotes/"):
+        add(ref.removeprefix("refs/remotes/"))
+        add(ref)
+    elif "/" in ref:
+        add(ref)
+    else:
+        add(f"origin/{ref}")
+        add(f"upstream/{ref}")
+        add(ref)
+
+    for candidate in candidates:
+        if _git_ref_exists(candidate):
+            return candidate
+
+    log(f"Explicit base_ref {base_ref!r} did not resolve; tried: {', '.join(candidates)}")
+    return None
+
+
 def find_compare_branch(base_ref: str) -> str | None:
     """Determine the compare branch for diff-cover."""
     if base_ref in _COMPARE_BRANCH_CACHE:
         return _COMPARE_BRANCH_CACHE[base_ref]
 
     if base_ref:
-        log(f"Using explicit base_ref: origin/{base_ref}")
-        resolved_ref = f"origin/{base_ref}"
+        resolved_ref = _resolve_explicit_compare_ref(base_ref)
+        log(f"Using explicit base_ref: {base_ref} -> {resolved_ref or '<unresolved>'}")
         _COMPARE_BRANCH_CACHE[base_ref] = resolved_ref
         return resolved_ref
 
@@ -466,7 +515,7 @@ def run_tests(base_ref: str = "") -> tuple[int, list[str]]:
             acceptance_xml,
             log_file,
             suite_name="acceptance",
-            mark_expr="acceptance",
+            mark_expr=PR_HARNESS_MARK_EXPR,
             emit_reports=not impacted_targets,
         )
         exit_codes.append(acceptance_rc)
@@ -479,7 +528,7 @@ def run_tests(base_ref: str = "") -> tuple[int, list[str]]:
                 impacted_xml,
                 log_file,
                 suite_name="impacted unit tests",
-                mark_expr="not acceptance and not nightly",
+                mark_expr=IMPACTED_UNIT_MARK_EXPR,
                 append=True,
                 emit_reports=True,
             )

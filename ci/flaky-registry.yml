@@ -65,3 +65,14 @@ entries:
     allowed_in:
       - nightly
     action: classify_warning
+
+  - id: gen-sql-plan-mode-hooks-broker-hang
+    type: test
+    nodeid: tests/unit_tests/agent/node/test_gen_sql_agentic_node.py::TestEndToEndPlanModeHooksInteraction::test_e2e_plan_mode_user_selects_manual
+    owner: agent-runtime
+    layer: harness_correctness
+    reason: Plan-mode broker simulator can hang on CI; quarantined so deterministic harness coverage stays signal-bearing.
+    allowed_until: 2026-06-05
+    allowed_in:
+      - quarantine
+    action: quarantine

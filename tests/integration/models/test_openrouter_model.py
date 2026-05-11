@@ -25,6 +25,7 @@ load_dotenv()
 
 pytestmark = [
     pytest.mark.nightly,
+    pytest.mark.provider_health,
     pytest.mark.skipif(not os.getenv("OPENROUTER_API_KEY"), reason="OPENROUTER_API_KEY not set"),
 ]
 
@@ -140,6 +141,7 @@ class TestOpenRouterModel:
 
 
 @pytest.mark.nightly
+@pytest.mark.provider_health
 @pytest.mark.skipif(not os.getenv("OPENROUTER_API_KEY"), reason="OPENROUTER_API_KEY not set")
 class TestOpenRouterMultiModel:
     """Test OpenRouter with different backend models."""

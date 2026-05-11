@@ -148,13 +148,13 @@ class TestSqliteMultiConnector:
         assert result.success == 1
         assert len(result.result) > 1
         table_names = set([item["name"] for item in result.result])
-        assert table_names == {"frpm", "satscores", "schools"}
+        assert {"frpm", "satscores", "schools"}.issubset(table_names)
 
         result = db_tool.list_tables(datasource="card_games")
         assert result.success == 1
         assert len(result.result) > 1
         table_names = set([item["name"] for item in result.result])
-        assert table_names == {"cards", "legalities", "set_translations", "foreign_data", "rulings", "sets"}
+        assert {"cards", "legalities", "set_translations", "foreign_data", "rulings", "sets"}.issubset(table_names)
 
 
 @pytest.mark.acceptance

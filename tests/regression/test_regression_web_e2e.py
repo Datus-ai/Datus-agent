@@ -12,6 +12,7 @@ Prerequisites:
     playwright install chromium
 """
 
+import socket
 import subprocess
 import sys
 import time
@@ -36,13 +37,31 @@ expect = playwright_sync_api.expect
 pytestmark = [pytest.mark.regression, pytest.mark.nightly]
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-WEB_PORT = 18501
-WEB_URL = f"http://localhost:{WEB_PORT}"
+
+
+def _free_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _tail(path: Path, max_lines: int = 120) -> str:
+    if not path.exists():
+        return "<server log file was not created>"
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    if len(lines) > max_lines:
+        lines = [f"... omitted {len(lines) - max_lines} earlier line(s) ...", *lines[-max_lines:]]
+    return "\n".join(lines)
 
 
 @pytest.fixture(scope="module")
-def web_server():
+def web_server(tmp_path_factory):
     """Start the FastAPI web chatbot server, wait for ready, yield URL, then terminate."""
+    web_port = _free_local_port()
+    web_url = f"http://127.0.0.1:{web_port}"
+    log_dir = tmp_path_factory.mktemp("web-e2e-server")
+    log_path = log_dir / "server.log"
+    log_file = log_path.open("w", encoding="utf-8")
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -50,40 +69,47 @@ def web_server():
             "datus.cli.main",
             "--web",
             "--port",
-            str(WEB_PORT),
+            str(web_port),
             "--host",
-            "localhost",
+            "127.0.0.1",
             "--config",
             str(PROJECT_ROOT / "tests" / "conf" / "agent.yml"),
             "--datasource",
             "ssb_sqlite",
         ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
     )
 
     # Poll until ready (max 30s)
-    for _ in range(30):
-        try:
-            resp = requests.get(f"{WEB_URL}/health", timeout=2)
-            if resp.status_code == 200:
-                break
-        except (requests.ConnectionError, requests.Timeout):
-            pass
-        time.sleep(1)
-    else:
-        proc.terminate()
-        proc.wait(timeout=5)
-        pytest.fail("Web server did not start within 30 seconds")
-
-    yield WEB_URL
-
-    proc.terminate()
     try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=5)
+        for _ in range(30):
+            if proc.poll() is not None:
+                pytest.fail(
+                    f"Web server exited before becoming ready with code {proc.returncode}.\n"
+                    f"Server log:\n{_tail(log_path)}"
+                )
+            try:
+                resp = requests.get(f"{web_url}/health", timeout=2)
+                if resp.status_code == 200:
+                    break
+            except (requests.ConnectionError, requests.Timeout):
+                pass
+            time.sleep(1)
+        else:
+            proc.terminate()
+            proc.wait(timeout=5)
+            pytest.fail(f"Web server did not start within 30 seconds at {web_url}.\nServer log:\n{_tail(log_path)}")
+
+        yield web_url
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+        log_file.close()
 
 
 @pytest.mark.regression

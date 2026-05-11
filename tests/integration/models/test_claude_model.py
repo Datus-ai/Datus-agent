@@ -16,7 +16,7 @@ from tests.unit_tests.utils.tracing_utils import auto_traceable
 logger = get_logger(__name__)
 set_tracing_disabled(True)
 
-pytestmark = pytest.mark.nightly
+pytestmark = [pytest.mark.nightly, pytest.mark.provider_health]
 
 
 @auto_traceable

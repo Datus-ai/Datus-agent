@@ -114,7 +114,8 @@ class TestGenExtKnowledgeNodeInit:
 # ===========================================================================
 
 
-@pytest.mark.nightly
+@pytest.mark.component
+@pytest.mark.llm_harness
 class TestGenExtKnowledgeNodeExecution:
     """Tests for GenExtKnowledgeAgenticNode.execute_stream() with real tools."""
 

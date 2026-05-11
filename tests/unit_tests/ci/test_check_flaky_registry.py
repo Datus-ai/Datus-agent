@@ -36,6 +36,17 @@ def _registry(allowed_until: str = "2999-01-01") -> dict:
                 "allowed_until": allowed_until,
                 "allowed_in": ["nightly"],
             },
+            {
+                "id": "quarantined-harness-test",
+                "type": "test",
+                "nodeid": "tests/unit_tests/agent/node/test_gen_sql_agentic_node.py::TestEndToEndPlanModeHooksInteraction::test_e2e_plan_mode_user_selects_manual",
+                "owner": "agent-runtime",
+                "layer": "harness_correctness",
+                "reason": "Known deterministic harness hang.",
+                "allowed_until": allowed_until,
+                "allowed_in": ["quarantine"],
+                "action": "quarantine",
+            },
         ],
     }
 
@@ -44,7 +55,8 @@ def test_validate_registry_accepts_owned_unexpired_entries():
     registry = check_flaky_registry.validate_registry(_registry(), today=date(2026, 5, 6), strict=True)
 
     assert registry.test_nodeids == {
-        "tests/integration/models/test_other_models.py::TestKimiModel::test_generate_with_mcp"
+        "tests/integration/models/test_other_models.py::TestKimiModel::test_generate_with_mcp",
+        "tests/unit_tests/agent/node/test_gen_sql_agentic_node.py::TestEndToEndPlanModeHooksInteraction::test_e2e_plan_mode_user_selects_manual",
     }
     assert [entry_id for entry_id, _pattern in registry.log_patterns] == ["async-pending-task"]
 
