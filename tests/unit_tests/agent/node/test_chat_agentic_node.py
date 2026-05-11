@@ -250,6 +250,31 @@ class TestChatAgenticNodeToolSetup:
 
         assert isinstance(node.date_parsing_tools, DateParsingTools)
 
+    def test_has_bash_tool_registered_under_bash_tools_category(self, real_agent_config, mock_llm_create):
+        """ChatAgenticNode owns a general-purpose BashTool registered to the
+        ``bash_tools`` permission category and exposed via ``node.tools``."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.tools.func_tool.bash_tool import BashTool
+
+        node = ChatAgenticNode(
+            node_id="test_bash",
+            description="Test bash tool",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+
+        assert node.bash_tool is not None
+        assert isinstance(node.bash_tool, BashTool)
+
+        # ``["*"]`` pattern: tool is exposed; per-call gating is handled by
+        # the PermissionManager ``bash_tools.execute_command`` ASK rule.
+        tool_names = [t.name for t in node.tools]
+        assert "execute_command" in tool_names
+
+        # Permission category mapping is mandatory — without it, the ASK rule
+        # added in ``profiles._NORMAL_RULES`` would never fire.
+        assert node.tool_registry.get("execute_command") == "bash_tools"
+
     def test_has_ask_user_tools(self, real_agent_config, mock_llm_create):
         """Chat node has ask_user tool set up via _setup_ask_user_tool."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode

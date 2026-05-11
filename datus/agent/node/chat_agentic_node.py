@@ -144,6 +144,10 @@ class ChatAgenticNode(AgenticNode):
         self.reference_template_tools = ReferenceTemplateTools(self.agent_config, db_func_tool=self.db_func_tool)
         self._setup_date_parsing_tools()
         self._setup_filesystem_tools()
+        # self.bash_tool was created in AgenticNode.__init__; just surface its
+        # tool in this node's eager tools list (rebuild_tools also re-appends).
+        if self.bash_tool:
+            self.tools.extend(self.bash_tool.available_tools())
         self._setup_skill_tools()
         self._setup_sub_agent_task_tool()
         # Setup ask_user tool for clarification questions (interactive mode only)
@@ -244,6 +248,8 @@ class ChatAgenticNode(AgenticNode):
                 self.tool_registry.register_tools("date_parsing_tools", self.date_parsing_tools.available_tools())
             if self.filesystem_func_tool:
                 self.tool_registry.register_tools("filesystem_tools", self.filesystem_func_tool.available_tools())
+            if self.bash_tool:
+                self.tool_registry.register_tools("bash_tools", self.bash_tool.available_tools())
             if self.skill_func_tool:
                 self.tool_registry.register_tools("skills", self.skill_func_tool.available_tools())
             if self.sub_agent_task_tool:
@@ -280,6 +286,8 @@ class ChatAgenticNode(AgenticNode):
             self.tools.extend(self.date_parsing_tools.available_tools())
         if self.filesystem_func_tool:
             self.tools.extend(self.filesystem_func_tool.available_tools())
+        if self.bash_tool:
+            self.tools.extend(self.bash_tool.available_tools())
         if self.skill_func_tool:
             self.tools.extend(self.skill_func_tool.available_tools())
         if self.sub_agent_task_tool:

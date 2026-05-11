@@ -19,7 +19,7 @@ from datus.tools.permission.permission_config import PermissionLevel
 from datus.tools.skill_tools.skill_manager import SkillManager
 
 if TYPE_CHECKING:
-    from datus.tools.skill_tools.skill_bash_tool import SkillBashTool
+    from datus.tools.func_tool.bash_tool import BashTool
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ class SkillFuncTool:
         self._permission_callback: Optional[Callable[[str, str, Dict[str, Any]], Awaitable[bool]]] = None
 
         # Track loaded skills for bash tool creation
-        self._loaded_skills: Dict[str, "SkillBashTool"] = {}
+        self._loaded_skills: Dict[str, "BashTool"] = {}
 
     def set_tool_context(self, ctx: Any) -> None:
         """Set tool context (called by framework before tool invocation).
@@ -170,7 +170,11 @@ class SkillFuncTool:
             )
 
     def _create_skill_bash_tool(self, skill) -> None:
-        """Create a SkillBashTool for a skill with scripts.
+        """Create a general-purpose ``BashTool`` scoped to a skill.
+
+        The skill's ``allowed_commands`` are forwarded as the BashTool
+        pattern whitelist, and ``SKILL_NAME``/``SKILL_DIR`` are injected
+        via ``extra_env`` so skill scripts can locate their own resources.
 
         Args:
             skill: SkillMetadata with allowed_commands
@@ -179,33 +183,35 @@ class SkillFuncTool:
             return
 
         try:
-            from datus.tools.skill_tools.skill_bash_tool import SkillBashTool
+            from datus.tools.func_tool.bash_tool import BashTool
 
-            bash_tool = SkillBashTool(
-                skill_metadata=skill,
+            bash_tool = BashTool(
                 workspace_root=str(skill.location),
+                allowed_patterns=skill.allowed_commands,
+                extra_env={"SKILL_NAME": skill.name, "SKILL_DIR": str(skill.location)},
+                identity=skill.name,
             )
             self._loaded_skills[skill.name] = bash_tool
-            logger.debug(f"Created SkillBashTool for skill '{skill.name}'")
+            logger.debug(f"Created BashTool for skill '{skill.name}'")
         except Exception as e:
-            logger.error(f"Failed to create SkillBashTool for '{skill.name}': {e}")
+            logger.error(f"Failed to create BashTool for '{skill.name}': {e}")
 
-    def get_skill_bash_tool(self, skill_name: str) -> Optional["SkillBashTool"]:
+    def get_skill_bash_tool(self, skill_name: str) -> Optional["BashTool"]:
         """Get the bash tool for a loaded skill.
 
         Args:
             skill_name: Name of the skill
 
         Returns:
-            SkillBashTool if skill has scripts and is loaded, None otherwise
+            BashTool if skill has scripts and is loaded, None otherwise
         """
         return self._loaded_skills.get(skill_name)
 
-    def get_all_skill_bash_tools(self) -> Dict[str, "SkillBashTool"]:
+    def get_all_skill_bash_tools(self) -> Dict[str, "BashTool"]:
         """Get all created skill bash tools.
 
         Returns:
-            Dictionary of skill_name -> SkillBashTool
+            Dictionary of skill_name -> BashTool
         """
         return self._loaded_skills
 

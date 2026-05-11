@@ -95,6 +95,10 @@ _NORMAL_RULES = [
     _rule("mcp.*", "*", PermissionLevel.ASK),
     _rule("skills", "*", PermissionLevel.ALLOW),
     _rule("skills", "skill_execute_command", PermissionLevel.ASK),
+    # General-purpose bash execution: always ASK in normal/auto so a stray
+    # command can't run without user consent. ``dangerous`` profile (default
+    # ALLOW, no rules) lets it through.
+    _rule("bash_tools", "execute_command", PermissionLevel.ASK),
 ]
 
 NORMAL = PermissionConfig(

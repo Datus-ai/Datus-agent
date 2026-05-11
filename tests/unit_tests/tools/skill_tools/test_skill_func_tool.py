@@ -10,9 +10,9 @@ Tests the load_skill native tool functionality.
 
 import pytest
 
+from datus.tools.func_tool.bash_tool import BashTool
 from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
 from datus.tools.permission.permission_manager import PermissionManager
-from datus.tools.skill_tools.skill_bash_tool import SkillBashTool
 from datus.tools.skill_tools.skill_config import SkillConfig
 from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
 from datus.tools.skill_tools.skill_manager import SkillManager
@@ -221,7 +221,8 @@ class TestSkillFuncToolLoadSkill:
 
         # Check that bash tool was created
         bash_tool = skill_func_tool.get_skill_bash_tool("script-skill")
-        assert isinstance(bash_tool, SkillBashTool)
+        assert isinstance(bash_tool, BashTool)
+        assert bash_tool.identity == "script-skill"
 
 
 class TestSkillFuncToolBashToolManagement:
@@ -237,8 +238,10 @@ class TestSkillFuncToolBashToolManagement:
         skill_func_tool.load_skill("script-skill")
         bash_tool = skill_func_tool.get_skill_bash_tool("script-skill")
 
-        assert isinstance(bash_tool, SkillBashTool)
-        assert bash_tool.skill_name == "script-skill"
+        assert isinstance(bash_tool, BashTool)
+        # The general-purpose BashTool exposes the originating skill via
+        # ``identity`` (SkillFuncTool sets it to the skill name on creation).
+        assert bash_tool.identity == "script-skill"
 
     def test_get_all_skill_bash_tools(self, skill_func_tool):
         """Test getting all bash tools."""

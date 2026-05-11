@@ -166,6 +166,7 @@ class AgenticNode(Node):
         self.skill_func_tool = None
         self.ask_user_tool = None
         self.sub_agent_task_tool = None
+        self.bash_tool = None
         self._is_subagent = is_subagent
         self._permission_callback: Optional[Callable[[str, str, Dict[str, Any]], Awaitable[bool]]] = None
 
@@ -198,6 +199,12 @@ class AgenticNode(Node):
 
         # Setup skill func tools for non-chat nodes when explicitly configured
         self._setup_skill_func_tools()
+
+        # General-purpose BashTool — available to every agentic node. The
+        # actual injection into ``self.tools`` happens lazily via
+        # ``_ensure_bash_tool_in_tools`` because subclass ``setup_tools``
+        # tends to reset ``self.tools`` after base ``__init__``.
+        self._setup_bash_tool()
 
         # Resolve model lazily so ``/model`` can flip the active target at
         # runtime without rebuilding every node. The node-specific override
@@ -426,6 +433,9 @@ class AgenticNode(Node):
 
         # Ensure skill tools are in self.tools (lazy injection after subclass setup_tools()).
         self._ensure_skill_tools_in_tools()
+
+        # Same lazy-injection trick for the general-purpose BashTool.
+        self._ensure_bash_tool_in_tools()
 
         # Inject available skills XML into system prompt when skill_func_tool is active.
         if self.skill_func_tool:
@@ -1107,6 +1117,56 @@ class AgenticNode(Node):
             f"{[t.name for t in self.skill_func_tool.available_tools()]}"
         )
 
+    def _setup_bash_tool(self) -> None:
+        """Create the node's general-purpose :class:`BashTool` instance.
+
+        Available to every agentic node. ``allowed_patterns=["*"]`` means
+        the tool exposes ``execute_command`` for any shell command; per-call
+        gating is the responsibility of the ``bash_tools`` ASK rule in the
+        permission profile, not a static pattern whitelist.
+
+        Only creates the instance — the tool enters ``self.tools`` via
+        :meth:`_ensure_bash_tool_in_tools` so subclass ``setup_tools()``
+        resets don't drop it.
+        """
+        try:
+            from datus.tools.func_tool.bash_tool import BashTool
+
+            self.bash_tool = BashTool(
+                workspace_root=self._resolve_workspace_root(),
+                allowed_patterns=["*"],
+            )
+            logger.debug(f"Setup bash tool with workspace: {self.bash_tool.workspace_root}")
+        except Exception as e:
+            logger.error(f"Failed to setup bash tool: {e}")
+            self.bash_tool = None
+
+    def _ensure_bash_tool_in_tools(self) -> None:
+        """Ensure the BashTool's ``execute_command`` is in ``self.tools``.
+
+        Mirrors :meth:`_ensure_skill_tools_in_tools` — called lazily so the
+        late ``setup_tools()`` reset in subclasses doesn't strip the tool.
+        Idempotent.
+        """
+        if not self.bash_tool:
+            return
+
+        bash_tool_names = {t.name for t in self.bash_tool.available_tools()}
+        if not bash_tool_names:
+            return
+
+        existing_names = {t.name for t in (self.tools or [])}
+        if bash_tool_names.issubset(existing_names):
+            return
+
+        if self.tools is None:
+            self.tools = []
+        self.tools.extend(self.bash_tool.available_tools())
+        logger.info(
+            f"Bash tool injected into node '{self.get_node_name()}': "
+            f"{[t.name for t in self.bash_tool.available_tools()]}"
+        )
+
     def set_permission_callback(self, callback: Callable[[str, str, Dict[str, Any]], Awaitable[bool]]) -> None:
         """
         Set callback for ASK permission prompts.
@@ -1610,13 +1670,19 @@ class AgenticNode(Node):
         ``tools`` catch-all, which only matches explicit ``tools.*`` rules.
 
         The base implementation registers ``skill_func_tool`` under
-        ``skills`` so the ``skills.*`` profile rule applies to every
-        subagent that exposes ``load_skill``/``skill_execute_command`` —
-        overrides should ``super().__()`` + extend.
+        ``skills`` and ``bash_tool`` under ``bash_tools`` so the
+        ``skills.*`` and ``bash_tools.*`` profile rules apply to every
+        subagent that exposes them — overrides should ``super()`` +
+        extend.
         """
         mapping: Dict[str, List[Any]] = {}
         if self.skill_func_tool:
             mapping["skills"] = list(self.skill_func_tool.available_tools())
+        bash_tool = getattr(self, "bash_tool", None)
+        if bash_tool:
+            bash_tools = list(bash_tool.available_tools())
+            if bash_tools:
+                mapping["bash_tools"] = bash_tools
         return mapping
 
     def _ensure_permission_hooks(self) -> None:

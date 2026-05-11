@@ -12,7 +12,6 @@ Skills are filesystem-based folders containing SKILL.md files with YAML frontmat
 that define specialized capabilities, workflows, and script execution patterns.
 """
 
-from datus.tools.skill_tools.skill_bash_tool import SkillBashTool
 from datus.tools.skill_tools.skill_bundle import calculate_sha256, create_bundle, extract_bundle
 from datus.tools.skill_tools.skill_config import SkillConfig, SkillMetadata
 from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
@@ -25,7 +24,6 @@ __all__ = [
     "SkillRegistry",
     "SkillManager",
     "SkillFuncTool",
-    "SkillBashTool",
     "create_bundle",
     "extract_bundle",
     "calculate_sha256",
