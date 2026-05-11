@@ -213,8 +213,12 @@ class TestStreamChatGeneratorError:
 
     @pytest.mark.asyncio
     async def test_upstream_exception_emits_error_event(self):
-        from datus.api.models.cli_models import SSEMessageData, SSEEvent
-        from datus.api.models.cli_models import SSEDataType, SSEMessagePayload
+        from datus.api.models.cli_models import (
+            SSEDataType,
+            SSEEvent,
+            SSEMessageData,
+            SSEMessagePayload,
+        )
 
         first_event = SSEEvent(
             id=7,
