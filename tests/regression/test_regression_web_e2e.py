@@ -54,32 +54,55 @@ def _tail(path: Path, max_lines: int = 120) -> str:
     return "\n".join(lines)
 
 
+def _terminate_process(proc: subprocess.Popen, timeout: int = 5) -> None:
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=timeout)
+
+
 @pytest.fixture(scope="module")
 def web_server(tmp_path_factory):
     """Start the FastAPI web chatbot server, wait for ready, yield URL, then terminate."""
-    web_port = _free_local_port()
-    web_url = f"http://127.0.0.1:{web_port}"
     log_dir = tmp_path_factory.mktemp("web-e2e-server")
     log_path = log_dir / "server.log"
     log_file = log_path.open("w", encoding="utf-8")
-    proc = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "datus.cli.main",
-            "--web",
-            "--port",
-            str(web_port),
-            "--host",
-            "127.0.0.1",
-            "--config",
-            str(PROJECT_ROOT / "tests" / "conf" / "agent.yml"),
-            "--datasource",
-            "ssb_sqlite",
-        ],
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-    )
+    proc = None
+    web_url = None
+
+    for _attempt in range(3):
+        web_port = _free_local_port()
+        candidate_url = f"http://127.0.0.1:{web_port}"
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "datus.cli.main",
+                "--web",
+                "--port",
+                str(web_port),
+                "--host",
+                "127.0.0.1",
+                "--config",
+                str(PROJECT_ROOT / "tests" / "conf" / "agent.yml"),
+                "--datasource",
+                "ssb_sqlite",
+            ],
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
+        time.sleep(0.5)
+        if proc.poll() is None:
+            web_url = candidate_url
+            break
+
+    if proc is None or web_url is None:
+        log_file.close()
+        pytest.fail(f"Failed to launch web server after retries.\nServer log:\n{_tail(log_path)}")
 
     # Poll until ready (max 30s)
     try:
@@ -97,18 +120,12 @@ def web_server(tmp_path_factory):
                 pass
             time.sleep(1)
         else:
-            proc.terminate()
-            proc.wait(timeout=5)
+            _terminate_process(proc)
             pytest.fail(f"Web server did not start within 30 seconds at {web_url}.\nServer log:\n{_tail(log_path)}")
 
         yield web_url
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=5)
+        _terminate_process(proc, timeout=10)
         log_file.close()
 
 

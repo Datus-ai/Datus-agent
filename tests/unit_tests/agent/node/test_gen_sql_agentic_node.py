@@ -1186,12 +1186,6 @@ class TestEndToEndNodeHooksInteraction:
 # ===========================================================================
 
 
-# These plan-mode tests have an outstanding hang in the broker simulator.
-# Quarantine keeps the known-bad harness case visible and owned without
-# polluting nightly/product signals or starving the coverage job budget.
-@pytest.mark.quarantine
-@pytest.mark.known_flaky
-@pytest.mark.skip(reason="Quarantined in ci/flaky-registry.yml: gen-sql-plan-mode-hooks-broker-hang")
 class TestEndToEndPlanModeHooksInteraction:
     """End-to-end tests: ChatAgenticNode(plan_mode=True) → LLM calls todo_write → PlanModeHooks →
     on_tool_end sets _plan_generated_pending → on_llm_end → _on_plan_generated → broker.request → submit.
@@ -1222,6 +1216,12 @@ class TestEndToEndPlanModeHooksInteraction:
         real_agent_config.permissions_config = DANGEROUS
         real_agent_config.active_profile_name = "dangerous"
 
+    # This plan-mode path has an outstanding hang in the broker simulator.
+    # Quarantine keeps the known-bad harness case visible and owned without
+    # polluting nightly/product signals or starving the coverage job budget.
+    @pytest.mark.quarantine
+    @pytest.mark.known_flaky
+    @pytest.mark.skip(reason="Quarantined in ci/flaky-registry.yml: gen-sql-plan-mode-hooks-broker-hang")
     @pytest.mark.asyncio
     async def test_e2e_plan_mode_user_selects_manual(self, real_agent_config, mock_llm_create):
         """Full flow: LLM calls todo_write → user selects 'Manual Confirm' (1) → plan enters executing/manual."""
@@ -1309,6 +1309,8 @@ class TestEndToEndPlanModeHooksInteraction:
         assert isinstance(output, dict)
         assert output.get("user_choice") == [["1"]]
 
+    @pytest.mark.component
+    @pytest.mark.llm_harness
     @pytest.mark.asyncio
     async def test_e2e_plan_mode_user_selects_auto(self, real_agent_config, mock_llm_create):
         """Full flow: LLM calls todo_write → user selects 'Auto Execute' (2) → plan enters executing/auto."""
@@ -1387,6 +1389,8 @@ class TestEndToEndPlanModeHooksInteraction:
         assert isinstance(output, dict)
         assert output.get("user_choice") == [["2"]]
 
+    @pytest.mark.component
+    @pytest.mark.llm_harness
     @pytest.mark.asyncio
     async def test_e2e_plan_mode_user_cancels(self, real_agent_config, mock_llm_create):
         """Full flow: LLM calls todo_write → user selects 'Cancel' (4) → UserCancelledException handled."""

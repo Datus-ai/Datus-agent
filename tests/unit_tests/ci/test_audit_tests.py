@@ -69,3 +69,34 @@ def test_component_case():
         assert any(issue.check == "nightly_marker_in_unit" for issue in issues)
     finally:
         audit_tests.configure_repo_root(original_root)
+
+
+def test_audit_flags_multiline_pytestmark_nightly_in_unit_test(tmp_path):
+    audit_tests = _load_audit_tests()
+    original_root = audit_tests.REPO_ROOT
+    try:
+        test_file = tmp_path / "tests" / "unit_tests" / "test_multiline_marker.py"
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text(
+            """
+import pytest
+
+pytestmark = [
+    pytest.mark.component,
+    pytest.mark.nightly,
+]
+
+def test_component_case():
+    assert 1 == 1
+""",
+            encoding="utf-8",
+        )
+        audit_tests.configure_repo_root(tmp_path)
+
+        issues = audit_tests.scan_file(test_file, required_packages=set())
+
+        nightly_issues = [issue for issue in issues if issue.check == "nightly_marker_in_unit"]
+        assert len(nightly_issues) == 1
+        assert nightly_issues[0].line == 6
+    finally:
+        audit_tests.configure_repo_root(original_root)

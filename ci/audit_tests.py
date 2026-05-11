@@ -213,6 +213,22 @@ class _AstChecker(ast.NodeVisitor):
             issue = Issue(**{**asdict(issue), "tier": self.tier})
         self.issues.append(issue)
 
+    def _check_nightly_marker(self, node: ast.AST) -> None:
+        marker_lineno = _find_pytest_mark_nightly_lineno(node)
+        if marker_lineno is None:
+            return
+        self._emit(
+            Issue(
+                file=self.path,
+                line=marker_lineno,
+                severity="P0",
+                check="nightly_marker_in_unit",
+                message="Unit/component tests must not be routed through nightly; use component/llm_harness or quarantine",
+                quote=self._quote(marker_lineno),
+                suggestion="Replace @pytest.mark.nightly with @pytest.mark.component/@pytest.mark.llm_harness, or quarantine with an owner and expiry.",
+            )
+        )
+
     # -- conditional_assert: if X: assert Y   (without a symmetric else-branch assertion)
     # -- try_except_skip: try ... except: pytest.skip()
     # -- try_except_pass_in_test: try ... except: pass (integration only)
@@ -353,7 +369,24 @@ class _AstChecker(ast.NodeVisitor):
         self.generic_visit(node)
         self._exit_function()
 
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        for decorator in node.decorator_list:
+            self._check_nightly_marker(decorator)
+        self.generic_visit(node)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        if any(isinstance(target, ast.Name) and target.id == "pytestmark" for target in node.targets):
+            self._check_nightly_marker(node.value)
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if isinstance(node.target, ast.Name) and node.target.id == "pytestmark" and node.value is not None:
+            self._check_nightly_marker(node.value)
+        self.generic_visit(node)
+
     def _enter_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        for decorator in node.decorator_list:
+            self._check_nightly_marker(decorator)
         self._check_test_function(node)
         is_test_or_fixture = node.name.startswith("test_") or _has_pytest_fixture_decorator(node)
         self._in_test_or_fixture.append(is_test_or_fixture or self._in_test_or_fixture[-1])
@@ -477,6 +510,26 @@ def _has_pytest_fixture_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) 
         if isinstance(target, ast.Name) and target.id == "fixture":
             return True
     return False
+
+
+def _find_pytest_mark_nightly_lineno(node: ast.AST) -> int | None:
+    """Return the line containing pytest.mark.nightly anywhere in an AST node."""
+    target = node.func if isinstance(node, ast.Call) else node
+    if (
+        isinstance(target, ast.Attribute)
+        and target.attr == "nightly"
+        and isinstance(target.value, ast.Attribute)
+        and target.value.attr == "mark"
+        and isinstance(target.value.value, ast.Name)
+        and target.value.value.id == "pytest"
+    ):
+        return getattr(target, "lineno", getattr(node, "lineno", None))
+
+    for child in ast.iter_child_nodes(node):
+        lineno = _find_pytest_mark_nightly_lineno(child)
+        if lineno is not None:
+            return lineno
+    return None
 
 
 def _arg_is_tmp_rooted(arg: ast.AST | None) -> bool:
@@ -859,7 +912,6 @@ _REAL_IO_PATTERNS: list[re.Pattern[str]] = [
 _LAMBDA_THROW = re.compile(r"lambda\s+[^:]*:\s*\(\s*_\s+for\s+_\s+in\s+\(\s*\)\s*\)\s*\.\s*throw")
 
 _PATCH_BUILTINS_OPEN = re.compile(r"""patch(?:\.object)?\s*\(\s*["'](?:builtins|__builtins__)\.open["']""")
-_UNIT_NIGHTLY_MARKER = re.compile(r"^\s*(?:@pytest\.mark\.nightly\b|pytestmark\s*=.*pytest\.mark\.nightly\b)")
 
 # Match hardcoded localhost connections in three flavors:
 #  1. URL / host:port literal:   "localhost:15432" / "postgresql://127.0.0.1:6379/"
@@ -965,25 +1017,6 @@ def regex_scan(path: Path, required_packages: set[str], tier: str) -> list[Issue
                     message="`patch('builtins.open')` globally intercepts every open() in the with-block — flaky + may hide production bugs",
                     quote=stripped[:120],
                     suggestion="Patch the specific module path, e.g. `patch('datus.module.path.open')`, not builtins.",
-                    tier=tier,
-                )
-            )
-
-        if (
-            tier == "unit"
-            and _UNIT_NIGHTLY_MARKER.search(line)
-            and not noqa_match
-            and rule_applies("nightly_marker_in_unit", tier)
-        ):
-            issues.append(
-                Issue(
-                    file=rel,
-                    line=lineno,
-                    severity="P0",
-                    check="nightly_marker_in_unit",
-                    message="Unit/component tests must not be routed through nightly; use component/llm_harness or quarantine",
-                    quote=stripped[:120],
-                    suggestion="Replace @pytest.mark.nightly with @pytest.mark.component/@pytest.mark.llm_harness, or quarantine with an owner and expiry.",
                     tier=tier,
                 )
             )
