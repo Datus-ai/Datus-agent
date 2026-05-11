@@ -40,6 +40,13 @@ jobs:
           ref: main
           path: external/datus-scheduler-adapters
 
+      - name: Checkout datus-semantic-adapter main
+        uses: actions/checkout@v4
+        with:
+          repository: Datus-ai/datus-semantic-adapter
+          ref: main
+          path: external/datus-semantic-adapter
+
       - name: Clean up stale temp files
         run: |
           echo "Cleaning stale pytest temp directories..."
@@ -89,8 +96,11 @@ jobs:
         run: |
           uv sync
           uv pip install --upgrade --no-cache-dir \
-            "datus-semantic-metricflow>=0.1.3" \
+            --reinstall-package datus-semantic-core \
+            --reinstall-package datus-semantic-metricflow \
             pytest-playwright \
+            ./external/datus-semantic-adapter/datus-semantic-core \
+            ./external/datus-semantic-adapter/datus-semantic-metricflow \
             ./external/datus-db-adapters/datus-db-core \
             ./external/datus-db-adapters/datus-sqlalchemy \
             ./external/datus-db-adapters/datus-postgresql \
