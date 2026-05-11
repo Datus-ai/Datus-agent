@@ -434,6 +434,7 @@ async def _stream_with_post_hook(
     """
     last_end_event: Optional[SSEEvent] = None
     captured_error: Optional[BaseException] = None
+    was_cancelled: bool = False
     last_event_id: int = 0
 
     try:
@@ -446,7 +447,11 @@ async def _stream_with_post_hook(
     except asyncio.CancelledError:
         # Client disconnected or the server is shutting down. The HTTP
         # response is already gone — nothing to yield, nothing to log
-        # as error.
+        # as error. We also do NOT schedule the post-chat hook below,
+        # because the usage payload is incomplete (no ``end`` event) and
+        # would otherwise look like a free successful turn to callers
+        # such as billing.
+        was_cancelled = True
         raise
     except BaseException as exc:
         captured_error = exc
@@ -458,6 +463,12 @@ async def _stream_with_post_hook(
             exc,
             exc_info=True,
         )
+        # Emit a synthetic SSE error event so the client renders a real
+        # reason instead of an opaque "network error". Catch
+        # ``BaseException`` here — including ``CancelledError`` raised
+        # by ``yield`` when the peer has already disconnected — so the
+        # outer bare ``raise`` below still re-propagates the original
+        # ``exc`` instead of being masked.
         try:
             error_event = SSEEvent(
                 id=last_event_id + 1,
@@ -469,16 +480,24 @@ async def _stream_with_post_hook(
                 ),
                 timestamp=now_utc_iso(),
             )
-            yield (
-                f"id: {error_event.id}\n"
-                f"event: {error_event.event}\n"
-                f"data: {error_event.data.model_dump_json()}\n\n"
+            yield (f"id: {error_event.id}\nevent: {error_event.event}\ndata: {error_event.data.model_dump_json()}\n\n")
+        except BaseException:  # pragma: no cover — defensive
+            logger.warning(
+                "Failed to emit terminal SSE error event (client likely disconnected)",
+                exc_info=True,
             )
-        except Exception:  # pragma: no cover — defensive
-            logger.error("Failed to emit terminal SSE error event", exc_info=True)
         raise
     finally:
-        if hooks is not None:
+        # Only schedule the post-chat hook when we have a meaningful
+        # outcome to report: either the stream finished normally (an
+        # ``end`` event was observed) or it failed with a real error
+        # we can describe. Pure cancellation is skipped — the usage
+        # payload would be empty and billing/audit callers would treat
+        # the turn as a free success.
+        should_schedule_post_hook = (
+            hooks is not None and not was_cancelled and (last_end_event is not None or captured_error is not None)
+        )
+        if should_schedule_post_hook:
             usage_dict: dict = {}
             session_id_value: Optional[str] = request.session_id
             if last_end_event is not None:

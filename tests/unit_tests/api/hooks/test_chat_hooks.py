@@ -246,9 +246,7 @@ class TestStreamChatGeneratorError:
         assert any("event: message" in c for c in body_chunks)
         error_chunks = [c for c in body_chunks if "event: error" in c]
         assert len(error_chunks) == 1
-        data_line = next(
-            line for line in error_chunks[0].splitlines() if line.startswith("data: ")
-        )
+        data_line = next(line for line in error_chunks[0].splitlines() if line.startswith("data: "))
         payload = json.loads(data_line[len("data: ") :])
         assert payload["error_type"] == "RuntimeError"
         assert "boom from tool runner" in payload["error"]
