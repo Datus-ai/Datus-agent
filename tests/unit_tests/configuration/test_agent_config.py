@@ -544,6 +544,16 @@ class TestAgentConfigServiceSelectors:
         )
         assert cfg.resolve_semantic_adapter("dbt") == "dbt"
 
+    def test_active_semantic_pin_wins_when_no_service_configured(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {},
+            },
+        )
+        cfg.set_active_semantic("dbt", persist=False)
+        assert cfg.resolve_semantic_adapter() == "dbt"
+
     def test_build_semantic_adapter_config_defaults_to_metricflow_when_no_service_configured(self, tmp_path):
         cfg = self._make(
             tmp_path,

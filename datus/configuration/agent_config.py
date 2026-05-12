@@ -1256,18 +1256,18 @@ class AgentConfig:
                 ),
             )
 
-        if not self.semantic_layer_configs:
-            return DEFAULT_SEMANTIC_ADAPTER
-
         active_override = self._active_semantic
         if active_override:
-            if active_override in self.semantic_layer_configs:
+            if not self.semantic_layer_configs or active_override in self.semantic_layer_configs:
                 return active_override
             logger.warning(
                 "Project override active_semantic=`%s` is not configured under "
                 "`agent.services.semantic_layer`; falling back to global default.",
                 active_override,
             )
+
+        if not self.semantic_layer_configs:
+            return DEFAULT_SEMANTIC_ADAPTER
 
         default_adapter = self.default_semantic_adapter()
         if default_adapter:
