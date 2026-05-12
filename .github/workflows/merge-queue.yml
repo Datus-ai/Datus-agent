@@ -1,0 +1,169 @@
+name: "Merge Queue Gate"
+
+on:
+  merge_group:
+  workflow_dispatch:
+
+concurrency:
+  group: merge-queue-gate-${{ github.event.merge_group.head_sha || github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  merge-queue-gate:
+    name: Merge Queue Gate
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-merge-queue-${{ hashFiles('requirements.txt', 'requirements-test.txt', 'pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-merge-queue-
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt
+          pip install --upgrade --no-cache-dir datus-semantic-metricflow==0.2.2
+          pip install packaging==26.2
+
+      - name: Check release metadata
+        run: python3 ci/check_release_readiness.py
+
+      - name: Setup config file
+        run: |
+          cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
+          cp /home/datus_ci/ci_template/ci.env .env
+
+      - name: Restore tracked test config
+        run: git restore --source=HEAD --worktree --staged tests/conf/agent.yml
+
+      - name: Isolate test data directory
+        run: |
+          DATUS_TEST_HOME="${GITHUB_WORKSPACE}/.datus_test_data"
+          echo "DATUS_TEST_HOME=$DATUS_TEST_HOME" >> "$GITHUB_ENV"
+          sed -i "s|home: .datus_test_data|home: $DATUS_TEST_HOME|g" tests/conf/agent.yml
+          sed -i "s|project_root: .datus_test_data/workspace|project_root: $DATUS_TEST_HOME/workspace|g" tests/conf/agent.yml
+
+      - name: Load environment variables
+        run: |
+          while IFS= read -r line || [ -n "$line" ]; do
+            if [[ ! -z "$line" && ! "$line" =~ ^[[:space:]]*# ]]; then
+              var_value=$(echo "$line" | cut -d'=' -f2-)
+              echo "::add-mask::$var_value"
+              echo "$line" >> "$GITHUB_ENV"
+            fi
+          done < .env
+
+      - name: Run deterministic merge queue suites
+        run: python3 ci/run-merge-queue-tests.py
+
+      - name: Upload merge queue artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: merge-queue-results
+          path: |
+            ci/merge-queue-results.json
+            ci/test-results-merge-*.xml
+
+  notify-failure:
+    name: Notify Merge Queue Failure
+    needs:
+      - merge-queue-gate
+    if: ${{ always() && needs.merge-queue-gate.result == 'failure' }}
+    runs-on: self-hosted
+    steps:
+      - name: Send Feishu failure notification
+        uses: actions/github-script@v7
+        env:
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_NOTIFY_CI_URL }}
+          NEEDS_JSON: ${{ toJson(needs) }}
+        with:
+          script: |
+            const https = require('https');
+            const webhook = process.env.FEISHU_WEBHOOK_URL;
+            if (!webhook) {
+              core.warning('FEISHU_WEBHOOK_URL is not set; skipping Feishu notification.');
+              return;
+            }
+
+            const needs = JSON.parse(process.env.NEEDS_JSON || '{}');
+            const failedJobs = Object.entries(needs)
+              .filter(([, job]) => job.result === 'failure')
+              .map(([name]) => name)
+              .join(', ') || 'unknown';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const messageBody = `## Merge Queue Failure
+
+            **Repository:** ${context.repo.owner}/${context.repo.repo}
+            **Workflow:** ${context.workflow}
+            **Event:** ${context.eventName}
+            **Ref:** ${context.ref}
+            **SHA:** ${context.sha}
+            **Failed jobs:** ${failedJobs}
+            **Run:** [#${context.runNumber}](${runUrl})
+
+            *Automated Feishu notification from GitHub Actions.*`;
+
+            const url = new URL(webhook);
+            const data = JSON.stringify({
+              msg_type: 'interactive',
+              card: {
+                type: 'template',
+                data: {
+                  template_id: 'AAqz7JC34dHlY',
+                  template_version_name: '1.0.0',
+                  template_variable: {
+                    report_result: messageBody,
+                  },
+                },
+              },
+            });
+
+            await new Promise((resolve) => {
+              const req = https.request(
+                {
+                  hostname: url.hostname,
+                  port: url.port || 443,
+                  path: url.pathname + url.search,
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(data),
+                  },
+                },
+                (res) => {
+                  res.resume();
+                  res.on('end', () => {
+                    if (res.statusCode >= 400) {
+                      core.warning(`Feishu notification returned HTTP ${res.statusCode}`);
+                    } else {
+                      console.log(`Feishu notification sent: ${res.statusCode}`);
+                    }
+                    resolve();
+                  });
+                },
+              );
+              req.on('error', (error) => {
+                core.warning(`Error sending Feishu notification: ${error.message}`);
+                resolve();
+              });
+              req.write(data);
+              req.end();
+            });
