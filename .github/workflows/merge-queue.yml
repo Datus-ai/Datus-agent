@@ -1,6 +1,11 @@
 name: "Merge Queue Gate"
 
 on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
   merge_group:
   workflow_dispatch:
 
@@ -14,6 +19,7 @@ permissions:
 jobs:
   merge-queue-gate:
     name: Merge Queue Gate
+    if: ${{ github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' }}
     runs-on: self-hosted
     steps:
       - name: Checkout code
