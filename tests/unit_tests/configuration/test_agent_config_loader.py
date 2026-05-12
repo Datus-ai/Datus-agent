@@ -546,6 +546,38 @@ class TestLoadAgentConfigResolution:
             )
         assert agent_config.current_datasource == "db_a"
 
+    def test_path_overrides_apply_before_storage_backend_init(self, tmp_path, reset_global_singletons):
+        """Path-shaping overrides must bind storage before AgentConfig init.
+
+        Applying ``home=`` after construction updates the returned config but
+        leaves the backend singleton pointed at the YAML home, so tests that
+        expect tmp_path isolation can read stale data from a shared directory.
+        """
+        cfg = self._write_base_yaml(
+            tmp_path,
+            {"only_db": {"type": "sqlite", "uri": str(tmp_path / "only.sqlite")}},
+        )
+        override_home = tmp_path / "override_home"
+        override_project = tmp_path / "override_workspace"
+        override_project.mkdir()
+
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=None,
+        ):
+            agent_config = load_agent_config(
+                config=str(cfg),
+                home=str(override_home),
+                project_root=str(override_project),
+                reload=True,
+            )
+
+        from datus.storage import backend_holder
+
+        assert agent_config.home == str(override_home)
+        assert Path(agent_config.project_root) == override_project.resolve()
+        assert backend_holder._data_dir == str(override_home / "data")
+
     def test_no_databases_is_tolerated(self, tmp_path, reset_global_singletons):
         """Deployments without any configured DB (pure KB / tool-only) must not
         crash at bootstrap; ``current_datasource`` simply stays empty."""

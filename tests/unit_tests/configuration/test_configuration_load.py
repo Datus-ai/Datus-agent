@@ -135,6 +135,34 @@ def test_storage_config_not_polluted_by_global_embedding_cache(tmp_path, monkeyp
     assert "document" not in agent_config.storage_configs
 
 
+def test_init_embedding_models_returns_current_storage_models():
+    from datus.configuration.agent_config import ModelConfig
+    from datus.storage.embedding_models import EMBEDDING_MODELS, init_embedding_models
+
+    original_models = dict(EMBEDDING_MODELS)
+    EMBEDDING_MODELS.clear()
+    try:
+        default_model = ModelConfig(type="openai", api_key="mock-api-key", model="mock-model")
+        storage_models = init_embedding_models(
+            {
+                "database": {"model_name": "shared-embedding", "dim_size": 384},
+                "document": {"model_name": "shared-embedding", "dim_size": 384},
+                "base_path": "data",
+                "embedding_device_type": "cpu",
+            },
+            openai_configs={},
+            default_openai_config=default_model,
+        )
+
+        assert set(storage_models) == {"database", "document"}
+        assert storage_models["database"] is storage_models["document"]
+        assert EMBEDDING_MODELS["database"] is storage_models["database"]
+        assert EMBEDDING_MODELS["document"] is storage_models["document"]
+    finally:
+        EMBEDDING_MODELS.clear()
+        EMBEDDING_MODELS.update(original_models)
+
+
 def test_get_db_name_type(agent_config: AgentConfig):
     db_name, db_type = agent_config.current_db_name_type(db_name="bird_school")
     assert db_name == "bird_school"

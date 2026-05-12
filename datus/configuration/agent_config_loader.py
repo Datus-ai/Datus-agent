@@ -334,6 +334,25 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
         agent_raw["active_semantic"] = override.semantic
 
 
+_PRE_INIT_OVERRIDE_KEYS = {"home", "project_root", "project_name"}
+
+
+def _apply_pre_init_overrides(agent_raw: Dict[str, Any], kwargs: Dict[str, Any]) -> set[str]:
+    """Apply path-shaping CLI overrides before AgentConfig initializes storage.
+
+    ``AgentConfig.__init__`` initializes the path manager and storage backends.
+    Applying these values later through ``override_by_args`` leaves the backend
+    bound to the YAML paths while the returned config points somewhere else.
+    """
+    applied: set[str] = set()
+    for key in _PRE_INIT_OVERRIDE_KEYS:
+        value = kwargs.get(key)
+        if value:
+            agent_raw[key] = value
+            applied.add(key)
+    return applied
+
+
 def load_agent_config(reload: bool = False, create_if_missing: bool = False, **kwargs) -> AgentConfig:
     # Check config file in order: kwargs["config"] > conf/agent.yml > ~/.datus/conf/agent.yml
     # Load .env file if it exists
@@ -350,6 +369,7 @@ def load_agent_config(reload: bool = False, create_if_missing: bool = False, **k
         ).data
     )
     _apply_project_override(agent_raw)
+    pre_init_override_keys = _apply_pre_init_overrides(agent_raw, kwargs)
     nodes = {}
     if "nodes" in agent_raw:
         nodes_raw = agent_raw["nodes"]
@@ -380,7 +400,7 @@ def load_agent_config(reload: bool = False, create_if_missing: bool = False, **k
     agent_config = AgentConfig(nodes=nodes, **agent_raw)
     if kwargs:
         # Filter out the 'config' parameter as it's only used for loading, not for overriding
-        override_kwargs = {k: v for k, v in kwargs.items() if k != "config"}
+        override_kwargs = {k: v for k, v in kwargs.items() if k != "config" and k not in pre_init_override_keys}
 
         # Only set datasource if it's valid (exists in agent_config.datasource_configs)
         ds_key = "datasource" if "datasource" in override_kwargs else None
