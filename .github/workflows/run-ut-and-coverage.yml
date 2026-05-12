@@ -34,7 +34,10 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-test.txt
           pip install --upgrade --no-cache-dir datus-semantic-metricflow
-          pip install pytest-cov diff-cover
+          pip install pytest-cov diff-cover packaging
+
+      - name: Check release metadata
+        run: python3 ci/check_release_readiness.py
 
       - name: Setup config file
         run: |

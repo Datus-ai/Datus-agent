@@ -1,0 +1,51 @@
+name: "Release Readiness"
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_version:
+        description: "Expected datus-agent version, for example 0.2.7"
+        required: true
+        type: string
+      check_tag_available:
+        description: "Fail if v<expected-version> already exists"
+        required: false
+        default: true
+        type: boolean
+  workflow_call:
+    inputs:
+      expected_version:
+        required: true
+        type: string
+      check_tag_available:
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  release-readiness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install release check dependencies
+        run: pip install packaging
+
+      - name: Check release readiness
+        run: |
+          args=(
+            --expected-version "${{ inputs.expected_version }}"
+            --check-adapter-latest
+          )
+          if [[ "${{ inputs.check_tag_available }}" == "true" ]]; then
+            args+=(--check-tag-available)
+          fi
+          python3 ci/check_release_readiness.py "${args[@]}"
