@@ -6,9 +6,10 @@ on:
       - opened
       - synchronize
       - reopened
+  merge_group:
 
 concurrency:
-  group: code-quality-${{ github.event.pull_request.number }}
+  group: code-quality-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -17,10 +18,10 @@ permissions:
 
 jobs:
   format-check:
-    if: ${{ !startsWith(github.event.pull_request.title, '[Doc]') && !startsWith(github.event.pull_request.title, '[doc]') }}
+    if: ${{ github.event_name == 'merge_group' || (!startsWith(github.event.pull_request.title, '[Doc]') && !startsWith(github.event.pull_request.title, '[doc]')) }}
     uses: ./.github/workflows/python-format-check.yml
 
   run-coverage:
     needs: format-check
-    if: ${{ !startsWith(github.event.pull_request.title, '[Doc]') && !startsWith(github.event.pull_request.title, '[doc]') }}
+    if: ${{ github.event_name == 'merge_group' || (!startsWith(github.event.pull_request.title, '[Doc]') && !startsWith(github.event.pull_request.title, '[doc]')) }}
     uses: ./.github/workflows/run-ut-and-coverage.yml

@@ -1,12 +1,6 @@
 name: "Merge Queue Gate"
 
 on:
-  pull_request:
-    types:
-      - opened
-      - synchronize
-      - reopened
-  merge_group:
   workflow_dispatch:
 
 concurrency:
