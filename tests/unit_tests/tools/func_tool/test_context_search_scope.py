@@ -68,6 +68,25 @@ def test_list_subject_tree_scope_does_not_expose_query_tools():
     assert tool_names == {"list_subject_tree"}
 
 
+def test_list_subject_tree_description_does_not_name_disabled_context_tools():
+    tools = _build_tools(
+        {
+            "tools": (
+                "context_search_tools.search_metrics,context_search_tools.list_subject_tree,db_tools,date_parsing_tools"
+            )
+        }
+    )
+
+    available_tools = tools.available_tools()
+    tool_names = {tool.name for tool in available_tools}
+    subject_tree_tool = next(tool for tool in available_tools if tool.name == "list_subject_tree")
+
+    assert tool_names == {"list_subject_tree", "search_metrics", "get_metrics"}
+    assert "enabled context retrieval tools" in subject_tree_tool.description
+    assert "get_reference_sql" not in subject_tree_tool.description
+    assert "get_knowledge" not in subject_tree_tool.description
+
+
 def test_missing_sub_agent_config_uses_default_context_tools():
     tools = _build_tools({})
 

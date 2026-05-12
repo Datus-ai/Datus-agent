@@ -204,9 +204,9 @@ class ContextSearchTools:
     @mcp_tool()
     def list_subject_tree(self) -> FuncToolResult:
         """
-        Get the domain-layer taxonomy from subject_tree store with metrics and SQL counts.
-        Use this as the first step to discover available metrics, reference SQL, and knowledge
-        before calling get_metrics, get_reference_sql, or get_knowledge.
+        Get the domain-layer taxonomy from subject_tree store.
+        Use this as the first step to discover available context entries before calling
+        enabled context retrieval tools.
 
         The response has the structure:
         {
@@ -214,7 +214,7 @@ class ContextSearchTools:
                 "<layer1>": {
                     "<layer2>": {
                         "metrics": <[name1, name2, ...], optional>,
-                        "reference_sql": <[name1, name2, ...], optional>
+                        "reference_sql": <[name1, name2, ...], optional>,
                         "knowledge": <[name1, name2, ...], optional>
                     },
                     ...
