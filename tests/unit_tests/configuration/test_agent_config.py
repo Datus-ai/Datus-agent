@@ -526,29 +526,40 @@ class TestAgentConfigServiceSelectors:
         )
         assert cfg.resolve_semantic_adapter() == "metricflow"
 
-    def test_resolve_semantic_adapter_raises_when_no_service_configured(self, tmp_path):
-        """The implicit metricflow fallback was removed: callers must
-        explicitly configure at least one entry under
-        ``services.semantic_layer``. The error message points the user at
-        the YAML or the ``/services semantic`` TUI."""
+    def test_resolve_semantic_adapter_defaults_to_metricflow_when_no_service_configured(self, tmp_path):
         cfg = self._make(
             tmp_path,
             services={
                 "datasources": {},
             },
         )
-        with pytest.raises(DatusException, match="No semantic layer configured"):
-            cfg.resolve_semantic_adapter()
+        assert cfg.resolve_semantic_adapter() == "metricflow"
 
-    def test_build_semantic_adapter_config_raises_when_no_service_configured(self, tmp_path):
+    def test_explicit_semantic_adapter_wins_when_no_service_configured(self, tmp_path):
         cfg = self._make(
             tmp_path,
             services={
                 "datasources": {},
             },
         )
-        with pytest.raises(DatusException, match="No semantic layer configured"):
-            cfg.build_semantic_adapter_config()
+        assert cfg.resolve_semantic_adapter("dbt") == "dbt"
+
+    def test_build_semantic_adapter_config_defaults_to_metricflow_when_no_service_configured(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {
+                    "demo": {
+                        "type": "duckdb",
+                        "uri": "duckdb:///:memory:",
+                        "default": True,
+                    }
+                },
+            },
+        )
+        config = cfg.build_semantic_adapter_config()
+        assert config["type"] == "metricflow"
+        assert config["datasource"] == "demo"
 
     def test_file_datasource_preserves_adapter_specific_extra_fields(self, tmp_path):
         cfg = self._make(

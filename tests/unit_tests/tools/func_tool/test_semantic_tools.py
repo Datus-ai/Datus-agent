@@ -453,6 +453,36 @@ class TestAvailableTools:
             tools = semantic_tools_ext.available_tools()
         assert len(tools) == 3
 
+    def test_default_metricflow_adapter_exposes_validate_tool(self):
+        with (
+            patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
+            patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
+            patch(
+                "datus.tools.func_tool.semantic_tools.semantic_adapter_registry.create_adapter",
+                side_effect=RuntimeError("adapter unavailable"),
+            ),
+        ):
+            from datus.tools.func_tool.semantic_tools import SemanticTools
+
+            config = Mock()
+            config.active_model.return_value.model = "gpt-4o"
+            config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: adapter_type or "metricflow"
+            config.build_semantic_adapter_config.side_effect = lambda adapter_type=None: {"datasource": "ns1"}
+            tool = SemanticTools(agent_config=config)
+
+            with patch("datus.tools.func_tool.semantic_tools.trans_to_function_tool") as mock_trans:
+
+                def _mock_tool(func):
+                    tool = Mock()
+                    tool.name = func.__name__
+                    return tool
+
+                mock_trans.side_effect = _mock_tool
+                tools = tool.available_tools()
+
+        names = [tool.name for tool in tools]
+        assert "validate_semantic" in names
+
     def test_with_adapter_adds_validate_and_attribution_tools(self):
         with (
             patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
