@@ -10,6 +10,8 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
+from datus.storage.document.schemas import FetchedDocument
+
 # Guard: PyGithub may not be installed
 try:
     import github  # noqa: F401
@@ -374,7 +376,7 @@ class TestFetchFile:
         mock_repo.get_contents.return_value = content
 
         doc = f._fetch_file(mock_repo, "docs/guide.md", "main", "v1.0", "owner/repo")
-        assert doc is not None
+        assert isinstance(doc, FetchedDocument)
         assert doc.raw_content == "# Guide Content"
         assert doc.platform == "testplatform"
         assert doc.version == "v1.0"
@@ -392,7 +394,7 @@ class TestFetchFile:
         mock_repo.get_contents.return_value = content
 
         doc = f._fetch_file(mock_repo, "docs/guide.md", "main", "v1.0", "owner/repo")
-        assert doc is not None
+        assert isinstance(doc, FetchedDocument)
         # For non-base64, it uses content.content directly (which is the raw text)
         assert doc.raw_content == "# Raw Content"
 
@@ -563,7 +565,7 @@ class TestFetchSingle:
         mock_repo.get_contents.return_value = content
 
         doc = f.fetch_single("docs/guide.md", repo_name="owner/repo")
-        assert doc is not None
+        assert isinstance(doc, FetchedDocument)
         assert doc.version == "3.4.0"  # Extracted from github_ref "v3.4.0"
 
     def test_fetch_single_with_non_version_github_ref(self):
@@ -584,7 +586,7 @@ class TestFetchSingle:
         mock_repo.get_contents.return_value = content
 
         doc = f.fetch_single("docs/guide.md", repo_name="owner/repo")
-        assert doc is not None
+        assert isinstance(doc, FetchedDocument)
         # version should be "versioned-docs" (not main/master, so used as-is)
         assert doc.version == "versioned-docs"
 

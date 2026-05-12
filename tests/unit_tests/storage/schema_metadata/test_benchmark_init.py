@@ -24,14 +24,17 @@ class TestProcessLine:
 
     def test_process_line_catches_exceptions(self):
         """process_line should catch and log exceptions without raising."""
-        from datus.storage.schema_metadata.benchmark_init import process_line
+        from datus.storage.schema_metadata import benchmark_init
 
         mock_storage = MagicMock()
-        # Invalid item that will cause an error in do_process_by_database
-        item = {"db_id": "nonexistent_db"}
+        item = {}
 
-        # Should not raise
-        process_line(mock_storage, item, "/nonexistent/path", set(), set())
+        with pytest.MonkeyPatch.context() as mp:
+            mock_error = MagicMock()
+            mp.setattr(benchmark_init.logger, "error", mock_error)
+            benchmark_init.process_line(mock_storage, item, "/nonexistent/path", set(), set())
+
+        mock_error.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

@@ -68,7 +68,9 @@ class TestAsyncRunner:
 def test_setup_windows_policy_non_windows():
     """On non-Windows platforms this should be a no-op (no exception)."""
     with patch.object(sys, "platform", "linux"):
-        setup_windows_policy()  # should not raise
+        with patch("asyncio.set_event_loop_policy") as mock_set:
+            setup_windows_policy()
+    mock_set.assert_not_called()
 
 
 def test_setup_windows_policy_windows():
@@ -104,7 +106,6 @@ async def test_is_event_loop_running_true_in_async():
 
 def test_get_or_create_event_loop_returns_loop():
     loop = get_or_create_event_loop()
-    assert loop is not None
     assert not loop.is_closed()
 
 

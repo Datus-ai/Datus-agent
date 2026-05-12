@@ -69,7 +69,7 @@ class TestReadCsvAndCleanText:
         csv_file.write_text("name,value\nalice,\nbob,2\n", encoding="utf-8")
         result = read_csv_and_clean_text(str(csv_file))
         # NaN values should be converted to None
-        assert result[0]["value"] is None or result[0]["value"] == "" or result[0]["value"] is None
+        assert result[0]["value"] is None
 
     def test_non_string_values_not_cleaned(self, tmp_path):
         csv_file = tmp_path / "test.csv"

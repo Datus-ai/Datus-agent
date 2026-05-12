@@ -65,9 +65,14 @@ class TestSqliteRdbDatabaseInit:
         assert os.path.isdir(str(tmp_path / "subdir"))
         assert db.db_file.endswith("test.db")
 
-    def test_close_is_noop(self, database):
+    def test_close_is_noop(self, database, table_def):
         """close() does nothing and doesn't raise."""
+        table = database.ensure_table(table_def)
+        table.insert(_Item(name="before-close", value="ok"))
         database.close()
+        rows = table.query(_Item)
+        assert len(rows) == 1
+        assert rows[0].name == "before-close"
 
 
 class TestSqliteRdbDatabaseInsert:

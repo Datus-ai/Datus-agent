@@ -27,7 +27,7 @@ class TestScopedContextOverrides:
         cfg = _cfg("public.users")
         with effective_subagent("agent_a", cfg):
             got = get_override("agent_a")
-            assert got is not None
+            assert isinstance(got, SubAgentConfig)
             assert got.scoped_context.tables == "public.users"
         # After exit, override is gone.
         assert get_override("agent_a") is None

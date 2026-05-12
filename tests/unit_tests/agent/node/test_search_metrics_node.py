@@ -280,7 +280,7 @@ class TestExecuteSearchMetrics:
         with patch.object(node, "_search_metrics", return_value=good_result):
             node.execute()
 
-        assert node.result is not None
+        assert node.result is good_result
 
 
 # ---------------------------------------------------------------------------

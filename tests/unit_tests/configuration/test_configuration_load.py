@@ -39,8 +39,7 @@ def test_config_exception(tmp_path):
 
 def test_service_config_structure(agent_config: AgentConfig):
     """Verify service config sections load into AgentConfig."""
-    assert agent_config.services is not None
-    assert len(agent_config.services.datasources) > 0
+    assert set(agent_config.services.datasources) >= {"bird_school", "snowflake", "local_duckdb"}
     assert "bird_school" in agent_config.services.datasources
     assert "snowflake" in agent_config.services.datasources
     assert "local_duckdb" in agent_config.services.datasources
@@ -100,10 +99,13 @@ def test_benchmark_db_check(agent_config: AgentConfig):
 
 
 @pytest.mark.parametrize(
-    argnames=["database", "benchmark"],
-    argvalues=[("bird_school", "bird_dev"), ("snowflake", "spider2")],
+    argnames=["database", "benchmark", "expected_suffix"],
+    argvalues=[
+        ("bird_school", "bird_dev", "benchmark/bird/dev_20240627"),
+        ("snowflake", "spider2", "benchmark/spider2/spider2-snow"),
+    ],
 )
-def test_benchmark_config(database: str, benchmark: str, agent_config: AgentConfig):
+def test_benchmark_config(database: str, benchmark: str, expected_suffix: str, agent_config: AgentConfig):
     agent_config.override_by_args(
         **{
             "datasource": database,
@@ -111,12 +113,26 @@ def test_benchmark_config(database: str, benchmark: str, agent_config: AgentConf
         }
     )
     benchmark_path = agent_config.benchmark_path(benchmark)
-    assert benchmark_path is not None
+    assert benchmark_path.replace(os.sep, "/").endswith(expected_suffix)
     assert "benchmark" in benchmark_path
 
 
 def test_storage_config(agent_config: AgentConfig):
-    assert agent_config.storage_configs is not None
+    assert agent_config.storage_configs == {}
+
+
+def test_storage_config_not_polluted_by_global_embedding_cache(tmp_path, monkeypatch):
+    from datus.storage.embedding_models import EMBEDDING_MODELS
+
+    class _CachedModel:
+        model_name = "cached-model"
+
+    monkeypatch.setitem(EMBEDDING_MODELS, "document", _CachedModel())
+
+    agent_config = load_agent_config(config=str(TEST_CONF_DIR / "agent.yml"), home=str(tmp_path), reload=True)
+
+    assert agent_config.storage_configs == {}
+    assert "document" not in agent_config.storage_configs
 
 
 def test_get_db_name_type(agent_config: AgentConfig):

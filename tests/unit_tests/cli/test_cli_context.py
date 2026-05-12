@@ -182,7 +182,7 @@ class TestUpdateDatabaseContext:
 # ---------------------------------------------------------------------------
 
 
-class TestSqlTask:
+class TestCliContextSqlTask:
     def test_set_current_sql_task(self):
         ctx = CliContext()
         task = _make_sql_task()

@@ -76,7 +76,7 @@ class TestValidateServerExists:
         valid, msg, cfg = _validate_server_exists(manager, "test")
         assert valid is True
         assert msg == ""
-        assert cfg is not None
+        assert cfg.name == "test"
 
     def test_server_not_exists(self, tmp_path):
         manager = _make_manager(tmp_path)
@@ -168,7 +168,6 @@ class TestMCPManagerCRUD:
         srv = STDIOServerConfig(name="srv", command="echo")
         manager.config.add_server(srv)
         result = manager.get_server_config("srv")
-        assert result is not None
         assert result.name == "srv"
 
     def test_get_server_config_missing(self, tmp_path):
@@ -301,7 +300,7 @@ class TestCreateServerInstance:
             mock_cls.return_value = mock_instance
             with patch("datus.tools.mcp_tools.mcp_manager.MCPServerSseParams"):
                 instance, details = manager._create_sse_server({"url": "http://example.com"})
-        assert instance is not None
+        assert instance is mock_instance
 
     def test_create_http_server_with_url(self, tmp_path):
         manager = _make_manager(tmp_path)
@@ -310,7 +309,7 @@ class TestCreateServerInstance:
             mock_cls.return_value = mock_instance
             with patch("datus.tools.mcp_tools.mcp_manager.MCPServerStreamableHttpParams"):
                 instance, details = manager._create_http_server({"url": "http://example.com"})
-        assert instance is not None
+        assert instance is mock_instance
 
     def test_create_server_instance_unsupported_type(self, tmp_path, monkeypatch):
         manager = _make_manager(tmp_path)
@@ -610,4 +609,4 @@ class TestCleanup:
         manager.cleanup()
         # cleanup() is a no-op finalizer; verify manager state remains intact
         assert isinstance(manager.config, MCPConfig)
-        assert manager.config_path is not None
+        assert manager.config_path.name == ".mcp.json"

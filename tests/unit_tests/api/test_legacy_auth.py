@@ -15,21 +15,19 @@ class TestLoadAuthConfig:
         config_file = tmp_path / "auth.yml"
         config_file.write_text(yaml.dump({"clients": [{"id": "test", "secret": "pass"}]}))
         result = load_auth_config(str(config_file))
-        assert result is not None
-        assert "clients" in result
+        assert result == {"clients": [{"id": "test", "secret": "pass"}]}
 
     def test_load_with_nonexistent_path(self):
         """load_auth_config returns defaults for nonexistent path."""
         result = load_auth_config("/nonexistent/auth.yml")
-        assert result is not None
-        assert "clients" in result
+        assert result["clients"] == {"datus_client": "datus_secret_key"}
 
     def test_load_with_invalid_yaml(self, tmp_path):
         """load_auth_config handles invalid YAML gracefully."""
         config_file = tmp_path / "bad_auth.yml"
         config_file.write_text(":\n  - ][")
         result = load_auth_config(str(config_file))
-        assert result is not None
+        assert result["clients"] == {"datus_client": "datus_secret_key"}
 
 
 class TestAuthService:

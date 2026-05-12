@@ -117,7 +117,7 @@ class TestSemanticAdapterRegistry:
         adapter_class = _make_adapter_class()
         SemanticAdapterRegistry.register("metaservice", adapter_class, display_name="Meta Service")
         meta = SemanticAdapterRegistry.get_metadata("metaservice")
-        assert meta is not None
+        assert isinstance(meta, AdapterMetadata)
         assert meta.display_name == "Meta Service"
 
     def test_create_adapter_uses_default_construction(self):
@@ -169,7 +169,7 @@ class TestSemanticAdapterRegistry:
         adapter_class = _make_adapter_class()
         SemanticAdapterRegistry.register("casetest", adapter_class)
         meta = SemanticAdapterRegistry.get_metadata("CaseTest")
-        assert meta is not None
+        assert isinstance(meta, AdapterMetadata)
         assert meta.display_name == "Casetest"
         assert meta.adapter_class is adapter_class
 

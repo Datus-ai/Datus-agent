@@ -354,7 +354,6 @@ class TestRunWorkflow:
         request = _make_request()
         response = await service.run_workflow(request)
 
-        assert response.result is not None
         assert len(response.result) == 2
         assert response.result[0]["name"] == "Alice"
 

@@ -97,7 +97,8 @@ class TestOutputToolExecute:
             result = tool.execute(input_data, mock_connector)
 
         assert result.success is True
-        assert result.output is not None
+        assert result.output.endswith(".csv")
+        assert os.path.exists(result.output)
 
     def test_execute_finished_sql_file_type(self, tmp_path):
         tool = OutputTool()

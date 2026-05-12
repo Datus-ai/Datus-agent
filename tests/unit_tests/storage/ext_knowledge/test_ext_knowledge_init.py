@@ -400,7 +400,7 @@ class TestInitSuccessStoryKnowledgeAsync:
 
     def test_async_function_is_importable(self):
         """init_success_story_knowledge_async can be imported from the module."""
-        assert init_success_story_knowledge_async is not None
+        assert init_success_story_knowledge_async.__name__ == "init_success_story_knowledge_async"
 
     def test_async_function_is_coroutine(self):
         """init_success_story_knowledge_async is a coroutine function (async def)."""
@@ -430,7 +430,7 @@ class TestInitSuccessStoryKnowledgeAsync:
         success, error = await init_success_story_knowledge_async(mock_config, missing)
 
         assert success is False
-        assert "not found" in error.lower() or missing in error
+        assert missing in error
 
     @pytest.mark.asyncio
     async def test_async_returns_two_tuple(self, tmp_path):

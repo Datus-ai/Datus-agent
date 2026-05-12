@@ -2,7 +2,14 @@
 
 import pytest
 
+from datus.api.services.chat_service import ChatService
+from datus.api.services.chat_task_manager import ChatTaskManager
+from datus.api.services.cli_service import CLIService
+from datus.api.services.database_service import DatasourceService
 from datus.api.services.datus_service import DatusService
+from datus.api.services.explorer_service import ExplorerService
+from datus.api.services.kb_service import KbService
+from datus.api.services.mcp_service import MCPService
 
 
 class TestDatusServiceInit:
@@ -17,7 +24,7 @@ class TestDatusServiceInit:
     def test_init_creates_task_manager(self, real_agent_config):
         """Constructor creates a ChatTaskManager instance."""
         svc = DatusService(agent_config=real_agent_config, project_id="p1")
-        assert svc.task_manager is not None
+        assert isinstance(svc.task_manager, ChatTaskManager)
 
     def test_init_default_source_and_interactive_forwarded(self, real_agent_config):
         """default_source / default_interactive are forwarded to ChatTaskManager."""
@@ -54,7 +61,7 @@ class TestDatusServiceLazyProperties:
         """Accessing .chat creates a ChatService instance."""
         svc = DatusService(agent_config=real_agent_config, project_id="p1")
         chat = svc.chat
-        assert chat is not None
+        assert isinstance(chat, ChatService)
         # Second access returns same instance
         assert svc.chat is chat
 
@@ -62,37 +69,37 @@ class TestDatusServiceLazyProperties:
         """Accessing .datasource creates a DatasourceService instance."""
         svc = DatusService(agent_config=real_agent_config, project_id="p1")
         db = svc.datasource
-        assert db is not None
+        assert isinstance(db, DatasourceService)
         assert svc.datasource is db
 
     def test_explorer_property_creates_explorer_service(self, real_agent_config):
         """Accessing .explorer creates an ExplorerService instance."""
         svc = DatusService(agent_config=real_agent_config, project_id="p1")
         explorer = svc.explorer
-        assert explorer is not None
+        assert isinstance(explorer, ExplorerService)
         assert svc.explorer is explorer
 
     def test_mcp_property_creates_mcp_service(self, real_agent_config):
         """Accessing .mcp creates an MCPService instance."""
         svc = DatusService(agent_config=real_agent_config, project_id="p1")
         mcp = svc.mcp
-        assert mcp is not None
+        assert isinstance(mcp, MCPService)
         assert svc.mcp is mcp
 
     def test_kb_property_creates_kb_service(self, real_agent_config):
         """Accessing .kb creates a KbService instance."""
         svc = DatusService(agent_config=real_agent_config, project_id="p1")
         kb = svc.kb
-        assert kb is not None
+        assert isinstance(kb, KbService)
         assert svc.kb is kb
 
     def test_cli_property_creates_cli_service(self, real_agent_config):
         """Accessing .cli creates a CLIService (also initializes .chat)."""
         svc = DatusService(agent_config=real_agent_config, project_id="p1")
         cli = svc.cli
-        assert cli is not None
+        assert isinstance(cli, CLIService)
         # cli depends on chat, so chat should also be initialized
-        assert svc._chat is not None
+        assert isinstance(svc._chat, ChatService)
 
 
 class TestDatusServiceBehavior:
@@ -107,8 +114,12 @@ class TestDatusServiceBehavior:
     @pytest.mark.asyncio
     async def test_shutdown_does_not_raise(self, real_agent_config):
         """Shutdown completes without error even with no running tasks."""
+        from unittest.mock import AsyncMock
+
         svc = DatusService(agent_config=real_agent_config, project_id="p1")
-        await svc.shutdown()  # should not raise
+        svc._task_manager.shutdown = AsyncMock()
+        await svc.shutdown()
+        svc._task_manager.shutdown.assert_awaited_once()
 
     def test_config_fingerprint_is_stable(self, real_agent_config):
         """Same config yields the same fingerprint across instances."""
@@ -140,4 +151,5 @@ class TestDatusServiceBehavior:
 
         svc = DatusService(agent_config=real_agent_config, project_id="p1")
         svc._task_manager.shutdown = AsyncMock(side_effect=RuntimeError("boom"))
-        await svc.shutdown()  # should not raise — exception is caught and logged
+        await svc.shutdown()
+        svc._task_manager.shutdown.assert_awaited_once()

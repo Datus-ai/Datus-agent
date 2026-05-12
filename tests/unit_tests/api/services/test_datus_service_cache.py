@@ -220,7 +220,8 @@ class TestEvict:
     async def test_evict_nonexistent_is_noop(self):
         """Evicting a non-existent key doesn't raise."""
         cache = DatusServiceCache()
-        await cache.evict("ghost")  # should not raise
+        await cache.evict("ghost")
+        assert cache._cache == {}
 
     async def test_evict_with_active_tasks_defers_shutdown(self):
         """Evict service with active tasks schedules deferred shutdown."""

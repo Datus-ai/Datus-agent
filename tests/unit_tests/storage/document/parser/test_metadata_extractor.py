@@ -148,8 +148,7 @@ class TestDetectVersion:
         # No semantic version present, so date version should be picked
         result = extractor._detect_version("Released in 2024-01 update cycle.")
 
-        assert result is not None
-        assert "2024" in result
+        assert result == "2024-01"
 
     def test_major_version_only(self):
         """Major version like 'version 15' is detected when no better match."""
@@ -367,4 +366,5 @@ class TestExtractPipeline:
 
         assert "keywords" in result
         # warehouse and stage should be detected with snowflake platform
-        assert "warehouse" in result["keywords"] or "stage" in result["keywords"]
+        assert "warehouse" in result["keywords"]
+        assert "stage" in result["keywords"]

@@ -341,7 +341,7 @@ class TestDescribeTarget:
     def test_scheduler_job(self):
         t = SchedulerJobTarget(platform="airflow", job_id="j-123", job_name="nightly")
         out = describe_target(t)
-        assert "scheduler" in out or "job" in out
+        assert "scheduler_job" in out
         assert "j-123" in out
 
 

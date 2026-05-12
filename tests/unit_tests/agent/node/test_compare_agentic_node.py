@@ -255,11 +255,11 @@ class TestCompareStaticMethods:
 
         # System instruction should be a non-empty string from the real template
         assert isinstance(system_instruction, str)
-        assert len(system_instruction) > 0
+        assert "compare" in system_instruction.lower()
 
         # User prompt should contain task-related text
         assert isinstance(user_prompt, str)
-        assert len(user_prompt) > 0
+        assert compare_input.sql_task.task in user_prompt
 
         # Messages should have system and user entries
         assert len(messages) == 2

@@ -391,7 +391,7 @@ class TestLlmBasedRecommendation:
             mock_pm.render_template.return_value = "prompt"
             result = tool._llm_based_recommendation(df)
 
-        assert result is not None
+        assert isinstance(result, VisualizationOutput)
         assert isinstance(result.y_cols, list)
 
     def test_llm_invalid_x_col_falls_back(self):
@@ -411,4 +411,4 @@ class TestLlmBasedRecommendation:
             result = tool._llm_based_recommendation(df)
 
         # x_col should fall back to a column that exists
-        assert result.x_col in df.columns or result.x_col == ""
+        assert result.x_col == "cat"

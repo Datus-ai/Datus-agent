@@ -329,8 +329,8 @@ class TestInitExtKnowledgeStringParam:
         import typing
 
         sig = inspect.signature(init_ext_knowledge)
+        assert "ext_knowledge_csv" in sig.parameters
         param = sig.parameters.get("ext_knowledge_csv")
-        assert param is not None
         annotation = param.annotation
         assert annotation is not inspect.Parameter.empty, "ext_knowledge_csv must have a type annotation"
         # Should be Optional[str] (i.e. Union[str, None])

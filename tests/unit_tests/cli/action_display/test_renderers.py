@@ -421,7 +421,7 @@ class TestRenderTaskToolAsSubagent:
         result = _renderer().render_task_tool_as_subagent(action, verbose=False)
         text = _plain(result)
         assert "gen_sql" in text
-        assert "subagent" not in text.lower() or "gen_sql" in text
+        assert "subagent" not in text.lower()
 
     def test_wrapped_arguments_dict_format(self):
         """Type is extracted from arguments when already parsed as dict."""

@@ -105,7 +105,7 @@ class TestSkillBashToolBasic:
             skill_metadata=python_skill_metadata,
             workspace_root=str(temp_skill_dir),
         )
-        assert tool is not None
+        assert isinstance(tool, SkillBashTool)
         assert tool.skill_name == "python-skill"
 
     def test_tool_with_custom_timeout(self, python_skill_metadata, temp_skill_dir):
@@ -235,7 +235,7 @@ class TestSkillBashToolExecution:
         result = tool.execute_command("python scripts/analyze.py --input test.json")
 
         assert result.success == 1
-        assert "--input" in result.result or "test.json" in result.result
+        assert "Args: ['--input', 'test.json']" in result.result
 
     def test_execute_denied_command(self, python_skill_metadata, temp_skill_dir):
         """Test executing a denied command."""
@@ -310,7 +310,7 @@ print(os.getcwd())
 
         result = tool.execute_command("python scripts/pwd_test.py")
         assert result.success == 1
-        assert str(temp_skill_dir) in result.result or temp_skill_dir.name in result.result
+        assert result.result.strip() == str(temp_skill_dir)
 
 
 class TestSkillBashToolEnvironment:

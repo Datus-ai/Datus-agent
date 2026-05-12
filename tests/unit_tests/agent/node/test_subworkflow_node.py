@@ -42,16 +42,20 @@ class TestSubworkflowNodeExecute:
     def test_execute_none_input_result_is_none_or_failure(self):
         """When input is None, execute returns early. result stays None."""
         node = make_node()
-        node.execute()
+        result = node.execute()
         # execute() returns early with a SubworkflowResult(success=False) via the first guard
-        assert node.result is None or node.result.success is False
+        assert result.success is False
+        assert result.workflow_name == "unknown"
+        assert node.result is None
 
     def test_execute_empty_workflow_name_returns_failure_or_none(self):
         """Empty workflow_name causes early return."""
         node = make_node(SubworkflowInput(workflow_name=""))
-        node.execute()
+        result = node.execute()
         # Either result is None (early return) or a SubworkflowResult(success=False)
-        assert node.result is None or node.result.success is False
+        assert result.success is False
+        assert result.workflow_name == "unknown"
+        assert node.result is None
 
     def test_execute_no_parent_workflow_returns_failure(self):
         """If parent workflow not attached, execute() catches the error."""
@@ -145,7 +149,9 @@ class TestSubworkflowNodeExecute:
             with patch("datus.agent.evaluate.setup_node_input", return_value={"success": True}):
                 node.execute()
 
-        assert node.result is not None
+        assert isinstance(node.result, SubworkflowResult)
+        assert node.result.success is True
+        assert node.result.execution_order == ["action_1"]
 
     def test_execute_child_node_fails_returns_early(self):
         cfg = make_agent_config(workflow_name="my_wf")
@@ -207,7 +213,7 @@ class TestSubworkflowNodeExecute:
                 node.execute()
 
         assert node.result.success is False
-        assert "infinite loop" in node.result.error.lower() or "maximum" in node.result.error.lower()
+        assert "exceeded maximum iterations (50)" in node.result.error
 
     def test_execute_child_node_raises_exception(self):
         cfg = make_agent_config(workflow_name="my_wf")

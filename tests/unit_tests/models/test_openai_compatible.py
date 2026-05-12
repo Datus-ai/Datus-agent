@@ -685,7 +685,6 @@ class TestDistributeTokenUsageToActions:
         model._distribute_token_usage_to_actions(manager, usage)
 
         # Only the last assistant action should have usage
-        assert action2.output is not None
         assert isinstance(action2.output, dict)
         assert action2.output.get("usage") == usage
 
@@ -757,7 +756,6 @@ class TestExtractAndDistributeTokenUsage:
         with patch.object(model, "context_length", return_value=128000):
             await model._extract_and_distribute_token_usage(result, manager)
 
-        assert action.output is not None
         assert isinstance(action.output, dict)
         assert action.output["usage"]["total_tokens"] == 150
 
@@ -766,8 +764,12 @@ class TestExtractAndDistributeTokenUsage:
         model = _make_model()
         result = MagicMock()
         result.context_wrapper = MagicMock()
+
+        def raise_usage_error(_self):
+            raise RuntimeError("bad")
+
         # Make usage access raise
-        type(result.context_wrapper).usage = property(lambda self: (_ for _ in ()).throw(RuntimeError("bad")))
+        type(result.context_wrapper).usage = property(raise_usage_error)
 
         manager = ActionHistoryManager()
         await model._extract_and_distribute_token_usage(result, manager)
@@ -1540,7 +1542,6 @@ class TestBuildAgent:
         model.litellm_adapter.reasoning_effort_level = "medium"
         _, call_args = self._call_build_agent(model)
         ms = call_args[1]["model_settings"]
-        assert ms.reasoning is not None
         assert ms.reasoning.effort == "medium"
 
     @pytest.mark.parametrize("effort", ["minimal", "low", "medium", "high"])
@@ -1639,7 +1640,7 @@ class TestBuildAgent:
         # the permissive outcome: reasoning IS injected.
         with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=False):
             _, call_args = self._call_build_agent(model)
-        assert call_args[1]["model_settings"].reasoning is not None
+        assert call_args[1]["model_settings"].reasoning.effort == "high"
 
     @pytest.mark.parametrize("model_name", ["deepseek-v4-pro", "deepseek-reasoner"])
     def test_deepseek_extra_body_carries_thinking_and_reasoning_effort(self, model_name):

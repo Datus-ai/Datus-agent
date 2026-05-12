@@ -32,7 +32,8 @@ from datus.cli.agent_commands import AgentCommands
 from datus.cli.cli_context import CliContext
 from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistoryManager
-from datus.schemas.node_models import SqlTask
+from datus.schemas.node_models import GenerateSQLInput, SqlTask
+from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.utils.constants import DBType
 
 # ---------------------------------------------------------------------------
@@ -139,7 +140,7 @@ class TestGenSqlTask:
 
         result = agent_commands._gen_sql_task("show me revenue")
 
-        assert result is not None
+        assert isinstance(result, SqlTask)
         assert result.task == "show me revenue"
 
     def test_returns_none_on_exception(self, agent_commands):
@@ -148,7 +149,7 @@ class TestGenSqlTask:
         # With no db_connector, it falls back to SQLITE — should still work
         result = agent_commands._gen_sql_task("test query")
         # The code falls back to SQLITE when db_connector is None; a SqlTask should be returned
-        assert result is not None
+        assert isinstance(result, SqlTask)
         assert result.task == "test query"
 
 
@@ -164,7 +165,7 @@ class TestCmdSchemaLinking:
         agent_commands.cli.prompt_input = lambda *a, **kw: ""
         agent_commands.cmd_schema_linking("")
         output = agent_commands.console.file.getvalue()
-        assert "cannot be empty" in output.lower() or "Error" in output
+        assert "Input text cannot be empty." in output
 
     def test_with_args_calls_schema_rag(self, agent_commands):
         """When input is provided, schema RAG is called."""
@@ -220,7 +221,8 @@ class TestCmdSearchMetrics:
                 agent_commands.cmd_search_metrics("revenue")
 
         output = agent_commands.console.file.getvalue()
-        assert "revenue" in output.lower() or "Found" in output
+        assert "Found 1 metrics." in output
+        assert "revenue" in output
 
     def test_no_results(self, agent_commands):
         from datus.tools.func_tool.base import FuncToolResult
@@ -237,7 +239,7 @@ class TestCmdSearchMetrics:
                 agent_commands.cmd_search_metrics("something")
 
         output = agent_commands.console.file.getvalue()
-        assert "No metrics" in output or "not found" in output.lower()
+        assert "No metrics found." in output
 
     def test_search_failure(self, agent_commands):
         from datus.tools.func_tool.base import FuncToolResult
@@ -295,7 +297,9 @@ class TestCmdSearchReferenceSql:
                 agent_commands.cmd_search_reference_sql("revenue sql")
 
         output = agent_commands.console.file.getvalue()
-        assert "Found" in output or "get_revenue" in output
+        assert "Found 1 reference SQL queries." in output
+        assert "Reference SQL Search Results" in output
+        assert "Revenue" in output
 
     def test_no_results(self, agent_commands):
         from datus.tools.func_tool.base import FuncToolResult
@@ -312,7 +316,7 @@ class TestCmdSearchReferenceSql:
                 agent_commands.cmd_search_reference_sql("nothing")
 
         output = agent_commands.console.file.getvalue()
-        assert "No reference SQL" in output or "not found" in output.lower()
+        assert "No reference SQL queries found." in output
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +338,7 @@ class TestCmdDocSearch:
         agent_commands.cli.prompt_input = mock_prompt
         agent_commands.cmd_doc_search("")
         output = agent_commands.console.file.getvalue()
-        assert "Platform name is required" in output or "required" in output.lower()
+        assert "Platform name is required." in output
 
     def test_empty_keywords_returns_error(self, agent_commands):
         """Empty keywords prints error and returns."""
@@ -351,7 +355,7 @@ class TestCmdDocSearch:
         agent_commands.cli.prompt_input = mock_prompt
         agent_commands.cmd_doc_search("")
         output = agent_commands.console.file.getvalue()
-        assert "Keywords cannot be empty" in output or "cannot be empty" in output.lower()
+        assert "Keywords cannot be empty." in output
 
 
 # ---------------------------------------------------------------------------
@@ -546,7 +550,7 @@ class TestCmdGen:
             agent_commands.cmd_gen("")
         # no exception, output unchanged
         output = agent_commands.console.file.getvalue()
-        assert "Error" not in output or "No" in output
+        assert output == ""
 
     def test_result_success_with_sql_contexts(self, agent_commands):
         mock_ctx = MagicMock()
@@ -607,8 +611,12 @@ class TestCmdGen:
 
 class TestCmdFix:
     def test_no_input_data_returns_early(self, agent_commands):
-        with patch.object(agent_commands, "create_node_input", return_value=None):
+        with (
+            patch.object(agent_commands, "create_node_input", return_value=None),
+            patch.object(agent_commands, "run_standalone_node") as mock_run,
+        ):
             agent_commands.cmd_fix("")
+        mock_run.assert_not_called()
 
     def test_result_success_with_sql_contexts(self, agent_commands):
         mock_ctx = MagicMock()
@@ -643,8 +651,12 @@ class TestCmdFix:
 
 class TestCmdReason:
     def test_no_input_returns_early(self, agent_commands):
-        with patch.object(agent_commands, "create_node_input", return_value=None):
+        with (
+            patch.object(agent_commands, "create_node_input", return_value=None),
+            patch.object(agent_commands, "run_standalone_node") as mock_run,
+        ):
             agent_commands.cmd_reason("")
+        mock_run.assert_not_called()
 
     def test_result_success_with_explanation(self, agent_commands):
         mock_result = MagicMock()
@@ -682,8 +694,12 @@ class TestCmdReason:
 
 class TestCmdCompare:
     def test_no_input_returns_early(self, agent_commands):
-        with patch.object(agent_commands, "create_node_input", return_value=None):
+        with (
+            patch.object(agent_commands, "create_node_input", return_value=None),
+            patch.object(agent_commands, "run_standalone_node") as mock_run,
+        ):
             agent_commands.cmd_compare("")
+        mock_run.assert_not_called()
 
     def test_result_success(self, agent_commands):
         mock_result = MagicMock()
@@ -695,7 +711,8 @@ class TestCmdCompare:
                 agent_commands.cmd_compare("compare")
 
         output = agent_commands.console.file.getvalue()
-        assert "completed" in output or "Matches" in output
+        assert "SQL comparison completed" in output
+        assert "Matches expectation" in output
 
     def test_result_failure(self, agent_commands):
         mock_result = MagicMock()
@@ -724,7 +741,7 @@ class TestCmdDaend:
         agent_commands.cli.workflow_runner = None
         agent_commands.cmd_daend("")
         output = agent_commands.console.file.getvalue()
-        assert "No active" in output or "no active" in output.lower()
+        assert "No active workflow session to end." in output
 
     def test_with_workflow_runner_saves(self, agent_commands):
         mock_runner = MagicMock()
@@ -737,7 +754,7 @@ class TestCmdDaend:
 
         mock_runner.workflow.save.assert_called_once()
         output = agent_commands.console.file.getvalue()
-        assert "save" in output.lower() or "Ending" in output
+        assert "Ending workflow session, save to /tmp/test_wf.yaml" in output
 
 
 # ---------------------------------------------------------------------------
@@ -770,7 +787,7 @@ class TestExtractSqlFromStreamingActions:
         node = MagicMock()
         del node.action_history_manager
         agent_commands._extract_sql_from_streaming_actions([], workflow, node)
-        # No exception raised
+        assert workflow.context.sql_contexts == []
 
     def test_extracts_from_read_query_action(self, agent_commands):
         workflow = MagicMock()
@@ -820,12 +837,16 @@ class TestExtractSqlFromStreamingActions:
     def test_exception_in_extraction_does_not_raise(self, agent_commands):
         """Top-level exception in extraction should be caught and logged, not raised."""
         workflow = MagicMock()
+
+        def raise_injected(_self):
+            raise RuntimeError("injected")
+
         # Make accessing sql_contexts raise an exception to exercise the outer except block
-        type(workflow.context).sql_contexts = property(lambda self: (_ for _ in ()).throw(RuntimeError("injected")))
+        type(workflow.context).sql_contexts = property(raise_injected)
 
         node = MagicMock(spec=[])
-        # Should not raise - outer try/except catches it
         agent_commands._extract_sql_from_streaming_actions([], workflow, node)
+        assert isinstance(workflow.context, MagicMock)
 
 
 # ---------------------------------------------------------------------------
@@ -893,7 +914,9 @@ class TestPrintMetadataTable:
 
     def test_prints_table_empty_data(self, agent_commands):
         agent_commands._print_metadata_table([], data_column="definition")
-        # Should not raise
+        output = agent_commands.console.file.getvalue()
+        assert "Schema Linking Results" in output
+        assert "definition" in output
 
 
 # ---------------------------------------------------------------------------
@@ -918,7 +941,7 @@ class TestCmdDocSearchExtended:
         agent_commands.cli.prompt_input = mock_prompt
         agent_commands.cmd_doc_search("")
         output = agent_commands.console.file.getvalue()
-        assert "integer" in output.lower() or "must be" in output.lower()
+        assert "top_n must be an integer." in output
 
     def test_success_path_displays_results(self, agent_commands):
         call_count = [0]
@@ -958,7 +981,9 @@ class TestCmdDocSearchExtended:
                 agent_commands.cmd_doc_search("")
 
         output = agent_commands.console.file.getvalue()
-        assert "Found" in output or "chunk" in output.lower() or "1" in output
+        assert "Found 1 document chunks." in output
+        assert "Keyword: window (1 results)" in output
+        assert "DuckDB >" in output
 
     def test_no_results_path(self, agent_commands):
         call_count = [0]
@@ -985,7 +1010,7 @@ class TestCmdDocSearchExtended:
             agent_commands.cmd_doc_search("")
 
         output = agent_commands.console.file.getvalue()
-        assert "No documents" in output or "not found" in output.lower()
+        assert "No documents found." in output
 
     def test_failure_path(self, agent_commands):
         call_count = [0]
@@ -1026,7 +1051,7 @@ class TestCreateNodeInputExtended:
         agent_commands.cli_context = cli_context
 
         result = agent_commands.create_node_input(NodeType.TYPE_GENERATE_SQL, "show revenue")
-        assert result is not None
+        assert isinstance(result, GenerateSQLInput)
 
     def test_fix_type_no_sql_returns_none(self, agent_commands, cli_context, sql_task):
         """When there is no previous SQL, fix returns None."""
@@ -1052,4 +1077,4 @@ class TestCreateNodeInputExtended:
         agent_commands.cli.prompt_input = lambda msg, default="", **kw: default or ""
 
         result = agent_commands.create_node_input(NodeType.TYPE_REASONING, "explain query")
-        assert result is not None
+        assert isinstance(result, ReasoningInput)

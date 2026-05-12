@@ -316,8 +316,7 @@ class TestExtractOauthToken:
         future_ms = int((time.time() + 3600) * 1000)
         data = {"claudeAiOauth": {"accessToken": "sk-ant-oat01-valid", "expiresAt": future_ms}}
         result = _extract_oauth_token(data, "src")
-        assert result is not None
-        assert result[0] == "sk-ant-oat01-valid"
+        assert result == ("sk-ant-oat01-valid", "src")
 
 
 class TestKeychainIntegration:

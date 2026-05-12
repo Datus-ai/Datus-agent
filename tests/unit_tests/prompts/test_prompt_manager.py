@@ -245,8 +245,9 @@ class TestPromptManager:
         assert str(manager_b.user_templates_dir) in PromptManager._env_cache
 
     def test_invalidate_env_noop_for_missing_key(self):
-        # Should not raise
+        before = dict(PromptManager._env_cache)
         PromptManager.invalidate_env("/nonexistent/path")
+        assert PromptManager._env_cache == before
 
 
 class TestGetPromptManager:

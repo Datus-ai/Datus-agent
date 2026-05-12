@@ -293,12 +293,15 @@ class TestLanceVectorBackend:
     def test_initialize_noop(self):
         """initialize() stores config and doesn't raise."""
         backend = LanceVectorBackend()
-        backend.initialize({})
+        backend.initialize({"data_dir": "/tmp/datus"})
+        assert backend._data_dir == "/tmp/datus"
 
     def test_close_noop(self):
         """close() is a no-op for LanceDB."""
         backend = LanceVectorBackend()
+        backend.initialize({"data_dir": "/tmp/datus"})
         backend.close()
+        assert backend._data_dir == "/tmp/datus"
 
 
 # ---------------------------------------------------------------------------

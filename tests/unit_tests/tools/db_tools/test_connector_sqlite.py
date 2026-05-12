@@ -1,4 +1,5 @@
 import os
+import sqlite3
 
 import pytest
 import structlog
@@ -33,7 +34,7 @@ def test_connection(sqlite_connector: SQLiteConnector, db_path):
     """Test database connection and close operations"""
     # Test connection
     sqlite_connector.connect()
-    assert sqlite_connector.connection is not None
+    assert isinstance(sqlite_connector.connection, sqlite3.Connection)
     assert os.path.exists(db_path)
 
     # Test close
@@ -130,7 +131,7 @@ def test_execute_delete(sqlite_connector):
 def test_execute_error(sqlite_connector: SQLiteConnector):
     """Test error handling in query execution"""
     result = sqlite_connector.execute({"sql_query": "SELECT * FROM non_existent_table"}, result_format="list")
-    assert result.error is not None
+    assert "does not exist" in result.error
 
 
 def test_input_validation(sqlite_connector):

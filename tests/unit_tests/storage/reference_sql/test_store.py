@@ -13,6 +13,7 @@ import yaml
 
 from datus.storage.embedding_models import get_db_embedding_model
 from datus.storage.reference_sql.store import ReferenceSqlStorage
+from datus.storage.subject_tree.store import SubjectTreeStore
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -98,7 +99,7 @@ class TestReferenceSqlStorageInit:
 
     def test_subject_tree_initialized(self, ref_sql_storage):
         """Subject tree should be initialized."""
-        assert ref_sql_storage.subject_tree is not None
+        assert isinstance(ref_sql_storage.subject_tree, SubjectTreeStore)
 
 
 # ============================================================
@@ -199,6 +200,8 @@ class TestBatchUpsertSql:
     def test_batch_upsert_sql_empty(self, ref_sql_storage):
         """Upserting empty list should be a no-op."""
         ref_sql_storage.batch_upsert_sql([])
+        assert ref_sql_storage._shared.initialized is False
+        assert ref_sql_storage.table is None
 
     def test_batch_upsert_sql_insert(self, ref_sql_storage):
         """Upserting new items should insert them."""
@@ -269,7 +272,7 @@ class TestSearchReferenceSql:
     def test_search_by_query_text(self):
         """Vector search with query text returns relevant results."""
         results = self.storage.search_reference_sql(query_text="data retrieval", top_n=5)
-        assert len(results) > 0
+        assert len(results) == 3
 
     def test_search_by_subject_path(self):
         """Filtering by subject_path returns only matching entries."""
@@ -293,7 +296,7 @@ class TestSearchReferenceSql:
             selected_fields=["name", "sql"],
             top_n=5,
         )
-        assert len(results) > 0
+        assert len(results) == 3
         for r in results:
             assert "name" in r
             assert "sql" in r
@@ -823,7 +826,6 @@ class TestSyncYamlSubjectTreeForSubtreeRefSql:
         ref_sql_storage.batch_store_sql([top_item, deep_item])
 
         q1_node = ref_sql_storage.subject_tree.get_node_by_path(["Analytics", "Reports", "Q1"])
-        assert q1_node is not None
         root_id = q1_node["node_id"]
 
         # Rename Q1 -> Quarter1 in place
@@ -859,7 +861,6 @@ class TestSyncYamlSubjectTreeForSubtreeRefSql:
         ref_sql_storage.batch_store_sql([item])
 
         q1_node = ref_sql_storage.subject_tree.get_node_by_path(["Analytics", "Reports", "Q1"])
-        assert q1_node is not None
         root_id = q1_node["node_id"]
 
         # Move Q1 from Analytics/Reports to Analytics/Dashboards
@@ -885,14 +886,21 @@ class TestSyncYamlSubjectTreeForSubtreeRefSql:
         q1_node = ref_sql_storage.subject_tree.get_node_by_path(["Analytics", "Reports", "Q1"])
         root_id = q1_node["node_id"]
 
-        # Should not raise
         ref_sql_storage.sync_yaml_subject_tree_for_subtree(root_id)
+        stored = ref_sql_storage.search_all_reference_sql(select_fields=["name", "filepath"])
+        assert stored == [
+            {
+                "name": "no_fp",
+                "filepath": "",
+                "subject_path": ["Analytics", "Reports", "Q1"],
+            }
+        ]
 
     def test_sync_handles_subtree_with_no_ref_sql(self, ref_sql_storage):
         """A subtree with no reference SQL entries should be a no-op."""
         ref_sql_storage.subject_tree.find_or_create_path(["Empty", "Branch"])
         node = ref_sql_storage.subject_tree.get_node_by_path(["Empty", "Branch"])
-        assert node is not None
+        assert node["name"] == "Branch"
 
         # Should not raise
         ref_sql_storage.sync_yaml_subject_tree_for_subtree(node["node_id"])

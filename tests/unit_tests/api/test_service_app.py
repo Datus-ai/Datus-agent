@@ -1,6 +1,7 @@
 """Tests for datus.api.service — FastAPI app creation and DatusAPIService."""
 
 import argparse
+from unittest.mock import patch
 
 from datus.api.service import DatusAPIService, create_app
 
@@ -116,10 +117,18 @@ class TestDatusAPIServiceGenerateTaskId:
 
     def test_generate_task_id_unique(self):
         """_generate_task_id produces unique IDs for same client."""
-        import time
+        from datetime import datetime
 
         svc = DatusAPIService(argparse.Namespace())
-        id1 = svc._generate_task_id("c1")
-        time.sleep(1.1)
-        id2 = svc._generate_task_id("c1")
+        timestamps = iter([datetime(2026, 1, 1, 0, 0, 0), datetime(2026, 1, 1, 0, 0, 1)])
+
+        class _FakeDatetime:
+            @classmethod
+            def now(cls):
+                return next(timestamps)
+
+        with patch("datus.api.service.datetime", _FakeDatetime):
+            id1 = svc._generate_task_id("c1")
+            id2 = svc._generate_task_id("c1")
+
         assert id1 != id2

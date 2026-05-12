@@ -259,7 +259,6 @@ class TestFeedbackAgenticNodeExecution:
         async for _ in node.execute_stream(action_manager):
             pass
 
-        assert node.result is not None
         assert isinstance(node.result, FeedbackNodeResult)
         assert node.result.success is True
 
@@ -279,7 +278,7 @@ class TestFeedbackAgenticNodeExecution:
         async for _ in node.execute_stream(action_manager):
             pass
 
-        assert node.result is not None
+        assert isinstance(node.result, FeedbackNodeResult)
         assert node.result.success is False
         assert "boom" in node.result.error
 
@@ -392,7 +391,7 @@ class TestExtractStorageInfo:
         async for _ in node.execute_stream(action_manager):
             pass
 
-        assert node.result is not None
+        assert isinstance(node.result, FeedbackNodeResult)
         assert node.result.success is True
         assert node.result.items_saved == 2
         assert node.result.storage_summary == {"ext_knowledge": 1, "sql_summary": 1}
@@ -514,7 +513,7 @@ class TestFeedbackNodeType:
 
         assert NodeType.TYPE_FEEDBACK in NodeType.NODE_TYPE_DESCRIPTIONS
         desc = NodeType.get_description(NodeType.TYPE_FEEDBACK)
-        assert "feedback" in desc.lower() or "archival" in desc.lower()
+        assert desc == "Conversation feedback analysis and knowledge archival"
 
     def test_node_factory_creates_feedback(self, real_agent_config, mock_llm_create):
         from datus.agent.node import Node
@@ -547,7 +546,7 @@ class TestFeedbackNodeType:
             tools=[],
         )
         assert isinstance(node, FeedbackAgenticNode)
-        assert node.input is not None
+        assert isinstance(node.input, FeedbackNodeInput)
         assert node.input.user_message == "test input"
 
 

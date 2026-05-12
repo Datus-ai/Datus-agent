@@ -100,7 +100,7 @@ class TestInitReferenceSqlEmptyDir:
         assert result["status"] == "success"
         assert result["valid_entries"] == 0
         assert result["processed_entries"] == 0
-        assert "empty" in result["message"].lower() or "no" in result["message"].lower()
+        assert result["message"] == "reference_sql storage initialized (empty - no --sql_dir provided)"
 
     def test_empty_sql_dir_none(self):
         """When sql_dir is None, returns success with zero entries."""
@@ -281,7 +281,7 @@ class TestInitReferenceSqlAsync:
         """init_reference_sql_async can be imported from the module."""
         from datus.storage.reference_sql.reference_sql_init import init_reference_sql_async
 
-        assert init_reference_sql_async is not None
+        assert init_reference_sql_async.__name__ == "init_reference_sql_async"
 
     def test_async_function_is_coroutine(self):
         """init_reference_sql_async is a coroutine function (async def)."""

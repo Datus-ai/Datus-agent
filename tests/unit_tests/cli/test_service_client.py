@@ -90,7 +90,7 @@ class TestServiceClient:
         client = self._make_client()
         tool_a = client.get_tool("list_dashboards")
         tool_b = client.get_tool("list_dashboards")
-        assert tool_a is not None
+        assert tool_a.name == "list_dashboards"
         assert tool_a is tool_b  # cached
 
     def test_has_method(self):
@@ -159,7 +159,7 @@ class TestServiceClientAvailableToolsFilter:
         )
         names = [m[0] for m in client.list_methods()]
         assert names == ["list_dashboards"]
-        assert client.get_tool("list_dashboards") is not None
+        assert client.get_tool("list_dashboards").name == "list_dashboards"
 
     def test_available_tools_exception_falls_back(self):
         class _Broken:
@@ -231,7 +231,7 @@ class TestServiceClientRegistry:
             # Before any get(), status is "configured" (adapter available, not built).
             assert registry.list_services()[0][2] == "configured"
             client = registry.get("superset")
-            assert client is not None
+            assert isinstance(client, ServiceClient)
             factory.assert_called_once()
             # Status flips to "active" once the client is cached.
             assert registry.list_services()[0][2] == "active"
@@ -247,7 +247,7 @@ class TestServiceClientRegistry:
             assert registry.has("superset") is True
             assert registry.has("SUPERSET") is True
             client = registry.get("SUPERSET")
-            assert client is not None
+            assert isinstance(client, ServiceClient)
             # Original-case name preserved for display.
             assert client.service_name == "Superset"
 
@@ -266,7 +266,7 @@ class TestServiceClientRegistry:
         with patch.dict("datus.cli.service_client._FACTORIES", {"schedulers": factory}):
             registry = ServiceClientRegistry(cfg)
             client = registry.get("airflow")
-            assert client is not None
+            assert isinstance(client, ServiceClient)
             assert client.service_type == "schedulers"
             factory.assert_called_once_with(cfg, "airflow")
 
@@ -276,7 +276,7 @@ class TestServiceClientRegistry:
         with patch.dict("datus.cli.service_client._FACTORIES", {"semantic_layer": factory}):
             registry = ServiceClientRegistry(cfg)
             client = registry.get("metricflow")
-            assert client is not None
+            assert isinstance(client, ServiceClient)
             assert client.service_type == "semantic_layer"
             factory.assert_called_once_with(cfg, "metricflow")
 
@@ -304,7 +304,7 @@ class TestServiceClientRegistry:
         ):
             registry = ServiceClientRegistry(cfg)
             c1 = registry.get("superset")
-            assert c1 is not None
+            assert isinstance(c1, ServiceClient)
             factory.assert_called_once()
 
             # Same datasource → cached instance reused.

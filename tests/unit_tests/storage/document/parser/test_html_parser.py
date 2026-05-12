@@ -1026,7 +1026,8 @@ class TestExtractSectionsAdvanced:
         sections = parser._extract_sections(soup.find("div"))
 
         content = sections[0].content
-        assert "> Line one" in content or "> Line" in content
+        assert "> Line one" in content
+        assert "> Line two" in content
 
 
 # ---------------------------------------------------------------------------
@@ -1264,4 +1265,4 @@ class TestFindMainContent:
         result = parser._find_main_content(soup)
 
         # Without body, should return soup itself
-        assert result is not None
+        assert result is soup

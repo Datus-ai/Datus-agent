@@ -39,7 +39,6 @@ class TestTaskStoreCrud:
         """get_task retrieves a created task."""
         task_store.create_task("t2", "SELECT 2")
         task = task_store.get_task("t2")
-        assert task is not None
         assert task["task_id"] == "t2"
         assert task["task_query"] == "SELECT 2"
 
@@ -83,7 +82,6 @@ class TestTaskStoreFeedback:
         assert result["task_id"] == "f1"
 
         feedback = task_store.get_feedback("f1")
-        assert feedback is not None
         assert feedback["user_feedback"] == "positive"
 
     def test_get_feedback_none(self, task_store):
@@ -140,5 +138,4 @@ class TestTaskStoreEdgeCases:
         assert result["task_query"] == "query1"
 
         task = task_store.get_task("dup")
-        assert task is not None
         assert task["task_query"] == "query1"

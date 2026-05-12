@@ -277,7 +277,7 @@ class TestSemanticModelStorageSearchObjects:
     def test_search_objects_no_filter(self):
         """Search without filters returns results."""
         results = self.storage.search_objects("orders", top_n=10)
-        assert len(results) > 0
+        assert {r["kind"] for r in results} == {"table", "column"}
 
     def test_search_objects_filter_by_kind_table(self):
         """Filtering by kind='table' returns only table objects."""
@@ -526,8 +526,9 @@ class TestUpdateEntryYamlSync:
             tmp.write("{{invalid yaml content")
             tmp.close()
 
-            # Call private method directly — should log error but not raise
             sem_storage._sync_semantic_update_to_yaml(tmp.name, "table", "orders", "orders", {"description": "new"})
+            with open(tmp.name, encoding="utf-8") as f:
+                assert f.read() == "{{invalid yaml content"
         finally:
             os.unlink(tmp.name)
 
@@ -640,7 +641,6 @@ class TestSemanticModelRAGGetSemanticModel:
         sem_rag.store_batch(objs)
 
         result = sem_rag.get_semantic_model(table_name="orders")
-        assert result is not None
         assert result["table_name"] == "orders"
         assert result["description"] == "Orders table"
 
@@ -676,7 +676,6 @@ class TestSemanticModelRAGGetSemanticModel:
         sem_rag.store_batch(objs)
 
         result = sem_rag.get_semantic_model(table_name="orders")
-        assert result is not None
 
         # Verify dimensions
         assert len(result["dimensions"]) == 1
@@ -715,7 +714,6 @@ class TestSemanticModelRAGGetSemanticModel:
         result = sem_rag.get_semantic_model(
             catalog_name="prod", database_name="sales", schema_name="dbo", table_name="orders"
         )
-        assert result is not None
         assert result["table_name"] == "orders"
 
     def test_get_semantic_model_fallback_broad_match(self, sem_rag):
@@ -735,7 +733,6 @@ class TestSemanticModelRAGGetSemanticModel:
         result = sem_rag.get_semantic_model(
             catalog_name="wrong_catalog", database_name="wrong_db", schema_name="wrong_schema", table_name="orders"
         )
-        assert result is not None
         assert result["table_name"] == "orders"
 
     def test_get_semantic_model_fallback_case_insensitive(self, sem_rag):
@@ -747,7 +744,6 @@ class TestSemanticModelRAGGetSemanticModel:
         # Since "ORDERS" != "orders", exact match fails, broad match also uses "ORDERS",
         # then case-insensitive tries "orders" (lowercase) which should succeed
         result = sem_rag.get_semantic_model(table_name="ORDERS")
-        assert result is not None
         assert result["table_name"] == "orders"
 
     def test_get_semantic_model_with_select_fields(self, sem_rag):
@@ -756,9 +752,7 @@ class TestSemanticModelRAGGetSemanticModel:
         sem_rag.store_batch(objs)
 
         result = sem_rag.get_semantic_model(table_name="orders", select_fields=["table_name", "description"])
-        assert result is not None
-        assert "table_name" in result
-        assert "description" in result
+        assert set(result) == {"table_name", "description"}
         # Fields not in select_fields should not be present
         assert "dimensions" not in result
         assert "measures" not in result
@@ -780,7 +774,6 @@ class TestSemanticModelRAGGetSemanticModel:
         sem_rag.store_batch(objs)
 
         result = sem_rag.get_semantic_model(table_name="events")
-        assert result is not None
         assert len(result["dimensions"]) == 1
         dim = result["dimensions"][0]
         assert dim["is_partition"] is True
@@ -795,7 +788,6 @@ class TestSemanticModelRAGGetSemanticModel:
         sem_rag.store_batch(objs)
 
         result = sem_rag.get_semantic_model(table_name="orders")
-        assert result is not None
         assert len(result["dimensions"]) == 0
         assert len(result["measures"]) == 0
         assert len(result["identifiers"]) == 0
@@ -889,7 +881,6 @@ class TestSemanticModelRAGStoreUpsert:
         sem_rag.upsert_batch(updated)
 
         result = sem_rag.get_semantic_model(table_name="orders")
-        assert result is not None
         assert result["description"] == "Updated"
 
 

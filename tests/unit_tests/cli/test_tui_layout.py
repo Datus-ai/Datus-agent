@@ -68,4 +68,4 @@ class TestCompletionsMenuConfig:
         # CompletionsMenu wraps its Window in a ConditionalContainer; peel
         # one layer if necessary so the assertion is resilient.
         wrapped = getattr(inner_window, "content", inner_window)
-        assert wrapped is not None
+        assert isinstance(wrapped, CompletionsMenuControl)

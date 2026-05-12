@@ -179,8 +179,8 @@ class TestBootstrapPlatformDoc:
         result = bootstrap_platform_doc(args, real_agent_config)
 
         output = capsys.readouterr().out
-        # Should either skip (no source) or try to init
-        assert result is None or output  # Handled gracefully
+        assert result is None
+        assert "skipped" in output.lower()
 
     def test_no_source_skips(self, real_agent_config, capsys):
         """When config has no source, prints skip message and returns None."""
@@ -234,12 +234,14 @@ class TestBootstrapPlatformDoc:
         result = bootstrap_platform_doc(args, real_agent_config)
 
         # Platform should be inferred as "testdb" and check mode should succeed
-        assert result is not None
+        assert result.platform == "testdb"
+        assert result.success is True
         assert result.platform == "testdb"
         assert result.success is True
 
         output = capsys.readouterr().out
-        assert "Check" in output or "testdb" in output
+        assert "Check" in output
+        assert "testdb" in output
 
 
 # ---------------------------------------------------------------------------
@@ -380,7 +382,7 @@ class TestCreateWorkflowRunner:
     def test_pre_run_callable_set_when_check_db(self):
         agent = _make_agent()
         runner = agent.create_workflow_runner(check_db=True)
-        assert runner._pre_run is not None
+        assert callable(runner._pre_run)
 
     def test_pre_run_callable_none_when_no_check_db(self):
         agent = _make_agent()
@@ -758,7 +760,7 @@ class TestEmitReferenceSqlEvent:
         evt = self._event(BatchStage.ITEM_FAILED, error=None)
         agent._emit_reference_sql_event(evt)
         out = capsys.readouterr().out
-        assert "error" not in out.lower() or out == ""
+        assert out == ""
 
 
 # ---------------------------------------------------------------------------
@@ -823,7 +825,7 @@ class TestEmitReferenceTemplateEvent:
         evt = self._event(BatchStage.ITEM_FAILED, error=None)
         agent._emit_reference_template_event(evt)
         out = capsys.readouterr().out
-        assert "error" not in out.lower() or out == ""
+        assert out == ""
 
     def test_reset_stream_state(self):
         agent = _make_agent_ext()

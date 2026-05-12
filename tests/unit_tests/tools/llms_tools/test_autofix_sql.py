@@ -143,8 +143,7 @@ class TestAutofixSqlFailures:
             result = autofix_sql(mock_model, input_data, [])
 
         assert result.success is False
-        # The exception message comes from the validation error or JSON decode error
-        assert result.error is not None
+        assert "Field required" in result.error
 
     def test_empty_dict_response_returns_failure(self):
         mock_model = _make_mock_model({})

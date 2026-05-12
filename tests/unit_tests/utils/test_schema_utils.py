@@ -53,7 +53,10 @@ class TestTableMetadataStruct:
         parsed = json.loads(result)
         table_data = parsed["public.orders"]
         assert "columns" in table_data
-        assert len(table_data["columns"]) > 0
+        assert table_data["columns"] == [
+            {"name": "id", "type": "INT"},
+            {"name": "name", "type": "VARCHAR(100)"},
+        ]
 
     def test_includes_comment_when_present(self):
         # Use MySQL-style DDL that sqlglot parses comments from
@@ -126,7 +129,8 @@ class TestTableMetadata2Markdown:
             }
         ]
         result = table_metadata2markdown(metadata)
-        assert "id" in result.lower() or "name" in result.lower()
+        assert "id" in result.lower()
+        assert "name" in result.lower()
 
     def test_contains_markdown_table_syntax(self):
         metadata = [

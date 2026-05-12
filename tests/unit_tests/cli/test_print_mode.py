@@ -189,7 +189,6 @@ class TestPrintModeRun:
             await runner._stream_chat(mock_node)
 
         output = buf.getvalue().strip()
-        assert output  # at least one JSON line
         data = json.loads(output)
         assert data["message_id"] == "a1"
         assert data["role"] == "assistant"

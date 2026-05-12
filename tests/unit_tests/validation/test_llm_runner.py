@@ -138,7 +138,6 @@ class TestBuildValidatorSession:
                 ]
 
         session = await _build_validator_session(FakeParent(), "skill-x")
-        assert session is not None
         items = await session.get_items()
         # 2 tool events preserved, user + assistant-text dropped
         assert len(items) == 2
@@ -421,7 +420,7 @@ class TestBuildPromptExtras:
         )
         prompt = _build_prompt(t, precheck=precheck)
         # Builtin pre-check result should be referenced so the LLM doesn't repeat it
-        assert "table_exists" in prompt or "existence" in prompt.lower() or "precheck" in prompt.lower()
+        assert "table_exists" in prompt
 
 
 class _FakeSkill:

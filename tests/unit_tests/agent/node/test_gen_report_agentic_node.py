@@ -33,6 +33,7 @@ import pytest
 from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput
+from datus.tools.func_tool import AskUserTool, ContextSearchTools, DBFuncTool
 from tests.unit_tests.mock_llm_model import MockToolCall, build_simple_response, build_tool_then_response
 
 # ---------------------------------------------------------------------------
@@ -73,7 +74,7 @@ class TestGenReportAgenticNodeInit:
         )
 
         # DB tools should be setup
-        assert node.db_func_tool is not None
+        assert isinstance(node.db_func_tool, DBFuncTool)
 
         tool_names = [tool.name for tool in node.tools]
         assert "list_tables" in tool_names
@@ -93,11 +94,11 @@ class TestGenReportAgenticNodeInit:
         )
 
         # Context search tools should be setup
-        assert node.context_search_tools is not None
+        assert isinstance(node.context_search_tools, ContextSearchTools)
+        assert node.context_search_tools.sub_agent_name == "gen_report"
 
         tool_names = [tool.name for tool in node.tools]
-        # Context search tools should include at least some search functions
-        assert len(tool_names) > 0
+        assert "list_tables" in tool_names
 
     def test_report_max_turns(self, real_agent_config, mock_llm_create):
         """Test max_turns is read from agentic_nodes config."""
@@ -179,7 +180,7 @@ class TestGenReportAgenticNodeExecutionMode:
         )
 
         assert node.execution_mode == "interactive"
-        assert node.ask_user_tool is not None
+        assert isinstance(node.ask_user_tool, AskUserTool)
         tool_names = [t.name for t in node.tools]
         assert "ask_user" in tool_names
 
@@ -338,7 +339,11 @@ class TestGenReportAgenticNodeExecution:
         # Last action should be SUCCESS with result
         last_action = actions[-1]
         assert last_action.status == ActionStatus.SUCCESS
-        assert last_action.output is not None
+        assert isinstance(last_action.output, dict)
+        assert last_action.output["success"] is True
+        assert last_action.output["response"] == "## Revenue Analysis\n\nRevenue grew 15% this quarter."
+        assert last_action.output["report_result"] is None
+        assert last_action.output["execution_stats"]["total_actions"] == 2
 
     @pytest.mark.asyncio
     async def test_report_with_db_schema_context(self, real_agent_config, mock_llm_create):
@@ -377,7 +382,9 @@ class TestGenReportAgenticNodeExecution:
         assert len(mock_llm_create.call_history) >= 1
         call = mock_llm_create.call_history[0]
         prompt = call.get("prompt", "")
-        assert "Schema" in prompt or "main" in prompt or "Analyze" in prompt
+        assert "Analyze revenue by department" in prompt
+        assert "Database context: california_schools" in prompt
+        assert "Schema: main" in prompt
 
     @pytest.mark.asyncio
     async def test_report_input_not_set_raises(self, real_agent_config, mock_llm_create):

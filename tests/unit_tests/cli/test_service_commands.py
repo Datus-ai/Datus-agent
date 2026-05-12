@@ -156,8 +156,8 @@ class TestDispatchInvokeMethod:
     def test_missing_required_shows_schema(self):
         cmd, cli = _make_commands_with_bi_stub()
         cmd.dispatch("/superset.get_dashboard", "")
-        rendered = " ".join(str(c) for c in cli.console.print.call_args_list)
-        assert "Missing required argument" in rendered or "required" in rendered.lower()
+        rendered = _printed_text(cli)
+        assert "Missing required argument(s): dashboard_id" in rendered
 
     def test_help_flag_shows_schema(self):
         cmd, cli = _make_commands_with_bi_stub()
@@ -169,22 +169,23 @@ class TestDispatchInvokeMethod:
     def test_write_method_is_blocked(self):
         cmd, cli = _make_commands_with_bi_stub()
         cmd.dispatch("/superset.create_dashboard", "--title=x")
-        msg = " ".join(str(c) for c in cli.console.print.call_args_list)
-        assert "write" in msg.lower() or "privileged" in msg.lower() or "read-only" in msg.lower()
+        msg = _printed_text(cli)
+        assert "Method 'create_dashboard' is a write or privileged operation." in msg
+        assert "The CLI only exposes read-only service methods. Use agent mode to invoke writes." in msg
 
     def test_unknown_method_prints_hint(self):
         cmd, cli = _make_commands_with_bi_stub()
         cmd.dispatch("/superset.no_such_method", "")
-        msg = " ".join(str(c) for c in cli.console.print.call_args_list)
-        assert "Unknown method" in msg or "no_such_method" in msg
+        msg = _printed_text(cli)
+        assert "Unknown method 'no_such_method' on service 'superset'." in msg
 
     def test_tool_error_rendered(self):
         """When FuncToolResult.success==0, error is surfaced."""
         cmd, cli = _make_commands_with_bi_stub()
         # get_dashboard with empty id returns success=0
         cmd.dispatch("/superset.get_dashboard", "''")
-        msg = " ".join(str(c) for c in cli.console.print.call_args_list)
-        assert "required" in msg.lower() or "Error" in msg
+        msg = _printed_text(cli)
+        assert "dashboard_id required" in msg
 
 
 class TestArgParser:
@@ -319,18 +320,14 @@ class TestArgParser:
         cmd = ServiceCommands(_fake_cli())
         schema = {"properties": {"a": {"type": "string"}, "limit": {"type": "integer"}}}
         assert cmd._parse_args("--bogus=x --a=ok", schema) is None
-        assert cmd._last_parse_error is not None
-        assert "bogus" in cmd._last_parse_error
-        # Valid alternatives listed so the user sees what they could have typed.
-        assert "a" in cmd._last_parse_error
-        assert "limit" in cmd._last_parse_error
+        assert cmd._last_parse_error == "Unknown parameter '--bogus'. Valid parameters: a, limit."
 
     def test_parse_error_resets_between_calls(self):
         """A successful parse after a failed one must clear the stale error."""
         cmd = ServiceCommands(_fake_cli())
         schema = {"properties": {"a": {"type": "string"}}}
         assert cmd._parse_args("--bogus=x", schema) is None
-        assert cmd._last_parse_error is not None
+        assert cmd._last_parse_error == "Unknown parameter '--bogus'. Valid parameters: a."
         # Second call succeeds → sentinel cleared.
         assert cmd._parse_args("--a=ok", schema) == {"a": "ok"}
         assert cmd._last_parse_error is None
@@ -339,8 +336,7 @@ class TestArgParser:
         cmd = ServiceCommands(_fake_cli())
         schema = {"properties": {"only": {"type": "string"}}}
         assert cmd._parse_args("first second third", schema) is None
-        assert cmd._last_parse_error is not None
-        assert "Too many positional" in cmd._last_parse_error
+        assert cmd._last_parse_error == "Too many positional arguments. Method accepts 1 (got extra: 'second')."
 
     def test_parse_malformed_quoting_returns_none(self):
         cmd = ServiceCommands(_fake_cli())
@@ -800,8 +796,11 @@ class TestServiceConfigDispatch:
         with patch.object(ServiceCommands, "_run_config_menu") as menu:
             cmd.cmd_services("foobar")
         menu.assert_not_called()
-        rendered = " ".join(str(c) for c in cli.console.print.call_args_list)
-        assert "/services dashboard" in rendered or "/services scheduler" in rendered
+        rendered = _printed_text(cli)
+        assert (
+            "Use `/services dashboard`, `/services scheduler`, or `/services semantic` to open the configuration TUI."
+            in rendered
+        )
 
 
 class TestApplySelectionPersistence:
@@ -907,7 +906,7 @@ class TestApplySelectionPersistence:
             )
             status = cmd._apply_selection(sel)
         mgr.update_item.assert_not_called()
-        assert "skipped" in (status or "").lower() or "fail" in (status or "").lower()
+        assert status == "Saving `ghost` skipped — adapter install failed."
 
     def test_delete_persists_with_delete_old_key_true(self):
         from datus.cli.service_config_app import ServiceConfigSelection
@@ -1047,7 +1046,7 @@ class TestRunConfigMenu:
 
     def test_refresh_after_change_drops_registry_cache(self):
         cmd, _ = _make_commands_with_bi_stub()
-        assert cmd._registry is not None  # primed by _make_commands_with_bi_stub
+        assert isinstance(cmd._registry, ServiceClientRegistry)  # primed by _make_commands_with_bi_stub
         cmd._refresh_after_change()
         assert cmd._registry is None
 

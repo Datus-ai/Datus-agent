@@ -816,7 +816,7 @@ class TestSyncToStorage:
             side_effect=RuntimeError("disk full"),
         ):
             result = await hooks._sync_to_storage("/tmp/file.yaml", "semantic")
-        assert "error" in result.lower() or "Sync error" in result
+        assert "**Sync error:** disk full" in result
 
 
 # ---------------------------------------------------------------------------

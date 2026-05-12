@@ -17,6 +17,7 @@ import pytest
 
 from datus.schemas.action_history import ActionRole, ActionStatus
 from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput
+from datus.tools.func_tool import ContextSearchTools, FilesystemFuncTool
 from tests.unit_tests.mock_llm_model import (
     MockToolCall,
     build_simple_response,
@@ -57,7 +58,7 @@ class TestGenExtKnowledgeNodeInit:
         assert node.execution_mode == "workflow"
         assert node.build_mode == "incremental"
         assert node.hooks is None  # No hooks in workflow mode
-        assert len(node.tools) > 0
+        assert {"list_tables", "read_file", "write_file"}.issubset({tool.name for tool in node.tools})
 
     def test_ext_knowledge_has_db_tools(self, real_agent_config, mock_llm_create):
         """Node has real database tools (list_tables, execute_sql, etc.)."""
@@ -90,7 +91,8 @@ class TestGenExtKnowledgeNodeInit:
         node = _create_node(real_agent_config)
 
         # Context search tools should be initialized
-        assert node.context_search_tools is not None
+        assert isinstance(node.context_search_tools, ContextSearchTools)
+        assert node.context_search_tools.sub_agent_name == "gen_ext_knowledge"
 
     def test_ext_knowledge_max_turns(self, real_agent_config, mock_llm_create):
         """max_turns is read from agentic_nodes config (5 in test config)."""
@@ -273,7 +275,8 @@ class TestGenExtKnowledgeNodeExecution:
         error_text = (last_output.get("error") or "").lower()
         # Error is wrapped by DatusException template which includes the
         # "Gold SQL failed to execute" preamble plus the underlying error.
-        assert "gold sql" in error_text or "no such table" in error_text
+        assert "gold sql failed to execute" in error_text
+        assert "table select * from __no_such_table__ does not exist" in error_text
 
         # verify_sql must not have been added since validation failed before
         # the enable hook ran.
@@ -446,7 +449,6 @@ class TestGenExtKnowledgeNodeExecution:
 
         # In interactive mode, the final result should have tokens_used > 0
         last_output = actions[-1].output
-        assert last_output is not None
         assert isinstance(last_output, dict), f"Expected dict, got {type(last_output)}"
         assert "tokens_used" in last_output, f"Missing 'tokens_used' key in {last_output.keys()}"
         assert last_output["tokens_used"] > 0
@@ -551,7 +553,7 @@ class TestGenExtKnowledgeFilesystemRootPath:
         node = _create_node(real_agent_config)
         expected = str(Path(real_agent_config.project_root).expanduser())
 
-        assert node.filesystem_func_tool is not None
+        assert isinstance(node.filesystem_func_tool, FilesystemFuncTool)
         assert node.filesystem_func_tool.root_path == expected
 
 

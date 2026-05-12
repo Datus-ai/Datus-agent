@@ -4,6 +4,7 @@
 
 """Unit tests for Node base class (node.py) - zero external dependencies."""
 
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,6 +14,7 @@ from datus.configuration.node_type import NodeType
 from datus.schemas.base import BaseResult
 from datus.schemas.node_models import ExecuteSQLResult, GenerateSQLResult
 from datus.schemas.schema_linking_node_models import SchemaLinkingResult
+from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SemanticNodeResult
 
 
 def make_mock_agent_config():
@@ -116,9 +118,11 @@ class TestNodeLifecycle:
 
     def test_start(self):
         node = self._make_node()
+        before_start = time.time()
         node.start()
         assert node.status == "running"
-        assert node.start_time is not None
+        assert isinstance(node.start_time, float)
+        assert node.start_time >= before_start
 
     def test_complete_success(self):
         node = self._make_node()
@@ -126,7 +130,7 @@ class TestNodeLifecycle:
         node.complete(result)
         assert node.status == "completed"
         assert node.result == result
-        assert node.end_time is not None
+        assert isinstance(node.end_time, float)
 
     def test_complete_failure(self):
         node = self._make_node()
@@ -139,7 +143,7 @@ class TestNodeLifecycle:
         node.fail("some error")
         assert node.status == "failed"
         assert node.result.error == "some error"
-        assert node.end_time is not None
+        assert isinstance(node.end_time, float)
 
     def test_fail_without_error(self):
         node = self._make_node()
@@ -207,7 +211,7 @@ class TestNodeRun:
 
         result = node.run()
         assert node.status == "failed"
-        assert result is not None
+        assert result == BaseResult(success=False, error="boom")
 
     def test_run_fails_when_result_is_none(self):
         node = Node.new_instance("run_none", "Test", NodeType.TYPE_GENERATE_SQL, agent_config=self.agent_config)
@@ -367,7 +371,7 @@ class TestNodeFromDict:
             "metadata": {},
         }
         node = Node.from_dict(node_dict, agent_config=self.agent_config)
-        assert node.input is not None
+        assert isinstance(node.input, SemanticNodeInput)
         assert node.input.user_message == "Create orders table"
 
     @patch("datus.agent.node.gen_table_agentic_node.DBFuncTool")
@@ -396,7 +400,7 @@ class TestNodeFromDict:
             "metadata": {},
         }
         node = Node.from_dict(node_dict, agent_config=self.agent_config)
-        assert node.result is not None
+        assert isinstance(node.result, SemanticNodeResult)
         assert node.result.response == "Table created"
 
     def test_from_dict_handles_corrupt_input_gracefully(self):

@@ -243,7 +243,7 @@ class TestShouldCreateNewNode:
 
         result = cmds._should_create_new_node()
         assert result is False
-        assert cmds.current_node is not None
+        assert cmds.current_node.id == "chat_cli"
 
     def test_returns_true_when_switching_from_no_subagent_to_subagent(self, real_agent_config, mock_llm_create):
         """Should create new node when switching from regular chat to a subagent."""
@@ -646,7 +646,6 @@ class TestExtractReportFromJson:
 
         result = cmds._extract_report_from_json(json_str)
         assert result == ""
-        assert result is not None
 
 
 # ===========================================================================
@@ -664,7 +663,7 @@ class TestExtractSqlAndOutputFromContent:
 
         sql, output = cmds._extract_sql_and_output_from_content(content)
         assert sql == "SELECT * FROM users"
-        assert output is not None
+        assert output == "5 rows returned"
 
     def test_json_with_sql_and_raw_output(self, real_agent_config, mock_llm_create):
         """JSON content with sql and raw_output fields extracts both."""
@@ -673,7 +672,7 @@ class TestExtractSqlAndOutputFromContent:
 
         sql, output = cmds._extract_sql_and_output_from_content(content)
         assert sql == "SELECT 1"
-        assert output is not None
+        assert output == "Result: 1"
 
     def test_sql_code_block_in_markdown(self, real_agent_config, mock_llm_create):
         """SQL code block in markdown extracts the SQL."""
@@ -699,9 +698,7 @@ class TestExtractSqlAndOutputFromContent:
         content = "{broken json content here"
 
         sql, output = cmds._extract_sql_and_output_from_content(content)
-        # Should not raise; returns either (None, None) or extracted data
-        assert sql is None or isinstance(sql, str)
-        assert output is None or isinstance(output, str)
+        assert (sql, output) == (None, None)
 
     def test_json_newline_format(self, real_agent_config, mock_llm_create):
         """'json\\n{...}' format extracts SQL and output."""
@@ -711,7 +708,7 @@ class TestExtractSqlAndOutputFromContent:
 
         sql, output = cmds._extract_sql_and_output_from_content(content)
         assert sql == "SELECT count(*) FROM t"
-        assert output is not None
+        assert output == "count: 42"
 
     def test_json_with_escaped_quotes(self, real_agent_config, mock_llm_create):
         """JSON with escaped quotes is handled correctly."""
@@ -719,8 +716,8 @@ class TestExtractSqlAndOutputFromContent:
         content = '{"sql": "SELECT * FROM users WHERE name = \'John\'", "output": "1 row"}'
 
         sql, output = cmds._extract_sql_and_output_from_content(content)
-        assert sql is not None
-        assert "SELECT" in sql
+        assert sql == "SELECT * FROM users WHERE name = 'John'"
+        assert output == "1 row"
 
 
 # ===========================================================================
@@ -778,7 +775,6 @@ class TestDisplayMarkdownResponse:
 
         output = _get_console_output(console)
         assert "Extracted report content here" in output
-        assert len(output) > 0
 
     def test_plain_json_without_report_still_displays(self, real_agent_config, mock_llm_create):
         """JSON without 'report' field falls through to display as markdown."""
@@ -789,8 +785,7 @@ class TestDisplayMarkdownResponse:
         cmds._display_markdown_response(json_str)
 
         output = _get_console_output(console)
-        # Should display the raw content as markdown
-        assert len(output) > 0
+        assert "SELECT 1" in output
 
 
 class TestDisplaySemanticModel:
@@ -972,7 +967,7 @@ class TestCmdClearChat:
         cmds = _make_chat_commands(real_agent_config, console=console)
 
         cmds.current_node = cmds._create_new_node()
-        assert cmds.current_node is not None
+        assert cmds.current_node.id == "chat_cli"
 
         cmds.cmd_clear_chat("")
 
@@ -998,7 +993,6 @@ class TestCmdChatInfo:
 
         output = _get_console_output(console)
         assert "No active session" in output
-        assert len(output) > 0
 
     def test_with_session_displays_info(self, real_agent_config, mock_llm_create):
         """With an active session, displays session info."""
@@ -1014,9 +1008,7 @@ class TestCmdChatInfo:
         cmds.cmd_chat_info("")
 
         output = _get_console_output(console)
-        # Either shows session info or "No active session"
-        assert len(output) > 0
-        assert ("Session" in output) or ("No active session" in output)
+        assert "No active session" in output
 
 
 # ===========================================================================
@@ -1076,7 +1068,6 @@ class TestAddInSqlContext:
         cmds.add_in_sql_context("SELECT * FROM users", "Get all users", actions)
 
         last_ctx = cmds.cli.cli_context.get_last_sql_context()
-        assert last_ctx is not None
         assert last_ctx.sql_query == "SELECT * FROM users"
         assert last_ctx.row_count == 5
 
@@ -1099,7 +1090,6 @@ class TestAddInSqlContext:
         cmds.add_in_sql_context("SELECT * FROM nonexistent", "Query failed", actions)
 
         last_ctx = cmds.cli.cli_context.get_last_sql_context()
-        assert last_ctx is not None
         assert last_ctx.sql_query == "SELECT * FROM nonexistent"
         assert last_ctx.sql_error == "Table not found"
         assert last_ctx.row_count == 0
@@ -1121,7 +1111,6 @@ class TestAddInSqlContext:
         cmds.add_in_sql_context("SELECT * FROM secret", "Permission check", actions)
 
         last_ctx = cmds.cli.cli_context.get_last_sql_context()
-        assert last_ctx is not None
         assert last_ctx.sql_query == "SELECT * FROM secret"
         assert last_ctx.row_count == 0
 
@@ -1141,7 +1130,6 @@ class TestAddInSqlContext:
         cmds.add_in_sql_context("SELECT * FROM users", "Query users", actions)
 
         last_ctx = cmds.cli.cli_context.get_last_sql_context()
-        assert last_ctx is not None
         assert last_ctx.sql_query == "SELECT * FROM users"
         assert last_ctx.sql_error == "plain text output"
         assert last_ctx.row_count == 0
@@ -1170,7 +1158,6 @@ class TestAddInSqlContext:
         cmds.add_in_sql_context("SELECT id FROM users", "Query users", actions)
 
         last_ctx = cmds.cli.cli_context.get_last_sql_context()
-        assert last_ctx is not None
         assert last_ctx.sql_query == "SELECT id FROM users"
         assert last_ctx.sql_error is None
         assert last_ctx.row_count == 2
@@ -1184,7 +1171,6 @@ class TestAddInSqlContext:
         cmds.add_in_sql_context("SELECT * FROM users", "Query users", actions)
 
         last_ctx = cmds.cli.cli_context.get_last_sql_context()
-        assert last_ctx is not None
         assert last_ctx.sql_query == "SELECT * FROM users"
         assert last_ctx.sql_error == "plain text output"
         assert last_ctx.row_count == 0
@@ -1220,7 +1206,6 @@ class TestAddInSqlContext:
         cmds.add_in_sql_context("SELECT * FROM users", "Latest query", actions)
 
         last_ctx = cmds.cli.cli_context.get_last_sql_context()
-        assert last_ctx is not None
         assert last_ctx.row_count == 10
         assert last_ctx.sql_return == "second"
 
@@ -1267,7 +1252,6 @@ class TestExecuteChatCommand:
         cmds.execute_chat_command("Hello, how are you?")
 
         # Node should have been created (even if execution failed)
-        assert cmds.current_node is not None
         assert isinstance(cmds.current_node, ChatAgenticNode)
 
     def test_subagent_creates_correct_node(self, real_agent_config, mock_llm_create):
@@ -1279,7 +1263,6 @@ class TestExecuteChatCommand:
 
         cmds.execute_chat_command("Generate SQL for users", subagent_name="gensql")
 
-        assert cmds.current_node is not None
         assert isinstance(cmds.current_node, GenSQLAgenticNode)
         assert cmds.current_subagent_name == "gensql"
 
@@ -1317,7 +1300,7 @@ class TestUpdateChatNodeTools:
         cmds.current_node = cmds._create_new_node()
 
         cmds.update_chat_node_tools()
-        assert cmds.current_node is not None
+        assert cmds.current_node.id == "chat_cli"
 
 
 # ===========================================================================
@@ -1624,7 +1607,7 @@ class TestDisplayExceptionPaths:
         renderer.print_renderables(console, renderables)
 
         output = _get_console_output(console)
-        assert len(output) > 0
+        assert "Interaction completed" in output
 
 
 # ===========================================================================
@@ -1648,10 +1631,9 @@ class TestExecuteChatCommandResponseProcessing:
         cmds.execute_chat_command("What is 1+1?")
 
         output = _get_console_output(console)
-        assert cmds.current_node is not None
         assert len(cmds.chat_history) == 1
         # The response should be processed in some form
-        assert len(output) > 0
+        assert "Here is your answer." in output
 
     def test_execute_with_sql_response(self, real_agent_config, mock_llm_create):
         """execute_chat_command with SQL response displays SQL panel."""
@@ -1670,8 +1652,8 @@ class TestExecuteChatCommandResponseProcessing:
 
         cmds.execute_chat_command("Count all schools")
 
-        _get_console_output(console)
-        assert cmds.current_node is not None
+        output = _get_console_output(console)
+        assert "SELECT count(*) FROM schools" in output
         assert len(cmds.chat_history) == 1
 
     def test_execute_with_report_response(self, real_agent_config, mock_llm_create):
@@ -1700,7 +1682,7 @@ class TestExecuteChatCommandResponseProcessing:
 
         cmds.execute_chat_command("Hello")
 
-        assert cmds.current_node is not None
+        assert cmds.current_node.id == "chat_cli"
         assert len(cmds.chat_history) == 1
 
     def test_execute_reuses_existing_node(self, real_agent_config, mock_llm_create):
@@ -1776,8 +1758,7 @@ class TestExtractReportEdgeCases:
         """Malformed JSON that json_repair can't fix returns None."""
         cmds = _make_chat_commands(real_agent_config)
         result = cmds._extract_report_from_json("{{{broken")
-        # json_repair may repair it or not - either way should not raise
-        assert result is None or isinstance(result, str)
+        assert result is None
 
 
 # ===========================================================================
@@ -1804,7 +1785,7 @@ class TestExtractSqlEdgeCases:
 
         sql, output = cmds._extract_sql_and_output_from_content(content)
         assert sql == "SELECT 1"
-        assert output is not None
+        assert output == "line1\nline2\nline3"
 
     def test_content_with_only_text_no_json_no_sql(self, real_agent_config, mock_llm_create):
         """Content with no JSON and no SQL blocks returns (None, None)."""
@@ -1998,7 +1979,7 @@ class TestExecuteResponseProcessing:
 
         assert len(cmds.chat_history) == 1
         # SQL should be displayed or stored
-        assert cmds.current_node is not None
+        assert cmds.current_node.id == "chat_cli"
 
     def test_response_with_report_json_extracts_report(self, real_agent_config, mock_llm_create):
         """Response with report JSON format extracts report field for display."""
@@ -2012,7 +1993,7 @@ class TestExecuteResponseProcessing:
         )
 
         assert len(cmds.chat_history) == 1
-        assert cmds.current_node is not None
+        assert cmds.current_node.id == "chat_cli"
 
     def test_response_with_plain_text_uses_fallback(self, real_agent_config, mock_llm_create):
         """Plain text response uses fallback path (ast.literal_eval or direct)."""
@@ -2026,7 +2007,7 @@ class TestExecuteResponseProcessing:
 
         assert len(cmds.chat_history) == 1
         # Plain text should be rendered as markdown
-        assert "table" in output.lower() or "database" in output.lower() or len(output) > 0
+        assert "database" in output.lower()
 
     def test_response_with_dict_string_extracts_raw_output(self, real_agent_config, mock_llm_create):
         """Response that is a Python dict string exercises ast.literal_eval path."""
@@ -2049,7 +2030,7 @@ class TestExecuteResponseProcessing:
         cmds, output = self._run_execute_and_get_output(real_agent_config, mock_llm_create, "Hello", responses)
 
         assert len(cmds.chat_history) == 1
-        assert cmds.current_node is not None
+        assert cmds.current_node.id == "chat_cli"
 
     def test_session_reuse_does_not_print_session_info(self, real_agent_config, mock_llm_create):
         """Second execute reusing same node must not print the legacy session banner."""
@@ -2093,9 +2074,7 @@ class TestCmdChatInfoWithSession:
         cmds.cmd_chat_info("")
 
         output = _get_console_output(console)
-        # Should display session info or "No active session" depending on session state
-        assert len(output) > 0
-        assert "Session" in output or "No active session" in output
+        assert "Session" in output
 
     def test_chat_info_shows_recent_conversations(self, real_agent_config, mock_llm_create):
         """cmd_chat_info displays recent conversation history."""
@@ -2117,7 +2096,7 @@ class TestCmdChatInfoWithSession:
         cmds.cmd_chat_info("")
 
         output = _get_console_output(console)
-        assert len(output) > 0
+        assert "Recent Conversations" in output
 
 
 # ===========================================================================
@@ -2148,14 +2127,7 @@ class TestCmdCompactWithSession:
         cmds.cmd_compact("")
 
         output = _get_console_output(console)
-        # Should show compact result (success or failure)
-        assert len(output) > 0
-        assert (
-            "Compacting" in output
-            or "compacted" in output.lower()
-            or "No active session" in output
-            or "Error" in output
-        )
+        assert "compacted successfully" in output.lower()
 
     def test_compact_resets_in_memory_state(self, real_agent_config, mock_llm_create):
         """After successful compact, in-memory state is reset via _reload_state_from_session."""
@@ -2180,7 +2152,7 @@ class TestCmdCompactWithSession:
         # Verify pre-compact state has accumulated data
         assert len(cmds.all_turn_actions) == 2
         assert len(cmds.chat_history) == 2
-        assert len(cmds.last_actions) > 0
+        assert len(cmds.last_actions) == 2
 
         console.file = io.StringIO()
         cmds.cmd_compact("")
@@ -2221,7 +2193,7 @@ class TestTriggerCompactWithSession:
 
         # First: create a chat session
         cmds.execute_chat_command("Hello")
-        assert cmds.current_node is not None
+        assert cmds.current_node.id == "chat_cli"
 
         # Second: switch to subagent — no compact should be triggered
         console.file = io.StringIO()
@@ -2249,7 +2221,7 @@ class TestCmdClearChatWithSession:
 
         mock_llm_create.reset(responses=[build_simple_response("Hello!")])
         cmds.execute_chat_command("Hi")
-        assert cmds.current_node is not None
+        assert cmds.current_node.id == "chat_cli"
 
         console.file = io.StringIO()
         cmds.cmd_clear_chat("")
@@ -2283,9 +2255,8 @@ class TestCmdResumeWithSession:
         cmds.cmd_resume(session_id)
 
         output = _get_console_output(console)
-        assert cmds.current_node is not None
         assert cmds.current_node.session_id == session_id
-        assert "resuming session" in output.lower() or "continue the conversation" in output.lower()
+        assert "You can now continue the conversation" in output
 
     def test_resume_session_not_found(self, real_agent_config, mock_llm_create):
         """cmd_resume with a nonexistent session_id shows error message."""
@@ -2295,7 +2266,7 @@ class TestCmdResumeWithSession:
         cmds.cmd_resume("nonexistent_session_id_12345")
 
         output = _get_console_output(console)
-        assert "not found" in output.lower() or "error" in output.lower()
+        assert "Session not found" in output
 
     def test_resume_no_sessions_interactive_path(self, real_agent_config, mock_llm_create):
         """cmd_resume with no args and no sessions shows 'No sessions found'."""
@@ -2305,7 +2276,7 @@ class TestCmdResumeWithSession:
         cmds.cmd_resume("")
 
         output = _get_console_output(console)
-        assert "no sessions" in output.lower() or "error" in output.lower()
+        assert "No sessions found" in output
 
     def test_resume_displays_conversation_history(self, real_agent_config, mock_llm_create):
         """cmd_resume shows conversation messages when session has messages."""
@@ -2326,9 +2297,8 @@ class TestCmdResumeWithSession:
         cmds.cmd_resume(session_id)
 
         output = _get_console_output(console)
-        assert cmds.current_node is not None
         assert cmds.current_node.session_id == session_id
-        assert "resumed" in output.lower() or "continue" in output.lower()
+        assert "Session resumed" in output
         # Should display message count
         assert "message" in output.lower()
 
@@ -2343,11 +2313,9 @@ class TestCmdResumeWithSession:
         cmds.cmd_resume(session_id)
 
         # Verify state is updated correctly
-        assert cmds.current_node is not None
         assert cmds.current_node.session_id == session_id
         # chat session -> subagent_name should be None, current_node should be updated
         assert cmds.current_subagent_name is None
-        assert cmds.current_node is not None
 
     def test_resume_exception_handling(self, real_agent_config, mock_llm_create):
         """cmd_resume handles exceptions gracefully with invalid session_id."""
@@ -2374,9 +2342,8 @@ class TestCmdResumeWithSession:
         cmds.cmd_resume(session_id)
 
         output = _get_console_output(console)
-        assert cmds.current_node is not None
         # Should show "You:" for user messages
-        assert "you:" in output.lower() or "message" in output.lower()
+        assert "You:" in output
 
 
 # ===========================================================================
@@ -2433,12 +2400,11 @@ class TestCmdRewindWithSession:
         result = cmds.cmd_rewind("1")
 
         output = _get_console_output(console)
-        assert cmds.current_node is not None
         # Turn 1 creates a fresh session (no prior messages)
         assert cmds.current_node.session_id != session_id
         # Should return the selected user message for input prefill
         assert result == "Question 1"
-        assert "rewound" in output.lower() or "input buffer" in output.lower()
+        assert "Selected message placed in input buffer" in output
 
     def test_rewind_turn2_returns_message_and_keeps_turn1(self, real_agent_config, mock_llm_create):
         """cmd_rewind with turn 2 keeps turn 1 and returns turn 2 message."""
@@ -2463,7 +2429,6 @@ class TestCmdRewindWithSession:
         result = cmds.cmd_rewind("2")
 
         assert result == "Question 2"
-        assert cmds.current_node is not None
         assert cmds.current_node.session_id != session_id
 
         # Verify the branched session only contains turns before the rewound turn
@@ -2521,7 +2486,7 @@ class TestCmdRewindWithSession:
         cmds.cmd_rewind("5")
 
         output = _get_console_output(console)
-        assert "invalid" in output.lower() or "must be between" in output.lower() or "error" in output.lower()
+        assert "Invalid turn number" in output
 
     def test_rewind_invalid_turn_number_zero(self, real_agent_config, mock_llm_create):
         """cmd_rewind with turn number 0 shows error."""
@@ -2540,7 +2505,7 @@ class TestCmdRewindWithSession:
         cmds.cmd_rewind("0")
 
         output = _get_console_output(console)
-        assert "invalid" in output.lower() or "must be between" in output.lower() or "error" in output.lower()
+        assert "Invalid turn number" in output
 
     def test_rewind_non_numeric_input(self, real_agent_config, mock_llm_create):
         """cmd_rewind with non-numeric input shows error."""
@@ -2559,7 +2524,7 @@ class TestCmdRewindWithSession:
         cmds.cmd_rewind("abc")
 
         output = _get_console_output(console)
-        assert "invalid" in output.lower() or "number" in output.lower()
+        assert "Invalid input. Please enter a number." in output
 
     def test_rewind_displays_conversation_table(self, real_agent_config, mock_llm_create):
         """cmd_rewind displays table of user turns before rewind."""
@@ -2586,8 +2551,8 @@ class TestCmdRewindWithSession:
         cmds.cmd_rewind("2")
 
         output = _get_console_output(console)
-        assert "conversation turns" in output.lower() or "turn" in output.lower()
-        assert cmds.current_node is not None
+        assert "Rewound to before turn 2" in output
+        assert cmds.current_node.session_id != session_id
 
     def test_rewind_cancel_with_q(self, real_agent_config, mock_llm_create):
         """cmd_rewind with 'q' as turn number shows cancellation."""
@@ -2629,7 +2594,6 @@ class TestCmdRewindWithSession:
         mock_llm_create.reset(responses=[])
         cmds.cmd_rewind("1")
 
-        assert cmds.current_node is not None
         new_session_id = cmds.current_node.session_id
         assert new_session_id != session_id
 
@@ -2673,7 +2637,7 @@ class TestCmdRewindWithSession:
         cmds.cmd_rewind("1")
 
         output = _get_console_output(console)
-        assert "no messages" in output.lower() or "no user turns" in output.lower() or "error" in output.lower()
+        assert "Current session has no messages" in output
 
 
 # ===========================================================================
@@ -2775,10 +2739,9 @@ class TestResumeWithSqlMessages:
         cmds.cmd_resume(session_id)
 
         output = _get_console_output(console)
-        assert cmds.current_node is not None
         assert cmds.current_node.session_id == session_id
         # Should show resumed message and display content
-        assert "resumed" in output.lower() or "continue" in output.lower()
+        assert "Session resumed" in output
 
     def test_resume_with_json_content_skips_markdown(self, real_agent_config, mock_llm_create):
         """Resume with JSON assistant content with SQL skips markdown rendering (line 1093)."""
@@ -2791,9 +2754,9 @@ class TestResumeWithSqlMessages:
         cmds.cmd_resume(session_id)
 
         output = _get_console_output(console)
-        assert cmds.current_node is not None
+        assert cmds.current_node.session_id == session_id
         # Content should be rendered (either as SQL or markdown)
-        assert len(output) > 50  # Should have substantial output
+        assert "SELECT * FROM students" in output
 
 
 # ===========================================================================
@@ -2831,7 +2794,7 @@ class TestRewindEdgeCases:
         cmds.cmd_rewind("1")
 
         output = _get_console_output(console)
-        assert "no user turns" in output.lower() or "no messages" in output.lower() or "error" in output.lower()
+        assert "Current session has no messages" in output
 
     def test_rewind_with_long_messages_truncates(self, real_agent_config, mock_llm_create):
         """cmd_rewind truncates long user messages in the table display (line 1152)."""
@@ -2870,7 +2833,7 @@ class TestRewindEdgeCases:
         cmds.cmd_rewind("-1")
 
         output = _get_console_output(console)
-        assert "invalid" in output.lower() or "must be between" in output.lower() or "error" in output.lower()
+        assert "Invalid turn number" in output
 
 
 # ===========================================================================
@@ -2914,7 +2877,7 @@ class TestResumeInteractiveNoSessions:
 
         output = _get_console_output(console)
         # Should show "No sessions with messages" or "No sessions found"
-        assert "no sessions" in output.lower() or "error" in output.lower()
+        assert "No sessions with messages found" in output
 
 
 # ===========================================================================
@@ -2953,7 +2916,7 @@ class TestResumeInteractiveWithSessions:
         cmds.cmd_resume("")
 
         output = _get_console_output(console)
-        assert cmds.current_node is not None
+        assert cmds.current_node.session_id in {"chat_session_pick01", "chat_session_pick01b"}
         assert "session" in output.lower()
         assert len(captured["items"]) >= 2
 
@@ -2978,7 +2941,7 @@ class TestResumeInteractiveWithSessions:
         cmds.cmd_resume("")
 
         output = _get_console_output(console)
-        assert "cancelled" in output.lower() or "session" in output.lower()
+        assert "Cancelled" in output
 
 
 class TestRewindDisplayMessages:
@@ -3021,7 +2984,7 @@ class TestRewindDisplayMessages:
 
         output = _get_console_output(console)
         # Should show rewound message
-        assert "rewound" in output.lower() or "turn" in output.lower() or "continue" in output.lower()
+        assert "Rewound to before turn 1" in output
 
     def test_rewind_no_user_turns_shows_warning(self, real_agent_config, mock_llm_create):
         """cmd_rewind with session containing only assistant messages shows 'no user turns'."""
@@ -3040,7 +3003,7 @@ class TestRewindDisplayMessages:
         cmds.cmd_rewind("1")
 
         output = _get_console_output(console)
-        assert "no user turns" in output.lower() or "no messages" in output.lower() or "error" in output.lower()
+        assert "Current session has no messages" in output
 
     def test_rewind_exception_shows_error(self, real_agent_config, mock_llm_create):
         """cmd_rewind handles exceptions gracefully (lines 1227-1229)."""
@@ -3059,7 +3022,7 @@ class TestRewindDisplayMessages:
         cmds.cmd_rewind("1")
 
         output = _get_console_output(console)
-        assert "error" in output.lower() or "no messages" in output.lower()
+        assert "Current session has no messages" in output
 
 
 class TestSelectChoiceExceptionHandler:
@@ -3081,7 +3044,7 @@ class TestSelectChoiceExceptionHandler:
 
         assert result == "y"
         output = console.file.getvalue()
-        assert "Selection error" in output or "error" in output.lower()
+        assert "Selection error" in output
 
 
 class TestResumeListingTruncation:
@@ -3113,9 +3076,9 @@ class TestResumeListingTruncation:
         cmds.cmd_resume("")
         output = _get_console_output(console)
         assert "cancelled" in output.lower()
-        assert len(captured["items"]) > 0
-        first_item = captured["items"][0]
-        assert long_msg.replace("\n", " ") in first_item.primary or first_item.primary in long_msg
+        matching_items = [item for item in captured["items"] if long_sid in item.secondary]
+        assert len(matching_items) == 1
+        assert matching_items[0].primary == long_msg
 
     def test_short_session_id_not_truncated(self, real_agent_config, mock_llm_create, monkeypatch):
         """Session with short session_id appears in ListSelectorApp items without truncation."""
@@ -3140,9 +3103,8 @@ class TestResumeListingTruncation:
 
         console.file = io.StringIO()
         cmds.cmd_resume("")
-        assert len(captured["items"]) > 0
-        all_text = " ".join(f"{item.primary} {item.secondary}" for item in captured["items"])
-        assert short_sid in all_text
+        matching_items = [item for item in captured["items"] if short_sid in item.secondary]
+        assert len(matching_items) == 1
 
 
 # ===========================================================================
@@ -3517,7 +3479,7 @@ class TestCmdClearChatExtended:
         chat_cmd.cmd_clear_chat("")
 
         # After clear, state should be reset
-        assert chat_cmd.chat_history == [] or chat_cmd.current_node is None
+        assert chat_cmd.current_node is None
 
 
 # ---------------------------------------------------------------------------
@@ -3600,7 +3562,7 @@ class TestCmdChatInfoExtended:
         chat_cmd.cmd_chat_info("")
         output = chat_cmd.console.file.getvalue()
         # Should print "No active session" or similar message
-        assert len(output) > 0, "Should have printed a message about no active session"
+        assert "No active session" in output
 
     def test_with_current_node_calls_get_info(self, chat_cmd):
         async def mock_get_info():
@@ -3622,7 +3584,7 @@ class TestCmdChatInfoExtended:
 
         chat_cmd.cmd_chat_info("")
         output = chat_cmd.console.file.getvalue()
-        assert "sess_123" in output or "Session" in output
+        assert "Session ID: sess_123" in output
 
 
 class TestMakeInputCollector:

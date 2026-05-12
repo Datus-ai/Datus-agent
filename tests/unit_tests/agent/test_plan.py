@@ -26,6 +26,7 @@ from datus.agent.workflow import Workflow
 from datus.agent.workflow_runner import WorkflowRunner  # noqa: F401 - resolves circular dep
 from datus.configuration.node_type import NodeType
 from datus.schemas.node_models import SqlTask
+from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -138,7 +139,7 @@ class TestCreateSingleNode:
         cfg = _mock_config()
         node = _create_single_node("schema_linking", "node_x", task, cfg)
         assert node.type == NodeType.TYPE_SCHEMA_LINKING
-        assert node.input is not None
+        assert isinstance(node.input, SchemaLinkingInput)
 
     def test_node_id_is_set(self):
         task = _sql_task()
@@ -232,15 +233,15 @@ class TestGenerateWorkflow:
         cfg = _mock_config(custom_workflows={"my_flow": ["reflect"]})
         with _patched_workflow():
             wf = generate_workflow(task, plan_type="my_flow", agent_config=cfg)
-        assert wf is not None
-        assert "my_flow" in wf.name
+        assert isinstance(wf, Workflow)
+        assert wf.name == "SQL Query Workflow (my_flow)"
 
     def test_custom_workflow_with_steps_dict(self):
         task = _sql_task()
         cfg = _mock_config(custom_workflows={"my_flow": {"steps": ["reflect"], "config": {"key": "val"}}})
         with _patched_workflow():
             wf = generate_workflow(task, plan_type="my_flow", agent_config=cfg)
-        assert wf is not None
+        assert isinstance(wf, Workflow)
         assert wf.workflow_config == {"key": "val"}
 
     def test_fallback_to_reflection_when_no_plan_type(self):
@@ -248,14 +249,22 @@ class TestGenerateWorkflow:
         cfg = _mock_config(workflow_plan="reflection", custom_workflows={})
         with _patched_workflow():
             wf = generate_workflow(task, plan_type=None, agent_config=cfg)
-        assert wf is not None
+        assert isinstance(wf, Workflow)
+        assert wf.name == "SQL Query Workflow (reflection)"
 
     def test_workflow_has_nodes(self):
         task = _sql_task()
         cfg = _mock_config(custom_workflows={})
         with _patched_workflow():
             wf = generate_workflow(task, plan_type="reflection", agent_config=cfg)
-        assert len(wf.nodes) > 0
+        assert [wf.nodes[node_id].type for node_id in wf.node_order] == [
+            NodeType.TYPE_BEGIN,
+            NodeType.TYPE_SCHEMA_LINKING,
+            NodeType.TYPE_GENERATE_SQL,
+            NodeType.TYPE_EXECUTE_SQL,
+            NodeType.TYPE_REFLECT,
+            NodeType.TYPE_OUTPUT,
+        ]
 
     def test_task_tables_triggers_schema_search(self):
         """When task.tables is set, schema RAG search is attempted."""
@@ -269,7 +278,8 @@ class TestGenerateWorkflow:
             with patch("datus.storage.schema_metadata.SchemaWithValueRAG", return_value=mock_rag):
                 wf = generate_workflow(task, plan_type="reflection", agent_config=cfg)
 
-        assert wf is not None
+        assert isinstance(wf, Workflow)
+        mock_rag.search_tables.assert_called_once_with(["users"], "", "db", "", dialect="")
 
     def test_schema_search_failure_does_not_crash(self):
         """If RAG search raises, workflow is still returned."""
@@ -283,7 +293,8 @@ class TestGenerateWorkflow:
             with patch("datus.storage.schema_metadata.SchemaWithValueRAG", mock_rag_cls):
                 wf = generate_workflow(task, plan_type="reflection", agent_config=cfg)
 
-        assert wf is not None
+        assert isinstance(wf, Workflow)
+        assert wf.name == "SQL Query Workflow (reflection)"
 
     def test_no_agent_config_raises_for_invalid_plan(self):
         task = _sql_task()
@@ -297,4 +308,7 @@ class TestGenerateWorkflow:
         with _patched_workflow():
             with pytest.raises(ValueError) as exc_info:
                 generate_workflow(task, plan_type="bad_plan", agent_config=cfg)
-        assert "c1" in str(exc_info.value) or "bad_plan" in str(exc_info.value)
+        assert (
+            str(exc_info.value) == "Invalid plan type 'bad_plan'. Available builtin workflows: ['reflection', 'fixed', "
+            "'empty', 'dynamic', 'metric_to_sql', 'chat_agentic', 'gensql_agentic'], custom workflows: ['c1']"
+        )

@@ -161,7 +161,7 @@ class TestParseBasic:
 
         # markdown-it parser attaches preamble to the first heading section
         first_section = result.sections[0]
-        assert "preamble" in first_section.content.lower() or "preamble" in first_section.get_all_content().lower()
+        assert "preamble" in first_section.get_all_content().lower()
 
     def test_parse_content_only_no_heading(self):
         """Content without any heading creates a level-0 section."""

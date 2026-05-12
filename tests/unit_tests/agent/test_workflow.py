@@ -12,7 +12,7 @@ from datus.schemas.node_models import SQLContext, SqlTask
 from datus.utils.exceptions import DatusException
 
 
-class TestNode:
+class TestWorkflowNode:
     """Test suite for the Node class."""
 
     def test_node_initialization(self):
@@ -44,14 +44,14 @@ class TestNode:
         # Test start transition
         node.start()
         assert node.status == "running"
-        assert node.start_time is not None
+        assert isinstance(node.start_time, float)
 
         # Test complete transition
         result = BaseResult(success=True)
         node.complete(result)
         assert node.status == "completed"
         assert node.result == result
-        assert node.end_time is not None
+        assert isinstance(node.end_time, float)
 
         # Test fail transition
         node = Node.new_instance("test_node", "Test node", NodeType.TYPE_GENERATE_SQL)
@@ -60,7 +60,7 @@ class TestNode:
         assert node.status == "failed"
         assert node.result.success is False
         assert node.result.error == error_msg
-        assert node.end_time is not None
+        assert isinstance(node.end_time, float)
 
     def test_node_dependencies(self):
         """Test adding dependencies to a node."""
@@ -170,7 +170,7 @@ class TestWorkflow:
         # Check node properties
         for node_id, description, node_type in expected_nodes:
             node = workflow.get_node(node_id)
-            assert node is not None
+            assert node.id == node_id
             assert node.description == description
             assert node.type == node_type
 
@@ -438,7 +438,7 @@ class TestWorkflowNavigation:
         result = wf.advance_to_next_node()
         assert result is None
         assert wf.status == "completed"
-        assert wf.completion_time is not None
+        assert isinstance(wf.completion_time, float)
 
     def test_get_last_node_by_type(self):
         wf = _make_workflow()
@@ -597,4 +597,7 @@ class TestWorkflowDisplay:
         n0 = _make_node("n0")
         n0.status = "completed"
         wf.add_node(n0)
-        wf.display()  # should not raise
+        with patch("datus.agent.workflow.logger.info") as mock_log:
+            wf.display()
+        assert mock_log.call_count == 3
+        assert wf.node_order == ["n0"]

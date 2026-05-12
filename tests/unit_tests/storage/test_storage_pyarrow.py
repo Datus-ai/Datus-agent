@@ -327,7 +327,6 @@ class TestExtKnowledgeStorePyArrow:
         new_node = storage.subject_tree.get_node_by_path(["Finance", "Banking", "Consumer"])
 
         assert old_node is None
-        assert new_node is not None
         assert new_node["name"] == "Consumer"
 
     def test_rename_knowledge_item(self, temp_db_path):
@@ -430,7 +429,6 @@ class TestMetricStoragePyArrow:
         new_node = storage.subject_tree.get_node_by_path(["Sales", "Revenue", "MonthlyTotal"])
 
         assert old_node is None
-        assert new_node is not None
         assert new_node["name"] == "MonthlyTotal"
 
     def test_rename_metric_item(self, temp_db_path):
@@ -665,7 +663,6 @@ class TestReferenceSqlStoragePyArrow:
         new_node = storage.subject_tree.get_node_by_path(["Analytics", "Reports", "DailyReports"])
 
         assert old_node is None
-        assert new_node is not None
         assert new_node["name"] == "DailyReports"
 
     def test_rename_sql_item(self, temp_db_path):

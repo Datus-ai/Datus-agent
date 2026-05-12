@@ -161,7 +161,6 @@ def test_run_drives_four_stages_and_returns_plan(console, fake_adapter) -> None:
 
         plan = picker.run()
 
-    assert plan is not None
     assert plan.options.platform == "superset"
     assert plan.adapter is fake_adapter
     assert plan.dashboard.name == "Sales"

@@ -16,7 +16,6 @@ class TestPackageDataPath:
         target.write_text("test")
         with patch("sys.prefix", str(tmp_path)):
             result = package_data_path(resource)
-        assert result is not None
         assert result == target
 
     def test_returns_path_when_exec_prefix_exists(self, tmp_path):
@@ -27,7 +26,7 @@ class TestPackageDataPath:
         non_existent = tmp_path / "nonexistent_prefix"
         with patch("sys.prefix", str(non_existent)), patch("sys.exec_prefix", str(tmp_path)):
             result = package_data_path(resource)
-        assert result is not None
+        assert result == target
 
     def test_falls_back_to_importlib(self, tmp_path):
         resource = "config/test.yml"
@@ -40,7 +39,7 @@ class TestPackageDataPath:
             patch("importlib.resources.files", return_value=mock_package_path),
         ):
             result = package_data_path(resource)
-        assert result is not None
+        assert result == tmp_path / resource
 
 
 class TestReadDataFileText:

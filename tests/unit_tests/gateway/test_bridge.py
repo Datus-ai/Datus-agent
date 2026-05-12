@@ -598,7 +598,7 @@ class TestEventToOutbound:
             ),
         )
         result = bridge._event_to_outbound(data, msg)
-        assert result is not None
+        assert isinstance(result, OutboundMessage)
         assert result.text == "Hello"
         assert result.sql is None
 
@@ -613,7 +613,7 @@ class TestEventToOutbound:
             ),
         )
         result = bridge._event_to_outbound(data, msg)
-        assert result is not None
+        assert isinstance(result, OutboundMessage)
         assert result.sql == "SELECT 1"
 
     def test_skip_non_message_data(self, bridge):
@@ -646,7 +646,7 @@ class TestEventToOutbound:
             ),
         )
         result = bridge._event_to_outbound(data, msg)
-        assert result is not None
+        assert isinstance(result, OutboundMessage)
         assert result.is_delta is True
         # Leading space must be preserved so accumulation works: "Hi" + " again!" = "Hi again!"
         assert result.text == " again! How are you?"
@@ -663,7 +663,7 @@ class TestEventToOutbound:
             ),
         )
         result = bridge._event_to_outbound(data, msg)
-        assert result is not None
+        assert isinstance(result, OutboundMessage)
         assert result.is_delta is True
         assert result.text == " "
 
@@ -719,7 +719,7 @@ class TestEventToOutbound:
             ),
         )
         result = bridge._event_to_outbound(data, msg, pending_tool_calls=pending)
-        assert result is not None
+        assert isinstance(result, OutboundMessage)
         assert "execute_sql" in result.text
         assert "2.5s" in result.text
         # Cached entry should be consumed

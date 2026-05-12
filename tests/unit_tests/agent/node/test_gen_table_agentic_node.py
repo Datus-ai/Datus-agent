@@ -129,7 +129,7 @@ class TestGenTableAgenticNodeInit:
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
 
         node = GenTableAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        assert node.db_func_tool is not None
+        assert node.db_func_tool.agent_config is real_agent_config
 
 
 # ---------------------------------------------------------------------------
@@ -363,5 +363,4 @@ class TestGenTableNodeType:
             tools=[],
         )
         assert isinstance(node, GenTableAgenticNode)
-        assert node.input is not None
         assert node.input.user_message == "test input"

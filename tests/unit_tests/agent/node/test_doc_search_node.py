@@ -117,8 +117,8 @@ class TestSetupInputDocSearch:
             mock_input_class.return_value = MagicMock(spec=DocSearchInput)
             node.setup_input(wf)
 
+        mock_input_class.assert_called_once()
         call_kwargs = mock_input_class.call_args
-        assert call_kwargs is not None
         # keywords should be passed
         if call_kwargs.kwargs:
             assert call_kwargs.kwargs.get("keywords") == ["profit", "margin"]
@@ -161,7 +161,7 @@ class TestUpdateContextDocSearch:
             pass  # Expected: the property setter raises RuntimeError or AttributeError
         else:
             # If no exception, verify context was still set correctly
-            assert wf.context is not None
+            assert isinstance(wf.context, MagicMock)
 
 
 # ---------------------------------------------------------------------------

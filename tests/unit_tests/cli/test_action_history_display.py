@@ -31,6 +31,7 @@ from unittest.mock import patch
 import pytest
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.table import Table
 from rich.text import Text
 
 from datus.cli.action_display.display import ActionHistoryDisplay, create_action_display
@@ -388,7 +389,7 @@ class TestNoSubAgentNormalFlow:
             ctx._process_actions()
 
         assert len(ctx._subagent_groups) == 0
-        assert len(printed) > 0
+        assert "search_table" in "\n".join(printed)
 
     def test_processing_tool_pins_frame_and_advances(self):
         """depth=0 PROCESSING TOOL advances the index so the paired SUCCESS action
@@ -1681,7 +1682,7 @@ class TestRenderMultiTurnHistory:
         display = ActionHistoryDisplay(console)
         display.render_multi_turn_history([], verbose=False)
         output = buf.getvalue()
-        assert output == "" or output.strip() == ""
+        assert output == ""
 
     def test_single_turn(self):
         """Single turn renders user message header and actions."""
@@ -1798,7 +1799,7 @@ class TestReprintHistoryWithTurns:
 
         output = buf.getvalue()
         # Should not crash, should render current actions
-        assert output is not None
+        assert "read_query" in output
 
 
 # ── _get_assistant_content helper ──────────────────────────────────
@@ -2302,7 +2303,9 @@ class TestCreateResultTable:
             output_data={"raw_output": '{"result": [{"name": "t1", "type": "table"}, {"name": "t2", "type": "view"}]}'},
         )
         table = gen._create_result_table(action)
-        assert table is not None
+        assert isinstance(table, Table)
+        assert [column.header for column in table.columns] == ["Name", "Type"]
+        assert len(table.rows) == 2
 
     def test_invalid_json_string_returns_none(self):
         """Invalid JSON string output returns None."""
@@ -2327,7 +2330,9 @@ class TestCreateResultTable:
             output_data={"raw_output": {"text": '[{"col1": "a", "col2": "b"}]'}},
         )
         table = gen._create_result_table(action)
-        assert table is not None
+        assert isinstance(table, Table)
+        assert [column.header for column in table.columns] == ["Col1", "Col2"]
+        assert len(table.rows) == 1
 
     def test_empty_list_returns_none(self):
         """Empty result list returns None."""
@@ -2359,7 +2364,10 @@ class TestCreateResultTable:
             output_data={"raw_output": {"result": [{"field": long_val}]}},
         )
         table = gen._create_result_table(action)
-        assert table is not None
+        assert isinstance(table, Table)
+        rendered = StringIO()
+        Console(file=rendered, no_color=True, width=120).print(table)
+        assert ("x" * 47) + "..." in rendered.getvalue()
 
     def test_more_than_10_rows_shows_summary(self):
         """More than 10 items shows summary row."""
@@ -2371,7 +2379,7 @@ class TestCreateResultTable:
             output_data={"raw_output": {"result": items}},
         )
         table = gen._create_result_table(action)
-        assert table is not None
+        assert isinstance(table, Table)
         # Table should have 11 rows (10 data + 1 summary)
         assert len(table.rows) == 11
 
@@ -3511,12 +3519,14 @@ class TestStopAndStartLive:
     def test_stop_live_no_context(self):
         """stop_live does nothing when no current context."""
         display = ActionHistoryDisplay()
-        display.stop_live()  # Should not raise
+        display.stop_live()
+        assert display._current_context is None
 
     def test_restart_live_no_context(self):
         """restart_live does nothing when no current context."""
         display = ActionHistoryDisplay()
-        display.restart_live()  # Should not raise
+        display.restart_live()
+        assert display._current_context is None
 
     def test_stop_live_with_context(self):
         """stop_live calls stop_display on current context."""
@@ -3652,7 +3662,8 @@ class TestEndSubagentGroupByKey:
         display = ActionHistoryDisplay()
         ctx = InlineStreamingContext([], display)
         ctx._end_subagent_group_by_key("nonexistent", _make_action(ActionRole.SYSTEM, ActionStatus.SUCCESS))
-        # Should not crash
+        assert ctx._completed_group_ids == set()
+        assert ctx._subagent_groups == {}
 
     def test_none_group_key_not_added_to_completed(self):
         """None group key is not added to _completed_group_ids."""
@@ -3824,7 +3835,7 @@ class TestCollapseCompleted:
         # Should NOT have collapsed marker (group is not complete)
         assert "\u23f4" not in output
         # Active group should be expanded with header
-        assert "\u23fa" in output or "gen_sql" in output
+        assert "gen_sql" in output
         # Should show tool action
         assert "search_schema" in output
 

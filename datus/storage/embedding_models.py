@@ -243,6 +243,7 @@ def init_embedding_models(
     if not EMBEDDING_DEVICE_TYPE:
         EMBEDDING_DEVICE_TYPE = get_device()
     models = {}
+    storage_models = {}
     for name, config in storage_config.items():
         if not isinstance(config, dict):
             continue
@@ -270,8 +271,9 @@ def init_embedding_models(
             )
             models[config["model_name"]] = target_model
         EMBEDDING_MODELS[name] = target_model
+        storage_models[name] = target_model
 
-    return EMBEDDING_MODELS
+    return storage_models
 
 
 def get_embedding_model(store_name: str) -> EmbeddingModel:

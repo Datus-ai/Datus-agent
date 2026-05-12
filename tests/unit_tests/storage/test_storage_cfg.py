@@ -195,8 +195,8 @@ class TestCheckStorageConfig:
         rag_path = str(tmp_path / "rag")
         cfg = {"model_name": "all-MiniLM-L6-v2", "dim_size": "384", "registry_name": "sentence-transformers"}
         check_storage_config("database", cfg, rag_path)
-        # Should not raise
         check_storage_config("database", cfg, rag_path)
+        assert load_storage_config(rag_path)["database"] == cfg
 
     def test_check_raises_on_mismatch(self, tmp_path):
         """Mismatching config should raise DatusException."""

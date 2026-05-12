@@ -16,7 +16,6 @@ class TestKbServiceInit:
     def test_init_with_real_config(self, real_agent_config):
         """KbService initializes with real agent config."""
         svc = KbService(agent_config=real_agent_config)
-        assert svc is not None
         assert svc.agent_config is real_agent_config
 
 
@@ -107,7 +106,7 @@ class TestKbServiceMakeEvent:
     def test_make_event_has_timestamp(self):
         """_make_event always includes timestamp."""
         event = KbService._make_event("s4", "test", BatchStage.TASK_STARTED)
-        assert event.timestamp is not None
+        assert datetime.fromisoformat(event.timestamp)
 
 
 class TestKbServiceBatchEventToSse:
@@ -137,7 +136,6 @@ class TestKbServiceBatchEventToSse:
             failed_items=2,
         )
         result = KbService._batch_event_to_sse("s1", "metadata", batch)
-        assert result.progress is not None
         assert result.progress["total"] == 100
         assert result.progress["completed"] == 50
         assert result.progress["failed"] == 2

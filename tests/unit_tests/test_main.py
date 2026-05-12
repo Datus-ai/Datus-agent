@@ -21,7 +21,7 @@ from datus.main import create_parser, main
 class TestCreateParser:
     def test_parser_created_successfully(self):
         parser = create_parser()
-        assert parser is not None
+        assert parser.description == "Datus: AI-powered SQL Agent for data engineering"
 
     def test_no_action_parses_ok(self):
         parser = create_parser()

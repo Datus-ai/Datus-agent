@@ -63,7 +63,6 @@ class TestBuildSubAgentFilter:
         )
         storage = _mock_storage()
         result = _build_sub_agent_filter(config, "team_a", storage, "tables")
-        assert result is not None
         clause = build_where(result)
         assert "users" in clause
 
@@ -88,7 +87,7 @@ class TestBuildSubAgentFilter:
         storage = _mock_storage(has_subject_tree=True)
         storage.subject_tree.get_matched_children_id.return_value = [1, 2]
         result = _build_sub_agent_filter(config, "team_a", storage, "metrics")
-        assert result is not None
+        assert "subject_node_id" in build_where(result)
 
     def test_empty_scope_value_returns_none(self):
         """Empty scope value -> no filter."""
@@ -117,7 +116,6 @@ class TestRuntimeOverrideIntegration:
     def test_yaml_path_when_no_override(self):
         config = self._real_config({"team_a": {"scoped_context": {"tables": "public.users"}}})
         result = _build_sub_agent_filter(config, "team_a", _mock_storage(), "tables")
-        assert result is not None
         assert "users" in build_where(result)
 
     def test_runtime_override_takes_precedence_over_yaml(self):
@@ -131,7 +129,6 @@ class TestRuntimeOverrideIntegration:
         )
         with effective_subagent("team_a", override_cfg):
             result = _build_sub_agent_filter(config, "team_a", _mock_storage(), "tables")
-        assert result is not None
         clause = build_where(result)
         assert "orders" in clause
         assert "users" not in clause
@@ -148,7 +145,6 @@ class TestRuntimeOverrideIntegration:
         )
         with effective_subagent("gen_metrics", override_cfg):
             result = _build_sub_agent_filter(config, "gen_metrics", _mock_storage(), "tables")
-        assert result is not None
         assert "users" in build_where(result)
 
     @pytest.mark.asyncio

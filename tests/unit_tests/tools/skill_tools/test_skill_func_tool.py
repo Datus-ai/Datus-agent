@@ -12,6 +12,7 @@ import pytest
 
 from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
 from datus.tools.permission.permission_manager import PermissionManager
+from datus.tools.skill_tools.skill_bash_tool import SkillBashTool
 from datus.tools.skill_tools.skill_config import SkillConfig
 from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
 from datus.tools.skill_tools.skill_manager import SkillManager
@@ -124,7 +125,6 @@ class TestSkillFuncToolBasic:
     def test_tool_creation(self, skill_manager):
         """Test creating a SkillFuncTool."""
         tool = SkillFuncTool(manager=skill_manager, node_name="chatbot")
-        assert tool is not None
         assert tool.node_name == "chatbot"
 
     def test_available_tools(self, skill_func_tool):
@@ -150,7 +150,6 @@ class TestSkillFuncToolLoadSkill:
         result = skill_func_tool.load_skill("simple-skill")
 
         assert result.success == 1
-        assert result.result is not None
         assert "Simple Skill" in result.result
         assert "Do this" in result.result
 
@@ -159,15 +158,13 @@ class TestSkillFuncToolLoadSkill:
         result = skill_func_tool.load_skill("nonexistent")
 
         assert result.success == 0
-        assert result.error is not None
-        assert "not found" in result.error.lower() or "not available" in result.error.lower()
+        assert "not found" in result.error.lower()
 
     def test_load_skill_denied(self, skill_func_tool):
         """Test loading a denied skill."""
         result = skill_func_tool.load_skill("internal-skill")
 
         assert result.success == 0
-        assert result.error is not None
         assert "not available" in result.error.lower()
 
     def test_aliased_authoring_tool_can_load_scoped_skill(self, skill_manager):
@@ -188,7 +185,6 @@ class TestSkillFuncToolLoadSkill:
         result = tool.load_skill("scoped-table")
 
         assert result.success == 1
-        assert result.result is not None
         assert "Scoped Table Skill" in result.result
 
     def test_non_authoring_tool_is_still_blocked_by_scope(self, skill_manager):
@@ -201,7 +197,6 @@ class TestSkillFuncToolLoadSkill:
         result = tool.load_skill("scoped-table")
 
         assert result.success == 0
-        assert result.error is not None
         assert "not available" in result.error.lower()
 
     def test_aliased_non_authoring_tool_passes_via_node_class(self, skill_manager):
@@ -215,18 +210,18 @@ class TestSkillFuncToolLoadSkill:
         result = tool.load_skill("scoped-table")
 
         assert result.success == 1
-        assert result.result is not None
+        assert "Scoped Table Skill" in result.result
 
     def test_load_skill_with_scripts(self, skill_func_tool):
         """Test loading a skill with scripts creates bash tool."""
         result = skill_func_tool.load_skill("script-skill")
 
         assert result.success == 1
-        assert result.result is not None
+        assert "Script Skill" in result.result
 
         # Check that bash tool was created
         bash_tool = skill_func_tool.get_skill_bash_tool("script-skill")
-        assert bash_tool is not None
+        assert isinstance(bash_tool, SkillBashTool)
 
 
 class TestSkillFuncToolBashToolManagement:
@@ -242,7 +237,7 @@ class TestSkillFuncToolBashToolManagement:
         skill_func_tool.load_skill("script-skill")
         bash_tool = skill_func_tool.get_skill_bash_tool("script-skill")
 
-        assert bash_tool is not None
+        assert isinstance(bash_tool, SkillBashTool)
         assert bash_tool.skill_name == "script-skill"
 
     def test_get_all_skill_bash_tools(self, skill_func_tool):
@@ -284,7 +279,7 @@ class TestSkillFuncToolPermissionCallback:
             return True
 
         skill_func_tool.set_permission_callback(mock_callback)
-        assert skill_func_tool._permission_callback is not None
+        assert skill_func_tool._permission_callback is mock_callback
 
 
 class TestSkillFuncToolEdgeCases:
@@ -295,7 +290,7 @@ class TestSkillFuncToolEdgeCases:
         result = skill_func_tool.load_skill("")
 
         assert result.success == 0
-        assert result.error is not None
+        assert result.error == "Skill '' not found"
 
     def test_load_same_skill_twice(self, skill_func_tool):
         """Test loading the same skill twice."""
@@ -370,12 +365,10 @@ class TestSkillExecuteCommand:
         load_result = skill_func_tool.load_skill("script-skill")
         assert load_result.success == 1
 
-        # Try to execute an allowed command (echo should be allowed by python:*)
-        result = skill_func_tool.skill_execute_command("script-skill", "python -c \"print('hello')\"")
+        result = skill_func_tool.skill_execute_command("script-skill", "python scripts/analyze.py")
 
-        # The command should be processed (success or failure depends on env)
-        # We mainly test that it routes to the correct bash tool
-        assert result is not None
+        assert result.success == 1
+        assert result.result.strip() == "analyzing"
 
     def test_execute_command_not_allowed(self, skill_func_tool):
         """Test executing command not in allowed patterns."""

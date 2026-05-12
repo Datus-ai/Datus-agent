@@ -32,7 +32,7 @@ class TestSkillConfig:
         # produce a path that exists on this checkout — and it must come last
         # so user overrides win.
         builtin = _builtin_skills_dir()
-        assert builtin is not None, "datus/resources/skills must resolve in the test env"
+        assert isinstance(builtin, str), "datus/resources/skills must resolve in the test env"
         assert config.directories[-1] == builtin
         assert config.warn_duplicates is True
         assert config.whitelist_from_compaction is True
@@ -64,7 +64,7 @@ class TestSkillConfig:
     def test_skill_config_from_dict_does_not_double_add_builtin(self):
         """If the user already includes the packaged dir, from_dict must not duplicate it."""
         builtin = _builtin_skills_dir()
-        assert builtin is not None
+        assert isinstance(builtin, str)
         config = SkillConfig.from_dict({"directories": [builtin, "/other"]})
         assert config.directories.count(builtin) == 1
 

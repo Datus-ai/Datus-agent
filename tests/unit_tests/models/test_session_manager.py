@@ -23,7 +23,6 @@ NO MOCK EXCEPT LLM. All objects are real backed by real SQLite in tmp_path.
 import json
 import os
 import sqlite3
-import time
 import uuid
 from types import SimpleNamespace
 
@@ -122,7 +121,7 @@ class TestSessionManagerInit:
         followed by a separator) instead of a strict ``endswith``.
         """
         assert os.path.isdir(sm.session_dir)
-        assert f"{os.sep}sessions{os.sep}" in sm.session_dir or sm.session_dir.endswith("sessions")
+        assert os.path.basename(os.path.dirname(sm.session_dir)) == "sessions"
 
     def test_init_sessions_cache_is_empty(self, sm):
         """SessionManager starts with an empty session cache."""
@@ -318,8 +317,9 @@ class TestSessionManagerExecution:
         old_path = os.path.join(sm.session_dir, "old-session.db")
         os.utime(old_path, (1000000, 1000000))
 
-        time.sleep(0.05)  # Ensure different mtime
         sm.get_session("new-session")
+        new_path = os.path.join(sm.session_dir, "new-session.db")
+        os.utime(new_path, (1000100, 1000100))
 
         result = sm.list_sessions(sort_by_modified=True)
         assert len(result) == 2
@@ -1093,7 +1093,7 @@ class TestSessionManagerCustomDir:
             # Default lives under the project-sharded ``sessions/{project_name}/``
             # tree. Assert the path contains the ``sessions`` segment and the
             # directory exists; sharding appends a project subdir after it.
-            assert f"{os.sep}sessions{os.sep}" in manager.session_dir or manager.session_dir.endswith("sessions")
+            assert os.path.basename(os.path.dirname(manager.session_dir)) == "sessions"
             assert os.path.isdir(manager.session_dir)
         finally:
             manager.close_all_sessions()
@@ -1314,7 +1314,7 @@ class TestParseOutputFromAction:
 
         result = SessionManager._parse_final_output([action], group)
 
-        assert result is not None
+        assert isinstance(result, ActionHistory)
         assert result.role == ActionRole.ASSISTANT
         assert result.status == ActionStatus.SUCCESS
         assert group["sql"] == "SELECT * FROM t"
@@ -1370,7 +1370,7 @@ class TestParseOutputFromAction:
 
         # Tool action is last, but assistant action should be found
         result = SessionManager._parse_final_output([assistant_action, tool_action], group)
-        assert result is not None
+        assert isinstance(result, ActionHistory)
         assert group["sql"] == "SELECT 1"
         assert group["content"] == "result"
 

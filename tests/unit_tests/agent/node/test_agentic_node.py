@@ -20,6 +20,7 @@ from datus.agent.node.agentic_node import AgenticNode
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.base import BaseInput, BaseResult
+from datus.schemas.token_usage import TokenUsage
 
 _UNSET = object()
 
@@ -114,7 +115,7 @@ class TestGetNodeName:
         node = _make_node()
         name = node.get_node_name()
         assert isinstance(name, str)
-        assert len(name) > 0
+        assert name == "_concrete"
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +260,7 @@ class TestSetupInputAgenticNode:
         wf.context.metrics = []
         node.setup_input(wf)
 
-        assert node.input is not None
+        assert isinstance(node.input, BaseInput)
 
 
 # ---------------------------------------------------------------------------
@@ -407,7 +408,6 @@ class TestSetupPermissionManager:
         node, user_config = self._setup_node(execution_mode="workflow")
         node._setup_permission_manager()
 
-        assert node.permission_manager is not None
         assert node.permission_manager.active_profile == "dangerous"
         # The custom user rule must NOT leak into workflow-mode managers.
         assert not any(rule.tool == "custom_marker_tool" for rule in node.permission_manager.global_config.rules), (
@@ -422,7 +422,6 @@ class TestSetupPermissionManager:
         node, user_config = self._setup_node(execution_mode="interactive")
         node._setup_permission_manager()
 
-        assert node.permission_manager is not None
         # ``normal`` is the user's configured profile, NOT clobbered by the
         # workflow override path.
         assert node.permission_manager.active_profile == "normal"
@@ -1162,8 +1161,7 @@ class TestGetOrCreateSession:
         # session_id is None - should be generated
 
         session, _ = node._get_or_create_session()
-        assert node.session_id is not None
-        assert "_session_" in node.session_id
+        assert node.session_id.startswith("_simple_session_")
 
     def test_summary_is_no_longer_returned_via_get_or_create_session(self):
         """Compacted summary now lives inside the session history itself, not
@@ -1237,7 +1235,7 @@ class TestSetupInput:
 
         result = node.setup_input(workflow)
         assert result["success"] is True
-        assert node.input is not None
+        assert isinstance(node.input, BaseInput)
 
     def test_populates_fields_when_input_has_them(self):
         node = _make_simple_node()
@@ -1252,7 +1250,7 @@ class TestSetupInput:
 
         node.setup_input(workflow)
         # Verify setup_input populated the node's input
-        assert node.input is not None
+        assert isinstance(node.input, BaseInput)
 
 
 # ---------------------------------------------------------------------------
@@ -1291,7 +1289,8 @@ class TestExecuteSync:
         node = _make_simple_node()
         result = node.execute()
         # The simple node yields success action
-        assert result is not None
+        assert isinstance(result, BaseResult)
+        assert result.success is True
 
 
 # ---------------------------------------------------------------------------
@@ -1432,7 +1431,7 @@ class TestGetLastTurnUsage:
         )
         node.actions = [action]
         result = asyncio.run(node.get_last_turn_usage())
-        assert result is not None
+        assert isinstance(result, TokenUsage)
         assert result.input_tokens == 1000
         assert result.output_tokens == 200
         assert result.cached_tokens == 500
@@ -1459,7 +1458,7 @@ class TestGetLastTurnUsage:
         )
         node.actions = [action]
         result = asyncio.run(node.get_last_turn_usage())
-        assert result is not None
+        assert isinstance(result, TokenUsage)
         assert result.session_total_tokens == 1000
 
     def test_skips_tool_actions(self):
@@ -1483,7 +1482,7 @@ class TestGetLastTurnUsage:
         node.actions = [assistant_action, tool_action]
         result = asyncio.run(node.get_last_turn_usage())
         # Should find the assistant action even though tool action is last
-        assert result is not None
+        assert isinstance(result, TokenUsage)
         assert result.input_tokens == 500
 
     def test_ignores_sub_agent_usage(self):
@@ -1508,7 +1507,7 @@ class TestGetLastTurnUsage:
         )
         node.actions = [root_action, sub_agent_action]
         result = asyncio.run(node.get_last_turn_usage())
-        assert result is not None
+        assert isinstance(result, TokenUsage)
         assert result.input_tokens == 500  # root action, not sub-agent
 
     def test_scoped_to_current_turn(self):
@@ -1556,7 +1555,7 @@ class TestGetLastTurnUsage:
         )
         node.actions = [action]
         result = asyncio.run(node.get_last_turn_usage())
-        assert result is not None
+        assert isinstance(result, TokenUsage)
         assert result.context_length == 0
 
 

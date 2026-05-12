@@ -43,7 +43,7 @@ class TestSchemaLinkingInput:
             SchemaLinkingInput(input_text="test", max_num_tables="111", database_type=DBType.SQLITE, database_name="")
 
 
-class TestSqlTask:
+class TestInputResultSqlTask:
     def test_initialization(self):
         task = SqlTask(
             id="123",
@@ -210,7 +210,7 @@ class TestSchemaLinkingResult:
         assert deserialized.table_values[0].table_name == "test_table"
 
 
-class TestGenerateSQLResult:
+class TestInputResultGenerateSQLResult:
     def test_initialization(self):
         result = GenerateSQLResult(
             success=True,
@@ -233,7 +233,7 @@ class TestGenerateSQLResult:
         assert result.sql_query == "SELECT * FROM test"
 
 
-class TestExecuteSQLResult:
+class TestInputResultExecuteSQLResult:
     def test_compact_result(self):
         result = ExecuteSQLResult(
             success=True,
@@ -249,18 +249,18 @@ class TestExecuteSQLResult:
 class TestReflectionInput:
     def test_validation(self):
         task = SqlTask(task="test")
-        print(task)
         gen_result = GenerateSQLResult(
             success=True,
             sql_query="SELECT * FROM test",
             tables=["test_table"],
             explanation="test explanation",
         )
-        print(gen_result)
         exec_result = ExecuteSQLResult(
             success=True, sql_query="SELECT * FROM test", row_count=1, sql_return="test result"
         )
-        print(exec_result)
+        assert task.task == "test"
+        assert gen_result.sql_query == "SELECT * FROM test"
+        assert exec_result.row_count == 1
         # input = ReflectionInput(
         #     task_description=task,
         #     sql_generation_result=gen_result,

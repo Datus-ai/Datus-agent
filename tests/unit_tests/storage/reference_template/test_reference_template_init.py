@@ -82,7 +82,7 @@ class TestInitReferenceTemplateEmptyDir:
         assert result["status"] == "success"
         assert result["valid_entries"] == 0
         assert result["processed_entries"] == 0
-        assert "empty" in result["message"].lower() or "no" in result["message"].lower()
+        assert result["message"] == "reference_template storage initialized (empty - no --template_dir provided)"
 
     def test_empty_template_dir_none(self):
         from datus.storage.reference_template.reference_template_init import init_reference_template
@@ -809,7 +809,7 @@ class TestInitReferenceTemplateAsyncProcessing:
 
         assert result["status"] == "success"
         assert result["processed_entries"] == 0
-        assert result["process_errors"] is not None
+        assert "Template processing returned no result" in result["process_errors"]
 
     @pytest.mark.asyncio
     async def test_processing_exception_recorded(self, tmp_path):
@@ -865,7 +865,6 @@ class TestInitReferenceTemplateAsyncProcessing:
             )
 
         assert result["status"] == "success"
-        assert result["process_errors"] is not None
         assert "Storage write failed" in result["process_errors"]
 
     @pytest.mark.asyncio

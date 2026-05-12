@@ -81,7 +81,7 @@ class TestReadTemplate:
 
         html = _read_template()
         assert isinstance(html, str)
-        assert len(html) > 0
+        assert html.lstrip().startswith("<!DOCTYPE html>")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -146,7 +146,7 @@ class TestCreateWebApp:
 
             # Check that /chatbot-assets route was mounted
             route_paths = [r.path for r in app.routes if hasattr(r, "path")]
-            assert "/chatbot-assets" in route_paths or any("/chatbot-assets" in str(r) for r in app.routes)
+            assert "/chatbot-assets" in route_paths
 
     def test_uses_cdn_when_no_chatbot_dist(self):
         """Without --chatbot-dist, should use CDN URLs in rendered HTML."""
@@ -205,7 +205,7 @@ class TestCreateWebApp:
             mock_create_app.return_value = FastAPI()
             app = create_web_app(args)
 
-            assert app is not None
+            assert isinstance(app, FastAPI)
             mock_logger.warning.assert_called_once()
 
     def test_falls_back_to_cdn_when_dist_incomplete(self, tmp_path):
@@ -265,7 +265,7 @@ class TestCreateWebApp:
 
             # Find the root route handler
             root_routes = [r for r in app.routes if hasattr(r, "path") and r.path == "/"]
-            assert len(root_routes) > 0
+            assert [r.path for r in root_routes] == ["/"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════

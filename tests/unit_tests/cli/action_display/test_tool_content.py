@@ -213,7 +213,7 @@ class TestFormatOutputVerbose:
 
     def test_raw_output_non_dict_parsed(self):
         lines = format_output_verbose({"raw_output": "[1]"})
-        assert lines == ["output: [1, 2]"] or "output:" in lines[0]
+        assert lines == ["output: [1]"]
 
     def test_multiline_value(self):
         lines = format_output_verbose({"key": "a\nb"})
@@ -299,7 +299,7 @@ class TestBuildListTables:
         )
         tc = _build_list_tables(a, verbose=True)
         assert len(tc.args_lines) == 1
-        assert len(tc.output_lines) > 0
+        assert tc.output_lines == ["[bold]type[/bold]: table, [bold]name[/bold]: t1"]
         # Should not contain success/error metadata
         assert not any("success" in line.lower() for line in tc.output_lines)
         assert tc.output_preview == ""
@@ -468,7 +468,7 @@ class TestToolCallContentBuilderDefault:
         assert len(tc.args_lines) >= 1
         assert any("sql" in line for line in tc.args_lines)
         assert any("SELECT 1" in line for line in tc.args_lines)
-        assert len(tc.output_lines) > 0
+        assert tc.output_lines == ["[bold]ok[/bold]: True"]
         assert tc.output_preview == ""
 
 
@@ -665,7 +665,7 @@ class TestFormatReadQueryOutputVerbose:
     def test_unparseable_falls_back_to_generic(self):
         """Verify unparseable output falls back to format_output_verbose."""
         lines = _format_read_query_output_verbose("not json")
-        assert len(lines) > 0
+        assert lines == ["output: not json"]
 
 
 # ── _format_describe_table_output_verbose ─────────────────────────
@@ -780,7 +780,7 @@ class TestFormatGetTableDdlOutputVerbose:
     def test_unparseable_falls_back(self):
         """Verify unparseable output falls back to generic format."""
         lines = _format_get_table_ddl_output_verbose("not json")
-        assert len(lines) > 0
+        assert lines == ["output: not json"]
 
 
 # ── _build_get_table_ddl ──────────────────────────────────────────
@@ -1024,7 +1024,7 @@ class TestFormatResultOnlyMarkup:
 
     def test_unparseable_falls_back(self):
         lines = _format_result_only_markup("not json")
-        assert len(lines) > 0
+        assert lines == ["output: not json"]
 
 
 @pytest.mark.ci
@@ -1076,7 +1076,7 @@ class TestBuildSimpleList:
         )
         tc = _build_simple_list(a, verbose=True, unit="items")
         assert len(tc.args_lines) >= 1
-        assert len(tc.output_lines) > 0
+        assert tc.output_lines == ["a"]
 
 
 @pytest.mark.ci

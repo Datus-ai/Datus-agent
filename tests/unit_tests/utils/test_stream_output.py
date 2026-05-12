@@ -16,7 +16,8 @@ NO MOCK EXCEPT LLM. All objects under test are real implementations.
 from io import StringIO
 
 import pytest
-from rich.console import Console
+from rich.console import Console, Group
+from rich.progress import Progress
 
 from datus.utils.stream_output import StreamOutputManager, create_stream_output_manager
 
@@ -164,8 +165,7 @@ class TestStreamOutputEdgeCases:
         console = Console(force_terminal=True, width=120)
         mgr = StreamOutputManager(console)
         mgr.success("Operation completed")
-        # success calls add_message which appends to messages deque
-        assert len(mgr.messages) >= 0  # Messages may or may not be stored depending on state
+        assert list(mgr.messages) == [("✓ Operation completed", "green")]
 
     def test_render_with_last_n_limits_output(self):
         """render_markdown_summary with last_n limits displayed summaries."""
@@ -191,17 +191,17 @@ class TestCreateProgress:
         mgr = StreamOutputManager(_console())
         p = mgr._create_progress(1)
         # Spinner-only mode has fewer columns
-        assert p is not None
+        assert isinstance(p, Progress)
 
     def test_zero_items_returns_spinner_only(self):
         mgr = StreamOutputManager(_console())
         p = mgr._create_progress(0)
-        assert p is not None
+        assert isinstance(p, Progress)
 
     def test_multi_item_returns_progress_with_bar(self):
         mgr = StreamOutputManager(_console())
         p = mgr._create_progress(5)
-        assert p is not None
+        assert isinstance(p, Progress)
 
 
 class TestStartStop:
@@ -231,7 +231,9 @@ class TestStartStop:
     def test_stop_when_not_running_is_safe(self):
         """stop() on a manager that was never started should not raise."""
         mgr = StreamOutputManager(_console())
-        mgr.stop()  # Should not raise
+        mgr.stop()
+        assert mgr._is_running is False
+        assert mgr.live is None
 
     def test_start_with_custom_description(self):
         mgr = StreamOutputManager(_console())
@@ -246,22 +248,32 @@ class TestUpdateProgress:
     def test_update_progress_no_active_progress(self):
         """Calling update_progress when progress is None should not raise."""
         mgr = StreamOutputManager(_console())
-        mgr.update_progress(advance=1)  # should be a no-op
+        mgr.update_progress(advance=1)
+        assert mgr.progress is None
+        assert mgr.progress_task is None
 
     def test_update_progress_with_description(self):
         mgr = StreamOutputManager(_console())
         mgr.start(5)
         mgr.update_progress(advance=1, description="Step 1")
+        task = next(iter(mgr.progress.tasks))
+        assert task.completed == 1
+        assert task.description == "Step 1"
         mgr.stop()
 
     def test_set_progress_no_active_progress(self):
         mgr = StreamOutputManager(_console())
-        mgr.set_progress(3)  # no-op
+        mgr.set_progress(3)
+        assert mgr.progress is None
+        assert mgr.progress_task is None
 
     def test_set_progress_with_description(self):
         mgr = StreamOutputManager(_console())
         mgr.start(10)
         mgr.set_progress(5, description="Halfway")
+        task = next(iter(mgr.progress.tasks))
+        assert task.completed == 5
+        assert task.description == "Halfway"
         mgr.stop()
 
 
@@ -288,7 +300,7 @@ class TestFileManagement:
     def test_start_file_with_total_items_adds_message(self):
         mgr = StreamOutputManager(_console())
         mgr.start_file("file.db", total_items=10)
-        assert len(mgr.messages) > 0
+        assert list(mgr.messages) == [("Processing 10 items...", "cyan")]
 
     def test_complete_file_clears_current_file(self):
         mgr = StreamOutputManager(_console())
@@ -417,7 +429,7 @@ class TestRender:
 
         mgr = StreamOutputManager(_console())
         result = mgr._render()
-        assert result is not None
+        assert isinstance(result, Group)
 
     def test_render_with_all_fields_set(self):
         mgr = StreamOutputManager(_console())
@@ -426,13 +438,13 @@ class TestRender:
         mgr.current_task = "[1] My Task"
         mgr.add_message("msg1")
         result = mgr._render()
-        assert result is not None
+        assert isinstance(result, Group)
         mgr.stop()
 
     def test_render_no_progress_excludes_progress_bar(self):
         mgr = StreamOutputManager(_console(), show_progress=False)
         result = mgr._render()
-        assert result is not None
+        assert isinstance(result, Group)
 
 
 class TestTaskContext:

@@ -173,8 +173,8 @@ class TestStoreBatchSplitting:
         """Calling store_batch with empty list should be a no-op."""
         store = self._make_store(tmp_path)
         store.store_batch([])
-        # Table may not even be initialized since we did nothing
-        # No exception should be raised
+        assert store._shared.initialized is False
+        assert store.table is None
 
     def test_store_batch_single_item(self, tmp_path):
         """A single-item batch should store correctly."""
@@ -250,7 +250,7 @@ class TestTruncate:
         # Force table initialization
         store._ensure_table_ready()
         assert store._shared.initialized is True
-        assert store.table is not None
+        assert store.table_name in store.db.table_names()
 
         store.truncate()
         assert store.table is None
@@ -313,7 +313,8 @@ class TestUpsertWithRetry:
         """upsert_batch with empty data is a no-op."""
         store = self._make_store(tmp_path)
         store.upsert_batch([], on_column="identifier")
-        # No exception should be raised
+        assert store._shared.initialized is False
+        assert store.table is None
 
     def test_upsert_batch_deduplicates_input_in_memory(self, tmp_path):
         """upsert_batch deduplicates input data by on_column before sending to backend."""
@@ -469,7 +470,7 @@ class TestEnsureTableReady:
         assert store._shared.initialized is False
         store._ensure_table_ready()
         assert store._shared.initialized is True
-        assert store.table is not None
+        assert store.table_name in store.db.table_names()
 
     def test_ensure_table_ready_idempotent(self, tmp_path):
         """Calling _ensure_table_ready twice doesn't cause errors."""
@@ -506,14 +507,17 @@ class TestUpdate:
         """update() with empty update_values does nothing."""
         store = self._make_store(tmp_path)
         store.store_batch([self._make_row(1)])
-        # No error, no-op
         store.update(where=eq("identifier", "id_1"), update_values={})
+        result = store.query_with_filter(where=eq("identifier", "id_1"), select_fields=["definition"])
+        assert result.column("definition")[0].as_py() == "CREATE TABLE table_1 (id INT)"
 
     def test_update_no_where_is_noop(self, tmp_path):
         """update() with no where clause does nothing."""
         store = self._make_store(tmp_path)
         store.store_batch([self._make_row(1)])
         store.update(where=None, update_values={"definition": "new def"})
+        result = store.query_with_filter(where=eq("identifier", "id_1"), select_fields=["definition"])
+        assert result.column("definition")[0].as_py() == "CREATE TABLE table_1 (id INT)"
 
     def test_update_with_unique_filter_conflict(self, tmp_path):
         """update() with unique_filter raises when conflicting rows exist."""
@@ -585,7 +589,7 @@ class TestUpdate:
 
         # Vector must be unchanged — never overwritten with None
         assert updated_vector == original_vector
-        assert updated_vector is not None
+        assert isinstance(updated_vector, list)
 
     def test_update_keeps_existing_vector_when_re_embed_raises(self, tmp_path, monkeypatch):
         """If the embedding model raises, the update still proceeds and the existing vector is kept."""
@@ -696,8 +700,8 @@ class TestCreateFtsIndex:
                 }
             ]
         )
-        # Should not raise
         store.create_fts_index(["definition"])
+        assert store.table_size() == 1
 
     def test_create_fts_index_with_multiple_fields(self, tmp_path):
         """create_fts_index with multiple fields should not raise."""
@@ -716,6 +720,7 @@ class TestCreateFtsIndex:
             ]
         )
         store.create_fts_index(["database_name", "schema_name", "table_name", "definition"])
+        assert store.table_size() == 1
 
 
 # ---------------------------------------------------------------------------

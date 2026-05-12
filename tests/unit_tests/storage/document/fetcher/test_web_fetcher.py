@@ -349,7 +349,6 @@ class TestFetchPage:
         f._client.get.return_value = mock_response
 
         result = f._fetch_page("https://example.com/docs/page", 1, "example.com", "1.0")
-        assert result is not None
         doc, links = result
         assert doc.platform == "testplatform"
         assert doc.version == "1.0"
@@ -385,7 +384,8 @@ class TestFetchPage:
         f._client.get.return_value = mock_response
 
         result = f._fetch_page("https://example.com/page", 0, "example.com", "1.0")
-        assert result is not None
+        doc, links = result
+        assert doc.metadata["title"] == "XHTML"
 
     def test_fetch_page_404_returns_none(self):
         """404 errors should return None."""
@@ -448,7 +448,6 @@ class TestFetchPage:
         f._client.get.return_value = mock_response
 
         result = f._fetch_page("https://example.com/docs/", 0, "example.com", "1.0")
-        assert result is not None
         doc, _ = result
         assert doc.doc_path == "/docs/index.html"
 

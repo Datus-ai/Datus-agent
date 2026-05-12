@@ -275,7 +275,7 @@ class TestGenerateSkillsXml:
         assert "<available_skills>" in xml
         assert "</available_skills>" in xml
         # Must explicitly mark the block as empty.
-        assert "(none)" in xml or "no skills" in xml.lower()
+        assert "(none)" in xml
         # Must warn that subagent names are NOT skill names.
         assert "subagent" in xml.lower() and "not" in xml.lower()
 
@@ -288,7 +288,7 @@ class TestGenerateSkillsXml:
         manager = SkillManager(registry=registry)
         xml = manager.generate_available_skills_xml("node")
         assert "sql-opt" in xml
-        assert "exhaustive" in xml.lower() or "only load" in xml.lower()
+        assert "exhaustive" in xml.lower()
 
     def test_generate_xml_escapes_injection_in_description(self):
         """A malicious skill description cannot close the block early or
@@ -415,7 +415,7 @@ class TestUtilityMethods:
         registry.get_skill_count.return_value = 1
         registry.get_skill.return_value = _make_skill()
         manager = SkillManager(registry=registry)
-        assert manager.get_skill("test-skill") is not None
+        assert manager.get_skill("test-skill").name == "test-skill"
 
     def test_refresh(self):
         registry = MagicMock()

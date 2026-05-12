@@ -736,7 +736,6 @@ class TestBatchSplitting:
 
         assert ok is True
         assert err == ""
-        assert result is not None
         assert len(result["metrics"]) == 3
 
     @pytest.mark.asyncio
@@ -773,7 +772,6 @@ class TestBatchSplitting:
 
         assert ok is True
         assert "batch 2" in err
-        assert result is not None
         assert len(result["metrics"]) == 2
         assert "m0" in result["metrics"]
         assert "m2" in result["metrics"]

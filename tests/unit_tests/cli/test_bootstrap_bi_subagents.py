@@ -149,7 +149,6 @@ def test_write_chart_sql_files_groups_by_chart_and_writes_comments(tmp_path: Pat
         SelectedSqlCandidate(chart_id=2, chart_name="B", description=None, sql="select 3"),
     ]
     out = write_chart_sql_files(sqls, platform="superset", dashboard_name="Sales", agent_config=cfg)
-    assert out is not None
     text = out.read_text(encoding="utf-8")
     # Comment + trailing semicolon normalization.
     assert "-- Dashboard=Sales;" in text

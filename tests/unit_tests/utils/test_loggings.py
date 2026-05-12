@@ -27,8 +27,6 @@ def logger(setup_logging):
 def test_log_context(logger):
     """Test log context manager"""
 
-    print("=== Test log context manager ===")
-
     # Default output
     logger.info("Default configuration log")
 
@@ -44,12 +42,12 @@ def test_log_context(logger):
     logger.info("This log will be output to both file and console (restored)")
 
     # Use context manager to temporarily output to file only
-    print("=== Output to file only ===")
     with log_context("file"):
+        log_manager = get_log_manager()
         root_logger = logging.getLogger()
         # In file-only mode no StreamHandler for stdout should be active
         active_handlers = root_logger.handlers
-        assert len(active_handlers) > 0, "Expected at least one handler (file) inside log_context('file')"
+        assert log_manager.file_handler in active_handlers, "Expected file handler inside log_context('file')"
         logger.info("This log will only be output to file (temporary)")
 
     # Restore default configuration after context ends
@@ -58,8 +56,6 @@ def test_log_context(logger):
 
 def test_log_manager(logger):
     """Test log manager"""
-
-    print("=== Test log manager ===")
 
     # Get log manager
     log_manager = get_log_manager()
@@ -87,8 +83,6 @@ def test_log_manager(logger):
 def test_multiple_switches(logger):
     """Test multiple switches between different output targets"""
 
-    print("=== Test multiple switches ===")
-
     log_manager = get_log_manager()
     root_logger = logging.getLogger()
 
@@ -112,14 +106,13 @@ def test_multiple_switches(logger):
 
     # After both contexts exit, handlers should be restored
     handlers_after = set(root_logger.handlers)
-    assert len(handlers_after) > 0, "Handlers should be restored after context exit"
+    assert log_manager.file_handler in handlers_after, "file_handler should be restored after context exit"
+    assert log_manager.console_handler in handlers_after, "console_handler should be restored after context exit"
     logger.info("Final log: should be both file and console")
 
 
 def test_simple_context(logger):
     """Test simple context manager to verify no deadlock"""
-
-    print("=== Test simple context manager ===")
 
     log_manager = get_log_manager()
     root_logger = logging.getLogger()
@@ -142,8 +135,6 @@ def test_simple_context(logger):
 
 def test_nested_context(logger):
     """Test nested context managers"""
-
-    print("=== Test nested context managers ===")
 
     log_manager = get_log_manager()
     root_logger = logging.getLogger()
@@ -318,7 +309,7 @@ class TestGetLogManager:
             loggings_module._log_manager = None
             with patch.object(loggings_module, "_is_source_environment", return_value=True):
                 mgr = loggings_module.get_log_manager()
-            assert mgr is not None
+            assert isinstance(mgr, loggings_module.DynamicLogManager)
         finally:
             loggings_module._log_manager = original
 
@@ -380,7 +371,7 @@ class TestConfigureLogging:
 
         with patch.object(loggings_module, "_is_source_environment", return_value=True):
             mgr = loggings_module.configure_logging()
-        assert mgr is not None
+        assert isinstance(mgr, loggings_module.DynamicLogManager)
 
     def test_configure_logging_non_source_env_uses_agent_config_path_manager(self, tmp_path):
         import datus.utils.loggings as loggings_module
@@ -454,7 +445,7 @@ class TestGetCurrentLogFile:
 
         configure_logging(log_dir=str(tmp_path / "logs"))
         result = _get_current_log_file()
-        assert result is None or isinstance(result, Path)
+        assert result == Path(get_log_manager().file_handler.baseFilename).resolve()
 
     def test_returns_none_when_no_log_manager(self):
         import datus.utils.loggings as loggings_module
@@ -574,9 +565,8 @@ class TestSetupWebChatbotLogging:
         agent_config = SimpleNamespace(path_manager=path_manager)
 
         with patch.object(loggings_module, "_is_source_environment", return_value=False):
-            result = loggings_module.setup_web_chatbot_logging(agent_config=agent_config)
+            loggings_module.setup_web_chatbot_logging(agent_config=agent_config)
 
-        assert result is not None  # no isinstance check — verifying path_manager integration
         assert path_manager.logs_dir.exists()
         assert any(path_manager.logs_dir.glob("web_chatbot.*.log"))
 

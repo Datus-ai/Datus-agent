@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta
 
-from datus.api.models.cli_models import SSEDataType
+from datus.api.models.cli_models import IMessageContent, SSEDataType, SSEEvent
 from datus.api.services.action_sse_converter import (
     _build_error_content,
     _build_interaction_content,
@@ -34,6 +34,17 @@ def _make_action(**overrides) -> ActionHistory:
     }
     defaults.update(overrides)
     return ActionHistory(**defaults)
+
+
+def _assert_content_list(contents):
+    assert isinstance(contents, list)
+    assert isinstance(contents[0], IMessageContent)
+    return contents
+
+
+def _assert_sse_event(event):
+    assert isinstance(event, SSEEvent)
+    return event
 
 
 # ------------------------------------------------------------------
@@ -386,8 +397,9 @@ class TestBuildThinkingContent:
             output={"response": "Analysis complete"},
         )
         contents = _build_thinking_content(action)
-        assert contents is not None
-        assert len(contents) >= 1
+        contents = _assert_content_list(contents)
+        assert contents[0].type == "thinking"
+        assert contents[0].payload["content"] == "Analysis complete"
 
     def test_no_output_returns_messages(self):
         """Empty output falls back to messages."""
@@ -406,7 +418,7 @@ class TestBuildThinkingContent:
             output={"response": json_str},
         )
         contents = _build_thinking_content(action)
-        assert contents is not None
+        contents = _assert_content_list(contents)
         # Should have code block for SQL and markdown for output
         types = [c.type for c in contents]
         assert "code" in types
@@ -422,7 +434,7 @@ class TestBuildThinkingContent:
             output={"raw_output": json_str},
         )
         contents = _build_thinking_content(action)
-        assert contents is not None
+        contents = _assert_content_list(contents)
         types = [c.type for c in contents]
         assert "code" in types
 
@@ -433,7 +445,7 @@ class TestBuildThinkingContent:
             output={"response": "plain text analysis"},
         )
         contents = _build_thinking_content(action)
-        assert contents is not None
+        contents = _assert_content_list(contents)
         assert contents[0].type == "thinking"
 
     def test_output_empty_dict_values(self):
@@ -579,7 +591,7 @@ class TestBuildInteractionResultContent:
         """Interaction result with content returns markdown."""
         action = _make_action(output={"content": "User selected db1"})
         contents = _build_interaction_result_content(action)
-        assert contents is not None
+        contents = _assert_content_list(contents)
         assert len(contents) == 1
         assert contents[0].type == "markdown"
         assert contents[0].payload["content"] == "User selected db1"
@@ -613,7 +625,7 @@ class TestActionToSSEEvent:
             output={"error": "Timeout"},
         )
         event = action_to_sse_event(action, event_id=1, message_id="msg-1")
-        assert event is not None
+        event = _assert_sse_event(event)
         assert event.id == 1
         assert event.event == "message"
         assert event.data.type == SSEDataType.CREATE_MESSAGE
@@ -635,7 +647,7 @@ class TestActionToSSEEvent:
             output={"error": "syntax error", "summary": "failed"},
         )
         event = action_to_sse_event(action, event_id=40, message_id="msg-40")
-        assert event is not None
+        event = _assert_sse_event(event)
         content = event.data.payload.content[0]
         assert content.type == "call-tool-result"
         assert content.payload["callToolId"] == "tool-99"
@@ -653,7 +665,7 @@ class TestActionToSSEEvent:
             messages="connection lost",
         )
         event = action_to_sse_event(action, event_id=41, message_id="msg-41")
-        assert event is not None
+        event = _assert_sse_event(event)
         content = event.data.payload.content[0]
         assert content.type == "call-tool-result"
         assert content.payload["error"] == "connection lost"
@@ -666,7 +678,7 @@ class TestActionToSSEEvent:
             input={"function_name": "list_tables", "arguments": {}},
         )
         event = action_to_sse_event(action, event_id=2, message_id="msg-2")
-        assert event is not None
+        event = _assert_sse_event(event)
         assert event.data.payload.content[0].type == "call-tool"
 
     def test_tool_success_produces_call_tool_result(self):
@@ -678,7 +690,7 @@ class TestActionToSSEEvent:
             output={"raw_output": "data"},
         )
         event = action_to_sse_event(action, event_id=3, message_id="msg-3")
-        assert event is not None
+        event = _assert_sse_event(event)
         assert event.data.payload.content[0].type == "call-tool-result"
 
     def test_tool_success_non_dict_output(self):
@@ -690,7 +702,7 @@ class TestActionToSSEEvent:
             output="plain string result",
         )
         event = action_to_sse_event(action, event_id=30, message_id="msg-30")
-        assert event is not None
+        event = _assert_sse_event(event)
         content = event.data.payload.content[0]
         assert content.type == "call-tool-result"
         assert content.payload["result"] == {"success": 1, "result": "plain string result"}
@@ -706,7 +718,7 @@ class TestActionToSSEEvent:
         """USER role produces markdown content when include_user_message=True."""
         action = _make_action(role=ActionRole.USER, input={"user_message": "Hello"})
         event = action_to_sse_event(action, event_id=5, message_id="msg-5", include_user_message=True)
-        assert event is not None
+        event = _assert_sse_event(event)
         assert event.data.payload.role == "user"
         assert event.data.payload.content[0].type == "markdown"
 
@@ -729,7 +741,7 @@ class TestActionToSSEEvent:
             output={"response": "1 table: orders"},
         )
         event = action_to_sse_event(action, event_id=6, message_id="msg-6", include_final_response=True)
-        assert event is not None
+        event = _assert_sse_event(event)
         assert event.data.payload.content[0].type == "markdown"
         assert event.data.payload.content[0].payload == {"content": "1 table: orders"}
 
@@ -742,7 +754,7 @@ class TestActionToSSEEvent:
             output={"raw_output": "Hello from the model", "is_thinking": False},
         )
         event = action_to_sse_event(action, event_id=6, message_id="msg-6")
-        assert event is not None
+        event = _assert_sse_event(event)
         content = event.data.payload.content[0]
         assert content.type == "markdown"
         assert content.payload == {"content": "Hello from the model"}
@@ -767,7 +779,7 @@ class TestActionToSSEEvent:
             input={"contents": ["Pick one"], "choices": [{}], "default_choices": [""]},
         )
         event = action_to_sse_event(action, event_id=7, message_id="msg-7")
-        assert event is not None
+        event = _assert_sse_event(event)
         assert event.data.payload.content[0].type == "user-interaction"
 
     def test_interaction_success_empty_returns_none(self):
@@ -791,7 +803,7 @@ class TestActionToSSEEvent:
             output={"response": "thinking"},
         )
         event = action_to_sse_event(action, event_id=9, message_id="msg-9")
-        assert event is not None
+        event = _assert_sse_event(event)
         assert "2025-06-15" in event.timestamp
 
     def test_thinking_content_returns_none_skips(self):
@@ -807,7 +819,7 @@ class TestActionToSSEEvent:
         # _build_thinking_content returns content with empty message (not None)
         event = action_to_sse_event(action, event_id=10, message_id="msg-10")
         # Should produce event (thinking with empty content) or None
-        assert event is None or event is not None
+        assert event is None
 
     def test_assistant_thinking_non_response_type(self):
         """Non-response assistant action produces thinking content."""
@@ -818,7 +830,8 @@ class TestActionToSSEEvent:
             output={"thinking": "Analyzing query..."},
         )
         event = action_to_sse_event(action, event_id=10, message_id="msg-10")
-        assert event is not None
+        event = _assert_sse_event(event)
+        assert event.data.payload.content[0].payload["content"] == "Analyzing query..."
 
     def test_depth_and_parent_action_id_forwarded(self):
         """depth=1 and parent_action_id are forwarded to SSEMessagePayload."""
@@ -830,7 +843,7 @@ class TestActionToSSEEvent:
             parent_action_id="parent-001",
         )
         event = action_to_sse_event(action, event_id=11, message_id="msg-11")
-        assert event is not None
+        event = _assert_sse_event(event)
         assert event.data.payload.depth == 1
         assert event.data.payload.parent_action_id == "parent-001"
 
@@ -842,7 +855,7 @@ class TestActionToSSEEvent:
             input={"function_name": "list_tables", "arguments": {}},
         )
         event = action_to_sse_event(action, event_id=12, message_id="msg-12")
-        assert event is not None
+        event = _assert_sse_event(event)
         assert event.data.payload.depth == 0
         assert event.data.payload.parent_action_id is None
 
@@ -855,7 +868,7 @@ class TestActionToSSEEvent:
             output={"subagent_type": "sql_gen", "tool_count": 3},
         )
         event = action_to_sse_event(action, event_id=13, message_id="msg-13")
-        assert event is not None
+        event = _assert_sse_event(event)
         assert len(event.data.payload.content) == 1
         content = event.data.payload.content[0]
         assert content.type == "subagent-complete"
@@ -874,7 +887,7 @@ class TestActionToSSEEvent:
             parent_action_id="parent-002",
         )
         event = action_to_sse_event(action, event_id=14, message_id="msg-14")
-        assert event is not None
+        event = _assert_sse_event(event)
         assert event.data.payload.depth == 1
         assert event.data.payload.parent_action_id == "parent-002"
 
@@ -887,7 +900,7 @@ class TestActionToSSEEvent:
             output="not a dict",
         )
         event = action_to_sse_event(action, event_id=15, message_id="msg-15")
-        assert event is not None
+        event = _assert_sse_event(event)
         content = event.data.payload.content[0]
         assert content.payload["subagentType"] == "unknown"
         assert content.payload["toolCount"] == 0
@@ -902,7 +915,7 @@ class TestActionToSSEEvent:
             end_time=None,
         )
         event = action_to_sse_event(action, event_id=16, message_id="msg-16")
-        assert event is not None
+        event = _assert_sse_event(event)
         assert event.data.payload.content[0].payload["duration"] == 0.0
 
     def test_thinking_delta_first_creates_message(self):
@@ -914,7 +927,7 @@ class TestActionToSSEEvent:
             output={"delta": "Hello ", "accumulated": "Hello "},
         )
         event = action_to_sse_event(action, event_id=20, message_id="msg-20", stream_thinking=True, is_first_delta=True)
-        assert event is not None
+        event = _assert_sse_event(event)
         assert event.event == "message"
         assert event.data.type == SSEDataType.CREATE_MESSAGE
         content = event.data.payload.content[0]
@@ -932,7 +945,7 @@ class TestActionToSSEEvent:
         event = action_to_sse_event(
             action, event_id=21, message_id="msg-21", stream_thinking=True, is_first_delta=False
         )
-        assert event is not None
+        event = _assert_sse_event(event)
         assert event.event == "message"
         assert event.data.type == SSEDataType.APPEND_MESSAGE
         content = event.data.payload.content[0]
@@ -959,7 +972,7 @@ class TestActionToSSEEvent:
             output={"delta": "", "accumulated": ""},
         )
         event = action_to_sse_event(action, event_id=22, message_id="msg-22", stream_thinking=True)
-        assert event is not None
+        event = _assert_sse_event(event)
         assert event.event == "message"
         assert event.data.type == SSEDataType.CREATE_MESSAGE  # is_first_delta defaults to True
         assert event.data.payload.content[0].payload["content"] == ""
@@ -973,7 +986,7 @@ class TestActionToSSEEvent:
             output="raw string",
         )
         event = action_to_sse_event(action, event_id=23, message_id="msg-23", stream_thinking=True)
-        assert event is not None
+        event = _assert_sse_event(event)
         assert event.event == "message"
         assert event.data.payload.content[0].payload["content"] == ""
 
@@ -988,7 +1001,7 @@ class TestActionToSSEEvent:
             parent_action_id="parent-003",
         )
         event = action_to_sse_event(action, event_id=24, message_id="msg-24", stream_thinking=True)
-        assert event is not None
+        event = _assert_sse_event(event)
         assert event.event == "message"
         assert event.data.payload.depth == 1
         assert event.data.payload.parent_action_id == "parent-003"
@@ -1002,7 +1015,7 @@ class TestActionToSSEEvent:
             output={"is_thinking": True, "thinking": "Full thinking content"},
         )
         event = action_to_sse_event(action, event_id=30, message_id="msg-30", stream_thinking=True, is_update=True)
-        assert event is not None
+        event = _assert_sse_event(event)
         assert event.data.type == SSEDataType.UPDATE_MESSAGE
 
     def test_thinking_response_default_create_message(self):
@@ -1014,7 +1027,7 @@ class TestActionToSSEEvent:
             output={"is_thinking": True, "thinking": "Full thinking content"},
         )
         event = action_to_sse_event(action, event_id=31, message_id="msg-31", stream_thinking=True)
-        assert event is not None
+        event = _assert_sse_event(event)
         assert event.data.type == SSEDataType.CREATE_MESSAGE
 
     def test_subagent_complete_failed_produces_subagent_complete_with_error(self):
@@ -1030,7 +1043,7 @@ class TestActionToSSEEvent:
             output={"error": "sub-agent timed out", "subagent_type": "explore", "tool_count": 3},
         )
         event = action_to_sse_event(action, event_id=17, message_id="msg-17")
-        assert event is not None
+        event = _assert_sse_event(event)
         content = event.data.payload.content[0]
         assert content.type == "subagent-complete"
         assert content.payload["subagentType"] == "explore"

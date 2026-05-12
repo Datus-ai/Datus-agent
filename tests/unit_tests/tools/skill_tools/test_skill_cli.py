@@ -488,11 +488,12 @@ class TestGetManager:
 
     def test_get_manager_default(self):
         from datus.cli.skill_cli import _get_manager
+        from datus.tools.skill_tools.skill_manager import SkillManager
 
         args = MagicMock()
         args.marketplace = None
         manager = _get_manager(args)
-        assert manager is not None
+        assert isinstance(manager, SkillManager)
 
     def test_get_manager_custom_marketplace(self):
         from datus.cli.skill_cli import _get_manager

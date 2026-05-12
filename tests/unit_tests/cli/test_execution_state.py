@@ -15,6 +15,7 @@ NO MOCK EXCEPT LLM. All classes under test are real implementations.
 """
 
 import asyncio
+from datetime import datetime
 
 import pytest
 
@@ -99,7 +100,7 @@ class TestPendingInteractionInit:
         assert pending.action_id == "test-id"
         assert pending.future is future
         assert pending.choices == [{"y": "Yes", "n": "No"}]
-        assert pending.created_at is not None
+        assert isinstance(pending.created_at, datetime)
         loop.close()
 
     def test_pending_interaction_created_at_auto_set(self):
@@ -108,10 +109,6 @@ class TestPendingInteractionInit:
         future = loop.create_future()
 
         pending = PendingInteraction(action_id="test-id-2", future=future, choices=[{}])
-
-        assert pending.created_at is not None
-        # created_at should be a datetime object
-        from datetime import datetime
 
         assert isinstance(pending.created_at, datetime)
         loop.close()

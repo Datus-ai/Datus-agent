@@ -1,5 +1,8 @@
 """Unit tests for SubjectTreeStore."""
 
+from datetime import datetime
+from unittest.mock import patch
+
 import pytest
 
 from datus.storage.subject_tree.store import SubjectTreeStore
@@ -19,13 +22,13 @@ class TestSubjectTreeStore:
         """Test creating root node."""
         node = store.create_node(None, "Finance", "Finance domain")
 
-        assert node["node_id"] is not None
+        assert node["node_id"] > 0
         assert node["name"] == "Finance"
         assert node["description"] == "Finance domain"
         assert node["parent_id"] is None
         assert store.get_full_path(node["node_id"]) == ["Finance"]
-        assert node["created_at"] is not None
-        assert node["updated_at"] is not None
+        assert datetime.strptime(node["created_at"], "%Y-%m-%d %H:%M:%S") <= datetime.now()
+        assert node["updated_at"] == node["created_at"]
 
     def test_create_child_node(self, store):
         """Test creating child node."""
@@ -90,8 +93,7 @@ class TestSubjectTreeStore:
             node = store.create_node(parent_id, f"Level{i}")
             parent_id = node["node_id"]
 
-        # Should succeed - no depth limit
-        assert parent_id is not None
+        assert store.get_full_path(parent_id) == [f"Level{i}" for i in range(20)]
 
     def test_get_node(self, store):
         """Test getting node by ID."""
@@ -99,7 +101,6 @@ class TestSubjectTreeStore:
 
         retrieved = store.get_node(created["node_id"])
 
-        assert retrieved is not None
         assert retrieved["node_id"] == created["node_id"]
         assert retrieved["name"] == "Finance"
         assert retrieved["description"] == "Finance domain"
@@ -118,7 +119,6 @@ class TestSubjectTreeStore:
         # Get by path
         retrieved = store.get_node_by_path(["Finance", "Revenue", "Q1"])
 
-        assert retrieved is not None
         assert retrieved["node_id"] == q1["node_id"]
         assert retrieved["name"] == "Q1"
 
@@ -237,7 +237,7 @@ class TestSubjectTreeStore:
         assert success is True
         assert store.get_node(revenue["node_id"]) is None
         assert store.get_node(q1["node_id"]) is None
-        assert store.get_node(finance["node_id"]) is not None
+        assert store.get_node(finance["node_id"])["name"] == "Finance"
 
     def test_delete_node_with_children_no_cascade_fails(self, store):
         """Test that deleting node with children fails without cascade."""
@@ -362,13 +362,7 @@ class TestSubjectTreeStore:
 
         tree = store.get_simple_tree_structure(finance["node_id"])
 
-        assert tree["Finance"] is not None
-        assert len(tree["Finance"]) == 1
-        assert tree["Finance"]["Revenue"] is not None
-        assert len(tree["Finance"]["Revenue"]) == 2
-
-        child_names = {c for c in tree["Finance"]["Revenue"]}
-        assert child_names == {"Q1", "Q2"}
+        assert tree == {"Finance": {"Revenue": {"Q1": {}, "Q2": {}}}}
 
     def test_get_tree_structure_empty(self, store):
         """Test getting tree structure when empty."""
@@ -420,7 +414,6 @@ class TestSubjectTreeStore:
 
         # Should succeed - no depth limit
         node_id = store.find_or_create_path(path)
-        assert node_id is not None
 
         node = store.get_node(node_id)
         assert node["name"] == "Level49"
@@ -490,7 +483,7 @@ class TestSubjectTreeStore:
         store.delete_node(revenue["node_id"], cascade=True)
         assert store.get_node(revenue["node_id"]) is None
         assert store.get_node(q1["node_id"]) is None
-        assert store.get_node(q2["node_id"]) is not None  # Still exists under Expense
+        assert store.get_full_path(q2["node_id"]) == ["Finance", "Expense", "Q2"]
 
         # Verify final state
         remaining = store.get_descendants(finance["node_id"])
@@ -516,7 +509,6 @@ class TestSubjectTreeStore:
         new_node = store.get_node_by_path(["Finance", "Revenue", "Quarter1"])
 
         assert old_node is None  # Old path no longer exists
-        assert new_node is not None  # New path exists
         assert new_node["name"] == "Quarter1"
         assert new_node["node_id"] == q1["node_id"]
         assert store.get_full_path(new_node["node_id"]) == ["Finance", "Revenue", "Quarter1"]
@@ -540,7 +532,6 @@ class TestSubjectTreeStore:
         new_location = store.get_node_by_path(["Finance", "Expense", "Q1"])
 
         assert old_location is None  # No longer at old location
-        assert new_location is not None  # Now at new location
         assert new_location["name"] == "Q1"
         assert store.get_full_path(new_location["node_id"]) == ["Finance", "Expense", "Q1"]
 
@@ -563,7 +554,6 @@ class TestSubjectTreeStore:
         new_location = store.get_node_by_path(["Finance", "Expense", "FirstQuarter"])
 
         assert old_location is None  # No longer at old location
-        assert new_location is not None  # Now at new location
         assert new_location["name"] == "FirstQuarter"
         assert store.get_full_path(new_location["node_id"]) == ["Finance", "Expense", "FirstQuarter"]
 
@@ -582,7 +572,6 @@ class TestSubjectTreeStore:
         new_node = store.get_node_by_path(["Financial"])
 
         assert old_node is None  # Old name no longer exists
-        assert new_node is not None  # New name exists
         assert new_node["name"] == "Financial"
 
         # Verify child path is updated
@@ -606,7 +595,6 @@ class TestSubjectTreeStore:
         new_location = store.get_node_by_path(["Q1"])
 
         assert old_location is None  # No longer at old location
-        assert new_location is not None  # Now at root level
         assert new_location["name"] == "Q1"
         assert new_location["parent_id"] is None
         assert store.get_full_path(new_location["node_id"]) == ["Q1"]
@@ -629,7 +617,6 @@ class TestSubjectTreeStore:
 
         # Verify new root location
         new_location = store.get_node_by_path(["Quarter1"])
-        assert new_location is not None
         assert new_location["name"] == "Quarter1"
         assert new_location["parent_id"] is None
         assert store.get_full_path(new_location["node_id"]) == ["Quarter1"]
@@ -743,7 +730,6 @@ class TestSubjectTreeStore:
 
         # Verify node is unchanged
         node = store.get_node_by_path(["Finance", "Revenue"])
-        assert node is not None
         assert node["name"] == "Revenue"
 
     def test_rename_same_name_different_parent(self, store):
@@ -765,7 +751,6 @@ class TestSubjectTreeStore:
         new_location = store.get_node_by_path(["Finance", "Expense", "Q1"])
 
         assert old_location is None
-        assert new_location is not None
         assert new_location["name"] == "Q1"
 
     def test_rename_with_descendants(self, store):
@@ -787,15 +772,12 @@ class TestSubjectTreeStore:
         new_q1 = store.get_node_by_path(["Finance", "Revenue", "Quarter1"])
 
         assert old_q1 is None
-        assert new_q1 is not None
         assert new_q1["name"] == "Quarter1"
 
         # Verify descendants can still be accessed through new path
         jan_updated = store.get_node_by_path(["Finance", "Revenue", "Quarter1", "Jan"])
         feb_updated = store.get_node_by_path(["Finance", "Revenue", "Quarter1", "Feb"])
 
-        assert jan_updated is not None
-        assert feb_updated is not None
         assert jan_updated["node_id"] == jan["node_id"]
         assert feb_updated["node_id"] == feb["node_id"]
 
@@ -820,14 +802,12 @@ class TestSubjectTreeStore:
         new_location = store.get_node_by_path(["Finance", "Expense", "Q1"])
 
         assert old_location is None
-        assert new_location is not None
+        assert store.get_full_path(new_location["node_id"]) == ["Finance", "Expense", "Q1"]
 
         # Verify descendants can still be accessed through new parent
         jan_updated = store.get_node_by_path(["Finance", "Expense", "Q1", "Jan"])
         feb_updated = store.get_node_by_path(["Finance", "Expense", "Q1", "Feb"])
 
-        assert jan_updated is not None
-        assert feb_updated is not None
         assert jan_updated["node_id"] == jan["node_id"]
         assert feb_updated["node_id"] == feb["node_id"]
 
@@ -840,17 +820,14 @@ class TestSubjectTreeStore:
         original_created = revenue["created_at"]
         original_updated = revenue["updated_at"]
 
-        # Rename Revenue to Income
-        import time
-
-        time.sleep(1.1)  # Ensure timestamp difference (more than 1 second)
-        success = store.rename(["Finance", "Revenue"], ["Finance", "Income"])
+        with patch("datus.storage.subject_tree.store.datetime") as mock_datetime:
+            mock_datetime.now.return_value = datetime(2099, 1, 1, 0, 0, 1)
+            success = store.rename(["Finance", "Revenue"], ["Finance", "Income"])
 
         assert success is True
 
         # Verify preservation
         updated_node = store.get_node_by_path(["Finance", "Income"])
-        assert updated_node is not None
         assert updated_node["name"] == "Income"
         assert updated_node["description"] == "Revenue management"  # Description preserved
         assert updated_node["created_at"] == original_created  # Created time preserved

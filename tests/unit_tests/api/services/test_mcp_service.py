@@ -1,7 +1,10 @@
 """Tests for datus.api.services.mcp_service — MCP tool management."""
 
+from pathlib import Path
+
 import pytest
 
+from datus.api.models.base_models import Result
 from datus.api.models.mcp_models import AddServerInput, ToolFilterInput
 from datus.api.services.mcp_service import MCPService
 
@@ -12,8 +15,8 @@ class TestMCPServiceInit:
     def test_init_with_real_config(self, real_agent_config):
         """MCPService initializes with real agent config."""
         svc = MCPService(agent_config=real_agent_config)
-        assert svc is not None
-        assert svc.manager is not None
+        assert isinstance(svc, MCPService)
+        assert svc.manager.config_path == Path(real_agent_config.home) / "conf" / ".mcp.json"
 
 
 class TestMCPServiceListServers:
@@ -132,15 +135,22 @@ class TestMCPServiceWithServer:
 
         # Get tool filter (should work now that server exists)
         filter_result = svc.get_tool_filter("lifecycle_srv")
-        assert filter_result is not None  # May succeed or return "no filter"
+        assert isinstance(filter_result, Result)
+        assert filter_result.success is True
+        assert filter_result.data["filter"] is None
 
         # Set tool filter
         set_result = svc.set_tool_filter("lifecycle_srv", ToolFilterInput(allowed_tools=["tool_a"]))
-        assert set_result is not None
+        assert set_result.success is True
+        assert set_result.data["filter"]["allowed_tool_names"] == ["tool_a"]
 
         # Remove tool filter
         rm_filter_result = svc.remove_tool_filter("lifecycle_srv")
-        assert rm_filter_result is not None
+        assert rm_filter_result.success is True
+        assert rm_filter_result.data == {
+            "server_name": "lifecycle_srv",
+            "message": "Tool filter removed",
+        }
 
         # Remove server
         rm_result = svc.remove_server("lifecycle_srv")

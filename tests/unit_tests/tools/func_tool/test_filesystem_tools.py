@@ -61,7 +61,6 @@ class TestGetSafePath:
     def test_valid_relative_path(self, tmp_path):
         tool = _make_tool(str(tmp_path))
         result = tool._get_safe_path("subdir/file.txt")
-        assert result is not None
         assert str(result).startswith(str(tmp_path.resolve()))
 
     def test_path_traversal_returns_none(self, tmp_path):
@@ -75,7 +74,6 @@ class TestGetSafePath:
     def test_dot_path_returns_root(self, tmp_path):
         tool = _make_tool(str(tmp_path))
         result = tool._get_safe_path(".")
-        assert result is not None
         assert result == tmp_path.resolve()
 
 

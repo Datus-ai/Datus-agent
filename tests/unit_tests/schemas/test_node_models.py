@@ -31,7 +31,7 @@ from datus.schemas.node_models import (
 # ---------------------------------------------------------------------------
 
 
-class TestSqlTask:
+class TestNodeModelsSqlTask:
     def test_basic_creation(self):
         task = SqlTask(task="show all tables")
         assert task.task == "show all tables"
@@ -370,7 +370,7 @@ class TestSQLContext:
 # ---------------------------------------------------------------------------
 
 
-class TestExecuteSQLResult:
+class TestNodeModelsExecuteSQLResult:
     def test_basic_creation(self):
         result = ExecuteSQLResult(success=True)
         assert result.success is True
@@ -403,7 +403,7 @@ class TestExecuteSQLResult:
 # ---------------------------------------------------------------------------
 
 
-class TestGenerateSQLResult:
+class TestNodeModelsGenerateSQLResult:
     def test_basic_creation(self):
         result = GenerateSQLResult(success=True, sql_query="SELECT 1")
         assert result.sql_query == "SELECT 1"

@@ -383,7 +383,10 @@ class TestExtractArtifactsFromActionHistory:
 
     def test_empty_history(self):
         artifacts = WorkflowArtifacts()
-        _extract_artifacts_from_action_history(None, artifacts)  # should not raise
+        tool_calls: dict = {}
+        _extract_artifacts_from_action_history(None, artifacts, tool_calls)
+        assert tool_calls == {}
+        assert artifacts.files == []
 
     def test_dotted_function_name(self):
         artifacts = WorkflowArtifacts()
@@ -495,7 +498,7 @@ class TestCsvPerTaskResultProvider:
     def test_fetch_missing_file(self, tmp_path):
         provider = CsvPerTaskResultProvider(str(tmp_path))
         result = provider.fetch("task_1")
-        assert result.error is not None
+        assert result.available is False
         assert "not found" in result.error
 
     def test_fetch_existing_file(self, tmp_path):
@@ -530,7 +533,7 @@ class TestCsvPerTaskResultProvider:
         ns_dir.mkdir()
         provider = CsvPerTaskResultProvider(str(tmp_path), datasource="empty_ns")
         result = provider.fetch("task_z")
-        assert result.error is not None
+        assert result.error.startswith("Result file not found:")
 
 
 # ---------------------------------------------------------------------------
@@ -542,7 +545,7 @@ class TestDirectorySqlProvider:
     def test_fetch_missing_file(self, tmp_path):
         provider = DirectorySqlProvider(str(tmp_path))
         result = provider.fetch("missing_task")
-        assert result.error is not None
+        assert result.error.startswith("SQL file not found:")
 
     def test_fetch_existing_sql_file(self, tmp_path):
         sql_file = tmp_path / "task_1.sql"
@@ -562,7 +565,7 @@ class TestJsonMappingSqlProvider:
     def test_fetch_missing_file(self, tmp_path):
         provider = JsonMappingSqlProvider(str(tmp_path / "nonexistent.json"))
         result = provider.fetch("t1")
-        assert result.error is not None
+        assert result.error.startswith("SQL reference file not found:")
 
     def test_fetch_from_list(self, tmp_path):
         data = [{"task_id": "t1", "SQL": "SELECT 1"}]
@@ -587,7 +590,7 @@ class TestJsonMappingSqlProvider:
         json_file.write_text(json.dumps(data))
         provider = JsonMappingSqlProvider(str(json_file))
         result = provider.fetch("nonexistent")
-        assert result.error is not None
+        assert result.error == "SQL not found for task_id=nonexistent"
 
     def test_fetch_from_jsonl(self, tmp_path):
         jsonl_file = tmp_path / "sqls.jsonl"
@@ -602,7 +605,7 @@ class TestJsonMappingSqlProvider:
         json_file.write_text("[]")
         provider = JsonMappingSqlProvider(str(json_file))
         result = provider.fetch("t1")
-        assert result.error is not None
+        assert result.error == f"No SQL entries found in {json_file}"
         assert "No SQL entries" in result.error
 
 
@@ -615,7 +618,7 @@ class TestCsvColumnSqlProvider:
     def test_fetch_missing_file(self, tmp_path):
         provider = CsvColumnSqlProvider(str(tmp_path / "nonexistent.csv"), task_id_key="task_id", sql_key="SQL")
         result = provider.fetch("t1")
-        assert result.error is not None
+        assert result.error.startswith("SQL reference file not found:")
 
     def test_fetch_found(self, tmp_path):
         csv_file = tmp_path / "sqls.csv"
@@ -630,7 +633,7 @@ class TestCsvColumnSqlProvider:
         csv_file.write_text("task_id,SQL\nt1,SELECT 1\n")
         provider = CsvColumnSqlProvider(str(csv_file), task_id_key="task_id", sql_key="SQL")
         result = provider.fetch("t_missing")
-        assert result.error is not None
+        assert result.error == "SQL not found for task_id=t_missing"
 
 
 # ---------------------------------------------------------------------------
@@ -725,7 +728,7 @@ class TestTrajectoryParser:
         yaml_file.write_text(yaml.dump(data))
         parser = TrajectoryParser()
         result = parser.parse(yaml_file, "t3")
-        assert len(result.errors) > 0
+        assert result.errors == ["node n1: task failed"]
 
 
 # ---------------------------------------------------------------------------

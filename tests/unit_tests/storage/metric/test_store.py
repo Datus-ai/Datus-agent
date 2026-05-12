@@ -99,7 +99,8 @@ class TestBatchStoreMetricsValidation:
     def test_batch_store_metrics_empty_list_noop(self, metric_storage: MetricStorage):
         """Storing an empty list should be a no-op."""
         metric_storage.batch_store_metrics([])
-        # No exception should be raised
+        assert metric_storage._shared.initialized is False
+        assert metric_storage.table is None
 
     def test_batch_store_metrics_missing_subject_path_raises(self, metric_storage: MetricStorage):
         """Missing subject_path should raise ValueError."""
@@ -148,6 +149,8 @@ class TestBatchUpsertMetricsValidation:
     def test_batch_upsert_metrics_empty_list_noop(self, metric_storage: MetricStorage):
         """Upserting an empty list should be a no-op."""
         metric_storage.batch_upsert_metrics([])
+        assert metric_storage._shared.initialized is False
+        assert metric_storage.table is None
 
     def test_batch_upsert_metrics_missing_subject_path_raises(self, metric_storage: MetricStorage):
         """Missing subject_path should raise ValueError."""
@@ -556,7 +559,6 @@ class TestSyncYamlSubjectTreeForSubtree:
 
         # Capture node_id BEFORE rename (stable across rename)
         q1_node = metric_storage.subject_tree.get_node_by_path(["Finance", "Revenue", "Q1"])
-        assert q1_node is not None
         root_id = q1_node["node_id"]
 
         # Rename Q1 -> Quarter1 (in place)
@@ -602,7 +604,6 @@ class TestSyncYamlSubjectTreeForSubtree:
         metric_storage.batch_store_metrics([metric])
 
         q1_node = metric_storage.subject_tree.get_node_by_path(["Finance", "Revenue", "Q1"])
-        assert q1_node is not None
         root_id = q1_node["node_id"]
 
         # Move Q1 from Finance/Revenue to Finance/Costs
@@ -636,14 +637,21 @@ class TestSyncYamlSubjectTreeForSubtree:
         q1_node = metric_storage.subject_tree.get_node_by_path(["Finance", "Revenue", "Q1"])
         root_id = q1_node["node_id"]
 
-        # Should not raise
         metric_storage.sync_yaml_subject_tree_for_subtree(root_id)
+        stored = metric_storage.search_all_metrics(select_fields=["name", "yaml_path"])
+        assert stored == [
+            {
+                "name": "no_yaml",
+                "yaml_path": "",
+                "subject_path": ["Finance", "Revenue", "Q1"],
+            }
+        ]
 
     def test_sync_handles_subtree_with_no_metrics(self, metric_storage: MetricStorage):
         """A subtree with no metric entries should be a no-op (no errors)."""
         metric_storage.subject_tree.find_or_create_path(["Empty", "Branch"])
         node = metric_storage.subject_tree.get_node_by_path(["Empty", "Branch"])
-        assert node is not None
+        assert node["name"] == "Branch"
 
         # Should not raise
         metric_storage.sync_yaml_subject_tree_for_subtree(node["node_id"])

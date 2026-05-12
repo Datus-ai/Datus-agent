@@ -120,7 +120,7 @@ class TestParseTemporalExpression:
                 mock_create.return_value = MagicMock()
                 result = tool.parse_temporal_expression(expression, reference_date, mock_model)
 
-        assert result is not None
+        assert result is mock_create.return_value
         mock_create.assert_called_once_with("last month", "relative", 0.9, start, end)
 
     def test_returns_none_when_llm_fails(self):
@@ -144,7 +144,6 @@ class TestParseTemporalExpression:
             result = tool.parse_temporal_expression(expression, reference_date, mock_model)
 
         mock_parse.assert_not_called()
-        assert result is not None
         assert result.start_date == "2025-02-03"
         assert result.end_date == "2025-02-09"
         assert result.date_type == "range"
@@ -159,7 +158,6 @@ class TestParseTemporalExpression:
             result = tool.parse_temporal_expression(expression, reference_date, mock_model)
 
         mock_parse.assert_not_called()
-        assert result is not None
         assert result.start_date == "2025-02-17"
         assert result.end_date == "2025-02-23"
         assert result.date_type == "range"
@@ -176,7 +174,6 @@ class TestParseTemporalExpression:
             result = tool.parse_temporal_expression(expression, reference_date, mock_model)
 
         mock_parse.assert_called_once_with("从上周到下周", reference_date, mock_model)
-        assert result is not None
         assert result.start_date == "2025-02-03"
         assert result.end_date == "2025-02-23"
         assert result.date_type == "range"
@@ -194,7 +191,6 @@ class TestParseTemporalExpression:
                 result = tool.parse_temporal_expression(expression, reference_date, mock_model)
 
             mock_parse.assert_called_once_with(original_text, reference_date, mock_model)
-            assert result is not None
             assert result.parsed_date == "2025-02-17"
             assert result.start_date is None
             assert result.end_date is None
@@ -220,7 +216,6 @@ class TestParseWithLlm:
             mock_pm.render_template.return_value = "prompt text"
             result = tool.parse_with_llm("last month", reference_date, mock_model)
 
-        assert result is not None
         start, end = result
         assert start == datetime(2023, 12, 1)
         assert end == datetime(2023, 12, 31)

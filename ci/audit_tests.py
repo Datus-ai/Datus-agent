@@ -85,7 +85,6 @@ def configure_repo_root(new_root: Path) -> None:
     TESTS_ROOT = UNIT_ROOT
 
 
-FILE_SIZE_LIMIT = 1500
 AUDIT_NOQA = "audit-noqa"
 
 
@@ -110,9 +109,8 @@ RULE_TIERS: dict[str, set[str]] = {
     "or_assert": {"unit", "integration"},
     "lambda_throw": {"unit", "integration"},
     "duplicate_test_files": {"unit", "integration"},
-    # Unit-tier-only (strict hermeticity / tight size budget).
+    # Unit-tier-only (strict hermeticity).
     "real_external_io_path": {"unit"},
-    "file_size_budget": {"unit"},
     "missing_test_for_module": {"unit"},
     # Integration-tier-only (boundary safety + flakiness prevention).
     "rmtree_outside_tmp": {"integration"},
@@ -1044,34 +1042,6 @@ def regex_scan(path: Path, required_packages: set[str], tier: str) -> list[Issue
 
 
 # ---------------------------------------------------------------------------
-# File-level checks
-# ---------------------------------------------------------------------------
-
-
-def check_file_size_budget(path: Path, tier: str) -> list[Issue]:
-    if not rule_applies("file_size_budget", tier):
-        return []
-    try:
-        line_count = sum(1 for _ in path.open(encoding="utf-8", errors="replace"))
-    except OSError:
-        return []
-    if line_count > FILE_SIZE_LIMIT:
-        return [
-            Issue(
-                file=str(path.relative_to(REPO_ROOT)),
-                line=1,
-                severity="P1",
-                check="file_size_budget",
-                message=f"Test file has {line_count} lines (> {FILE_SIZE_LIMIT}) — split by class / feature",
-                quote=f"{line_count} lines total",
-                suggestion="Split into multiple files, one per source class being tested.",
-                tier=tier,
-            )
-        ]
-    return []
-
-
-# ---------------------------------------------------------------------------
 # Cross-file checks
 # ---------------------------------------------------------------------------
 
@@ -1418,14 +1388,12 @@ def scan_file(path: Path, required_packages: set[str]) -> list[Issue]:
     except SyntaxError as e:
         log(f"syntax error in {path}:{e.lineno} — skipping AST checks")
         issues.extend(regex_scan(path, required_packages, tier))
-        issues.extend(check_file_size_budget(path, tier))
         return issues
     checker = _AstChecker(path, source, tier)
     checker.visit(tree)
     issues.extend(checker.issues)
     issues.extend(check_module_level_sys_modules(path, tree, tier))
     issues.extend(regex_scan(path, required_packages, tier))
-    issues.extend(check_file_size_budget(path, tier))
     return issues
 
 

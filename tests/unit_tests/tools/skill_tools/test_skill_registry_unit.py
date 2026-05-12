@@ -34,7 +34,7 @@ class TestSkillRegistryScanAndAccess:
         registry = SkillRegistry(config=config)
         registry.scan_directories()
         assert registry.get_skill_count() == 1
-        assert registry.get_skill("test-skill") is not None
+        assert registry.get_skill("test-skill").name == "test-skill"
 
     def test_scan_skips_nonexistent_dir(self):
         config = SkillConfig(directories=["/nonexistent/path"])
@@ -127,7 +127,6 @@ class TestSkillRegistryInstall:
         registry = SkillRegistry(config=config)
         registry.scan_directories()
         meta = registry.install_skill("test-skill", d)
-        assert meta is not None
         assert meta.name == "test-skill"
         assert meta.source == "marketplace"
 
@@ -186,7 +185,7 @@ class TestSkillRegistryDiscoveryExtended:
         registry = SkillRegistry(config=config)
         registry.scan_directories()
         skill = registry.get_skill("script-skill")
-        assert skill is not None
+        assert skill.name == "script-skill"
         assert skill.has_scripts() is True
         assert "python:scripts/*.py" in skill.allowed_commands
         assert "sh:*.sh" in skill.allowed_commands
@@ -202,7 +201,7 @@ class TestSkillRegistryDiscoveryExtended:
         registry = SkillRegistry(config=config)
         registry.scan_directories()
         skill = registry.get_skill("user-only-skill")
-        assert skill is not None
+        assert skill.name == "user-only-skill"
         assert skill.disable_model_invocation is True
         assert skill.is_model_invocable() is False
 
@@ -222,7 +221,7 @@ class TestSkillRegistryDiscoveryExtended:
         registry = SkillRegistry(config=config)
         registry.scan_directories()
         skill = registry.get_skill("scoped-skill")
-        assert skill is not None
+        assert skill.name == "scoped-skill"
         assert skill.allowed_agents == ["gen_dashboard", "gen_table"]
 
     def test_skill_location_is_path(self, tmp_path):
@@ -302,7 +301,7 @@ class TestBuiltinSkillsResolution:
         registry.scan_directories()
 
         skill = registry.get_skill("init")
-        assert skill is not None
+        assert skill.name == "init"
         # First-wins: the description must come from the override, not the built-in.
         assert skill.description == "User-shadow init"
 
@@ -311,6 +310,6 @@ class TestBuiltinSkillsResolution:
         from datus.tools.skill_tools.skill_config import _builtin_skills_dir
 
         builtin = _builtin_skills_dir()
-        assert builtin is not None
+        assert isinstance(builtin, str)
         config = SkillConfig.from_dict({"directories": [builtin]})
         assert config.directories == [builtin]

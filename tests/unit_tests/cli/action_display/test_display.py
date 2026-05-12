@@ -12,7 +12,7 @@ import pytest
 from rich.console import Console
 
 from datus.cli.action_display.display import ActionHistoryDisplay, create_action_display
-from datus.cli.action_display.renderers import ActionRenderer
+from datus.cli.action_display.renderers import ActionContentGenerator, ActionRenderer
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
 
@@ -51,7 +51,7 @@ class TestActionHistoryDisplayInit:
 
     def test_has_content_generator(self):
         display = ActionHistoryDisplay()
-        assert display.content_generator is not None
+        assert isinstance(display.content_generator, ActionContentGenerator)
 
 
 @pytest.mark.ci
@@ -119,8 +119,10 @@ class TestStopRestartLive:
 
     def test_stop_live_no_context(self):
         display = ActionHistoryDisplay()
-        display.stop_live()  # Should not raise
+        display.stop_live()
+        assert display._current_context is None
 
     def test_restart_live_no_context(self):
         display = ActionHistoryDisplay()
-        display.restart_live()  # Should not raise
+        display.restart_live()
+        assert display._current_context is None

@@ -226,7 +226,6 @@ class TestAvailableTools:
         tools = SchedulerTools(_make_agent_config())
         result = tools.available_tools()
         assert isinstance(result, list)
-        assert len(result) > 0
         tool_names = {t.name for t in result}
         for expected in ["submit_sql_job", "submit_sparksql_job", "trigger_scheduler_job", "get_scheduler_job"]:
             assert expected in tool_names
@@ -1283,7 +1282,7 @@ class TestSchedulerDeliverableTarget:
             result = tools.submit_sql_job(job_name="job_x", sql_file_path=str(sql_file), conn_id="c1")
         assert result.success == 1
         target = result.result.get("deliverable_target")
-        assert target is not None
+        assert isinstance(target, dict)
         assert target["type"] == "scheduler_job"
         assert target["platform"] == "airflow"
         assert target["job_id"] == "job_x"
@@ -1297,7 +1296,7 @@ class TestSchedulerDeliverableTarget:
             result = tools.submit_sparksql_job(job_name="spark_x", sql_file_path=str(sql_file))
         assert result.success == 1
         target = result.result.get("deliverable_target")
-        assert target is not None
+        assert isinstance(target, dict)
         assert target["type"] == "scheduler_job"
         assert target["job_id"] == "spark_x"
 
@@ -1316,7 +1315,7 @@ class TestSchedulerDeliverableTarget:
             )
         assert result.success == 1
         target = result.result.get("deliverable_target")
-        assert target is not None
+        assert isinstance(target, dict)
         assert target["type"] == "scheduler_job"
         assert target["job_id"] == "job_u"
 
@@ -1331,7 +1330,7 @@ class TestSchedulerDeliverableTarget:
             result = tools.submit_sql_job(job_name="job_x", sql_file_path=str(sql_file), conn_id="c1")
         assert result.success == 0
         # On failure the tool sets result=None, so there's no dict to contain a target.
-        assert result.result is None or "deliverable_target" not in (result.result or {})
+        assert result.result is None
 
 
 # ── Path policy: align with FilesystemFuncTool ───────────────────────────

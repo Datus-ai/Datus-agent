@@ -481,8 +481,7 @@ class TestCurrentModel:
         svc = _make_svc(catalog=_basic_catalog(), available={"openai"})
         result = await list_models(svc)
 
-        assert result.data.current_model is not None
-        assert result.data.current_model.startswith("openai/")
+        assert result.data.current_model == "openai/gpt-4o"
 
     @pytest.mark.asyncio
     async def test_no_models_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:

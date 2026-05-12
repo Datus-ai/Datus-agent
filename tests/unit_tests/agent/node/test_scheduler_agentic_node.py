@@ -270,7 +270,6 @@ class TestSchedulerRegistration:
         from datus.schemas.scheduler_agentic_node_models import SchedulerNodeInput
 
         result = NodeType.type_input(NodeType.TYPE_SCHEDULER, {}, ignore_require_check=True)
-        assert result is not None
         assert isinstance(result, SchedulerNodeInput)
         assert result.database is None
 
@@ -344,7 +343,7 @@ class TestSchedulerRegistration:
                 input_data=input_data,
                 agent_config=real_agent_config,
             )
-            assert node.input is not None
+            assert isinstance(node.input, SchedulerNodeInput)
             assert node.input.user_message == "Submit a daily job"
 
     def test_from_dict_input_deserialization(self, real_agent_config, mock_llm_create):
@@ -353,6 +352,7 @@ class TestSchedulerRegistration:
         with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
             from datus.agent.node.node import Node
             from datus.configuration.node_type import NodeType
+            from datus.schemas.scheduler_agentic_node_models import SchedulerNodeInput
 
             node_dict = {
                 "id": "test_from_dict",
@@ -367,7 +367,7 @@ class TestSchedulerRegistration:
                 "metadata": {},
             }
             node = Node.from_dict(node_dict, agent_config=real_agent_config)
-            assert node.input is not None
+            assert isinstance(node.input, SchedulerNodeInput)
             assert node.input.user_message == "List jobs"
 
     def test_from_dict_result_deserialization(self, real_agent_config, mock_llm_create):
@@ -395,7 +395,9 @@ class TestSchedulerRegistration:
                 "metadata": {},
             }
             node = Node.from_dict(node_dict, agent_config=real_agent_config)
-            assert node.result is not None
+            from datus.schemas.scheduler_agentic_node_models import SchedulerNodeResult
+
+            assert isinstance(node.result, SchedulerNodeResult)
             assert node.result.response == "Job submitted"
             assert node.result.scheduler_result == {"job_id": "dag_123"}
 

@@ -166,4 +166,4 @@ class TestDocFrameworkDetector:
     def test_detector_can_be_instantiated(self):
         """DocFrameworkDetector should be instantiable without arguments."""
         detector = DocFrameworkDetector()
-        assert detector is not None
+        assert isinstance(detector, DocFrameworkDetector)

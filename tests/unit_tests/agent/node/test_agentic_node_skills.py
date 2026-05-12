@@ -212,7 +212,7 @@ class TestFinalizeSystemPrompt:
         assert result.startswith(base_prompt)
         assert "<available_skills>" in result
         # Explicitly marked as empty, with anti-hallucination guidance.
-        assert "(none)" in result or "no skills" in result.lower()
+        assert "(none)" in result
         assert "subagent" in result.lower()
 
     def test_calls_ensure_skill_tools(self, mock_agent_config, skill_manager):
@@ -315,7 +315,7 @@ class TestEnsureSkillToolsInTools:
         node._ensure_skill_tools_in_tools()
 
         # Should have created tools list
-        assert node.tools is not None
+        assert isinstance(node.tools, list)
         assert len(node.tools) == 2
         tool_names = [t.name for t in node.tools]
         assert "load_skill" in tool_names
@@ -375,7 +375,6 @@ class TestSetupSkillFuncTools:
         )
 
         # Should have created skill_manager with defaults
-        assert node.skill_manager is not None
         assert isinstance(node.skill_manager, SkillManager)
 
     def test_uses_existing_skill_manager(self, mock_agent_config, skill_manager):
@@ -392,7 +391,6 @@ class TestSetupSkillFuncTools:
         )
 
         # Should use the skill manager created during _setup_skill_manager()
-        assert node.skill_manager is not None
         assert isinstance(node.skill_manager, SkillManager)
 
     def test_creates_skill_func_tool(self, mock_agent_config, skill_manager):
@@ -408,7 +406,6 @@ class TestSetupSkillFuncTools:
             agent_config=mock_agent_config,
         )
 
-        assert node.skill_func_tool is not None
         assert isinstance(node.skill_func_tool, SkillFuncTool)
         assert node.skill_func_tool.node_name == "test_node"
 
@@ -440,7 +437,6 @@ class TestAgenticNodeSkillDefaults:
             agent_config=mock_agent_config,
         )
 
-        assert node.skill_func_tool is not None
         assert isinstance(node.skill_func_tool, SkillFuncTool)
 
 
@@ -556,9 +552,8 @@ class TestSkillManagerSetup:
             agent_config=mock_agent_config,
         )
 
-        assert node.skill_manager is not None
         assert isinstance(node.skill_manager, SkillManager)
-        assert node.skill_manager.get_skill_count() > 0
+        assert node.skill_manager.get_skill_count() == 3
 
 
 @pytest.fixture

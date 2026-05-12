@@ -8,8 +8,8 @@ import pytest
 
 MODULE_PATH = Path(__file__).resolve().parents[3] / "ci" / "prepare_docs_build.py"
 MODULE_SPEC = importlib.util.spec_from_file_location("prepare_docs_build", MODULE_PATH)
-assert MODULE_SPEC is not None
-assert MODULE_SPEC.loader is not None
+if MODULE_SPEC is None or MODULE_SPEC.loader is None:
+    raise AssertionError(f"Unable to load prepare_docs_build from {MODULE_PATH}")
 prepare_docs_build = importlib.util.module_from_spec(MODULE_SPEC)
 MODULE_SPEC.loader.exec_module(prepare_docs_build)
 

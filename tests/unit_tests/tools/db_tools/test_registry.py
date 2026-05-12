@@ -101,7 +101,6 @@ class TestIsRegistered:
 class TestGetMetadata:
     def test_sqlite_metadata(self):
         meta = connector_registry.get_metadata("sqlite")
-        assert meta is not None
         assert meta.db_type == "sqlite"
 
     def test_unknown_metadata_none(self):

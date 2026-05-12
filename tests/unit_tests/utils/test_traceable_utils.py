@@ -165,7 +165,7 @@ class TestSetupTracing:
         ):
             setup_tracing()
 
-            assert module._tracing_processor is not None
+            assert isinstance(module._tracing_processor, FakeBase)
             mock_set.assert_called_once()
 
     def test_datus_tracing_processor_captures_trace_url(self, monkeypatch):

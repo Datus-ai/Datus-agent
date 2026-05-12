@@ -217,4 +217,4 @@ class TestNavResolverPipelineInit:
     def test_pipeline_can_be_instantiated(self):
         """NavResolverPipeline should be instantiable without arguments."""
         pipeline = NavResolverPipeline()
-        assert pipeline is not None
+        assert isinstance(pipeline, NavResolverPipeline)

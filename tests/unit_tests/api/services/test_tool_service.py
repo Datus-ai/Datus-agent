@@ -66,7 +66,7 @@ class TestToolServiceExecute:
         """execute list_subject_tree with no params succeeds."""
         result = tool_service.execute("list_subject_tree", {})
         assert result.success is True
-        assert result.data is not None
+        assert result.data.result == {"domain": {}}
         mock_context_search_tools.list_subject_tree.assert_called_once_with()
 
     def test_execute_search_metrics_with_params(self, tool_service, mock_context_search_tools):

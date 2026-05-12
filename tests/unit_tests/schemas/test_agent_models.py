@@ -164,7 +164,7 @@ class TestSubAgentConfigEffectiveScopedContext:
         child = SubAgentConfig(system_prompt="x")  # no scope → inherit parent
         effective = child.with_effective_scoped_context(parent)
         assert effective is not child
-        assert effective.scoped_context is not None
+        assert isinstance(effective.scoped_context, ScopedContext)
         assert effective.scoped_context.tables == "public.users"
         # Original child unchanged.
         assert child.scoped_context is None

@@ -53,8 +53,7 @@ class TestToolInit:
             mock_llm.create_model.return_value = Mock()
             svc = DataVisualizationService(agent_config=mock_agent_config)
             tool = svc._get_tool()
-        assert tool is not None
-        assert tool.model is not None
+        assert tool.model is mock_llm.create_model.return_value
 
     def test_caches_tool_instance(self, mock_agent_config):
         with patch(_LLM_PATH) as mock_llm:
@@ -166,7 +165,7 @@ class TestGenerateWithContext:
 
         assert result["success"] is True
         di = result["data"]["data_insight"]
-        assert di["insight"] is not None
+        assert di["insight"] == "Sales increased by 50% from day 1 to day 2."
 
     def test_chart_type_override_with_context(self, mock_agent_config, csv_data):
         svc, _ = self._setup_context_svc(mock_agent_config, self._mock_llm_response())

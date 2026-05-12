@@ -273,7 +273,7 @@ class TestSetupExceptionHandler:
 
             console_logger.assert_called_once()
             call_arg = console_logger.call_args[0][0]
-            assert "test error" in call_arg or "Execution failed" in call_arg
+            assert "test error" in call_arg
         finally:
             sys.excepthook = original_hook
 

@@ -30,6 +30,10 @@ import pytest
 
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+from datus.tools.func_tool.database import DBFuncTool
+from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+from datus.tools.func_tool.gen_semantic_model_tools import GenSemanticModelTools
+from datus.tools.func_tool.generation_tools import GenerationTools
 from tests.unit_tests.mock_llm_model import MockToolCall, build_simple_response, build_tool_then_response
 
 # ---------------------------------------------------------------------------
@@ -63,23 +67,18 @@ class TestGenMetricsAgenticNodeInit:
             execution_mode="workflow",
         )
 
-        assert len(node.tools) > 0
-        tool_names = [tool.name for tool in node.tools]
+        tool_names = {tool.name for tool in node.tools}
 
         # Filesystem tools
-        assert "read_file" in tool_names
-        assert "write_file" in tool_names
-        assert "edit_file" in tool_names
-        assert "glob" in tool_names
-        assert "grep" in tool_names
+        assert {"read_file", "write_file", "edit_file", "glob", "grep"}.issubset(tool_names)
 
         # Generation tools
         assert "check_semantic_object_exists" in tool_names
         assert "end_metric_generation" in tool_names
 
         # Tool instances should be initialized
-        assert node.filesystem_func_tool is not None
-        assert node.generation_tools is not None
+        assert isinstance(node.filesystem_func_tool, FilesystemFuncTool)
+        assert isinstance(node.generation_tools, GenerationTools)
 
     def test_metrics_max_turns(self, real_agent_config, mock_llm_create):
         """Test max_turns is read from agentic_nodes config."""
@@ -300,7 +299,8 @@ class TestGenMetricsAgenticNodeExecution:
         assert len(mock_llm_create.call_history) >= 1
         call = mock_llm_create.call_history[0]
         prompt = call.get("prompt", "")
-        assert "california_schools" in prompt or "Generate" in prompt
+        assert "Generate revenue metrics" in prompt
+        assert "california_schools" in prompt
 
     @pytest.mark.asyncio
     async def test_metrics_interactive_mode_token_tracking(self, real_agent_config, mock_llm_create):
@@ -330,7 +330,6 @@ class TestGenMetricsAgenticNodeExecution:
 
         # In interactive mode, the final action output should be present
         last_output = actions[-1].output
-        assert last_output is not None
         assert isinstance(last_output, dict), f"Expected dict output in interactive mode, got {type(last_output)}"
         # Interactive mode must report token usage for cost tracking
         assert "tokens_used" in last_output, f"Expected 'tokens_used' in output keys, got: {list(last_output.keys())}"
@@ -432,7 +431,7 @@ class TestSetupDbTools:
         # SQLite connector provides these tools via DBFuncTool
         assert "describe_table" in tool_names, f"Missing describe_table, got: {tool_names}"
         assert "list_tables" in tool_names, f"Missing list_tables, got: {tool_names}"
-        assert node.db_func_tool is not None
+        assert isinstance(node.db_func_tool, DBFuncTool)
 
     def test_db_tools_failure_does_not_break_init(self, real_agent_config, mock_llm_create):
         """When DBFuncTool() constructor raises, node still initializes with other tools."""
@@ -480,7 +479,7 @@ class TestSetupGenSemanticModelTools:
         assert "analyze_column_usage_patterns" in tool_names, (
             f"Missing analyze_column_usage_patterns, got: {tool_names}"
         )
-        assert node.gen_semantic_model_tools is not None
+        assert isinstance(node.gen_semantic_model_tools, GenSemanticModelTools)
 
     def test_gen_semantic_model_tools_skipped_when_no_db(self, real_agent_config, mock_llm_create):
         """When DBFuncTool() constructor fails, gen_semantic_model_tools is None but node still works."""
@@ -1069,7 +1068,7 @@ class TestGenMetricsFilesystemRootPath:
         node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         expected = str(Path(real_agent_config.project_root).expanduser())
 
-        assert node.filesystem_func_tool is not None
+        assert isinstance(node.filesystem_func_tool, FilesystemFuncTool)
         assert node.filesystem_func_tool.root_path == expected
 
 

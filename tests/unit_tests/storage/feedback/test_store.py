@@ -38,7 +38,6 @@ class TestFeedbackStoreCrud:
         """get_feedback retrieves stored feedback."""
         feedback_store.record_feedback("task2", "negative")
         fb = feedback_store.get_feedback("task2")
-        assert fb is not None
         assert fb["task_id"] == "task2"
         assert fb["status"] == "negative"
 
@@ -70,7 +69,6 @@ class TestFeedbackStoreCrud:
         feedback_store.record_feedback("u1", "first")
         feedback_store.record_feedback("u1", "updated")
         fb = feedback_store.get_feedback("u1")
-        assert fb is not None
         assert fb["status"] == "updated"
 
     def test_get_all_feedback_empty(self, feedback_store):

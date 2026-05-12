@@ -18,7 +18,9 @@ import pytest
 from datus.agent.node.agentic_node import AgenticNode
 from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
-from datus.schemas.gen_skill_agentic_node_models import SkillCreatorNodeInput
+from datus.schemas.gen_skill_agentic_node_models import SkillCreatorNodeInput, SkillCreatorNodeResult
+from datus.tools.func_tool.database import DBFuncTool
+from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
 from tests.unit_tests.mock_llm_model import MockLLMModel, build_simple_response
 
 
@@ -112,7 +114,7 @@ class TestSkillCreatorAgenticNodeInit:
         assert node.get_node_class_name() == "gen_skill"
 
         # The SkillFuncTool instance inherits both dimensions.
-        assert node.skill_func_tool_instance is not None
+        assert isinstance(node.skill_func_tool_instance, SkillFuncTool)
         assert node.skill_func_tool_instance.node_name == "my_skill_editor"
         assert node.skill_func_tool_instance.node_class == "gen_skill"
         assert node.skill_func_tool_instance.authoring_mode is True
@@ -167,7 +169,7 @@ class TestSkillCreatorAgenticNodeTools:
             agent_config=real_agent_config,
             node_name="gen_skill",
         )
-        assert node.db_func_tool is not None
+        assert isinstance(node.db_func_tool, DBFuncTool)
         tool_names = [t.name for t in node.tools]
         assert "list_tables" in tool_names
         assert "describe_table" in tool_names
@@ -262,7 +264,7 @@ class TestSkillCreatorSystemPrompt:
             node_name="gen_skill",
         )
         prompt = node._get_system_prompt()
-        assert prompt is not None
+        assert isinstance(prompt, str)
         assert len(prompt) > 100
 
     def test_system_prompt_contains_routing(self, real_agent_config, mock_llm_create):
@@ -365,7 +367,7 @@ class TestSkillCreatorExecution:
         async for _ in node.execute_stream(ahm):
             pass
 
-        assert node.result is not None
+        assert isinstance(node.result, SkillCreatorNodeResult)
         assert node.result.success is True
         assert "data-profiler" in node.result.response
 
@@ -439,7 +441,7 @@ class TestSkillCreatorExecution:
                 actions.append(action)
 
         assert actions[-1].status == ActionStatus.FAILED
-        assert node.result is not None
+        assert isinstance(node.result, SkillCreatorNodeResult)
         assert node.result.success is False
         assert "LLM connection failed" in node.result.error
 
@@ -471,7 +473,7 @@ class TestSkillCreatorExecution:
                 actions.append(action)
 
         assert actions[-1].status == ActionStatus.FAILED
-        assert node.result is not None
+        assert isinstance(node.result, SkillCreatorNodeResult)
         assert node.result.success is False
 
 
@@ -603,8 +605,8 @@ class TestSkillCreatorSystemPromptEdgeCases:
         )
         prompt = node._get_system_prompt()
         # The prompt should render successfully even if no skills found
-        assert prompt is not None
-        assert len(prompt) > 0
+        assert isinstance(prompt, str)
+        assert "skill" in prompt.lower()
 
     def test_system_prompt_template_error(self, real_agent_config, mock_llm_create):
         """System prompt should raise DatusException on template error."""

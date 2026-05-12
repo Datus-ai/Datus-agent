@@ -48,7 +48,7 @@ class TestPlanning:
             )
 
             # Check that the workflow was created
-            assert workflow is not None
+            assert isinstance(workflow, Workflow)
             assert workflow.name == "SQL Query Workflow (reflection)"
             assert workflow.task == sql_task
 
@@ -77,9 +77,8 @@ class TestPlanning:
             )
 
             # Check that the workflow was created with the correct structure
-            assert workflow is not None
+            assert isinstance(workflow, Workflow)
             assert workflow.name == "SQL Query Workflow (reflection)"
-            assert len(workflow.nodes) > 0
             # Reflection workflow should have multiple nodes
             assert len(workflow.nodes) >= 3
 
@@ -108,7 +107,7 @@ class TestPlanning:
             )
 
             # Check that the workflow was created with the correct structure
-            assert workflow is not None
+            assert isinstance(workflow, Workflow)
             assert workflow.name == "SQL Query Workflow (fixed)"
             assert len(workflow.nodes) >= 2
             # The workflow should contain at least begin and some action nodes

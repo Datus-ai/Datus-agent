@@ -83,7 +83,8 @@ class TestClear:
         assert not os.path.exists(token_file)
 
     def test_no_error_when_missing(self, storage):
-        storage.clear()  # should not raise
+        storage.clear()
+        assert not os.path.exists(storage.path)
 
 
 class TestNeedsRefresh:

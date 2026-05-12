@@ -249,12 +249,12 @@ class TestAtReferenceParser:
     def test_parse_metrics_reference(self):
         parser = AtReferenceParser()
         result = parser.parse_input("@Metrics Finance.revenue")
-        assert len(result["metrics"]) > 0
+        assert result["metrics"] == ["Finance.revenue"]
 
     def test_parse_sql_reference(self):
         parser = AtReferenceParser()
         result = parser.parse_input("@Sql Finance.get_revenue")
-        assert len(result["sqls"]) > 0
+        assert result["sqls"] == ["Finance.get_revenue"]
 
     def test_parse_multiple_references(self):
         parser = AtReferenceParser()
@@ -265,7 +265,7 @@ class TestAtReferenceParser:
     def test_parse_dotted_path(self):
         parser = AtReferenceParser()
         result = parser.parse_input("@Table catalog.database.schema.my_table")
-        assert len(result["tables"]) > 0
+        assert result["tables"] == ["catalog.database.schema.my_table"]
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +276,7 @@ class TestAtReferenceParser:
 class TestCustomLexerAndStyle:
     def test_custom_sql_lexer_importable(self):
         lexer = CustomSqlLexer()
-        assert lexer is not None
+        assert lexer.name == "SQL"
 
     def test_custom_pygments_style_importable(self):
         from pygments.token import Token
@@ -331,7 +331,7 @@ class TestDynamicAtReferenceCompleterClear:
         c = _StubCompleter(data={"key": "val"})
         c._ensure_loaded()
         assert c._loaded is True
-        assert len(c.flatten_data) > 0
+        assert c.flatten_data == {"key": "val"}
 
         c.clear()
         assert c._data == {}

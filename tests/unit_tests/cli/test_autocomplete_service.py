@@ -195,7 +195,11 @@ class TestDefensiveBranches:
     def test_registry_exception_yields_nothing(self):
         cli = MagicMock()
         cli.service_commands = MagicMock()
+
+        def raise_registry_error(_self):
+            raise RuntimeError("boom")
+
         # Accessing ``registry`` raises.
-        type(cli.service_commands).registry = property(fget=lambda self: (_ for _ in ()).throw(RuntimeError("boom")))
+        type(cli.service_commands).registry = property(fget=raise_registry_error)
         completer = ServiceCommandCompleter(cli)
         assert _completions(completer, "/superset.") == []

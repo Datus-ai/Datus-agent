@@ -173,9 +173,7 @@ class TestRenderList:
         items = [ListItem(key="a", primary="Main")]
         app = ListSelectorApp(title="Test", items=items)
         lines = app._render_list()
-        text_lines = [content for _style, content in lines]
-        for line in text_lines:
-            assert "      " not in line or "\u2192" in line or line.strip() == ""
+        assert lines == [(CLR_CURSOR, "  \u2192 Main\n")]
 
     def test_scroll_indicator(self):
         items = [ListItem(key=str(i), primary=f"Item {i}") for i in range(30)]

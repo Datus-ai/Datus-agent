@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
+from time import monotonic
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -62,11 +62,11 @@ def _make_cli(bg_loop, *, enabled=True, on_startup=True, include_values=False, c
 
 def _wait_for_future(fut, timeout=5.0):
     """Block until the manager's current future either completes or clears."""
-    end = time.monotonic() + timeout
-    while time.monotonic() < end:
+    end = monotonic() + timeout
+    while monotonic() < end:
         if fut is None or fut.done():
             return
-        time.sleep(0.01)
+        threading.Event().wait(0.01)
 
 
 # --------------------------------------------------------------------------- #
@@ -222,8 +222,8 @@ class TestDisabledIsNoOp:
         cli = _make_cli(bg_loop, enabled=False)
         mgr = BackgroundSchemaSyncManager(cli)
         mgr.schedule(datasource="local_db")
-        time.sleep(0.1)
         assert called["n"] == 0
+        assert mgr._current_future is None
         assert mgr.is_running() is False
 
 
@@ -328,8 +328,8 @@ class TestShutdown:
         mgr = BackgroundSchemaSyncManager(cli)
         mgr.shutdown()
         mgr.schedule(datasource="local_db")
-        time.sleep(0.1)
         assert called["n"] == 0
+        assert mgr._current_future is None
 
 
 class TestEmptyDatasourceIgnored:
@@ -347,5 +347,5 @@ class TestEmptyDatasourceIgnored:
         cli = _make_cli(bg_loop)
         mgr = BackgroundSchemaSyncManager(cli)
         mgr.schedule(datasource="")
-        time.sleep(0.05)
         assert called["n"] == 0
+        assert mgr._current_future is None

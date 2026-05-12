@@ -7,8 +7,8 @@ import defusedxml.ElementTree as ET
 
 MODULE_PATH = Path(__file__).resolve().parents[3] / "ci" / "run-pr-tests.py"
 MODULE_SPEC = importlib.util.spec_from_file_location("run_pr_tests", MODULE_PATH)
-assert MODULE_SPEC is not None
-assert MODULE_SPEC.loader is not None
+if MODULE_SPEC is None or MODULE_SPEC.loader is None:
+    raise AssertionError(f"Unable to load run-pr-tests from {MODULE_PATH}")
 run_pr_tests = importlib.util.module_from_spec(MODULE_SPEC)
 MODULE_SPEC.loader.exec_module(run_pr_tests)
 

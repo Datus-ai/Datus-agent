@@ -147,7 +147,7 @@ class TestParseCommandString:
         t, name, params = parse_command_string(cmd)
         assert t == "stdio"
         # name == "python" or None depending on token count
-        assert params["command"] is not None
+        assert params["command"] == "python"
 
 
 # ---------------------------------------------------------------------------
@@ -375,7 +375,7 @@ class TestMCPToolFilterMethods:
         result = tool.get_tool_filter("srv")
         assert result.success is True
         assert result.result["has_filter"] is True
-        assert result.result["filter_config"] is not None
+        assert result.result["filter_config"]["allowed_tool_names"] == ["read"]
 
     def test_get_tool_filter_no_filter(self, tmp_path):
         tool = _make_mcp_tool(tmp_path)

@@ -34,8 +34,8 @@ class TestSnowflake:
     def test_search_all(self, rag_storage: SchemaWithValueRAG):
         all_schemas = rag_storage.search_all_schemas()
         all_values = rag_storage.search_all_value()
-        print(len(all_schemas), all_schemas.num_rows)
-        print(len(all_values), all_values.num_rows)
+        assert all_schemas.num_rows == 0
+        assert all_values.num_rows == 0
 
 
 @pytest.fixture

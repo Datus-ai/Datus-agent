@@ -8,6 +8,7 @@ import pytest
 
 from datus.storage.embedding_models import get_db_embedding_model
 from datus.storage.ext_knowledge.store import ExtKnowledgeRAG, ExtKnowledgeStore, gen_subject_item_id
+from datus.storage.subject_tree.store import SubjectTreeStore
 
 
 @pytest.fixture
@@ -94,7 +95,7 @@ class TestExtKnowledgeStoreInit:
     def test_store_creation(self, ext_store):
         """Test that store initializes correctly with expected attributes."""
         assert ext_store.table_name == "ext_knowledge"
-        assert ext_store.subject_tree is not None
+        assert isinstance(ext_store.subject_tree, SubjectTreeStore)
         assert hasattr(ext_store.subject_tree, "get_matched_children_id"), (
             "subject_tree must expose get_matched_children_id for scoped filtering"
         )
@@ -239,7 +240,7 @@ class TestExtKnowledgeStoreSearch:
         ext_store.batch_store_knowledge(sample_knowledge)
         results = ext_store.search_knowledge(query_text="financial metrics", top_n=2)
         assert len(results) <= 2
-        assert len(results) > 0
+        assert len(results) == 2
 
     def test_search_knowledge_by_subject_path(self, ext_store, sample_knowledge):
         """Test search filtered by subject_path."""
@@ -271,7 +272,7 @@ class TestExtKnowledgeStoreSearch:
             select_fields=["name", "search_text"],
             top_n=2,
         )
-        assert len(results) > 0
+        assert len(results) == 2
         for r in results:
             assert "name" in r
             assert "search_text" in r
@@ -326,7 +327,7 @@ class TestExtKnowledgeStoreCreateIndices:
         ext_store.create_indices()
         # Verify search still works after creating indices
         results = ext_store.search_knowledge(query_text="banking", top_n=2)
-        assert len(results) > 0
+        assert len(results) == 2
 
 
 # ============================================================
@@ -340,7 +341,7 @@ class TestExtKnowledgeRAGInit:
     def test_rag_init(self, real_agent_config):
         """Test RAG initializes with real agent config."""
         rag = ExtKnowledgeRAG(agent_config=real_agent_config)
-        assert rag.store is not None
+        assert isinstance(rag.store, ExtKnowledgeStore)
 
 
 class TestExtKnowledgeRAGOperations:

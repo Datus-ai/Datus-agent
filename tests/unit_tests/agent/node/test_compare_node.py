@@ -239,7 +239,7 @@ class TestExecuteCompare:
             }
             node.execute()
 
-        assert node.result is not None
+        assert isinstance(node.result, CompareResult)
         assert node.result.success is True
 
 

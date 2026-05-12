@@ -11,6 +11,7 @@ from datus.gateway.commands import (
     _COMMAND_REGISTRY,
     ChatCommand,
     CommandContext,
+    CommandMatch,
     HelpCommand,
     NewSessionCommand,
     VerboseCommand,
@@ -67,7 +68,7 @@ class TestCommandRegistry:
         cmd = _DummyCommand()
         register_command(cmd)
         result = match_command("/ping")
-        assert result is not None
+        assert isinstance(result, CommandMatch)
         assert result.command is cmd
         assert result.args == ""
 
@@ -87,7 +88,7 @@ class TestCommandRegistry:
         cmd = _DummyCommand()
         register_command(cmd)
         result = match_command("/ping foo bar")
-        assert result is not None
+        assert isinstance(result, CommandMatch)
         assert result.command is cmd
         assert result.args == "foo bar"
 
@@ -114,10 +115,10 @@ class TestCommandRegistry:
 
     def test_register_builtin_commands(self):
         register_builtin_commands()
-        assert match_command("/new") is not None
-        assert match_command("/reset") is not None
-        assert match_command("/verbose") is not None
-        assert match_command("/help") is not None
+        assert isinstance(match_command("/new"), CommandMatch)
+        assert isinstance(match_command("/reset"), CommandMatch)
+        assert isinstance(match_command("/verbose"), CommandMatch)
+        assert isinstance(match_command("/help"), CommandMatch)
         # /new and /reset should resolve to the same command instance
         assert match_command("/new").command is match_command("/reset").command
 

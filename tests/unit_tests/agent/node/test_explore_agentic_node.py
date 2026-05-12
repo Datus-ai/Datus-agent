@@ -106,7 +106,7 @@ class TestExploreAgenticNodeTools:
             agent_config=real_agent_config,
             node_name="explore",
         )
-        assert node.db_func_tool is not None
+        assert node.db_func_tool.agent_config is real_agent_config
         tool_names = [t.name for t in node.tools]
         assert "list_tables" in tool_names
         assert "describe_table" in tool_names
@@ -333,7 +333,6 @@ class TestExploreAgenticNodeExecution:
         async for _ in node.execute_stream(ahm):
             pass
 
-        assert node.result is not None
         assert node.result.success is True
         assert "satscores" in node.result.response
 
@@ -372,7 +371,7 @@ class TestExploreNodeTypeRegistration:
     def test_type_explore_has_description(self):
         """TYPE_EXPLORE should have a description."""
         desc = NodeType.get_description(NodeType.TYPE_EXPLORE)
-        assert "explore" in desc.lower() or "exploration" in desc.lower()
+        assert desc == "Read-only data exploration and context gathering"
 
     def test_type_input_explore(self):
         """NodeType.type_input should handle explore type."""

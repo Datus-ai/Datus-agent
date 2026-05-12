@@ -9,8 +9,8 @@ MODULE_PATH = Path(__file__).resolve().parents[3] / "ci" / "audit_tests.py"
 
 def _load_audit_tests():
     module_spec = importlib.util.spec_from_file_location("audit_tests", MODULE_PATH)
-    assert module_spec is not None
-    assert module_spec.loader is not None
+    if module_spec is None or module_spec.loader is None:
+        raise AssertionError(f"Unable to load audit_tests from {MODULE_PATH}")
     audit_tests = importlib.util.module_from_spec(module_spec)
     sys.modules[module_spec.name] = audit_tests
     module_spec.loader.exec_module(audit_tests)
@@ -98,5 +98,24 @@ def test_component_case():
         nightly_issues = [issue for issue in issues if issue.check == "nightly_marker_in_unit"]
         assert len(nightly_issues) == 1
         assert nightly_issues[0].line == 6
+    finally:
+        audit_tests.configure_repo_root(original_root)
+
+
+def test_audit_does_not_flag_large_unit_test_file(tmp_path):
+    audit_tests = _load_audit_tests()
+    original_root = audit_tests.REPO_ROOT
+    try:
+        test_file = tmp_path / "tests" / "unit_tests" / "test_large_file.py"
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text(
+            "def test_large_file_still_scans():\n    assert 1 == 1\n" + "\n".join("# filler" for _ in range(1800)),
+            encoding="utf-8",
+        )
+        audit_tests.configure_repo_root(tmp_path)
+
+        issues = audit_tests.scan_file(test_file, required_packages=set())
+
+        assert all(issue.check != "file_size_budget" for issue in issues)
     finally:
         audit_tests.configure_repo_root(original_root)

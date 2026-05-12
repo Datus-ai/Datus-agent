@@ -10,6 +10,7 @@ import pytest
 
 from datus.storage.document.schemas import PlatformDocChunk
 from datus.storage.document.store import (
+    _SAFE_IDENTIFIER_RE,
     DocumentStore,
     document_store,
     get_platform_doc_schema,
@@ -89,7 +90,7 @@ class TestGetPlatformDocSchema:
         """Default schema should use 384-dim embedding."""
         schema = get_platform_doc_schema()
         vec_field = schema.field("vector")
-        assert vec_field is not None
+        assert vec_field.name == "vector"
         assert vec_field.type.list_size == 384
 
     def test_custom_embedding_dim(self):
@@ -222,7 +223,7 @@ class TestDocumentStoreSearchDocs:
     def test_search_docs_no_filter(self):
         """Search without version filter returns results from all versions."""
         results = self.store.search_docs("database operations", top_n=10)
-        assert len(results) > 0
+        assert len(results) == 5
 
     def test_search_docs_with_version_filter(self):
         """Search with version filter returns only matching version."""
@@ -237,7 +238,7 @@ class TestDocumentStoreSearchDocs:
             top_n=5,
             select_fields=["chunk_text", "title", "version"],
         )
-        assert len(results) > 0
+        assert len(results) == 5
         for r in results:
             assert "chunk_text" in r
             assert "title" in r
@@ -303,7 +304,7 @@ class TestDocumentStoreStats:
         assert stats["total_chunks"] == 5
         assert set(stats["versions"]) == {"v1.0.0", "v2.0.0"}
         assert stats["doc_count"] == 2
-        assert stats["latest_update"] is not None
+        assert isinstance(stats["latest_update"], str)
 
     def test_get_stats_by_version(self, doc_store):
         """Version-specific stats should match filtered data."""
@@ -337,22 +338,27 @@ class TestValidateIdentifier:
     def test_valid_simple_string(self):
         """Simple alphanumeric string should pass."""
         DocumentStore._validate_identifier("v1.0.0", "version")
+        assert _SAFE_IDENTIFIER_RE.match("v1.0.0")
 
     def test_valid_with_hyphens(self):
         """String with hyphens should pass."""
         DocumentStore._validate_identifier("v1-beta-2", "version")
+        assert _SAFE_IDENTIFIER_RE.match("v1-beta-2")
 
     def test_valid_with_underscores(self):
         """String with underscores should pass."""
         DocumentStore._validate_identifier("version_1_0", "version")
+        assert _SAFE_IDENTIFIER_RE.match("version_1_0")
 
     def test_valid_with_spaces(self):
         """String with spaces should pass."""
         DocumentStore._validate_identifier("version 1", "version")
+        assert _SAFE_IDENTIFIER_RE.match("version 1")
 
     def test_valid_with_dots(self):
         """String with dots should pass."""
         DocumentStore._validate_identifier("v1.2.3", "version")
+        assert _SAFE_IDENTIFIER_RE.match("v1.2.3")
 
     def test_invalid_with_semicolon(self):
         """String with semicolon should raise DatusException."""
@@ -423,7 +429,7 @@ class TestDocumentStoreCreateIndices:
         doc_store.create_indices()
         # Verify search still works
         results = doc_store.search_docs("database operations", top_n=2)
-        assert len(results) > 0
+        assert len(results) == 2
 
     def test_create_indices_calls_vector_index(self, doc_store):
         """create_indices must delegate to the backend's create_vector_index."""

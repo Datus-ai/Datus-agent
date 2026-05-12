@@ -6,6 +6,8 @@ from enum import Enum
 from pathlib import Path
 from uuid import UUID, uuid4
 
+import pandas as pd
+import pydantic
 import pytest
 
 from datus.utils.json_utils import (
@@ -28,8 +30,6 @@ from datus.utils.json_utils import (
 
 
 def test_to_str_serializes_pydantic_model():
-    pydantic = pytest.importorskip("pydantic")
-
     class SampleModel(pydantic.BaseModel):
         created_at: datetime
         amount: Decimal
@@ -73,7 +73,6 @@ def test_to_str_coerces_mapping_keys_to_strings():
 
 def test_to_str_normalizes_pandas_and_numpy_objects():
     np = pytest.importorskip("numpy")
-    pd = pytest.importorskip("pandas")
 
     frame = pd.DataFrame([{"value": Decimal("1.5"), "ts": datetime(2024, 1, 1, 8, 30)}])
     array = np.array([1, 2, 3])
@@ -218,12 +217,11 @@ class TestExtractCodeBlockContent:
 class TestLlmResult2Json:
     def test_plain_json_dict(self):
         result = llm_result2json('{"sql": "SELECT 1"}')
-        assert result is not None
         assert result["sql"] == "SELECT 1"
 
     def test_json_in_code_block(self):
         result = llm_result2json('```json\n{"sql": "SELECT 1"}\n```')
-        assert result is not None
+        assert result == {"sql": "SELECT 1"}
 
     def test_returns_none_for_empty_string(self):
         result = llm_result2json("")
@@ -236,8 +234,7 @@ class TestLlmResult2Json:
 
     def test_returns_list_result(self):
         result = llm_result2json('[{"a": 1}]', expected_type=list)
-        assert result is not None
-        assert isinstance(result, list)
+        assert result == [{"a": 1}]
 
     def test_returns_none_when_both_sql_and_output_empty(self):
         result = llm_result2json('{"sql": "", "output": ""}')
@@ -245,7 +242,6 @@ class TestLlmResult2Json:
 
     def test_returns_dict_when_output_present(self):
         result = llm_result2json('{"sql": "", "output": "some result"}')
-        assert result is not None
         assert result["output"] == "some result"
 
     def test_returns_none_for_dict_without_sql_or_output(self):
@@ -255,7 +251,6 @@ class TestLlmResult2Json:
 
     def test_returns_dict_with_sql_key(self):
         result = llm_result2json('{"sql": "SELECT 1", "action": "query"}')
-        assert result is not None
         assert result["sql"] == "SELECT 1"
 
     def test_scrubs_bogus_backslash_escapes_in_sql_field(self):
@@ -270,7 +265,6 @@ class TestLlmResult2Json:
             '\\n  WHERE id IS NOT NULL\\\\)\\nSELECT * FROM base"}'
         )
         result = llm_result2json(raw)
-        assert result is not None
         # `\)` must become `)`; newline must survive
         assert "\\)" not in result["sql"]
         assert ")" in result["sql"]
@@ -279,7 +273,6 @@ class TestLlmResult2Json:
     def test_scrubs_all_bogus_brackets_and_semicolons(self):
         raw = r'{"sql": "SELECT \[a\]\;  FROM t\(x\)"}'
         result = llm_result2json(raw)
-        assert result is not None
         assert result["sql"] == "SELECT [a];  FROM t(x)"
 
     def test_scrubbing_preserves_backslashes_inside_quoted_strings(self):
@@ -288,7 +281,6 @@ class TestLlmResult2Json:
         # Inside a single-quoted SQL literal, the scrubber must leave it alone.
         raw = r'{"sql": "SELECT * FROM t WHERE path = ' "'" "C:\\(data\\)" "'" ' AND x = 1"}'
         result = llm_result2json(raw)
-        assert result is not None
         assert r"C:\(data\)" in result["sql"]
 
 
@@ -316,8 +308,7 @@ class TestLlmResult2Sql:
     def test_fallback_generic_code_block_with_sql_keywords(self):
         text = "```\nSELECT id FROM users WHERE active = 1\n```"
         result = llm_result2sql(text)
-        assert result is not None
-        assert "SELECT" in result
+        assert result == "SELECT id FROM users WHERE active = 1"
 
     def test_returns_none_when_no_sql_found(self):
         result = llm_result2sql("just some plain text with no code blocks")
@@ -338,7 +329,6 @@ class TestJsonList2MarkdownTable:
 
     def test_single_row(self):
         result = json_list2markdown_table([{"name": "alice", "age": 30}])
-        assert result is not None
         assert "alice" in result
 
     def test_multiple_rows(self):
@@ -570,8 +560,6 @@ class TestNormalizeForJson:
         assert result == "hello world"
 
     def test_pydantic_model(self):
-        pydantic = pytest.importorskip("pydantic")
-
         class MyModel(pydantic.BaseModel):
             name: str
             count: int

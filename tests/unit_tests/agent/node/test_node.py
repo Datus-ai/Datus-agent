@@ -1,5 +1,6 @@
 import glob
 import json
+import time
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -157,7 +158,7 @@ def init_metricflow_db() -> None:
     conn.close()
 
 
-class TestNode:
+class TestNodeFactory:
     """Test suite for Node class"""
 
     def setup_method(self) -> None:
@@ -184,16 +185,19 @@ class TestNode:
         node = Node.new_instance("test_node", "Test Node", NodeType.TYPE_SCHEMA_LINKING, agent_config=agent_config)
 
         # Test start state
+        before_start = time.time()
         node.start()
         assert node.status == "running"
-        assert node.start_time is not None
+        assert isinstance(node.start_time, float)
+        assert node.start_time >= before_start
 
         # Test complete state
         result = BaseResult(success=True, error=None)
         node.complete(result)
         assert node.status == "completed"
         assert node.result == result
-        assert node.end_time is not None
+        assert isinstance(node.end_time, float)
+        assert node.end_time >= node.start_time
 
         # Test fail state
         node = Node.new_instance("test_node", "Test Node", NodeType.TYPE_SCHEMA_LINKING, agent_config=agent_config)
@@ -249,9 +253,35 @@ class TestNode:
             assert node.input.input_text == test_case["input_text"]
             result = node.run()
             assert isinstance(result, SchemaLinkingResult)
-            assert isinstance(result, SchemaLinkingResult)
-            assert result.success
-            assert result.schema_count > 0
+            assert result.success is True
+            actual_table_names = {schema.table_name for schema in result.table_schemas}
+            known_fixture_tables = {
+                "_dummy",
+                "account",
+                "atom",
+                "bond",
+                "card",
+                "cards",
+                "client",
+                "connected",
+                "disp",
+                "district",
+                "foreign_data",
+                "frpm",
+                "legalities",
+                "loan",
+                "molecule",
+                "order",
+                "rulings",
+                "satscores",
+                "schools",
+                "set_translations",
+                "sets",
+                "trans",
+            }
+            assert result.schema_count == len(result.table_schemas)
+            assert actual_table_names != set()
+            assert actual_table_names <= known_fixture_tables
 
     def test_schema_linking_fallback(self, agent_config: AgentConfig, mock_llm_create):
         """Test schema linking node with fallback"""
@@ -355,9 +385,8 @@ class TestNode:
             assert node.status == "completed", f"Node execution failed with status: {node.status}"
             assert result.success is True, f"Node execution failed: {result}"
             assert isinstance(result, GenerateSQLResult), "Result type mismatch"
-            assert len(result.sql_query) > 0, "Empty SQL query generated"
-            assert isinstance(result.tables, list), "Tables result is not a list"
-            assert len(result.tables) > 0, "No tables in result"
+            assert result.sql_query == "SELECT * FROM schools WHERE City = 'Fresno' LIMIT 10"
+            assert result.tables == ["schools"]
 
             # Test error state handling
             node.fail("Test error")
@@ -602,8 +631,9 @@ class TestNode:
                 assert node.status == "completed", f"Node execution failed with status: {node.status}"
                 assert isinstance(result, ExecuteSQLResult), "Result type mismatch"
                 assert result.success is True, f"Node execution failed: {result}"
-                assert result.sql_return is not None, "Execution result is empty"
-                assert result.row_count is not None, "Execution explanation is empty"
+                assert result.row_count == 1
+                assert isinstance(result.sql_return, str)
+                assert result.sql_return.endswith("\n")
 
         except Exception as e:
             logger.error(f"Execution node test failed: {str(e)}")
@@ -740,18 +770,8 @@ class TestNode:
             assert node.status == "completed", f"Node execution failed with status: {node.status}"
             assert isinstance(result, CompareResult), "Result type mismatch"
             assert result.success is True, f"Node execution failed: {result}"
-            assert len(result.explanation) > 0, "Empty explanation"
-            assert len(result.suggest) > 0, "Empty suggestions"
-
-            # Test that explanation contains meaningful content
-            assert "Charter" in result.explanation or "charter" in result.explanation, (
-                "Explanation should mention charter schools"
-            )
-
-            # Test that suggestions contain actionable advice
-            assert "JOIN" in result.suggest or "join" in result.suggest or "table" in result.suggest, (
-                "Suggestions should mention JOIN or table differences"
-            )
+            assert result.explanation == resp["explanation"]
+            assert result.suggest == resp["suggest"]
 
         except Exception as e:
             logger.error(f"Compare node test failed: {str(e)}")
@@ -848,21 +868,8 @@ class TestNode:
             assert node.status == "completed", f"Node execution failed with status: {node.status}"
             assert isinstance(result, CompareResult), "Result type mismatch"
             assert result.success is True, f"Node execution failed: {result}"
-            assert len(result.explanation) > 0, "Empty explanation"
-            # assert len(result.suggest) > 0, "Empty suggestions"
-
-            # Should identify key differences between single table vs JOIN approach
-            explanation_lower = result.explanation.lower()
-            assert "join" in explanation_lower or "table" in explanation_lower or "frpm" in explanation_lower, (
-                "Should identify table structure differences"
-            )
-
-            # Suggestions should be actionable and database-informed
-            assert result.suggest
-            suggest_lower = result.suggest.lower()
-            assert "join" in suggest_lower or "table" in suggest_lower or "modify" in suggest_lower, (
-                "Should provide actionable database-informed suggestions"
-            )
+            assert "frpm table contains the authoritative charter funding information" in result.explanation
+            assert "Join with the frpm table using CDSCode" in result.suggest
 
         except Exception as e:
             logger.error(f"Compare MCP node test failed: {str(e)}")

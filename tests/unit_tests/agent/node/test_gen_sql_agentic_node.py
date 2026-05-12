@@ -17,6 +17,7 @@ real PathManager.
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 
@@ -64,6 +65,7 @@ class TestGenSQLAgenticNodeInit:
     def test_gensql_has_db_tools(self, real_agent_config, mock_llm_create):
         """After init, node has real db tools (list_tables, describe_table, read_query, get_table_ddl)."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+        from datus.tools.func_tool.database import DBFuncTool
 
         node = GenSQLAgenticNode(
             node_id="test_gensql_2",
@@ -73,13 +75,10 @@ class TestGenSQLAgenticNodeInit:
             node_name="gensql",
         )
 
-        assert node.db_func_tool is not None
-        assert len(node.tools) > 0
+        assert isinstance(node.db_func_tool, DBFuncTool)
 
-        tool_names = [t.name for t in node.tools]
-        assert "list_tables" in tool_names
-        assert "describe_table" in tool_names
-        assert "read_query" in tool_names
+        tool_names = {t.name for t in node.tools}
+        assert {"list_tables", "describe_table", "read_query"} <= tool_names
 
     def test_gensql_max_turns_from_config(self, real_agent_config, mock_llm_create):
         """max_turns is read from agentic_nodes config (set to 5 in fixture)."""
@@ -103,6 +102,7 @@ class TestGenSQLAgenticNodeExecutionMode:
     def test_interactive_mode_has_ask_user_tool(self, real_agent_config, mock_llm_create):
         """Interactive mode (default) enables ask_user tool."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+        from datus.tools.func_tool.ask_user_tools import AskUserTool
 
         node = GenSQLAgenticNode(
             node_id="test_gensql_interactive",
@@ -113,7 +113,7 @@ class TestGenSQLAgenticNodeExecutionMode:
         )
 
         assert node.execution_mode == "interactive"
-        assert node.ask_user_tool is not None
+        assert isinstance(node.ask_user_tool, AskUserTool)
         tool_names = [t.name for t in node.tools]
         assert "ask_user" in tool_names
 
@@ -312,7 +312,8 @@ class TestGenSQLAgenticNodeExecution:
         # The output should contain actual data from the california_schools SQLite db
         output = sql_result["output"]
         output_str = str(output)
-        assert "cds" in output_str.lower() or "AvgScrRead" in output_str or "502" in output_str
+        assert "cds" in output_str.lower()
+        assert "AvgScrRead" in output_str
 
     @pytest.mark.asyncio
     async def test_gensql_describe_table_tool(self, real_agent_config, mock_llm_create):
@@ -361,9 +362,11 @@ class TestGenSQLAgenticNodeExecution:
         assert desc_result["executed"] is True
 
         # The output should contain column info from the real satscores table
-        output_str = str(desc_result["output"])
+        output_str = str(desc_result["output"]).lower()
         # Should contain column names from the satscores schema
-        assert "cds" in output_str.lower() or "avgscrread" in output_str.lower() or "sname" in output_str.lower()
+        assert "cds" in output_str
+        assert "avgscrread" in output_str
+        assert "sname" in output_str
 
     @pytest.mark.asyncio
     async def test_gensql_action_history_tracking(self, real_agent_config, mock_llm_create):
@@ -416,8 +419,21 @@ class TestGenSQLAgenticNodeExecution:
 
         # Each action should have a valid action_id
         for action in tracked_actions:
-            assert action.action_id is not None
-            assert len(action.action_id) > 0
+            prefixed_action_id_lengths = {
+                "call_": 12,
+                "complete_call_": 12,
+                "assistant_": 8,
+            }
+            action_id_prefix = next(
+                (prefix for prefix in prefixed_action_id_lengths if action.action_id.startswith(prefix)),
+                None,
+            )
+            if action_id_prefix:
+                action_id_suffix = action.action_id.removeprefix(action_id_prefix)
+                assert len(action_id_suffix) == prefixed_action_id_lengths[action_id_prefix]
+                int(action_id_suffix, 16)
+            else:
+                assert str(UUID(action.action_id)) == action.action_id
 
     @pytest.mark.asyncio
     async def test_gensql_sql_extraction(self, real_agent_config, mock_llm_create):
@@ -460,7 +476,6 @@ class TestGenSQLAgenticNodeExecution:
         final_action = actions[-1]
         assert final_action.role == ActionRole.ASSISTANT
         assert final_action.status == ActionStatus.SUCCESS
-        assert final_action.output is not None
 
         # Check that SQL was extracted into the result
         output = final_action.output
@@ -522,6 +537,8 @@ class TestChatAgenticNodeInit:
     def test_chat_has_all_tools(self, real_agent_config, mock_llm_create):
         """Chat has both db tools and context_search tools after initialization."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.tools.func_tool.context_search import ContextSearchTools
+        from datus.tools.func_tool.database import DBFuncTool
 
         node = ChatAgenticNode(
             node_id="test_chat_2",
@@ -531,18 +548,14 @@ class TestChatAgenticNodeInit:
         )
 
         # Chat node should have db tools
-        assert node.db_func_tool is not None
+        assert isinstance(node.db_func_tool, DBFuncTool)
 
         # Chat node should have context_search_tools
-        assert node.context_search_tools is not None
+        assert isinstance(node.context_search_tools, ContextSearchTools)
 
         # Verify db tool names present
-        tool_names = [t.name for t in node.tools]
-        assert "list_tables" in tool_names
-        assert "describe_table" in tool_names
-
-        # Chat should have more tools than gensql because it includes context_search
-        assert len(node.tools) > 0
+        tool_names = {t.name for t in node.tools}
+        assert {"list_tables", "describe_table", "ask_user"} <= tool_names
 
     def test_chat_has_skill_attributes(self, real_agent_config, mock_llm_create):
         """ChatAgenticNode has skill_func_tool and permission_hooks attributes."""
@@ -640,7 +653,9 @@ class TestChatAgenticNodeExecution:
 
         # The real tool output should contain our test tables
         output_str = str(tool_result["output"])
-        assert "satscores" in output_str or "schools" in output_str or "frpm" in output_str
+        assert "satscores" in output_str
+        assert "schools" in output_str
+        assert "frpm" in output_str
 
         # Verify actions include TOOL role
         roles = [a.role for a in actions]
@@ -650,6 +665,7 @@ class TestChatAgenticNodeExecution:
     async def test_chat_with_context_search(self, real_agent_config, mock_llm_create):
         """Chat calls a context search tool (may return empty results from fresh RAG store, that is OK)."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.tools.func_tool.context_search import ContextSearchTools
 
         node = ChatAgenticNode(
             node_id="test_chat_ctx_search",
@@ -661,7 +677,7 @@ class TestChatAgenticNodeExecution:
         # Check if context_search_tools has any available tools
         # In a fresh test environment, the RAG stores may be empty, so there may be
         # no search tools exposed. That is acceptable - we verify the tools object exists.
-        assert node.context_search_tools is not None
+        assert isinstance(node.context_search_tools, ContextSearchTools)
 
         # Get the actual available search tool names
         ctx_tools = node.context_search_tools.available_tools()
@@ -697,7 +713,6 @@ class TestChatAgenticNodeExecution:
         else:
             # No context search tools available (empty RAG store) - this is OK
             # Verify the context_search_tools object was created and is iterable
-            assert node.context_search_tools is not None
             assert hasattr(node.context_search_tools, "available_tools"), (
                 "context_search_tools must expose available_tools()"
             )
@@ -824,6 +839,7 @@ class TestGenSQLNodeReferenceTemplateToolSetup:
         }
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
         from datus.configuration.node_type import NodeType
+        from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 
         node = GenSQLAgenticNode(
             node_id="tpl_test_id",
@@ -833,7 +849,7 @@ class TestGenSQLNodeReferenceTemplateToolSetup:
             node_name="tpl_test",
         )
         # reference_template_tools should be initialized (may have 0 templates though)
-        assert node.reference_template_tools is not None
+        assert isinstance(node.reference_template_tools, ReferenceTemplateTools)
 
     def test_setup_reference_template_tools_specific_method(self, real_agent_config, mock_llm_create):
         """reference_template_tools.search_reference_template loads only search tool."""
@@ -844,6 +860,7 @@ class TestGenSQLNodeReferenceTemplateToolSetup:
         }
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
         from datus.configuration.node_type import NodeType
+        from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 
         node = GenSQLAgenticNode(
             node_id="tpl_test2_id",
@@ -852,7 +869,7 @@ class TestGenSQLNodeReferenceTemplateToolSetup:
             agent_config=real_agent_config,
             node_name="tpl_test2",
         )
-        assert node.reference_template_tools is not None
+        assert isinstance(node.reference_template_tools, ReferenceTemplateTools)
 
 
 # ===========================================================================
@@ -1008,9 +1025,9 @@ class TestEndToEndNodeHooksInteraction:
 
         # The error action should indicate failure due to permission denial
         error_action = assistant_actions[-1]
-        assert error_action.output is not None
         assert isinstance(error_action.output, dict), f"Expected dict, got {type(error_action.output)}"
-        assert error_action.output.get("success") is False or "rejected" in str(error_action.output).lower()
+        assert error_action.output["success"] is False
+        assert "rejected" in str(error_action.output).lower()
 
     @pytest.mark.asyncio
     async def test_e2e_ask_permission_session_approve_second_call_auto(self, real_agent_config, mock_llm_create):
@@ -2711,7 +2728,8 @@ class TestGenSQLSetupTools:
         # After init, tools should be set up
         assert isinstance(node.tools, list)
         # Should have at least DB tools
-        assert len(node.tools) > 0
+        tool_names = {tool.name for tool in node.tools}
+        assert {"list_tables", "describe_table", "read_query"} <= tool_names
 
     def test_setup_tools_with_scoped_context(self, real_agent_config, mock_llm_create):
         """scoped_context config affects context search tool creation."""

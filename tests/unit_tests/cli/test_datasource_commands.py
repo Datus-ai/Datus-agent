@@ -266,8 +266,9 @@ class TestMenuLoop:
     def test_menu_cancel_exits(self):
         cli = _make_cli()
         cmds = DatasourceCommands(cli)
-        with patch.object(cmds, "_run_app", return_value=None):
+        with patch.object(cmds, "_run_app", return_value=None), patch.object(cmds, "_switch") as mock_switch:
             cmds._run_menu()
+        mock_switch.assert_not_called()
 
     def test_menu_add_submit(self):
         cli = _make_cli()
@@ -438,7 +439,8 @@ class TestDatasourceAppViews:
         ):
             app._enter_type_select()
             assert app._view == _View.TYPE_SELECT
-            assert len(app._db_types) > 0
+            assert ("duckdb", "duckdb", True) in app._db_types
+            assert ("sqlite", "sqlite", True) in app._db_types
 
     def test_enter_config_form(self):
         cli = _make_cli()
@@ -457,7 +459,7 @@ class TestDatasourceAppViews:
             assert app._view == _View.CONFIG_FORM
             assert len(app._form_textareas) == 4
             assert app._form_field_names[0] == "_name"
-            assert app._form_container is not None
+            assert len(app._form_container.children) == len(app._form_textareas) + 1
 
     def test_enter_config_form_edit_mode(self):
         cli = _make_cli()
@@ -553,29 +555,26 @@ class TestDatasourceAppFormSubmit:
         app = self._make_app_with_form()
         app._form_textareas[0].text = ""
         app._submit_form()
-        assert app._error_message is not None
-        assert "name" in app._error_message.lower()
+        assert app._error_message == "Datasource name is required."
 
     def test_submit_validates_invalid_name(self):
         app = self._make_app_with_form()
         app._form_textareas[0].text = "bad name!"
         app._submit_form()
-        assert app._error_message is not None
+        assert app._error_message == "Name may only contain letters, digits, hyphens, and underscores."
 
     def test_submit_validates_duplicate_name(self):
         app = self._make_app_with_form()
         app._form_textareas[0].text = "local_db"
         app._submit_form()
-        assert app._error_message is not None
-        assert "already exists" in app._error_message
+        assert app._error_message == "Datasource 'local_db' already exists."
 
     def test_submit_validates_required_fields(self):
         app = self._make_app_with_form()
         app._form_textareas[0].text = "new_ds"
         app._form_textareas[1].text = ""
         app._submit_form()
-        assert app._error_message is not None
-        assert "required" in app._error_message.lower()
+        assert app._error_message == "Host is required."
 
     def test_submit_validates_port_range(self):
         app = self._make_app_with_form()
@@ -590,7 +589,7 @@ class TestDatasourceAppFormSubmit:
         # Port validation only triggers when field_name == "port"
         # Our fields are: _name, host, port
         # port has type=int, value=99999 — fails port range check
-        assert app._error_message is not None
+        assert app._error_message == "Port must be between 1 and 65535."
 
 
 class TestDatasourceAppCursor:

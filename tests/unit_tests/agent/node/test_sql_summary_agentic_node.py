@@ -16,6 +16,8 @@ import pytest
 
 from datus.schemas.action_history import ActionRole, ActionStatus
 from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput
+from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+from datus.tools.func_tool.generation_tools import GenerationTools
 from tests.unit_tests.mock_llm_model import (
     MockToolCall,
     build_simple_response,
@@ -75,8 +77,8 @@ class TestSqlSummaryAgenticNodeInit:
         assert "grep" in tool_names
 
         # Tool instances should be initialized
-        assert node.filesystem_func_tool is not None
-        assert node.generation_tools is not None
+        assert isinstance(node.filesystem_func_tool, FilesystemFuncTool)
+        assert isinstance(node.generation_tools, GenerationTools)
 
     def test_sql_summary_max_turns(self, real_agent_config, mock_llm_create):
         """max_turns is read from agentic_nodes config (5 in test config)."""
@@ -253,7 +255,7 @@ class TestSqlSummaryAgenticNodeExecution:
         call = mock_llm_create.call_history[0]
         prompt = call.get("prompt", "")
         # The enhanced message should contain the SQL query
-        assert "SELECT" in prompt or "Summarize" in prompt
+        assert "SELECT s.County, AVG(sc.AvgScrRead)" in prompt
 
     @pytest.mark.asyncio
     async def test_sql_summary_interactive_mode_token_tracking(self, real_agent_config, mock_llm_create):
@@ -466,7 +468,7 @@ class TestSqlSummaryFilesystemRootPath:
         node = _create_node(real_agent_config)
         expected = str(Path(real_agent_config.project_root).expanduser())
 
-        assert node.filesystem_func_tool is not None
+        assert isinstance(node.filesystem_func_tool, FilesystemFuncTool)
         assert node.filesystem_func_tool.root_path == expected
 
 

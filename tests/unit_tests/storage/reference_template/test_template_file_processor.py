@@ -85,7 +85,7 @@ class TestValidateTemplate:
         template = "{% if condition %}SELECT 1"  # Missing endif
         is_valid, error = validate_template(template)
         assert not is_valid
-        assert "syntax error" in error.lower() or "Unexpected" in error
+        assert "jinja2 syntax error" in error.lower()
 
     def test_plain_sql_is_valid(self):
         template = "SELECT col1, col2 FROM table1 WHERE active = 1"

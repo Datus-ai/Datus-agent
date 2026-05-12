@@ -2,8 +2,10 @@
 
 import pytest
 
+from datus.api.models.base_models import Result
 from datus.api.models.database_models import ListDatabasesInput
 from datus.api.services.database_service import DatasourceService
+from datus.tools.db_tools.db_manager import DBManager
 
 
 class TestDatasourceServiceInit:
@@ -12,13 +14,13 @@ class TestDatasourceServiceInit:
     def test_init_with_real_config(self, real_agent_config):
         """DatasourceService initializes with real agent config."""
         svc = DatasourceService(agent_config=real_agent_config)
-        assert svc is not None
-        assert svc.current_db_connector is not None
+        assert isinstance(svc, DatasourceService)
+        assert svc.current_db_connector.get_type() == "sqlite"
 
     def test_init_sets_current_db_name(self, real_agent_config):
         """Init resolves the current database name from the datasource."""
         svc = DatasourceService(agent_config=real_agent_config)
-        assert svc.current_db_name is not None
+        assert svc.current_db_name == "california_schools"
 
     def test_init_sets_datasource(self, real_agent_config):
         """Init stores current_datasource from config."""
@@ -28,7 +30,7 @@ class TestDatasourceServiceInit:
     def test_db_manager_created(self, real_agent_config):
         """Init creates DBManager."""
         svc = DatasourceService(agent_config=real_agent_config)
-        assert svc.db_manager is not None
+        assert isinstance(svc.db_manager, DBManager)
 
 
 class TestDatabaseServiceGetDatabaseType:
@@ -56,14 +58,14 @@ class TestGetSemanticModel:
         svc = DatasourceService(agent_config=real_agent_config)
         result = svc.get_semantic_model("nonexistent_table_xyz")
         # Should return success=True with no data, or success=False
-        assert result is not None
+        assert isinstance(result, Result)
 
     def test_get_semantic_model_for_known_table(self, real_agent_config):
         """get_semantic_model for known table (may return empty if no semantic model built)."""
         svc = DatasourceService(agent_config=real_agent_config)
         result = svc.get_semantic_model("schools")
         # The table exists but may not have a semantic model file
-        assert result is not None
+        assert isinstance(result, Result)
 
     @pytest.mark.asyncio
     async def test_validate_semantic_model_nonexistent(self, real_agent_config):
@@ -85,7 +87,7 @@ class TestListDatabases:
         request = ListDatabasesInput()
         result = svc.list_databases(request)
         assert result.success is True
-        assert result.data is not None
+        assert result.data.total_count == len(result.data.databases)
         assert result.data.total_count >= 1
 
     def test_list_databases_has_entries(self, real_agent_config):
@@ -142,14 +144,14 @@ class TestListDatabases:
         request = ListDatabasesInput()
         result = svc.list_databases(request)
         for db in result.data.databases:
-            assert db.type is not None
+            assert db.type == "sqlite"
 
     def test_list_databases_has_current_database(self, real_agent_config):
         """list_databases data includes current_database field."""
         svc = DatasourceService(agent_config=real_agent_config)
         request = ListDatabasesInput()
         result = svc.list_databases(request)
-        assert result.data.current_database is not None
+        assert result.data.current_database == "california_schools"
 
 
 class TestGetTableSchema:
@@ -160,8 +162,8 @@ class TestGetTableSchema:
         svc = DatasourceService(agent_config=real_agent_config)
         result = svc.get_table_schema("schools")
         assert result.success is True
-        assert result.data is not None
-        assert len(result.data.table.columns) > 0
+        assert result.data.table.name == "schools"
+        assert [col.name for col in result.data.table.columns[:2]] == ["CDSCode", "NCESDist"]
 
     def test_get_table_schema_column_has_name_and_type(self, real_agent_config):
         """Each column has name and type fields."""

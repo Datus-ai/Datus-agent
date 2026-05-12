@@ -83,7 +83,6 @@ SQL = """create or replace TABLE GT.GT2.VARIANTS (
 
 def test_parse_sql():
     table_meta = parse_metadata_from_ddl(SQL, "snowflake")
-    print(table_meta)
     assert table_meta["table"]["name"] == "VARIANTS"
     assert table_meta["columns"][0]["name"] == "reference_name"
     assert len(table_meta["columns"]) == 40
@@ -206,9 +205,8 @@ def test_parse_sqlserver():
 
 
 def test_json_utils():
-    print(
-        llm_result2json(
-            """```json
+    result = llm_result2json(
+        """```json
 [
   {
     "table": "NOAA_HISTORIC_SEVERE_STORMS.HAIL_REPORTS",
@@ -420,15 +418,21 @@ def test_json_utils():
   }]
   ```
 """
-        )
     )
+    assert isinstance(result, list)
+    assert len(result) == 2
+    matched_tables = result[0]
+    unmatched_tables = result[1]
+    assert len(matched_tables) == 5
+    assert len(unmatched_tables) == 43
+    assert matched_tables[0]["table"] == "NOAA_HISTORIC_SEVERE_STORMS.HAIL_REPORTS"
+    assert matched_tables[0]["score"] == 0.9
 
 
-def parse_and_print(select_sql, except_tables, dialect=DBType.SQLITE):
+def parse_and_assert(select_sql, expected_tables, dialect=DBType.SQLITE):
     tables = extract_table_names(select_sql, dialect, ignore_empty=True)
-    for table in tables:
-        print(f"  - {table}")
-    assert set(tables) == set(except_tables)
+    assert set(tables) == set(expected_tables)
+    return tables
 
 
 def test_parse_by_query():
@@ -439,10 +443,14 @@ def test_parse_by_query():
     WHERE T2.CustomerID = ( SELECT CustomerID FROM yearmonth ORDER BY Consumption DESC LIMIT 1)
     GROUP BY T2.CustomerID, T1.Currency
     """
-    parse_and_print(example_sql, ["customers", "transactions_1k", "yearmonth"])
+    tables = parse_and_assert(example_sql, ["customers", "transactions_1k", "yearmonth"])
+    assert sorted(tables) == [
+        "customers",
+        "transactions_1k",
+        "yearmonth",
+    ]
 
-    print("-" * 100)
-    parse_and_print(
+    snowflake_tables = parse_and_assert(
         """SELECT
   genex."case_barcode" AS "case_barcode",
   genex."sample_barcode" AS "sample_barcode",
@@ -498,9 +506,15 @@ ORDER BY
         ],
         dialect="snowflake",
     )
+    assert sorted(snowflake_tables) == sorted(
+        [
+            "TCGA.TCGA_VERSIONED.SOMATIC_MUTATION_HG19_DCC_2017_02",
+            "TCGA.TCGA_VERSIONED.CLINICAL_GDC_R39",
+            "TCGA.TCGA_VERSIONED.RNASEQ_HG19_GDC_2017_02",
+        ]
+    )
 
-    print("-" * 100)
-    parse_and_print(
+    assert parse_and_assert(
         """SELECT account_id, MAX(payments) AS max_payment, MIN(payments) AS min_payment
         FROM loan GROUP BY account_id HAVING COUNT(account_id) > 1 AND (MAX(payments) - MIN(payments)) > 2;
         WITH cte AS (SELECT * FROM loan)
@@ -508,7 +522,7 @@ ORDER BY
         """,
         ["loan"],
         dialect="postgres",
-    )
+    ) == ["loan"]
 
 
 def test_parse_duckdb():
@@ -520,7 +534,10 @@ date date null,
 type text null)""",
         dialect=DBType.DUCKDB,
     )
-    print(table_meta)
+    assert table_meta["table"]["name"] == "test"
+    assert table_meta["table"]["schema_name"] == "abc"
+    assert table_meta["columns"][0]["name"] == "id"
+    assert len(table_meta["columns"]) == 4
 
 
 def test_parse_sqlite():
@@ -548,7 +565,6 @@ def test_parse_sqlite():
         dialect=DBType.SQLITE,
     )
 
-    print(table_meta)
     tb_info = table_meta["table"]
     assert tb_info["name"] == "date"
     assert tb_info["database_name"] == ""
@@ -985,7 +1001,6 @@ def test_parse_sql_type_starrocks_metadata_none_parse():
 def test_parse_context_switch_duckdb_set_schema():
     """Cover line 820: DuckDB SET SCHEMA without database sets fuzzy=False."""
     result = parse_context_switch("SET SCHEMA main", dialect=DBType.DUCKDB)
-    assert result is not None
     assert result["command"] == "SET"
     assert result["target"] == "schema"
     assert result["schema_name"] == "main"
@@ -1454,29 +1469,26 @@ class TestParseContextSwitchExtended:
 
     def test_set_database(self):
         result = parse_context_switch("SET DATABASE mydb", "duckdb")
-        assert result is not None
         assert result["command"] == "SET"
         assert result["target"] == "database"
         assert result["database_name"] == "mydb"
 
     def test_set_schema_duckdb(self):
         result = parse_context_switch("SET SCHEMA main", "duckdb")
-        assert result is not None
         assert result["target"] == "schema"
+        assert result["schema_name"] == "main"
 
     def test_set_catalog(self):
         result = parse_context_switch("SET CATALOG mycat", "duckdb")
-        assert result is not None
         assert result["target"] == "catalog"
+        assert result["catalog_name"] == "mycat"
 
     def test_set_with_equals(self):
         result = parse_context_switch("SET CATALOG = mycat", "snowflake")
-        assert result is not None
         assert result["catalog_name"] == "mycat"
 
     def test_set_with_to(self):
         result = parse_context_switch("SET CATALOG TO mycat", "snowflake")
-        assert result is not None
         assert result["catalog_name"] == "mycat"
 
     def test_set_empty_remainder_returns_none(self):
@@ -1485,34 +1497,31 @@ class TestParseContextSwitchExtended:
 
     def test_use_catalog_keyword(self):
         result = parse_context_switch("USE CATALOG my_catalog", "starrocks")
-        assert result is not None
         assert result["target"] == "catalog"
+        assert result["catalog_name"] == "my_catalog"
 
     def test_use_database_keyword(self):
         result = parse_context_switch("USE DATABASE mydb", "snowflake")
-        assert result is not None
         assert result["target"] == "database"
+        assert result["database_name"] == "mydb"
 
     def test_use_schema_keyword_snowflake(self):
         result = parse_context_switch("USE SCHEMA myschema", "snowflake")
-        assert result is not None
         assert result["target"] == "schema"
         assert result["schema_name"] == "myschema"
 
     def test_set_session_database(self):
         result = parse_context_switch("SET SESSION DATABASE mydb", "snowflake")
-        assert result is not None
         assert result["target"] == "database"
         assert result["database_name"] == "mydb"
 
     def test_generic_use_fallback(self):
         # For postgres (has schema capability), generic fallback applies
         result = parse_context_switch("USE myschema", "postgres")
-        assert result is not None
+        assert result["schema_name"] == "myschema"
 
     def test_starrocks_use_catalog_dot_db(self):
         result = parse_context_switch("USE my_catalog.my_db", "starrocks")
-        assert result is not None
         assert result["target"] == "database"
         assert result["catalog_name"] == "my_catalog"
         assert result["database_name"] == "my_db"
@@ -1545,5 +1554,5 @@ class TestParseMetadataFromDDLExtended:
         )"""
         result = parse_metadata_from_ddl(ddl, "mysql")
         assert result["table"]["name"] == "t"
-        name_col = next((c for c in result["columns"] if c["name"] == "name"), None)
-        assert name_col is not None
+        name_col = next(c for c in result["columns"] if c["name"] == "name")
+        assert name_col == {"name": "name", "type": "VARCHAR(100)"}

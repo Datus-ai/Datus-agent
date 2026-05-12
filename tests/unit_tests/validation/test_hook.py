@@ -165,7 +165,6 @@ class TestOnEnd:
         hook = _make_hook(FakeDBFuncTool(exists=True))
         hook.reset_session()
         await hook.on_end(None, None, None)
-        assert hook.final_report is not None
         assert hook.final_report.checks == []
 
     @pytest.mark.asyncio
@@ -176,9 +175,8 @@ class TestOnEnd:
             tgt = TableTarget(database="d", table=table, rows_affected=10).model_dump(by_alias=True, exclude_none=True)
             await hook.on_tool_end(None, None, None, FakeToolResult({"deliverable_target": tgt}))
         await hook.on_end(None, None, None)
-        assert hook.final_report is not None
         # Each target contributes at least an existence check
-        assert len(hook.final_report.checks) >= 2
+        assert [c.name for c in hook.final_report.checks].count("table_exists") == 2
 
     @pytest.mark.asyncio
     async def test_on_end_blocking_failure_recorded_not_raised(self):
@@ -188,7 +186,6 @@ class TestOnEnd:
         hook._session_targets.append(TableTarget(database="d", table="missing"))
         await hook.on_end(None, None, None)
         # Did not raise
-        assert hook.final_report is not None
         assert hook.final_report.has_blocking_failure()
 
     @pytest.mark.asyncio
@@ -202,7 +199,6 @@ class TestOnEnd:
         await hook.on_tool_end(None, None, None, FakeToolResult({"deliverable_target": tgt}))
         # on_end runs Layer A and records the failure
         await hook.on_end(None, None, None)
-        assert hook.final_report is not None
         assert hook.final_report.has_blocking_failure()
         assert any(c.name == "table_exists" and not c.passed for c in hook.final_report.checks)
 
@@ -222,7 +218,6 @@ class TestOnEnd:
         assert len(hook.session_targets) == 1
         # on_end finds the parity mismatch
         await hook.on_end(None, None, None)
-        assert hook.final_report is not None
         assert hook.final_report.has_blocking_failure()
         assert any(c.name == "transfer_row_count_parity" and not c.passed for c in hook.final_report.checks)
 
@@ -395,7 +390,7 @@ class TestResetSession:
         await hook.on_tool_end(None, None, None, FakeToolResult({"deliverable_target": tgt}))
         assert len(hook.session_targets) == 1
         await hook.on_end(None, None, None)
-        assert hook.final_report is not None
+        assert hook.final_report.checks[0].name == "table_exists"
         hook.reset_session()
         assert hook.session_targets == []
         assert hook.final_report is None

@@ -11,6 +11,7 @@ import pytest
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
+from datus.schemas.agent_models import ScopedContext
 from datus.tools.func_tool.sub_agent_task_tool import (
     BUILTIN_SUBAGENT_DESCRIPTIONS,
     NODE_CLASS_MAP,
@@ -227,7 +228,7 @@ class TestResolveNodeType:
         task_tool._parent_node = parent
         # 'sales_analyst' yaml has no scoped_context → child empty → inherit parent
         effective = task_tool._resolve_effective_sub_agent_config("sales_analyst")
-        assert effective.scoped_context is not None
+        assert isinstance(effective.scoped_context, ScopedContext)
         assert effective.scoped_context.tables == "public.users"
 
     def test_resolve_effective_accepts_parent_scoped_context_instance(self, task_tool):
@@ -2263,5 +2264,5 @@ class TestSessionPersistence:
         assert "session_id" not in schema.get("required", [])
         # Description guides the LLM to the iterative-refinement use case.
         desc = schema["properties"]["session_id"]["description"]
-        assert "CONTINUE" in desc or "continue" in desc.lower()
+        assert "continue" in desc.lower()
         assert "type" in desc.lower()  # callout that types must match

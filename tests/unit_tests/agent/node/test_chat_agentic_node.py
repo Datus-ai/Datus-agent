@@ -137,6 +137,7 @@ class TestChatAgenticNodeToolSetup:
     def test_has_db_tools(self, real_agent_config, mock_llm_create):
         """Chat node has database tools."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.tools.func_tool.database import DBFuncTool
 
         node = ChatAgenticNode(
             node_id="test_db",
@@ -145,7 +146,7 @@ class TestChatAgenticNodeToolSetup:
             agent_config=real_agent_config,
         )
 
-        assert node.db_func_tool is not None
+        assert isinstance(node.db_func_tool, DBFuncTool)
         tool_names = [t.name for t in node.tools]
         # Should have at least some db tools
         assert any("table" in name or "query" in name or "sql" in name for name in tool_names)
@@ -153,6 +154,7 @@ class TestChatAgenticNodeToolSetup:
     def test_has_context_search_tools(self, real_agent_config, mock_llm_create):
         """Chat node has context search tools."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.tools.func_tool.context_search import ContextSearchTools
 
         node = ChatAgenticNode(
             node_id="test_ctx",
@@ -161,11 +163,12 @@ class TestChatAgenticNodeToolSetup:
             agent_config=real_agent_config,
         )
 
-        assert node.context_search_tools is not None
+        assert isinstance(node.context_search_tools, ContextSearchTools)
 
     def test_has_filesystem_tools(self, real_agent_config, mock_llm_create):
         """Chat node has filesystem tools."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 
         node = ChatAgenticNode(
             node_id="test_fs",
@@ -174,7 +177,7 @@ class TestChatAgenticNodeToolSetup:
             agent_config=real_agent_config,
         )
 
-        assert node.filesystem_func_tool is not None
+        assert isinstance(node.filesystem_func_tool, FilesystemFuncTool)
 
     def test_filesystem_strict_from_agent_config(self, real_agent_config, mock_llm_create):
         """agent_config.filesystem_strict = True propagates into the tool
@@ -195,8 +198,6 @@ class TestChatAgenticNodeToolSetup:
             # Contract is mandatory: strict mode must reach the hook policy,
             # otherwise EXTERNAL paths would still trigger broker prompts in
             # non-interactive bootstraps (the whole point of strict mode).
-            assert node.permission_hooks is not None
-            assert node.permission_hooks.fs_policy is not None
             assert node.permission_hooks.fs_policy.strict is True
         finally:
             real_agent_config.filesystem_strict = previous_strict
@@ -238,6 +239,7 @@ class TestChatAgenticNodeToolSetup:
     def test_has_date_parsing_tools(self, real_agent_config, mock_llm_create):
         """Chat node has date parsing tools."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 
         node = ChatAgenticNode(
             node_id="test_date",
@@ -246,11 +248,12 @@ class TestChatAgenticNodeToolSetup:
             agent_config=real_agent_config,
         )
 
-        assert node.date_parsing_tools is not None
+        assert isinstance(node.date_parsing_tools, DateParsingTools)
 
     def test_has_ask_user_tools(self, real_agent_config, mock_llm_create):
         """Chat node has ask_user tool set up via _setup_ask_user_tool."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.tools.func_tool.ask_user_tools import AskUserTool
 
         node = ChatAgenticNode(
             node_id="test_ask_user",
@@ -259,7 +262,7 @@ class TestChatAgenticNodeToolSetup:
             agent_config=real_agent_config,
         )
 
-        assert node.ask_user_tool is not None
+        assert isinstance(node.ask_user_tool, AskUserTool)
         tool_names = [t.name for t in node.ask_user_tool.available_tools()]
         assert "ask_user" in tool_names
 
@@ -292,7 +295,7 @@ class TestChatAgenticNodeToolSetup:
         )
 
         assert node.execution_mode == "interactive"
-        assert node.ask_user_tool is not None
+        assert [t.name for t in node.ask_user_tool.available_tools()] == ["ask_user"]
 
 
 # ===========================================================================
@@ -361,7 +364,6 @@ class TestChatAgenticNodeExecuteStream:
             actions.append(action)
 
         final_action = actions[-1]
-        assert final_action.output is not None
         assert isinstance(final_action.output, dict)
         assert "sql" not in final_action.output
 
@@ -470,7 +472,6 @@ class TestChatAgenticNodeUpdateDatabaseConnection:
         # db_func_tool should be a new instance
         assert node.db_func_tool is not original_db_tool
         # Tools should still be rebuilt and contain core db tools
-        assert len(node.tools) > 0
         tool_names = [t.name for t in node.tools]
         assert "list_tables" in tool_names
         assert "describe_table" in tool_names
@@ -553,7 +554,7 @@ class TestChatAgenticNodeSystemPrompt:
 
         prompt = node._get_system_prompt()
         assert isinstance(prompt, str)
-        assert len(prompt) > 0
+        assert len(prompt) >= 100
 
     def test_get_system_prompt_with_conversation_summary(self, real_agent_config, mock_llm_create):
         """_get_system_prompt accepts conversation summary argument."""
@@ -568,7 +569,7 @@ class TestChatAgenticNodeSystemPrompt:
 
         prompt = node._get_system_prompt(conversation_summary="Previous conversation about SQL queries.")
         assert isinstance(prompt, str)
-        assert len(prompt) > 0
+        assert "Previous conversation about SQL queries." in prompt
 
     def test_get_system_prompt_contains_active_permission_profile(self, real_agent_config, mock_llm_create):
         """Runtime /profile changes must be visible to the next LLM turn."""
@@ -604,7 +605,7 @@ class TestChatAgenticNodeSystemPrompt:
         # Should fall back to chat_system template without raising
         prompt = node._get_system_prompt()
         assert isinstance(prompt, str)
-        assert len(prompt) > 0
+        assert len(prompt) >= 100
 
     def test_get_system_prompt_raises_on_template_error(self, real_agent_config, mock_llm_create):
         """_get_system_prompt raises DatusException when both primary and fallback templates fail."""
@@ -652,7 +653,7 @@ class TestChatAgenticNodeExecutionConfig:
         assert "tools" in config
         assert "instruction" in config
         assert isinstance(config["instruction"], str)
-        assert len(config["tools"]) > 0
+        assert "list_tables" in {tool.name for tool in config["tools"]}
 
     def test_unknown_mode_raises_value_error(self, real_agent_config, mock_llm_create):
         """Unknown execution mode raises ValueError with the mode name."""
@@ -684,8 +685,7 @@ class TestChatAgenticNodeExecutionConfig:
         config = node._get_execution_config("normal", node.input)
 
         # Permission hooks should always be set up for chat node
-        assert node.permission_hooks is not None
-        assert config["hooks"] is not None
+        assert config["hooks"] is node.permission_hooks
 
 
 # ===========================================================================
@@ -770,7 +770,6 @@ class TestChatAgenticNodeSetupInput:
         result = node.setup_input(workflow)
 
         assert result["success"] is True
-        assert node.input is not None
         assert node.input.user_message == "Tell me about the schools"
         assert node.input.database == "california_schools"
         assert node.input.external_knowledge == "Some context info"
@@ -1072,7 +1071,6 @@ class TestChatAgenticNodeExecuteStreamWithTools:
             actions.append(action)
 
         final_action = actions[-1]
-        assert final_action.output is not None
         result_data = final_action.output
         # tokens_used should be extracted from mock usage (700 per _mock_usage)
         assert result_data.get("tokens_used", 0) == 700
@@ -1430,7 +1428,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
         final_action = actions[-1]
         assert final_action.status == ActionStatus.SUCCESS
         assert isinstance(final_action.output["response"], str)
-        assert len(final_action.output["response"]) > 0
+        assert "Report" in final_action.output["response"]
 
 
 # ===========================================================================
@@ -1515,7 +1513,7 @@ class TestChatAgenticNodeRebuildTools:
         )
 
         # ask_user_tool should be set up during __init__
-        assert node.ask_user_tool is not None
+        assert [tool.name for tool in node.ask_user_tool.available_tools()] == ["ask_user"]
 
         node._rebuild_tools()
         tool_names = [t.name for t in node.tools]
@@ -1542,7 +1540,6 @@ class TestChatAgenticNodeRebuildTools:
         # Rebuild should still work with just db tools
         node._rebuild_tools()
 
-        assert len(node.tools) > 0
         tool_names = [t.name for t in node.tools]
         assert "list_tables" in tool_names
         assert "ask_user" not in tool_names
@@ -1637,7 +1634,7 @@ class TestChatAgenticNodeExecutionMode:
             agent_config=real_agent_config,
         )
         assert node.execution_mode == "interactive"
-        assert node.ask_user_tool is not None
+        assert [tool.name for tool in node.ask_user_tool.available_tools()] == ["ask_user"]
 
     def test_workflow_mode_disables_ask_user_tool(self, real_agent_config, mock_llm_create):
         node = self._build(real_agent_config, execution_mode="workflow")
@@ -1647,7 +1644,7 @@ class TestChatAgenticNodeExecutionMode:
     def test_interactive_mode_keeps_ask_user_tool(self, real_agent_config, mock_llm_create):
         node = self._build(real_agent_config, execution_mode="interactive")
         assert node.execution_mode == "interactive"
-        assert node.ask_user_tool is not None
+        assert [tool.name for tool in node.ask_user_tool.available_tools()] == ["ask_user"]
 
 
 # ===========================================================================

@@ -30,6 +30,7 @@ import pytest
 
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+from datus.tools.func_tool import DBFuncTool, FilesystemFuncTool, GenSemanticModelTools
 from tests.unit_tests.mock_llm_model import MockToolCall, build_simple_response, build_tool_then_response
 
 # ---------------------------------------------------------------------------
@@ -64,7 +65,7 @@ class TestGenSemanticModelAgenticNodeInit:
         )
 
         # DB tools should be present
-        assert node.db_func_tool is not None
+        assert isinstance(node.db_func_tool, DBFuncTool)
 
         tool_names = [tool.name for tool in node.tools]
 
@@ -81,7 +82,7 @@ class TestGenSemanticModelAgenticNodeInit:
             execution_mode="workflow",
         )
 
-        assert node.filesystem_func_tool is not None
+        assert isinstance(node.filesystem_func_tool, FilesystemFuncTool)
 
         tool_names = [tool.name for tool in node.tools]
 
@@ -97,7 +98,7 @@ class TestGenSemanticModelAgenticNodeInit:
         assert "end_semantic_model_generation" in tool_names
 
         # GenSemanticModelTools should be present
-        assert node.gen_semantic_model_tools is not None
+        assert isinstance(node.gen_semantic_model_tools, GenSemanticModelTools)
 
     def test_semantic_model_max_turns(self, real_agent_config, mock_llm_create):
         """Test max_turns is read from agentic_nodes config."""
@@ -281,7 +282,8 @@ class TestGenSemanticModelAgenticNodeExecution:
         assert len(mock_llm_create.call_history) >= 1
         call = mock_llm_create.call_history[0]
         prompt = call.get("prompt", "")
-        assert "california_schools" in prompt or "Generate" in prompt
+        assert "Generate semantic model for satscores" in prompt
+        assert "database: california_schools" in prompt
 
     @pytest.mark.asyncio
     async def test_semantic_model_interactive_mode_token_tracking(self, real_agent_config, mock_llm_create):
@@ -696,7 +698,10 @@ class TestExecuteStreamGenSemanticModelError:
         assert len(mock_llm_create.call_history) >= 1
         call = mock_llm_create.call_history[0]
         prompt = call.get("prompt", "")
-        assert "my_catalog" in prompt or "Generate" in prompt
+        assert "Generate semantic model" in prompt
+        assert "catalog: my_catalog" in prompt
+        assert "database: california_schools" in prompt
+        assert "schema: main" in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -762,5 +767,5 @@ class TestGenSemanticModelFilesystemRootPath:
         node = GenSemanticModelAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         expected = str(Path(real_agent_config.project_root).expanduser())
 
-        assert node.filesystem_func_tool is not None
+        assert isinstance(node.filesystem_func_tool, FilesystemFuncTool)
         assert node.filesystem_func_tool.root_path == expected

@@ -404,7 +404,7 @@ class TestDBFuncToolExecuteWrite:
         tool = self._make_tool(mock_connector)
         result = tool.execute_write("INSERT INTO t VALUES (1)")
         assert result.success == 0
-        assert "not support" in result.error.lower() or "does not support" in result.error.lower()
+        assert "does not support INSERT operations" in result.error
 
     def test_execute_write_exception_during_execution(self):
         """Connector that raises during execution should return error."""
@@ -447,8 +447,8 @@ class TestDescribeTableDuckDBSchemaPrefix:
         assert result.success == 1, f"Expected success but got error: {result.error}"
         assert len(result.result.get("columns", [])) == 2
 
+        mock_connector.get_schema.assert_called_once()
         call_kwargs = mock_connector.get_schema.call_args
-        assert call_kwargs is not None, "get_schema was not called"
         # Accept both positional and keyword invocation
         kwargs = call_kwargs.kwargs if call_kwargs.kwargs else {}
         args = call_kwargs.args if call_kwargs.args else ()
@@ -471,8 +471,8 @@ class TestDescribeTableDuckDBSchemaPrefix:
 
         assert result.success == 1, f"Expected success but got error: {result.error}"
 
+        mock_connector.get_schema.assert_called_once()
         call_kwargs = mock_connector.get_schema.call_args
-        assert call_kwargs is not None, "get_schema was not called"
         kwargs = call_kwargs.kwargs if call_kwargs.kwargs else {}
         args = call_kwargs.args if call_kwargs.args else ()
         param_names = ["catalog_name", "database_name", "schema_name", "table_name"]
@@ -490,8 +490,8 @@ class TestDescribeTableDuckDBSchemaPrefix:
 
         assert result.success == 1, f"Expected success but got error: {result.error}"
 
+        mock_connector.get_schema.assert_called_once()
         call_kwargs = mock_connector.get_schema.call_args
-        assert call_kwargs is not None, "get_schema was not called"
         kwargs = call_kwargs.kwargs if call_kwargs.kwargs else {}
         args = call_kwargs.args if call_kwargs.args else ()
         param_names = ["catalog_name", "database_name", "schema_name", "table_name"]
@@ -1230,7 +1230,7 @@ class TestTransferQueryResult:
                 target_datasource="target_db",
             )
             assert result.success == 0, f"Expected rejection for target_table='{bad_name}'"
-            assert "invalid" in result.error.lower() or "identifier" in result.error.lower()
+            assert f"Invalid target_table identifier: '{bad_name}'" in result.error
 
     def test_transfer_target_connector_raises_returns_error(self):
         """When _get_connector raises for target_datasource, should return success=0."""

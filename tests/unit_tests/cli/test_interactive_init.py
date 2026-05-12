@@ -512,7 +512,7 @@ class TestDoInitSqlAndLogResult:
         do_init_sql_and_log_result(mock_config, "/nonexistent/path/12345", None, console)
 
         output = console.file.getvalue()
-        assert "No sql files found" in output or "sql files" in output.lower()
+        assert "No sql files found in /nonexistent/path/12345" in output
 
     def test_empty_sql_dir_prints_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -522,7 +522,8 @@ class TestDoInitSqlAndLogResult:
             do_init_sql_and_log_result(mock_config, tmpdir, None, console)
 
             output = console.file.getvalue()
-            assert "No sql files found" in output or "sql files" in output.lower()
+            normalized_output = output.replace("\n", "")
+            assert f"No sql files found in {tmpdir}" in normalized_output
 
     def test_non_sql_file_extension_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -538,7 +539,8 @@ class TestDoInitSqlAndLogResult:
 
             output = console.file.getvalue()
             # Should print error about non-sql extension
-            assert ".sql" in output or "sql" in output.lower()
+            normalized_output = output.replace("\n", "")
+            assert f"{f} must be a .sql file" in normalized_output
 
 
 # ---------------------------------------------------------------------------

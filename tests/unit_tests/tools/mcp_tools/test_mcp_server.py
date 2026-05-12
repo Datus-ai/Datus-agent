@@ -9,6 +9,7 @@ Tests that require real database connections or knowledge base data
 are in tests/integration/tools/test_mcp_server.py (marked nightly).
 """
 
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,9 +22,19 @@ from datus.mcp_server import (
     create_dynamic_app,
     create_server,
 )
+from datus.tools.mcp_tools.mcp_server import SilentMCPServerStdio, find_mcp_directory
 from tests.conftest import TEST_CONF_DIR
 
 TEST_CONF_PATH = str(TEST_CONF_DIR / "agent.yml")
+
+
+def _make_stdio_params(command="python", args=None, env=None):
+    """Build a simple MCPServerStdioParams-like object via mock."""
+    params = MagicMock()
+    params.command = command
+    params.args = args or []
+    params.env = env or {}
+    return params
 
 
 # =============================================================================
@@ -46,21 +57,20 @@ class TestMCPServerCreation:
 
     def test_server_creation(self, server):
         """Test that server can be created."""
-        assert server is not None
         assert server.datasource == "bird_sqlite"
-        assert server.mcp is not None
+        assert server._stateless_http is False
 
     def test_server_has_tools(self, server):
         """Test that tools are initialized."""
-        assert server.db_tool is not None or server.context_tool is not None
+        assert set(server.tools) == {"db_tool", "context_tool"}
 
     def test_db_tools_initialized(self, server):
         """Test database tools are available."""
-        assert server.db_tool is not None
+        assert server.db_tool is server.tools["db_tool"]
 
     def test_context_tools_initialized(self, server):
         """Test context tools are available."""
-        assert server.context_tool is not None
+        assert server.context_tool is server.tools["context_tool"]
 
 
 class TestMCPServerASGIApp:
@@ -76,12 +86,12 @@ class TestMCPServerASGIApp:
     def test_get_sse_app(self, server):
         """Test SSE ASGI app creation."""
         app = server.get_sse_app()
-        assert app is not None
+        assert hasattr(app, "routes")
 
     def test_get_streamable_http_app(self, server):
         """Test streamable HTTP ASGI app creation."""
         app = server.get_streamable_http_app()
-        assert app is not None
+        assert hasattr(app, "routes")
 
 
 # =============================================================================
@@ -100,8 +110,8 @@ class TestToolContextManager:
 
     def test_manager_creation(self, manager):
         """Test that manager can be created."""
-        assert manager is not None
-        assert len(manager.available_datasources) > 0
+        assert manager.config_path == TEST_CONF_PATH
+        assert "bird_sqlite" in manager.available_datasources
 
     def test_validate_datasource(self, manager):
         """Test datasource validation."""
@@ -119,7 +129,6 @@ class TestToolContextManager:
         )
         with patch.object(manager, "_create_context", return_value=mock_context):
             context1 = await manager.get_or_create_context(datasource="bird_sqlite")
-            assert context1 is not None
             assert isinstance(context1, ToolContext)
             assert context1.datasource == "bird_sqlite"
 
@@ -198,9 +207,8 @@ class TestLightweightDynamicMCPServer:
 
     def test_server_creation(self, server):
         """Test that dynamic server can be created."""
-        assert server is not None
-        assert server.mcp is not None
-        assert len(server.available_datasources) > 0
+        assert server.config_path == TEST_CONF_PATH
+        assert "bird_sqlite" in server.available_datasources
 
     def test_validate_datasource(self, server):
         """Test datasource validation."""
@@ -211,7 +219,6 @@ class TestLightweightDynamicMCPServer:
     async def test_list_tools(self, server):
         """Test that tools are registered with FastMCP."""
         tools = await server.mcp.list_tools()
-        assert len(tools) > 0
 
         tool_names = [t.name for t in tools]
         assert "list_tables" in tool_names
@@ -463,3 +470,94 @@ class TestDynamicRouterPathParsing:
         assert subpath == "/"
 
         server._context_manager.close_all()
+
+
+# =============================================================================
+# MCP server module helpers merged from test_mcp_server_module.py
+# =============================================================================
+
+
+class TestSilentMCPServerStdio:
+    """Test that SilentMCPServerStdio correctly wraps command with stderr redirection."""
+
+    def test_unix_wraps_with_sh(self):
+        params = _make_stdio_params(command="uvicorn", args=["app:app"], env={})
+        with patch("datus.tools.mcp_tools.mcp_server.MCPServerStdio.__init__", return_value=None):
+            with patch.object(sys, "platform", "linux"):
+                srv = SilentMCPServerStdio.__new__(SilentMCPServerStdio)
+                SilentMCPServerStdio.__init__(srv, params)
+        assert params.command == "sh"
+        assert params.args[0] == "-c"
+        assert "2>/dev/null" in params.args[1]
+        assert params.env is None
+
+    def test_windows_wraps_with_cmd(self):
+        params = _make_stdio_params(command="node", args=["server.js"], env={})
+        with patch("datus.tools.mcp_tools.mcp_server.MCPServerStdio.__init__", return_value=None):
+            with patch("sys.platform", "win32"):
+                srv = SilentMCPServerStdio.__new__(SilentMCPServerStdio)
+                SilentMCPServerStdio.__init__(srv, params)
+        assert params.command == "cmd"
+        assert params.args[0] == "/c"
+        assert "2>nul" in params.args[1]
+
+    def test_env_vars_excluded_from_shell_env(self):
+        env = {"API_KEY": "secret", "BASH_FUNC_xyz": "bad", "SHLVL": "2", "PATH": "/usr/bin"}
+        params = _make_stdio_params(command="python", args=[], env=env)
+        with patch("datus.tools.mcp_tools.mcp_server.MCPServerStdio.__init__", return_value=None):
+            with patch("sys.platform", "linux"):
+                srv = SilentMCPServerStdio.__new__(SilentMCPServerStdio)
+                SilentMCPServerStdio.__init__(srv, params)
+        assert params.env is None
+        cmd_str = params.args[1]
+        assert "API_KEY" in cmd_str
+        assert "BASH_FUNC_xyz" not in cmd_str
+        assert "SHLVL" not in cmd_str
+
+    def test_dict_params_also_handled(self):
+        params = {"command": "echo", "args": ["hello"], "env": {}}
+        with patch("datus.tools.mcp_tools.mcp_server.MCPServerStdio.__init__", return_value=None):
+            with patch("sys.platform", "linux"):
+                srv = SilentMCPServerStdio.__new__(SilentMCPServerStdio)
+                SilentMCPServerStdio.__init__(srv, params)
+        assert params["command"] == "sh"
+        assert params["env"] is None
+
+    def test_args_quoted_properly(self):
+        params = _make_stdio_params(command="my server", args=["--flag with space"], env={})
+        with patch("datus.tools.mcp_tools.mcp_server.MCPServerStdio.__init__", return_value=None):
+            with patch("sys.platform", "linux"):
+                srv = SilentMCPServerStdio.__new__(SilentMCPServerStdio)
+                SilentMCPServerStdio.__init__(srv, params)
+        cmd_str = params.args[1]
+        assert "'my server'" in cmd_str
+
+
+class TestFindMcpDirectory:
+    def test_finds_relative_path_when_exists(self, tmp_path, monkeypatch):
+        mcp_dir = tmp_path / "mcp" / "my-server"
+        mcp_dir.mkdir(parents=True)
+        monkeypatch.chdir(tmp_path)
+        result = find_mcp_directory("my-server")
+        assert "my-server" in result
+
+    def test_finds_via_sys_path_site_packages(self, tmp_path, monkeypatch):
+        site_pkg = tmp_path / "site-packages"
+        mcp_dir = site_pkg / "mcp" / "test-server"
+        mcp_dir.mkdir(parents=True)
+
+        other = tmp_path / "other"
+        other.mkdir()
+        monkeypatch.chdir(other)
+
+        with patch("sys.path", [str(site_pkg)]):
+            result = find_mcp_directory("test-server")
+
+        assert "test-server" in result, f"Expected 'test-server' in result path, got: {result!r}"
+        assert "site-packages" in result, f"Expected result to come from site-packages, got: {result!r}"
+
+    def test_raises_file_not_found_when_missing(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        with patch("sys.path", []):
+            with pytest.raises(FileNotFoundError, match="not found"):
+                find_mcp_directory("nonexistent-server-xyz")

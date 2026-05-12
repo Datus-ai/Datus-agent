@@ -1,6 +1,7 @@
 """Tests for datus.api.services.chat_task_manager — background task management."""
 
 import asyncio
+import re
 from datetime import datetime
 from unittest.mock import MagicMock
 
@@ -471,7 +472,7 @@ class TestStartChat:
         manager = ChatTaskManager()
         request = StreamChatInput(message="hello", session_id="start-test")
         task = await manager.start_chat(real_agent_config, request)
-        assert task is not None
+        assert isinstance(task, ChatTask)
         assert task.session_id == "start-test"
         assert task.status == "running"
         # Clean up
@@ -496,8 +497,7 @@ class TestStartChat:
         manager = ChatTaskManager()
         request = StreamChatInput(message="hello")
         task = await manager.start_chat(real_agent_config, request)
-        assert task.session_id is not None
-        assert len(task.session_id) > 0
+        assert re.fullmatch(r"chat_session_[0-9a-f]{8}", task.session_id)
         await manager.shutdown()
 
     async def test_start_chat_with_subagent(self, real_agent_config, mock_llm_create):
@@ -517,7 +517,7 @@ class TestStartChat:
         manager = ChatTaskManager()
         request = StreamChatInput(message="hello", database="california_schools")
         task = await manager.start_chat(real_agent_config, request)
-        assert task is not None
+        assert isinstance(task, ChatTask)
         assert real_agent_config.current_datasource == "california_schools"
         await manager.shutdown()
 
@@ -1362,6 +1362,7 @@ class TestStartChatModelOverride:
         from datus.api.models.cli_models import StreamChatInput
 
         original_target = real_agent_config.target
+        original_target_provider = real_agent_config._target_provider
 
         async def fake_run_loop(self, task, agent_config, request, **kwargs):
             pass
@@ -1372,7 +1373,7 @@ class TestStartChatModelOverride:
         task = await manager.start_chat(real_agent_config, request)
         await task.asyncio_task
         assert real_agent_config.target == original_target
-        assert real_agent_config._target_provider is None or real_agent_config._target_provider != "openai"
+        assert real_agent_config._target_provider == original_target_provider
 
     @pytest.mark.asyncio
     async def test_custom_model_unknown_raises(self, real_agent_config, monkeypatch):

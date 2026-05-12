@@ -150,8 +150,8 @@ class TestBuildThinkingContent:
     def test_output_with_response(self):
         action = _make_action(output_data={"response": "some response"})
         contents = build_thinking_content(action)
-        assert contents is not None
-        assert len(contents) >= 1
+        assert len(contents) == 1
+        assert contents[0].payload["content"] == "some response"
 
     def test_fallback_to_messages(self):
         action = _make_action(messages="fallback", output_data={})
@@ -220,7 +220,7 @@ class TestBuildInteractionResultContent:
             output_data={"content": "Result text", "user_choice": "y"},
         )
         contents = build_interaction_result_content(action)
-        assert contents is not None
+        assert len(contents) == 1
         assert contents[0].type == "markdown"
         assert contents[0].payload["content"] == "Result text"
 
@@ -265,7 +265,7 @@ class TestActionToContent:
             input_data={"function_name": "fn", "arguments": {}},
         )
         contents = action_to_content(action)
-        assert contents is not None
+        assert len(contents) == 1
         assert contents[0].type == "call-tool"
 
     def test_tool_success(self):
@@ -276,7 +276,7 @@ class TestActionToContent:
             output_data={"summary": "", "raw_output": "ok"},
         )
         contents = action_to_content(action)
-        assert contents is not None
+        assert len(contents) == 1
         assert contents[0].type == "call-tool-result"
 
     def test_user_role_skipped(self):
@@ -298,7 +298,7 @@ class TestActionToContent:
             input_data={"content": "Choose"},
         )
         contents = action_to_content(action)
-        assert contents is not None
+        assert len(contents) == 1
         assert contents[0].type == "user-interaction"
 
     def test_interaction_success_with_content(self):
@@ -308,7 +308,8 @@ class TestActionToContent:
             output_data={"content": "done"},
         )
         contents = action_to_content(action)
-        assert contents is not None
+        assert len(contents) == 1
+        assert contents[0].payload["content"] == "done"
 
     def test_interaction_success_empty(self):
         action = _make_action(
@@ -326,5 +327,5 @@ class TestActionToContent:
             messages="thinking...",
         )
         contents = action_to_content(action)
-        assert contents is not None
+        assert len(contents) == 1
         assert contents[0].type == "thinking"

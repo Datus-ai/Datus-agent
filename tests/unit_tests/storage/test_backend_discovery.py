@@ -68,8 +68,8 @@ class TestDiscoverTestBackends:
     def test_default_has_builtin_test_envs(self):
         """Default config has built-in TestEnv instances."""
         backends = discover_test_backends()
-        assert backends[0].rdb_test_env is not None
-        assert backends[0].vector_test_env is not None
+        assert isinstance(backends[0].rdb_test_env, RdbTestEnv)
+        assert isinstance(backends[0].vector_test_env, VectorTestEnv)
 
     def test_calls_entry_point_discovery(self):
         """discover_test_backends() calls _discover_via_entry_points()."""

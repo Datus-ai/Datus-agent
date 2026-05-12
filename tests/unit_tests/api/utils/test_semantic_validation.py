@@ -44,7 +44,7 @@ class TestFallbackValidation:
             datasource="default",
         )
         assert is_valid is False
-        assert len(errors) > 0
+        assert len(errors) == 1
 
     def test_empty_yaml_passes(self):
         semantic_validation._METRICFLOW_AVAILABLE = False

@@ -374,7 +374,7 @@ class TestValidateMetricFileHasBlocks:
         from datus.tools.func_tool.generation_tools import GenerationTools
 
         msg = GenerationTools._validate_metric_file_has_blocks("/nonexistent/m.yaml")
-        assert msg is not None and "not found" in msg
+        assert "not found" in msg
 
     def test_returns_error_for_documentation_only(self, tmp_path):
         from datus.tools.func_tool.generation_tools import GenerationTools
@@ -382,7 +382,6 @@ class TestValidateMetricFileHasBlocks:
         f = tmp_path / "doc.yml"
         f.write_text("# just docs\n- bullet\n- bullet2\n")
         msg = GenerationTools._validate_metric_file_has_blocks(str(f))
-        assert msg is not None
         assert "no `metric:` YAML blocks" in msg
 
     def test_returns_error_for_invalid_yaml(self, tmp_path):
@@ -391,7 +390,6 @@ class TestValidateMetricFileHasBlocks:
         f = tmp_path / "broken.yml"
         f.write_text(": : :\n  - oops\n  not yaml")
         msg = GenerationTools._validate_metric_file_has_blocks(str(f))
-        assert msg is not None
         assert "not valid YAML" in msg
 
     def test_returns_none_for_single_metric_block(self, tmp_path):

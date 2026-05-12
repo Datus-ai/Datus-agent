@@ -101,7 +101,6 @@ class TestVersionPathRegex:
     def test_matches_version_strings(self, path, expected):
         """Regex matches valid version strings."""
         m = _VERSION_PATH_RE.match(path)
-        assert m is not None
         assert m.group(1) == expected
 
     @pytest.mark.parametrize(

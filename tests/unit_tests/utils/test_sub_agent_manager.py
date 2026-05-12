@@ -148,7 +148,6 @@ class TestGetAgent:
         manager, config_mgr, _ = _build_manager(tmp_path)
         config_mgr.update_item("agentic_nodes", {"agent1": {"system_prompt": "agent1", "prompt_version": "1.0"}})
         result = manager.get_agent("agent1")
-        assert result is not None
         assert result["system_prompt"] == "agent1"
 
     def test_get_missing_agent_returns_none(self, tmp_path):
@@ -213,7 +212,7 @@ class TestSaveAgentNew:
         manager, _, _ = _build_manager(tmp_path)
         config = SubAgentConfig(system_prompt="agent_x", scoped_context=ScopedContext(tables="t"))
         result = manager.save_agent(config)
-        assert result["prompt_path"] is not None
+        assert Path(result["prompt_path"]).name == "agent_x_system_1.0.j2"
 
     def test_gen_report_node_uses_gen_report_template(self, tmp_path):
         manager, _, _ = _build_manager(tmp_path)

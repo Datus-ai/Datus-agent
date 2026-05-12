@@ -502,7 +502,7 @@ class TestBIFuncToolWriteOps:
         with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
             result = tool.create_chart(chart_type="bar", title="Test")
         assert result.success == 0
-        assert "dataset_id" in result.error.lower() or "sql" in result.error.lower()
+        assert result.error == "Either dataset_id (Superset) or sql (Grafana) is required."
 
     def test_create_chart_sql_rejects_missing_dashboard_id(self):
         """Grafana path requires dashboard_id when sql is provided."""
@@ -615,21 +615,19 @@ class TestBIFuncToolWriteOps:
 
     def test_list_charts_exception(self):
         tool = self._make_tool()
-        tool.adapter.list_charts = lambda dashboard_id: (_ for _ in ()).throw(RuntimeError("fail"))
+        tool.adapter.list_charts = MagicMock(side_effect=RuntimeError("fail"))
         result = tool.list_charts("1")
         assert result.success == 0
 
     def test_get_chart_exception(self):
         tool = self._make_tool()
-        tool.adapter.get_chart = lambda chart_id, dashboard_id=None: (_ for _ in ()).throw(RuntimeError("fail"))
+        tool.adapter.get_chart = MagicMock(side_effect=RuntimeError("fail"))
         result = tool.get_chart("1")
         assert result.success == 0
 
     def test_get_chart_data_exception(self):
         tool = self._make_tool()
-        tool.adapter.get_chart_data = lambda chart_id, dashboard_id=None, limit=None: (_ for _ in ()).throw(
-            RuntimeError("fail")
-        )
+        tool.adapter.get_chart_data = MagicMock(side_effect=RuntimeError("fail"))
         result = tool.get_chart_data("1")
         assert result.success == 0
 
@@ -642,13 +640,13 @@ class TestBIFuncToolWriteOps:
 
     def test_list_datasets_exception(self):
         tool = self._make_tool()
-        tool.adapter.list_datasets = lambda dashboard_id="": (_ for _ in ()).throw(RuntimeError("fail"))
+        tool.adapter.list_datasets = MagicMock(side_effect=RuntimeError("fail"))
         result = tool.list_datasets()
         assert result.success == 0
 
     def test_error_handling(self):
         tool = self._make_tool()
-        tool.adapter.list_dashboards = lambda **kwargs: (_ for _ in ()).throw(RuntimeError("connection failed"))
+        tool.adapter.list_dashboards = MagicMock(side_effect=RuntimeError("connection failed"))
         result = tool.list_dashboards()
         assert result.success == 0
         assert "connection failed" in result.error
@@ -727,7 +725,7 @@ class TestBIFuncToolDeliverableTarget:
             result = tool.create_dashboard("My Dash", description="d")
         assert result.success == 1
         target = result.result.get("deliverable_target")
-        assert target is not None
+        assert isinstance(target, dict)
         assert target["type"] == "dashboard"
         assert target["platform"] == "superset"
         assert target["dashboard_id"] == "10"
@@ -739,7 +737,7 @@ class TestBIFuncToolDeliverableTarget:
             result = tool.update_dashboard("10", title="Renamed", description="x")
         assert result.success == 1
         target = result.result.get("deliverable_target")
-        assert target is not None
+        assert isinstance(target, dict)
         assert target["type"] == "dashboard"
         assert target["dashboard_id"] == "10"
 
@@ -755,7 +753,7 @@ class TestBIFuncToolDeliverableTarget:
             )
         assert result.success == 1
         target = result.result.get("deliverable_target")
-        assert target is not None
+        assert isinstance(target, dict)
         assert target["type"] == "chart"
         assert target["platform"] == "superset"
         assert target["chart_id"] == "5"
@@ -768,7 +766,7 @@ class TestBIFuncToolDeliverableTarget:
             result = tool.update_chart("5", title="Renamed Chart")
         assert result.success == 1
         target = result.result.get("deliverable_target")
-        assert target is not None
+        assert isinstance(target, dict)
         assert target["type"] == "chart"
         assert target["chart_id"] == "5"
 
@@ -778,7 +776,7 @@ class TestBIFuncToolDeliverableTarget:
             result = tool.create_dataset("events", database_id="1", sql="SELECT 1")
         assert result.success == 1
         target = result.result.get("deliverable_target")
-        assert target is not None
+        assert isinstance(target, dict)
         assert target["type"] == "dataset"
         assert target["platform"] == "superset"
         assert target["dataset_id"] == "3"
@@ -797,7 +795,7 @@ class TestBIFuncToolDeliverableTarget:
         result = tool.add_chart_to_dashboard("5", "42")
         assert result.success == 1
         target = result.result.get("deliverable_target")
-        assert target is not None
+        assert isinstance(target, dict)
         assert target["type"] == "chart"
         assert target["platform"] == "superset"
         assert target["chart_id"] == "5"

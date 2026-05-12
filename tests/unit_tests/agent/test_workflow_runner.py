@@ -371,7 +371,11 @@ class TestWorkflowRunnerRun:
             with patch("datus.agent.workflow_runner.evaluate_result", return_value={"success": True}):
                 with patch("datus.agent.workflow_runner.get_trace_url", return_value=None):
                     with patch("datus.agent.workflow_runner.setup_node_input"):
-                        runner.run(sql_task=_make_sql_task(), check_storage=False)
+                        result = runner.run(sql_task=_make_sql_task(), check_storage=False)
+
+        assert mock_node.run.call_count == 2
+        assert mock_wf.display.call_count == 2
+        assert result == {"status": "completed", "nodes": {}}
 
     def test_run_node_failure_breaks_loop(self, tmp_path):
         """When a node fails, the run loop breaks."""

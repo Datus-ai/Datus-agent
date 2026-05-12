@@ -153,4 +153,4 @@ class TestRetryLoopDrivenByOnEnd:
         last = actions[-1]
         output = last.output or {}
         assert output.get("success") is False
-        assert output.get("validation_report") is not None
+        assert output["validation_report"]["checks"][0]["error"] == "synthetic blocking failure for retry-loop test"

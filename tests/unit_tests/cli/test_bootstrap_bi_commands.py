@@ -24,6 +24,7 @@ from datus.cli.bootstrap_bi_commands import BootstrapBiCommands
 from datus.cli.bootstrap_bi_picker import BootstrapBiPlan, DashboardCliOptions
 from datus.cli.bootstrap_bi_streams import BiBuildState
 from datus.schemas.action_history import ActionHistory, ActionStatus
+from datus.schemas.agent_models import ScopedContext
 
 # ─────────────────────────────────────────────────────────────────
 # fixtures
@@ -286,7 +287,7 @@ def test_build_scoped_context_returns_none_when_state_empty() -> None:
 def test_build_scoped_context_joins_lists_with_commas() -> None:
     state = BiBuildState(table_names=["a", "b"], ref_sqls=["s1"], metrics=["m1", "m2"])
     sc = BootstrapBiCommands._build_scoped_context(state)
-    assert sc is not None
+    assert isinstance(sc, ScopedContext)
     assert sc.tables == "a,b"
     assert sc.sqls == "s1"
     assert sc.metrics == "m1,m2"

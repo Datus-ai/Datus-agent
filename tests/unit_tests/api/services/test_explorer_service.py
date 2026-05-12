@@ -2,6 +2,7 @@
 
 import pytest
 
+from datus.api.models.base_models import Result
 from datus.api.models.explorer_models import (
     CreateDirectoryInput,
     CreateKnowledgeInput,
@@ -9,6 +10,7 @@ from datus.api.models.explorer_models import (
     EditKnowledgeInput,
     ReferenceSQLInput,
     RenameSubjectInput,
+    SubjectListData,
     SubjectNodeType,
 )
 from datus.api.services.explorer_service import ExplorerService
@@ -20,21 +22,27 @@ class TestExplorerServiceInit:
     def test_init_with_real_config(self, real_agent_config):
         """ExplorerService initializes with real agent config."""
         svc = ExplorerService(agent_config=real_agent_config)
-        assert svc is not None
+        assert isinstance(svc, ExplorerService)
         assert svc.agent_config is real_agent_config
         assert svc.datasource_id == real_agent_config.current_datasource
 
     def test_init_creates_rag_stores(self, real_agent_config):
         """ExplorerService creates metric, ref_sql, and knowledge RAG stores."""
+        from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
+        from datus.storage.metric.store import MetricRAG
+        from datus.storage.reference_sql.store import ReferenceSqlRAG
+
         svc = ExplorerService(agent_config=real_agent_config)
-        assert svc.metric_rag is not None
-        assert svc.reference_sql_rag is not None
-        assert svc.knowledge_rag is not None
+        assert isinstance(svc.metric_rag, MetricRAG)
+        assert isinstance(svc.reference_sql_rag, ReferenceSqlRAG)
+        assert isinstance(svc.knowledge_rag, ExtKnowledgeRAG)
 
     def test_init_creates_subject_tree_store(self, real_agent_config):
         """ExplorerService creates subject tree store."""
+        from datus.storage.subject_tree.store import SubjectTreeStore
+
         svc = ExplorerService(agent_config=real_agent_config)
-        assert svc.subject_tree_store is not None
+        assert isinstance(svc.subject_tree_store, SubjectTreeStore)
 
 
 @pytest.mark.asyncio
@@ -46,7 +54,7 @@ class TestExplorerServiceGetSubjectList:
         svc = ExplorerService(agent_config=real_agent_config)
         result = await svc.get_subject_list()
         assert result.success is True
-        assert result.data is not None
+        assert isinstance(result.data, SubjectListData)
 
     async def test_get_subject_list_has_subjects_field(self, real_agent_config):
         """get_subject_list returns data with subjects field (possibly empty)."""
@@ -82,14 +90,11 @@ class TestExplorerServiceGetSubjectList:
         # Should have at least one directory node
         assert len(result.data.subjects) >= 1
         # Find our test directory
-        tree_test_node = None
-        for node in result.data.subjects:
-            if node.name == "tree_test":
-                tree_test_node = node
-                break
-        assert tree_test_node is not None
+        tree_test_nodes = [node for node in result.data.subjects if node.name == "tree_test"]
+        assert len(tree_test_nodes) == 1
+        tree_test_node = tree_test_nodes[0]
         # Children should include ref_sql and knowledge
-        assert tree_test_node.children is not None
+        assert isinstance(tree_test_node.children, list)
         child_names = {c.name for c in tree_test_node.children}
         assert "tree_sql" in child_names
         assert "tree_kb" in child_names
@@ -301,7 +306,8 @@ class TestExplorerServiceRenameSubject:
             )
         )
         # May succeed or fail depending on metric existence, but exercises the code path
-        assert result is not None
+        assert isinstance(result, Result)
+        assert isinstance(result.success, bool)
 
     async def test_rename_empty_paths_fail(self, real_agent_config):
         """rename_subject with empty paths returns error."""
@@ -583,7 +589,7 @@ class TestExplorerServiceCreateMetric:
         )
         result = await svc.create_metric(request)
         assert result.success is False
-        assert "yaml" in result.errorMessage.lower() or "invalid" in result.errorMessage.lower()
+        assert "Invalid YAML format" in result.errorMessage
 
     async def test_create_metric_missing_metric_key(self, real_agent_config):
         """create_metric with YAML missing 'metric' key returns error."""
@@ -632,10 +638,9 @@ class TestExplorerServiceCreateMetric:
         result = await svc.create_metric(request)
         # May fail on deep validation (no data_source in model) — that's expected.
         # The important thing is it exercises the full path: parse → check existence → validate
-        assert result is not None
-        assert result.success or (
-            "validation" in result.errorMessage.lower() or "not defined" in result.errorMessage.lower()
-        )
+        assert isinstance(result, Result)
+        assert result.success is False
+        assert "validation" in result.errorMessage.lower()
 
     async def test_create_metric_duplicate_file_fails(self, real_agent_config):
         """create_metric rejects when file already exists on disk."""
@@ -690,7 +695,8 @@ class TestExplorerServiceCreateMetric:
         )
         request = EditMetricInput(subject_path=["tagged_dir"], yaml=yaml_content)
         result = await svc.create_metric(request)
-        assert result is not None
+        assert isinstance(result, Result)
+        assert isinstance(result.success, bool)
 
 
 @pytest.mark.asyncio
@@ -796,7 +802,8 @@ class TestExplorerServiceValidateMetricYaml:
             "/tmp/bad.yml",
         )
         assert is_valid is False
-        assert len(errors) > 0
+        assert len(errors) == 1
+        assert isinstance(errors[0], str)
 
 
 class TestMetricDbToYaml:
@@ -951,8 +958,8 @@ class TestUpdateMetricInYamlDocs:
         svc = ExplorerService(agent_config=real_agent_config)
         docs = [{"metric": {"name": "revenue"}}]
         updated, error = svc._update_metric_in_yaml_docs(docs, "nonexistent", {})
-        assert error is not None
-        assert "not found" in error
+        assert error == "Metric 'nonexistent' not found in YAML file"
+        assert updated == docs
 
     def test_skips_none_documents(self, real_agent_config):
         """Skips None/empty documents without error."""
@@ -1000,7 +1007,7 @@ class TestWriteYamlAtomic:
         """Writing to nonexistent directory returns error message."""
         svc = ExplorerService(agent_config=real_agent_config)
         error = svc._write_yaml_atomic("/nonexistent/path/file.yml", [{"a": 1}])
-        assert error is not None
+        assert error.startswith("Failed to write YAML file:")
         assert "Failed to write" in error
 
 
@@ -1012,7 +1019,7 @@ class TestGetSemanticFilePath:
         svc = ExplorerService(agent_config=real_agent_config)
         path, error = svc._get_semantic_file_path(None, None, None, "nonexistent_table")
         assert path == ""
-        assert error is not None
+        assert error == "No semantic model found for provided parameters"
 
 
 class TestExplorerServiceHelpers:

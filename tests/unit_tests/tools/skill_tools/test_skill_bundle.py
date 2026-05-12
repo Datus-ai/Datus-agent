@@ -48,7 +48,7 @@ class TestCreateBundle:
     def test_creates_tar_gz(self, skill_dir):
         data = create_bundle(skill_dir)
         assert isinstance(data, bytes)
-        assert len(data) > 0
+        assert data.startswith(b"\x1f\x8b")
 
     def test_includes_skill_md(self, skill_dir):
         data = create_bundle(skill_dir)

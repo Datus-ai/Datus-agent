@@ -28,7 +28,6 @@ class TestBlockingInputManagerInit:
         assert mgr._original_stderr is None
 
     def test_global_instance_exists(self):
-        assert blocking_input_manager is not None
         assert isinstance(blocking_input_manager, BlockingInputManager)
 
 

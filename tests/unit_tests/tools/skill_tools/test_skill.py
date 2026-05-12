@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 
 from datus.tools.permission.permission_manager import PermissionManager
-from datus.tools.skill_tools import SkillConfig, SkillManager
+from datus.tools.skill_tools import SkillBashTool, SkillConfig, SkillManager
 
 TESTS_ROOT = Path(__file__).resolve().parents[3]  # tests/
 SKILLS_DIR = TESTS_ROOT / "data" / "skills"
@@ -68,7 +68,7 @@ class TestSkillDiscovery:
 
         manager.refresh()
         assert manager.get_skill_count() == initial_count + 1
-        assert manager.get_skill("runtime-skill") is not None
+        assert manager.get_skill("runtime-skill").name == "runtime-skill"
 
     def test_nonexistent_directory_gracefully_skipped(self, tmp_path):
         """Mix of valid + invalid directories works without error."""
@@ -91,7 +91,7 @@ class TestSkillDiscovery:
 
         manager = SkillManager(config=config)
         skill = manager.get_skill("sql-analysis")
-        assert skill is not None
+        assert skill.name == "sql-analysis"
         assert skill.description == "Guided workflow for SQL data analysis using db_tools"
         assert manager.get_skill_count() == 5
 
@@ -120,7 +120,7 @@ class TestSkillLoadAndExecute:
         assert "python scripts/generate_report.py" in result.result
 
         bash_tool = skill_func_tool.get_skill_bash_tool("report-generator")
-        assert bash_tool is not None
+        assert isinstance(bash_tool, SkillBashTool)
 
         exec_result = bash_tool.execute_command("python scripts/generate_report.py --format json")
         assert exec_result.success == 1
@@ -139,7 +139,7 @@ class TestSkillLoadAndExecute:
         assert r2.success == 1
 
         bash_tool = skill_func_tool.get_skill_bash_tool("data-profiler")
-        assert bash_tool is not None
+        assert isinstance(bash_tool, SkillBashTool)
         exec_result = bash_tool.execute_command("python scripts/profile_data.py --table students")
         assert exec_result.success == 1
         output = json.loads(exec_result.result.strip())
@@ -164,7 +164,7 @@ class TestSkillLoadAndExecute:
         """Calling skill_execute_command before load_skill gives helpful error."""
         result = skill_func_tool.skill_execute_command("report-generator", "python scripts/generate_report.py")
         assert result.success == 0
-        assert "not been loaded" in result.error.lower() or "load_skill" in result.error.lower()
+        assert "not been loaded" in result.error.lower()
 
 
 # ============================================================================
@@ -192,7 +192,7 @@ class TestPermissionEnforcement:
         """DENY permission blocks load_skill."""
         success, message, _content = skill_manager_with_perms.load_skill("admin-tools", "chatbot")
         assert success is False
-        assert "denied" in message.lower() or "Permission" in message
+        assert "denied" in message.lower()
 
     def test_ask_keeps_skill_visible_but_blocks_load(self, skill_config, perm_ask_sql):
         """ASK permission keeps skill visible but returns ASK_PERMISSION on load."""
@@ -253,7 +253,7 @@ class TestPermissionEnforcement:
         names = [s.name for s in available]
         assert "hidden-skill" not in names
 
-        assert manager.get_skill("hidden-skill") is not None
+        assert manager.get_skill("hidden-skill").name == "hidden-skill"
 
 
 # ============================================================================

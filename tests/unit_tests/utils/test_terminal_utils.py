@@ -19,12 +19,22 @@ NO MOCK EXCEPT LLM. All objects under test are real implementations.
 import io
 import os
 import sys
-import time
+import threading
+from time import monotonic
 
 import pytest
 
 from datus.cli.execution_state import InterruptController
 from datus.utils.terminal_utils import EscapeGuard, interrupt_on_escape, suppress_keyboard_input
+
+
+def _wait_until(predicate, timeout=1.0, interval=0.01):
+    end = monotonic() + timeout
+    while monotonic() < end:
+        if predicate():
+            return True
+        threading.Event().wait(interval)
+    return predicate()
 
 
 class TestSuppressKeyboardInput:
@@ -201,7 +211,6 @@ class TestInterruptOnEscapeWithPty:
                     # Listener should be running; controller should not be interrupted yet
                     assert ctrl.is_interrupted is False
                     assert isinstance(guard, EscapeGuard)
-                    time.sleep(0.15)  # Brief pause to let listener start
                 # After exit, listener should be stopped and settings restored
                 assert ctrl.is_interrupted is False
             finally:
@@ -222,8 +231,7 @@ class TestInterruptOnEscapeWithPty:
                 with interrupt_on_escape(ctrl):
                     # Write ESC key to master side (simulates user pressing ESC)
                     os.write(master_fd, b"\x1b")
-                    # Give the listener thread time to detect the ESC
-                    time.sleep(0.3)
+                    assert _wait_until(lambda: ctrl.is_interrupted)
                 assert ctrl.is_interrupted is True
             finally:
                 sys.stdin = original_stdin
@@ -264,12 +272,11 @@ class TestInterruptOnEscapeWithPty:
             try:
                 ctrl = InterruptController()
                 with interrupt_on_escape(ctrl) as guard:
-                    time.sleep(0.15)  # Let listener start
                     with guard.paused():
                         # Write ESC while paused - should NOT be detected
                         os.write(master_fd, b"\x1b")
-                        time.sleep(0.3)
                     assert ctrl.is_interrupted is False
+                    assert _wait_until(lambda: ctrl.is_interrupted, timeout=0.2) is False
                     # After resume, flush should have cleared the ESC byte
                 assert ctrl.is_interrupted is False
             finally:
@@ -291,7 +298,12 @@ class TestInterruptOnEscapeWithPty:
                 old_settings = termios.tcgetattr(slave_fd)
                 ctrl = InterruptController()
                 with interrupt_on_escape(ctrl) as guard:
-                    time.sleep(0.15)  # Let listener start and modify terminal
+                    assert _wait_until(
+                        lambda: (
+                            (termios.tcgetattr(slave_fd)[3] & termios.ICANON) == 0
+                            and (termios.tcgetattr(slave_fd)[3] & termios.ECHO) == 0
+                        )
+                    )
                     with guard.paused():
                         # During pause, ICANON and ECHO should be restored
                         # (kernel may add PENDIN flag during mode switch, so check specific bits)
@@ -303,7 +315,12 @@ class TestInterruptOnEscapeWithPty:
                             "ECHO should be restored during pause"
                         )
                     # After resume, terminal should be back in raw mode
-                    time.sleep(0.15)  # Let listener re-enter raw mode
+                    assert _wait_until(
+                        lambda: (
+                            (termios.tcgetattr(slave_fd)[3] & termios.ICANON) == 0
+                            and (termios.tcgetattr(slave_fd)[3] & termios.ECHO) == 0
+                        )
+                    )
                     raw_settings = termios.tcgetattr(slave_fd)
                     assert (raw_settings[3] & termios.ICANON) == 0, "ICANON should be off after resume"
                     assert (raw_settings[3] & termios.ECHO) == 0, "ECHO should be off after resume"

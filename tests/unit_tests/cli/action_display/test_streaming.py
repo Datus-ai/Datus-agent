@@ -14,6 +14,7 @@ import pytest
 from rich.console import Console
 
 from datus.cli.action_display.display import ActionHistoryDisplay
+from datus.cli.action_display.markdown_stream import MarkdownStreamBuffer
 from datus.cli.action_display.streaming import InlineStreamingContext
 from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
 
@@ -995,7 +996,7 @@ class TestStreamingMarkdown:
 
     def test_tui_mode_provisions_markdown_buffer(self):
         ctx, _live_state, _buf = self._make_ctx()
-        assert ctx._markdown_buffer is not None
+        assert isinstance(ctx._markdown_buffer, MarkdownStreamBuffer)
         assert ctx._markdown_stream_has_streamed is False
 
     def test_delta_populates_pinned_region(self):

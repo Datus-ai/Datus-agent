@@ -28,7 +28,7 @@ def db_path(tmp_path):
 def test_connect_and_close(db_path):
     connector = DuckdbConnector(DuckDBConfig(db_path=db_path))
     connector.connect()
-    assert connector.connection is not None
+    assert isinstance(connector.connection, duckdb.DuckDBPyConnection)
     connector.connection.execute("SELECT 1").fetchone()
 
     connector.close()
@@ -74,7 +74,7 @@ def test_falls_back_when_duckdb_engine_missing(db_path, monkeypatch):
     connector = DuckdbConnector(DuckDBConfig(db_path=db_path))
     connector.connect()
     try:
-        assert connector.connection is not None
+        assert isinstance(connector.connection, duckdb.DuckDBPyConnection)
         # Fallback path must NOT pass a config dict.
         assert "config" not in seen_kwargs
     finally:

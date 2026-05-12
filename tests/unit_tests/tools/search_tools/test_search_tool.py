@@ -122,7 +122,7 @@ class TestBuildNavTree:
             "doc1.md": {"nav_path": ["SQL Reference", "DDL"], "title": "CREATE TABLE"},
         }
         result = tool._build_nav_tree(doc_map)
-        assert len(result) > 0
+        assert len(result) == 1
         # Top level should be "SQL Reference"
         names = [n["name"] for n in result]
         assert "SQL Reference" in names

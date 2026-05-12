@@ -6,7 +6,7 @@ from datus.agent.node import Node
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
 from datus.schemas.node_models import Metric, SqlTask
-from datus.schemas.search_metrics_node_models import SearchMetricsInput
+from datus.schemas.search_metrics_node_models import SearchMetricsInput, SearchMetricsResult
 from datus.storage.metric.store import MetricRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.utils.constants import DBType
@@ -28,7 +28,7 @@ def agent_config(tmp_path) -> AgentConfig:
     return agent_config
 
 
-class TestNode:
+class TestSearchMetricsNode:
     def test_vector_and_scalar_query(self, agent_config: AgentConfig):
         sql_task = SqlTask(
             id="test_task_2",
@@ -52,7 +52,8 @@ class TestNode:
             agent_config=agent_config,
         )
         node.run()
-        assert node.result is not None, "Expected node.result to be populated, but got None"
+        assert node.result.success is False
+        assert "RAG storage path does not exist" in node.result.error
 
     def test_empty_vector_and_scalar_query(self, agent_config: AgentConfig):
         sql_task = SqlTask(
@@ -78,7 +79,7 @@ class TestNode:
             agent_config=agent_config,
         )
         node.execute()
-        assert node.result is not None, "Expected node.result to be populated, but got None"
+        assert isinstance(node.result, SearchMetricsResult)
 
 
 class TestRag:
@@ -105,10 +106,7 @@ class TestRag:
                 "yaml_path": "/test/path",
             }
         ]
-        try:
-            rag.storage.batch_store_metrics(test_metrics)
-        except (ImportError, AttributeError) as e:
-            pytest.skip(f"Storage API unavailable: {e}")
+        rag.storage.batch_store_metrics(test_metrics)
         return rag
 
     @pytest.fixture
@@ -117,19 +115,20 @@ class TestRag:
         # Populate with test data
         test_models = [
             {
-                "subject_path": ["RGM_voice"],
+                "id": "table:test_semantic_model",
+                "kind": "table",
                 "name": "test_semantic_model",
+                "fq_name": "test_semantic_model",
+                "semantic_model_name": "test_model",
                 "description": "Test semantic model for testing",
                 "catalog_name": "",
                 "database_name": "",
                 "schema_name": "",
+                "table_name": "test_semantic_model",
                 "yaml_path": "/test/path",
             }
         ]
-        try:
-            rag.storage.batch_store(test_models)
-        except (ImportError, AttributeError) as e:
-            pytest.skip(f"Storage API unavailable: {e}")
+        rag.storage.store_batch(test_models)
         return rag
 
     def test_pure_scalar_query(self, metrics_rag: MetricRAG, semantic_rag: SemanticModelRAG):

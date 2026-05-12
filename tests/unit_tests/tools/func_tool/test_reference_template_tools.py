@@ -138,10 +138,10 @@ class TestRenderReferenceTemplate:
         result = tools.render_reference_template(["Sales"], "tpl", json.dumps({"start_date": "2024-01-01"}))
         assert result.success == 0
         assert "region" in result.error
-        assert "Missing parameters" in result.error or "missing" in result.error.lower()
+        assert "Missing parameters: ['region']" in result.error
         # Error should include expected and provided params to help model retry
         assert "start_date" in result.error
-        assert "Expected parameters" in result.error or "requires parameters" in result.error
+        assert "requires parameters: ['start_date', 'region']" in result.error
 
     def test_render_template_not_found(self, tools, mock_rag):
         mock_rag.get_reference_template_detail.return_value = []

@@ -199,7 +199,7 @@ class TestInitSuccessStorySemanticModelAsync:
         """init_success_story_semantic_model_async can be imported from the module."""
         from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
 
-        assert init_success_story_semantic_model_async is not None
+        assert callable(init_success_story_semantic_model_async)
 
     def test_async_function_is_coroutine(self):
         """init_success_story_semantic_model_async is a coroutine function (async def)."""
@@ -220,7 +220,7 @@ class TestInitSuccessStorySemanticModelAsync:
         success, error = await init_success_story_semantic_model_async(mock_config, missing)
 
         assert success is False
-        assert "not found" in error.lower() or missing in error
+        assert error == f"Success story CSV file not found: {missing}"
 
     @pytest.mark.asyncio
     async def test_async_returns_false_for_empty_csv(self, tmp_path):
@@ -248,7 +248,7 @@ class TestInitSuccessStorySemanticModelAsync:
         success, error = await init_success_story_semantic_model_async(mock_config, str(csv_path))
 
         assert success is False
-        assert "missing" in error.lower() or "sql" in error.lower()
+        assert "missing required columns: ['sql']" in error
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +264,7 @@ class TestInitSuccessStorySemanticModelSync:
         """init_success_story_semantic_model can be imported."""
         from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model
 
-        assert init_success_story_semantic_model is not None
+        assert callable(init_success_story_semantic_model)
 
     def test_sync_function_is_not_coroutine(self):
         """init_success_story_semantic_model is a plain sync function, not a coroutine."""

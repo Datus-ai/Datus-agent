@@ -12,6 +12,7 @@ from datus.storage.document.schemas import (
     CONTENT_TYPE_MARKDOWN,
     CONTENT_TYPE_RST,
     SOURCE_TYPE_LOCAL,
+    FetchedDocument,
 )
 
 # ---------------------------------------------------------------------------
@@ -231,7 +232,7 @@ class TestFetchSingle:
         md = tmp_path / "single.md"
         md.write_text("# Single File\n\nContent")
         doc = fetcher.fetch_single(str(md))
-        assert doc is not None
+        assert isinstance(doc, FetchedDocument)
         assert doc.platform == "test-platform"
         assert doc.version == "1.0.0"
         assert doc.content_type == CONTENT_TYPE_MARKDOWN
@@ -245,7 +246,7 @@ class TestFetchSingle:
         f = sub / "ref.md"
         f.write_text("# API Reference")
         doc = fetcher.fetch_single(str(f), base_url=str(tmp_path / "docs"))
-        assert doc is not None
+        assert isinstance(doc, FetchedDocument)
         assert doc.doc_path == "api/ref.md"
 
     @pytest.mark.ci
@@ -254,7 +255,7 @@ class TestFetchSingle:
         f = tmp_path / "standalone.md"
         f.write_text("# Standalone")
         doc = fetcher.fetch_single(str(f))
-        assert doc is not None
+        assert isinstance(doc, FetchedDocument)
         assert doc.doc_path == "standalone.md"
 
     @pytest.mark.ci
@@ -263,7 +264,7 @@ class TestFetchSingle:
         f = tmp_path / "page.html"
         f.write_text("<html><head><title>My Page</title></head><body>Hello</body></html>")
         doc = fetcher.fetch_single(str(f))
-        assert doc is not None
+        assert isinstance(doc, FetchedDocument)
         assert doc.content_type == CONTENT_TYPE_HTML
 
     @pytest.mark.ci
@@ -272,7 +273,7 @@ class TestFetchSingle:
         f = tmp_path / "auto.md"
         f.write_text("# Auto")
         doc = fetcher_no_version.fetch_single(str(f))
-        assert doc is not None
+        assert isinstance(doc, FetchedDocument)
         import re
 
         assert re.match(r"\d{4}-\d{2}-\d{2}", doc.version)

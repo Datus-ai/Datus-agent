@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from datus.tools.db_tools import connector_registry
+from datus.validation.report import TableTarget
 from datus.validation.target_extractor import extract_ddl_target, extract_dml_target
 
 
@@ -48,43 +49,30 @@ def _register_test_capabilities():
 class TestExtractDDLTarget:
     def test_basic_create_table(self):
         t = extract_ddl_target("CREATE TABLE staging.users (id INT)", "main")
-        assert t is not None
-        assert t.database == "main"
-        assert t.db_schema == "staging"
-        assert t.table == "users"
+        assert t == TableTarget(datasource="main", database="main", db_schema="staging", table="users")
 
     def test_if_not_exists(self):
         t = extract_ddl_target("CREATE TABLE IF NOT EXISTS orders (id INT)", "main")
-        assert t is not None
-        assert t.table == "orders"
-        assert t.db_schema is None
+        assert t == TableTarget(datasource="main", database="main", table="orders")
 
     def test_create_or_replace(self):
         t = extract_ddl_target("CREATE OR REPLACE TABLE analytics.revenue (m TEXT)", "prod")
-        assert t is not None
-        assert t.database == "prod"
-        assert t.db_schema == "analytics"
-        assert t.table == "revenue"
+        assert t == TableTarget(datasource="prod", database="prod", db_schema="analytics", table="revenue")
 
     def test_temporary(self):
         t = extract_ddl_target("CREATE TEMPORARY TABLE tmp_foo (x INT)", "db1")
-        assert t is not None
-        assert t.table == "tmp_foo"
+        assert t == TableTarget(datasource="db1", database="db1", table="tmp_foo")
 
     def test_ctas(self):
         t = extract_ddl_target(
             "CREATE TABLE analytics.revenue_monthly AS SELECT * FROM staging.sales",
             "db1",
         )
-        assert t is not None
-        assert t.db_schema == "analytics"
-        assert t.table == "revenue_monthly"
+        assert t == TableTarget(datasource="db1", database="db1", db_schema="analytics", table="revenue_monthly")
 
     def test_quoted_identifier(self):
         t = extract_ddl_target('CREATE TABLE "My Schema"."My Table" (x INT)', "db1")
-        assert t is not None
-        assert t.db_schema == "My Schema"
-        assert t.table == "My Table"
+        assert t == TableTarget(datasource="db1", database="db1", db_schema="My Schema", table="My Table")
 
     def test_three_part_identifier_default_dialect(self):
         """Empty dialect defaults to catalog-tier semantics (the safer bet —
@@ -92,11 +80,7 @@ class TestExtractDDLTarget:
         validator flag real tables as missing). Leading component becomes
         ``catalog``, middle becomes ``database``, ``db_schema`` stays None."""
         t = extract_ddl_target("CREATE TABLE mydb.myschema.mytable (x INT)", "default_db")
-        assert t is not None
-        assert t.catalog == "mydb"
-        assert t.database == "myschema"
-        assert t.db_schema is None
-        assert t.table == "mytable"
+        assert t == TableTarget(catalog="mydb", datasource="default_db", database="myschema", table="mytable")
 
     def test_three_part_identifier_starrocks_has_catalog(self):
         """On StarRocks ``default_catalog.ac_manage.stats`` is
@@ -109,11 +93,12 @@ class TestExtractDDLTarget:
             "default_db",
             dialect="starrocks",
         )
-        assert t is not None
-        assert t.catalog == "default_catalog"
-        assert t.database == "ac_manage"
-        assert t.db_schema is None
-        assert t.table == "stats"
+        assert t == TableTarget(
+            catalog="default_catalog",
+            datasource="default_db",
+            database="ac_manage",
+            table="stats",
+        )
 
     def test_three_part_identifier_postgres_no_catalog(self):
         """On Postgres the three-part form is ``db.schema.table`` — the
@@ -125,11 +110,7 @@ class TestExtractDDLTarget:
             "default_db",
             dialect="postgres",
         )
-        assert t is not None
-        assert t.catalog is None
-        assert t.database == "mydb"
-        assert t.db_schema == "public"
-        assert t.table == "users"
+        assert t == TableTarget(datasource="default_db", database="mydb", db_schema="public", table="users")
 
     def test_postgresql_alias_uses_sqlglot_postgres_dialect(self):
         """Config uses ``postgresql`` while sqlglot calls the dialect
@@ -140,23 +121,17 @@ class TestExtractDDLTarget:
             "default_db",
             dialect="postgresql",
         )
-        assert t is not None
-        assert t.catalog is None
-        assert t.database == "mydb"
-        assert t.db_schema == "public"
-        assert t.table == "users"
+        assert t == TableTarget(datasource="default_db", database="mydb", db_schema="public", table="users")
 
     def test_two_part_identifier_catalog_is_none(self):
         """Two-part ``schema.table`` leaves catalog unset."""
         t = extract_ddl_target("CREATE TABLE analytics.users (x INT)", "db1")
-        assert t is not None
-        assert t.catalog is None
+        assert t == TableTarget(datasource="db1", database="db1", db_schema="analytics", table="users")
 
     def test_one_part_identifier_catalog_is_none(self):
         """Bare table name leaves catalog unset."""
         t = extract_ddl_target("CREATE TABLE users (x INT)", "db1")
-        assert t is not None
-        assert t.catalog is None
+        assert t == TableTarget(datasource="db1", database="db1", table="users")
 
     def test_drop_table_returns_none(self):
         assert extract_ddl_target("DROP TABLE foo", "db1") is None
@@ -182,19 +157,15 @@ class TestExtractDDLTarget:
 class TestExtractDMLTarget:
     def test_insert(self):
         t = extract_dml_target("INSERT INTO staging.users (id) VALUES (1)", "main")
-        assert t is not None
-        assert t.db_schema == "staging"
-        assert t.table == "users"
+        assert t == TableTarget(datasource="main", database="main", db_schema="staging", table="users")
 
     def test_update(self):
         t = extract_dml_target("UPDATE orders SET status = 'done' WHERE id = 1", "db")
-        assert t is not None
-        assert t.table == "orders"
+        assert t == TableTarget(datasource="db", database="db", table="orders")
 
     def test_delete(self):
         t = extract_dml_target("DELETE FROM orders WHERE id = 1", "db")
-        assert t is not None
-        assert t.table == "orders"
+        assert t == TableTarget(datasource="db", database="db", table="orders")
 
     def test_select_returns_none(self):
         """SELECT is not a mutating tool — no target."""

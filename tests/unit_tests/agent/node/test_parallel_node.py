@@ -42,7 +42,7 @@ class TestParallelNodeExecute:
         result = node.execute()
         # execute() returns ParallelResult directly; node.result may or may not be set
         # Check the returned value
-        assert result is not None
+        assert isinstance(result, ParallelResult)
         assert result.success is False
         assert "No child nodes" in result.error
 

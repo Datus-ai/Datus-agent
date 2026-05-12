@@ -283,7 +283,7 @@ class TestCodexModelClientInit:
         with patch("openai.OpenAI") as mock_openai:
             mock_openai.return_value = MagicMock()
             client = model._get_client()
-            assert client is not None
+            assert client is mock_openai.return_value
             assert model._client is client
             # Second call returns cached client
             client2 = model._get_client()
@@ -303,7 +303,7 @@ class TestCodexModelClientInit:
         with patch("openai.AsyncOpenAI") as mock_async:
             mock_async.return_value = MagicMock()
             client = model._get_async_client()
-            assert client is not None
+            assert client is mock_async.return_value
             assert model._async_client is client
             # Second call returns cached
             client2 = model._get_async_client()

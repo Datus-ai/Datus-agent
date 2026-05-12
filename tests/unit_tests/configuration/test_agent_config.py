@@ -140,9 +140,7 @@ class TestDbConfigFilterKwargs:
     def test_unknown_fields_go_to_extra(self):
         kwargs = {"type": "mysql", "host": "localhost", "custom_option": "value123"}
         cfg = DbConfig.filter_kwargs(DbConfig, kwargs)
-        assert cfg.extra is not None
-        assert "custom_option" in cfg.extra
-        assert cfg.extra["custom_option"] == "value123"
+        assert cfg.extra == {"custom_option": "value123"}
 
     def test_name_sets_logic_name(self):
         kwargs = {"type": "sqlite", "uri": "sqlite:///db.db", "name": "my_logic_name"}
@@ -174,7 +172,7 @@ class TestDbConfigFilterKwargs:
         kwargs = {"type": "sqlite", "uri": "x.db", "some_none_field": None}
         cfg = DbConfig.filter_kwargs(DbConfig, kwargs)
         # None values should not be added to extra
-        assert cfg.extra is None or "some_none_field" not in cfg.extra
+        assert cfg.extra is None
 
     def test_unknown_string_fields_expand_env_vars(self, monkeypatch):
         monkeypatch.setenv("CUSTOM_TOKEN", "token-value")
@@ -687,17 +685,17 @@ class TestAgentConfigServiceSelectors:
         cfg.set_active_dashboard("superset")
         assert cfg.active_dashboard() == "superset"
 
-        from datus.configuration.project_config import load_project_override
+        from datus.configuration.project_config import ProjectOverride, load_project_override
 
         loaded = load_project_override(cwd=str(tmp_path / "proj"))
-        assert loaded is not None
+        assert isinstance(loaded, ProjectOverride)
         assert loaded.dashboard == "superset"
 
         cfg.set_active_dashboard(None)
         assert cfg.active_dashboard() is None
         loaded = load_project_override(cwd=str(tmp_path / "proj"))
         # Cleared field is omitted on disk.
-        assert loaded is None or loaded.dashboard is None
+        assert loaded == ProjectOverride()
 
     def test_set_active_scheduler_persists_to_project_override(self, tmp_path):
         cfg = AgentConfig(
@@ -719,10 +717,10 @@ class TestAgentConfigServiceSelectors:
         cfg.set_active_scheduler("airflow")
         assert cfg.active_scheduler() == "airflow"
 
-        from datus.configuration.project_config import load_project_override
+        from datus.configuration.project_config import ProjectOverride, load_project_override
 
         loaded = load_project_override(cwd=str(tmp_path / "proj"))
-        assert loaded is not None
+        assert isinstance(loaded, ProjectOverride)
         assert loaded.scheduler == "airflow"
 
     def test_file_datasource_uri_expands_env_vars(self, tmp_path, monkeypatch):

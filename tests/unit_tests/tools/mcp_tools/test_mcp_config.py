@@ -284,7 +284,7 @@ class TestMCPServerConfigFactory:
                 "tool_filter": {"allowed_tool_names": ["read"], "enabled": True},
             },
         )
-        assert cfg.tool_filter is not None
+        assert isinstance(cfg.tool_filter, ToolFilterConfig)
         assert cfg.tool_filter.allowed_tool_names == ["read"]
 
     def test_tool_filter_as_toolfilterconfig_object(self):

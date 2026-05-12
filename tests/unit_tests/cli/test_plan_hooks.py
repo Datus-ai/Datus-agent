@@ -108,11 +108,15 @@ class TestTransitionState:
 class TestAsyncHookStubs:
     async def test_on_start(self, broker, session):
         hooks = _make_hooks(broker, session)
-        await hooks.on_start(MagicMock(), MagicMock())  # should not raise
+        await hooks.on_start(MagicMock(), MagicMock())
+        assert hooks.plan_phase == "generating"
+        assert hooks._state_transitions == []
 
     async def test_on_end(self, broker, session):
         hooks = _make_hooks(broker, session)
-        await hooks.on_end(MagicMock(), MagicMock(), MagicMock())  # should not raise
+        await hooks.on_end(MagicMock(), MagicMock(), MagicMock())
+        assert hooks.plan_phase == "generating"
+        assert hooks._state_transitions == []
 
 
 # ---------------------------------------------------------------------------

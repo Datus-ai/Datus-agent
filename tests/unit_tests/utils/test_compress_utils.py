@@ -129,12 +129,20 @@ ORDER BY
     result = tool.read_query(sql)
 
     assert result.success == 1
-    assert result.result
+    assert isinstance(result.result, dict)
     query_result = result.result
-    assert query_result["is_compressed"]
+    assert query_result["is_compressed"] is True
     assert query_result["original_rows"] > 10
-    assert query_result["compressed_data"]
-    assert len(query_result["original_columns"]) > 0
+    assert isinstance(query_result["compressed_data"], str)
+    assert query_result["original_columns"] == [
+        "name",
+        "setCode",
+        "rarity",
+        "type",
+        "manaCost",
+        "cardKingdomId",
+        "cardKingdomFoilId",
+    ]
 
 
 # ---------------------------------------------------------------------------

@@ -515,7 +515,9 @@ class TestDBFuncTool:
         assert isinstance(result, FuncToolResult)
         assert result.success == 1
         assert result.error is None
-        assert result.result is not None  # Should be compressed data
+        assert result.result["original_rows"] == 1
+        assert result.result["original_columns"] == ["id", "name"]
+        assert result.result["compression_type"] == "none"
 
         mock_connector.execute_query.assert_called_once_with("SELECT * FROM users", result_format="list")
 
@@ -1236,8 +1238,7 @@ class TestDBFuncToolIntegration:
         # Test that a method can be transformed
         tool = trans_to_function_tool(db_func_tool.list_tables)
 
-        assert tool is not None
-        assert hasattr(tool, "name")
+        assert tool.name == "list_tables"
         assert hasattr(tool, "description")
         assert hasattr(tool, "params_json_schema")
 
@@ -1260,7 +1261,8 @@ class TestDBFuncToolIntegration:
         result = db_func_tool.read_query("SELECT * FROM users")
 
         assert result.success == 1
-        assert result.result is not None
+        assert result.result["original_rows"] == 2
+        assert result.result["original_columns"] == ["id", "name"]
         assert result.result["is_compressed"] is False
 
 

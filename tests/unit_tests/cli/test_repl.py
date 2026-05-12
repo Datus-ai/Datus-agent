@@ -332,7 +332,7 @@ class TestCheckAgentAvailable:
         result = cli.check_agent_available()
         assert result is False
         output = cli.console.file.getvalue()
-        assert "initializing" in output.lower() or "background" in output.lower()
+        assert "AI features are still initializing in the background." in output
 
     def test_agent_not_available(self, cli):
         cli.agent_ready = False
@@ -341,7 +341,7 @@ class TestCheckAgentAvailable:
         result = cli.check_agent_available()
         assert result is False
         output = cli.console.file.getvalue()
-        assert "not available" in output.lower() or "failed" in output.lower()
+        assert "AI features are not available. Agent initialization failed." in output
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +411,8 @@ class TestSmartDisplayTable:
         data = [{"col1": "val1", "col2": "val2"}]
         cli._smart_display_table(data)
         output = cli.console.file.getvalue()
-        assert "col1" in output or "val1" in output
+        assert "col1" in output
+        assert "val1" in output
 
     def test_many_columns_truncated(self, cli):
         """Many columns are truncated to fit terminal width."""
@@ -419,7 +420,8 @@ class TestSmartDisplayTable:
         # Should not raise
         cli._smart_display_table(data)
         output = cli.console.file.getvalue()
-        assert len(output) > 0
+        assert "col0" in output
+        assert "val0" in output
 
     def test_explicit_columns(self, cli):
         data = [{"col1": "val1", "col2": "val2", "col3": "val3"}]
@@ -452,7 +454,7 @@ class TestExecuteSql:
         cli.db_connector.execute.return_value = None
         cli._execute_sql("SELECT 1")
         output = cli.console.file.getvalue()
-        assert "No result" in output or "Error" in output
+        assert "No result from the query." in output
 
     def test_successful_arrow_result_displays_table(self, cli):
         import pyarrow as pa
@@ -467,7 +469,8 @@ class TestExecuteSql:
 
         cli._execute_sql("SELECT 1")
         output = cli.console.file.getvalue()
-        assert "Alice" in output or "rows" in output.lower()
+        assert "Alice" in output
+        assert "Returned 2 rows" in output
 
     def test_sql_error_result_prints_error(self, cli):
         mock_result = MagicMock()
@@ -477,13 +480,14 @@ class TestExecuteSql:
 
         cli._execute_sql("SELECT BAD")
         output = cli.console.file.getvalue()
-        assert "SQL Error" in output or "syntax error" in output
+        assert "SQL Error" in output
+        assert "syntax error near 'BAD'" in output
 
     def test_execute_exception_prints_error(self, cli):
         cli.db_connector.execute.side_effect = RuntimeError("connection lost")
         cli._execute_sql("SELECT 1")
         output = cli.console.file.getvalue()
-        assert "Error" in output or "connection lost" in output
+        assert "connection lost" in output
 
     def test_non_arrow_row_count_positive_shows_update(self, cli):
         mock_result = MagicMock()
@@ -496,7 +500,8 @@ class TestExecuteSql:
         cli._execute_sql("UPDATE orders SET x=1")
         output = cli.console.file.getvalue()
         # Should print update message
-        assert len(output) > 0
+        assert "Update" in output
+        assert "rows in" in output
 
     def test_content_set_sql_updates_cli_context_in_place(self, cli):
         """USE/SET SQL updates cli_context in-place, preserving accumulated state."""
@@ -644,12 +649,13 @@ class TestCmdBash:
     def test_empty_args_prints_message(self, cli):
         cli._cmd_bash("")
         output = cli.console.file.getvalue()
-        assert "provide" in output.lower() or "Please" in output
+        assert "Please provide a bash command." in output
 
     def test_non_whitelisted_command_prints_security_error(self, cli):
         cli._cmd_bash("rm -rf /tmp/test")
         output = cli.console.file.getvalue()
-        assert "Security" in output or "whitelist" in output.lower()
+        assert "Security:" in output
+        assert "not in whitelist" in output
 
     def test_whitelisted_command_executes(self, cli):
         mock_run_result = MagicMock()
@@ -671,7 +677,8 @@ class TestCmdBash:
             cli._cmd_bash("ls /nonexistent")
 
         output = cli.console.file.getvalue()
-        assert "failed" in output.lower() or "no such file" in output
+        assert "Command failed with code 1:" in output
+        assert "no such file" in output
 
     def test_timeout_prints_error(self, cli):
         import subprocess
@@ -699,7 +706,8 @@ class TestCmdHelp:
     def test_help_output_contains_commands(self, cli):
         cli._cmd_help("")
         output = cli.console.file.getvalue()
-        assert "Help" in output or "Commands" in output or "SQL" in output
+        assert "Datus-CLI Help" in output
+        assert "Tool Commands" in output
 
 
 # ---------------------------------------------------------------------------
@@ -724,7 +732,7 @@ class TestWaitForAgentAvailable:
 
         assert result is False
         output = cli.console.file.getvalue()
-        assert "timed out" in output.lower() or "failed" in output.lower() or "not available" in output.lower()
+        assert "Agent initialization timed out. Try again later." in output
 
 
 # ---------------------------------------------------------------------------
@@ -745,7 +753,7 @@ class TestCreateCombinedCompleterExtended:
                     result = cli.create_combined_completer()
 
         mock_merge.assert_called_once()
-        assert result is not None
+        assert result is mock_merge.return_value
 
 
 # ---------------------------------------------------------------------------
