@@ -24,10 +24,8 @@ contract this node enforces.
 
 from __future__ import annotations
 
-import datetime as _dt
 import json
 import re
-import uuid
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
@@ -36,6 +34,7 @@ from datus.cli.execution_state import ExecutionInterrupted
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.gen_visual_report_models import (
+    REPORT_ID_RE,
     GenVisualReportNodeInput,
     GenVisualReportNodeResult,
 )
@@ -52,28 +51,37 @@ from datus.utils.message_utils import MessagePart, build_structured_content
 logger = get_logger(__name__)
 
 
-_TITLE_FALLBACK_RE = re.compile(r"[^a-z0-9]+")
+# Inline scan for ``rpt_<id>`` mentions in the user prompt. The result is
+# fed to the LLM as an awareness hint (not used to auto-bind) so the model
+# can decide between editing the existing report and producing a new one
+# that references it. Validation against the strict ``REPORT_ID_RE``
+# happens after the dir-exists check.
+_REPORT_ID_INLINE_RE = re.compile(r"(?:(?<=[^a-z0-9])|^)rpt_[a-z0-9][a-z0-9_-]{0,80}")
 
 
-def _slugify_for_report_id(user_message: str, max_len: int = 32) -> str:
-    """Best-effort short slug from the user prompt for report id prefix."""
-    ascii_only = user_message.encode("ascii", errors="ignore").decode("ascii")
-    slug = _TITLE_FALLBACK_RE.sub("_", ascii_only.lower()).strip("_")
-    return slug[:max_len] if slug else ""
+def _detect_referenced_report_ids(user_message: str, project_root: Path) -> List[str]:
+    """Return all on-disk report ids mentioned in ``user_message``.
 
-
-def _allocate_report_id(user_message: str, project_root: Path) -> str:
-    """Generate ``rpt_<slug>_<yymmdd>_<rand>`` not colliding with existing dirs."""
-    stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%y%m%d")
-    base_slug = _slugify_for_report_id(user_message) or "report"
+    Used only to inform the LLM ("the user mentioned these existing
+    reports") — the model decides whether to edit them via
+    ``bind_existing_report`` or use them as references for a fresh
+    report via ``start_new_report``. Deduplicates while preserving
+    first-mention order so the hint reads naturally.
+    """
     reports_root = project_root / "reports"
-    for _ in range(8):
-        suffix = uuid.uuid4().hex[:6]
-        candidate = f"rpt_{base_slug}_{stamp}_{suffix}" if base_slug else f"rpt_{stamp}_{suffix}"
-        candidate = candidate[:83]  # leave room under the 84-char regex bound
-        if not (reports_root / candidate).exists():
-            return candidate
-    raise RuntimeError("Failed to allocate a unique report id after 8 attempts")
+    if not reports_root.is_dir():
+        return []
+    seen: set[str] = set()
+    found: List[str] = []
+    for match in _REPORT_ID_INLINE_RE.finditer(user_message.lower()):
+        candidate = match.group(0)
+        if candidate in seen or not REPORT_ID_RE.fullmatch(candidate):
+            continue
+        candidate_dir = reports_root / candidate
+        if candidate_dir.is_dir() and (candidate_dir / "manifest.json").is_file():
+            seen.add(candidate)
+            found.append(candidate)
+    return found
 
 
 class GenVisualReportAgenticNode(AgenticNode):
@@ -370,10 +378,20 @@ class GenVisualReportAgenticNode(AgenticNode):
             parts.append(f"Database context: {user_input.database}")
         if user_input.db_schema:
             parts.append(f"Schema: {user_input.db_schema}")
-        if self._active_report_id:
-            parts.append(f"Active report id: {self._active_report_id}")
-            parts.append(f"Report directory: reports/{self._active_report_id}/")
-            parts.append("Reminder: write queries via save_query and the final manifest via save_manifest.")
+
+        if self.agent_config and getattr(self.agent_config, "project_root", None):
+            project_root = Path(self.agent_config.project_root).resolve()
+            referenced = _detect_referenced_report_ids(user_input.user_message, project_root)
+            if referenced:
+                ref_list = ", ".join(referenced)
+                parts.append(
+                    "The user's message references existing report id(s) on disk: "
+                    f"{ref_list}. Decide whether they want to EDIT one of these in place "
+                    "(call bind_existing_report) or PRODUCE A NEW report that draws on "
+                    "them as references (call start_new_report and use the filesystem "
+                    "read tool on reports/<id>/manifest.json and reports/<id>/queries/* "
+                    "to learn from them). When unclear, default to start_new_report."
+                )
 
         if parts:
             return build_structured_content(
@@ -387,7 +405,13 @@ class GenVisualReportAgenticNode(AgenticNode):
     # ------------------------------------------------ artifact tools wiring
 
     def _prepare_report_artifacts(self, user_input: GenVisualReportNodeInput) -> None:
-        """Allocate a fresh report id and wire the artifact tools into ``self.tools``."""
+        """Wire the artifact tools into ``self.tools`` without binding a report id.
+
+        The LLM decides between ``start_new_report`` (create) and
+        ``bind_existing_report`` (edit) at execution time; we just make
+        both tools available here. ``_active_report_id`` stays ``None``
+        until the LLM commits to one or the other.
+        """
         if not self.agent_config or not getattr(self.agent_config, "project_root", None):
             raise ValueError("agent_config.project_root is required for gen_visual_report")
         if not self.db_func_tool:
@@ -396,13 +420,11 @@ class GenVisualReportAgenticNode(AgenticNode):
                 "gen_visual_report requires db_tools to be configured (DEFAULT_TOOLS includes db_tools.*)."
             )
 
-        project_root = Path(self.agent_config.project_root).resolve()
-        report_id = _allocate_report_id(user_input.user_message, project_root)
-        self._active_report_id = report_id
-
+        # Tools start unbound — the LLM picks new vs edit via the two
+        # intent-declaration tools below.
+        self._active_report_id = None
         self.report_artifact_tools = ReportArtifactTools(
             agent_config=self.agent_config,
-            report_id=report_id,
             db_func_tool=self.db_func_tool,
         )
         self.tools.extend(self.report_artifact_tools.available_tools())
@@ -540,6 +562,11 @@ class GenVisualReportAgenticNode(AgenticNode):
             manifest_action = self._find_artifact_tool_call(tool_calls, "save_manifest")
             query_actions = [a for a in tool_calls if a.action_type == "save_query"]
 
+            # The LLM picked the active report by calling start_new_report or
+            # bind_existing_report; the tools instance owns the resulting id.
+            if self.report_artifact_tools is not None and self.report_artifact_tools.report_id:
+                self._active_report_id = self.report_artifact_tools.report_id
+
             manifest_rel_path: Optional[str] = None
             if manifest_action is not None:
                 manifest_rel_path = self._extract_artifact_result_field(manifest_action, "manifest_path")
@@ -565,7 +592,14 @@ class GenVisualReportAgenticNode(AgenticNode):
                 },
             )
             if manifest_rel_path is None:
-                result.error = "save_manifest was never called — the report artifact is incomplete."
+                if self._active_report_id is None:
+                    result.error = (
+                        "Run finished without binding a report. The LLM must call either "
+                        "start_new_report(...) or bind_existing_report(...) before producing "
+                        "the artifact."
+                    )
+                else:
+                    result.error = "save_manifest was never called — the report artifact is incomplete."
 
             self.actions.extend(all_actions)
 

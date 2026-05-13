@@ -28,6 +28,7 @@ import json
 import os
 import re
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -49,6 +50,34 @@ logger = get_logger(__name__)
 
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+\-]\d{2}:?\d{2})?)?$")
 _MAX_QUERY_BYTES = 5 * 1024 * 1024  # 5 MB hard cap per query result file
+
+_SLUG_NON_ASCII_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _slugify_title(title: str, max_len: int = 32) -> str:
+    """Best-effort ASCII slug from an LLM-supplied report title.
+
+    Returns ``""`` for titles that yield no usable characters; callers fall
+    back to a default like ``"report"`` so the resulting id always has a
+    non-empty middle segment.
+    """
+    ascii_only = title.encode("ascii", errors="ignore").decode("ascii")
+    slug = _SLUG_NON_ASCII_RE.sub("_", ascii_only.lower()).strip("_")
+    return slug[:max_len]
+
+
+def _allocate_report_id(title: str, project_root: Path) -> str:
+    """Generate ``rpt_<title-slug>_<yymmdd>_<rand6>`` not colliding on disk."""
+    stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%y%m%d")
+    base_slug = _slugify_title(title) or "report"
+    reports_root = project_root / "reports"
+    for _ in range(8):
+        suffix = uuid.uuid4().hex[:6]
+        candidate = f"rpt_{base_slug}_{stamp}_{suffix}"
+        candidate = candidate[:83]  # stay under the 84-char regex cap
+        if not (reports_root / candidate).exists():
+            return candidate
+    raise RuntimeError("Failed to allocate a unique report id after 8 attempts")
 
 
 def _utc_now_iso() -> str:
@@ -244,9 +273,17 @@ class ReportFilesystemFuncTool(FilesystemFuncTool):
 class ReportArtifactTools:
     """LLM-facing tools that produce the report artifact tree.
 
-    The owning node constructs one instance per execution with a fresh
-    ``report_id`` and exposes both ``save_query`` and ``save_manifest`` via
-    :meth:`available_tools`.
+    Lifecycle:
+
+    1. The owning node constructs one instance per execution with no
+       active report id.
+    2. The LLM decides intent and binds the active report by calling
+       **exactly one** of ``start_new_report`` (create) or
+       ``bind_existing_report`` (edit). The system prompt enumerates
+       the decision criteria.
+    3. ``save_query`` and ``save_manifest`` operate against the active
+       report. They fail-fast with a clear pointer when no report is
+       bound, forcing the LLM to declare intent before writing.
 
     The tools intentionally hide the disk layout: callers reference queries
     by *slug* (e.g. ``"sales_by_store"``) and never see the absolute path.
@@ -256,33 +293,145 @@ class ReportArtifactTools:
         self,
         *,
         agent_config,
-        report_id: str,
         db_func_tool,
     ) -> None:
-        if not REPORT_ID_RE.fullmatch(report_id):
-            raise ValueError(f"report_id must match {REPORT_ID_RE.pattern}, got {report_id!r}")
-
         self.agent_config = agent_config
-        self.report_id = report_id
         self._db_func_tool = db_func_tool
 
         project_root = Path(getattr(agent_config, "project_root", "")).resolve()
         if not project_root or str(project_root) == ".":
             raise ValueError("agent_config.project_root must be a non-empty directory")
-        self.report_dir: Path = project_root / "reports" / report_id
-        self.queries_dir: Path = self.report_dir / "queries"
-        self.queries_dir.mkdir(parents=True, exist_ok=True)
-
         self._project_root = project_root
+
+        # Lazy state — populated by start_new_report / bind_existing_report.
+        self.report_id: Optional[str] = None
+        self.report_dir: Optional[Path] = None
+        self.queries_dir: Optional[Path] = None
+        # Tracks how the active report became active, surfaced to callers
+        # that want to differentiate "fresh artifact" from "edit in-place"
+        # in their final response (e.g. the node's result payload).
+        self.mode: Optional[str] = None  # "new" | "edit"
 
     # -- public --------------------------------------------------------------
 
     def available_tools(self) -> List[Tool]:
         """Return tools registered with the agent framework."""
         return [
+            trans_to_function_tool(self.start_new_report),
+            trans_to_function_tool(self.bind_existing_report),
             trans_to_function_tool(self.save_query),
             trans_to_function_tool(self.save_manifest),
         ]
+
+    # -- intent declaration --------------------------------------------------
+
+    def start_new_report(self, title: str = "") -> FuncToolResult:
+        """
+        Allocate a fresh report directory and bind subsequent saves to it.
+
+        Call this when the user's request is to **produce a new report
+        artifact**, even if they reference one or more existing reports
+        for context. To learn from a reference report, read its
+        ``manifest.json`` / ``queries/*`` via the filesystem read tool
+        and then build the new artifact here.
+
+        Args:
+            title: short ASCII title used to seed the report id's slug
+                segment. Non-ASCII characters are stripped. Optional —
+                pass an empty string to fall back to ``"report"``.
+
+        Returns:
+            FuncToolResult.result is a dict like::
+
+                {
+                    "report_id": "rpt_<slug>_<yymmdd>_<rand>",
+                    "report_dir": "reports/<report_id>",
+                    "mode": "new",
+                }
+        """
+        try:
+            new_id = _allocate_report_id(title, self._project_root)
+        except RuntimeError as exc:
+            return FuncToolResult(success=0, error=str(exc))
+        return self._activate(new_id, mode="new", create_dirs=True)
+
+    def bind_existing_report(self, report_id: str) -> FuncToolResult:
+        """
+        Switch the active report to an existing one and bind subsequent saves there.
+
+        Call this when the user asks to **modify / update / edit /
+        append to** a specific named report. ``save_query`` will
+        overwrite same-named queries; ``save_manifest`` will replace
+        ``manifest.json``. The filesystem read tool is the recommended
+        way to load the current manifest before mutating it.
+
+        Args:
+            report_id: target report id, e.g. ``"rpt_2026q1_na_sales"``.
+                Must match ``^rpt_[a-z0-9_-]{1,80}$`` and the directory
+                (including ``manifest.json``) must already exist under
+                ``<project_root>/reports/``.
+
+        Returns:
+            FuncToolResult.result is a dict like::
+
+                {
+                    "report_id": "<report_id>",
+                    "report_dir": "reports/<report_id>",
+                    "mode": "edit",
+                }
+        """
+        if not report_id or not REPORT_ID_RE.fullmatch(report_id):
+            return FuncToolResult(
+                success=0,
+                error=f"report_id must match {REPORT_ID_RE.pattern}; got {report_id!r}",
+            )
+        candidate = self._project_root / "reports" / report_id
+        if not candidate.is_dir():
+            return FuncToolResult(
+                success=0,
+                error=(
+                    f"Report directory not found: reports/{report_id}. "
+                    "Use start_new_report() if you intended to create a new report."
+                ),
+            )
+        if not (candidate / "manifest.json").is_file():
+            return FuncToolResult(
+                success=0,
+                error=(
+                    f"reports/{report_id}/manifest.json is missing — the report is incomplete. Cannot bind for editing."
+                ),
+            )
+        return self._activate(report_id, mode="edit", create_dirs=False)
+
+    def _activate(self, report_id: str, *, mode: str, create_dirs: bool) -> FuncToolResult:
+        report_dir = self._project_root / "reports" / report_id
+        queries_dir = report_dir / "queries"
+        if create_dirs:
+            queries_dir.mkdir(parents=True, exist_ok=True)
+        self.report_id = report_id
+        self.report_dir = report_dir
+        self.queries_dir = queries_dir
+        self.mode = mode
+        return FuncToolResult(
+            result={
+                "report_id": report_id,
+                "report_dir": f"reports/{report_id}",
+                "mode": mode,
+            }
+        )
+
+    def _require_active(self, tool_name: str) -> Optional[FuncToolResult]:
+        """Return a failure result when no report is bound, else ``None``."""
+        if self.report_id is None or self.report_dir is None or self.queries_dir is None:
+            return FuncToolResult(
+                success=0,
+                error=(
+                    f"No active report bound. Call start_new_report(title=...) to create one, "
+                    f"or bind_existing_report(report_id=...) to edit an existing one, "
+                    f"before calling {tool_name}()."
+                ),
+            )
+        return None
 
     def save_query(
         self,
@@ -318,6 +467,9 @@ class ReportArtifactTools:
             The ``columns`` block is the authoritative source for Vega-Lite
             encoding ``type`` decisions in subsequent ``save_manifest`` calls.
         """
+        not_bound = self._require_active("save_query")
+        if not_bound is not None:
+            return not_bound
         if not name or not QUERY_SLUG_RE.fullmatch(name):
             return FuncToolResult(
                 success=0,
@@ -444,10 +596,12 @@ class ReportArtifactTools:
 
         Args:
             manifest_json: The full manifest object encoded as a JSON string.
-                Schema follows ``ReportManifest``. ``id`` must equal this
-                run's ``report_id`` (omit it and we set it for you). Every
-                chart/table ``data_ref`` must point to a query file already
-                produced by ``save_query``.
+                Schema follows ``ReportManifest``. ``id`` must equal the
+                currently-active ``report_id`` (omit it and we set it for
+                you). Every chart/table ``data_ref`` must point to a query
+                file present in this report's ``queries/`` directory —
+                either produced via ``save_query`` in the current turn or
+                left over from a previous run when in edit mode.
 
         Returns:
             FuncToolResult.result is a dict like::
@@ -458,6 +612,9 @@ class ReportArtifactTools:
                     "data_refs": [...],
                 }
         """
+        not_bound = self._require_active("save_manifest")
+        if not_bound is not None:
+            return not_bound
         if isinstance(manifest_json, dict):
             # Allow direct dict input from internal callers and tests.
             manifest: Dict[str, Any] = manifest_json

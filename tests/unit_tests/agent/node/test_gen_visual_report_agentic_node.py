@@ -10,12 +10,15 @@ Design principle: NO mocks except LLM (same as test_gen_report_agentic_node).
 Covers:
 * Node initialization wires the expected tools
 * ``ReportFilesystemFuncTool`` replaces the default filesystem tool
-* Allocation of a fresh ``report_id`` per ``execute_stream`` call
-* End-to-end streaming run where the LLM calls ``save_query`` then
-  ``save_manifest`` against a real SQLite database, persisting the
-  artifact under ``project_root/reports/<id>/``
+* ``_prepare_report_artifacts`` registers the artifact tools but leaves the
+  report id unbound — the LLM owns the new/edit decision at runtime
+* End-to-end streaming run where the LLM calls ``start_new_report``,
+  ``save_query``, and ``save_manifest`` against a real SQLite database,
+  persisting the artifact under ``project_root/reports/<id>/``
+* The LLM-facing hint surfaces when the user references existing reports on disk
 * CLI mode compiles ``index.html`` after a successful run
-* When ``save_manifest`` is never called, the run is reported as failed
+* When the LLM never binds a report, the run reports a binding-error
+* When the LLM binds but never calls ``save_manifest``, the run reports an incomplete-manifest error
 """
 
 from __future__ import annotations
@@ -89,23 +92,64 @@ class TestGenVisualReportInit:
 
 
 class TestPrepareReportArtifacts:
-    def test_prepare_allocates_report_id_and_tools(self, real_agent_config, mock_llm_create):
+    def test_registers_intent_tools_without_binding(self, real_agent_config, mock_llm_create):
+        """Prepare wires the intent-declaration tools but leaves report_id unbound.
+
+        The LLM picks new vs edit at runtime via start_new_report /
+        bind_existing_report; pre-allocating an id was the bug we are
+        protecting against here.
+        """
         node = _make_node(real_agent_config)
         user_input = GenVisualReportNodeInput(user_message="北美一季度门店销售分析")
         node.input = user_input
 
         node._prepare_report_artifacts(user_input)
 
-        # report_id format is `rpt_<slug>_<yymmdd>_<rand6>` per the contract.
-        active_id = node._active_report_id or ""
-        assert active_id.startswith("rpt_"), f"unexpected report id: {active_id!r}"
-        assert len(active_id) >= len("rpt_") + len("000000") + 1, f"report id too short: {active_id!r}"
         assert isinstance(node.report_artifact_tools, ReportArtifactTools)
+        # Nothing on disk yet — the active id stays None until the LLM commits.
+        assert node._active_report_id is None
+        assert node.report_artifact_tools.report_id is None
+        assert node.report_artifact_tools.mode is None
+
         tool_names = {t.name for t in node.tools}
+        # All four artifact tools should be callable by the LLM.
+        assert "start_new_report" in tool_names
+        assert "bind_existing_report" in tool_names
         assert "save_query" in tool_names
         assert "save_manifest" in tool_names
-        report_dir = Path(real_agent_config.project_root) / "reports" / node._active_report_id
-        assert (report_dir / "queries").is_dir()
+
+        # No rpt_<...> subdirectory created prematurely. pathlib.Path.glob
+        # silently yields nothing when the parent is missing, so this assert
+        # holds for both "reports/ absent" and "reports/ empty".
+        reports_root = Path(real_agent_config.project_root) / "reports"
+        report_subdirs = sorted(p.name for p in reports_root.glob("rpt_*"))
+        assert report_subdirs == []
+
+
+class TestEnhancedMessageHint:
+    def test_hint_added_when_user_references_existing_report(self, real_agent_config, mock_llm_create):
+        """User message naming an on-disk report id should trigger the LLM hint."""
+        project_root = Path(real_agent_config.project_root)
+        existing_id = "rpt_existing_demo_260513_aaaaaa"
+        existing_dir = project_root / "reports" / existing_id
+        (existing_dir / "queries").mkdir(parents=True)
+        (existing_dir / "manifest.json").write_text(json.dumps({"id": existing_id}))
+
+        node = _make_node(real_agent_config)
+        user_input = GenVisualReportNodeInput(user_message=f"修改 {existing_id} 报告，补充一个 YoY 分析章节")
+
+        message = node._build_enhanced_message(user_input)
+        assert existing_id in message
+        assert "bind_existing_report" in message
+        assert "start_new_report" in message
+
+    def test_no_hint_when_no_reports_directory(self, real_agent_config, mock_llm_create):
+        """No reports/ dir on disk → no hint, the LLM should treat as a fresh start."""
+        node = _make_node(real_agent_config)
+        user_input = GenVisualReportNodeInput(user_message="generate a new sales overview")
+        message = node._build_enhanced_message(user_input)
+        assert "bind_existing_report" not in message
+        assert "start_new_report" not in message
 
 
 # --------------------------------------------------------------------------- #
@@ -115,8 +159,14 @@ class TestPrepareReportArtifacts:
 
 @pytest.mark.asyncio
 async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
-    """LLM saves one query, then a valid manifest. Artifact should be on disk."""
+    """LLM binds a fresh report, saves one query, then a valid manifest.
 
+    The LLM-driven intent declaration means start_new_report must be the
+    first artifact tool call; this test exercises that ordering plus the
+    on-disk artifact produced by the chained calls.
+    """
+
+    start_new_args = json.dumps({"title": "California SAT"})
     save_query_args = json.dumps(
         {
             "name": "avg_sat_reading",
@@ -151,6 +201,7 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
         responses=[
             build_tool_then_response(
                 tool_calls=[
+                    MockToolCall(name="start_new_report", arguments=start_new_args),
                     MockToolCall(name="save_query", arguments=save_query_args),
                     MockToolCall(name="save_manifest", arguments=save_manifest_args),
                 ],
@@ -336,11 +387,11 @@ class TestAutoOpenInBrowser:
 
 
 @pytest.mark.asyncio
-async def test_execute_stream_without_manifest_marks_failure(real_agent_config, mock_llm_create):
-    """If LLM never calls save_manifest, the run reports failure."""
+async def test_execute_stream_without_binding_marks_failure(real_agent_config, mock_llm_create):
+    """LLM never binds a report → run reports a binding-required failure."""
     mock_llm_create.reset(
         responses=[
-            build_simple_response("I gathered context but did not finalize the manifest."),
+            build_simple_response("I gathered context but never bound a report."),
         ]
     )
 
@@ -356,5 +407,39 @@ async def test_execute_stream_without_manifest_marks_failure(real_agent_config, 
     assert isinstance(result, dict)
     assert result["success"] is False
     assert result["manifest_path"] is None
+    assert result["report_id"] is None
+    assert result["query_count"] == 0
+    error = result.get("error") or ""
+    assert "start_new_report" in error
+    assert "bind_existing_report" in error
+
+
+@pytest.mark.asyncio
+async def test_execute_stream_bound_but_no_manifest_marks_failure(real_agent_config, mock_llm_create):
+    """LLM binds but never calls save_manifest → distinct incomplete-artifact failure."""
+    mock_llm_create.reset(
+        responses=[
+            build_tool_then_response(
+                tool_calls=[
+                    MockToolCall(name="start_new_report", arguments=json.dumps({"title": "halfway"})),
+                ],
+                content="I bound a report but forgot to finalize the manifest.",
+            ),
+        ]
+    )
+
+    node = _make_node(real_agent_config)
+    node.input = GenVisualReportNodeInput(user_message="bound-then-quit run")
+
+    actions = []
+    async for action in node.execute_stream(ActionHistoryManager()):
+        actions.append(action)
+
+    final = actions[-1]
+    result = final.output
+    assert isinstance(result, dict)
+    assert result["success"] is False
+    assert result["manifest_path"] is None
+    assert result["report_id"] is not None and result["report_id"].startswith("rpt_halfway_")
     assert result["query_count"] == 0
     assert "save_manifest was never called" in (result.get("error") or "")
