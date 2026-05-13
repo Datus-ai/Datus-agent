@@ -780,12 +780,14 @@ class AgentConfig:
 
         # Platform documentation fetch configs (datasource-independent)
         document_raw = kwargs.get("document", {}) or {}
-        # Extract tavily_api_key from document config (top-level, not a platform)
+        # Extract tavily_api_key from document config (top-level, not a platform).
+        # Falls back to TAVILY_API_KEY env var so downstream tools see a single
+        # resolved value regardless of whether the YAML key was provided.
         tavily_key_raw = document_raw.pop("tavily_api_key", None)
         if tavily_key_raw:
-            self.tavily_api_key = resolve_env(str(tavily_key_raw))
+            self.tavily_api_key = resolve_env(str(tavily_key_raw)) or None
         else:
-            self.tavily_api_key = None
+            self.tavily_api_key = os.environ.get("TAVILY_API_KEY") or None
 
         self.document_configs: Dict[str, DocumentConfig] = {}
         for name, cfg in document_raw.items():
