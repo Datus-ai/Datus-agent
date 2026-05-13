@@ -22,6 +22,7 @@ from datus.schemas.gen_visual_report_models import (
     LayoutSection,
     QueryResultFile,
     ReportManifest,
+    SectionHeader,
     TableColumnSpec,
     TableSection,
 )
@@ -155,6 +156,70 @@ class TestSections:
                     {"id": "b", "type": "markdown", "content": "b"},
                 ],
             )
+
+    def test_section_header_minimal_valid(self):
+        sec = SectionHeader(id="blk_h_overview", title="总体统计概览", level=1)
+        assert sec.type == "section_header"
+        assert sec.level == 1
+        assert sec.number is None
+        assert sec.description is None
+
+    def test_section_header_with_number_and_description(self):
+        sec = SectionHeader(
+            id="blk_h_overview",
+            number=3,
+            title="Numerical Distribution Features",
+            description="Observe distribution shape, dispersion, and skewness of key numeric columns",
+            level=2,
+        )
+        assert sec.number == 3
+        assert sec.level == 2
+        assert sec.description.startswith("Observe")
+
+    def test_section_header_level_out_of_range_rejected(self):
+        with pytest.raises(ValidationError):
+            SectionHeader(id="blk_h", title="x", level=0)
+        with pytest.raises(ValidationError):
+            SectionHeader(id="blk_h", title="x", level=8)
+
+    def test_section_header_number_must_be_positive(self):
+        with pytest.raises(ValidationError):
+            SectionHeader(id="blk_h", title="x", level=1, number=0)
+
+    def test_section_header_title_required(self):
+        with pytest.raises(ValidationError):
+            SectionHeader(id="blk_h", title="", level=1)
+
+    def test_section_header_extra_field_rejected(self):
+        with pytest.raises(ValidationError):
+            SectionHeader.model_validate(
+                {"id": "blk_h", "type": "section_header", "title": "x", "level": 1, "unknown": "value"}
+            )
+
+    def test_section_header_inside_manifest_discriminated(self):
+        """The manifest's discriminated union must accept type=section_header."""
+        manifest = ReportManifest.model_validate(
+            {
+                "id": "rpt_demo_002",
+                "title": "demo",
+                "created_at": "2026-05-13T10:00:00Z",
+                "sections": [
+                    {
+                        "id": "blk_h_overview",
+                        "type": "section_header",
+                        "number": 1,
+                        "title": "Overview",
+                        "description": "High-level KPIs",
+                        "level": 1,
+                    },
+                    {"id": "blk_body", "type": "markdown", "content": "body"},
+                ],
+            }
+        )
+        # The first section round-trips as a SectionHeader instance.
+        header = manifest.sections[0]
+        assert isinstance(header, SectionHeader)
+        assert header.number == 1
 
     def test_layout_nested_valid(self):
         sec = LayoutSection(

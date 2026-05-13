@@ -79,6 +79,46 @@ class MarkdownSection(BaseModel):
     content: str = Field(..., min_length=1, description="Markdown source (GFM)")
 
 
+class SectionHeader(BaseModel):
+    """Structured chapter / section heading.
+
+    Replaces ``# Title`` markdown blobs with a typed primitive so renderers
+    can apply consistent typography, optional numbered badges, and an
+    accompanying one-line lede. Pick this over ``markdown`` whenever the
+    block is acting as a hierarchical heading; reserve ``markdown`` for
+    prose, lists, and inline formatting.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(..., pattern=SECTION_ID_RE.pattern)
+    type: Literal["section_header"] = "section_header"
+    title: str = Field(..., min_length=1, max_length=200, description="Heading text")
+    description: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Optional one-line lede shown beneath the title in a softer style",
+    )
+    level: int = Field(
+        ...,
+        ge=1,
+        le=7,
+        description=(
+            "Visual hierarchy, 1 (top-level chapter) to 7 (deepest sub-section). "
+            "Renderers map this to font size + weight + spacing."
+        ),
+    )
+    number: Optional[int] = Field(
+        None,
+        ge=1,
+        le=999,
+        description=(
+            "Optional 1-based ordinal displayed as a badge (e.g. '03') before the title. "
+            "Omit when the section is unnumbered."
+        ),
+    )
+
+
 class ChartSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -168,7 +208,7 @@ class LayoutSection(BaseModel):
 
 
 Section = Annotated[
-    Union[MarkdownSection, ChartSection, TableSection, LayoutSection, DividerSection],
+    Union[MarkdownSection, SectionHeader, ChartSection, TableSection, LayoutSection, DividerSection],
     Field(discriminator="type"),
 ]
 
