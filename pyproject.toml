@@ -110,6 +110,7 @@ exclude = ["benchmark*", "docs*"]
     "sample_data/superset/*",
 ]
 "datus.cli.web" = ["templates/*.html"]
+"datus.agent.node" = ["templates/*.html"]
 "datus.prompts" = ["*.txt", "*.md", "*.j2"]
 "datus.prompts.prompt_templates" = ["*.j2"]
 

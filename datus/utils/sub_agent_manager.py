@@ -107,6 +107,8 @@ class SubAgentManager:
         node_class = config.node_class or "gen_sql"
         if node_class == "gen_report":
             source_template = "gen_report_system"
+        elif node_class == "gen_visual_report":
+            source_template = "gen_visual_report_system"
         else:
             source_template = "sql_system"
 

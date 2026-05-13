@@ -12,6 +12,7 @@ from datus.tools.func_tool.gen_semantic_model_tools import GenSemanticModelTools
 from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.tools.func_tool.plan_tools import PlanTool, SessionTodoStorage
 from datus.tools.func_tool.platform_doc_search import PlatformDocSearchTool
+from datus.tools.func_tool.report_artifact_tools import ReportArtifactTools, ReportFilesystemFuncTool
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
 
@@ -29,6 +30,8 @@ __all__ = [
     "SessionTodoStorage",
     "filesystem_function_tools",
     "FilesystemFuncTool",
+    "ReportFilesystemFuncTool",
+    "ReportArtifactTools",
     "SemanticTools",
     "GenSemanticModelTools",
     "PlatformDocSearchTool",
