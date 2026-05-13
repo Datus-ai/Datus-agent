@@ -66,6 +66,7 @@ agent:
         username: superset
         password: superset
         database: superset_examples
+        schema: public
     semantic_layer:
       metricflow:
         type: metricflow
@@ -75,14 +76,15 @@ agent:
         api_base_url: http://localhost:8088
         username: admin
         password: admin
-        extra:
-          provider: db
+        dataset_db:
+          datasource_ref: superset
+          bi_database_name: examples
 ```
 
 !!! note "配置说明"
     - **services.datasources**：定义用于 SQL 执行的数据源连接
     - **services.semantic_layer**：注册 metric 与 semantic model 工作流使用的语义适配器
-    - **services.bi_platforms**：定义用于仪表盘访问的 BI 平台凭据
+    - **services.bi_platforms**：定义 BI 平台凭据，并将 Superset 中的 `examples` 数据库连接映射到 Datus 的 `superset` datasource
 
 !!! tip
     也可以在 REPL 内通过斜杠命令交互式添加：`/datasource` 添加 SQL 数据源，`/services` 添加 semantic layer、BI platform 与 scheduler。

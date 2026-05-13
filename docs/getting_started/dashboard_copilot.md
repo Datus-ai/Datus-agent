@@ -66,6 +66,7 @@ agent:
         username: superset
         password: superset
         database: superset_examples
+        schema: public
     semantic_layer:
       metricflow:
         type: metricflow
@@ -75,14 +76,15 @@ agent:
         api_base_url: http://localhost:8088
         username: admin
         password: admin
-        extra:
-          provider: db
+        dataset_db:
+          datasource_ref: superset
+          bi_database_name: examples
 ```
 
 !!! note "Configuration Sections"
     - **services.datasources**: Defines datasource connections for SQL execution
     - **services.semantic_layer**: Registers the semantic adapter used by metric and semantic-model workflows
-    - **services.bi_platforms**: Defines the BI platform credentials for dashboard access
+    - **services.bi_platforms**: Defines the BI platform credentials and maps Superset's `examples` database connection to the Datus `superset` datasource
 
 !!! tip
     You can also add entries interactively from inside the REPL via slash commands: `/datasource` for SQL datasources, and `/services` for semantic layer, BI platform, and scheduler entries.
