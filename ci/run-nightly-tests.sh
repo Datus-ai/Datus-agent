@@ -872,6 +872,95 @@ PY
   return 1
 }
 
+wait_for_starrocks_client_readiness() {
+  local timeout_seconds="${1:-300}"
+  local deadline=$((SECONDS + timeout_seconds))
+  local probe_output="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-starrocks-readiness-${GITHUB_RUN_ID:-$$}.log"
+
+  log "Waiting for StarRocks client readiness at ${STARROCKS_HOST:-127.0.0.1}:${STARROCKS_PORT:-9030}/${STARROCKS_DATABASE:-test}"
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if uv run python - <<'PY' >"$probe_output" 2>&1; then
+import os
+
+import pymysql
+
+
+def quote_identifier(identifier: str) -> str:
+    return "`" + identifier.replace("`", "``") + "`"
+
+
+def is_alive(value) -> bool:
+    return str(value).strip().lower() in {"true", "1", "yes"}
+
+
+database = os.getenv("STARROCKS_DATABASE", "test")
+probe_table = f"__datus_starrocks_readiness_probe_{os.getpid()}"
+conn = pymysql.connect(
+    host=os.getenv("STARROCKS_HOST", "127.0.0.1"),
+    port=int(os.getenv("STARROCKS_PORT", "9030")),
+    user=os.getenv("STARROCKS_USER", "root"),
+    password=os.getenv("STARROCKS_PASSWORD", ""),
+    charset="utf8mb4",
+    autocommit=True,
+    connect_timeout=5,
+    read_timeout=5,
+    write_timeout=5,
+)
+try:
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT 1")
+        row = cursor.fetchone()
+        if not row or row[0] != 1:
+            raise RuntimeError(f"unexpected SELECT 1 result: {row!r}")
+
+        try:
+            cursor.execute("SHOW BACKENDS")
+        except pymysql.err.OperationalError as exc:
+            if not exc.args or exc.args[0] != 5203:
+                raise
+        else:
+            rows = cursor.fetchall()
+            columns = [description[0] for description in cursor.description or []]
+            alive_index = next((index for index, column in enumerate(columns) if column.lower() == "alive"), None)
+            if alive_index is None:
+                raise RuntimeError(f"SHOW BACKENDS did not return an Alive column: {columns!r}")
+            alive_rows = [row for row in rows if is_alive(row[alive_index])]
+            if not alive_rows:
+                raise RuntimeError(f"SHOW BACKENDS has no alive backend: columns={columns!r} rows={rows!r}")
+
+        if database:
+            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {quote_identifier(database)}")
+            cursor.execute(f"USE {quote_identifier(database)}")
+            cursor.execute(
+                f"""
+                CREATE TABLE {quote_identifier(probe_table)} (
+                    `id` INT
+                )
+                ENGINE=OLAP
+                DUPLICATE KEY(`id`)
+                DISTRIBUTED BY HASH(`id`) BUCKETS 1
+                PROPERTIES ("replication_num" = "1")
+                """
+            )
+            cursor.execute(f"DROP TABLE IF EXISTS {quote_identifier(probe_table)}")
+finally:
+    conn.close()
+PY
+      log "StarRocks client readiness probe succeeded"
+      return 0
+    fi
+    sleep 5
+  done
+
+  echo "Timed out waiting for StarRocks client readiness" | tee -a "$LOG_FILE" >&2
+  if [ -s "$probe_output" ]; then
+    log "Last StarRocks readiness probe output:"
+    sed 's/^/  /' "$probe_output" | tee -a "$LOG_FILE"
+  fi
+  test_exit_code=1
+  return 1
+}
+
 wait_for_compose_client_readiness() {
   local group_name="$1"
   local airflow_base
@@ -895,7 +984,7 @@ wait_for_compose_client_readiness() {
       wait_for_tcp_readiness "ClickHouse" "${CLICKHOUSE_HOST:-127.0.0.1}" "${CLICKHOUSE_PORT:-8123}" 300
       ;;
     "StarRocks Adapter Tests")
-      wait_for_tcp_readiness "StarRocks" "${STARROCKS_HOST:-127.0.0.1}" "${STARROCKS_PORT:-9030}" 300
+      wait_for_starrocks_client_readiness 300
       ;;
     "Trino Adapter Tests")
       wait_for_http_readiness "Trino" "http://${TRINO_HOST:-127.0.0.1}:${TRINO_PORT:-8080}/v1/info" 300
