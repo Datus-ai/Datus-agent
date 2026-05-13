@@ -1463,7 +1463,10 @@ class TestChatAgenticNodePlanMode:
             assert node.plan_mode_active is True
             assert node.plan_file_path == first_plan_path
 
-            # User toggles plan mode off — plan-mode state must clear.
+            saved_plan_path = node.plan_file_path
+
+            # User toggles plan mode off — only the active flag flips; the
+            # plan_file_path is preserved for the lifetime of the session.
             node.input = ChatNodeInput(
                 user_message="Just answer me",
                 database="california_schools",
@@ -1475,8 +1478,47 @@ class TestChatAgenticNodePlanMode:
                 pass
 
             assert node.plan_mode_active is False
-            assert node.plan_file_path is None
+            assert node.plan_file_path == saved_plan_path
             assert node.workflow_prompt_sent is False
+        finally:
+            os.chdir(cwd)
+
+    def test_plan_file_path_is_never_reset_within_session(
+        self, real_agent_config, mock_llm_create, tmp_path
+    ):
+        """plan_file_path is allocated once per session and survives toggle/confirm cycles."""
+        import os
+
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            node = ChatAgenticNode(
+                node_id="test_plan_reuse",
+                description="Reuse plan path",
+                node_type=NodeType.TYPE_CHAT,
+                agent_config=real_agent_config,
+            )
+
+            first_path = node.activate_plan_mode()
+            assert os.path.exists(first_path)
+
+            # confirm_plan exit shape: flip active flag, keep path.
+            node.plan_mode_active = False
+            node.workflow_prompt_sent = False
+
+            # Re-activation reuses the same file.
+            assert node.activate_plan_mode() == first_path
+            assert node.plan_mode_active is True
+
+            # Explicit Shift+Tab off also keeps the path (session-scoped).
+            node.deactivate_plan_mode()
+            assert node.plan_file_path == first_path
+            assert node.plan_mode_active is False
+
+            # Re-activation after toggle off still reuses the same file.
+            assert node.activate_plan_mode() == first_path
         finally:
             os.chdir(cwd)
 

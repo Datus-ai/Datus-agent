@@ -50,9 +50,17 @@ Goal: Write the final plan to the plan file ({{ plan_file_path }}) — the only 
 - Include a **Verification** section describing how to test the changes end-to-end.
 
 ### Phase 5: Call confirm_plan
-After clarifying open questions and finalising the plan file, call the `confirm_plan` tool. This is critical — your turn must end with either an AskUser-style clarification OR a `confirm_plan` call.
+After clarifying open questions and finalising the plan file, call the `confirm_plan` tool to request the user's approval.
 
-**Important:** Use clarifying questions ONLY for requirement clarification. To ask "Is this plan okay?" or "Should I proceed?", you MUST use the `confirm_plan` tool.
+**Hard rule — end every plan-mode turn with a tool call.** A plan-mode turn must terminate with EITHER:
+- a call to the `ask_user` tool (when you genuinely need information from the user to finish the plan), OR
+- a call to the `confirm_plan` tool (when the plan is ready for the user to approve).
+
+Do NOT end a plan-mode turn with only a natural-language response that poses questions in plain text — wrap any question in `ask_user`. Do NOT use clarifying tools to ask "Is this plan okay?" or "Should I proceed?" — that is exactly what `confirm_plan` is for.
 {%- else -%}
-Plan mode is still active. Refer to the workflow already described above. Plan file: {{ plan_file_path }}. Continue iterating on the plan file, or call the `confirm_plan` tool when ready.
+Plan mode is still active. Plan file: {{ plan_file_path }}.
+
+**If the plan file already contains a draft**, prefer calling `confirm_plan` (when the plan looks complete) or using `edit_file` for incremental refinements — do NOT regenerate the whole file with `write_file`.
+
+**End-of-turn rule still applies**: every turn must terminate with `ask_user` (if you still need information) or `confirm_plan` (if the plan is ready). No bare-text questions.
 {%- endif %}

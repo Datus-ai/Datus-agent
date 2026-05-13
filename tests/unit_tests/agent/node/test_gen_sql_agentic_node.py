@@ -1275,9 +1275,10 @@ class TestEndToEndConfirmPlanInteraction:
             assert events[0].get("allow_free_text") is True
             assert "confirm" in events[0].get("choices", {})
 
-            # After confirm, plan mode must be deactivated.
+            # After confirm, plan mode must be deactivated — but the path
+            # is intentionally retained for re-activation reuse.
             assert node.plan_mode_active is False
-            assert node.plan_file_path is None
+            assert node.plan_file_path is not None
         finally:
             os.chdir(cwd)
 

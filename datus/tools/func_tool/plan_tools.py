@@ -342,7 +342,42 @@ class ConfirmPlanTool:
             user_choice = answers[0][0] or ""
 
         if user_choice == "confirm":
+            plan_path = self.node.plan_file_path
             self.node.deactivate_plan_mode()
-            return FuncToolResult(result={"status": "confirmed"})
+            # Set a one-shot flag so the next user prompt carries an "execute
+            # the confirmed plan" reminder in the enhanced section.
+            self.node._plan_just_confirmed = True
+            return FuncToolResult(
+                result={
+                    "status": "confirmed",
+                    "plan_file": plan_path,
+                    "next_action": (
+                        f"The plan at {plan_path} has been approved. Plan mode is now exited.\n"
+                        "**Do NOT end this turn with a natural-language message yet.** "
+                        "Your immediate next steps MUST be:\n"
+                        f"  1. Read {plan_path} via read_file to recall the plan content.\n"
+                        "  2. Call todo_write to convert the plan's concrete actionable steps "
+                        "into a todo list (one todo per step).\n"
+                        "  3. Execute the first pending todo by calling the relevant tools "
+                        "(grep / read_file / list_tables / read_query / write_file — whatever "
+                        "the step requires).\n"
+                        "  4. After completing each step, call todo_update to mark it completed, "
+                        "then move to the next step.\n"
+                        "  5. Continue executing steps without asking the user for permission, "
+                        "until either all todos are done or you hit a blocker that genuinely "
+                        "requires user input (in which case use ask_user)."
+                    ),
+                }
+            )
 
-        return FuncToolResult(result={"status": "feedback", "feedback": user_choice})
+        return FuncToolResult(
+            result={
+                "status": "feedback",
+                "feedback": user_choice,
+                "next_action": (
+                    "The user requested revisions to the plan (see ``feedback`` above). "
+                    "Apply the changes via edit_file on the plan file. Do NOT call "
+                    "confirm_plan again until the feedback is addressed."
+                ),
+            }
+        )

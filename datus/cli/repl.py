@@ -1586,6 +1586,18 @@ class DatusCLI:
     def _execute_chat_command(self, message: str, subagent_name: str = None):
         """Route free-form chat text to the configured default agent."""
         self.chat_commands.execute_chat_command(message, plan_mode=self.plan_mode_active, subagent_name=subagent_name)
+        # Sync the REPL plan-mode toggle from node state — ``confirm_plan``
+        # flips the node's ``plan_mode_active`` off when the user accepts
+        # the plan, but the REPL switch otherwise stays on and would force
+        # re-activation on the next prompt.
+        node = getattr(self.chat_commands, "current_node", None)
+        if (
+            node is not None
+            and self.plan_mode_active
+            and not getattr(node, "plan_mode_active", False)
+        ):
+            self.plan_mode_active = False
+            logger.debug("REPL plan-mode toggle synced off after confirm_plan")
 
     def _execute_slash_command(self, cmd: str, args: str):
         """Execute a slash command resolved via ``SLASH_COMMANDS`` registry.

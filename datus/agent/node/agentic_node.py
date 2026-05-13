@@ -221,6 +221,10 @@ class AgenticNode(Node):
         self.plan_mode_active: bool = False
         self.workflow_prompt_sent: bool = False
         self.plan_file_path: Optional[str] = None
+        # One-shot flag: set by ``confirm_plan`` so the next user prompt
+        # carries an "execute the confirmed plan" reminder. Cleared by
+        # ``_build_enhanced_message`` after the reminder is injected.
+        self._plan_just_confirmed: bool = False
 
     @property
     def model(self) -> Optional[LLMBaseModel]:
@@ -313,11 +317,15 @@ class AgenticNode(Node):
     # ── Plan mode lifecycle ─────────────────────────────────────────────
 
     def activate_plan_mode(self) -> str:
-        """Idempotently turn on plan mode and allocate the plan file path.
+        """Turn plan mode on.
 
-        On first activation generates ``./.datus/plans/{short_uuid}.md``,
-        ensures the directory exists, and resets ``workflow_prompt_sent`` so
-        the next user prompt carries the full workflow description.
+        Reuses an existing ``plan_file_path`` when present (e.g. left over
+        after ``confirm_plan`` exited plan mode without a full reset) so the
+        next plan session continues on the same markdown file. Allocates a
+        fresh ``./.datus/plans/{short_uuid}.md`` only when no path is set.
+
+        Always resets ``workflow_prompt_sent=False`` so the next user prompt
+        carries the full workflow description.
 
         Returns:
             The plan file path (absolute or project-relative).
@@ -327,22 +335,45 @@ class AgenticNode(Node):
 
         self.plan_mode_active = True
         self.workflow_prompt_sent = False
+
+        # Reuse a previously-allocated path (e.g. confirm_plan exit) when
+        # available — this lets the user re-enter the same plan session.
+        if self.plan_file_path:
+            logger.info(f"Plan mode reactivated: plan_file_path={self.plan_file_path}")
+            return self.plan_file_path
+
         plan_dir = os.path.join(".", ".datus", "plans")
         os.makedirs(plan_dir, exist_ok=True)
         # Short id keeps the path human-friendly; uuid4 has 122 bits of
         # entropy, so 8 hex chars (32 bits) is still ample for collision
         # avoidance within a project's plans directory.
         self.plan_file_path = os.path.join(plan_dir, f"{uuid.uuid4().hex[:8]}.md")
+        # Pre-create an empty plan file so the LLM can read/edit it on the
+        # first turn (it commonly probes with ``read_file`` before writing).
+        try:
+            with open(self.plan_file_path, "w", encoding="utf-8") as _f:
+                pass
+        except OSError as exc:
+            logger.warning(f"Failed to pre-create plan file {self.plan_file_path}: {exc}")
         logger.info(f"Plan mode activated: plan_file_path={self.plan_file_path}")
         return self.plan_file_path
 
     def deactivate_plan_mode(self) -> None:
-        """Clear plan-mode state. The plan file is intentionally NOT deleted."""
+        """Turn plan mode off for this turn while preserving the plan file.
+
+        ``plan_file_path`` is allocated exactly once per session (per node
+        lifetime) and **never** cleared — toggling plan mode off and back on
+        always returns to the same markdown file. This keeps the user's
+        narrative continuous across Shift+Tab toggles and ``confirm_plan``
+        exits within a single session.
+
+        Only ``plan_mode_active`` and ``workflow_prompt_sent`` flip back; the
+        on-disk file and its in-memory path remain.
+        """
         if self.plan_mode_active:
-            logger.info(f"Plan mode deactivated: plan_file_path={self.plan_file_path}")
+            logger.info(f"Plan mode paused: plan_file_path={self.plan_file_path}")
         self.plan_mode_active = False
         self.workflow_prompt_sent = False
-        self.plan_file_path = None
 
     def is_in_plan_mode(self) -> bool:
         """Return True when plan mode is currently active for this node."""
@@ -526,6 +557,19 @@ class AgenticNode(Node):
             plan_prompt = self.build_plan_mode_enhanced_prompt()
             if plan_prompt:
                 enhanced_parts.append(plan_prompt)
+        elif getattr(self, "_plan_just_confirmed", False) and self.plan_file_path:
+            # One-shot reminder on the turn immediately following a successful
+            # ``confirm_plan``. Tells the LLM the plan is approved and it
+            # should execute the steps instead of asking for further input.
+            enhanced_parts.append(
+                "## Post-Plan Execution\n"
+                f"You just confirmed the plan at {self.plan_file_path}. Plan mode is "
+                "exited. The user's next message is a continuation cue — do NOT ask "
+                "what to do next; instead read the plan file, materialise its actionable "
+                "steps via todo_write, and start executing them in order. Use ask_user "
+                "only when a step genuinely requires user input that cannot be inferred."
+            )
+            self._plan_just_confirmed = False
 
         user_message = getattr(user_input, "user_message", "") or ""
         if not enhanced_parts:
