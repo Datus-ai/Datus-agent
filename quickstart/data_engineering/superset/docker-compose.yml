@@ -53,6 +53,7 @@ services:
         superset fab create-admin --username "$$SUPERSET_ADMIN_USERNAME" --firstname Admin --lastname User --email "$$SUPERSET_ADMIN_EMAIL" --password "$$SUPERSET_ADMIN_PASSWORD";
       fi &&
       superset init &&
+      superset load_examples &&
       superset set-database-uri -d examples -u "$$SQLALCHEMY_EXAMPLES_URI" &&
       exec superset run -p 8088 -h 0.0.0.0 --with-threads
       '
