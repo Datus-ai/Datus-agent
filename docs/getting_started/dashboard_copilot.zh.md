@@ -22,97 +22,28 @@ Bootstrap 过程会自动生成两个专门的子代理：一个**主子代理**
 开始之前，请确保您已具备：
 
 - Docker Desktop 已安装并运行
-- Kubernetes CLI (`kubectl`)
-- Helm 包管理器
 - Python 3.12 并已安装 Datus
 
 ## 步骤 1：部署 Superset + PostgreSQL
 
-首先，安装所需的基础设施工具。
-
-### 安装依赖
-
-=== "macOS"
-
-    ```bash
-    brew install --cask docker
-    brew install helm kubectl minikube
-    ```
-
-=== "Linux"
-
-    ```bash
-    # 安装 Docker
-    curl -fsSL https://get.docker.com | sh
-
-    # 安装 kubectl
-    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-    chmod +x kubectl && sudo mv kubectl /usr/local/bin/
-
-    # 安装 Helm
-    curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-
-    # 安装 minikube
-    curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
-    sudo install minikube-linux-amd64 /usr/local/bin/minikube
-    ```
-
-=== "Windows"
-
-    ```powershell
-    # 使用 Chocolatey 安装
-    choco install docker-desktop
-    choco install kubernetes-helm
-    choco install kubernetes-cli
-    choco install minikube
-    ```
-
-### 启动 Minikube
+可快速启动一个本地 superset 环境（本指南建议）：
 
 ```bash
-minikube start --driver=docker
+cd quickstart/data_engineering/superset
+docker compose up -d
 ```
 
-### 部署 Superset
-
-添加 Superset Helm 仓库并部署：
+待服务就绪后确认：
 
 ```bash
-# 添加 Superset Helm 仓库
-helm repo add superset https://apache.github.io/superset
-helm repo update
-
-# 使用示例配置部署 Superset
-helm upgrade --install superset superset/superset -n default -f ./examples-values.yaml --wait --timeout 30m
-```
-[下载 examples-values.yaml](../assets/examples-values.yaml){ .md-button }
-
-!!! tip "自定义配置"
-    您可以通过修改 `examples-values.yaml` 来自定义部署。有关可用选项，请参阅 [Superset Helm Chart 文档](https://github.com/apache/superset/tree/master/helm/superset)。
-
-### 等待 Pod 就绪
-
-监控部署状态，直到所有 Pod 运行正常：
-
-```bash
-kubectl get pods -n default -w
-```
-
-等待所有 Pod 显示 `Running` 状态后再继续。
-
-### 设置端口转发
-
-将 Superset 和 PostgreSQL 服务暴露到本地：
-
-```bash
-# 转发 Superset UI（端口 8088）
-kubectl port-forward -n default service/superset 8088:8088 > /dev/null 2>&1 &
-
-# 转发 PostgreSQL（端口 15432）
-kubectl port-forward -n default svc/superset-postgresql 15432:5432 > /dev/null 2>&1 &
+docker compose logs -f superset
 ```
 
 现在您可以通过 [http://localhost:8088](http://localhost:8088) 访问 Superset，默认凭据为 `admin/admin`。
+PostgreSQL 暴露在 `127.0.0.1:5433`，默认库为 `superset_examples`，用户名/密码为 `superset`。
+
+!!! note "Helm 方式（可选）"
+    如果您更偏好 Kubernetes，也可以使用仓库中的 Helm 部署流程。
 
 ## 步骤 2：配置 Datus
 
@@ -129,10 +60,10 @@ agent:
       superset:
         type: postgresql
         host: 127.0.0.1
-        port: 15432
+        port: 5433
         username: superset
         password: superset
-        database: examples
+        database: superset_examples
     semantic_layer:
       metricflow:
         type: metricflow

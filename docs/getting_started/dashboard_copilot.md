@@ -21,99 +21,29 @@ The bootstrap process automatically generates two specialized subagents: a **mai
 
 Before you begin, ensure you have:
 
-- Docker Desktop installed and running
-- Kubernetes CLI (`kubectl`)
-- Helm package manager
+- Docker Desktop (or Docker Engine) with Docker Compose
 - Python 3.12 with Datus installed
 
 ## Step 1: Deploy Superset + PostgreSQL
 
-First, install the required infrastructure tools.
-
-### Install Dependencies
-
-=== "macOS"
-
-    ```bash
-    brew install --cask docker
-    brew install helm kubectl minikube
-    ```
-
-=== "Linux"
-
-    ```bash
-    # Install Docker
-    curl -fsSL https://get.docker.com | sh
-
-    # Install kubectl
-    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-    chmod +x kubectl && sudo mv kubectl /usr/local/bin/
-
-    # Install Helm
-    curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-
-    # Install minikube
-    curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
-    sudo install minikube-linux-amd64 /usr/local/bin/minikube
-    ```
-
-=== "Windows"
-
-    ```powershell
-    # Install with Chocolatey
-    choco install docker-desktop
-    choco install kubernetes-helm
-    choco install kubernetes-cli
-    choco install minikube
-    ```
-
-### Start Minikube
+For a fast local bootstrap, use the repository-provided Compose stack:
 
 ```bash
-minikube start --driver=docker
+cd quickstart/data_engineering/superset
+docker compose up -d
 ```
 
-### Deploy Superset
-
-Add the Superset Helm repository and deploy:
+Wait until services are healthy:
 
 ```bash
-# Add Superset Helm repo
-helm repo add superset https://apache.github.io/superset
-helm repo update
-
-# Deploy Superset with example configuration
-helm upgrade --install superset superset/superset -n default -f ./examples-values.yaml --wait --timeout 30m
-```
-
-[Download examples-values.yaml](../assets/examples-values.yaml){ .md-button }
-
-!!! tip "Custom Values"
-    You can customize the deployment by modifying `examples-values.yaml`. See the [Superset Helm Chart documentation](https://github.com/apache/superset/tree/master/helm/superset) for available options.
-
-### Wait for Pods
-
-Monitor the deployment until all pods are running:
-
-```bash
-kubectl get pods -n default -w
-```
-
-Wait until you see all pods in `Running` state before proceeding.
-
-### Set Up Port Forwarding
-
-Expose Superset and PostgreSQL services locally:
-
-```bash
-# Forward Superset UI (port 8088)
-kubectl port-forward -n default service/superset 8088:8088 > /dev/null 2>&1 &
-
-# Forward PostgreSQL (port 15432)
-kubectl port-forward -n default svc/superset-postgresql 15432:5432 > /dev/null 2>&1 &
+docker compose logs -f superset
 ```
 
 You can now access Superset at [http://localhost:8088](http://localhost:8088) with default credentials `admin/admin`.
+PostgreSQL is exposed at `127.0.0.1:5433` with default DB `superset_examples`, user/password `superset`.
+
+!!! note "Helm path (optional)"
+    If you still prefer Kubernetes, you can use the previous Helm flow in a dedicated local environment.
 
 ## Step 2: Configure Datus
 
@@ -130,10 +60,10 @@ agent:
       superset:
         type: postgresql
         host: 127.0.0.1
-        port: 15432
+        port: 5433
         username: superset
         password: superset
-        database: examples
+        database: superset_examples
     semantic_layer:
       metricflow:
         type: metricflow
