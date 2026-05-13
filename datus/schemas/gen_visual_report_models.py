@@ -83,10 +83,14 @@ class SectionHeader(BaseModel):
     """Structured chapter / section heading.
 
     Replaces ``# Title`` markdown blobs with a typed primitive so renderers
-    can apply consistent typography, optional numbered badges, and an
-    accompanying one-line lede. Pick this over ``markdown`` whenever the
-    block is acting as a hierarchical heading; reserve ``markdown`` for
+    can apply consistent typography, automatic section numbering badges,
+    and an accompanying one-line lede. Pick this over ``markdown`` whenever
+    the block is acting as a hierarchical heading; reserve ``markdown`` for
     prose, lists, and inline formatting.
+
+    The renderer derives the visible "03"-style badge from each header's
+    position in the section tree — the LLM only needs to declare ``level``,
+    not the ordinal — so numbering stays self-consistent across edits.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -105,16 +109,8 @@ class SectionHeader(BaseModel):
         le=7,
         description=(
             "Visual hierarchy, 1 (top-level chapter) to 7 (deepest sub-section). "
-            "Renderers map this to font size + weight + spacing."
-        ),
-    )
-    number: Optional[int] = Field(
-        None,
-        ge=1,
-        le=999,
-        description=(
-            "Optional 1-based ordinal displayed as a badge (e.g. '03') before the title. "
-            "Omit when the section is unnumbered."
+            "Renderers map this to font size + weight + spacing, and use it to "
+            "compute the auto-numbered badge."
         ),
     )
 

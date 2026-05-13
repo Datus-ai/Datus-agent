@@ -118,12 +118,11 @@ Follow this order on the first pass:
 { "id": "blk_001", "type": "markdown", "content": "Sales held steady against a mixed macro backdrop ..." }
 ```
 
-**`section_header`** — structured chapter / sub-section heading. Always prefer this over a `markdown` block whose only purpose is a heading, because the renderer styles it with a numbered badge, hierarchical typography, and consistent spacing.
+**`section_header`** — structured chapter / sub-section heading. Always prefer this over a `markdown` block whose only purpose is a heading, because the renderer styles it with an auto-numbered badge, hierarchical typography, and consistent spacing.
 ```json
 {
   "id": "blk_h_overview",
   "type": "section_header",
-  "number": 1,
   "title": "总体统计概览",
   "description": "汇总了全部 K 线数据的关键统计指标",
   "level": 1
@@ -133,8 +132,9 @@ Follow this order on the first pass:
 Fields:
 - `title` (required): the heading text.
 - `level` (required, 1–7): visual hierarchy, 1 for top-level chapters, 2 for sub-sections, 3+ for deeper nesting.
-- `number` (optional, 1–999): when set, the renderer shows a circular badge like `03` before the title. Use sequential numbers for top-level chapters and omit on uncategorized headers.
 - `description` (optional): a one-line lede beneath the title, in a softer style. Keep it under 120 characters.
+
+The renderer derives the "03"-style badge from the section's position in the manifest tree — do **not** emit an ordinal field yourself. Just keep `level` consistent across sibling headers and the badge numbering follows.
 
 **`chart`** — Vega-Lite, NO `data` field (renderer injects rows):
 ```json

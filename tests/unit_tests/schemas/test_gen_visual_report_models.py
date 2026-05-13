@@ -161,18 +161,15 @@ class TestSections:
         sec = SectionHeader(id="blk_h_overview", title="总体统计概览", level=1)
         assert sec.type == "section_header"
         assert sec.level == 1
-        assert sec.number is None
         assert sec.description is None
 
-    def test_section_header_with_number_and_description(self):
+    def test_section_header_with_description(self):
         sec = SectionHeader(
             id="blk_h_overview",
-            number=3,
             title="Numerical Distribution Features",
             description="Observe distribution shape, dispersion, and skewness of key numeric columns",
             level=2,
         )
-        assert sec.number == 3
         assert sec.level == 2
         assert sec.description.startswith("Observe")
 
@@ -182,15 +179,16 @@ class TestSections:
         with pytest.raises(ValidationError):
             SectionHeader(id="blk_h", title="x", level=8)
 
-    def test_section_header_number_must_be_positive(self):
-        with pytest.raises(ValidationError):
-            SectionHeader(id="blk_h", title="x", level=1, number=0)
-
     def test_section_header_title_required(self):
         with pytest.raises(ValidationError):
             SectionHeader(id="blk_h", title="", level=1)
 
     def test_section_header_extra_field_rejected(self):
+        """`number` is no longer part of the schema — emitting it must fail."""
+        with pytest.raises(ValidationError):
+            SectionHeader.model_validate(
+                {"id": "blk_h", "type": "section_header", "title": "x", "level": 1, "number": 3}
+            )
         with pytest.raises(ValidationError):
             SectionHeader.model_validate(
                 {"id": "blk_h", "type": "section_header", "title": "x", "level": 1, "unknown": "value"}
@@ -207,7 +205,6 @@ class TestSections:
                     {
                         "id": "blk_h_overview",
                         "type": "section_header",
-                        "number": 1,
                         "title": "Overview",
                         "description": "High-level KPIs",
                         "level": 1,
@@ -219,7 +216,7 @@ class TestSections:
         # The first section round-trips as a SectionHeader instance.
         header = manifest.sections[0]
         assert isinstance(header, SectionHeader)
-        assert header.number == 1
+        assert header.title == "Overview"
 
     def test_layout_nested_valid(self):
         sec = LayoutSection(
