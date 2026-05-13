@@ -216,17 +216,15 @@ The aggregations in these charts will be mined for metric definitions. By defaul
 
 The build phase issues parallel LLM calls. Increase the pool size to speed things up if your provider quota allows. The default is 3.
 
-```text
-─────────────────────────────── Bootstrap BI ───────────────────────────────
-────────────────────────────────────────────────────────────────────────────
-  Pick a thread-pool size for parallel LLM calls:
-    1 threads
-  → 3 threads
-    5 threads
-    10 threads
-────────────────────────────────────────────────────────────────────────────
-  ↑↓ navigate   ↵ select   Esc back
-```
+    ─────────────────────────────── Bootstrap BI ───────────────────────────────
+    ────────────────────────────────────────────────────────────────────────────
+      Pick a thread-pool size for parallel LLM calls:
+        1 threads
+      → 3 threads
+        5 threads
+        10 threads
+    ────────────────────────────────────────────────────────────────────────────
+      ↑↓ navigate   ↵ select   Esc back
 
 ### Automated Build
 
@@ -342,7 +340,7 @@ Deduplication Result: 9 queries → 4 unique aggregation patterns → 4 core met
 
 ### Output
 
-When bootstrap finishes, both subagents are saved and registered as slash commands:
+When bootstrap finishes, both subagents are saved and available for invocation via `@Agent <name>` or by switching the default through `/agent`:
 
 ```text
 ⏺ save_subagents(superset_world_bank_s)
