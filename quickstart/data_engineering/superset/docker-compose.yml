@@ -36,6 +36,7 @@ services:
       SUPERSET_DB_NAME: ${SUPERSET_DB_NAME:-superset_examples}
       SUPERSET_DB_USER: ${SUPERSET_DB_USER:-superset}
       SUPERSET_DB_PASSWORD: ${SUPERSET_DB_PASSWORD:-superset}
+      SQLALCHEMY_EXAMPLES_URI: postgresql+psycopg2://${SUPERSET_DB_USER:-superset}:${SUPERSET_DB_PASSWORD:-superset}@postgres:5432/${SUPERSET_DB_NAME:-superset_examples}
       SUPERSET_ADMIN_USERNAME: ${SUPERSET_ADMIN_USERNAME:-admin}
       SUPERSET_ADMIN_EMAIL: ${SUPERSET_ADMIN_EMAIL:-admin@example.com}
       SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:-admin}
