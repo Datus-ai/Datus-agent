@@ -30,9 +30,6 @@ from datus.utils.loggings import get_logger
 from datus.utils.message_utils import (
     MessagePart,
     build_structured_content,
-    extract_enhanced_context,
-    extract_user_input,
-    is_structured_content,
 )
 from datus.utils.node_utils import build_database_context
 
@@ -103,9 +100,7 @@ class GenSQLAgenticNode(AgenticNode):
         # active in full plan_mode workflows.
         self.plan_tool = None
 
-        # Initialize plan mode attributes
-        self.plan_mode_active = False
-        self.plan_hooks = None
+        # Plan mode state lives on AgenticNode base class; nothing to declare here.
 
         # Call parent constructor with all required Node parameters
         super().__init__(
@@ -742,16 +737,15 @@ class GenSQLAgenticNode(AgenticNode):
             # Get or create session and any available summary
             session, conversation_summary = self._get_or_create_session()
 
-            # Check for plan mode activation
+            # Check for plan mode activation — state lives on the base class.
             is_plan_mode = getattr(user_input, "plan_mode", False)
             if is_plan_mode:
-                self.plan_mode_active = True
-                from datus.cli.plan_hooks import PlanModeHooks
-
-                broker = self._get_or_create_broker()
-                auto_mode = getattr(user_input, "auto_execute_plan", False)
-                self.plan_hooks = PlanModeHooks(broker=broker, session=session, auto_mode=auto_mode)
-                logger.info(f"Plan mode activated (auto_mode={auto_mode})")
+                # Idempotent: reuse the plan file if plan mode is already
+                # active across turns.
+                self.activate_plan_mode()
+            elif self.is_in_plan_mode():
+                # User toggled plan mode off without confirming — clean up.
+                self.deactivate_plan_mode()
 
             # Add context to user message if provided
             from datus.utils.node_utils import resolve_database_name_for_prompt
@@ -772,6 +766,10 @@ class GenSQLAgenticNode(AgenticNode):
                 reference_sql=user_input.reference_sql,
             )
 
+            # Inject the plan-mode workflow prompt as an enhanced (hidden) MessagePart.
+            if self.is_in_plan_mode():
+                enhanced_message = self._merge_plan_mode_prompt(enhanced_message)
+
             # Execute with streaming
             response_content = ""
             sql_content = None
@@ -779,16 +777,19 @@ class GenSQLAgenticNode(AgenticNode):
             logger.debug(f"Tools available : {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
             logger.debug(f"MCP servers available : {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}")
 
-            # Choose execution mode based on plan_mode flag
-            execution_mode = "plan" if is_plan_mode else "normal"
+            config = self._get_execution_config(user_input)
 
-            # Stream response using unified execution (supports plan mode and normal mode)
-            async for stream_action in self._execute_with_recursive_replan(
+            async for stream_action in self.model.generate_with_tools_stream(
                 prompt=enhanced_message,
-                execution_mode=execution_mode,
-                original_input=user_input,
-                action_history_manager=action_history_manager,
+                tools=config["tools"],
+                mcp_servers=self.mcp_servers,
+                instruction=config["instruction"],
+                max_turns=self.max_turns,
                 session=session,
+                action_history_manager=action_history_manager,
+                hooks=config.get("hooks"),
+                agent_name=self.get_node_name(),
+                interrupt_controller=self.interrupt_controller,
             ):
                 yield stream_action
 
@@ -907,12 +908,9 @@ class GenSQLAgenticNode(AgenticNode):
             action_history_manager.add_action(error_action)
             yield error_action
 
-        finally:
-            # Clean up plan mode state
-            if is_plan_mode:
-                self.plan_mode_active = False
-                self.plan_hooks = None
-                logger.info("Plan mode deactivated")
+        # Plan-mode state intentionally persists across execute_stream calls so
+        # the LLM can iterate on the same plan file. Deactivation only happens
+        # via ``confirm_plan`` or via the toggle-off branch at the top.
 
     def update_context(self, workflow: Workflow) -> dict:
         """
@@ -948,137 +946,22 @@ class GenSQLAgenticNode(AgenticNode):
             logger.error(f"Failed to update SQL generation context: {e}")
             return {"success": False, "message": str(e)}
 
-    async def _execute_with_recursive_replan(
-        self,
-        prompt: str,
-        execution_mode: str,
-        original_input: GenSQLNodeInput,
-        action_history_manager: ActionHistoryManager,
-        session,
-    ):
+    def _get_execution_config(self, original_input: GenSQLNodeInput) -> dict:
+        """Build execution config — tools, system instruction, hooks.
+
+        Plan-mode tools (``confirm_plan`` + ``todo_*``) are appended via
+        :meth:`AgenticNode._get_plan_mode_tools`.
         """
-        Unified recursive execution function that handles all execution modes.
-
-        Args:
-            prompt: The prompt to send to LLM
-            execution_mode: "normal", "plan", or "replan"
-            original_input: Original SQL generation input for context
-            action_history_manager: Action history manager
-            session: SQL generation session
-        """
-        logger.info(f"Executing mode: {execution_mode}")
-
-        # Get execution configuration for this mode
-        config = self._get_execution_config(execution_mode, original_input)
-
-        # Reset state for replan mode
-        if execution_mode == "plan" and self.plan_hooks:
-            self.plan_hooks.plan_phase = "generating"
-
-        try:
-            # Build enhanced prompt for plan mode
-            final_prompt = prompt
-            if execution_mode == "plan":
-                final_prompt = self._build_plan_prompt(prompt)
-
-            # Unified execution using configuration
-            async for stream_action in self.model.generate_with_tools_stream(
-                prompt=final_prompt,
-                tools=config["tools"],
-                mcp_servers=self.mcp_servers,
-                instruction=config["instruction"],
-                max_turns=self.max_turns,
-                session=session,
-                action_history_manager=action_history_manager,
-                hooks=config.get("hooks"),
-                agent_name=self.get_node_name(),
-                interrupt_controller=self.interrupt_controller,
-            ):
-                yield stream_action
-
-        except Exception as e:
-            if "REPLAN_REQUIRED" in str(e):
-                logger.info("Replan requested, recursing...")
-
-                # Recursive call - enter replan mode with original user prompt
-                async for action in self._execute_with_recursive_replan(
-                    prompt=prompt,
-                    execution_mode=execution_mode,
-                    original_input=original_input,
-                    action_history_manager=action_history_manager,
-                    session=session,
-                ):
-                    yield action
-            else:
-                raise
-
-    def _get_execution_config(self, execution_mode: str, original_input: GenSQLNodeInput) -> dict:
-        """
-        Get execution configuration based on mode.
-
-        Args:
-            execution_mode: "normal", "plan"
-            original_input: Original SQL generation input for context
-
-        Returns:
-            Configuration dict with tools, instruction, and hooks
-        """
-        if execution_mode == "normal":
-            return {"tools": self.tools, "instruction": self._get_system_instruction(original_input), "hooks": None}
-        elif execution_mode == "plan":
-            # Plan mode: standard tools + plan tools
-            plan_tools = self.plan_hooks.get_plan_tools() if self.plan_hooks else []
-
-            # Use base instruction (chat_system.j2) which contains tool usage rules
-            base_instruction = self._get_system_instruction(original_input)
-
-            return {
-                "tools": self.tools + plan_tools,
-                "instruction": base_instruction,
-                "hooks": self.plan_hooks,
-            }
-        else:
-            raise ValueError(f"Unknown execution mode: {execution_mode}")
+        return {
+            "tools": self.tools + self._get_plan_mode_tools(),
+            "instruction": self._get_system_instruction(original_input),
+            "hooks": None,
+        }
 
     def _get_system_instruction(self, original_input: GenSQLNodeInput) -> str:
         """Get system instruction for normal mode."""
         _, conversation_summary = self._get_or_create_session()
         return self._get_system_prompt(conversation_summary, original_input.prompt_version)
-
-    def _build_plan_prompt(self, original_prompt: str) -> str:
-        """Build enhanced prompt for plan mode based on current phase."""
-        from datus.prompts.prompt_manager import get_prompt_manager
-
-        # Check current phase and replan feedback
-        current_phase = getattr(self.plan_hooks, "plan_phase", "generating") if self.plan_hooks else "generating"
-        replan_feedback = getattr(self.plan_hooks, "replan_feedback", "") if self.plan_hooks else ""
-
-        # Load plan mode prompt from template
-        try:
-            plan_prompt_addition = get_prompt_manager(agent_config=self.agent_config).render_template(
-                template_name="plan_mode_system",
-                version=None,  # Use latest version
-                current_phase=current_phase,
-                replan_feedback=replan_feedback,
-            )
-        except FileNotFoundError:
-            # Fallback to inline prompt if template not found
-            logger.warning("plan_mode_system template not found, using inline prompt")
-            plan_prompt_addition = "\n\nPLAN MODE\nCheck todo_read to see current plan status and proceed accordingly."
-
-        # If structured format, append plan addition to enhanced part and rebuild
-        if is_structured_content(original_prompt):
-            user_input = extract_user_input(original_prompt)
-            enhanced = extract_enhanced_context(original_prompt)
-            new_enhanced = (enhanced or "") + "\n\n" + plan_prompt_addition
-            return build_structured_content(
-                [
-                    MessagePart(type="enhanced", content=new_enhanced),
-                    MessagePart(type="user", content=user_input),
-                ]
-            )
-
-        return original_prompt + "\n\n" + plan_prompt_addition
 
     def _extract_sql_and_output_from_response(self, output: dict) -> tuple[Optional[str], Optional[str]]:
         """

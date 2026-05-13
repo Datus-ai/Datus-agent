@@ -97,7 +97,7 @@ class CompositeHooks(AgentHooks):
 
     This class allows multiple hooks to be applied in sequence,
     enabling composition of permission hooks with other hooks
-    (e.g., PlanModeHooks).
+    (e.g., GenerationHooks).
     """
 
     def __init__(self, hooks_list: List[Optional[AgentHooks]]):

@@ -805,3 +805,146 @@ class TestAutoSubmitInteraction:
         # Let event loop process the call_soon_threadsafe callback
         await asyncio.sleep(0.05)
         assert future.result() == [[""]]
+
+
+# ===========================================================================
+# InteractionBroker.send + free-text request Tests
+# ===========================================================================
+
+
+class TestInteractionBrokerSend:
+    """Tests for the one-way ``send()`` helper used for plan-mode previews."""
+
+    @pytest.mark.asyncio
+    async def test_send_pushes_assistant_action_with_default_action_type(self):
+        broker = InteractionBroker()
+
+        await broker.send("# Plan\n- step 1", content_type="markdown")
+
+        action = await broker._output_queue.get()
+        assert action.role == ActionRole.ASSISTANT
+        assert action.status == ActionStatus.SUCCESS
+        assert action.action_type == "plan_preview"
+        assert action.messages == "# Plan\n- step 1"
+        assert action.output == {"content": "# Plan\n- step 1", "content_type": "markdown"}
+        # send() must not register a pending future — it is purely one-way.
+        assert broker.has_pending is False
+
+    @pytest.mark.asyncio
+    async def test_send_respects_custom_action_type_and_role(self):
+        broker = InteractionBroker()
+
+        await broker.send("hello", role=ActionRole.INTERACTION, action_type="custom_type")
+
+        action = await broker._output_queue.get()
+        assert action.role == ActionRole.INTERACTION
+        assert action.action_type == "custom_type"
+
+    @pytest.mark.asyncio
+    async def test_send_after_close_is_swallowed(self):
+        broker = InteractionBroker()
+        broker.close()
+
+        await broker.send("ignored", content_type="markdown")
+        # Only the sentinel pushed at close() should remain on the queue.
+        assert broker._output_queue.qsize() == 1
+
+
+class TestInteractionBrokerAllowFreeText:
+    """Tests for the ``allow_free_text`` flag on ``InteractionEvent`` / ``submit``."""
+
+    @pytest.mark.asyncio
+    async def test_allow_free_text_accepts_non_key_string(self):
+        from datus.schemas.interaction_event import InteractionEvent
+
+        broker = InteractionBroker()
+
+        async def submit_free_text():
+            for _ in range(50):
+                await asyncio.sleep(0.01)
+                if broker.has_pending:
+                    action_id = list(broker._pending.keys())[0]
+                    ok = await broker.submit(action_id, [["please add validation step"]])
+                    assert ok is True
+                    return
+            raise AssertionError("no pending interaction created")
+
+        submitter = asyncio.create_task(submit_free_text())
+        answers = await broker.request(
+            [
+                InteractionEvent(
+                    title="Plan",
+                    content="Confirm or revise?",
+                    choices={"confirm": "Confirm"},
+                    default_choice="confirm",
+                    allow_free_text=True,
+                )
+            ]
+        )
+        await submitter
+
+        assert answers == [["please add validation step"]]
+
+    @pytest.mark.asyncio
+    async def test_allow_free_text_disabled_still_rejects_non_key(self):
+        from datus.schemas.interaction_event import InteractionEvent
+
+        broker = InteractionBroker()
+
+        async def submit_invalid():
+            for _ in range(50):
+                await asyncio.sleep(0.01)
+                if broker.has_pending:
+                    action_id = list(broker._pending.keys())[0]
+                    rejected = await broker.submit(action_id, [["garbage"]])
+                    assert rejected is False
+                    accepted = await broker.submit(action_id, [["y"]])
+                    assert accepted is True
+                    return
+            raise AssertionError("no pending interaction created")
+
+        submitter = asyncio.create_task(submit_invalid())
+        answers = await broker.request(
+            [
+                InteractionEvent(
+                    title="Yes/No",
+                    content="Yes or no?",
+                    choices={"y": "yes", "n": "no"},
+                    default_choice="y",
+                    allow_free_text=False,
+                )
+            ]
+        )
+        await submitter
+        assert answers == [["y"]]
+
+    @pytest.mark.asyncio
+    async def test_allow_free_text_exposed_in_action_input(self):
+        from datus.schemas.interaction_event import InteractionEvent
+
+        broker = InteractionBroker()
+
+        async def submit_anything():
+            for _ in range(50):
+                await asyncio.sleep(0.01)
+                if broker.has_pending:
+                    action_id = list(broker._pending.keys())[0]
+                    await broker.submit(action_id, [["confirm"]])
+                    return
+
+        asyncio.create_task(submit_anything())
+        await broker.request(
+            [
+                InteractionEvent(
+                    title="Plan",
+                    content="...",
+                    choices={"confirm": "Confirm"},
+                    default_choice="confirm",
+                    allow_free_text=True,
+                )
+            ]
+        )
+
+        action = broker._output_queue.get_nowait()
+        events = action.input.get("events", []) if isinstance(action.input, dict) else []
+        assert events and events[0].get("allow_free_text") is True

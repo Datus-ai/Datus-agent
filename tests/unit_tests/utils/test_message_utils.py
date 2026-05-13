@@ -460,3 +460,61 @@ def test_roundtrip_build_then_extract_user_and_context():
 
     assert extract_user_input(structured) == "What is 2+2?"
     assert extract_enhanced_context(structured) == "The user is asking a math question."
+
+
+# ---------------------------------------------------------------------------
+# append_enhanced
+# ---------------------------------------------------------------------------
+
+
+def test_append_enhanced_plain_text_wraps_into_structured():
+    """Plain text input becomes structured [enhanced=additional, user=plain]."""
+    from datus.utils.message_utils import append_enhanced
+
+    result = append_enhanced("What is 2+2?", "Plan-mode workflow notes")
+    parsed = json.loads(result)
+
+    assert isinstance(parsed, list)
+    assert parsed[0] == {"type": "enhanced", "content": "Plan-mode workflow notes"}
+    assert parsed[1] == {"type": "user", "content": "What is 2+2?"}
+
+
+def test_append_enhanced_existing_structured_appends_to_enhanced_part():
+    """A pre-existing enhanced part is preserved and the additional content is appended."""
+    from datus.utils.message_utils import append_enhanced
+
+    original = build_structured_content(
+        [
+            {"type": "enhanced", "content": "Existing context"},
+            {"type": "user", "content": "Question"},
+        ]
+    )
+    result = append_enhanced(original, "More context")
+    parsed = json.loads(result)
+
+    enhanced_part = next(p for p in parsed if p["type"] == "enhanced")
+    user_part = next(p for p in parsed if p["type"] == "user")
+    assert "Existing context" in enhanced_part["content"]
+    assert "More context" in enhanced_part["content"]
+    assert user_part["content"] == "Question"
+
+
+def test_append_enhanced_structured_without_enhanced_inserts_one():
+    """Structured input lacking an enhanced part gets one inserted before the user part."""
+    from datus.utils.message_utils import append_enhanced
+
+    original = build_structured_content([{"type": "user", "content": "Q"}])
+    result = append_enhanced(original, "Workflow")
+    parsed = json.loads(result)
+
+    assert parsed[0] == {"type": "enhanced", "content": "Workflow"}
+    assert any(p["type"] == "user" and p["content"] == "Q" for p in parsed)
+
+
+def test_append_enhanced_empty_addition_is_noop():
+    """Passing an empty additional string returns the original message unchanged."""
+    from datus.utils.message_utils import append_enhanced
+
+    assert append_enhanced("hello", "") == "hello"
+    structured = build_structured_content([{"type": "user", "content": "x"}])
+    assert append_enhanced(structured, "") == structured

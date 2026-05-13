@@ -12,6 +12,7 @@ streaming interactions with tool integration and action history management.
 from __future__ import annotations
 
 import asyncio
+import os
 import uuid
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional
@@ -29,6 +30,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.base import BaseInput, BaseResult
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.message_utils import append_enhanced
 
 if TYPE_CHECKING:
     from datus.agent.workflow import Workflow
@@ -211,6 +213,13 @@ class AgenticNode(Node):
         self.interaction_broker = InteractionBroker()
         self.interrupt_controller = InterruptController()
 
+        # Plan mode state (managed at base class, shared by all subclasses).
+        # Activated manually via REPL/CLI for the current primary agent; sub-agents
+        # spawned during execution do NOT inherit these flags.
+        self.plan_mode_active: bool = False
+        self.workflow_prompt_sent: bool = False
+        self.plan_file_path: Optional[str] = None
+
     @property
     def model(self) -> Optional[LLMBaseModel]:
         """Return the currently active :class:`LLMBaseModel` for this node.
@@ -298,6 +307,108 @@ class AgenticNode(Node):
             return current.context_length()
         except Exception:
             return None
+
+    # ── Plan mode lifecycle ─────────────────────────────────────────────
+
+    def activate_plan_mode(self) -> str:
+        """Idempotently turn on plan mode and allocate the plan file path.
+
+        On first activation generates ``./.datus/{uuid}.md``, ensures the
+        ``./.datus/`` directory exists, and resets ``workflow_prompt_sent``
+        so the next user prompt carries the full workflow description.
+
+        Returns:
+            The plan file path (absolute or project-relative).
+        """
+        if self.plan_mode_active and self.plan_file_path:
+            return self.plan_file_path
+
+        self.plan_mode_active = True
+        self.workflow_prompt_sent = False
+        plan_dir = os.path.join(".", ".datus")
+        os.makedirs(plan_dir, exist_ok=True)
+        self.plan_file_path = os.path.join(plan_dir, f"{uuid.uuid4().hex}.md")
+        logger.info(f"Plan mode activated: plan_file_path={self.plan_file_path}")
+        return self.plan_file_path
+
+    def deactivate_plan_mode(self) -> None:
+        """Clear plan-mode state. The plan file is intentionally NOT deleted."""
+        if self.plan_mode_active:
+            logger.info(f"Plan mode deactivated: plan_file_path={self.plan_file_path}")
+        self.plan_mode_active = False
+        self.workflow_prompt_sent = False
+        self.plan_file_path = None
+
+    def is_in_plan_mode(self) -> bool:
+        """Return True when plan mode is currently active for this node."""
+        return self.plan_mode_active
+
+    def build_plan_mode_enhanced_prompt(self) -> str:
+        """Render the plan_mode_system template based on current plan-mode state.
+
+        The template branches on ``workflow_prompt_sent``: when False, the full
+        workflow description is rendered; otherwise a short reminder. After the
+        full version is rendered, ``workflow_prompt_sent`` is flipped to True
+        so subsequent prompts only carry the reminder.
+        """
+        if not self.plan_mode_active or not self.plan_file_path:
+            return ""
+
+        try:
+            rendered = get_prompt_manager(agent_config=self.agent_config).render_template(
+                template_name="plan_mode_system",
+                version=None,
+                plan_file_path=self.plan_file_path,
+                workflow_prompt_sent=self.workflow_prompt_sent,
+            )
+        except FileNotFoundError:
+            logger.warning("plan_mode_system template not found, using inline fallback")
+            if self.workflow_prompt_sent:
+                rendered = (
+                    f"Plan mode is active. Refer to the workflow already described. "
+                    f"Plan file: {self.plan_file_path}. Continue iterating or call confirm_plan."
+                )
+            else:
+                rendered = (
+                    f"Plan mode is active. Plan file path: {self.plan_file_path}. "
+                    "Use read-only tools and only edit the plan file; call confirm_plan when ready."
+                )
+        # Flip the flag so future prompts only carry the short reminder.
+        self.workflow_prompt_sent = True
+        return rendered
+
+    def _merge_plan_mode_prompt(self, enhanced_message: str) -> str:
+        """Append the plan-mode workflow prompt as an ``enhanced`` MessagePart.
+
+        Works for both legacy plain-text prompts and already-structured JSON
+        prompts produced by ``build_structured_content``.
+        """
+        addition = self.build_plan_mode_enhanced_prompt()
+        if not addition:
+            return enhanced_message
+        return append_enhanced(enhanced_message, addition)
+
+    def _get_plan_mode_tools(self) -> List[Tool]:
+        """Return plan-mode-only func tools when plan mode is active.
+
+        Tools: ``confirm_plan`` (signals user to accept/revise the plan file)
+        plus the legacy ``todo_read/todo_write/todo_update`` tools that remain
+        available as execution-phase helpers.
+        """
+        if not self.plan_mode_active:
+            return []
+
+        from datus.tools.func_tool.plan_tools import ConfirmPlanTool, PlanTool
+
+        tools: List[Tool] = []
+        # Session may not exist yet (e.g. called before execute_stream creates it);
+        # PlanTool only uses session for backward-compat field, so an inert stand-in
+        # is acceptable. Prefer real session when available.
+        session = self._session
+        if session is not None:
+            tools.extend(PlanTool(session).available_tools())
+        tools.extend(ConfirmPlanTool(self).available_tools())
+        return tools
 
     def get_node_name(self) -> str:
         """

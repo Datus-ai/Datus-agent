@@ -7,7 +7,8 @@ Simplified plan tools - merged from multiple files into single module
 """
 
 from enum import Enum
-from typing import List, Optional
+from pathlib import Path
+from typing import TYPE_CHECKING, List, Optional
 from uuid import uuid4
 
 from agents import SQLiteSession, Tool
@@ -15,6 +16,9 @@ from pydantic import BaseModel, Field
 
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
+
+if TYPE_CHECKING:
+    from datus.agent.node.agentic_node import AgenticNode
 
 logger = get_logger(__name__)
 
@@ -249,3 +253,81 @@ class PlanTool:
                 return FuncToolResult(success=0, error="Failed to save updated todo list to storage")
         else:
             return FuncToolResult(success=0, error="Failed to update todo item status")
+
+
+class ConfirmPlanTool:
+    """Tool wrapping the user-facing ``confirm_plan`` call.
+
+    The tool reads the plan file the LLM has been editing, pushes its
+    contents to the user via :meth:`InteractionBroker.send`, and then
+    prompts the user with a *confirm-or-revise* interaction. Confirming
+    exits plan mode; any free-text response is returned to the LLM as
+    feedback so it can iterate.
+    """
+
+    def __init__(self, node: "AgenticNode"):
+        self.node = node
+
+    def available_tools(self) -> List[Tool]:
+        return [trans_to_function_tool(self.confirm_plan)]
+
+    async def confirm_plan(self) -> FuncToolResult:
+        """Confirm the current plan with the user.
+
+        Workflow:
+        - Read ``node.plan_file_path``; if missing, return an error so the
+          LLM knows to write the plan first.
+        - Push the plan content to the user as an assistant message.
+        - Ask the user to either ``confirm`` or type free-text feedback.
+        - On ``confirm``: deactivate plan mode and return success.
+        - On feedback: return the text so the LLM can revise the plan.
+        """
+        # Local imports to avoid cycles with execution_state / schemas.
+        from datus.cli.execution_state import InteractionCancelled
+        from datus.schemas.interaction_event import InteractionEvent
+
+        path = self.node.plan_file_path
+        if not path or not Path(path).exists():
+            return FuncToolResult(
+                success=0,
+                error=(
+                    "plan file not found at "
+                    f"{path or '<unset>'}; write the plan to this path before calling confirm_plan"
+                ),
+            )
+
+        broker = getattr(self.node, "interaction_broker", None)
+        if broker is None:
+            return FuncToolResult(success=0, error="interaction broker unavailable on node")
+
+        try:
+            plan_md = Path(path).read_text(encoding="utf-8")
+        except OSError as exc:
+            return FuncToolResult(success=0, error=f"failed to read plan file: {exc}")
+
+        await broker.send(content=plan_md, content_type="markdown", action_type="plan_preview")
+
+        event = InteractionEvent(
+            title="Plan",
+            content="Confirm this plan, or type feedback to revise:",
+            content_type="markdown",
+            choices={"confirm": "Confirm"},
+            default_choice="confirm",
+            allow_free_text=True,
+        )
+        try:
+            answers = await broker.request([event])
+        except InteractionCancelled:
+            return FuncToolResult(success=0, error="user cancelled plan confirmation")
+
+        # ``answers`` is List[List[str]]; for a single-question prompt the
+        # user's response is answers[0][0] (or "" when nothing was provided).
+        user_choice = ""
+        if answers and isinstance(answers, list) and answers[0]:
+            user_choice = answers[0][0] or ""
+
+        if user_choice == "confirm":
+            self.node.deactivate_plan_mode()
+            return FuncToolResult(result={"status": "confirmed"})
+
+        return FuncToolResult(result={"status": "feedback", "feedback": user_choice})

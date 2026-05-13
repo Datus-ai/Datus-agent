@@ -22,19 +22,12 @@ from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
-from datus.tools.permission.permission_hooks import CompositeHooks, PermissionHooks
+from datus.tools.permission.permission_hooks import PermissionHooks
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
 from datus.tools.skill_tools.skill_manager import SkillManager
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
-from datus.utils.message_utils import (
-    MessagePart,
-    build_structured_content,
-    extract_enhanced_context,
-    extract_user_input,
-    is_structured_content,
-)
 
 logger = get_logger(__name__)
 
@@ -48,7 +41,7 @@ class ChatAgenticNode(AgenticNode):
     - Full tool support: database, filesystem, context search, date parsing
     - Skill discovery and execution with permission control
     - Permission hooks for tool access control
-    - Plan mode support with recursive replanning
+    - Plan mode (state and tooling provided by ``AgenticNode`` base class)
     - Session-based conversation management with MCP server integration
     """
 
@@ -97,10 +90,6 @@ class ChatAgenticNode(AgenticNode):
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self._platform_doc_tool: Optional[PlatformDocSearchTool] = None
         self.reference_template_tools: Optional[ReferenceTemplateTools] = None
-
-        # Plan mode attributes
-        self.plan_mode_active = False
-        self.plan_hooks = None
 
         # Chat-specific: permission hooks
         self.permission_hooks: Optional[PermissionHooks] = None
@@ -445,65 +434,23 @@ class ChatAgenticNode(AgenticNode):
 
     # ── Execution ───────────────────────────────────────────────────────
 
-    def _get_execution_config(self, execution_mode: str, original_input) -> dict:
-        """Get execution configuration with permission hooks."""
-        if execution_mode == "normal":
-            config = {
-                "tools": self.tools,
-                "instruction": self._get_system_instruction(original_input),
-                "hooks": None,
-            }
-        elif execution_mode == "plan":
-            plan_tools = self.plan_hooks.get_plan_tools() if self.plan_hooks else []
-            base_instruction = self._get_system_instruction(original_input)
-            config = {
-                "tools": self.tools + plan_tools,
-                "instruction": base_instruction,
-                "hooks": self.plan_hooks,
-            }
-        else:
-            raise ValueError(f"Unknown execution mode: {execution_mode}")
+    def _get_execution_config(self, original_input) -> dict:
+        """Build execution config — tools, system instruction, hooks.
 
-        # Add permission hooks if available
+        Plan-mode tools (``confirm_plan`` + ``todo_*``) are appended via
+        :meth:`AgenticNode._get_plan_mode_tools`. Permission hooks are
+        composited on top when configured.
+        """
+        config = {
+            "tools": self.tools + self._get_plan_mode_tools(),
+            "instruction": self._get_system_instruction(original_input),
+            "hooks": None,
+        }
+
         if self.permission_hooks:
-            existing_hooks = config.get("hooks")
-            if existing_hooks:
-                config["hooks"] = CompositeHooks([existing_hooks, self.permission_hooks])
-            else:
-                config["hooks"] = self.permission_hooks
+            config["hooks"] = self.permission_hooks
 
         return config
-
-    def _build_plan_prompt(self, original_prompt: str) -> str:
-        """Build enhanced prompt for plan mode based on current phase."""
-        from datus.prompts.prompt_manager import get_prompt_manager
-
-        current_phase = getattr(self.plan_hooks, "plan_phase", "generating") if self.plan_hooks else "generating"
-        replan_feedback = getattr(self.plan_hooks, "replan_feedback", "") if self.plan_hooks else ""
-
-        try:
-            plan_prompt_addition = get_prompt_manager(agent_config=self.agent_config).render_template(
-                template_name="plan_mode_system",
-                version=None,
-                current_phase=current_phase,
-                replan_feedback=replan_feedback,
-            )
-        except FileNotFoundError:
-            logger.warning("plan_mode_system template not found, using inline prompt")
-            plan_prompt_addition = "\n\nPLAN MODE\nCheck todo_read to see current plan status and proceed accordingly."
-
-        if is_structured_content(original_prompt):
-            user_input = extract_user_input(original_prompt)
-            enhanced = extract_enhanced_context(original_prompt)
-            new_enhanced = (enhanced or "") + "\n\n" + plan_prompt_addition
-            return build_structured_content(
-                [
-                    MessagePart(type="enhanced", content=new_enhanced),
-                    MessagePart(type="user", content=user_input),
-                ]
-            )
-
-        return original_prompt + "\n\n" + plan_prompt_addition
 
     async def _execute_with_recursive_replan(
         self,
@@ -512,47 +459,31 @@ class ChatAgenticNode(AgenticNode):
         original_input,
         action_history_manager: ActionHistoryManager,
         session,
-    ):
-        """Unified recursive execution function that handles all execution modes."""
-        logger.info(f"Executing mode: {execution_mode}")
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Thin wrapper around :meth:`LLMBaseModel.generate_with_tools_stream`.
 
-        config = self._get_execution_config(execution_mode, original_input)
-
-        if execution_mode == "plan" and self.plan_hooks:
-            self.plan_hooks.plan_phase = "generating"
-
-        try:
-            final_prompt = prompt
-            if execution_mode == "plan":
-                final_prompt = self._build_plan_prompt(prompt)
-
-            async for stream_action in self.model.generate_with_tools_stream(
-                prompt=final_prompt,
-                tools=config["tools"],
-                mcp_servers=self.mcp_servers,
-                instruction=config["instruction"],
-                max_turns=self.max_turns,
-                session=session,
-                action_history_manager=action_history_manager,
-                hooks=config.get("hooks"),
-                agent_name=self.get_node_name(),
-                interrupt_controller=self.interrupt_controller,
-            ):
-                yield stream_action
-
-        except Exception as e:
-            if "REPLAN_REQUIRED" in str(e):
-                logger.info("Replan requested, recursing...")
-                async for action in self._execute_with_recursive_replan(
-                    prompt=prompt,
-                    execution_mode=execution_mode,
-                    original_input=original_input,
-                    action_history_manager=action_history_manager,
-                    session=session,
-                ):
-                    yield action
-            else:
-                raise
+        The legacy recursive plan-mode flow was removed when plan mode moved
+        to a file-backed workflow. This wrapper is kept so that existing
+        tests (and any external code patching this method) continue to work.
+        ``execution_mode`` is accepted for backward compatibility but is
+        unused — tool/hook selection now lives entirely in
+        :meth:`_get_execution_config`.
+        """
+        del execution_mode  # legacy positional, no longer drives behavior
+        config = self._get_execution_config(original_input)
+        async for stream_action in self.model.generate_with_tools_stream(
+            prompt=prompt,
+            tools=config["tools"],
+            mcp_servers=self.mcp_servers,
+            instruction=config["instruction"],
+            max_turns=self.max_turns,
+            session=session,
+            action_history_manager=action_history_manager,
+            hooks=config.get("hooks"),
+            agent_name=self.get_node_name(),
+            interrupt_controller=self.interrupt_controller,
+        ):
+            yield stream_action
 
     # ── Workflow Integration ────────────────────────────────────────────
 
@@ -627,17 +558,12 @@ class ChatAgenticNode(AgenticNode):
 
         is_plan_mode = getattr(user_input, "plan_mode", False)
         if is_plan_mode:
-            self.plan_mode_active = True
-
-            from datus.cli.plan_hooks import PlanModeHooks
-
-            broker = self._get_or_create_broker()
-            session = self._get_or_create_session()[0]
-
-            auto_mode = getattr(user_input, "auto_execute_plan", False)
-            logger.info(f"Plan mode auto_mode: {auto_mode} (from input)")
-
-            self.plan_hooks = PlanModeHooks(broker=broker, session=session, auto_mode=auto_mode)
+            # Idempotent: reuses the existing plan file if plan mode is already
+            # active so the LLM keeps iterating on the same plan across turns.
+            self.activate_plan_mode()
+        elif self.is_in_plan_mode():
+            # User toggled plan mode off without confirming — clean up state.
+            self.deactivate_plan_mode()
 
         # Create initial action
         action_type = "plan_mode_interaction" if is_plan_mode else "chat_interaction"
@@ -669,17 +595,20 @@ class ChatAgenticNode(AgenticNode):
                 reference_sql=user_input.reference_sql,
             )
 
+            # Plan-mode workflow prompt is injected as an enhanced MessagePart
+            # so the user never sees it but the LLM does.
+            if self.is_in_plan_mode():
+                enhanced_message = self._merge_plan_mode_prompt(enhanced_message)
+
             response_content = ""
             tokens_used = 0
             last_successful_output = None
             last_successful_tool_summary = ""
             tool_result_seen = False
 
-            execution_mode = "plan" if is_plan_mode and self.plan_hooks else "normal"
-
             async for stream_action in self._execute_with_recursive_replan(
                 prompt=enhanced_message,
-                execution_mode=execution_mode,
+                execution_mode="normal",
                 original_input=user_input,
                 action_history_manager=action_history_manager,
                 session=session,
@@ -861,7 +790,7 @@ class ChatAgenticNode(AgenticNode):
             action_history_manager.add_action(action)
             yield action
 
-        finally:
-            if is_plan_mode:
-                self.plan_mode_active = False
-                self.plan_hooks = None
+        # Note: plan-mode state intentionally persists across execute_stream
+        # invocations so the LLM can iterate on the same plan over multiple
+        # turns. It is cleared either by ``confirm_plan`` (user confirms) or
+        # by the entry guard above when the user toggles plan mode off.

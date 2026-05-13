@@ -560,11 +560,11 @@ class SubAgentTaskTool:
 
         # Update broker references on hooks that were already initialised
         # with the node's original (now stale) broker.
-        for attr in ("hooks", "permission_hooks", "plan_hooks"):
+        for attr in ("hooks", "permission_hooks"):
             hooks_obj = getattr(node, attr, None)
             if hooks_obj is None:
                 continue
-            # Direct hook (GenerationHooks, PermissionHooks, PlanModeHooks)
+            # Direct hook (GenerationHooks, PermissionHooks)
             if hasattr(hooks_obj, "broker"):
                 hooks_obj.broker = broker
             # CompositeHooks wrapping multiple hooks

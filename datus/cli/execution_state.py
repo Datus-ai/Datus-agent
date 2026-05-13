@@ -135,11 +135,40 @@ class InteractionBroker:
                     pass
         self._output_queue.put_nowait(self._STOP_SENTINEL)
 
+    async def send(
+        self,
+        content: str,
+        content_type: str = "markdown",
+        role: ActionRole = ActionRole.ASSISTANT,
+        action_type: str = "plan_preview",
+    ) -> None:
+        """Push a one-way SUCCESS action to the output queue.
+
+        Unlike :meth:`request`, this does NOT register a pending future and
+        does NOT wait for any user response. It is the right hook for
+        showing the user a piece of content (e.g. a generated plan file)
+        without an input prompt.
+        """
+        if self._closed:
+            logger.warning("InteractionBroker.send() called after close()")
+            return
+        action = ActionHistory(
+            action_id=str(uuid.uuid4()),
+            role=role,
+            status=ActionStatus.SUCCESS,
+            action_type=action_type,
+            messages=content,
+            input={"content": content, "content_type": content_type},
+            output={"content": content, "content_type": content_type},
+        )
+        self._output_queue.put_nowait(action)
+        logger.debug(f"InteractionBroker: send queued action_type={action_type}")
+
     async def request(self, events: List["InteractionEvent"]) -> List[List[str]]:
         """Request user input. Blocks until user responds.
 
         Args:
-            events: One or more ``InteractionEvent`` objects.
+            events: One or more InteractionEvent objects.
 
         Returns:
             ``List[List[str]]`` — one inner list per event.

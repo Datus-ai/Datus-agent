@@ -1199,23 +1199,20 @@ class TestEndToEndNodeHooksInteraction:
 
 
 # ===========================================================================
-# End-to-End Integration: AgenticNode + PlanModeHooks + InteractionBroker
+# End-to-End Integration: AgenticNode plan-mode + confirm_plan + InteractionBroker
 # ===========================================================================
 
 
-class TestEndToEndPlanModeHooksInteraction:
-    """End-to-end tests: ChatAgenticNode(plan_mode=True) → LLM calls todo_write → PlanModeHooks →
-    on_tool_end sets _plan_generated_pending → on_llm_end → _on_plan_generated → broker.request → submit.
+class TestEndToEndConfirmPlanInteraction:
+    """End-to-end tests for the new plan-mode flow:
 
-    Tests the full production flow for plan mode interactions:
-    1. ChatAgenticNode receives plan_mode=True input
-    2. PlanModeHooks is created with broker + session
-    3. Plan tools (todo_write, todo_read, todo_update) are added
-    4. MockLLM calls todo_write with plan items
-    5. PlanModeHooks.on_tool_end detects todo_write → sets _plan_generated_pending
-    6. PlanModeHooks.on_llm_end triggers _on_plan_generated → broker.request(choices 1/2/3/4)
-    7. UI simulator submits choice
-    8. Plan mode state transitions accordingly
+    1. ChatAgenticNode receives ``plan_mode=True`` and activates plan mode.
+    2. The LLM writes the plan markdown via ``Write`` (here we pre-seed it).
+    3. The LLM calls ``confirm_plan``; ``ConfirmPlanTool`` pushes the plan
+       text via ``broker.send`` and requests confirmation via
+       ``broker.request(allow_free_text=True)``.
+    4. The UI submits ``confirm`` (or free-text feedback).
+    5. On confirm, plan mode deactivates and execution continues.
     """
 
     @pytest.fixture(autouse=True)
@@ -1240,250 +1237,156 @@ class TestEndToEndPlanModeHooksInteraction:
     @pytest.mark.known_flaky
     @pytest.mark.skip(reason="Quarantined in ci/flaky-registry.yml: gen-sql-plan-mode-hooks-broker-hang")
     @pytest.mark.asyncio
-    async def test_e2e_plan_mode_user_selects_manual(self, real_agent_config, mock_llm_create):
-        """Full flow: LLM calls todo_write → user selects 'Manual Confirm' (1) → plan enters executing/manual."""
+    async def test_e2e_confirm_plan_user_confirms(self, real_agent_config, mock_llm_create, tmp_path):
+        """LLM calls confirm_plan → user submits 'confirm' → plan mode deactivates."""
         import asyncio
+        import os
 
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
 
-        todos = json.dumps(
-            [
-                {"content": "Query database schema", "status": "pending"},
-                {"content": "Generate SQL report", "status": "pending"},
-            ]
-        )
+        cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            mock_llm_create.reset(
+                responses=[
+                    build_tool_then_response(
+                        tool_calls=[MockToolCall(name="confirm_plan", arguments="{}")],
+                        content="Plan confirmed by the user.",
+                    ),
+                ]
+            )
 
-        mock_llm_create.reset(
-            responses=[
-                build_tool_then_response(
-                    tool_calls=[
-                        MockToolCall(
-                            name="todo_write",
-                            arguments=json.dumps({"todos_json": todos}),
-                        ),
-                    ],
-                    content="I have created a plan with 2 steps.",
-                ),
-            ]
-        )
+            node = ChatAgenticNode(
+                node_id="e2e_confirm_plan",
+                description="E2E confirm_plan test",
+                node_type=NodeType.TYPE_CHAT,
+                agent_config=real_agent_config,
+            )
 
-        node = ChatAgenticNode(
-            node_id="e2e_plan_manual",
-            description="E2E plan manual test",
-            node_type=NodeType.TYPE_CHAT,
-            agent_config=real_agent_config,
-        )
+            node.input = ChatNodeInput(
+                user_message="Plan how to summarise the schools dataset",
+                database="california_schools",
+                plan_mode=True,
+            )
 
-        node.input = ChatNodeInput(
-            user_message="Create a plan for database analysis",
-            database="california_schools",
-            plan_mode=True,
-        )
+            # Pre-seed the plan file so confirm_plan finds content to display.
+            node.activate_plan_mode()
+            assert node.plan_file_path is not None
+            with open(node.plan_file_path, "w", encoding="utf-8") as f:
+                f.write("# Plan\n\n- Step 1\n- Step 2\n")
 
-        broker = node._get_or_create_broker()
+            broker = node._get_or_create_broker()
 
-        # Concurrent UI simulator: wait for plan confirmation request, select Manual (1)
-        async def ui_select_manual():
-            for _ in range(300):
-                await asyncio.sleep(0.02)
-                if broker.has_pending:
-                    action_id = list(broker._pending.keys())[0]
-                    await broker.submit(action_id, [["1"]])  # Manual Confirm
-                    return
-            pytest.fail("Timed out waiting for plan confirmation interaction")
+            async def ui_confirm():
+                for _ in range(300):
+                    await asyncio.sleep(0.02)
+                    if broker.has_pending:
+                        action_id = list(broker._pending.keys())[0]
+                        await broker.submit(action_id, [["confirm"]])
+                        return
+                pytest.fail("Timed out waiting for confirm_plan interaction")
 
-        ui_task = asyncio.create_task(ui_select_manual())
+            ui_task = asyncio.create_task(ui_confirm())
 
-        ahm = ActionHistoryManager()
-        actions = []
-        async for action in node.execute_stream_with_interactions(ahm):
-            actions.append(action)
+            ahm = ActionHistoryManager()
+            actions = []
+            async for action in node.execute_stream_with_interactions(ahm):
+                actions.append(action)
 
-        await ui_task
+            await ui_task
 
-        # Verify todo_write was executed
-        todo_write_results = [r for r in mock_llm_create.tool_results if r["tool"] == "todo_write"]
-        assert len(todo_write_results) >= 1
-        assert todo_write_results[0]["executed"] is True
+            confirm_results = [r for r in mock_llm_create.tool_results if r["tool"] == "confirm_plan"]
+            assert len(confirm_results) >= 1
 
-        # Verify INTERACTION actions appeared in the merged stream
-        interaction_actions = [a for a in actions if a.role == ActionRole.INTERACTION]
-        assert len(interaction_actions) >= 1
+            interactions = [a for a in actions if a.role == ActionRole.INTERACTION]
+            assert any(a.status == ActionStatus.PROCESSING for a in interactions)
+            processing = [a for a in interactions if a.status == ActionStatus.PROCESSING][0]
+            assert processing.input.get("allow_free_text") is True
+            assert "confirm" in processing.input.get("choices", {})
 
-        # Verify the PROCESSING interaction offered plan mode choices (1/2/3/4)
-        processing = [a for a in actions if a.role == ActionRole.INTERACTION and a.status == ActionStatus.PROCESSING]
-        assert len(processing) >= 1
-        events = processing[0].input.get("events", []) if isinstance(processing[0].input, dict) else []
-        choices = events[0].get("choices", {}) if events else {}
-        assert "1" in choices  # Manual Confirm
-        assert "2" in choices  # Auto Execute
-        assert "4" in choices  # Cancel
+            # Confirm flow must surface a PROCESSING interaction with the
+            # confirm choice + allow_free_text=True.
+            interactions = [a for a in actions if a.role == ActionRole.INTERACTION]
+            processing = [a for a in interactions if a.status == ActionStatus.PROCESSING]
+            assert processing, "no PROCESSING interaction emitted"
+            events = processing[0].input.get("events", []) if isinstance(processing[0].input, dict) else []
+            assert events, "request payload missing events"
+            assert events[0].get("allow_free_text") is True
+            assert "confirm" in events[0].get("choices", {})
 
-        # Verify the SUCCESS action indicates Manual mode was selected
-        success = [a for a in actions if a.role == ActionRole.INTERACTION and a.status == ActionStatus.SUCCESS]
-        assert len(success) >= 1
-        output = success[0].output
-        assert isinstance(output, dict)
-        assert output.get("user_choice") == [["1"]]
+            # After confirm, plan mode must be deactivated.
+            assert node.plan_mode_active is False
+            assert node.plan_file_path is None
+        finally:
+            os.chdir(cwd)
 
     @pytest.mark.component
     @pytest.mark.llm_harness
     @pytest.mark.asyncio
-    async def test_e2e_plan_mode_user_selects_auto(self, real_agent_config, mock_llm_create):
-        """Full flow: LLM calls todo_write → user selects 'Auto Execute' (2) → plan enters executing/auto."""
+    async def test_e2e_confirm_plan_user_provides_feedback(self, real_agent_config, mock_llm_create, tmp_path):
+        """LLM calls confirm_plan → user types free-text feedback → plan mode stays active."""
         import asyncio
+        import os
 
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
 
-        todos = json.dumps(
-            [
-                {"content": "List all tables", "status": "pending"},
-                {"content": "Describe satscores table", "status": "pending"},
-                {"content": "Run sample query", "status": "pending"},
-            ]
-        )
+        cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            mock_llm_create.reset(
+                responses=[
+                    build_tool_then_response(
+                        tool_calls=[MockToolCall(name="confirm_plan", arguments="{}")],
+                        content="Will revise the plan as requested.",
+                    ),
+                ]
+            )
 
-        mock_llm_create.reset(
-            responses=[
-                build_tool_then_response(
-                    tool_calls=[
-                        MockToolCall(
-                            name="todo_write",
-                            arguments=json.dumps({"todos_json": todos}),
-                        ),
-                    ],
-                    content="Plan created with 3 steps for auto execution.",
-                ),
-            ]
-        )
+            node = ChatAgenticNode(
+                node_id="e2e_confirm_plan_feedback",
+                description="E2E confirm_plan feedback test",
+                node_type=NodeType.TYPE_CHAT,
+                agent_config=real_agent_config,
+            )
 
-        node = ChatAgenticNode(
-            node_id="e2e_plan_auto",
-            description="E2E plan auto test",
-            node_type=NodeType.TYPE_CHAT,
-            agent_config=real_agent_config,
-        )
+            node.input = ChatNodeInput(
+                user_message="Plan how to enrich the schools dataset",
+                database="california_schools",
+                plan_mode=True,
+            )
 
-        node.input = ChatNodeInput(
-            user_message="Analyze the database automatically",
-            database="california_schools",
-            plan_mode=True,
-        )
+            node.activate_plan_mode()
+            with open(node.plan_file_path, "w", encoding="utf-8") as f:
+                f.write("# Plan\n\n- Step 1\n")
+            plan_path_before = node.plan_file_path
 
-        broker = node._get_or_create_broker()
+            broker = node._get_or_create_broker()
 
-        # Concurrent UI simulator: select Auto Execute (2)
-        async def ui_select_auto():
-            for _ in range(300):
-                await asyncio.sleep(0.02)
-                if broker.has_pending:
-                    action_id = list(broker._pending.keys())[0]
-                    await broker.submit(action_id, [["2"]])  # Auto Execute
-                    return
-            pytest.fail("Timed out waiting for plan confirmation interaction")
+            async def ui_feedback():
+                for _ in range(300):
+                    await asyncio.sleep(0.02)
+                    if broker.has_pending:
+                        action_id = list(broker._pending.keys())[0]
+                        await broker.submit(action_id, [["please add a validation step"]])
+                        return
+                pytest.fail("Timed out waiting for confirm_plan interaction")
 
-        ui_task = asyncio.create_task(ui_select_auto())
+            ui_task = asyncio.create_task(ui_feedback())
 
-        ahm = ActionHistoryManager()
-        actions = []
-        async for action in node.execute_stream_with_interactions(ahm):
-            actions.append(action)
+            ahm = ActionHistoryManager()
+            async for _action in node.execute_stream_with_interactions(ahm):
+                pass
 
-        await ui_task
+            await ui_task
 
-        # Verify todo_write was executed
-        todo_write_results = [r for r in mock_llm_create.tool_results if r["tool"] == "todo_write"]
-        assert len(todo_write_results) >= 1
-
-        # Verify INTERACTION actions in stream
-        interaction_actions = [a for a in actions if a.role == ActionRole.INTERACTION]
-        assert len(interaction_actions) >= 1
-
-        # Verify the SUCCESS action indicates Auto mode was selected
-        success = [a for a in actions if a.role == ActionRole.INTERACTION and a.status == ActionStatus.SUCCESS]
-        assert len(success) >= 1
-        output = success[0].output
-        assert isinstance(output, dict)
-        assert output.get("user_choice") == [["2"]]
-
-    @pytest.mark.component
-    @pytest.mark.llm_harness
-    @pytest.mark.asyncio
-    async def test_e2e_plan_mode_user_cancels(self, real_agent_config, mock_llm_create):
-        """Full flow: LLM calls todo_write → user selects 'Cancel' (4) → UserCancelledException handled."""
-        import asyncio
-
-        from datus.agent.node.chat_agentic_node import ChatAgenticNode
-
-        todos = json.dumps(
-            [
-                {"content": "Some task", "status": "pending"},
-            ]
-        )
-
-        mock_llm_create.reset(
-            responses=[
-                build_tool_then_response(
-                    tool_calls=[
-                        MockToolCall(
-                            name="todo_write",
-                            arguments=json.dumps({"todos_json": todos}),
-                        ),
-                    ],
-                    content="Plan created.",
-                ),
-            ]
-        )
-
-        node = ChatAgenticNode(
-            node_id="e2e_plan_cancel",
-            description="E2E plan cancel test",
-            node_type=NodeType.TYPE_CHAT,
-            agent_config=real_agent_config,
-        )
-
-        node.input = ChatNodeInput(
-            user_message="Create a plan but I will cancel",
-            database="california_schools",
-            plan_mode=True,
-        )
-
-        broker = node._get_or_create_broker()
-
-        # Concurrent UI simulator: select Cancel (4)
-        async def ui_select_cancel():
-            for _ in range(300):
-                await asyncio.sleep(0.02)
-                if broker.has_pending:
-                    action_id = list(broker._pending.keys())[0]
-                    await broker.submit(action_id, [["4"]])  # Cancel
-                    return
-            pytest.fail("Timed out waiting for plan confirmation interaction")
-
-        ui_task = asyncio.create_task(ui_select_cancel())
-
-        ahm = ActionHistoryManager()
-        actions = []
-        async for action in node.execute_stream_with_interactions(ahm):
-            actions.append(action)
-
-        await ui_task
-
-        # ChatAgenticNode catches UserCancelledException and creates a cancellation action
-        # Verify we get the cancellation action (success=True, action_type=user_cancellation)
-        cancellation_actions = [a for a in actions if a.action_type == "user_cancellation"]
-        assert len(cancellation_actions) >= 1
-
-        # Verify INTERACTION actions in stream
-        interaction_actions = [a for a in actions if a.role == ActionRole.INTERACTION]
-        assert len(interaction_actions) >= 1
-
-        # plan_hooks is reset to None in the finally block, so check via INTERACTION output
-        success = [a for a in actions if a.role == ActionRole.INTERACTION and a.status == ActionStatus.SUCCESS]
-        assert success
-        output = success[0].output
-        assert isinstance(output, dict)
-        assert output.get("user_choice") == [["4"]]
+            # Plan mode remains active and the plan file path is preserved
+            # because the user asked for revisions instead of confirming.
+            assert node.plan_mode_active is True
+            assert node.plan_file_path == plan_path_before
+            # Cleanup
+            node.deactivate_plan_mode()
+        finally:
+            os.chdir(cwd)
 
 
 # ===========================================================================
@@ -2472,39 +2375,41 @@ class TestUpdateContextGenSQL:
 
 
 class TestGetExecutionConfig:
-    def test_normal_mode_returns_tools_and_instruction(self, real_agent_config, mock_llm_create):
+    def test_returns_base_tools_when_plan_mode_inactive(self, real_agent_config, mock_llm_create):
         node = _make_node_extra2(real_agent_config, mock_llm_create)
-        node.tools = [MagicMock()]
+        base_tool = MagicMock()
+        node.tools = [base_tool]
         user_input = GenSQLNodeInput(user_message="query")
 
         with patch.object(node, "_get_system_instruction", return_value="system instruction"):
-            config = node._get_execution_config("normal", user_input)
+            config = node._get_execution_config(user_input)
 
-        assert config["tools"] == node.tools
+        assert config["tools"] == [base_tool]
         assert config["instruction"] == "system instruction"
         assert config["hooks"] is None
 
-    def test_plan_mode_returns_combined_tools(self, real_agent_config, mock_llm_create):
+    def test_appends_plan_tools_when_plan_mode_active(self, real_agent_config, mock_llm_create, tmp_path):
+        import os
+
         node = _make_node_extra2(real_agent_config, mock_llm_create)
         base_tool = MagicMock()
-        plan_tool = MagicMock()
         node.tools = [base_tool]
-        node.plan_hooks = MagicMock()
-        node.plan_hooks.get_plan_tools.return_value = [plan_tool]
         user_input = GenSQLNodeInput(user_message="query", plan_mode=True)
 
-        with patch.object(node, "_get_system_instruction", return_value="base instruction"):
-            config = node._get_execution_config("plan", user_input)
+        cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            node.activate_plan_mode()
+            with patch.object(node, "_get_system_instruction", return_value="base instruction"):
+                config = node._get_execution_config(user_input)
 
-        assert base_tool in config["tools"]
-        assert plan_tool in config["tools"]
-        assert config["hooks"] == node.plan_hooks
-
-    def test_unknown_mode_raises(self, real_agent_config, mock_llm_create):
-        node = _make_node_extra2(real_agent_config, mock_llm_create)
-        user_input = GenSQLNodeInput(user_message="query")
-        with pytest.raises(ValueError, match="Unknown execution mode"):
-            node._get_execution_config("invalid_mode", user_input)
+            tool_names = {getattr(t, "name", "") for t in config["tools"]}
+            assert base_tool in config["tools"]
+            assert "confirm_plan" in tool_names
+            assert config["instruction"] == "base instruction"
+        finally:
+            node.deactivate_plan_mode()
+            os.chdir(cwd)
 
 
 # ---------------------------------------------------------------------------
