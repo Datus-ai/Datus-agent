@@ -978,3 +978,43 @@ class TestSkillAllowedAgentsConsistency:
         dashboard_names = {skill.name for skill in manager.get_available_skills("gen_dashboard")}
         assert "superset-dashboard" in dashboard_names
         assert "grafana-dashboard" in dashboard_names
+
+
+class TestBashToolToggle:
+    """``agent.bash.enabled`` controls whether ``BashTool`` is instantiated."""
+
+    def test_bash_tool_created_by_default(self, mock_agent_config):
+        """Default behaviour (no explicit toggle) creates the BashTool."""
+        # Mock(spec=AgentConfig) makes ``bash_tool_enabled`` resolve to a
+        # truthy Mock — equivalent to the production default of ``True``.
+        node = MinimalAgenticNode(
+            node_id="bash_toggle_default",
+            description="Test node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+
+        assert node.bash_tool is not None
+        bash_names = {t.name for t in node.bash_tool.available_tools()}
+        assert "execute_command" in bash_names
+
+    def test_bash_tool_disabled_via_config(self, mock_agent_config):
+        """``bash_tool_enabled=False`` keeps ``BashTool`` out of the node."""
+        mock_agent_config.bash_tool_enabled = False
+
+        node = MinimalAgenticNode(
+            node_id="bash_toggle_off",
+            description="Test node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+
+        assert node.bash_tool is None
+        # ``_ensure_bash_tool_in_tools`` must also short-circuit so the
+        # tool never sneaks into ``self.tools`` via the lazy injector.
+        node.tools = []
+        node._ensure_bash_tool_in_tools()
+        assert node.tools == []
+        # Category map must drop the ``bash_tools`` bucket so profile
+        # rules don't inherit a phantom entry.
+        assert "bash_tools" not in node._tool_category_map()

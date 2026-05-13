@@ -1120,15 +1120,20 @@ class AgenticNode(Node):
     def _setup_bash_tool(self) -> None:
         """Create the node's general-purpose :class:`BashTool` instance.
 
-        Available to every agentic node. ``allowed_patterns=["*"]`` means
-        the tool exposes ``execute_command`` for any shell command; per-call
-        gating is the responsibility of the ``bash_tools`` ASK rule in the
+        Available to every agentic node when ``agent.bash.enabled`` is
+        ``True`` (the default). ``allowed_patterns=["*"]`` means the tool
+        exposes ``execute_command`` for any shell command; per-call gating
+        is the responsibility of the ``bash_tools`` ASK rule in the
         permission profile, not a static pattern whitelist.
 
         Only creates the instance — the tool enters ``self.tools`` via
         :meth:`_ensure_bash_tool_in_tools` so subclass ``setup_tools()``
         resets don't drop it.
         """
+        if not getattr(self.agent_config, "bash_tool_enabled", True):
+            logger.debug("Bash tool disabled via agent.bash.enabled=false")
+            self.bash_tool = None
+            return
         try:
             from datus.tools.func_tool.bash_tool import BashTool
 

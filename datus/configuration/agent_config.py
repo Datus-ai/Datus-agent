@@ -651,6 +651,14 @@ class AgentConfig:
         # CLI, or direct assignment from API/gateway bootstraps.
         filesystem_raw = kwargs.get("filesystem") or {}
         self._filesystem_strict = bool(filesystem_raw.get("strict", False))
+        # ``bash.enabled`` toggles whether agentic nodes instantiate the
+        # general-purpose ``BashTool``. Default ``True`` preserves the
+        # current behaviour where every node exposes ``execute_command``
+        # (gated by the ``bash_tools`` ASK rule in the permission profile).
+        # Set to ``False`` for hardened environments where shell execution
+        # must be unavailable regardless of profile.
+        bash_raw = kwargs.get("bash") or {}
+        self._bash_tool_enabled = bool(bash_raw.get("enabled", True))
         self._current_datasource = ""
         self.nodes = nodes
         self.export_config: Dict[str, Any] = kwargs.get("export", {})
@@ -815,6 +823,24 @@ class AgentConfig:
     @filesystem_strict.setter
     def filesystem_strict(self, value: bool) -> None:
         self._filesystem_strict = bool(value)
+
+    @property
+    def bash_tool_enabled(self) -> bool:
+        """Whether agentic nodes should instantiate the general-purpose ``BashTool``.
+
+        ``True`` (default): every :class:`AgenticNode` exposes
+        ``execute_command``; per-call gating is handled by the
+        ``bash_tools`` ASK rule in the permission profile.
+
+        ``False``: ``BashTool`` is not created and ``execute_command`` is
+        not advertised to the model. Use this for hardened deployments
+        where shell execution must be unavailable regardless of profile.
+        """
+        return self._bash_tool_enabled
+
+    @bash_tool_enabled.setter
+    def bash_tool_enabled(self, value: bool) -> None:
+        self._bash_tool_enabled = bool(value)
 
     @property
     def current_datasource(self):

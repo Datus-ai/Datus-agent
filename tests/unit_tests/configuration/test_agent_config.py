@@ -1316,6 +1316,64 @@ class TestAgentConfigFilesystemStrict:
         assert cfg.filesystem_strict is True
 
 
+# ---------------------------------------------------------------------------
+# AgentConfig.bash_tool_enabled
+# ---------------------------------------------------------------------------
+
+
+class TestAgentConfigBashToolEnabled:
+    """``bash_tool_enabled`` toggles whether agentic nodes instantiate
+    :class:`BashTool`. Sourced from ``agent.bash.enabled`` in YAML and
+    settable at runtime; default is ``True`` so the historical behaviour
+    is preserved when the key is absent.
+    """
+
+    def _make(self, tmp_path, **extra_kwargs):
+        from datus.configuration.agent_config import AgentConfig, NodeConfig
+
+        kwargs = dict(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={
+                "mock": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "m",
+                    "base_url": "http://localhost:0",
+                }
+            },
+            skip_init_dirs=True,
+        )
+        kwargs.update(extra_kwargs)
+        return AgentConfig(**kwargs)
+
+    def test_default_true(self, tmp_path):
+        cfg = self._make(tmp_path)
+        assert cfg.bash_tool_enabled is True
+
+    def test_from_yaml_false(self, tmp_path):
+        cfg = self._make(tmp_path, bash={"enabled": False})
+        assert cfg.bash_tool_enabled is False
+
+    def test_from_yaml_true_explicit(self, tmp_path):
+        cfg = self._make(tmp_path, bash={"enabled": True})
+        assert cfg.bash_tool_enabled is True
+
+    def test_from_yaml_missing_key_defaults_true(self, tmp_path):
+        # ``agent.bash: {}`` (empty dict) must still default to True so
+        # the default-on guarantee survives stub config blocks.
+        cfg = self._make(tmp_path, bash={})
+        assert cfg.bash_tool_enabled is True
+
+    def test_setter_coerces_to_bool(self, tmp_path):
+        cfg = self._make(tmp_path)
+        cfg.bash_tool_enabled = 0
+        assert cfg.bash_tool_enabled is False
+        cfg.bash_tool_enabled = 1
+        assert cfg.bash_tool_enabled is True
+
+
 class TestAgentConfigLanguage:
     """``agent.language`` is the default response language for all agentic
     nodes. Chat API requests may override it per-task on the cloned config.
