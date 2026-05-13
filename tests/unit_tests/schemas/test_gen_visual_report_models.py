@@ -127,6 +127,22 @@ class TestSections:
         with pytest.raises(ValidationError):
             TableSection(id="blk_tbl", data_ref="queries/q1", columns=[])
 
+    def test_table_narrative_optional_and_persisted(self):
+        sec = TableSection(
+            id="blk_tbl",
+            data_ref="queries/q1",
+            columns=[TableColumnSpec(field="a", label="A", type="integer")],
+            narrative="Top 3 regions account for 78% of revenue.",
+        )
+        assert sec.narrative.startswith("Top 3")
+
+        sec_no_narrative = TableSection(
+            id="blk_tbl2",
+            data_ref="queries/q1",
+            columns=[TableColumnSpec(field="a", label="A", type="integer")],
+        )
+        assert sec_no_narrative.narrative is None
+
     def test_table_columns_must_be_unique(self):
         with pytest.raises(ValidationError):
             TableSection(

@@ -175,9 +175,12 @@ Encoding type cheat-sheet (must align with `save_query` columns):
     { "field": "store_name", "label": "Store", "type": "string" },
     { "field": "sales",      "label": "Sales", "type": "number", "format": "currency_usd", "align": "right" },
     { "field": "growth",     "label": "YoY",   "type": "number", "format": "percent", "color_scale": "delta" }
-  ]
+  ],
+  "narrative": "Manhattan #1 and Brooklyn #3 drive 41% of total revenue this quarter."
 }
 ```
+
+Like `chart.narrative`, the optional `table.narrative` renders as a one-paragraph callout below the table — use it to highlight what the reader should take away from the numbers.
 
 Column `type` ∈ {`string`, `integer`, `number`, `date`, `boolean`}.
 Predefined `format` values: `currency_usd`, `currency_cny`, `percent`, `integer`, `date_short`, `date_long`. Or pass a d3-format string (`.2f`, `,.0f`, `.1%`).

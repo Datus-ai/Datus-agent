@@ -153,6 +153,10 @@ class TableSection(BaseModel):
     title: Optional[str] = Field(None, max_length=200)
     data_ref: str = Field(..., description="Reference to a query, formatted as 'queries/<slug>'")
     columns: List[TableColumnSpec] = Field(..., min_length=1, max_length=64)
+    narrative: Optional[str] = Field(
+        None,
+        description="Plain text or Markdown commentary rendered below the table, in a callout",
+    )
 
     @field_validator("data_ref")
     @classmethod
