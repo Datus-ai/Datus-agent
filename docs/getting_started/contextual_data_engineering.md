@@ -135,11 +135,11 @@ You need:
 
 - `datus` installed (see the [Quick Start Guide](Quickstart.md))
 - An LLM provider configured via `/model` inside `datus`. The picker writes provider credentials into `~/.datus/conf/agent.yml`.
-- The MetricFlow semantic-layer adapter configured via `/services semantic` — the CLI auto-installs the missing `datus-semantic-metricflow` package on first use.
+- The MetricFlow semantic-layer adapter configured via `/services semantic` — the CLI will auto-install the missing `datus-semantic-metricflow` package when the service configuration is saved in `/services`.
 
 You do **not** need to download or `cp` anything. The first time `datus` runs without a config, it bootstraps `~/.datus/`:
 
-- `~/.datus/sample/` — bundled sample data (refreshed every launch)
+- `~/.datus/sample/` — bundled sample data (created on first run; existing files are preserved on subsequent runs)
 - `~/.datus/benchmark/california_schools/` — your working copy (preserved on upgrade)
 - `~/.datus/conf/agent.yml` — the `california_schools` datasource and benchmark are pre-registered
 
