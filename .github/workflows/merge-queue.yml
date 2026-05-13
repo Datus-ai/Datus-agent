@@ -1,10 +1,16 @@
 name: "Merge Queue Gate"
 
 on:
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+  merge_group:
   workflow_dispatch:
 
 concurrency:
-  group: merge-queue-gate-${{ github.event.merge_group.head_sha || github.sha }}
+  group: merge-queue-gate-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.sha }}
   cancel-in-progress: true
 
 permissions:
@@ -13,20 +19,28 @@ permissions:
 jobs:
   merge-queue-gate:
     name: Merge Queue Gate
-    if: ${{ github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' }}
     runs-on: self-hosted
     steps:
+      - name: Publish PR gate context
+        if: ${{ github.event_name == 'pull_request_target' }}
+        run: |
+          echo "Merge Queue Gate publishes this lightweight PR check context."
+          echo "The deterministic merge queue suites run on merge_group before merge."
+
       - name: Checkout code
+        if: ${{ github.event_name != 'pull_request_target' }}
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Set up Python
+        if: ${{ github.event_name != 'pull_request_target' }}
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Cache pip dependencies
+        if: ${{ github.event_name != 'pull_request_target' }}
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
@@ -36,6 +50,7 @@ jobs:
             ${{ runner.os }}-pip-
 
       - name: Install dependencies
+        if: ${{ github.event_name != 'pull_request_target' }}
         run: |
           pip install -r requirements.txt
           pip install -r requirements-test.txt
@@ -43,17 +58,21 @@ jobs:
           pip install packaging==26.2
 
       - name: Check release metadata
+        if: ${{ github.event_name != 'pull_request_target' }}
         run: python3 ci/check_release_readiness.py
 
       - name: Setup config file
+        if: ${{ github.event_name != 'pull_request_target' }}
         run: |
           cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
           cp /home/datus_ci/ci_template/ci.env .env
 
       - name: Restore tracked test config
+        if: ${{ github.event_name != 'pull_request_target' }}
         run: git restore --source=HEAD --worktree --staged tests/conf/agent.yml
 
       - name: Isolate test data directory
+        if: ${{ github.event_name != 'pull_request_target' }}
         run: |
           DATUS_TEST_HOME="${GITHUB_WORKSPACE}/.datus_test_data"
           echo "DATUS_TEST_HOME=$DATUS_TEST_HOME" >> "$GITHUB_ENV"
@@ -61,6 +80,7 @@ jobs:
           sed -i "s|project_root: .datus_test_data/workspace|project_root: $DATUS_TEST_HOME/workspace|g" tests/conf/agent.yml
 
       - name: Load environment variables
+        if: ${{ github.event_name != 'pull_request_target' }}
         run: |
           while IFS= read -r line || [ -n "$line" ]; do
             if [[ ! -z "$line" && ! "$line" =~ ^[[:space:]]*# ]]; then
@@ -71,11 +91,12 @@ jobs:
           done < .env
 
       - name: Run deterministic merge queue suites
+        if: ${{ github.event_name != 'pull_request_target' }}
         run: python3 ci/run-merge-queue-tests.py
 
       - name: Upload merge queue artifacts
         uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request_target' }}
         with:
           name: merge-queue-results
           path: |

@@ -18,10 +18,21 @@ permissions:
 
 jobs:
   format-check:
-    if: ${{ github.event_name == 'merge_group' || (!startsWith(github.event.pull_request.title, '[Doc]') && !startsWith(github.event.pull_request.title, '[doc]')) }}
+    if: ${{ github.event_name == 'merge_group' || (github.event_name == 'pull_request_target' && !startsWith(github.event.pull_request.title, '[Doc]') && !startsWith(github.event.pull_request.title, '[doc]')) }}
     uses: ./.github/workflows/python-format-check.yml
 
   run-coverage:
     needs: format-check
-    if: ${{ github.event_name == 'merge_group' || (!startsWith(github.event.pull_request.title, '[Doc]') && !startsWith(github.event.pull_request.title, '[doc]')) }}
+    if: ${{ github.event_name == 'pull_request_target' && !startsWith(github.event.pull_request.title, '[Doc]') && !startsWith(github.event.pull_request.title, '[doc]') }}
     uses: ./.github/workflows/run-ut-and-coverage.yml
+
+  run-coverage-merge-group-context:
+    name: run-coverage / coverage
+    needs: format-check
+    if: ${{ github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish merge queue coverage context
+        run: |
+          echo "run-coverage / coverage is enforced on pull_request_target before merge queue entry."
+          echo "Merge Queue Gate runs the deterministic pre-merge test suites on merge_group."

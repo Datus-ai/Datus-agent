@@ -87,6 +87,7 @@ nav:
       - Overview: develop/README.md
       - Architecture: develop/Architecture.md
       - Contributing: develop/Contributing.md
+      - CI Ruleset: develop/ci_ruleset.md
     - VSCode Extension: vscode_extension/introduction.md
 
   - Release Notes: release_notes.md
