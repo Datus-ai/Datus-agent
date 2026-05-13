@@ -178,6 +178,18 @@ class ArgumentParser:
         )
 
         self.parser.add_argument(
+            "--no-open-report",
+            dest="no_open_report",
+            action="store_true",
+            default=False,
+            help=(
+                "Do not auto-open the generated report HTML in the system browser after "
+                "gen_visual_report finishes (REPL mode only — print mode never opens). "
+                "Default is to open."
+            ),
+        )
+
+        self.parser.add_argument(
             "--stream",
             dest="stream_thinking",
             action="store_true",

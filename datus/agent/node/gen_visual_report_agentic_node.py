@@ -438,10 +438,39 @@ class GenVisualReportAgenticNode(AgenticNode):
                 report_id=report_id,
                 report_dist=report_dist,
             )
+            self._maybe_open_in_browser(html_path)
             return str(html_path.relative_to(project_root))
         except Exception as exc:
             logger.error("Failed to compile report HTML for %s: %s", report_id, exc, exc_info=True)
             return None
+
+    def _maybe_open_in_browser(self, html_path: Path) -> None:
+        """Open the compiled report in the system browser when the CLI opts in.
+
+        Gated on ``agent_config.report_auto_open`` which ``DatusCLI`` sets to
+        ``True`` for the interactive REPL (unless the user passes
+        ``--no-open-report``) and ``False`` for print mode. Mirrors the
+        background-thread pattern in ``datus.cli.web.chatbot`` so a slow
+        platform launcher never blocks the agent's final action emission.
+        """
+        if not bool(getattr(self.agent_config, "report_auto_open", False)):
+            return
+        try:
+            import threading
+            import webbrowser
+
+            url = html_path.resolve().as_uri()
+
+            def _open() -> None:
+                try:
+                    webbrowser.open(url)
+                except Exception as exc:  # pragma: no cover — depends on the host env
+                    logger.debug("webbrowser.open failed: %s", exc)
+
+            threading.Thread(target=_open, daemon=True).start()
+            logger.info("Opening report in browser: %s", url)
+        except Exception as exc:
+            logger.debug("Failed to schedule browser open: %s", exc)
 
     # ----------------------------------------------------------- execution
 

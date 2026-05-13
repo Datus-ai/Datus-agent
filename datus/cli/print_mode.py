@@ -39,6 +39,9 @@ class PrintModeRunner:
             # Same runtime override hook DatusCLI uses — keeps print mode
             # parity with the REPL for offline-asset overrides.
             self.agent_config.report_dist_cli_override = report_dist_flag
+        # Print mode never opens a browser — it is typically used for
+        # scripting / CI where popping a window is unwanted noise.
+        self.agent_config.report_auto_open = False
         self.at_completer = AtReferenceCompleter(self.agent_config)
         self.actions = ActionHistoryManager()
         self.message = args.print_mode

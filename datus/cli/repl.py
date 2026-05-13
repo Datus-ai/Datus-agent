@@ -166,6 +166,10 @@ class DatusCLI:
         report_dist_flag = getattr(self.args, "report_dist", None)
         if report_dist_flag:
             self.agent_config.report_dist_cli_override = report_dist_flag
+        # REPL is interactive — auto-open the report HTML in a browser unless
+        # the user opted out via ``--no-open-report``. Stash on agent_config
+        # so the deeply-nested node reads it without arg threading.
+        self.agent_config.report_auto_open = not bool(getattr(self.args, "no_open_report", False))
         self.configuration_manager = configuration_manager()
 
         # Active permission profile name. Initialized from agent_config;

@@ -251,6 +251,90 @@ class TestReportDistResolution:
         assert copied_css.read_text(encoding="utf-8") == "/* node-only css */"
 
 
+class _InlineThread:
+    """Synchronous stand-in for ``threading.Thread``.
+
+    The node's ``_maybe_open_in_browser`` schedules ``webbrowser.open`` on a
+    daemon thread so a slow platform launcher does not block the CLI. Tests
+    need that call to happen before assertions run, so we replace
+    ``threading.Thread`` with this drop-in that invokes ``target`` inline
+    on ``start()``. Eliminates the need for sleep-based waits (P0 violation).
+    """
+
+    def __init__(self, target=None, daemon=False, **kwargs):
+        self._target = target
+        self.daemon = daemon
+
+    def start(self) -> None:
+        if self._target is not None:
+            self._target()
+
+
+class TestAutoOpenInBrowser:
+    """Verify ``_maybe_open_in_browser`` gates on ``agent_config.report_auto_open``."""
+
+    def _seed_manifest_on_disk(self, project_root: Path, report_id: str) -> None:
+        report_dir = project_root / "reports" / report_id
+        (report_dir / "queries").mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "version": "1.0",
+            "id": report_id,
+            "title": "stub",
+            "created_at": "2026-05-13T10:00:00Z",
+            "sections": [{"id": "blk_001", "type": "markdown", "content": "# hi"}],
+        }
+        (report_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    def test_opens_browser_when_flag_enabled(self, real_agent_config, mock_llm_create, monkeypatch):
+        node = _make_node(real_agent_config)
+        real_agent_config.report_auto_open = True
+        report_id = "rpt_auto_open_yes"
+        self._seed_manifest_on_disk(Path(real_agent_config.project_root), report_id)
+        node._active_report_id = report_id
+
+        opened = []
+        monkeypatch.setattr("threading.Thread", _InlineThread)
+        monkeypatch.setattr("webbrowser.open", lambda url, *a, **kw: opened.append(url) or True)
+
+        node._maybe_compile_html(report_id)
+
+        assert len(opened) == 1, f"expected one webbrowser.open call, got {opened}"
+        assert opened[0].startswith("file://")
+        assert opened[0].endswith(f"reports/{report_id}/index.html")
+
+    def test_does_not_open_when_flag_disabled(self, real_agent_config, mock_llm_create, monkeypatch):
+        node = _make_node(real_agent_config)
+        real_agent_config.report_auto_open = False
+        report_id = "rpt_auto_open_no"
+        self._seed_manifest_on_disk(Path(real_agent_config.project_root), report_id)
+        node._active_report_id = report_id
+
+        opened = []
+        monkeypatch.setattr("threading.Thread", _InlineThread)
+        monkeypatch.setattr("webbrowser.open", lambda url, *a, **kw: opened.append(url) or True)
+
+        node._maybe_compile_html(report_id)
+
+        assert opened == [], f"webbrowser.open must not be called; got {opened}"
+
+    def test_does_not_open_when_attribute_missing(self, real_agent_config, mock_llm_create, monkeypatch):
+        """No ``report_auto_open`` attribute (e.g. SaaS path) must default to no-open."""
+        node = _make_node(real_agent_config)
+        if hasattr(real_agent_config, "report_auto_open"):
+            delattr(real_agent_config, "report_auto_open")
+        report_id = "rpt_auto_open_default"
+        self._seed_manifest_on_disk(Path(real_agent_config.project_root), report_id)
+        node._active_report_id = report_id
+
+        opened = []
+        monkeypatch.setattr("threading.Thread", _InlineThread)
+        monkeypatch.setattr("webbrowser.open", lambda url, *a, **kw: opened.append(url) or True)
+
+        node._maybe_compile_html(report_id)
+
+        assert opened == []
+
+
 @pytest.mark.asyncio
 async def test_execute_stream_without_manifest_marks_failure(real_agent_config, mock_llm_create):
     """If LLM never calls save_manifest, the run reports failure."""
