@@ -21,6 +21,14 @@ jobs:
     if: ${{ github.event_name == 'merge_group' || (github.event_name == 'pull_request_target' && !startsWith(github.event.pull_request.title, '[Doc]') && !startsWith(github.event.pull_request.title, '[doc]')) }}
     uses: ./.github/workflows/python-format-check.yml
 
+  format-check-doc-context:
+    name: format-check / format-check
+    if: ${{ github.event_name == 'pull_request_target' && (startsWith(github.event.pull_request.title, '[Doc]') || startsWith(github.event.pull_request.title, '[doc]')) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish docs PR format context
+        run: echo "format-check is skipped for documentation PRs."
+
   run-coverage:
     needs: format-check
     if: ${{ github.event_name == 'pull_request_target' && !startsWith(github.event.pull_request.title, '[Doc]') && !startsWith(github.event.pull_request.title, '[doc]') }}
