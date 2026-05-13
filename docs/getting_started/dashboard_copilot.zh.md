@@ -26,10 +26,26 @@ Bootstrap 过程会自动生成两个专门的子代理：一个**主子代理**
 
 ## 步骤 1：部署 Superset + PostgreSQL
 
-可快速启动一个本地 superset 环境（本指南建议）：
+可快速启动一个本地 Superset 环境（本指南无需本地源码）：
 
 ```bash
-cd quickstart/data_engineering/superset
+# 采用统一目录保存 Dashboard Copilot 快速开始文件，不依赖源码仓库。
+: "${DATUS_QUICKSTART_STACK:=/tmp/datus-superset}"
+mkdir -p "$DATUS_QUICKSTART_STACK"
+cd "$DATUS_QUICKSTART_STACK"
+
+echo "从 datus-quickstart-data 下载 Dashboard Copilot 快速开始包。"
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+
+local_zip="$tmpdir/datus-dashboard-copilot-stack-v1.zip"
+curl -L -o "$local_zip" \
+  https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v1/datus-dashboard-copilot-stack-v1.zip
+
+unzip -q "$local_zip" -d "$tmpdir"
+cp "$tmpdir"/*/superset/docker-compose.yml "$DATUS_QUICKSTART_STACK/docker-compose.yml"
+cp "$tmpdir"/*/superset/superset_config.py "$DATUS_QUICKSTART_STACK/superset_config.py"
+
 docker compose up -d
 ```
 

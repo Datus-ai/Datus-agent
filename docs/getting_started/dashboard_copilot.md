@@ -26,10 +26,26 @@ Before you begin, ensure you have:
 
 ## Step 1: Deploy Superset + PostgreSQL
 
-For a fast local bootstrap, use the repository-provided Compose stack:
+For a fast local bootstrap, use this Compose stack (no local source checkout required):
 
 ```bash
-cd quickstart/data_engineering/superset
+# Use this folder to store the lightweight Dashboard Copilot quickstart package.
+: "${DATUS_QUICKSTART_STACK:=/tmp/datus-superset}"
+mkdir -p "$DATUS_QUICKSTART_STACK"
+cd "$DATUS_QUICKSTART_STACK"
+
+echo "Downloading Dashboard Copilot quickstart package from datus-quickstart-data release."
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+
+local_zip="$tmpdir/datus-dashboard-copilot-stack-v1.zip"
+curl -L -o "$local_zip" \
+  https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v1/datus-dashboard-copilot-stack-v1.zip
+
+unzip -q "$local_zip" -d "$tmpdir"
+cp "$tmpdir"/*/superset/docker-compose.yml "$DATUS_QUICKSTART_STACK/docker-compose.yml"
+cp "$tmpdir"/*/superset/superset_config.py "$DATUS_QUICKSTART_STACK/superset_config.py"
+
 docker compose up -d
 ```
 
