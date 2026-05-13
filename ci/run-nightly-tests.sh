@@ -893,6 +893,7 @@ def is_alive(value) -> bool:
     return str(value).strip().lower() in {"true", "1", "yes"}
 
 
+ACCESS_DENIED_ERROR_CODES = {1045, 1227, 5203}
 database = os.getenv("STARROCKS_DATABASE", "test")
 probe_table = f"__datus_starrocks_readiness_probe_{os.getpid()}"
 conn = pymysql.connect(
@@ -916,7 +917,11 @@ try:
         try:
             cursor.execute("SHOW BACKENDS")
         except pymysql.err.OperationalError as exc:
-            if not exc.args or exc.args[0] != 5203:
+            # StarRocks 5203 is the privilege-denied error seen when SHOW BACKENDS
+            # lacks SYSTEM OPERATE/NODE privileges; MySQL 1045/1227 are equivalent
+            # access-denied signals for this optional backend-status probe.
+            error_code = exc.args[0] if exc.args else None
+            if error_code not in ACCESS_DENIED_ERROR_CODES:
                 raise
         else:
             rows = cursor.fetchall()
