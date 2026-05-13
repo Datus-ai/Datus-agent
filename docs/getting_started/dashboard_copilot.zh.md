@@ -279,16 +279,16 @@ filter:
 
 **6. 选择并发数**
 
-后续构建会并行调用 LLM，可根据网络与配额选择线程池大小（默认 1，可加大以加速）。
+后续构建会并行调用 LLM，可根据网络与配额选择线程池大小（默认 3，可加大以加速）。
 
 ```text
 ─────────────────────────────── Bootstrap BI ───────────────────────────────
 ────────────────────────────────────────────────────────────────────────────
   Pick a thread-pool size for parallel LLM calls:
-  → 1 threads
-    2 threads
-    4 threads
-    8 threads
+    1 threads
+  → 3 threads
+    5 threads
+    10 threads
 ────────────────────────────────────────────────────────────────────────────
   ↑↓ navigate   ↵ select   Esc back
 ```
@@ -304,7 +304,7 @@ filter:
 ```text
 ⏺ 💬 Dashboard: World Bank's Data (id=5)
 
-⏺ 💬 Selected 9/9 chart(s); 1 table(s); pool_size=1
+⏺ 💬 Selected 9/9 chart(s); 1 table(s); pool_size=3
 
 ⏺ 💬 Crawling metadata for 1 table(s)…
 
@@ -325,7 +325,7 @@ filter:
 
 ⏺ 💬 Discovering SQL files under /Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql (mode=incremental)…
 
-⏺ 💬 Processing 9 SQL item(s) with concurrency=1.
+⏺ 💬 Processing 9 SQL item(s) with concurrency=3.
 
 ⏺ gen_sql_summary(/Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql)
   ⎿  Done (2 tool uses · 20.0s)
@@ -427,7 +427,7 @@ Bootstrap 完成后，您将获得可直接使用的子代理：
 
 ## 步骤 4：使用生成的子代理
 
-Bootstrap 一次生成两个子代理：用于自助取数的**主子代理**，以及面向指标分析的**归因子代理**。两者均可作为斜杠命令直接调用，也可在 `/agent` 中切换为当前默认 agent。
+Bootstrap 一次生成两个子代理：用于自助取数的**主子代理**，以及面向指标分析的**归因子代理**。两者均可通过 `@Agent <name>`（例如 `@Agent superset_world_bank_s`）直接调用，也可在 `/agent` 中切换为当前默认 agent。
 
 ### SQL 取数 — 主子代理
 

@@ -280,16 +280,16 @@ The aggregations in these charts will be mined for metric definitions. By defaul
 
 **6. Pick a thread-pool size**
 
-The build phase issues parallel LLM calls. Increase the pool size to speed things up if your provider quota allows.
+The build phase issues parallel LLM calls. Increase the pool size to speed things up if your provider quota allows. The default is 3.
 
 ```text
 ─────────────────────────────── Bootstrap BI ───────────────────────────────
 ────────────────────────────────────────────────────────────────────────────
   Pick a thread-pool size for parallel LLM calls:
-  → 1 threads
-    2 threads
-    4 threads
-    8 threads
+    1 threads
+  → 3 threads
+    5 threads
+    10 threads
 ────────────────────────────────────────────────────────────────────────────
   ↑↓ navigate   ↵ select   Esc back
 ```
@@ -305,7 +305,7 @@ Crawls and indexes the schema of the in-scope tables:
 ```text
 ⏺ 💬 Dashboard: World Bank's Data (id=5)
 
-⏺ 💬 Selected 9/9 chart(s); 1 table(s); pool_size=1
+⏺ 💬 Selected 9/9 chart(s); 1 table(s); pool_size=3
 
 ⏺ 💬 Crawling metadata for 1 table(s)…
 
@@ -326,7 +326,7 @@ For each selected chart, Datus generates a structured SQL Summary (purpose, tabl
 
 ⏺ 💬 Discovering SQL files under /Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql (mode=incremental)…
 
-⏺ 💬 Processing 9 SQL item(s) with concurrency=1.
+⏺ 💬 Processing 9 SQL item(s) with concurrency=3.
 
 ⏺ gen_sql_summary(/Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql)
   ⎿  Done (2 tool uses · 20.0s)
@@ -428,7 +428,7 @@ When bootstrap finishes, both subagents are saved and registered as slash comman
 
 ## Step 4: Use the Generated Subagents
 
-`/bootstrap-bi` produces two subagents at once: a **main subagent** for self-service SQL, and an **attribution subagent** for metric-level analysis. Both are immediately invocable as slash commands; you can also switch the default agent through `/agent`.
+`/bootstrap-bi` produces two subagents at once: a **main subagent** for self-service SQL, and an **attribution subagent** for metric-level analysis. Both are invocable with `@Agent <name>` (for example, `@Agent superset_world_bank_s`) and you can switch the default agent through `/agent`.
 
 ### Self-service SQL — main subagent
 
