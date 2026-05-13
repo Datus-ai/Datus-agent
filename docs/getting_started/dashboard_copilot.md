@@ -26,7 +26,7 @@ Before you begin, ensure you have:
 
 ## Step 1: Deploy Superset + PostgreSQL
 
-For a fast local bootstrap, use this Compose stack (no local source checkout required):
+For a fast local bootstrap, use this Compose stack:
 
 ```bash
 mkdir -p /tmp/datus-superset && cd /tmp/datus-superset

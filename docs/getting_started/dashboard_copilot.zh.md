@@ -26,7 +26,7 @@ Bootstrap 过程会自动生成两个专门的子代理：一个**主子代理**
 
 ## 步骤 1：部署 Superset + PostgreSQL
 
-可快速启动一个本地 Superset 环境（本指南无需本地源码）：
+可快速启动一个本地 Superset 环境：
 
 ```bash
 mkdir -p /tmp/datus-superset && cd /tmp/datus-superset
