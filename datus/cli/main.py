@@ -165,6 +165,19 @@ class ArgumentParser:
         )
 
         self.parser.add_argument(
+            "--report-dist",
+            dest="report_dist",
+            type=str,
+            default=None,
+            help=(
+                "Path to a local @datus/web-report dist directory. When provided, "
+                "gen_visual_report copies datus-report.css/.umd.js next to the generated "
+                "index.html so the report opens via file:// without network access. "
+                "Overrides agentic_nodes.gen_visual_report.report_dist from agent.yml."
+            ),
+        )
+
+        self.parser.add_argument(
             "--stream",
             dest="stream_thinking",
             action="store_true",

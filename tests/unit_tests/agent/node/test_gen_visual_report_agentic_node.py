@@ -192,6 +192,65 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
     assert (report_dir / "index.html").is_file()
 
 
+class TestReportDistResolution:
+    """Verify the CLI flag → node_config priority for offline asset overrides."""
+
+    def _make_dist(self, base: Path, name: str) -> Path:
+        d = base / name
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "datus-report.css").write_text(f"/* {name} css */", encoding="utf-8")
+        (d / "datus-report.umd.js").write_text(f"/* {name} js */", encoding="utf-8")
+        return d
+
+    def _seed_manifest_on_disk(self, project_root: Path, report_id: str) -> None:
+        report_dir = project_root / "reports" / report_id
+        (report_dir / "queries").mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "version": "1.0",
+            "id": report_id,
+            "title": "stub",
+            "created_at": "2026-05-13T10:00:00Z",
+            "sections": [{"id": "blk_001", "type": "markdown", "content": "# hi"}],
+        }
+        (report_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    def test_cli_override_wins_over_node_config(self, real_agent_config, mock_llm_create, tmp_path):
+        node_dist = self._make_dist(tmp_path / "vendors", "from-node-config")
+        cli_dist = self._make_dist(tmp_path / "vendors", "from-cli-flag")
+
+        node = _make_node(real_agent_config)
+        node.node_config["report_dist"] = str(node_dist)
+        real_agent_config.report_dist_cli_override = str(cli_dist)
+
+        report_id = "rpt_priority_check_001"
+        self._seed_manifest_on_disk(Path(real_agent_config.project_root), report_id)
+        node._active_report_id = report_id
+
+        html_rel = node._maybe_compile_html(report_id)
+        assert html_rel == f"reports/{report_id}/index.html"
+
+        copied_css = Path(real_agent_config.project_root) / "reports" / report_id / "_assets" / "datus-report.css"
+        # CLI override beat node_config; the CLI copy ended up on disk.
+        assert copied_css.read_text(encoding="utf-8") == "/* from-cli-flag css */"
+
+    def test_node_config_used_when_cli_flag_absent(self, real_agent_config, mock_llm_create, tmp_path):
+        node_dist = self._make_dist(tmp_path / "vendors", "node-only")
+
+        node = _make_node(real_agent_config)
+        node.node_config["report_dist"] = str(node_dist)
+        # Ensure no leftover CLI override is hanging on the shared fixture.
+        if hasattr(real_agent_config, "report_dist_cli_override"):
+            delattr(real_agent_config, "report_dist_cli_override")
+
+        report_id = "rpt_priority_check_002"
+        self._seed_manifest_on_disk(Path(real_agent_config.project_root), report_id)
+        node._active_report_id = report_id
+
+        node._maybe_compile_html(report_id)
+        copied_css = Path(real_agent_config.project_root) / "reports" / report_id / "_assets" / "datus-report.css"
+        assert copied_css.read_text(encoding="utf-8") == "/* node-only css */"
+
+
 @pytest.mark.asyncio
 async def test_execute_stream_without_manifest_marks_failure(real_agent_config, mock_llm_create):
     """If LLM never calls save_manifest, the run reports failure."""

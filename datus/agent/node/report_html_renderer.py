@@ -12,17 +12,16 @@ Two asset-loading modes, mirroring ``datus.cli.web.chatbot``:
 
 * **CDN mode (default)** — the rendered HTML loads ``@datus/web-report`` from
   ``unpkg.com`` at a pinned version. Requires network at view time.
-* **Offline mode** — caller passes ``report_dist`` (or a node-config /
-  ``DATUS_REPORT_DIST`` env override). The two assets are copied next to
-  the ``index.html`` under ``_assets/`` and the template is rewritten to
-  reference them via relative paths. The result opens correctly through
-  ``file://`` with no network access.
+* **Offline mode** — caller passes ``report_dist`` (resolved upstream from
+  the ``--report-dist`` CLI flag or ``agentic_nodes.gen_visual_report.report_dist``).
+  The two assets are copied next to the ``index.html`` under ``_assets/``
+  and the template is rewritten to reference them via relative paths so
+  the result opens through ``file://`` with no network access.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -77,19 +76,13 @@ def _escape_for_script_tag(payload: str) -> str:
 def _resolve_dist(report_dist: Optional[Path]) -> Optional[Path]:
     """Validate ``report_dist`` and return the resolved directory or ``None``.
 
-    Falls back to ``$DATUS_REPORT_DIST`` when the caller did not pass an
-    explicit path, matching how ``datus.cli.web.chatbot`` honours its
-    ``--chatbot-dist`` flag.
+    Returns ``None`` (caller falls back to CDN) when the path is unset,
+    not a directory, or missing one of the required asset files.
     """
-    candidate: Optional[str]
-    if report_dist is not None:
-        candidate = str(report_dist)
-    else:
-        candidate = os.environ.get("DATUS_REPORT_DIST") or None
-    if not candidate:
+    if not report_dist:
         return None
 
-    resolved = Path(candidate).expanduser().resolve()
+    resolved = Path(report_dist).expanduser().resolve()
     if not resolved.is_dir():
         logger.warning("report_dist %s is not a directory; falling back to CDN.", resolved)
         return None
@@ -139,8 +132,8 @@ def render_report_html(
             ``datus-report.umd.js``. When provided and valid, the two files
             are copied next to the generated HTML and the template links to
             them via relative paths (so the page works offline through
-            ``file://``). When ``None``, falls back to the ``DATUS_REPORT_DIST``
-            environment variable, then to the pinned unpkg CDN.
+            ``file://``). When ``None`` (or the directory is missing /
+            incomplete), the template links to the pinned unpkg CDN instead.
 
     Returns:
         Absolute path to the generated ``index.html``.

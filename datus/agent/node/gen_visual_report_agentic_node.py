@@ -425,11 +425,13 @@ class GenVisualReportAgenticNode(AgenticNode):
             from datus.agent.node.report_html_renderer import render_report_html
 
             project_root = Path(self.agent_config.project_root).resolve()
-            # ``report_dist`` lets users point at a locally-built copy of
-            # ``packages/web-report/dist/`` so the rendered HTML can be opened
-            # without network access. Empty / unset → renderer falls back to
-            # ``DATUS_REPORT_DIST`` env, then to the pinned unpkg CDN.
-            report_dist_value = self.node_config.get("report_dist")
+            # ``report_dist`` priority (highest first):
+            #   1. ``--report-dist`` CLI flag (stashed on agent_config by
+            #      DatusCLI / PrintModeRunner as ``report_dist_cli_override``)
+            #   2. ``agentic_nodes.gen_visual_report.report_dist`` in agent.yml
+            #   3. unpkg CDN (renderer default when ``report_dist`` is None)
+            cli_override = getattr(self.agent_config, "report_dist_cli_override", None)
+            report_dist_value = cli_override or self.node_config.get("report_dist")
             report_dist = Path(report_dist_value).expanduser() if report_dist_value else None
             html_path = render_report_html(
                 project_root=project_root,

@@ -34,6 +34,11 @@ class PrintModeRunner:
 
     def __init__(self, args):
         self.agent_config = load_agent_config(**vars(args))
+        report_dist_flag = getattr(args, "report_dist", None)
+        if report_dist_flag:
+            # Same runtime override hook DatusCLI uses — keeps print mode
+            # parity with the REPL for offline-asset overrides.
+            self.agent_config.report_dist_cli_override = report_dist_flag
         self.at_completer = AtReferenceCompleter(self.agent_config)
         self.actions = ActionHistoryManager()
         self.message = args.print_mode
