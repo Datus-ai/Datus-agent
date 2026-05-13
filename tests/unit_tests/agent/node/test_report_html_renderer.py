@@ -69,3 +69,92 @@ def test_render_report_html_missing_manifest_raises(tmp_path: Path):
     (tmp_path / "reports" / "rpt_missing" / "queries").mkdir(parents=True)
     with pytest.raises(FileNotFoundError):
         render_report_html(project_root=tmp_path, report_id="rpt_missing")
+
+
+def test_render_report_html_defaults_to_cdn(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("DATUS_REPORT_DIST", raising=False)
+    _seed_report(tmp_path, report_id="rpt_cdn_default")
+    out_path = render_report_html(project_root=tmp_path, report_id="rpt_cdn_default")
+    body = out_path.read_text(encoding="utf-8")
+    assert "https://unpkg.com/@datus/web-report" in body
+    assert "datus-report.css" in body
+    assert "datus-report.umd.js" in body
+    assert not (tmp_path / "reports" / "rpt_cdn_default" / "_assets").exists()
+
+
+def _seed_dist(dist_dir: Path) -> None:
+    dist_dir.mkdir(parents=True, exist_ok=True)
+    (dist_dir / "datus-report.css").write_text("/* offline css */", encoding="utf-8")
+    (dist_dir / "datus-report.umd.js").write_text("/* offline js */", encoding="utf-8")
+
+
+def test_render_report_html_offline_kwarg_copies_assets(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("DATUS_REPORT_DIST", raising=False)
+    _seed_report(tmp_path, report_id="rpt_offline_001")
+    dist_dir = tmp_path / "vendor" / "datus-report-dist"
+    _seed_dist(dist_dir)
+
+    out_path = render_report_html(
+        project_root=tmp_path,
+        report_id="rpt_offline_001",
+        report_dist=dist_dir,
+    )
+    body = out_path.read_text(encoding="utf-8")
+    # Local relative paths replace the CDN.
+    assert "_assets/datus-report.css" in body
+    assert "_assets/datus-report.umd.js" in body
+    assert "https://unpkg.com/" not in body
+
+    copied_assets = tmp_path / "reports" / "rpt_offline_001" / "_assets"
+    assert (copied_assets / "datus-report.css").read_text(encoding="utf-8") == "/* offline css */"
+    assert (copied_assets / "datus-report.umd.js").read_text(encoding="utf-8") == "/* offline js */"
+
+
+def test_render_report_html_offline_via_env_var(tmp_path: Path, monkeypatch):
+    _seed_report(tmp_path, report_id="rpt_offline_env")
+    dist_dir = tmp_path / "vendor" / "from-env"
+    _seed_dist(dist_dir)
+    monkeypatch.setenv("DATUS_REPORT_DIST", str(dist_dir))
+
+    out_path = render_report_html(project_root=tmp_path, report_id="rpt_offline_env")
+    body = out_path.read_text(encoding="utf-8")
+    assert "_assets/datus-report.umd.js" in body
+    assert "https://unpkg.com/" not in body
+
+
+def test_render_report_html_invalid_dist_falls_back_to_cdn(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("DATUS_REPORT_DIST", raising=False)
+    _seed_report(tmp_path, report_id="rpt_invalid_dist")
+    # Directory exists but only contains the css — js missing, should fall back.
+    incomplete = tmp_path / "vendor" / "incomplete"
+    incomplete.mkdir(parents=True)
+    (incomplete / "datus-report.css").write_text("/* partial */", encoding="utf-8")
+
+    out_path = render_report_html(
+        project_root=tmp_path,
+        report_id="rpt_invalid_dist",
+        report_dist=incomplete,
+    )
+    body = out_path.read_text(encoding="utf-8")
+    assert "https://unpkg.com/@datus/web-report" in body
+    assert not (tmp_path / "reports" / "rpt_invalid_dist" / "_assets").exists()
+
+
+def test_render_report_html_kwarg_overrides_env(tmp_path: Path, monkeypatch):
+    """An explicit ``report_dist`` argument wins over ``DATUS_REPORT_DIST``."""
+    _seed_report(tmp_path, report_id="rpt_kwarg_priority")
+    env_dist = tmp_path / "vendor" / "from-env"
+    kwarg_dist = tmp_path / "vendor" / "from-kwarg"
+    _seed_dist(env_dist)
+    _seed_dist(kwarg_dist)
+    (env_dist / "datus-report.css").write_text("/* env css */", encoding="utf-8")
+    (kwarg_dist / "datus-report.css").write_text("/* kwarg css */", encoding="utf-8")
+    monkeypatch.setenv("DATUS_REPORT_DIST", str(env_dist))
+
+    render_report_html(
+        project_root=tmp_path,
+        report_id="rpt_kwarg_priority",
+        report_dist=kwarg_dist,
+    )
+    copied_css = tmp_path / "reports" / "rpt_kwarg_priority" / "_assets" / "datus-report.css"
+    assert copied_css.read_text(encoding="utf-8") == "/* kwarg css */"

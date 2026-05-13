@@ -425,7 +425,17 @@ class GenVisualReportAgenticNode(AgenticNode):
             from datus.agent.node.report_html_renderer import render_report_html
 
             project_root = Path(self.agent_config.project_root).resolve()
-            html_path = render_report_html(project_root=project_root, report_id=report_id)
+            # ``report_dist`` lets users point at a locally-built copy of
+            # ``packages/web-report/dist/`` so the rendered HTML can be opened
+            # without network access. Empty / unset → renderer falls back to
+            # ``DATUS_REPORT_DIST`` env, then to the pinned unpkg CDN.
+            report_dist_value = self.node_config.get("report_dist")
+            report_dist = Path(report_dist_value).expanduser() if report_dist_value else None
+            html_path = render_report_html(
+                project_root=project_root,
+                report_id=report_id,
+                report_dist=report_dist,
+            )
             return str(html_path.relative_to(project_root))
         except Exception as exc:
             logger.error("Failed to compile report HTML for %s: %s", report_id, exc, exc_info=True)
