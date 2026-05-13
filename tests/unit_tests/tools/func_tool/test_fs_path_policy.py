@@ -190,10 +190,10 @@ class TestWhitelistAnchors:
 
     def test_anchors_skip_memory_when_node_none(self, project, fake_home):
         anchors = whitelist_anchors(root_path=project, current_node=None, datus_home=fake_home)
-        # Expect exactly two anchors: project .datus/skills and home .datus/skills.
-        # No per-node memory anchor because current_node is None.
-        assert len(anchors) == 2
-        expected_suffixes = {(".datus", "skills")}
+        # Expect exactly three anchors: project .datus/skills, project .datus/plans
+        # and home .datus/skills. No per-node memory anchor because current_node is None.
+        assert len(anchors) == 3
+        expected_suffixes = {(".datus", "skills"), (".datus", "plans")}
         seen = {(a.parent.name, a.name) for a in anchors}
         assert seen == expected_suffixes
 
@@ -222,17 +222,17 @@ class TestBuildWalkPatterns:
         # otherwise ``.datus`` survives the first-level match.
         assert excludes == [".datus", ".datus/**"]
 
-    def test_re_includes_default_to_skills_only(self, project):
+    def test_re_includes_default_to_skills_and_plans_only(self, project):
         _, re_includes = build_walk_patterns(root_path=project, current_node=None)
         # Without a current_node we cannot scope a memory subtree — only the
-        # project-local skills directory gets re-included.
-        assert re_includes == [".datus/skills/**"]
+        # project-local skills and plans directories get re-included.
+        assert re_includes == [".datus/skills/**", ".datus/plans/**"]
 
     def test_re_includes_add_node_memory(self, project):
         _, re_includes = build_walk_patterns(root_path=project, current_node="gen_sql")
-        # Skills stays first (longest-prefix-wins isn't used here, but the
-        # downstream walker iterates in list order for determinism).
-        assert re_includes == [".datus/skills/**", ".datus/memory/gen_sql/**"]
+        # Skills/plans stay first (downstream walker iterates in list order
+        # for determinism).
+        assert re_includes == [".datus/skills/**", ".datus/plans/**", ".datus/memory/gen_sql/**"]
 
     def test_re_includes_add_inherited_memory(self, project):
         _, re_includes = build_walk_patterns(
@@ -242,6 +242,7 @@ class TestBuildWalkPatterns:
         )
         assert re_includes == [
             ".datus/skills/**",
+            ".datus/plans/**",
             ".datus/memory/gen_sql/**",
             ".datus/memory/chat/**",
         ]
@@ -252,7 +253,7 @@ class TestBuildWalkPatterns:
             current_node="chat",
             inherited_memory_node="chat",
         )
-        assert re_includes == [".datus/skills/**", ".datus/memory/chat/**"]
+        assert re_includes == [".datus/skills/**", ".datus/plans/**", ".datus/memory/chat/**"]
 
     def test_patterns_are_posix_for_wcmatch(self, project):
         """All generated patterns are POSIX slashes; wcmatch does not normalize

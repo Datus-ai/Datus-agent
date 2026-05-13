@@ -379,12 +379,13 @@ class TestGenReportAgenticNodeExecution:
         assert actions[-1].status == ActionStatus.SUCCESS
 
         # Verify the model was called with a prompt that includes schema context
+        # (now via the unified ``build_database_context`` format).
         assert len(mock_llm_create.call_history) >= 1
         call = mock_llm_create.call_history[0]
         prompt = call.get("prompt", "")
         assert "Analyze revenue by department" in prompt
-        assert "Database context: california_schools" in prompt
-        assert "Schema: main" in prompt
+        assert "california_schools" in prompt
+        assert "main" in prompt
 
     @pytest.mark.asyncio
     async def test_report_input_not_set_raises(self, real_agent_config, mock_llm_create):
@@ -557,11 +558,14 @@ class TestExtractReportFromResponse:
 
 
 class TestBuildEnhancedMessage:
-    def test_no_context_returns_user_message(self, real_agent_config, mock_llm_create):
+    def test_includes_dialect_block_from_agent_config(self, real_agent_config, mock_llm_create):
+        """``db_type`` from agent_config drives the dialect block even without input-side ctx."""
         node = _make_node(real_agent_config, mock_llm_create)
         user_input = GenReportNodeInput(user_message="Analyze revenue")
         result = node._build_enhanced_message(user_input)
-        assert result == "Analyze revenue"
+        assert "Analyze revenue" in result
+        # Dialect comes from agent_config.db_type
+        assert "Dialect" in result
 
     def test_with_database_context_builds_structured_message(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)

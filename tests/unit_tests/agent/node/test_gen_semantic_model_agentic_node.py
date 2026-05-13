@@ -279,11 +279,12 @@ class TestGenSemanticModelAgenticNodeExecution:
         assert actions[-1].status == ActionStatus.SUCCESS
 
         # Verify the model was called with enhanced prompt containing database context
+        # (unified format via ``build_database_context``).
         assert len(mock_llm_create.call_history) >= 1
         call = mock_llm_create.call_history[0]
         prompt = call.get("prompt", "")
         assert "Generate semantic model for satscores" in prompt
-        assert "database: california_schools" in prompt
+        assert "california_schools" in prompt
 
     @pytest.mark.asyncio
     async def test_semantic_model_interactive_mode_token_tracking(self, real_agent_config, mock_llm_create):
@@ -694,14 +695,14 @@ class TestExecuteStreamGenSemanticModelError:
         assert len(actions) >= 2
         assert actions[-1].status == ActionStatus.SUCCESS
 
-        # Verify prompt contains catalog context
+        # Verify prompt contains catalog context (unified ``build_database_context`` format).
         assert len(mock_llm_create.call_history) >= 1
         call = mock_llm_create.call_history[0]
         prompt = call.get("prompt", "")
         assert "Generate semantic model" in prompt
-        assert "catalog: my_catalog" in prompt
-        assert "database: california_schools" in prompt
-        assert "schema: main" in prompt
+        assert "my_catalog" in prompt
+        assert "california_schools" in prompt
+        assert "main" in prompt
 
 
 # ---------------------------------------------------------------------------

@@ -67,7 +67,6 @@ class TestExtKnowledgeNodeInput:
             database="db",
             db_schema="sch",
             question="What is the metric?",
-            search_text="revenue",
         )
         d = inp.model_dump()
         assert d["catalog"] == "cat"

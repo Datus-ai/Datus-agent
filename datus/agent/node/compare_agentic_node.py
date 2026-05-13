@@ -220,6 +220,13 @@ class CompareAgenticNode(AgenticNode):
             response_content: Any = ""
             last_successful_output: Optional[Dict[str, Any]] = None
 
+            # The Jinja-rendered ``user_prompt`` already inlines the full
+            # comparison context (two SQLs + expectation). Stash it as the
+            # input's user-side text and let the base helper inject DB
+            # context + plan-mode workflow into the enhanced section.
+            user_input.user_message = user_prompt
+            user_prompt = self._build_enhanced_message(user_input)
+
             async for stream_action in self.model.generate_with_tools_stream(
                 prompt=user_prompt,
                 tools=self.tools or [],

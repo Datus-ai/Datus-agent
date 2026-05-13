@@ -13,7 +13,7 @@ skills, and permissions. This node is fully independent from GenSQLAgenticNode.
 from typing import Any, AsyncGenerator, Dict, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
-from datus.agent.node.gen_sql_agentic_node import build_enhanced_message, prepare_template_context
+from datus.agent.node.gen_sql_agentic_node import prepare_template_context
 from datus.agent.workflow import Workflow
 from datus.cli.execution_state import ExecutionInterrupted
 from datus.configuration.agent_config import AgentConfig
@@ -275,6 +275,8 @@ class ChatAgenticNode(AgenticNode):
             self.tools.extend(self.sub_agent_task_tool.available_tools())
         if self.ask_user_tool:
             self.tools.extend(self.ask_user_tool.available_tools())
+        # Plan-mode tools (confirm_plan + todo_*) for main agents; no-op for sub-agents.
+        self._register_plan_mode_tools()
 
     def _update_database_connection(self, database_name: str):
         """Update database connection to a different database."""
@@ -437,12 +439,12 @@ class ChatAgenticNode(AgenticNode):
     def _get_execution_config(self, original_input) -> dict:
         """Build execution config — tools, system instruction, hooks.
 
-        Plan-mode tools (``confirm_plan`` + ``todo_*``) are appended via
-        :meth:`AgenticNode._get_plan_mode_tools`. Permission hooks are
-        composited on top when configured.
+        Plan-mode tools were registered on ``self.tools`` once at setup time
+        (see :meth:`AgenticNode._register_plan_mode_tools`), so they are
+        already part of ``self.tools`` here for main agents.
         """
         config = {
-            "tools": self.tools + self._get_plan_mode_tools(),
+            "tools": self.tools,
             "instruction": self._get_system_instruction(original_input),
             "hooks": None,
         }
@@ -556,16 +558,9 @@ class ChatAgenticNode(AgenticNode):
 
         user_input = self.input
 
+        # Plan-mode state transition is handled inside ``_build_enhanced_message``.
+        # We still read the raw input flag here for the user-visible action label.
         is_plan_mode = getattr(user_input, "plan_mode", False)
-        if is_plan_mode:
-            # Idempotent: reuses the existing plan file if plan mode is already
-            # active so the LLM keeps iterating on the same plan across turns.
-            self.activate_plan_mode()
-        elif self.is_in_plan_mode():
-            # User toggled plan mode off without confirming — clean up state.
-            self.deactivate_plan_mode()
-
-        # Create initial action
         action_type = "plan_mode_interaction" if is_plan_mode else "chat_interaction"
         action = ActionHistory.create_action(
             role=ActionRole.USER,
@@ -582,23 +577,9 @@ class ChatAgenticNode(AgenticNode):
 
             session, conversation_summary = self._get_or_create_session()
 
-            # Build enhanced message with database context
-            enhanced_message = build_enhanced_message(
-                user_message=user_input.user_message,
-                db_type=self.agent_config.db_type,
-                catalog=user_input.catalog,
-                database=user_input.database,
-                db_schema=user_input.db_schema,
-                external_knowledge=user_input.external_knowledge,
-                schemas=user_input.schemas,
-                metrics=user_input.metrics,
-                reference_sql=user_input.reference_sql,
-            )
-
-            # Plan-mode workflow prompt is injected as an enhanced MessagePart
-            # so the user never sees it but the LLM does.
-            if self.is_in_plan_mode():
-                enhanced_message = self._merge_plan_mode_prompt(enhanced_message)
+            # Shared base-class assembly handles DB context + plan-mode
+            # workflow injection (plan tools were registered at setup time).
+            enhanced_message = self._build_enhanced_message(user_input)
 
             response_content = ""
             tokens_used = 0

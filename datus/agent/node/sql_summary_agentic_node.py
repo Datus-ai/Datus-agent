@@ -22,7 +22,6 @@ from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput, S
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.utils.loggings import get_logger
-from datus.utils.message_utils import MessagePart, build_structured_content
 
 logger = get_logger(__name__)
 
@@ -398,42 +397,15 @@ class SqlSummaryAgenticNode(AgenticNode):
             # prompt_version is now hardcoded to "1.0" in _get_system_prompt
             system_instruction = self._get_system_prompt(conversation_summary, None, template_context)
 
-            # Add context to user message if provided
-            enhanced_message = user_input.user_message
-            enhanced_parts = []
-
-            # Add SQL query context if provided
+            # sql_query / comment are node-specific extras spliced into the
+            # enhanced section; DB context + plan-mode prompt are added by base.
+            extra_parts: List[str] = []
             if user_input.sql_query:
-                enhanced_parts.append(f"SQL Query:\n```sql\n{user_input.sql_query}\n```")
-
+                extra_parts.append(f"SQL Query:\n```sql\n{user_input.sql_query}\n```")
             if user_input.comment:
-                enhanced_parts.append(f"Comment: {user_input.comment}")
+                extra_parts.append(f"Comment: {user_input.comment}")
 
-            from datus.utils.node_utils import resolve_database_name_for_prompt
-
-            effective_db = resolve_database_name_for_prompt(
-                None,
-                user_input.database or "",
-            )
-            if user_input.catalog or effective_db or user_input.db_schema:
-                context_parts = []
-                if user_input.catalog:
-                    context_parts.append(f"catalog: {user_input.catalog}")
-                if effective_db:
-                    context_parts.append(f"database: {effective_db}")
-                if user_input.db_schema:
-                    context_parts.append(f"schema: {user_input.db_schema}")
-                context_part_str = f"Context: {', '.join(context_parts)}"
-                enhanced_parts.append(context_part_str)
-
-            if enhanced_parts:
-                enhanced_context = "\n\n".join(enhanced_parts)
-                enhanced_message = build_structured_content(
-                    [
-                        MessagePart(type="enhanced", content=enhanced_context),
-                        MessagePart(type="user", content=user_input.user_message),
-                    ]
-                )
+            enhanced_message = self._build_enhanced_message(user_input, extra_enhanced_parts=extra_parts)
 
             logger.debug(f"Tools available: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
             logger.debug(f"Passing hooks to model: {self.hooks} (type: {type(self.hooks)})")

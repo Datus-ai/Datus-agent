@@ -29,8 +29,10 @@ from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.base import BaseInput, BaseResult
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
-from datus.utils.message_utils import append_enhanced
+from datus.utils.message_utils import MessagePart, build_structured_content
+from datus.utils.node_utils import build_database_context
 
 if TYPE_CHECKING:
     from datus.agent.workflow import Workflow
@@ -313,9 +315,9 @@ class AgenticNode(Node):
     def activate_plan_mode(self) -> str:
         """Idempotently turn on plan mode and allocate the plan file path.
 
-        On first activation generates ``./.datus/{uuid}.md``, ensures the
-        ``./.datus/`` directory exists, and resets ``workflow_prompt_sent``
-        so the next user prompt carries the full workflow description.
+        On first activation generates ``./.datus/plans/{short_uuid}.md``,
+        ensures the directory exists, and resets ``workflow_prompt_sent`` so
+        the next user prompt carries the full workflow description.
 
         Returns:
             The plan file path (absolute or project-relative).
@@ -325,9 +327,12 @@ class AgenticNode(Node):
 
         self.plan_mode_active = True
         self.workflow_prompt_sent = False
-        plan_dir = os.path.join(".", ".datus")
+        plan_dir = os.path.join(".", ".datus", "plans")
         os.makedirs(plan_dir, exist_ok=True)
-        self.plan_file_path = os.path.join(plan_dir, f"{uuid.uuid4().hex}.md")
+        # Short id keeps the path human-friendly; uuid4 has 122 bits of
+        # entropy, so 8 hex chars (32 bits) is still ample for collision
+        # avoidance within a project's plans directory.
+        self.plan_file_path = os.path.join(plan_dir, f"{uuid.uuid4().hex[:8]}.md")
         logger.info(f"Plan mode activated: plan_file_path={self.plan_file_path}")
         return self.plan_file_path
 
@@ -377,38 +382,162 @@ class AgenticNode(Node):
         self.workflow_prompt_sent = True
         return rendered
 
-    def _merge_plan_mode_prompt(self, enhanced_message: str) -> str:
-        """Append the plan-mode workflow prompt as an ``enhanced`` MessagePart.
-
-        Works for both legacy plain-text prompts and already-structured JSON
-        prompts produced by ``build_structured_content``.
-        """
-        addition = self.build_plan_mode_enhanced_prompt()
-        if not addition:
-            return enhanced_message
-        return append_enhanced(enhanced_message, addition)
-
     def _get_plan_mode_tools(self) -> List[Tool]:
-        """Return plan-mode-only func tools when plan mode is active.
+        """Build the plan-mode func tools (``confirm_plan`` + ``todo_*``).
 
-        Tools: ``confirm_plan`` (signals user to accept/revise the plan file)
-        plus the legacy ``todo_read/todo_write/todo_update`` tools that remain
-        available as execution-phase helpers.
+        - **Sub-agent** (``self._is_subagent is True``): returns ``[]``.
+          Sub-agents are invoked by a parent agent that already owns planning,
+          so they must not expose their own planning surface.
+        - **Main agent**: always returns the tools, regardless of
+          ``plan_mode_active``. The user can pre-activate plan mode to *force*
+          the LLM through the file-backed workflow, but the tools themselves
+          are visible from the start so the LLM can judge whether to use them.
         """
-        if not self.plan_mode_active:
+        if getattr(self, "_is_subagent", False):
             return []
 
         from datus.tools.func_tool.plan_tools import ConfirmPlanTool, PlanTool
 
-        tools: List[Tool] = []
-        # Session may not exist yet (e.g. called before execute_stream creates it);
-        # PlanTool only uses session for backward-compat field, so an inert stand-in
-        # is acceptable. Prefer real session when available.
-        session = self._session
-        if session is not None:
-            tools.extend(PlanTool(session).available_tools())
+        # PlanTool keeps a reference to the agents-SDK session for backward-
+        # compat but does not actually read it, so passing the current value
+        # (which may still be None at setup time) is safe.
+        tools: List[Tool] = list(PlanTool(self._session).available_tools())
         tools.extend(ConfirmPlanTool(self).available_tools())
         return tools
+
+    def _register_plan_mode_tools(self) -> None:
+        """Append plan-mode tools to ``self.tools`` at node setup time.
+
+        Subclasses call this at the end of any code path that (re)builds
+        ``self.tools`` from scratch — e.g. inside ``_rebuild_tools()`` /
+        ``setup_tools()`` and after datasource swaps. The call is a no-op
+        for sub-agents (``_is_subagent=True``).
+        """
+        if getattr(self, "_is_subagent", False):
+            return
+        plan_tools = self._get_plan_mode_tools()
+        if not plan_tools:
+            return
+        if self.tools is None:
+            self.tools = []
+        self.tools.extend(plan_tools)
+
+    def _sync_plan_mode_state(self, user_input: Any) -> None:
+        """Reconcile ``self.plan_mode_active`` with the input's ``plan_mode`` flag.
+
+        - ``user_input.plan_mode == True`` → idempotently activate (reuse the
+          existing plan file across turns).
+        - Flag absent / False but currently active → deactivate (user toggled
+          plan mode off mid-session).
+        - Sub-agent invocations never carry the flag, so this is a no-op.
+        """
+        if getattr(user_input, "plan_mode", False):
+            self.activate_plan_mode()
+        elif self.is_in_plan_mode():
+            self.deactivate_plan_mode()
+
+    def _build_enhanced_message(
+        self,
+        user_input: Any,
+        extra_enhanced_parts: Optional[List[str]] = None,
+    ) -> str:
+        """Assemble the per-turn user prompt for the LLM.
+
+        Composes (in order):
+        1. Plan-mode state transition (activate / deactivate) based on
+           ``user_input.plan_mode``.
+        2. Shared context parts read from *user_input* via ``getattr``
+           (so subclasses with sparser inputs still work):
+           - ``external_knowledge`` → "MUST use these business logic" block
+           - DB-context block (dialect + catalog/database/db_schema)
+           - ``schemas`` (list of :class:`TableSchema`) → "Available tables"
+           - ``metrics`` → "Metrics:" block
+           - ``reference_sql`` → "Reference SQL:" block
+        3. Subclass-supplied ``extra_enhanced_parts`` (already formatted).
+        4. Plan-mode workflow prompt when plan mode is active.
+
+        Args:
+            user_input: The node's input model. Attributes are read via
+                ``getattr`` so unrelated fields are simply skipped. The raw
+                user text comes from ``user_input.user_message``.
+            extra_enhanced_parts: Already-formatted strings to splice into
+                the enhanced section (after the standard parts, before the
+                plan-mode workflow prompt). Use this for subclass-specific
+                context (e.g. compare's pair-of-SQL block) so the user-side
+                of the structured envelope remains the raw user message.
+
+        Returns the final user-facing string. When no enhanced parts apply,
+        returns the raw user message unchanged; otherwise wraps both in a
+        structured JSON ``[enhanced, user]`` envelope.
+        """
+        self._sync_plan_mode_state(user_input)
+
+        enhanced_parts: List[str] = []
+
+        ext_know = getattr(user_input, "external_knowledge", "") or ""
+        if ext_know:
+            enhanced_parts.append(f"MUST use these business logic:\n{ext_know}")
+
+        db_type = getattr(self.agent_config, "db_type", "") if self.agent_config else ""
+        if db_type:
+            # Always resolve empty database via the connector default — the
+            # helper is a no-op when no connector is wired or value is set.
+            from datus.utils.node_utils import resolve_database_name_for_prompt
+
+            connector = None
+            db_func_tool = getattr(self, "db_func_tool", None)
+            if db_func_tool is not None:
+                connector = getattr(db_func_tool, "connector", None)
+            effective_database = resolve_database_name_for_prompt(
+                connector,
+                getattr(user_input, "database", "") or "",
+            )
+            ctx = build_database_context(
+                db_type,
+                catalog=getattr(user_input, "catalog", "") or "",
+                database=effective_database or "",
+                schema=getattr(user_input, "db_schema", "") or "",
+            )
+            if ctx:
+                enhanced_parts.append(ctx)
+
+        schemas = getattr(user_input, "schemas", None)
+        if schemas:
+            from datus.schemas.node_models import TableSchema
+
+            table_names_str = TableSchema.table_names_to_prompt(schemas)
+            enhanced_parts.append(
+                "Available tables (MUST use these tables and ONLY use these "
+                f"table names in FROM/JOIN clauses): \n{table_names_str}"
+            )
+
+        metrics = getattr(user_input, "metrics", None)
+        if metrics:
+            enhanced_parts.append(f"Metrics: \n{to_str([item.model_dump() for item in metrics])}")
+
+        reference_sql = getattr(user_input, "reference_sql", None)
+        if reference_sql:
+            enhanced_parts.append(f"Reference SQL: \n{to_str([item.model_dump() for item in reference_sql])}")
+
+        if extra_enhanced_parts:
+            enhanced_parts.extend(p for p in extra_enhanced_parts if p)
+
+        if self.is_in_plan_mode():
+            plan_prompt = self.build_plan_mode_enhanced_prompt()
+            if plan_prompt:
+                enhanced_parts.append(plan_prompt)
+
+        user_message = getattr(user_input, "user_message", "") or ""
+        if not enhanced_parts:
+            return user_message
+
+        enhanced_context = "\n\n".join(enhanced_parts)
+        return build_structured_content(
+            [
+                MessagePart(type="enhanced", content=enhanced_context),
+                MessagePart(type="user", content=user_message),
+            ]
+        )
 
     def get_node_name(self) -> str:
         """

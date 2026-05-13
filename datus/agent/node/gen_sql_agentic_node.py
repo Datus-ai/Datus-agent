@@ -19,19 +19,12 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.agent_models import SubAgentConfig
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput, GenSQLNodeResult
-from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.exceptions import DatusException, ErrorCode
-from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
-from datus.utils.message_utils import (
-    MessagePart,
-    build_structured_content,
-)
-from datus.utils.node_utils import build_database_context
 
 logger = get_logger(__name__)
 
@@ -265,6 +258,9 @@ class GenSQLAgenticNode(AgenticNode):
         self._setup_sub_agent_task_tool()
         if self.sub_agent_task_tool:
             self.tools.extend(self.sub_agent_task_tool.available_tools())
+
+        # Plan-mode tools (confirm_plan + todo_*) for main agents; no-op for sub-agents.
+        self._register_plan_mode_tools()
 
         logger.debug(f"Setup {len(self.tools)} tools: {[tool.name for tool in self.tools]}")
 
@@ -727,9 +723,6 @@ class GenSQLAgenticNode(AgenticNode):
         action_history_manager.add_action(action)
         yield action
 
-        # Track plan mode state for cleanup
-        is_plan_mode = False
-
         try:
             # Check for auto-compact before session creation to ensure fresh context
             await self._auto_compact()
@@ -737,38 +730,7 @@ class GenSQLAgenticNode(AgenticNode):
             # Get or create session and any available summary
             session, conversation_summary = self._get_or_create_session()
 
-            # Check for plan mode activation — state lives on the base class.
-            is_plan_mode = getattr(user_input, "plan_mode", False)
-            if is_plan_mode:
-                # Idempotent: reuse the plan file if plan mode is already
-                # active across turns.
-                self.activate_plan_mode()
-            elif self.is_in_plan_mode():
-                # User toggled plan mode off without confirming — clean up.
-                self.deactivate_plan_mode()
-
-            # Add context to user message if provided
-            from datus.utils.node_utils import resolve_database_name_for_prompt
-
-            effective_db = resolve_database_name_for_prompt(
-                self.db_func_tool.connector if self.db_func_tool else None,
-                user_input.database or "",
-            )
-            enhanced_message = build_enhanced_message(
-                user_message=user_input.user_message,
-                db_type=self.agent_config.db_type,
-                catalog=user_input.catalog,
-                database=effective_db,
-                db_schema=user_input.db_schema,
-                external_knowledge=user_input.external_knowledge,
-                schemas=user_input.schemas,
-                metrics=user_input.metrics,
-                reference_sql=user_input.reference_sql,
-            )
-
-            # Inject the plan-mode workflow prompt as an enhanced (hidden) MessagePart.
-            if self.is_in_plan_mode():
-                enhanced_message = self._merge_plan_mode_prompt(enhanced_message)
+            enhanced_message = self._build_enhanced_message(user_input)
 
             # Execute with streaming
             response_content = ""
@@ -949,11 +911,11 @@ class GenSQLAgenticNode(AgenticNode):
     def _get_execution_config(self, original_input: GenSQLNodeInput) -> dict:
         """Build execution config — tools, system instruction, hooks.
 
-        Plan-mode tools (``confirm_plan`` + ``todo_*``) are appended via
-        :meth:`AgenticNode._get_plan_mode_tools`.
+        Plan-mode tools were registered on ``self.tools`` once at setup time
+        via :meth:`AgenticNode._register_plan_mode_tools`.
         """
         return {
-            "tools": self.tools + self._get_plan_mode_tools(),
+            "tools": self.tools,
             "instruction": self._get_system_instruction(original_input),
             "hooks": None,
         }
@@ -1152,50 +1114,3 @@ def prepare_template_context(
         context["workspace_root"] = workspace_root or getattr(agent_config, "project_root", None)
     logger.debug(f"Prepared template context: {context}")
     return context
-
-
-def build_enhanced_message(
-    user_message: str,
-    db_type: str,
-    catalog: str = "",
-    database: str = "",
-    db_schema: str = "",
-    external_knowledge: str = "",
-    schemas: Optional[list[TableSchema]] = None,
-    metrics: Optional[list[Metric]] = None,
-    reference_sql: Optional[list[ReferenceSql]] = None,
-) -> str:
-    enhanced_parts = []
-    if external_knowledge:
-        enhanced_parts.append(f"MUST use these business logic:\n{external_knowledge}")
-
-    context_part_str = build_database_context(
-        db_type,
-        catalog=catalog,
-        database=database,
-        schema=db_schema,
-    )
-    enhanced_parts.append(context_part_str)
-
-    if schemas:
-        table_names_str = TableSchema.table_names_to_prompt(schemas)
-        enhanced_parts.append(
-            f"Available tables (MUST use these tables and ONLY use these table names in FROM/JOIN clauses):"
-            f" \n{table_names_str}"
-        )
-    if metrics:
-        enhanced_parts.append(f"Metrics: \n{to_str([item.model_dump() for item in metrics])}")
-
-    if reference_sql:
-        enhanced_parts.append(f"Reference SQL: \n{to_str([item.model_dump() for item in reference_sql])}")
-
-    if enhanced_parts:
-        enhanced_context = "\n\n".join(enhanced_parts)
-        return build_structured_content(
-            [
-                MessagePart(type="enhanced", content=enhanced_context),
-                MessagePart(type="user", content=user_message),
-            ]
-        )
-
-    return user_message

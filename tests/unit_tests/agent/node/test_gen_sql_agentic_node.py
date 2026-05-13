@@ -742,45 +742,6 @@ class TestChatAgenticNodeExecution:
 # ===========================================================================
 
 
-class TestBuildEnhancedMessage:
-    """Tests for the build_enhanced_message utility function."""
-
-    def test_basic_message(self):
-        from datus.agent.node.gen_sql_agentic_node import build_enhanced_message
-
-        result = build_enhanced_message(
-            user_message="Show all tables",
-            db_type="sqlite",
-        )
-        assert "Show all tables" in result
-        assert "sqlite" in result
-
-    def test_message_with_external_knowledge(self):
-        from datus.agent.node.gen_sql_agentic_node import build_enhanced_message
-
-        result = build_enhanced_message(
-            user_message="Query revenue",
-            db_type="postgresql",
-            external_knowledge="Revenue is stored in the financials table",
-        )
-        assert "Revenue is stored in the financials table" in result
-        assert "postgresql" in result
-
-    def test_message_with_database_context(self):
-        from datus.agent.node.gen_sql_agentic_node import build_enhanced_message
-
-        result = build_enhanced_message(
-            user_message="Count users",
-            db_type="mysql",
-            catalog="main_catalog",
-            database="main_db",
-            db_schema="public",
-        )
-        assert "main_catalog" in result
-        assert "main_db" in result
-        assert "public" in result
-
-
 class TestPrepareTemplateContext:
     """Tests for the prepare_template_context utility function."""
 
@@ -1693,38 +1654,6 @@ class TestEndToEndGenerationHooksInteraction:
 # ===========================================================================
 
 
-class TestBuildEnhancedMessageWithContext:
-    """Tests for build_enhanced_message with various context combinations."""
-
-    def test_build_enhanced_message_with_db_type_only(self):
-        """build_enhanced_message includes dialect context when only db_type is provided."""
-        from datus.agent.node.gen_sql_agentic_node import build_enhanced_message
-
-        result = build_enhanced_message(
-            user_message="Show me the data",
-            db_type="sqlite",
-        )
-
-        assert "sqlite" in result
-        assert "Show me the data" in result
-
-    def test_build_enhanced_message_with_database_and_schema(self):
-        """build_enhanced_message includes database and schema in context."""
-        from datus.agent.node.gen_sql_agentic_node import build_enhanced_message
-
-        result = build_enhanced_message(
-            user_message="Query sales",
-            db_type="postgresql",
-            database="analytics",
-            db_schema="public",
-        )
-
-        assert "postgresql" in result
-        assert "analytics" in result
-        assert "public" in result
-        assert "Query sales" in result
-
-
 # ===========================================================================
 # SQL File Storage Helper Tests
 # ===========================================================================
@@ -2375,41 +2304,64 @@ class TestUpdateContextGenSQL:
 
 
 class TestGetExecutionConfig:
-    def test_returns_base_tools_when_plan_mode_inactive(self, real_agent_config, mock_llm_create):
+    def test_main_agent_always_exposes_plan_tools(self, real_agent_config, mock_llm_create):
+        """Main agent: plan tools are registered on ``self.tools`` at setup time."""
         node = _make_node_extra2(real_agent_config, mock_llm_create)
-        base_tool = MagicMock()
-        node.tools = [base_tool]
         user_input = GenSQLNodeInput(user_message="query")
 
         with patch.object(node, "_get_system_instruction", return_value="system instruction"):
             config = node._get_execution_config(user_input)
 
-        assert config["tools"] == [base_tool]
+        tool_names = {getattr(t, "name", "") for t in config["tools"]}
+        assert "confirm_plan" in tool_names
+        assert "todo_write" in tool_names
         assert config["instruction"] == "system instruction"
         assert config["hooks"] is None
 
-    def test_appends_plan_tools_when_plan_mode_active(self, real_agent_config, mock_llm_create, tmp_path):
+    def test_subagent_never_gets_plan_tools(self, real_agent_config, mock_llm_create):
+        """Sub-agent invocation suppresses plan tools entirely (set at construction)."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        node = GenSQLAgenticNode(
+            node_id="test_subagent_no_plan",
+            description="subagent",
+            node_type=NodeType.TYPE_GENSQL,
+            agent_config=real_agent_config,
+            node_name="gensql",
+            is_subagent=True,
+        )
+        user_input = GenSQLNodeInput(user_message="query")
+
+        with patch.object(node, "_get_system_instruction", return_value="system instruction"):
+            config = node._get_execution_config(user_input)
+
+        tool_names = {getattr(t, "name", "") for t in config["tools"]}
+        assert "confirm_plan" not in tool_names
+        assert "todo_write" not in tool_names
+
+    def test_plan_mode_activation_does_not_change_tool_list(self, real_agent_config, mock_llm_create, tmp_path):
+        """Activating plan mode does not change the tool list — already registered at setup."""
         import os
 
         node = _make_node_extra2(real_agent_config, mock_llm_create)
-        base_tool = MagicMock()
-        node.tools = [base_tool]
         user_input = GenSQLNodeInput(user_message="query", plan_mode=True)
 
         cwd = os.getcwd()
         os.chdir(tmp_path)
         try:
+            with patch.object(node, "_get_system_instruction", return_value="base instruction"):
+                tools_before = list(node._get_execution_config(user_input)["tools"])
             node.activate_plan_mode()
             with patch.object(node, "_get_system_instruction", return_value="base instruction"):
-                config = node._get_execution_config(user_input)
-
-            tool_names = {getattr(t, "name", "") for t in config["tools"]}
-            assert base_tool in config["tools"]
-            assert "confirm_plan" in tool_names
-            assert config["instruction"] == "base instruction"
+                tools_after = list(node._get_execution_config(user_input)["tools"])
         finally:
             node.deactivate_plan_mode()
             os.chdir(cwd)
+
+        assert tools_before == tools_after
+        names = {getattr(t, "name", "") for t in tools_after}
+        assert "confirm_plan" in names
+        assert "todo_write" in names
 
 
 # ---------------------------------------------------------------------------

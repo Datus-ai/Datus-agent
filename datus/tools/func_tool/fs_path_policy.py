@@ -133,6 +133,7 @@ def classify_path(
     # rather than the global one. See Decision Order step 4 in the plan.
     project_dot_datus = (root_resolved / ".datus").resolve(strict=False)
     project_skills = (project_dot_datus / "skills").resolve(strict=False)
+    project_plans = (project_dot_datus / "plans").resolve(strict=False)
     project_memory_node: Optional[Path] = None
     if current_node:
         project_memory_node = (project_dot_datus / "memory" / current_node).resolve(strict=False)
@@ -144,7 +145,9 @@ def classify_path(
 
     # Owned (writable) anchors first; the inherited anchor is checked last and
     # tagged ``read_only=True`` so the tool layer can deny writes there.
-    writable_whitelist = [project_skills]
+    # ``project_plans`` hosts the LLM's plan-mode markdown files and must be
+    # both readable and writable from any agentic node.
+    writable_whitelist = [project_skills, project_plans]
     if project_memory_node is not None:
         writable_whitelist.append(project_memory_node)
     writable_whitelist.append(global_skills)
@@ -209,7 +212,10 @@ def whitelist_anchors(
     root_resolved = Path(root_path).expanduser().resolve(strict=False)
     home_resolved = _resolve_home(datus_home)
     project_dot_datus = (root_resolved / ".datus").resolve(strict=False)
-    anchors = [(project_dot_datus / "skills").resolve(strict=False)]
+    anchors = [
+        (project_dot_datus / "skills").resolve(strict=False),
+        (project_dot_datus / "plans").resolve(strict=False),
+    ]
     if current_node:
         anchors.append((project_dot_datus / "memory" / current_node).resolve(strict=False))
     if inherited_memory_node and inherited_memory_node != current_node:
@@ -247,7 +253,7 @@ def build_walk_patterns(
     """
     del root_path  # reserved for future use; keeps API stable.
     excludes = [".datus", ".datus/**"]
-    re_includes = [".datus/skills/**"]
+    re_includes = [".datus/skills/**", ".datus/plans/**"]
     if current_node:
         re_includes.append(f".datus/memory/{current_node}/**")
     if inherited_memory_node and inherited_memory_node != current_node:

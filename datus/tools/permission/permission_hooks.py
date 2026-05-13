@@ -199,6 +199,11 @@ class PermissionHooks(AgentHooks):
         self.fs_policy = fs_policy
         self.non_interactive = non_interactive
 
+    # Plan-mode tooling is always allowed regardless of permission profile:
+    # ``confirm_plan`` already runs its own user interaction, and ``todo_*``
+    # are local-only state helpers that never touch the filesystem or DB.
+    _PLAN_MODE_BYPASS_TOOLS = frozenset({"confirm_plan", "todo_read", "todo_write", "todo_update"})
+
     async def on_tool_start(self, context, agent, tool) -> None:
         """Intercept ALL tool calls for permission checking.
 
@@ -218,6 +223,11 @@ class PermissionHooks(AgentHooks):
             PermissionDeniedException: If permission is denied or user rejects
         """
         tool_name = getattr(tool, "name", str(tool))
+
+        # Short-circuit plan-mode helpers: they carry their own UX and have
+        # no external side effects, so skip the permission profile entirely.
+        if tool_name in self._PLAN_MODE_BYPASS_TOOLS:
+            return
 
         # Get tool category and pattern name for permission checking
         category, pattern_name = self._get_category_and_pattern(tool_name, context)

@@ -19,6 +19,10 @@ class CompareInput(BaseInput):
     sql_context: SQLContext = Field(..., description="The SQL context to compare")
     expectation: str = Field(..., description="Ground truth expectation (SQL query or data text)")
     prompt_version: Optional[str] = Field(default=None, description="Version for prompt")
+    # Populated by the node after rendering the comparison template; the
+    # shared :meth:`AgenticNode._build_enhanced_message` reads this as the
+    # user-side text of the structured ``[enhanced, user]`` envelope.
+    user_message: str = Field(default="", description="Rendered user-side prompt sent to the LLM")
 
 
 class CompareResult(BaseResult):

@@ -284,7 +284,6 @@ async def process_knowledge_line(
 
     question = row.get("question", "")
     sql = row.get("sql", "")
-    subject_path = row.get("subject_path", "")
 
     if not question:
         return {"successful": False, "error": "Missing question field"}
@@ -295,7 +294,6 @@ async def process_knowledge_line(
         user_message=question,  # for compatibility
         question=question,  # pass directly for workflow mode
         gold_sql=sql,  # pass directly, accessed via get_gold_sql() tool
-        subject_path=subject_path if subject_path else None,
     )
 
     # Create GenExtKnowledgeAgenticNode (workflow mode auto-saves to database)

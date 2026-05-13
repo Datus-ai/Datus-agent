@@ -258,9 +258,11 @@ class FeedbackAgenticNode(AgenticNode):
             tokens_used = 0
             last_successful_output = None
 
+            feedback_prompt = self._build_enhanced_message(user_input)
+
             async for stream_action in self.model.generate_with_tools_stream(
-                prompt=user_input.user_message,
-                tools=self.tools,
+                prompt=feedback_prompt,
+                tools=self.tools or [],
                 mcp_servers=self.mcp_servers,
                 instruction=system_instruction,
                 max_turns=self.max_turns,

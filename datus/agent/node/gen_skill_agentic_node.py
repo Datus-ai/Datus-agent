@@ -388,9 +388,11 @@ class SkillCreatorAgenticNode(AgenticNode):
             tokens_used = 0
             last_successful_output = None
 
+            skill_prompt = self._build_enhanced_message(user_input)
+
             async for stream_action in self.model.generate_with_tools_stream(
-                prompt=user_input.user_message,
-                tools=self.tools,
+                prompt=skill_prompt,
+                tools=self.tools or [],
                 mcp_servers={},
                 instruction=system_prompt,
                 max_turns=self.max_turns,

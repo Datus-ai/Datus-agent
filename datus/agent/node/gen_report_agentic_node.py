@@ -20,7 +20,6 @@ from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput, Gen
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.loggings import get_logger
-from datus.utils.message_utils import MessagePart, build_structured_content
 
 logger = get_logger(__name__)
 
@@ -354,40 +353,6 @@ class GenReportAgenticNode(AgenticNode):
             base_prompt = pm.render_template(template_name="gen_report_system", version=version, **context)
 
         return self._finalize_system_prompt(base_prompt)
-
-    def _build_enhanced_message(self, user_input: GenReportNodeInput) -> str:
-        """
-        Build enhanced message with context.
-
-        Base implementation adds database context. Subclasses can override
-        to add additional context specific to their report type.
-
-        Args:
-            user_input: Report node input
-
-        Returns:
-            Enhanced message string with context (structured JSON format)
-        """
-        enhanced_parts = []
-
-        if user_input.catalog:
-            enhanced_parts.append(f"Catalog : {user_input.catalog}")
-        # Add database context
-        if user_input.database:
-            enhanced_parts.append(f"Database context: {user_input.database}")
-        if user_input.db_schema:
-            enhanced_parts.append(f"Schema: {user_input.db_schema}")
-
-        if enhanced_parts:
-            enhanced_context = chr(10).join(enhanced_parts)
-            return build_structured_content(
-                [
-                    MessagePart(type="enhanced", content=enhanced_context),
-                    MessagePart(type="user", content=user_input.user_message),
-                ]
-            )
-
-        return user_input.user_message
 
     def _extract_report_result(self, actions: List[ActionHistory]) -> Optional[Dict[str, Any]]:
         """

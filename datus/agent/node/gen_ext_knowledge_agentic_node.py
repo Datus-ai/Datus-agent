@@ -31,8 +31,6 @@ from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.utils.benchmark_utils import ComparisonOutcome, TableComparator
 from datus.utils.loggings import get_logger
-from datus.utils.message_utils import MessagePart, build_structured_content
-from datus.utils.node_utils import build_database_context
 
 logger = get_logger(__name__)
 
@@ -575,13 +573,9 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
         context["has_ask_user_tool"] = self.ask_user_tool is not None
         context["has_gold_sql"] = bool(gold_sql)
 
-        # Priority 1: User-specified subject_path (highest priority)
-        if user_input.subject_path:
-            context["has_user_specified_subject"] = True
-            context["user_subject_path"] = user_input.subject_path
-            logger.info(f"Using user-specified subject_path: {user_input.subject_path}")
-        else:
-            context["has_user_specified_subject"] = False
+        # ``subject_path`` was removed from ExtKnowledgeNodeInput; no caller
+        # populated it in production. Always fall back to subject-tree.
+        context["has_user_specified_subject"] = False
 
         # Priority 2 & 3: Handle subject_tree context based on whether predefined or query from storage
         if self.subject_tree:
@@ -846,33 +840,14 @@ Rules:
             # Get system instruction from template with enhanced context
             system_instruction = self._get_system_prompt(conversation_summary, prompt_version, template_context)
 
-            # Build enhanced message using question only (gold_sql accessed via tool)
-            enhanced_message = question
-            enhanced_parts = []
-            enhanced_parts.append(
-                build_database_context(
-                    self.agent_config.db_type, self.input.catalog, self.input.database, self.input.db_schema
-                )
-            )
-
-            # Add search_text context if provided
-            if user_input.search_text:
-                enhanced_parts.append(f"search_text: {user_input.search_text}")
-
-            if user_input.explanation:
-                enhanced_parts.append(f"Existing Explanation: {user_input.explanation}")
-
-            if user_input.subject_path:
-                enhanced_parts.append(f"Subject Path: {user_input.subject_path}")
-
-            if enhanced_parts:
-                enhanced_context = "\n\n".join(enhanced_parts)
-                enhanced_message = build_structured_content(
-                    [
-                        MessagePart(type="enhanced", content=enhanced_context),
-                        MessagePart(type="user", content=question),
-                    ]
-                )
+            # Use the parsed question (extracted from raw user_message) as the
+            # user-side prompt; DB context + plan-mode workflow come from base.
+            original_user_message = user_input.user_message
+            user_input.user_message = question
+            try:
+                enhanced_message = self._build_enhanced_message(user_input)
+            finally:
+                user_input.user_message = original_user_message
 
             logger.debug(f"Tools available: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
             logger.info(f"Passing hooks to model: {self.hooks} (type: {type(self.hooks)})")

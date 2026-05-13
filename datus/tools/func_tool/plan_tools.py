@@ -274,6 +274,11 @@ class ConfirmPlanTool:
     async def confirm_plan(self) -> FuncToolResult:
         """Confirm the current plan with the user.
 
+        Preconditions:
+        - Plan mode MUST be active (user activated via Shift+Tab / --plan-mode).
+          Otherwise this tool returns an error so the LLM does not surface a
+          confirmation prompt outside the formal plan-mode workflow.
+
         Workflow:
         - Read ``node.plan_file_path``; if missing, return an error so the
           LLM knows to write the plan first.
@@ -285,6 +290,15 @@ class ConfirmPlanTool:
         # Local imports to avoid cycles with execution_state / schemas.
         from datus.cli.execution_state import InteractionCancelled
         from datus.schemas.interaction_event import InteractionEvent
+
+        if not self.node.is_in_plan_mode():
+            return FuncToolResult(
+                success=0,
+                error=(
+                    "plan mode is not active; the user must enable plan mode "
+                    "(Shift+Tab in REPL or --plan-mode flag) before calling confirm_plan"
+                ),
+            )
 
         path = self.node.plan_file_path
         if not path or not Path(path).exists():
@@ -305,7 +319,8 @@ class ConfirmPlanTool:
         except OSError as exc:
             return FuncToolResult(success=0, error=f"failed to read plan file: {exc}")
 
-        await broker.send(content=plan_md, content_type="markdown", action_type="plan_preview")
+        preview = f"\n---\n\n{plan_md}"
+        await broker.send(content=preview, content_type="markdown", action_type="plan_preview")
 
         event = InteractionEvent(
             title="Plan",

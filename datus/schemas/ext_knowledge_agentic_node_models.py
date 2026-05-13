@@ -30,11 +30,6 @@ class ExtKnowledgeNodeInput(BaseInput):
         description="Reference SQL answer. Accessed via get_gold_sql() tool, not exposed in prompt.",
     )
 
-    search_text: Optional[str] = Field(default=None, description="Business search_text/concept to define")
-    explanation: Optional[str] = Field(default=None, description="Existing explanation for the knowledge")
-    subject_path: Optional[str] = Field(
-        default=None, description="Subject path for classification (e.g., 'Finance/Revenue')"
-    )
     prompt_version: Optional[str] = Field(default=None, description="Version for prompt template")
     prompt_language: Optional[str] = Field(default="en", description="Language for prompts (en/zh)")
     agent_description: Optional[str] = Field(default=None, description="Custom agent description")

@@ -655,28 +655,40 @@ class TestChatAgenticNodeExecutionConfig:
         assert isinstance(config["instruction"], str)
         assert "list_tables" in {tool.name for tool in config["tools"]}
 
-    def test_plan_mode_config_adds_plan_tools(self, real_agent_config, mock_llm_create):
-        """When plan mode is active, confirm_plan and todo_* are appended."""
+    def test_main_agent_always_exposes_plan_tools(self, real_agent_config, mock_llm_create):
+        """Main agent gets ``confirm_plan`` / ``todo_*`` regardless of plan_mode state."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
 
         node = ChatAgenticNode(
-            node_id="test_exec_plan",
-            description="Test plan exec config",
+            node_id="test_exec_plan_tools",
+            description="Test plan-tool availability",
             node_type=NodeType.TYPE_CHAT,
             agent_config=real_agent_config,
         )
         node.input = ChatNodeInput(user_message="test", database="california_schools")
-        baseline_count = len(node._get_execution_config(node.input)["tools"])
+        node._is_subagent = False
+        assert node.plan_mode_active is False
 
-        node.activate_plan_mode()
-        try:
-            plan_config = node._get_execution_config(node.input)
-            tool_names = {t.name for t in plan_config["tools"]}
-            assert "confirm_plan" in tool_names
-            assert "todo_write" in tool_names
-            assert len(plan_config["tools"]) > baseline_count
-        finally:
-            node.deactivate_plan_mode()
+        tool_names = {t.name for t in node._get_execution_config(node.input)["tools"]}
+        assert "confirm_plan" in tool_names
+        assert "todo_write" in tool_names
+
+    def test_subagent_does_not_get_plan_tools(self, real_agent_config, mock_llm_create):
+        """Sub-agent invocation suppresses plan tools entirely."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        node = ChatAgenticNode(
+            node_id="test_exec_subagent",
+            description="Test sub-agent plan tools off",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+            is_subagent=True,
+        )
+        node.input = ChatNodeInput(user_message="test", database="california_schools")
+
+        tool_names = {t.name for t in node._get_execution_config(node.input)["tools"]}
+        assert "confirm_plan" not in tool_names
+        assert "todo_write" not in tool_names
 
     def test_permission_hooks_are_applied(self, real_agent_config, mock_llm_create):
         """Permission hooks are attached to the execution config when available."""
