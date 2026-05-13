@@ -11,4 +11,4 @@ import os
 # bundled backup. User can opt back in by setting the env var to "false".
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "true")
 
-__version__ = "0.2.6"
+__version__ = "0.3.0"
