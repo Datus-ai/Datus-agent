@@ -234,7 +234,7 @@ Treat each output as a polished deliverable — a small **branded analytics prod
 - **Section primitive** (report mode): a `<Section>` wrapper with optional kicker, title, and body slot. Insert a subtle divider rule between sections.
 - **Callout / pull-quote primitive** (report mode): a `<Callout>` block with a 4-px left border in `COLORS.primary` (or `accent` / `negative`), pale background. At most one per section.
 - **Figure captions** (report mode): every chart gets a caption beneath the `<ResponsiveContainer>` in the form `Figure N. <one-line description>. Source: <sqlId>, executed <date>`. Captions in 11px italic muted text.
-- **Data tables** (report mode): zebra-striped rows, right-aligned numeric columns, left-aligned string columns, sticky header within the table card. Limit to ~15 visible rows; hide the rest behind a "show more" toggle.
+- **Data tables** (report mode): zebra-striped rows, right-aligned numeric columns, left-aligned string columns, sticky header within the table card. When the dataset has **more than 15 rows, paginate** at 15 rows/page. Render a small pagination footer beneath the table with `‹ Prev`, a centered `<current> / <total>` page indicator, and `Next ›` — keep the current page in component-local `useState`, disable the boundary button at page 1 / last page. Don't use a "show more" toggle and don't render all rows at once; paginating is the cleaner read for the user and keeps the rendered DOM small.
 
 ### Iconography & emoji (read this twice)
 
