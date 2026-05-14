@@ -468,6 +468,14 @@ class ChatCommands:
                 if banner_callback is not None:
                     streaming_ctx.set_clear_header_callback(banner_callback)
 
+                # TUI mode binds Rich to TUIOutputBuffer, where Console.clear()
+                # + ESC[3J only injects unrecognised ANSI bytes. Hand the
+                # streaming context the buffer's own clear primitive so the
+                # mid-stream Ctrl+O verbose toggle wipes the viewport for real.
+                tui_output_buffer = getattr(self.cli, "_tui_output_buffer", None)
+                if tui_output_buffer is not None:
+                    streaming_ctx.set_clear_screen_callback(tui_output_buffer.clear)
+
                 # In TUI mode the persistent prompt_toolkit Application owns
                 # stdin, so the termios-based ``interrupt_on_escape`` listener
                 # would fight the main input loop. Skip it and rely on

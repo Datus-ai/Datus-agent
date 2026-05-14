@@ -133,6 +133,7 @@ class InlineStreamingContext:
         self._input_collector: Optional[Callable[[ActionHistory, Console], Optional[List[List[str]]]]] = None
         self._event_loop: Optional[asyncio.AbstractEventLoop] = None
         self._clear_header_callback: Optional[Callable[[], None]] = None
+        self._clear_screen_callback: Optional[Callable[[], None]] = None
         # TUI path: when provided, all subagent/processing rolling-window
         # rendering is pushed into this shared state (painted by DatusApp's
         # own layout) instead of Rich ``Live``, eliminating cursor-fights
@@ -214,6 +215,16 @@ class InlineStreamingContext:
         after a verbose-mode toggle redraw.
         """
         self._clear_header_callback = callback
+
+    def set_clear_screen_callback(self, callback: Optional[Callable[[], None]]) -> None:
+        """Inject the screen-clear primitive used during Ctrl+O verbose toggle.
+
+        TUI mode binds Rich to ``TUIOutputBuffer``; ``Console.clear()`` plus
+        ``ESC[3J`` only injects unrecognised ANSI bytes into that buffer and
+        corrupts the real terminal. Callers should pass ``TUIOutputBuffer.clear``
+        in TUI mode. When unset, falls back to the legacy escape-code path.
+        """
+        self._clear_screen_callback = callback
 
     # -- sync mode entry point ---------------------------------------------
 
@@ -422,9 +433,19 @@ class InlineStreamingContext:
                     self._stop_processing_live()
                     self._stop_subagent_live()
                     with self._print_lock:
-                        self.display.console.clear()
-                        sys.stdout.write("\033[3J")
-                        sys.stdout.flush()
+                        if self._clear_screen_callback is not None:
+                            try:
+                                self._clear_screen_callback()
+                            except Exception as exc:
+                                logger.debug(
+                                    "clear_screen_callback raised in verbose toggle: %s",
+                                    exc,
+                                    exc_info=True,
+                                )
+                        else:
+                            self.display.console.clear()
+                            sys.stdout.write("\033[3J")
+                            sys.stdout.flush()
                         if self._clear_header_callback is not None:
                             try:
                                 self._clear_header_callback()
@@ -445,9 +466,19 @@ class InlineStreamingContext:
                     self._stop_processing_live()
                     self._stop_subagent_live()
                     with self._print_lock:
-                        self.display.console.clear()
-                        sys.stdout.write("\033[3J")
-                        sys.stdout.flush()
+                        if self._clear_screen_callback is not None:
+                            try:
+                                self._clear_screen_callback()
+                            except Exception as exc:
+                                logger.debug(
+                                    "clear_screen_callback raised in verbose toggle: %s",
+                                    exc,
+                                    exc_info=True,
+                                )
+                        else:
+                            self.display.console.clear()
+                            sys.stdout.write("\033[3J")
+                            sys.stdout.flush()
                         if self._clear_header_callback is not None:
                             try:
                                 self._clear_header_callback()
