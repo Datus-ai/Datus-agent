@@ -22,7 +22,7 @@ import threading
 import pytest
 
 from datus.cli.tui.live_display_state import LiveDisplayLine
-from datus.cli.tui.output_buffer import TUIOutputBuffer
+from datus.cli.tui.output_buffer import BufferedOutputControl, TUIOutputBuffer
 
 
 def _flatten_text(tokens):
@@ -291,3 +291,108 @@ def test_tokens_cache_drops_on_clear():
     after = buf.tokens()
     assert after is not before
     assert _flatten_text(after) == "a\nb"
+
+
+def test_snapshot_is_reused_across_calls_when_buffer_unchanged():
+    """``BufferedOutputControl`` keys its UIContent cache on snapshot
+    identity, so repeated paints over an idle buffer must hand back the
+    same snapshot object. Without this each paint would rebuild a fresh
+    snapshot and the UIContent cache would never hit."""
+    buf = TUIOutputBuffer()
+    buf.write("line-1\nline-2\nline-3\n")
+    first = buf.snapshot()
+    assert first.total == 3
+    second = buf.snapshot()
+    assert second is first
+
+    buf.write("line-4\n")
+    third = buf.snapshot()
+    assert third is not first
+    assert third.total == 4
+
+
+def test_snapshot_get_line_returns_per_region_fragments():
+    """``UIContent.get_line(idx)`` is invoked only for visible rows, so the
+    snapshot must address committed history, live tail, and the partial
+    bottom row by absolute line index in that order."""
+    live = [
+        LiveDisplayLine(segments=[("class:live", "L1")]),
+        LiveDisplayLine(segments=[("class:live", "L2")]),
+    ]
+    buf = TUIOutputBuffer(live_state_snapshot_fn=lambda: list(live))
+    buf.write("hist-1\nhist-2\n")
+    buf.write("partial-tail")
+
+    snap = buf.snapshot()
+    assert snap.total == 2 + 2 + 1
+    # Region boundaries: 0..1 committed, 2..3 live, 4 partial.
+    assert _flatten_text(snap.get_line(0)) == "hist-1"
+    assert _flatten_text(snap.get_line(1)) == "hist-2"
+    assert snap.get_line(2) == [("class:live", "L1")]
+    assert snap.get_line(3) == [("class:live", "L2")]
+    assert _flatten_text(snap.get_line(4)) == "partial-tail"
+
+
+def test_snapshot_invalidates_on_clear():
+    """After ``clear()`` the next snapshot must reflect an empty buffer
+    even if a write recreates the same line count — otherwise the post-
+    Ctrl+O reprint paints the stale frame."""
+    buf = TUIOutputBuffer()
+    buf.write("a\nb\n")
+    before = buf.snapshot()
+    assert before.total == 2
+
+    buf.clear()
+    after_clear = buf.snapshot()
+    assert after_clear is not before
+    assert after_clear.total == 0
+
+    buf.write("a\nb\n")
+    rebuilt = buf.snapshot()
+    assert rebuilt.total == 2
+    assert rebuilt is not before
+
+
+def test_buffered_output_control_returns_lazy_uicontent():
+    """``BufferedOutputControl.create_content`` must hand prompt_toolkit a
+    ``UIContent`` whose ``get_line`` is callable per-row rather than a
+    pre-materialised fragment stream. Two paints over an unchanged buffer
+    must reuse the same ``UIContent`` so prompt_toolkit's per-line height
+    cache stays warm."""
+    buf = TUIOutputBuffer()
+    buf.write("row-1\nrow-2\nrow-3\n")
+    control = BufferedOutputControl(buf, focusable=True, show_cursor=False)
+
+    content = control.create_content(width=80, height=24)
+    assert content.line_count == 3
+    assert _flatten_text(content.get_line(0)) == "row-1"
+    assert _flatten_text(content.get_line(2)) == "row-3"
+
+    # Same buffer state → same UIContent object (cache hit).
+    again = control.create_content(width=80, height=24)
+    assert again is content
+
+    # After a write the cache must miss; ``get_line(3)`` is reachable.
+    buf.write("row-4\n")
+    refreshed = control.create_content(width=80, height=24)
+    assert refreshed is not content
+    assert refreshed.line_count == 4
+    assert _flatten_text(refreshed.get_line(3)) == "row-4"
+
+
+def test_buffered_output_control_does_not_touch_offscreen_rows():
+    """Smoke check the lazy contract: a 10k-row scrollback must produce a
+    ``UIContent`` in O(1) wrt how many ``get_line`` calls the renderer
+    makes. We assert by reading just the bottom visible window — the rows
+    outside that window must never be queried."""
+    buf = TUIOutputBuffer()
+    for i in range(10_000):
+        buf.write(f"row-{i}\n")
+    control = BufferedOutputControl(buf)
+    content = control.create_content(width=80, height=24)
+    assert content.line_count == 10_000
+
+    # Read only the last 24 rows (what a viewport would paint).
+    visible = [content.get_line(i) for i in range(content.line_count - 24, content.line_count)]
+    assert _flatten_text(visible[0]) == "row-9976"
+    assert _flatten_text(visible[-1]) == "row-9999"

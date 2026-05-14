@@ -36,11 +36,52 @@ from __future__ import annotations
 import threading
 from typing import Callable, List, Optional, Tuple
 
+from prompt_toolkit.data_structures import Point
+from prompt_toolkit.filters import to_filter
 from prompt_toolkit.formatted_text import ANSI, to_formatted_text
+from prompt_toolkit.layout.controls import UIContent, UIControl
+from prompt_toolkit.mouse_events import MouseEvent
 
 from datus.cli.tui.live_display_state import LiveDisplayLine
 
 _StyledToken = Tuple[str, str]
+
+
+class _BufferSnapshot:
+    """Frozen view of the buffer captured at a single ``snapshot()`` call.
+
+    Holds references to the committed lines (tuple of per-line fragment
+    lists), the live-tail snapshot, and the parsed partial-line fragments.
+    Provides ``get_line(idx)`` so :class:`BufferedOutputControl` can hand it
+    straight to prompt_toolkit's :class:`UIContent` without materialising the
+    full fragment stream. ``UIContent.get_line`` is invoked **only for visible
+    rows**, so a multi-thousand-line scrollback no longer pays an O(N)
+    ``tuple(fragments)`` hash on every key press.
+    """
+
+    __slots__ = ("committed", "live_lines", "partial_fragments", "total")
+
+    def __init__(
+        self,
+        committed: Tuple[List[_StyledToken], ...],
+        live_lines: Tuple[LiveDisplayLine, ...],
+        partial_fragments: List[_StyledToken],
+        total: int,
+    ) -> None:
+        self.committed = committed
+        self.live_lines = live_lines
+        self.partial_fragments = partial_fragments
+        self.total = total
+
+    def get_line(self, idx: int) -> List[_StyledToken]:
+        committed_n = len(self.committed)
+        if idx < committed_n:
+            return self.committed[idx]
+        idx -= committed_n
+        live_n = len(self.live_lines)
+        if idx < live_n:
+            return self.live_lines[idx].segments
+        return self.partial_fragments
 
 
 class TUIOutputBuffer:
@@ -81,6 +122,14 @@ class TUIOutputBuffer:
         self._cache_committed_version: int = -1
         self._cache_partial: Optional[str] = None
         self._cache_live_lines: Optional[List[LiveDisplayLine]] = None
+        # Separate cache for the lazy-row snapshot consumed by
+        # :class:`BufferedOutputControl`. Reusing the same snapshot object
+        # across paints lets the control's own ``UIContent`` cache short-
+        # circuit re-layout when nothing visible has changed.
+        self._cache_snapshot: Optional[_BufferSnapshot] = None
+        self._cache_snapshot_version: int = -1
+        self._cache_snapshot_partial: Optional[str] = None
+        self._cache_snapshot_live: Optional[Tuple[LiveDisplayLine, ...]] = None
 
     # ── Rich file-like contract ───────────────────────────────────
 
@@ -232,12 +281,17 @@ class TUIOutputBuffer:
             self._partial = ""
             self._last_line_count = 0
             self._committed_version += 1
-            # Drop the render cache so the next ``tokens()`` rebuilds against
-            # the empty state instead of handing the renderer a stale list.
+            # Drop both render caches so the next ``tokens()`` / ``snapshot()``
+            # call rebuilds against the empty state instead of handing the
+            # renderer a stale list.
             self._cache_tokens = None
             self._cache_committed_version = -1
             self._cache_partial = None
             self._cache_live_lines = None
+            self._cache_snapshot = None
+            self._cache_snapshot_version = -1
+            self._cache_snapshot_partial = None
+            self._cache_snapshot_live = None
         if had_content:
             self._on_change()
 
@@ -259,3 +313,110 @@ class TUIOutputBuffer:
         """Replace the live-tail snapshot source post-construction."""
         with self._lock:
             self._live_state_snapshot_fn = live_state_snapshot_fn
+
+    # ── viewport snapshot (lazy-row API) ──────────────────────────
+
+    def snapshot(self) -> _BufferSnapshot:
+        """Return an immutable view consumed by :class:`BufferedOutputControl`.
+
+        Unlike :meth:`tokens`, this never builds a flat fragment stream — it
+        only freezes the per-line containers so prompt_toolkit's renderer can
+        call ``get_line(idx)`` for the rows it actually needs. The snapshot is
+        cached and reused whenever the buffer state has not changed, so a
+        sequence of paints over a static scrollback returns the exact same
+        snapshot object and the control's own ``UIContent`` cache short-
+        circuits all further work.
+        """
+        # Acquire the live snapshot outside our lock — its provider holds its
+        # own lock and the two must never nest in opposite orders.
+        live_lines = tuple(self._live_state_snapshot_fn() or [])
+
+        with self._lock:
+            partial = self._partial
+            committed_version = self._committed_version
+            cached = self._cache_snapshot
+            if (
+                cached is not None
+                and self._cache_snapshot_version == committed_version
+                and self._cache_snapshot_partial == partial
+                and self._cache_snapshot_live == live_lines
+            ):
+                return cached
+            committed = tuple(self._committed)
+
+        partial_fragments: List[_StyledToken] = list(to_formatted_text(ANSI(partial))) if partial else []
+        total = len(committed) + len(live_lines) + (1 if partial else 0)
+        snap = _BufferSnapshot(committed, live_lines, partial_fragments, total)
+
+        with self._lock:
+            self._cache_snapshot = snap
+            self._cache_snapshot_version = committed_version
+            self._cache_snapshot_partial = partial
+            self._cache_snapshot_live = live_lines
+            # Keep ``render_line_count`` aligned with whichever code path the
+            # renderer most recently consulted — both ``tokens`` and
+            # ``snapshot`` report the same logical row count.
+            self._last_line_count = total
+        return snap
+
+
+class BufferedOutputControl(UIControl):
+    """``UIControl`` that renders :class:`TUIOutputBuffer` content lazily.
+
+    Replaces :class:`prompt_toolkit.layout.controls.FormattedTextControl` for
+    the scrollable output pane. The stock control hashes
+    ``tuple(fragments_with_mouse_handlers)`` into its ``_content_cache`` key on
+    every paint and rebuilds ``fragment_lines`` via ``split_lines`` — both
+    operations are O(N) over the full scrollback, which dominates render cost
+    once the buffer holds thousands of rows. By delegating to a per-line
+    ``get_line`` callable backed by :class:`_BufferSnapshot`, prompt_toolkit
+    only touches the rows that intersect the viewport, so type-latency stays
+    flat regardless of scrollback depth.
+    """
+
+    def __init__(
+        self,
+        buffer: "TUIOutputBuffer",
+        *,
+        focusable: bool = True,
+        show_cursor: bool = False,
+        get_cursor_position: Optional[Callable[[], Optional[Point]]] = None,
+    ) -> None:
+        self._buffer = buffer
+        self._focusable = to_filter(focusable)
+        self.show_cursor = show_cursor
+        self.get_cursor_position = get_cursor_position
+        # One-slot ``UIContent`` cache keyed on snapshot identity + cursor
+        # position. ``create_content`` is called multiple times per render run
+        # (preferred_height, then the actual paint); returning the same
+        # ``UIContent`` lets prompt_toolkit's per-line height cache stay warm.
+        self._uicontent_key: Optional[Tuple[int, Optional[Tuple[int, int]]]] = None
+        self._uicontent: Optional[UIContent] = None
+
+    def is_focusable(self) -> bool:
+        return self._focusable()
+
+    def create_content(self, width: int, height: Optional[int]) -> UIContent:
+        snap = self._buffer.snapshot()
+        cursor_position: Optional[Point] = None
+        if self.get_cursor_position is not None:
+            cursor_position = self.get_cursor_position()
+        cursor_key = (cursor_position.x, cursor_position.y) if cursor_position is not None else None
+        key = (id(snap), cursor_key)
+        if self._uicontent_key == key and self._uicontent is not None:
+            return self._uicontent
+
+        content = UIContent(
+            get_line=snap.get_line,
+            line_count=snap.total,
+            cursor_position=cursor_position or Point(x=0, y=0),
+            show_cursor=self.show_cursor,
+        )
+        self._uicontent_key = key
+        self._uicontent = content
+        return content
+
+    def mouse_handler(self, mouse_event: MouseEvent):  # noqa: ANN201
+        # Default: defer to ``Window`` / key bindings. ``DatusApp`` overrides
+        # this attribute in place to wire scroll-wheel handling.
+        return NotImplemented

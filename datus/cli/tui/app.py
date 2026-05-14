@@ -67,6 +67,7 @@ from prompt_toolkit.widgets import TextArea
 
 from datus.cli.cli_styles import PASTE_COLLAPSE_THRESHOLD
 from datus.cli.tui.live_display_state import LiveDisplayState, compute_pinned_max_rows
+from datus.cli.tui.output_buffer import BufferedOutputControl, TUIOutputBuffer
 from datus.cli.tui.wizard_host import EmbeddedWizard
 from datus.utils.loggings import get_logger
 
@@ -118,6 +119,7 @@ class DatusApp:
         todo_line_count_fn: Optional[Callable[[], int]] = None,
         output_tokens_fn: Optional[Callable[[], List[Tuple[str, str]]]] = None,
         output_line_count_fn: Optional[Callable[[], int]] = None,
+        output_buffer: Optional["TUIOutputBuffer"] = None,
     ) -> None:
         self._status_tokens_fn = status_tokens_fn
         self._dispatch_fn = dispatch_fn
@@ -133,6 +135,7 @@ class DatusApp:
         # consulted by the sticky-bottom auto-scroll logic.
         self._output_tokens_fn = output_tokens_fn or (lambda: [])
         self._output_line_count_fn = output_line_count_fn or (lambda: 0)
+        self._output_buffer = output_buffer
         # Sticky-bottom scroll model: ``_output_at_bottom=True`` (the
         # default) means ``_get_output_scroll`` returns the max possible
         # offset every frame, so new output is always in view. Wheel-up
@@ -232,13 +235,30 @@ class DatusApp:
         # the cursor-driven scroll's "wait for cursor to leave the
         # viewport edge before shifting" hesitation that made trackpad
         # scrolling feel like it stalled before suddenly jumping.
-        self._output_window = Window(
-            content=FormattedTextControl(
+        # Prefer the lazy-row :class:`BufferedOutputControl` when a buffer is
+        # wired. It feeds prompt_toolkit a ``UIContent.get_line`` callable so
+        # only the rows that intersect the viewport are materialised — the
+        # ``FormattedTextControl`` fallback hashes the entire fragment stream
+        # on every paint, which dominates type-latency once the scrollback
+        # contains thousands of lines (the verbose-mode case). The fallback
+        # path is preserved so tests / non-TUI callers that only pass a
+        # ``tokens_fn`` still work.
+        if self._output_buffer is not None:
+            output_control = BufferedOutputControl(
+                self._output_buffer,
+                focusable=True,
+                show_cursor=False,
+                get_cursor_position=self._output_cursor_position,
+            )
+        else:
+            output_control = FormattedTextControl(
                 text=self._output_tokens_fn,
                 focusable=True,
                 show_cursor=False,
                 get_cursor_position=self._output_cursor_position,
-            ),
+            )
+        self._output_window = Window(
+            content=output_control,
             width=Dimension(weight=4),
             wrap_lines=False,
             scroll_offsets=ScrollOffsets(),
@@ -246,12 +266,12 @@ class DatusApp:
             always_hide_cursor=to_filter(True),
             style="class:output-pane",
         )
-        # FormattedTextControl has no ``mouse_handler`` constructor kwarg —
-        # it's an instance method consulted by the Window. Override it
-        # in place so scroll-wheel events trigger our sticky-bottom-aware
-        # cursor movement instead of the default Window scroll (which
-        # would be undone by ``get_cursor_position`` re-anchoring to the
-        # last line on the next paint).
+        # Neither control type accepts ``mouse_handler`` via constructor — it
+        # is an instance method that the Window consults. Override it in place
+        # so scroll-wheel events drive our sticky-bottom-aware scroll motion
+        # instead of the default Window scroll (which would be undone by
+        # ``get_cursor_position`` re-anchoring to the last line on the next
+        # paint).
         self._output_window.content.mouse_handler = self._output_mouse_handler
 
         # Right-side todo-list sidebar for the pinned output row. Wired via

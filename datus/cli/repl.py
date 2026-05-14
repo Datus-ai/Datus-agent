@@ -621,6 +621,11 @@ class DatusCLI:
             # recent ``tokens()`` call — see ``render_line_count`` for the
             # IndexError race it avoids.
             output_line_count_fn=self._tui_output_buffer.render_line_count,
+            # When passed, ``DatusApp`` swaps in :class:`BufferedOutputControl`
+            # so prompt_toolkit's paint loop only materialises rows that fall
+            # inside the viewport. This keeps type-latency flat even when the
+            # verbose-mode scrollback grows into thousands of lines.
+            output_buffer=self._tui_output_buffer,
         )
 
         # Now that the Application exists, wire the buffer's ``on_change``
