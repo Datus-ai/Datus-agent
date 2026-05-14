@@ -859,29 +859,26 @@ class TestInteractionBrokerAllowFreeText:
 
         broker = InteractionBroker()
 
-        async def submit_free_text():
-            for _ in range(50):
-                await asyncio.sleep(0.01)
-                if broker.has_pending:
-                    action_id = list(broker._pending.keys())[0]
-                    ok = await broker.submit(action_id, [["please add validation step"]])
-                    assert ok is True
-                    return
-            raise AssertionError("no pending interaction created")
-
-        submitter = asyncio.create_task(submit_free_text())
-        answers = await broker.request(
-            [
-                InteractionEvent(
-                    title="Plan",
-                    content="Confirm or revise?",
-                    choices={"confirm": "Confirm"},
-                    default_choice="confirm",
-                    allow_free_text=True,
-                )
-            ]
+        # Drive the broker deterministically: start the request, wait for
+        # the action to appear on the output queue, then submit. This avoids
+        # ``if broker.has_pending`` polling branches (P0 conditional_assert).
+        request_task = asyncio.create_task(
+            broker.request(
+                [
+                    InteractionEvent(
+                        title="Plan",
+                        content="Confirm or revise?",
+                        choices={"confirm": "Confirm"},
+                        default_choice="confirm",
+                        allow_free_text=True,
+                    )
+                ]
+            )
         )
-        await submitter
+        request_action = await asyncio.wait_for(broker._output_queue.get(), timeout=1.0)
+        ok = await broker.submit(request_action.action_id, [["please add validation step"]])
+        assert ok is True
+        answers = await request_task
 
         assert answers == [["please add validation step"]]
 
@@ -891,31 +888,26 @@ class TestInteractionBrokerAllowFreeText:
 
         broker = InteractionBroker()
 
-        async def submit_invalid():
-            for _ in range(50):
-                await asyncio.sleep(0.01)
-                if broker.has_pending:
-                    action_id = list(broker._pending.keys())[0]
-                    rejected = await broker.submit(action_id, [["garbage"]])
-                    assert rejected is False
-                    accepted = await broker.submit(action_id, [["y"]])
-                    assert accepted is True
-                    return
-            raise AssertionError("no pending interaction created")
-
-        submitter = asyncio.create_task(submit_invalid())
-        answers = await broker.request(
-            [
-                InteractionEvent(
-                    title="Yes/No",
-                    content="Yes or no?",
-                    choices={"y": "yes", "n": "no"},
-                    default_choice="y",
-                    allow_free_text=False,
-                )
-            ]
+        request_task = asyncio.create_task(
+            broker.request(
+                [
+                    InteractionEvent(
+                        title="Yes/No",
+                        content="Yes or no?",
+                        choices={"y": "yes", "n": "no"},
+                        default_choice="y",
+                        allow_free_text=False,
+                    )
+                ]
+            )
         )
-        await submitter
+        request_action = await asyncio.wait_for(broker._output_queue.get(), timeout=1.0)
+        rejected = await broker.submit(request_action.action_id, [["garbage"]])
+        assert rejected is False
+        accepted = await broker.submit(request_action.action_id, [["y"]])
+        assert accepted is True
+        answers = await request_task
+
         assert answers == [["y"]]
 
     @pytest.mark.asyncio

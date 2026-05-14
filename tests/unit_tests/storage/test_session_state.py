@@ -57,12 +57,22 @@ class TestPlanModeStateRoundTrip:
     @pytest.mark.parametrize(
         "raw,expected",
         [
-            ({"plan_mode_active": "yes", "plan_file_path": None, "workflow_prompt_sent": 0}, (True, None, False)),
-            ({"plan_mode_active": 0, "workflow_prompt_sent": 1}, (False, None, True)),
+            # Truthy strings and ints are NOT booleans — strict typing
+            # falls back to the safe default so corrupted/legacy JSON
+            # (e.g. ``"false"`` as a string) cannot mis-restore state.
+            ({"plan_mode_active": "yes", "plan_file_path": None, "workflow_prompt_sent": 0}, (False, None, False)),
+            ({"plan_mode_active": 0, "workflow_prompt_sent": 1}, (False, None, False)),
+            # ``plan_file_path`` must be a string; anything else → None.
+            ({"plan_mode_active": True, "plan_file_path": 42, "workflow_prompt_sent": True}, (True, None, True)),
+            # Actual booleans are preserved.
+            (
+                {"plan_mode_active": True, "plan_file_path": "p.md", "workflow_prompt_sent": False},
+                (True, "p.md", False),
+            ),
             ({}, (False, None, False)),
         ],
     )
-    def test_load_coerces_types(self, tmp_path, raw, expected):
+    def test_load_rejects_non_bool_and_non_str(self, tmp_path, raw, expected):
         path = tmp_path / "coerce.json"
         path.write_text(json.dumps(raw), encoding="utf-8")
         loaded = PlanModeState.load(path)

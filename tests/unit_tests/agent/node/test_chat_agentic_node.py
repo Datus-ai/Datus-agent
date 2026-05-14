@@ -1448,7 +1448,8 @@ class TestChatAgenticNodePlanMode:
 
             assert node.plan_mode_active is True
             first_plan_path = node.plan_file_path
-            assert first_plan_path is not None
+            assert isinstance(first_plan_path, str) and first_plan_path
+            assert os.path.exists(first_plan_path)
 
             # Second turn with plan_mode=True must reuse the same file path.
             node.input = ChatNodeInput(

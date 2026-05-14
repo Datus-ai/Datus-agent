@@ -394,8 +394,17 @@ class PlanTool:
         for idx, todo_item in enumerate(todos):
             if not isinstance(todo_item, dict):
                 return FuncToolResult(success=0, error=f"Item {idx} is not an object")
-            title = (todo_item.get("title") or "").strip()
-            content = (todo_item.get("content") or "").strip()
+            # Type-check before ``.strip()``: an LLM emitting ``{"title": 123}``
+            # would otherwise hit ``AttributeError`` on ``(123 or "").strip()``
+            # and bubble out of the tool instead of returning a clean error.
+            raw_title = todo_item.get("title")
+            raw_content = todo_item.get("content")
+            if raw_title is not None and not isinstance(raw_title, str):
+                return FuncToolResult(success=0, error=f"Item {idx}: 'title' must be a string")
+            if raw_content is not None and not isinstance(raw_content, str):
+                return FuncToolResult(success=0, error=f"Item {idx}: 'content' must be a string")
+            title = (raw_title or "").strip()
+            content = (raw_content or "").strip()
             if not title:
                 return FuncToolResult(success=0, error=f"Item {idx}: 'title' is required")
             if not content:

@@ -1232,7 +1232,8 @@ class TestEndToEndConfirmPlanInteraction:
 
             # Pre-seed the plan file so confirm_plan finds content to display.
             node.activate_plan_mode()
-            assert node.plan_file_path is not None
+            assert isinstance(node.plan_file_path, str) and node.plan_file_path
+            assert os.path.exists(node.plan_file_path)
             with open(node.plan_file_path, "w", encoding="utf-8") as f:
                 f.write("# Plan\n\n- Step 1\n- Step 2\n")
 
@@ -1278,7 +1279,8 @@ class TestEndToEndConfirmPlanInteraction:
             # After confirm, plan mode must be deactivated — but the path
             # is intentionally retained for re-activation reuse.
             assert node.plan_mode_active is False
-            assert node.plan_file_path is not None
+            assert isinstance(node.plan_file_path, str) and node.plan_file_path
+            assert os.path.exists(node.plan_file_path)
         finally:
             os.chdir(cwd)
 
@@ -1963,6 +1965,19 @@ class TestSetupInputGenSQL:
 
 
 class TestRebuildTools:
+    # Plan-mode tools are re-registered on every ``_rebuild_tools`` call so
+    # they survive a datasource switch (``_update_database_connection``).
+    # Filter them out when comparing user-supplied tool counts.
+    _PLAN_TOOL_NAMES = {"todo_list", "todo_write", "todo_update", "todo_read", "confirm_plan"}
+
+    @classmethod
+    def _user_tools(cls, tools):
+        return [t for t in tools if getattr(t, "name", "") not in cls._PLAN_TOOL_NAMES]
+
+    @classmethod
+    def _plan_tool_names(cls, tools):
+        return {getattr(t, "name", "") for t in tools} & cls._PLAN_TOOL_NAMES
+
     def test_rebuild_tools_with_all_tools(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)
 
@@ -1985,7 +2000,9 @@ class TestRebuildTools:
 
         # 3 mocked tools + ask_user tool (added in interactive mode)
         expected = 4 if node.ask_user_tool else 3
-        assert len(node.tools) == expected
+        assert len(self._user_tools(node.tools)) == expected
+        # Plan-mode tools are re-registered as part of every rebuild.
+        assert self._plan_tool_names(node.tools) == self._PLAN_TOOL_NAMES
 
     def test_rebuild_tools_with_ask_user(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)
@@ -2003,10 +2020,12 @@ class TestRebuildTools:
 
         node._rebuild_tools()
 
-        # 1 db tool + 1 ask_user tool
-        assert len(node.tools) == 2
-        tool_names = [getattr(t, "name", "") for t in node.tools]
+        # 1 db tool + 1 ask_user tool (excluding plan-mode tools)
+        user_tools = self._user_tools(node.tools)
+        assert len(user_tools) == 2
+        tool_names = [getattr(t, "name", "") for t in user_tools]
         assert "ask_user" in tool_names
+        assert self._plan_tool_names(node.tools) == self._PLAN_TOOL_NAMES
 
     def test_rebuild_tools_empty_when_no_tools(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)
@@ -2020,7 +2039,9 @@ class TestRebuildTools:
 
         node._rebuild_tools()
 
-        assert node.tools == []
+        # No user tools — plan-mode tools are still re-registered.
+        assert self._user_tools(node.tools) == []
+        assert self._plan_tool_names(node.tools) == self._PLAN_TOOL_NAMES
 
 
 # ---------------------------------------------------------------------------

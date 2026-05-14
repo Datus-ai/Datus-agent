@@ -230,6 +230,11 @@ class GenSQLAgenticNode(AgenticNode):
             self.tools.extend(self.ask_user_tool.available_tools())
         if self.sub_agent_task_tool:
             self.tools.extend(self.sub_agent_task_tool.available_tools())
+        # Plan-mode tools (confirm_plan + todo_*) must survive every rebuild,
+        # otherwise a mid-session datasource switch (which routes through
+        # ``_update_database_connection`` → ``_rebuild_tools``) silently
+        # strips plan tooling for the rest of the session.
+        self._register_plan_mode_tools()
 
     # Default tools when not configured in agent.yml
     DEFAULT_TOOLS = "db_tools.*, semantic_tools.*, context_search_tools.*"

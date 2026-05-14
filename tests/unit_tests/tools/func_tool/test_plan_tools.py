@@ -199,7 +199,8 @@ class TestSessionTodoStoragePersistence:
         # Fresh instance recovers items AND next_id.
         s2 = SessionTodoStorage(session=Mock(), session_id="chat_session_bbbb")
         restored = s2.get_todo_list()
-        assert restored is not None
+        assert isinstance(restored, TodoList)
+        assert len(restored.items) == 1
         assert restored.items[0].title == "Existing"
         assert restored.items[0].content == "Existing body"
         assert restored.next_id == 2
@@ -265,7 +266,8 @@ class TestSessionTodoStoragePersistence:
 
         sid_holder["value"] = "session_b"
         loaded = storage.get_todo_list()
-        assert loaded is not None
+        assert isinstance(loaded, TodoList)
+        assert len(loaded.items) == 1
         assert loaded.items[0].title == "From B"
 
     def test_legacy_uuid_payload_is_discarded(self, path_manager):

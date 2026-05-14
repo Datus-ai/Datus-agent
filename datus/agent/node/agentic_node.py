@@ -383,7 +383,7 @@ class AgenticNode(Node):
             self._persist_plan_mode_state()
             return self.plan_file_path
 
-        plan_dir = os.path.join(".", ".datus", "plans")
+        plan_dir = os.path.join(self._resolve_workspace_root(), ".datus", "plans")
         os.makedirs(plan_dir, exist_ok=True)
         # Short id keeps the path human-friendly; uuid4 has 122 bits of
         # entropy, so 8 hex chars (32 bits) is still ample for collision

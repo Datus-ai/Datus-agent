@@ -193,9 +193,11 @@ class TestWhitelistAnchors:
         # Expect exactly three anchors: project .datus/skills, project .datus/plans
         # and home .datus/skills. No per-node memory anchor because current_node is None.
         assert len(anchors) == 3
-        expected_suffixes = {(".datus", "skills"), (".datus", "plans")}
-        seen = {(a.parent.name, a.name) for a in anchors}
-        assert seen == expected_suffixes
+        # Compare full resolved paths so a regression that drops one anchor
+        # but duplicates another (same parent/name tuple) still fails.
+        assert (project / ".datus" / "skills").resolve(strict=False) in anchors
+        assert (project / ".datus" / "plans").resolve(strict=False) in anchors
+        assert (fake_home / "skills").resolve(strict=False) in anchors
 
     def test_anchors_include_inherited_memory_dir(self, project, fake_home):
         anchors = whitelist_anchors(

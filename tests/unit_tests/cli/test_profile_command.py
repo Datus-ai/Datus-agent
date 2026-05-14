@@ -269,8 +269,11 @@ def test_run_profile_picker_embeds_in_tui_when_loop_active(monkeypatch):
 
     result = DatusCLI._run_profile_picker(_CLIStub(), "normal")
     assert result == "auto"
-    # ``run_wizard`` was handed the picker's ``build_embedded_panel``.
-    assert wizard_calls["factory"] is not None
+    # ``run_wizard`` was handed the picker's ``build_embedded_panel`` method
+    # (verifying the exact factory, not just "any truthy value").
+    factory = wizard_calls["factory"]
+    assert callable(factory)
+    assert getattr(factory, "__name__", "") == "build_embedded_panel"
 
 
 def test_profile_malformed_rules_fails_closed_to_normal():

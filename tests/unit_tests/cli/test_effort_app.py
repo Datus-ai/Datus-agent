@@ -16,7 +16,7 @@ import asyncio
 
 import pytest
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout.containers import HSplit
+from prompt_toolkit.layout.containers import HSplit, Window
 from rich.console import Console
 
 from datus.cli.effort_app import EffortApp, EffortSelection
@@ -40,7 +40,8 @@ def test_build_embedded_panel_returns_wizard_with_expected_shape():
         assert isinstance(panel, EmbeddedWizard)
         assert isinstance(panel.container, HSplit)
         assert isinstance(panel.key_bindings, KeyBindings)
-        assert panel.first_focus is not None
+        assert isinstance(panel.first_focus, Window)
+        assert panel.first_focus.content is not None
         assert panel.done_future is fut
     finally:
         loop.close()

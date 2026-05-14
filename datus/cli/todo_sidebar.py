@@ -108,7 +108,7 @@ class TodoSidebarProvider:
             self._cached_mtime = None
             return self._cached_items
         try:
-            mtime = path.stat().st_mtime
+            mtime = path.stat().st_mtime_ns
         except OSError as exc:  # pragma: no cover - defensive
             logger.debug("TodoSidebar: stat failed on %s: %s", path, exc)
             return self._cached_items

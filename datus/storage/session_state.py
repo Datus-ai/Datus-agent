@@ -31,10 +31,16 @@ class PlanModeState:
             return cls()
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
+            # Strict type checks: ``bool(x)`` happily accepts the literal
+            # string ``"false"`` (truthy because non-empty), which would
+            # mis-restore plan-mode state from corrupted / legacy payloads.
+            raw_active = data.get("plan_mode_active", False)
+            raw_path = data.get("plan_file_path")
+            raw_prompt_sent = data.get("workflow_prompt_sent", False)
             return cls(
-                plan_mode_active=bool(data.get("plan_mode_active", False)),
-                plan_file_path=data.get("plan_file_path"),
-                workflow_prompt_sent=bool(data.get("workflow_prompt_sent", False)),
+                plan_mode_active=raw_active if isinstance(raw_active, bool) else False,
+                plan_file_path=raw_path if isinstance(raw_path, str) else None,
+                workflow_prompt_sent=raw_prompt_sent if isinstance(raw_prompt_sent, bool) else False,
             )
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("Failed to load PlanModeState from %s: %s", path, exc)

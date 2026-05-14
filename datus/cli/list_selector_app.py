@@ -142,9 +142,17 @@ class ListSelectorApp:
 
     def build_embedded_panel(self, done_future: "asyncio.Future") -> EmbeddedWizard:
         if not self._items:
-            # Empty list: resolve immediately so the host doesn't mount
-            # a useless panel.
+            # Empty list: resolve immediately and skip the selection callbacks
+            # so the host unmounts without dispatching keypresses through us.
             resolve_cancel(done_future)
+            kb = self._build_key_bindings()
+            root, list_window = self._build_root_container(kb)
+            return EmbeddedWizard(
+                container=root,
+                key_bindings=kb,
+                first_focus=list_window,
+                done_future=done_future,
+            )
         self._on_done = lambda result: (
             resolve_cancel(done_future) if result is None else resolve_with(done_future, result)
         )

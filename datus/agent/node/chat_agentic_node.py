@@ -245,12 +245,16 @@ class ChatAgenticNode(AgenticNode):
                 self.tool_registry.register_tools("tools", self._platform_doc_tool.available_tools())
             # 2. Create PermissionHooks sharing the same tool_registry instance
             broker = self._get_or_create_broker()
+            # ``workflow`` runs have no UI listener; ASK / EXTERNAL fs checks
+            # must fail closed instead of awaiting the broker forever.
+            non_interactive = getattr(self, "execution_mode", None) == "workflow"
             self.permission_hooks = PermissionHooks(
                 broker=broker,
                 permission_manager=self.permission_manager,
                 node_name=self.get_node_name(),
                 tool_registry=self.tool_registry,
                 fs_policy=self._make_filesystem_policy(),
+                non_interactive=non_interactive,
             )
 
             logger.debug(f"Permission hooks setup with {len(self.tool_registry)} registered tools")

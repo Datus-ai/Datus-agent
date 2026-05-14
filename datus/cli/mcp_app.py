@@ -216,10 +216,18 @@ class MCPApp:
         self._on_done = _done
         kb = self._build_key_bindings()
         root = self._build_root_container(kb)
+        # Initial focus must match the seeded view; the LIST window is the
+        # right target only when ``_view`` is LIST. For form / search seeds
+        # the visible input widget gets the first keystroke.
+        first_focus = self._list_window
+        if self._view in (_View.ADD_FORM, _View.FILTER_FORM) and self._form_focus_order:
+            first_focus = self._form_focus_order[self._form_focus_idx]
+        elif self._view == _View.SEARCH_BAR:
+            first_focus = self._search_input
         return EmbeddedWizard(
             container=root,
             key_bindings=kb,
-            first_focus=self._list_window,
+            first_focus=first_focus,
             done_future=done_future,
         )
 
