@@ -430,7 +430,15 @@ class GenVisualReportAgenticNode(AgenticNode):
             agent_config=self.agent_config,
             db_func_tool=self.db_func_tool,
         )
-        self.tools.extend(self.report_artifact_tools.available_tools())
+        # Repeated ``execute_stream`` calls on the same node instance would
+        # otherwise stack stale tool wrappers bound to the previous
+        # ``ReportArtifactTools`` instance, which could resolve calls
+        # against an outdated ``report_id``. Replace any prior registration
+        # by name before extending with the freshly-built tools.
+        new_tools = self.report_artifact_tools.available_tools()
+        replaced_names = {getattr(t, "name", None) for t in new_tools}
+        self.tools = [t for t in self.tools if getattr(t, "name", None) not in replaced_names]
+        self.tools.extend(new_tools)
 
     def _is_cli_mode(self) -> bool:
         """CLI deployments compile a standalone HTML; API/SaaS deployments don't."""

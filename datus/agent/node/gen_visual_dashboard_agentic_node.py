@@ -399,7 +399,15 @@ class GenVisualDashboardAgenticNode(AgenticNode):
             agent_config=self.agent_config,
             db_func_tool=self.db_func_tool,
         )
-        self.tools.extend(self.dashboard_artifact_tools.available_tools())
+        # Repeated ``execute_stream`` calls on the same node instance would
+        # otherwise stack stale tool wrappers bound to the previous
+        # ``DashboardArtifactTools`` instance, which could resolve calls
+        # against an outdated ``dashboard_id``. Replace any prior
+        # registration by name before extending.
+        new_tools = self.dashboard_artifact_tools.available_tools()
+        replaced_names = {getattr(t, "name", None) for t in new_tools}
+        self.tools = [t for t in self.tools if getattr(t, "name", None) not in replaced_names]
+        self.tools.extend(new_tools)
 
     # ----------------------------------------------------------- execution
 
