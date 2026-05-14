@@ -14,15 +14,19 @@ import pytest
 from datus.agent.node.report_html_renderer import render_report_html
 
 _APP_JSX = """\
-/** @datus-title Demo report </script> */
+/** @datus-title Demo report <update & fix> */
 import React from 'react';
 import KpiBanner from './kpi-banner';
 import { useDatusArtifact } from '@datus/web-artifact';
 
+// Sentinel </script> exercises the JSON-escape path independently of the
+// title (the title regex strips '/' so the title alone cannot carry it).
+const SENTINEL = '</script>';
+
 export default function App() {
   const { useQuerySql } = useDatusArtifact();
   const { data } = useQuerySql('queries/q');
-  return React.createElement(KpiBanner, { rows: data?.rows ?? [] });
+  return React.createElement(KpiBanner, { rows: data?.rows ?? [], sentinel: SENTINEL });
 }
 """
 
@@ -52,7 +56,14 @@ def test_render_report_html_substitutes_payload(tmp_path: Path):
     assert "__DATUS_REPORT_DATA__" not in body
     assert "__DATUS_REPORT_TITLE__" not in body
     assert "Demo report" in body
-    # </script> from the title must be escaped so it doesn't close the data block.
+    # The title is HTML-escaped before being injected into <title>, so the
+    # raw '<', '&', '>' from the annotation must appear as entities.
+    assert (
+        "<title>Datus Report — Demo report &lt;update &amp; fix&gt;</title>"
+        in body
+    )
+    # </script> from the source must be escaped in the JSON data block so it
+    # doesn't close the embedded <script type="application/json"> prematurely.
     assert "</script></script>" not in body
 
 

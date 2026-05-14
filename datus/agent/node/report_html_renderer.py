@@ -34,6 +34,7 @@ Two asset-loading modes, mirroring ``datus.cli.web.chatbot``:
 from __future__ import annotations
 
 import datetime as _dt
+import html
 import json
 import re
 import shutil
@@ -70,6 +71,11 @@ _DIST_JS_NAME = "index.umd.js"
 
 # Subdirectory under ``reports/<id>/`` where local assets are copied.
 _ASSETS_SUBDIR = "_assets"
+
+# Accepted shape for ``report_id``. Restricting this up front prevents path
+# traversal (``..``) or absolute-path components from escaping ``reports/``
+# when the id is joined into ``project_root / "reports" / report_id``.
+_REPORT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def _extract_title(app_jsx: str, fallback: str) -> str:
@@ -182,6 +188,10 @@ def render_report_html(
         FileNotFoundError: if ``render/app.jsx`` is missing.
         OSError: on read/write failures.
     """
+    if not _REPORT_ID_RE.fullmatch(report_id):
+        raise ValueError(
+            f"invalid report_id {report_id!r}; expected only [A-Za-z0-9_-]"
+        )
     project_root = project_root.resolve()
     report_dir = project_root / "reports" / report_id
     render_dir = report_dir / "render"
@@ -215,7 +225,7 @@ def render_report_html(
     payload_json = _escape_for_script_tag(json.dumps(payload, ensure_ascii=False))
     rendered = (
         template_html.replace(_DATA_PLACEHOLDER, payload_json)
-        .replace(_TITLE_PLACEHOLDER, title)
+        .replace(_TITLE_PLACEHOLDER, html.escape(title))
         .replace(_CSS_URL_PLACEHOLDER, css_url)
         .replace(_JS_URL_PLACEHOLDER, js_url)
     )
