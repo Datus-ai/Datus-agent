@@ -119,6 +119,14 @@ STATUS_BAR_STYLE: dict[str, str] = {
     "status-bar.running": f"{STATUS_BAR_RUNNING} bold",
     "status-bar.dot": f"{STATUS_BAR_RUNNING} bold",
     "separator": STATUS_BAR_SEP,
+    # Right-side todo-list sidebar pinned above the status bar (see
+    # datus.cli.todo_sidebar). Only the title may use bold; per CLAUDE.md
+    # colours must not be bold.
+    "todo-sidebar": STATUS_BAR_FG_HINT,
+    "todo-sidebar.title": "#8be9fd bold",
+    "todo-sidebar.pending": STATUS_BAR_FG_HINT,
+    "todo-sidebar.completed": "#50fa7b",
+    "todo-sidebar.failed": "#ff5555",
     # Slash-command autocomplete popup. ``bg:default`` blends into the
     # terminal palette; ``noreverse`` strips prompt_toolkit's default
     # reverse-video highlight so the selection is conveyed by bright

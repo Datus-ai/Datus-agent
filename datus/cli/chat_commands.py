@@ -1144,9 +1144,21 @@ class ChatCommands:
         """Clear the screen and re-render the full multi-turn history.
 
         The viewport ends up with exactly what Ctrl+O produces: banner →
-        optional mode label → every turn's trace + final response. The
-        scrollback is unchanged (``patch_stdout`` cannot erase it), so
-        earlier content remains reachable by scrolling up.
+        optional mode label → every turn's trace + final response.
+
+        Two clearing strategies depending on TUI mode:
+
+        * **Full-screen TUI (current default)**: the Rich console is bound
+          to the in-memory :class:`TUIOutputBuffer`. ``Console.clear()`` /
+          ``sys.stdout.write("\\x1b[3J")`` would just inject raw ANSI
+          escapes into the buffer (which the ANSI parser does not
+          recognise as clear-screen) and corrupt the real terminal,
+          respectively. Instead, reset the buffer in place — the next
+          ``console.print`` lands in an empty buffer and produces the
+          same banner-then-history viewport.
+        * **Legacy non-full-screen** path: behave as before, using
+          terminal escape codes to wipe the viewport while leaving the
+          terminal-native scrollback intact.
 
         Args:
             verbose: Render style for action trace lines.
@@ -1156,9 +1168,13 @@ class ChatCommands:
                 single action list instead. Used by Ctrl+O on the very first
                 turn before ``all_turn_actions.append`` runs.
         """
-        self.console.clear()
-        sys.stdout.write("\033[3J")
-        sys.stdout.flush()
+        tui_output_buffer = getattr(self.cli, "_tui_output_buffer", None)
+        if tui_output_buffer is not None:
+            tui_output_buffer.clear()
+        else:
+            self.console.clear()
+            sys.stdout.write("\033[3J")
+            sys.stdout.flush()
         banner_callback = getattr(self.cli, "_print_welcome", None)
         if banner_callback is not None:
             banner_callback()

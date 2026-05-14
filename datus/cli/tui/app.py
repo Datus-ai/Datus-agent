@@ -40,6 +40,7 @@ from prompt_toolkit.application import Application
 from prompt_toolkit.application.run_in_terminal import in_terminal
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer
+from prompt_toolkit.data_structures import Point
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition, has_completions, is_done, to_filter
 from prompt_toolkit.formatted_text import FormattedText
@@ -47,12 +48,12 @@ from prompt_toolkit.history import History
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import Layout
-from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, ScrollOffsets, Window
+from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, ScrollOffsets, VSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.menus import CompletionsMenuControl
 from prompt_toolkit.lexers import Lexer
-from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 from prompt_toolkit.styles import Style
 from prompt_toolkit.utils import get_cwidth
 from prompt_toolkit.widgets import TextArea
@@ -104,12 +105,37 @@ class DatusApp:
         placeholder_fn: Optional[Callable[[], str]] = None,
         input_prompt_fn: Optional[Callable[[], str]] = None,
         live_display_state: Optional[LiveDisplayState] = None,
+        todo_tokens_fn: Optional[Callable[[], List[Tuple[str, str]]]] = None,
+        todo_has_items_fn: Optional[Callable[[], bool]] = None,
+        todo_line_count_fn: Optional[Callable[[], int]] = None,
+        output_tokens_fn: Optional[Callable[[], List[Tuple[str, str]]]] = None,
+        output_line_count_fn: Optional[Callable[[], int]] = None,
     ) -> None:
         self._status_tokens_fn = status_tokens_fn
         self._dispatch_fn = dispatch_fn
         self._placeholder_fn = placeholder_fn or (lambda: "")
         self._input_prompt_fn = input_prompt_fn or (lambda: "> ")
         self._live_state = live_display_state
+        self._todo_tokens_fn = todo_tokens_fn
+        self._todo_has_items_fn = todo_has_items_fn
+        self._todo_line_count_fn = todo_line_count_fn
+        # Scroll-pane output (full_screen=True). Replaces patch_stdout —
+        # all console.print output is captured into an in-memory buffer
+        # which feeds ``output_tokens_fn``. ``output_line_count_fn`` is
+        # consulted by the sticky-bottom auto-scroll logic.
+        self._output_tokens_fn = output_tokens_fn or (lambda: [])
+        self._output_line_count_fn = output_line_count_fn or (lambda: 0)
+        # Sticky-bottom is driven by the FormattedTextControl cursor
+        # position. ``_output_at_bottom=True`` (the default) means the
+        # cursor tracks the very last logical line of content — every
+        # invalidate re-anchors the scroll viewport so freshly committed
+        # output stays in view. PgUp / wheel-up snapshot the logical
+        # cursor into ``_output_cursor_y`` and disengage; PgDn / wheel
+        # back to the last line re-engages. Wheel events come through the
+        # output Window's ``mouse_handler`` because FormattedTextControl
+        # has no built-in scroll behaviour.
+        self._output_at_bottom: bool = True
+        self._output_cursor_y: int = 0
 
         self._agent_running = threading.Event()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="datus-tui-worker")
@@ -181,32 +207,59 @@ class DatusApp:
             filter=Condition(lambda: bool(self._ctrl_c_hint)),
         )
 
-        # Pinned live-render region for subagent rolling window, processing-
-        # tool blink, and streaming-markdown tail. Sits between the
-        # patch_stdout scroll area and the status bar.
+        # Scrollable output pane (left, weight=4). Replaces the old
+        # patch_stdout-driven scrollback. Every byte Rich emits flows into
+        # an in-memory ``TUIOutputBuffer``; ``output_tokens_fn`` (wired by
+        # ``DatusCLI``) returns the buffer's token stream on every paint.
+        # The streaming markdown tail and subagent rolling window — still
+        # written to ``LiveDisplayState`` — are concatenated by the buffer
+        # so they appear at the bottom of the same pane, exactly where the
+        # cursor would have rendered them in ``full_screen=False`` mode.
         #
-        # Height is derived from the *current* terminal size on every render
-        # (see :meth:`_pinned_max_rows`) so a larger terminal gets a larger
-        # pinned area — enough room for a full markdown table to stay
-        # box-rendered — while a narrow terminal is protected from having
-        # the input row squeezed off screen. ``dont_extend_height=True``
-        # plus ``wrap_lines=False`` means we never steal more than our
-        # declared budget, and prompt_toolkit shrinks us first when the
-        # input area needs to grow (multi-line paste, completions, etc.).
-        live_state_active = Condition(self._live_state_is_active)
-        self._live_region = ConditionalContainer(
-            content=Window(
-                content=FormattedTextControl(self._render_live_region),
-                height=self._pinned_height_dimension,
-                dont_extend_height=True,
-                wrap_lines=False,
+        # Sticky-bottom auto-scroll is achieved by pointing
+        # ``get_cursor_position`` at the last logical line of content and
+        # letting prompt_toolkit's built-in "scroll to keep cursor visible"
+        # do the work. PgUp / mouse-wheel-up disengage by moving the
+        # logical cursor up; PgDn / wheel-down back to the end re-engages.
+        # Using ``get_cursor_position`` instead of ``get_vertical_scroll``
+        # is required because ``wrap_lines=True`` makes logical-row counts
+        # mismatch visible-row counts, so a hand-rolled offset would
+        # systematically under-scroll on wrapped output.
+        self._output_window = Window(
+            content=FormattedTextControl(
+                text=self._output_tokens_fn,
+                focusable=True,
+                show_cursor=False,
+                get_cursor_position=self._output_cursor_position,
             ),
-            filter=live_state_active,
+            width=Dimension(weight=4),
+            wrap_lines=True,
+            scroll_offsets=ScrollOffsets(top=1, bottom=1),
+            always_hide_cursor=to_filter(True),
+            style="class:output-pane",
         )
+        # FormattedTextControl has no ``mouse_handler`` constructor kwarg —
+        # it's an instance method consulted by the Window. Override it
+        # in place so scroll-wheel events trigger our sticky-bottom-aware
+        # cursor movement instead of the default Window scroll (which
+        # would be undone by ``get_cursor_position`` re-anchoring to the
+        # last line on the next paint).
+        self._output_window.content.mouse_handler = self._output_mouse_handler
+
+        # Right-side todo-list sidebar for the pinned output row. Wired via
+        # callbacks so non-TUI callers (and tests that pass no todo hooks)
+        # keep an unchanged single-column layout. Hidden when items are empty
+        # or the terminal is too narrow to fit a useful 20% column.
+        self._todo_sidebar = self._build_todo_sidebar()
+
+        # Top output row: scrollable output (weight=4) + todo sidebar
+        # (weight=1). No fixed height — the row absorbs all remaining
+        # terminal rows above the status bar / input / hint stack.
+        top_row = VSplit([self._output_window, self._todo_sidebar])
 
         root = HSplit(
             [
-                self._live_region,
+                top_row,
                 self._make_separator(),
                 self._status_window,
                 self._make_separator(),
@@ -219,21 +272,23 @@ class DatusApp:
 
         self._kb = self._build_default_key_bindings()
 
+        # ``full_screen=True`` so the output pane and sidebar share the
+        # full terminal vertical real estate. ``mouse_support=True`` lights
+        # up the scroll wheel for the output pane (and click-to-focus); per
+        # plan the user accepted losing terminal-native Shift+drag select
+        # inside the rendered area in exchange.
         self._app: Application = Application(
             layout=Layout(root, focused_element=self._input_area),
             key_bindings=self._kb,
             style=style or Style([]),
-            full_screen=False,
-            mouse_support=False,
+            full_screen=True,
+            mouse_support=True,
             erase_when_done=False,
         )
 
-        # Wire the live-region repaint callback now that ``self.invalidate`` is
-        # bound; :class:`LiveDisplayState` defaults to a no-op callback so
-        # constructing it before the app is still safe. The row-budget
-        # provider delegates to :meth:`_pinned_max_rows` so writers (the
-        # streaming refresh daemon) shape their line lists against the
-        # same ceiling prompt_toolkit applies to the Window.
+        # Live state now drives the streaming tail inside the scrollable
+        # output pane (via ``TUIOutputBuffer.tokens()``) — its invalidate
+        # callback still wakes the main loop the same way.
         if self._live_state is not None:
             self._live_state.set_invalidate(self.invalidate)
             self._live_state.set_max_rows_provider(self._pinned_max_rows)
@@ -242,6 +297,89 @@ class DatusApp:
     def _make_separator() -> Window:
         """Full-width horizontal rule rendered with box-drawing character."""
         return Window(height=1, char="\u2500", style="class:separator")
+
+    # Minimum terminal width before the sidebar becomes too narrow to
+    # be readable (20% of 60 columns ≈ 12, with a 1-col rule on its
+    # left). Below this threshold the entire right column is hidden.
+    _SIDEBAR_MIN_TERMINAL_COLS = 60
+
+    def _build_todo_sidebar(self) -> ConditionalContainer:
+        """Construct the TodoList sidebar column pinned above the status bar.
+
+        When ``todo_tokens_fn`` is None (non-TUI callers, tests) the
+        sidebar's visibility filter returns False permanently, which
+        makes the VSplit collapse to a single column at render time —
+        no behavioural change for callers that don't opt in.
+
+        The outer width is **hard-pinned** to ``terminal_cols // 5``
+        (min 14) via a callable ``Dimension``. Without this, in idle
+        mode (live region collapsed to 0 rows / 0 preferred width)
+        prompt_toolkit's VSplit splitter ignores the weights and lets
+        the sidebar's content preferred-width drive the column size —
+        long CJK tasks push the sidebar far past 20%. Pinning min=max
+        keeps the split deterministic. Height is also capped to the pinned
+        output row budget so a long todo list cannot push the status bar/input
+        stack away from the bottom of the terminal.
+        """
+        tokens_fn = self._todo_tokens_fn or (lambda: [])
+        has_items_fn = self._todo_has_items_fn or (lambda: False)
+
+        def _sidebar_visible() -> bool:
+            if self._terminal_columns() < self._SIDEBAR_MIN_TERMINAL_COLS:
+                return False
+            try:
+                return bool(has_items_fn())
+            except Exception:  # pragma: no cover - defensive
+                return False
+
+        def _sidebar_width() -> Dimension:
+            target = self._sidebar_target_width()
+            return Dimension(min=target, max=target, preferred=target)
+
+        # In full_screen mode the top output row absorbs all remaining
+        # vertical space, so the sidebar Window must NOT cap its height —
+        # otherwise a 4-task sidebar would shrink the row to 4 rows and
+        # let the output pane below it collapse. ``dont_extend_height``
+        # is also dropped: the sidebar can fill the column with empty
+        # rows beneath the last task.
+        #
+        # ``wrap_lines=True`` lets a single long task wrap across as many
+        # visual rows as the column needs — the provider intentionally
+        # does NOT truncate content so wrapping is the only way the user
+        # sees the full task text on a narrow sidebar.
+        sidebar_body = Window(
+            content=FormattedTextControl(
+                text=tokens_fn,
+                focusable=False,
+                show_cursor=False,
+            ),
+            wrap_lines=True,
+            dont_extend_width=False,
+            style="class:todo-sidebar",
+        )
+        return ConditionalContainer(
+            content=VSplit(
+                [
+                    Window(width=Dimension.exact(1), char="\u2502", style="class:separator"),
+                    sidebar_body,
+                ],
+                width=_sidebar_width,
+            ),
+            filter=Condition(_sidebar_visible),
+        )
+
+    def _sidebar_target_width(self) -> int:
+        """Total cells reserved for the right-side todo column.
+
+        Returns ``max(14, terminal_cols // 5)`` so a narrow terminal
+        still gets a 14-cell minimum, and wider terminals get exactly
+        20% of the column count. The corresponding line-content cell
+        budget (subtracting the 1-col ``│`` separator and the
+        ``" ✓ "`` prefix) is computed in :meth:`DatusCLI._sidebar_content_width`
+        and passed to ``TodoSidebarProvider`` so truncation tracks the
+        actual rendered width.
+        """
+        return max(14, self._terminal_columns() // 5)
 
     def _live_state_is_active(self) -> bool:
         return self._live_state is not None and self._live_state.is_active()
@@ -272,6 +410,101 @@ class DatusApp:
     def _pinned_max_rows(self) -> int:
         """Current row ceiling for the pinned region (terminal-aware)."""
         return compute_pinned_max_rows(self._terminal_rows())
+
+    def _output_viewport_rows(self) -> int:
+        """Visible row count of the output pane (live render_info if available).
+
+        Used by PgUp / PgDn / wheel handlers to size each scroll step
+        against the actual rendered viewport. Falls back to a coarse
+        estimate before the first paint so the very first key-press
+        still produces a reasonable jump.
+        """
+        try:
+            render_info = self._output_window.render_info
+        except AttributeError:
+            render_info = None
+        if render_info is not None and getattr(render_info, "window_height", 0) > 0:
+            return int(render_info.window_height)
+        return max(1, self._terminal_rows() - 4)  # status + 2 separators + input
+
+    def _output_page_size(self) -> int:
+        """Rows to scroll on a single PageUp / PageDown keystroke."""
+        return max(1, self._output_viewport_rows() - 1)
+
+    def _output_last_line_index(self) -> int:
+        """Index of the last logical line in the output token stream.
+
+        Returns 0 when there is no content so the cursor stays at the
+        origin instead of going negative (which would crash
+        prompt_toolkit's coordinate math).
+        """
+        return max(0, int(self._output_line_count_fn()) - 1)
+
+    def _output_cursor_position(self) -> Optional[Point]:
+        """Cursor position fed to ``FormattedTextControl``.
+
+        When sticky-bottom is engaged, the cursor sits on the last
+        logical line and prompt_toolkit's default behaviour (keep the
+        cursor visible within ``scroll_offsets``) auto-scrolls the pane
+        to show new output every paint. When the user has paged up the
+        cursor is clamped to ``_output_cursor_y`` so the viewport stays
+        where they left it. The cursor column is irrelevant; the
+        control is read-only and the cursor is hidden via
+        ``always_hide_cursor``.
+
+        Returns ``None`` when the buffer is empty — otherwise
+        prompt_toolkit's render loop dereferences ``fragment_lines[0]``
+        on an empty list (``controls.py:413``) and crashes the TUI.
+        """
+        line_count = int(self._output_line_count_fn())
+        if line_count <= 0:
+            return None
+        last = line_count - 1
+        if self._output_at_bottom:
+            return Point(x=0, y=last)
+        return Point(x=0, y=max(0, min(last, self._output_cursor_y)))
+
+    def _scroll_output_up(self, rows: int) -> None:
+        """Move the logical cursor up by ``rows``; disengage sticky-bottom."""
+        last = self._output_last_line_index()
+        # Snapshot the current scroll position into the explicit cursor
+        # state on the first PgUp so subsequent jumps are relative.
+        current = last if self._output_at_bottom else min(last, self._output_cursor_y)
+        self._output_cursor_y = max(0, current - max(1, rows))
+        self._output_at_bottom = False
+
+    def _scroll_output_down(self, rows: int) -> None:
+        """Move the logical cursor down by ``rows``; re-engage sticky-bottom on overshoot."""
+        last = self._output_last_line_index()
+        current = last if self._output_at_bottom else min(last, self._output_cursor_y)
+        new_y = current + max(1, rows)
+        if new_y >= last:
+            self._output_at_bottom = True
+            self._output_cursor_y = last
+        else:
+            self._output_cursor_y = new_y
+
+    # Wheel events scroll a small fixed step — matches what feels native
+    # in most terminal emulators.
+    _OUTPUT_WHEEL_STEP = 3
+
+    def _output_mouse_handler(self, event: MouseEvent):  # noqa: ANN001
+        """Translate scroll-wheel events on the output pane into scroll motion.
+
+        FormattedTextControl has no built-in mouse handling, so we wire
+        the wheel directly. Click / drag fall through (return
+        ``NotImplemented``) so prompt_toolkit's default focus-on-click
+        and selection still apply once we add a selectable buffer.
+        """
+        if event.event_type == MouseEventType.SCROLL_UP:
+            self._scroll_output_up(self._OUTPUT_WHEEL_STEP)
+            self._app.invalidate()
+            return None
+        if event.event_type == MouseEventType.SCROLL_DOWN:
+            self._scroll_output_down(self._OUTPUT_WHEEL_STEP)
+            self._app.invalidate()
+            return None
+        return NotImplemented
 
     def _terminal_columns(self) -> int:
         """Best-effort current terminal column count.
@@ -341,38 +574,6 @@ class DatusApp:
             line_width = sum(get_cwidth(ch) for ch in line)
             total += max(1, -(-line_width // usable))
         return max(total, 1)
-
-    def _pinned_height_dimension(self) -> Dimension:
-        """Height dimension callback for the pinned Window.
-
-        ``Dimension.preferred`` is anchored to the current content size so a
-        short markdown tail doesn't grab extra rows it doesn't need, while
-        ``max`` rises with the terminal so a full table can live-render in
-        box form once the body has enough visible rows.
-        """
-        cap = self._pinned_max_rows()
-        preferred = 1
-        if self._live_state is not None:
-            preferred = max(1, min(cap, self._live_state.line_count()))
-        return Dimension(min=1, preferred=preferred, max=cap)
-
-    def _render_live_region(self) -> FormattedText:
-        """Flatten every pinned line into a single multiline FormattedText.
-
-        Lines are joined with ``\\n`` so the hosting Window sizes naturally
-        to the pinned-line count (each line contributes one terminal row).
-        """
-        if self._live_state is None:
-            return FormattedText([])
-        snap = self._live_state.snapshot()
-        if not snap:
-            return FormattedText([])
-        fragments: List[Tuple[str, str]] = []
-        for idx, line in enumerate(snap):
-            if idx > 0:
-                fragments.append(("", "\n"))
-            fragments.extend(line.segments)
-        return FormattedText(fragments)
 
     def show_ctrl_c_hint(self) -> None:
         self._ctrl_c_hint = "Press Ctrl+C again to exit"
@@ -551,12 +752,12 @@ class DatusApp:
             pass
 
     def run(self) -> int:
-        """Run the Application under ``patch_stdout``. Blocks until exit.
+        """Run the Application in full_screen mode. Blocks until exit.
 
-        Pinning the layout to the bottom of the terminal is done by the
-        caller *before* printing the banner (see ``DatusCLI._pin_to_bottom``),
-        so the banner still lands in the visible area. Anchoring inside this
-        method would push the already-printed banner off screen.
+        ``patch_stdout`` is gone: all Rich console output now flows into
+        :class:`TUIOutputBuffer` (set up by ``DatusCLI``), which feeds the
+        scrollable output pane on the left of the layout. The full-screen
+        Application owns the entire terminal until ``exit()`` is called.
         """
 
         async def _main() -> None:
@@ -575,8 +776,7 @@ class DatusApp:
                 self._loop = None
 
         try:
-            with patch_stdout(raw=True):
-                asyncio.run(_main())
+            asyncio.run(_main())
         finally:
             try:
                 self._executor.shutdown(wait=True, cancel_futures=True)
@@ -757,5 +957,15 @@ class DatusApp:
                 self._paste_collapsed = False
                 event.app.current_buffer.reset()
                 self.show_ctrl_c_hint()
+
+        @kb.add("pageup")
+        def _page_up(event) -> None:  # noqa: ANN001
+            self._scroll_output_up(self._output_page_size())
+            event.app.invalidate()
+
+        @kb.add("pagedown")
+        def _page_down(event) -> None:  # noqa: ANN001
+            self._scroll_output_down(self._output_page_size())
+            event.app.invalidate()
 
         return kb

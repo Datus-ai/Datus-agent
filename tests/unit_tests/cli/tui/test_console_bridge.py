@@ -6,8 +6,11 @@
 The bridge has a single helper, ``run_in_terminal_sync``, whose contract is:
 
 * If no prompt_toolkit Application is active, invoke ``func`` directly.
-* If one is active, schedule ``func`` via ``run_in_terminal`` and block on
-  the returned future.
+* If a **full-screen** Application is active (the main Datus TUI), invoke
+  ``func`` directly — the output buffer handles its own thread safety and
+  ``in_terminal()`` would blank the layout for every print.
+* Otherwise (legacy non-full-screen modal): schedule ``func`` via
+  ``run_in_terminal`` and block on the returned future.
 """
 
 from __future__ import annotations
@@ -41,6 +44,7 @@ def test_schedules_via_run_in_terminal_when_on_event_loop() -> None:
     """
     fake_future = mock.MagicMock()
     fake_app = mock.MagicMock()
+    fake_app.full_screen = False  # legacy modal path; full_screen path is exercised separately
     fake_loop = mock.MagicMock()
 
     with (
@@ -67,6 +71,7 @@ def test_submits_coroutine_from_off_loop_thread() -> None:
     fake_cf = mock.MagicMock()
     fake_cf.result.return_value = None
     fake_app = mock.MagicMock()
+    fake_app.full_screen = False
 
     with (
         mock.patch("datus.cli.tui.console_bridge.get_app_or_none", return_value=fake_app),
@@ -94,6 +99,7 @@ def test_swallows_future_exceptions() -> None:
     fake_cf = mock.MagicMock()
     fake_cf.result.side_effect = RuntimeError("boom")
     fake_app = mock.MagicMock()
+    fake_app.full_screen = False
 
     with (
         mock.patch("datus.cli.tui.console_bridge.get_app_or_none", return_value=fake_app),
@@ -122,6 +128,7 @@ def test_runs_inline_when_loop_missing_on_app() -> None:
     through to an inline call.
     """
     fake_app = mock.MagicMock()
+    fake_app.full_screen = False
     fake_app.loop = None
     called = {"count": 0}
 
@@ -138,3 +145,24 @@ def test_runs_inline_when_loop_missing_on_app() -> None:
         run_in_terminal_sync(_fn)
 
     assert called["count"] == 1
+
+
+def test_runs_inline_when_full_screen_application_is_active() -> None:
+    """The main Datus TUI runs full_screen — the bridge must invoke
+    ``func`` directly. ``in_terminal()`` would erase the full layout
+    for every print, which is unusable. The output buffer that
+    receives ``func``'s side-effects is independently thread-safe."""
+    fake_app = mock.MagicMock()
+    fake_app.full_screen = True
+    called = {"count": 0}
+
+    with (
+        mock.patch("datus.cli.tui.console_bridge.get_app_or_none", return_value=fake_app),
+        mock.patch("datus.cli.tui.console_bridge.run_in_terminal") as mocked_rit,
+        mock.patch("datus.cli.tui.console_bridge.asyncio.run_coroutine_threadsafe") as mocked_submit,
+    ):
+        run_in_terminal_sync(lambda: called.__setitem__("count", called["count"] + 1))
+
+    assert called["count"] == 1
+    mocked_rit.assert_not_called()
+    mocked_submit.assert_not_called()

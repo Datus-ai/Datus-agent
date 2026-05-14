@@ -65,6 +65,7 @@ from datus.cli.model_commands import ModelCommands
 from datus.cli.service_commands import ServiceCommands
 from datus.cli.slash_registry import GROUP_ORDER, GROUP_TITLES, iter_visible, lookup
 from datus.cli.status_bar import StatusBarProvider
+from datus.cli.todo_sidebar import TodoSidebarProvider
 from datus.cli.tui import DatusApp, tui_enabled
 from datus.cli.tui.app import EXIT_SENTINEL
 from datus.cli.tui.live_display_state import LiveDisplayState
@@ -274,6 +275,7 @@ class DatusCLI:
 
         self.bg_sync = BackgroundSchemaSyncManager(self)
         self._status_bar_provider = StatusBarProvider(self)
+        self._todo_sidebar_provider = TodoSidebarProvider(self)
 
         # Dictionary of available commands - created after handlers are initialized
         self.commands: Dict[str, Any] = {
@@ -499,6 +501,40 @@ class DatusCLI:
             logger.debug(f"status bar render failed: {e}")
             return []
 
+    def _todo_tokens_for_tui(self) -> List[Tuple[str, str]]:
+        """Build todo-sidebar tokens for the persistent TUI layout.
+
+        Bound method wrapper so :meth:`_init_tui_app` can pass this as a
+        callback *before* ``_todo_sidebar_provider`` is assigned in
+        ``__init__`` — the actual provider lookup happens on each paint,
+        by which point ``__init__`` has completed.
+        """
+        try:
+            return self._todo_sidebar_provider.tokens()
+        except Exception as e:  # pragma: no cover - defensive
+            logger.debug(f"todo sidebar tokens failed: {e}")
+            return []
+
+    def _todo_has_items_for_tui(self) -> bool:
+        """Filter callback for the todo-sidebar ``ConditionalContainer``.
+
+        See :meth:`_todo_tokens_for_tui` for the deferred-binding
+        rationale.
+        """
+        try:
+            return self._todo_sidebar_provider.has_items()
+        except Exception as e:  # pragma: no cover - defensive
+            logger.debug(f"todo sidebar has_items failed: {e}")
+            return False
+
+    def _todo_line_count_for_tui(self) -> int:
+        """Rendered row count for sizing the pinned todo sidebar."""
+        try:
+            return self._todo_sidebar_provider.line_count()
+        except Exception as e:  # pragma: no cover - defensive
+            logger.debug(f"todo sidebar line_count failed: {e}")
+            return 0
+
     def _interrupt_agent(self) -> None:
         chat_commands = getattr(self, "chat_commands", None)
         current_node = getattr(chat_commands, "current_node", None) if chat_commands else None
@@ -515,7 +551,11 @@ class DatusCLI:
         # (trigger completion only, no navigation). Additional bindings —
         # Shift+Tab plan-mode toggle, Ctrl+O trace details, ESC interrupt —
         # are wired in later phases.
+        import shutil
+
         from prompt_toolkit.lexers import PygmentsLexer
+
+        from datus.cli.tui.output_buffer import TUIOutputBuffer
 
         # The TUI path still relies on the same AtReferenceCompleter handle
         # that downstream code queries for subagent state, so attach it
@@ -527,6 +567,43 @@ class DatusCLI:
         # docstring for the deferred-callback rationale).
         self.live_state = LiveDisplayState()
 
+        # Build the in-memory output buffer and **swap self.console to write
+        # into it** before any further banner / warning print. In
+        # ``full_screen=True`` mode prompt_toolkit owns the entire terminal,
+        # so anything printed via the original stdout-bound Console would be
+        # erased the instant ``tui_app.run()`` starts. By rerouting now,
+        # ``_print_welcome`` and friends land in the buffer and appear in the
+        # scroll pane as the first paint renders. Rich's ``Console`` locks
+        # ``file=`` and ``width=`` at construction so we replace the whole
+        # instance.
+        self._tui_output_buffer = TUIOutputBuffer(
+            live_state_snapshot_fn=self.live_state.snapshot,
+        )
+        # Rich must be told the WIDTH OF THE OUTPUT PANE — *not* the full
+        # terminal — otherwise Markdown borders, table grids, and Pygments
+        # alignment break visibly the moment the sidebar takes its 20%
+        # column. We mirror ``DatusApp._sidebar_target_width`` (``max(14,
+        # cols // 5)``) and subtract a 1-col safety margin so wrapped tail
+        # characters don't butt against the ``│`` separator on resize.
+        cols = shutil.get_terminal_size(fallback=(120, 30)).columns
+        sidebar_width = max(14, cols // 5)
+        pane_width = max(20, cols - sidebar_width - 1)
+        self.console = Console(
+            file=self._tui_output_buffer,
+            force_terminal=True,
+            color_system="256",
+            width=pane_width,
+            log_path=False,
+        )
+        # Propagate the new Console to subsystems that captured the old one
+        # via bound method: setup_exception_handler kept a closure over
+        # ``self.console.print``; reinstall it so global exceptions land in
+        # the buffer too.
+        setup_exception_handler(
+            console_logger=lambda *a, **kw: self.console.print(*a, **kw),
+            prefix_wrap_func=lambda x: f"[red]{x}[/red]",
+        )
+
         self.tui_app = DatusApp(
             status_tokens_fn=self._status_tokens_for_tui,
             dispatch_fn=self._dispatch_command_text,
@@ -536,7 +613,21 @@ class DatusCLI:
             style=self._build_app_style(),
             input_prompt_fn=self._get_prompt_text,
             live_display_state=self.live_state,
+            todo_tokens_fn=self._todo_tokens_for_tui,
+            todo_has_items_fn=self._todo_has_items_for_tui,
+            todo_line_count_fn=self._todo_line_count_for_tui,
+            output_tokens_fn=self._tui_output_buffer.tokens,
+            # Cursor positioning *must* read the count tied to the most
+            # recent ``tokens()`` call — see ``render_line_count`` for the
+            # IndexError race it avoids.
+            output_line_count_fn=self._tui_output_buffer.render_line_count,
         )
+
+        # Now that the Application exists, wire the buffer's ``on_change``
+        # callback to its ``invalidate`` so every Rich write triggers a
+        # repaint (via ``loop.call_soon_threadsafe`` — thread-safe by
+        # construction, see DatusApp.invalidate).
+        self._tui_output_buffer.set_on_change(self.tui_app.invalidate)
 
         @self.tui_app.key_bindings.add("tab")
         def _tab(event):  # noqa: ANN001 - prompt_toolkit signature
@@ -1591,11 +1682,7 @@ class DatusCLI:
         # the plan, but the REPL switch otherwise stays on and would force
         # re-activation on the next prompt.
         node = getattr(self.chat_commands, "current_node", None)
-        if (
-            node is not None
-            and self.plan_mode_active
-            and not getattr(node, "plan_mode_active", False)
-        ):
+        if node is not None and self.plan_mode_active and not getattr(node, "plan_mode_active", False):
             self.plan_mode_active = False
             logger.debug("REPL plan-mode toggle synced off after confirm_plan")
 
