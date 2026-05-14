@@ -397,10 +397,9 @@ What the menu does — all entirely client-side, no host round-trip:
 
 Rules of thumb:
 
-- **Add it to every chart that's backed by a real query** — line / bar / area / pie / scatter / radar charts, sortable tables. The "view SQL" action is the single best credibility move you can make for an analytical deliverable.
-- **Skip it on pure decoration** — KPI sparklines, tiny mini-charts that are visual texture rather than primary data, hand-rolled diagrams that don't have a single backing query.
-- **Trigger placement**: align it to the right side of the chart's title row, not floating over the chart canvas. The 26×26 button is sized to slot into a `flex` row alongside the H3 cleanly.
-- **One trigger per card**: don't add multiple `<ChartEntryMore>` for different sub-charts inside one card. Combine them into one card per query or pick the most-prominent sqlId.
+- **Add `<ChartEntryMore>` to every visualization backed by a `useQuerySql` call**, with no exceptions. That covers line / bar / area / pie / scatter / radar charts, KPI cards, KPI sparklines, custom inline SVG visualizations, and **data tables** — the table header row gets a trigger right of the title too. The "view SQL" action is the single best credibility move you can make for an analytical deliverable; do not gate it on whether the chart "looks important enough".
+- **Trigger placement**: align it to the right side of the visualization's title row in a `flex` container — `<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>` with the H3/title on the left and `<ChartEntryMore>` on the right. Never float it over the chart canvas. For data tables, the trigger lives in the header strip above the `<table>`, not inside `<thead>`. The 26×26 button is sized to slot into the flex row cleanly.
+- **One trigger per card**: don't add multiple `<ChartEntryMore>` for different sub-charts inside one card. Combine them into one card per query, or pick the most-prominent sqlId.
 - **Don't pass any other ref** as `cardRef` — must be the outer card, otherwise PNG export crops out the title.
 
 ### Formatting helpers
