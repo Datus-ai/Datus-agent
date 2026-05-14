@@ -308,15 +308,46 @@ class PermissionHooks(AgentHooks):
 
                 logger.info(f"User approved tool '{tool_name}'")
 
+    # Tool-name set used to distinguish destructive writes from reads.
+    # Keep in sync with ``FilesystemFuncTool.available_tools`` — adding a new
+    # write-capable filesystem tool (e.g. ``append_file``) requires extending
+    # this set so the profile-aware gate treats it as a write.
+    _FILESYSTEM_WRITE_TOOLS = frozenset({"write_file", "edit_file"})
+
     async def _handle_filesystem_zone(self, context: Any, tool_name: str, pattern_name: str) -> bool:
-        """Zone-based gating for ``filesystem_tools.*`` calls.
+        """Zone × profile × read-vs-write gating for ``filesystem_tools.*`` calls.
 
         Returns ``True`` when the call has been fully handled (either allowed
         through or rejected) and ``False`` to let the normal category-level
-        permission check run. ``EXTERNAL`` zones always land in the ``ASK``
-        branch here regardless of what the category rule says — that is the
-        whole point of zones, otherwise a session-level ``allow`` on
-        ``filesystem_tools`` would silently grant ``/etc/passwd`` access.
+        permission check run.
+
+        Decision matrix (see plan: profile-aware filesystem permission):
+
+        ============  ========================  ==============  ==============  ==============
+        operation     zone                      normal          auto            dangerous
+        ============  ========================  ==============  ==============  ==============
+        read          INTERNAL / WHITELIST      bypass          bypass          bypass
+        read          HIDDEN                    tool not-found  tool not-found  tool not-found
+        read          EXTERNAL (interactive)    ASK(path bucket) ASK(path bucket) bypass
+        read          EXTERNAL (strict)         tool fail       tool fail       tool fail
+        read          EXTERNAL (non-interactive) raise          raise           raise
+        write         INTERNAL                  rule lookup ASK bypass          bypass
+        write         WHITELIST (parent memory) tool reject     tool reject     tool reject
+        write         HIDDEN                    tool not-found  tool not-found  tool not-found
+        write         EXTERNAL (interactive)    ASK(path bucket) ASK(path bucket) bypass
+        write         EXTERNAL (strict)         tool fail       tool fail       tool fail
+        write         EXTERNAL (non-interactive) raise          raise           raise
+        ============  ========================  ==============  ==============  ==============
+
+        Key invariants:
+
+        * ``non_interactive`` short-circuits ``dangerous`` — workflow flows must
+          never silently write outside the project just because they happen to
+          run under the dangerous profile.
+        * ``policy.strict`` short-circuits everything for EXTERNAL paths;
+          callers without an interactive broker rely on the tool-layer fail.
+        * WHITELIST writes are left to ``FilesystemFuncTool._read_only_reject``
+          so the user doesn't waste an ASK click on a path the tool will refuse.
         """
         policy = self.fs_policy
         assert policy is not None  # guarded by caller
@@ -344,7 +375,23 @@ class PermissionHooks(AgentHooks):
             logger.debug(f"classify_path failed for {tool_name} path={path_arg!r}: {e}")
             return False
 
+        is_write = tool_name in self._FILESYSTEM_WRITE_TOOLS
+        profile = getattr(self.permission_manager, "active_profile", None) or "normal"
+
         if resolved.zone in (PathZone.INTERNAL, PathZone.WHITELIST):
+            # INTERNAL × write × normal: fall through to rule lookup so the
+            # category-level ``default=ASK`` (or any explicit ``filesystem_tools.write_file``
+            # rule) takes over. ``_NORMAL_RULES`` has no entry for write_file,
+            # so this materialises as a per-session ASK prompt on the user.
+            # WHITELIST writes are handled by ``FilesystemFuncTool._read_only_reject``
+            # at the tool layer (parent-memory inheritance is read-only),
+            # so we keep bypass here to avoid a wasted ASK round-trip.
+            if is_write and profile == "normal" and resolved.zone == PathZone.INTERNAL:
+                logger.debug(
+                    "Filesystem zone INTERNAL × write × normal: deferring to rule lookup for %s",
+                    resolved.display,
+                )
+                return False
             logger.debug(
                 "Filesystem zone %s: allowing %s on %s without prompt",
                 resolved.zone.value,
@@ -391,6 +438,18 @@ class PermissionHooks(AgentHooks):
                 tool_category="filesystem_tools",
                 tool_name=pattern_name,
             )
+
+        # Dangerous profile in interactive mode: opt out of the EXTERNAL ASK
+        # gate entirely. Workflow flows reach the ``non_interactive`` branch
+        # above before this point, so the user's foreground ``/profile dangerous``
+        # choice is the only thing that can land here.
+        if profile == "dangerous":
+            logger.debug(
+                "Profile=dangerous: bypassing EXTERNAL ASK for %s on %s",
+                tool_name,
+                resolved.resolved,
+            )
+            return True
 
         cache_key = f"filesystem_tools.external::{resolved.resolved}"
         if self.permission_manager._session_approvals.get(cache_key):

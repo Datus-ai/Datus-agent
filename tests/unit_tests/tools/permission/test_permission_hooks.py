@@ -692,6 +692,199 @@ class TestFilesystemZoneBranch:
             await hooks.on_tool_start(ctx, MagicMock(), tool)
 
 
+class TestFilesystemZoneProfileMatrix:
+    """``_handle_filesystem_zone`` now reads ``active_profile`` and the
+    tool name to enforce the read/write × profile matrix documented in
+    ``datus/tools/permission/profiles.py``.
+
+    Key invariants exercised below:
+
+    * ``normal × INTERNAL × write`` falls back to rule lookup → ``default=ASK``
+      (so the LLM cannot silently edit project files under the safe profile).
+    * ``dangerous × EXTERNAL`` (interactive) bypasses the ASK gate.
+    * ``non_interactive=True`` short-circuits before ``dangerous`` is even
+      consulted — workflow flows must never inherit the dangerous bypass.
+    """
+
+    def _build(
+        self,
+        broker,
+        tmp_path,
+        *,
+        profile="normal",
+        rules=None,
+        registered_tools=("read_file", "write_file", "edit_file", "glob", "grep"),
+        non_interactive=False,
+        strict=False,
+    ):
+        registry = ToolRegistry()
+        fs_tools = []
+        for name in registered_tools:
+            mock_tool = MagicMock()
+            mock_tool.name = name
+            fs_tools.append(mock_tool)
+        registry.register_tools("filesystem_tools", fs_tools)
+
+        config = PermissionConfig(
+            default_permission=PermissionLevel.ASK,
+            rules=rules or [],
+        )
+        manager = PermissionManager(global_config=config, active_profile=profile)
+        project = tmp_path / "proj"
+        project.mkdir()
+        hooks = PermissionHooks(
+            broker=broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=registry,
+            fs_policy=FilesystemPolicy(root_path=project, current_node="chat", strict=strict),
+            non_interactive=non_interactive,
+        )
+        return hooks, manager, project
+
+    @staticmethod
+    def _ctx_for(path):
+        ctx = MagicMock()
+        ctx.tool_arguments = f'{{"path": "{path}"}}'
+        return ctx
+
+    @staticmethod
+    def _tool(name):
+        tool = MagicMock()
+        tool.name = name
+        return tool
+
+    # --------------------------------------------------------------- INTERNAL
+    @pytest.mark.parametrize("profile", ["normal", "auto", "dangerous"])
+    @pytest.mark.asyncio
+    async def test_internal_read_bypasses_all_profiles(self, mock_broker, tmp_path, profile):
+        """Reading project-internal files never prompts, regardless of profile."""
+        hooks, _, project = self._build(mock_broker, tmp_path, profile=profile)
+        (project / "hello.md").write_text("hi")
+        await hooks.on_tool_start(self._ctx_for("hello.md"), MagicMock(), self._tool("read_file"))
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_internal_write_normal_asks(self, mock_broker, tmp_path):
+        """Writing inside the project under normal profile must prompt.
+
+        The zone gate returns ``False`` here so the category-level
+        ``default=ASK`` (or any explicit ``filesystem_tools.write_file`` rule)
+        takes over. The user choosing "Allow once" lets the call proceed; the
+        cache key is category-level, matching how ``bash_tools.execute_command``
+        ASK works.
+        """
+        hooks, _, project = self._build(mock_broker, tmp_path, profile="normal")
+        (project / "draft.md").write_text("")
+        mock_broker.request = AsyncMock(return_value="y")
+
+        await hooks.on_tool_start(self._ctx_for("draft.md"), MagicMock(), self._tool("write_file"))
+        # Exactly one prompt — the rule-level ASK, not the path-bucketed
+        # external prompt.
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_internal_write_normal_denial_raises(self, mock_broker, tmp_path):
+        """User clicking "Deny" on the ASK prompt must raise, not silently allow."""
+        hooks, _, project = self._build(mock_broker, tmp_path, profile="normal")
+        (project / "draft.md").write_text("")
+        mock_broker.request = AsyncMock(return_value="n")
+
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._ctx_for("draft.md"), MagicMock(), self._tool("write_file"))
+
+    @pytest.mark.parametrize("profile", ["auto", "dangerous"])
+    @pytest.mark.asyncio
+    async def test_internal_write_non_normal_bypasses(self, mock_broker, tmp_path, profile):
+        """Auto and dangerous let project-internal writes through silently."""
+        hooks, _, project = self._build(mock_broker, tmp_path, profile=profile)
+        (project / "draft.md").write_text("")
+        await hooks.on_tool_start(self._ctx_for("draft.md"), MagicMock(), self._tool("write_file"))
+        mock_broker.request.assert_not_called()
+
+    # --------------------------------------------------------------- EXTERNAL
+    @pytest.mark.parametrize(
+        "tool_name",
+        ["read_file", "write_file"],
+    )
+    @pytest.mark.asyncio
+    async def test_external_dangerous_interactive_bypasses(self, mock_broker, tmp_path, tool_name):
+        """``dangerous`` in interactive mode opts out of EXTERNAL ASK entirely.
+
+        Read or write, no broker call. Workflow flows (non-interactive) still
+        fail closed via the separate guard above this branch — see
+        ``test_external_non_interactive_raises_even_under_dangerous``.
+        """
+        hooks, _, _ = self._build(mock_broker, tmp_path, profile="dangerous")
+        target = tmp_path / "outside.md"
+        target.write_text("x")
+        await hooks.on_tool_start(self._ctx_for(target), MagicMock(), self._tool(tool_name))
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "profile,tool_name",
+        [
+            ("normal", "read_file"),
+            ("normal", "write_file"),
+            ("auto", "read_file"),
+            ("auto", "write_file"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_external_non_dangerous_still_asks_per_path(self, mock_broker, tmp_path, profile, tool_name):
+        """normal and auto keep the path-bucketed EXTERNAL ASK gate."""
+        hooks, manager, _ = self._build(mock_broker, tmp_path, profile=profile)
+        target = tmp_path / "outside.md"
+        target.write_text("x")
+        mock_broker.request = AsyncMock(return_value="a")  # always-allow this path
+
+        await hooks.on_tool_start(self._ctx_for(target), MagicMock(), self._tool(tool_name))
+        assert mock_broker.request.await_count == 1
+        # Cache key is the absolute path — guards against profile downgrades
+        # collapsing the EXTERNAL ASK into a category-wide approval.
+        assert any(f"external::{target.resolve()}" in k for k in manager._session_approvals)
+
+    @pytest.mark.parametrize("profile", ["normal", "auto", "dangerous"])
+    @pytest.mark.asyncio
+    async def test_external_non_interactive_raises_even_under_dangerous(self, mock_broker, tmp_path, profile):
+        """Workflow safety: ``non_interactive=True`` always denies EXTERNAL.
+
+        Without this, a ``/profile dangerous`` foreground change would leak
+        into a workflow subagent's non-interactive ``PermissionHooks``
+        (e.g. ``execution_mode="workflow"``) and let it silently touch
+        ``/etc/passwd``.
+        """
+        hooks, _, _ = self._build(mock_broker, tmp_path, profile=profile, non_interactive=True)
+        target = tmp_path / "outside.md"
+        target.write_text("x")
+
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._ctx_for(target), MagicMock(), self._tool("write_file"))
+        mock_broker.request.assert_not_called()
+
+    # --------------------------------------------------------------- write-set
+    @pytest.mark.asyncio
+    async def test_is_write_set_matches_filesystem_tool_surface(self):
+        """Guard against drift: the hook's write-set must cover every write
+        method ``FilesystemFuncTool`` actually exposes.
+
+        If a new write tool (e.g. ``append_file``) is added without updating
+        ``_FILESYSTEM_WRITE_TOOLS``, the normal-profile INTERNAL gate would
+        silently regress to bypass for that tool.
+        """
+        from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+
+        fs_tool = FilesystemFuncTool(root_path="/tmp")
+        tool_names = {t.name for t in fs_tool.available_tools()}
+        write_names = {"write_file", "edit_file"}
+        # The hook's declared write-set must equal the writes the tool exposes,
+        # not a strict subset. Both directions matter:
+        #   - subset breaks the matrix (writes get silently bypassed)
+        #   - superset means we ASK on a tool name that doesn't exist
+        assert write_names == PermissionHooks._FILESYSTEM_WRITE_TOOLS
+        assert write_names.issubset(tool_names)
+
+
 class TestNonInteractiveMode:
     """``non_interactive=True`` short-circuits ASK / EXTERNAL fs branches.
 

@@ -15,9 +15,32 @@ The three profiles embody three security postures:
   all other writes ASK, named destructive tools DENY. Default for new installs.
 * ``auto``:      Normal + workspace writes auto-execute, BI/scheduler
   non-trigger writes auto, DB writes still ASK.
-* ``dangerous``: everything ALLOW. Filesystem EXTERNAL paths still
-  prompt via ``PathZone`` at the hook layer — that gate is orthogonal
-  to the rule engine.
+* ``dangerous``: everything ALLOW, including EXTERNAL filesystem paths in
+  interactive mode. Workflow (non-interactive) flows still fail closed on
+  EXTERNAL paths regardless of profile.
+
+Filesystem decision matrix (rules here interact with the zone gate in
+``PermissionHooks._handle_filesystem_zone``):
+
+============  ===================  ==============  ==============  ==============
+operation     zone                 normal          auto            dangerous
+============  ===================  ==============  ==============  ==============
+read          INTERNAL/WHITELIST   bypass          bypass          bypass
+read          HIDDEN               tool not-found  tool not-found  tool not-found
+read          EXTERNAL (interactive)  ASK(path)    ASK(path)       bypass
+read          EXTERNAL (strict)    tool fail       tool fail       tool fail
+read          EXTERNAL (non-interactive)  raise    raise           raise
+write         INTERNAL             rule lookup ASK bypass          bypass
+write         WHITELIST            tool reject     tool reject     tool reject
+write         HIDDEN               tool not-found  tool not-found  tool not-found
+write         EXTERNAL (interactive)  ASK(path)    ASK(path)       bypass
+write         EXTERNAL (strict)    tool fail       tool fail       tool fail
+write         EXTERNAL (non-interactive)  raise    raise           raise
+============  ===================  ==============  ==============  ==============
+
+The zone gate consults ``active_profile`` and the tool name; the rules
+below cover the cases where the zone gate returns ``False`` (e.g.
+``normal × INTERNAL × write_file`` lands here as ``default=ASK``).
 """
 
 from typing import Optional
@@ -67,11 +90,12 @@ _NORMAL_RULES = [
     _rule("scheduler_tools", "list_*", PermissionLevel.ALLOW),
     _rule("scheduler_tools", "get_*", PermissionLevel.ALLOW),
     _rule("scheduler_tools", "delete_job", PermissionLevel.DENY),
-    # filesystem read
+    # filesystem read. Writes are handled by the zone × profile gate in
+    # ``PermissionHooks._handle_filesystem_zone`` — see this file's docstring
+    # for the full decision matrix. Patterns here must match a real
+    # ``FilesystemFuncTool.available_tools()`` entry; dead rules silently
+    # become noise once tools are renamed.
     _rule("filesystem_tools", "read_*", PermissionLevel.ALLOW),
-    _rule("filesystem_tools", "list_*", PermissionLevel.ALLOW),
-    _rule("filesystem_tools", "directory_tree", PermissionLevel.ALLOW),
-    _rule("filesystem_tools", "search_files", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "glob", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "grep", PermissionLevel.ALLOW),
     # plan read
@@ -113,11 +137,12 @@ NORMAL = PermissionConfig(
 # posture, so forcing them to switch to ``dangerous`` just to remove one
 # chart is hostile. ASK still gates each call via the broker.
 _AUTO_EXTRA_RULES = [
-    # workspace writes (PathZone handles EXTERNAL ASK at hook layer)
+    # workspace writes — ALLOW promotes the INTERNAL × write decision in
+    # ``_handle_filesystem_zone`` so the auto profile no longer falls through
+    # to ``default=ASK`` like normal does. EXTERNAL paths are still gated by
+    # the zone branch (ASK in auto, ALLOW only in dangerous).
     _rule("filesystem_tools", "write_file", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "edit_file", PermissionLevel.ALLOW),
-    _rule("filesystem_tools", "create_directory", PermissionLevel.ALLOW),
-    _rule("filesystem_tools", "move_file", PermissionLevel.ALLOW),
     # plan writes
     _rule("tools", "todo_write", PermissionLevel.ALLOW),
     _rule("tools", "todo_update", PermissionLevel.ALLOW),

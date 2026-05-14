@@ -117,9 +117,12 @@ class TestAutoProfile:
 
     def test_workspace_writes_allowed(self):
         config = AUTO
+        # ``write_file`` / ``edit_file`` are the full set of write tools
+        # ``FilesystemFuncTool`` exposes today (``create_directory`` /
+        # ``move_file`` were removed in the #561 refactor and used to live here
+        # as dead rules — see ``test_dead_filesystem_rules_absent``).
         assert _resolve(config, "filesystem_tools", "write_file") == PermissionLevel.ALLOW
         assert _resolve(config, "filesystem_tools", "edit_file") == PermissionLevel.ALLOW
-        assert _resolve(config, "filesystem_tools", "create_directory") == PermissionLevel.ALLOW
 
     def test_bi_write_allowed_delete_asks(self):
         """Auto downgrades NORMAL's DENY on destructives to ASK — user is
@@ -160,6 +163,48 @@ class TestDangerousProfile:
         assert _resolve(config, "scheduler_tools", "delete_job") == PermissionLevel.ALLOW
         assert _resolve(config, "mcp.anything", "whatever") == PermissionLevel.ALLOW
         assert _resolve(config, "skills", "any-skill") == PermissionLevel.ALLOW
+
+
+class TestFilesystemRuleSurface:
+    """Filesystem rules must match the tool surface exposed by
+    ``FilesystemFuncTool.available_tools``.
+
+    ``#561`` reduced the toolset to five methods (``read_file``,
+    ``write_file``, ``edit_file``, ``glob``, ``grep``) but the rule tables
+    kept five stale patterns until this PR. The asserts below lock in that
+    cleanup so a future refactor doesn't silently grow another dead rule.
+    """
+
+    _DEAD_PATTERNS = ("list_*", "directory_tree", "search_files", "create_directory", "move_file")
+    _LIVE_PATTERNS = ("read_*", "glob", "grep", "write_file", "edit_file")
+
+    def test_dead_filesystem_rules_absent(self):
+        for cfg in (NORMAL, AUTO):
+            fs_patterns = {r.pattern for r in cfg.rules if r.tool == "filesystem_tools"}
+            for dead in self._DEAD_PATTERNS:
+                assert dead not in fs_patterns, (
+                    f"Dead filesystem rule '{dead}' resurfaced in profile rules. "
+                    "FilesystemFuncTool no longer exposes this method — see "
+                    "datus/tools/permission/profiles.py docstring."
+                )
+
+    def test_live_filesystem_rules_cover_actual_tool_surface(self):
+        from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+
+        fs_tool = FilesystemFuncTool(root_path="/tmp")
+        tool_names = {t.name for t in fs_tool.available_tools()}
+        # AUTO contains every NORMAL rule by construction; check there.
+        fs_patterns = {r.pattern for r in AUTO.rules if r.tool == "filesystem_tools"}
+        assert fs_patterns == set(self._LIVE_PATTERNS), (
+            f"Expected live patterns {sorted(self._LIVE_PATTERNS)}; got {sorted(fs_patterns)}"
+        )
+        # Every live tool name must be resolvable through the AUTO rules
+        # (either matched by an exact name or by a wildcard like ``read_*``).
+        for name in tool_names:
+            assert _resolve(AUTO, "filesystem_tools", name) in {
+                PermissionLevel.ALLOW,
+                PermissionLevel.ASK,
+            }, f"AUTO rule lookup returned an unexpected level for filesystem_tools.{name}"
 
 
 def _resolve(config: PermissionConfig, category: str, pattern: str) -> PermissionLevel:
