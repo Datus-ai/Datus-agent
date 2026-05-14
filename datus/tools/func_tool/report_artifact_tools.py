@@ -2,22 +2,26 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Tools for producing report artifacts (main.jsx + queries/*).
+"""Tools for producing report artifacts (render/*.jsx + queries/*).
 
-Two complementary tools live here:
+Three complementary tools live here:
 
 * ``ReportArtifactTools.save_query`` — runs a read-only SQL through the
   existing ``DBFuncTool`` connector, infers column semantic types, and
   atomically persists ``<slug>.sql`` and ``<slug>.json`` under the
   report's ``queries/`` directory.
-* ``ReportArtifactTools.save_main_jsx`` — validates a candidate React
-  component source (cross-checking ``useQuerySql('queries/...')``
-  references against on-disk query files) and atomically writes
-  ``main.jsx``.
+* ``ReportArtifactTools.validate_render`` — the terminal action of this
+  subagent. Walks ``reports/<id>/render/`` and verifies the entry point,
+  import graph, and ``useQuerySql`` references resolve cleanly.
+* ``ReportFilesystemFuncTool`` wraps the standard ``FilesystemFuncTool`` to
+  reject writes/edits targeting ``queries/*`` (use ``save_query``) and
+  keep ``render/*`` writes limited to JSX/JS/CSS files.
 
-``ReportFilesystemFuncTool`` wraps the standard ``FilesystemFuncTool`` to
-reject writes/edits targeting paths that should only be touched via
-``save_query`` / ``save_main_jsx``.
+The author writes the actual report by calling ``write_file`` (and
+``edit_file`` / ``delete_file``) against ``reports/<id>/render/*.jsx`` —
+plain tool calls the LLM already knows. This avoids the per-tool-call
+output-token truncation that bit a single-shot ``save_main_jsx`` for
+real-world (~25 KB) reports.
 """
 
 from __future__ import annotations
@@ -29,7 +33,7 @@ import re
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from agents import Tool
 
@@ -49,14 +53,55 @@ logger = get_logger(__name__)
 
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+\-]\d{2}:?\d{2})?)?$")
 _MAX_QUERY_BYTES = 5 * 1024 * 1024  # 5 MB hard cap per query result file
-_MAX_MAIN_JSX_BYTES = 512 * 1024  # 512 KB ceiling for the React source file
 
 _SLUG_NON_ASCII_RE = re.compile(r"[^a-z0-9]+")
 
-# Captures the literal-string argument of useQuerySql(...). Template strings
+# Catches every literal-string argument to useQuerySql(...). Template strings
 # and dynamic expressions are intentionally skipped (the system prompt allows
 # them for enumerable filter selectors that resolve at runtime).
 _USE_QUERY_SQL_LITERAL_RE = re.compile(r"useQuerySql\s*\(\s*['\"]([^'\"\\\n]+)['\"]\s*\)")
+
+# Catches both `import ... from '<path>'` and `export ... from '<path>'`
+# variants. Side-effect imports `import './foo'` are matched via the
+# alternate branch.
+_IMPORT_PATH_RE = re.compile(
+    r"""
+    (?:^|\W)                                   # not inside a word
+    (?:import|export)\s+                       # the keyword
+    (?:                                        # binding clause is optional
+        (?:[^'"\n;]+?\s+from\s+)               # ... from
+        |                                      # OR
+        (?=['"])                               # side-effect form (just a path)
+    )?
+    ['"]([^'"]+)['"]                           # the captured path
+    """,
+    re.VERBOSE | re.MULTILINE,
+)
+
+# `export default` at the top of a line — used to confirm the entry module
+# exposes a renderable component. Matches `export default function ...`,
+# `export default class ...`, `export default foo`, `export default ({...})
+# => ...`, etc.
+_DEFAULT_EXPORT_RE = re.compile(r"(?m)^\s*export\s+default\b")
+
+# Bare specifiers an authored render module is allowed to import. Keep in
+# lockstep with the module map inside the iframe runtime
+# (`packages/web-common/src/modules/report/dynamic-artifact/iframe-runtime.ts`).
+ALLOWED_BARE_MODULES: frozenset[str] = frozenset(
+    {
+        "react",
+        "recharts",
+        "lucide-react",
+        "d3-format",
+        "dayjs",
+        "@datus/web-artifact",
+    }
+)
+
+# File extensions the LLM may write under `reports/<id>/render/`. JSON / data
+# files are intentionally excluded — those belong under `queries/` and only
+# `save_query` should produce them.
+RENDER_ALLOWED_SUFFIXES: frozenset[str] = frozenset({".jsx", ".js", ".css"})
 
 
 def _slugify_title(title: str, max_len: int = 32) -> str:
@@ -178,11 +223,55 @@ def _looks_like_select(sql: str) -> bool:
     return head[:6].upper().startswith(("SELECT", "WITH", "SHOW", "DESCRI", "EXPLAI", "PRAGMA"))
 
 
-def _looks_like_react_component(jsx: str) -> bool:
-    """Tiny syntactic smoke test — catch obvious "wrong file" submissions."""
-    if "export default" not in jsx:
-        return False
-    return ("function " in jsx) or ("=> {" in jsx) or ("=>" in jsx and "(" in jsx)
+# --------------------------------------------------------------------------- #
+# Render module resolution                                                    #
+# --------------------------------------------------------------------------- #
+
+
+def _module_key(rel_path: str) -> str:
+    """Strip a .jsx/.js extension to get the canonical module key.
+
+    `rel_path` is relative to the `render/` directory, e.g.
+    ``"app.jsx"`` → ``"app"`` or ``"charts/trend.jsx"`` → ``"charts/trend"``.
+    """
+    return re.sub(r"\.(jsx|js)$", "", rel_path)
+
+
+def _resolve_relative_import(caller_key: str, spec: str, module_keys: Set[str]) -> Optional[str]:
+    """Resolve a relative import spec to a module key (or None when it doesn't).
+
+    Mirrors the iframe runtime's resolution so static validation can refuse
+    references the renderer would also reject. ``caller_key`` is the
+    importing module (e.g. ``"app"`` or ``"charts/trend"``); ``spec`` is the
+    relative path (``"./kpi-banner"``, ``"../shared/util"``). Returns the
+    resolved module key on success.
+    """
+    parts: List[str] = caller_key.split("/")[:-1] if "/" in caller_key else []
+    spec_segments = spec.split("/")
+    # The renderer accepts both extension-less and extension-full imports.
+    if spec_segments:
+        spec_segments[-1] = re.sub(r"\.(jsx|js)$", "", spec_segments[-1])
+
+    for seg in spec_segments:
+        if seg in ("", "."):
+            continue
+        if seg == "..":
+            if not parts:
+                return None  # escape attempt outside render/
+            parts.pop()
+        else:
+            parts.append(seg)
+
+    candidate = "/".join(parts)
+    if not candidate:
+        return None  # someone wrote `import './'` — meaningless
+
+    if candidate in module_keys:
+        return candidate
+    indexed = f"{candidate}/index"
+    if indexed in module_keys:
+        return indexed
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -191,21 +280,33 @@ def _looks_like_react_component(jsx: str) -> bool:
 
 
 class ReportFilesystemFuncTool(FilesystemFuncTool):
-    """Filesystem tool with deny rules for report artifact paths.
+    """Filesystem tool that protects the report artifact tree.
 
-    Two patterns are write-protected (read/glob/grep still work):
-
-    * ``reports/<id>/main.jsx``
-    * ``reports/<id>/queries/<anything>``
-
-    Any attempt to ``write_file`` or ``edit_file`` against these paths returns
-    a clear error pointing the LLM at ``save_main_jsx`` / ``save_query``.
+    * ``reports/<id>/queries/*`` — read-only via the filesystem layer.
+      Writes must go through ``save_query`` so the SQL is actually executed
+      and the result JSON is well-formed.
+    * ``reports/<id>/render/*`` — writable, but only ``.jsx`` / ``.js`` /
+      ``.css`` files. JSON or other data formats are denied here so the
+      LLM can't smuggle query payloads into the rendered tree.
+    * Anything else under the project root inherits the parent's policy.
     """
 
-    _DENY_RE = re.compile(r"^reports/[^/]+/(main\.jsx|queries/.+)$")
+    _RENDER_PATH_RE = re.compile(r"^reports/[^/]+/render(?:/.+)?$")
+    _QUERIES_PATH_RE = re.compile(r"^reports/[^/]+/queries/.+$")
 
-    def _is_report_artifact_path(self, path: str) -> Optional[str]:
-        """Return the matching pattern label, or None when the path is free."""
+    def _is_queries_path(self, path: str) -> bool:
+        try:
+            resolved = self._classify(path)
+        except Exception:  # pragma: no cover - defensive
+            return False
+        try:
+            rel = resolved.resolved.relative_to(self._root_resolved)
+        except ValueError:
+            return False
+        return bool(self._QUERIES_PATH_RE.match(rel.as_posix()))
+
+    def _classify_render_path(self, path: str) -> Optional[str]:
+        """Return ``"render"`` when path lives under the report's render dir."""
         try:
             resolved = self._classify(path)
         except Exception:  # pragma: no cover - defensive
@@ -214,23 +315,21 @@ class ReportFilesystemFuncTool(FilesystemFuncTool):
             rel = resolved.resolved.relative_to(self._root_resolved)
         except ValueError:
             return None
-        rel_str = rel.as_posix()
-        match = self._DENY_RE.match(rel_str)
-        if not match:
+        if not self._RENDER_PATH_RE.match(rel.as_posix()):
             return None
-        return "main.jsx" if match.group(1) == "main.jsx" else "queries/*"
+        return "render"
+
+    def _render_extension_reject(self, display: str) -> FuncToolResult:
+        return FuncToolResult(
+            success=0,
+            error=(
+                f"{display}: only .jsx / .js / .css files are allowed under reports/<id>/render/. "
+                "Data files belong under queries/ and must be produced via save_query."
+            ),
+        )
 
     def write_file(self, path: str, content: str, file_type: str = "") -> FuncToolResult:  # type: ignore[override]
-        match = self._is_report_artifact_path(path)
-        if match == "main.jsx":
-            return FuncToolResult(
-                success=0,
-                error=(
-                    "main.jsx must not be written directly. Use the `save_main_jsx` tool, "
-                    "which validates the component before writing."
-                ),
-            )
-        if match == "queries/*":
+        if self._is_queries_path(path):
             return FuncToolResult(
                 success=0,
                 error=(
@@ -238,20 +337,14 @@ class ReportFilesystemFuncTool(FilesystemFuncTool):
                     "Use the `save_query` tool, which runs the SQL and writes both .sql and .json."
                 ),
             )
+        if self._classify_render_path(path) == "render":
+            suffix = Path(path).suffix.lower()
+            if suffix not in RENDER_ALLOWED_SUFFIXES:
+                return self._render_extension_reject(path)
         return super().write_file(path, content, file_type)
 
     def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:  # type: ignore[override]
-        match = self._is_report_artifact_path(path)
-        if match == "main.jsx":
-            return FuncToolResult(
-                success=0,
-                error=(
-                    "main.jsx cannot be edited in place. Use `read_file` to load it, "
-                    "produce the full replacement source in your reasoning, then call "
-                    "`save_main_jsx` with the new content."
-                ),
-            )
-        if match == "queries/*":
+        if self._is_queries_path(path):
             return FuncToolResult(
                 success=0,
                 error=(
@@ -259,7 +352,27 @@ class ReportFilesystemFuncTool(FilesystemFuncTool):
                     "the same name to regenerate them."
                 ),
             )
+        if self._classify_render_path(path) == "render":
+            suffix = Path(path).suffix.lower()
+            if suffix not in RENDER_ALLOWED_SUFFIXES:
+                return self._render_extension_reject(path)
         return super().edit_file(path, old_string, new_string)
+
+    def delete_file(self, path: str) -> FuncToolResult:  # type: ignore[override]
+        if self._is_queries_path(path):
+            return FuncToolResult(
+                success=0,
+                error=(
+                    "Query artifact files cannot be deleted via delete_file. "
+                    "Re-run save_query for the desired final state, or remove the report "
+                    "directory via the filesystem outside the agent."
+                ),
+            )
+        if self._classify_render_path(path) == "render":
+            suffix = Path(path).suffix.lower()
+            if suffix not in RENDER_ALLOWED_SUFFIXES:
+                return self._render_extension_reject(path)
+        return super().delete_file(path)
 
 
 # --------------------------------------------------------------------------- #
@@ -278,9 +391,13 @@ class ReportArtifactTools:
        **exactly one** of ``start_new_report`` (create) or
        ``bind_existing_report`` (edit). The system prompt enumerates the
        decision criteria.
-    3. ``save_query`` and ``save_main_jsx`` operate against the active
-       report. They fail-fast with a clear pointer when no report is
-       bound, forcing the LLM to declare intent before writing.
+    3. ``save_query`` writes query artifacts. ``write_file`` /
+       ``edit_file`` / ``delete_file`` (from the filesystem tool) put
+       JSX/JS/CSS under ``reports/<id>/render/``.
+    4. ``validate_render`` is the terminal action: it walks the render
+       tree, checks the entry point, verifies every ``useQuerySql``
+       slug exists, and confirms every relative import resolves. The
+       subagent stops on its first success.
     """
 
     def __init__(
@@ -301,15 +418,10 @@ class ReportArtifactTools:
         self.report_id: Optional[str] = None
         self.report_dir: Optional[Path] = None
         self.queries_dir: Optional[Path] = None
+        self.render_dir: Optional[Path] = None
         # "new" | "edit" — surfaced to callers that want to differentiate
         # "fresh artifact" from "edit in-place" in their final response.
         self.mode: Optional[str] = None
-
-        # Chunked main.jsx buffer. Populated by append_jsx_chunk(position=...)
-        # so the LLM can stream the source past the model's per-tool-call
-        # output token limit (DeepSeek truncates tool-call arguments around
-        # 4-8 KB; a real report's main.jsx is ~25-30 KB).
-        self._jsx_chunks: List[str] = []
 
     # -- public --------------------------------------------------------------
 
@@ -319,8 +431,7 @@ class ReportArtifactTools:
             trans_to_function_tool(self.start_new_report),
             trans_to_function_tool(self.bind_existing_report),
             trans_to_function_tool(self.save_query),
-            trans_to_function_tool(self.save_main_jsx),
-            trans_to_function_tool(self.append_jsx_chunk),
+            trans_to_function_tool(self.validate_render),
         ]
 
     # -- intent declaration --------------------------------------------------
@@ -332,8 +443,8 @@ class ReportArtifactTools:
         Call this when the user's request is to **produce a new report
         artifact**, even if they reference one or more existing reports
         for context. To learn from a reference report, read its
-        ``main.jsx`` / ``queries/*`` via the filesystem read tool and then
-        build the new artifact here.
+        ``render/*`` / ``queries/*`` via the filesystem read tool and
+        then build the new artifact here.
 
         Args:
             title: short ASCII title used to seed the report id's slug
@@ -346,6 +457,8 @@ class ReportArtifactTools:
                 {
                     "report_id": "rpt_<slug>_<yymmdd>_<rand>",
                     "report_dir": "reports/<report_id>",
+                    "render_dir": "reports/<report_id>/render",
+                    "queries_dir": "reports/<report_id>/queries",
                     "mode": "new",
                 }
         """
@@ -360,15 +473,15 @@ class ReportArtifactTools:
         Switch the active report to an existing one and bind subsequent saves there.
 
         Call this when the user asks to **modify / update / edit /
-        append to** a specific named report. ``save_query`` will overwrite
-        same-named queries; ``save_main_jsx`` will replace ``main.jsx``.
-        Use the filesystem read tool to load the current ``main.jsx``
-        before mutating it.
+        append to** a specific named report. ``save_query`` overwrites
+        same-named queries; ``write_file`` / ``edit_file`` /
+        ``delete_file`` mutate ``render/`` in-place. Use ``read_file``
+        + ``glob`` to inspect the existing tree before mutating it.
 
         Args:
             report_id: target report id, e.g. ``"rpt_2026q1_na_sales"``.
                 Must match ``^rpt_[a-z0-9_-]{1,80}$`` and the directory
-                (including ``main.jsx``) must already exist under
+                (including ``render/app.jsx``) must already exist under
                 ``<project_root>/reports/``.
 
         Returns:
@@ -377,6 +490,8 @@ class ReportArtifactTools:
                 {
                     "report_id": "<report_id>",
                     "report_dir": "reports/<report_id>",
+                    "render_dir": "reports/<report_id>/render",
+                    "queries_dir": "reports/<report_id>/queries",
                     "mode": "edit",
                 }
         """
@@ -394,26 +509,33 @@ class ReportArtifactTools:
                     "Use start_new_report() if you intended to create a new report."
                 ),
             )
-        if not (candidate / "main.jsx").is_file():
+        if not (candidate / "render" / "app.jsx").is_file():
             return FuncToolResult(
                 success=0,
-                error=(f"reports/{report_id}/main.jsx is missing — the report is incomplete. Cannot bind for editing."),
+                error=(
+                    f"reports/{report_id}/render/app.jsx is missing — the report is incomplete. Cannot bind for editing."
+                ),
             )
         return self._activate(report_id, mode="edit", create_dirs=False)
 
     def _activate(self, report_id: str, *, mode: str, create_dirs: bool) -> FuncToolResult:
         report_dir = self._project_root / "reports" / report_id
         queries_dir = report_dir / "queries"
+        render_dir = report_dir / "render"
         if create_dirs:
             queries_dir.mkdir(parents=True, exist_ok=True)
+            render_dir.mkdir(parents=True, exist_ok=True)
         self.report_id = report_id
         self.report_dir = report_dir
         self.queries_dir = queries_dir
+        self.render_dir = render_dir
         self.mode = mode
         return FuncToolResult(
             result={
                 "report_id": report_id,
                 "report_dir": f"reports/{report_id}",
+                "render_dir": f"reports/{report_id}/render",
+                "queries_dir": f"reports/{report_id}/queries",
                 "mode": mode,
             }
         )
@@ -463,7 +585,7 @@ class ReportArtifactTools:
                 }
 
             The ``columns`` block is the authoritative source for axis-type
-            decisions in subsequent ``save_main_jsx`` calls.
+            decisions in subsequent render/*.jsx files.
         """
         not_bound = self._require_active("save_query")
         if not_bound is not None:
@@ -588,205 +710,165 @@ class ReportArtifactTools:
             }
         )
 
-    def save_main_jsx(self, jsx_code: str = "") -> FuncToolResult:
+    def validate_render(self) -> FuncToolResult:
         """
-        Validate a candidate React component source and atomically write it to disk.
+        Validate the assembled render/ tree. Terminal action of this subagent.
 
-        ONE-SHOT mode (small JSX): pass the full source as ``jsx_code``.
-        Tool-call argument strings get truncated by most LLM providers
-        around 4-8 KB — if the JSX is larger than that, this single-shot
-        call will fail with "Invalid JSON arguments (Unterminated string …)".
-        When that happens, fall back to ``append_jsx_chunk(chunk, position)``
-        and stream the file in pieces.
+        Walks ``reports/<id>/render/`` and verifies:
 
-        Args:
-            jsx_code: The full ``main.jsx`` source. Must:
-                * include ``export default function ...`` (or arrow form),
-                * stay under 512 KB,
-                * reference only ``queries/<slug>`` sqlIds that already
-                  exist on disk via prior ``save_query`` calls.
+        * ``render/app.jsx`` exists and contains an ``export default``.
+        * Every ``useQuerySql('queries/<slug>')`` literal across all files
+          resolves to a query whose ``.json`` is on disk.
+        * Every ``import`` / ``export ... from`` path is either:
+          - a bare specifier in the allowed list (``react``, ``recharts``,
+            ``lucide-react``, ``d3-format``, ``dayjs``,
+            ``@datus/web-artifact``), OR
+          - a relative path that resolves to a file under ``render/``.
+        * No file escapes ``render/`` via ``../`` import.
 
         Returns:
-            FuncToolResult.result is a dict like::
+            FuncToolResult.result on success::
 
                 {
-                    "main_jsx_path": "reports/<id>/main.jsx",
-                    "bytes": <int>,
+                    "app_jsx_path": "reports/<id>/render/app.jsx",
+                    "render_files": ["render/app.jsx", "render/kpi-banner.jsx", ...],
                     "query_refs": ["queries/foo", "queries/bar"],
+                    "warnings": ["render/legacy.jsx is unreachable from app.jsx"],
                 }
 
-        Template-string sqlIds (``\\`queries/by_month_${month}\\```) are
-        intentionally NOT statically checked — they resolve from a literal
-        enumeration at runtime. The system prompt warns the LLM that these
-        will surface as ``errorMessage`` if the enumerated slug isn't
-        actually published.
+            On failure, ``success=0`` and ``error`` lists every issue found.
+            Warnings (e.g. unreferenced files) are non-fatal — fix or ignore.
         """
-        not_bound = self._require_active("save_main_jsx")
+        not_bound = self._require_active("validate_render")
         if not_bound is not None:
             return not_bound
 
-        if not isinstance(jsx_code, str) or not jsx_code.strip():
+        if not self.render_dir.is_dir():
             return FuncToolResult(
                 success=0,
                 error=(
-                    "jsx_code is empty. If the JSX is too large to fit in a single tool-"
-                    "call argument (most providers truncate around 4-8 KB), stream it "
-                    "with append_jsx_chunk(chunk, position) instead: position='first' to "
-                    "start, position='middle' for each interior chunk, position='last' "
-                    "to finalize + validate + write."
+                    f"render/ directory missing under reports/{self.report_id}. "
+                    "Write at least an app.jsx with write_file before calling validate_render."
                 ),
             )
 
-        # Reset any half-finished streaming buffer so a one-shot save after a
-        # failed stream doesn't accidentally prepend stale chunks.
-        self._jsx_chunks = []
-        return self._validate_and_write_main_jsx(jsx_code)
-
-    def append_jsx_chunk(self, chunk: str, position: str = "middle") -> FuncToolResult:
-        """
-        Stream main.jsx in chunks for reports too large for one save_main_jsx call.
-
-        Tool-call argument strings emitted by the LLM are subject to the
-        model's per-response output-token limit. DeepSeek truncates around
-        4-8 KB; other providers vary. A polished dashboard / report JSX is
-        typically 20-30 KB and **will not fit in one call**. Stream it
-        instead:
-
-        ::
-
-            append_jsx_chunk("/** @datus-title ... */\\nimport ...", position="first")
-            append_jsx_chunk("...", position="middle")    # repeat as needed
-            append_jsx_chunk("...", position="last")      # validate + write
-
-        Keep each chunk under ~3 KB to leave a safety margin under the
-        truncation limit. Chunk boundaries can fall anywhere in the source
-        (mid-line, mid-string-literal) — the validator runs against the
-        concatenation only on ``position='last'``.
-
-        Args:
-            chunk: source text to append. Plain str — no JSON wrapping.
-            position: "first" resets the buffer and starts streaming.
-                "middle" appends without validating. "last" appends the
-                final chunk, validates the assembled JSX, and atomically
-                writes ``main.jsx``.
-
-        Returns:
-            For ``position`` in {"first", "middle"}: ``{"bytes_buffered": N,
-            "chunks_so_far": N, "position": "first"|"middle"}``.
-
-            For ``position='last'``: same shape as ``save_main_jsx`` —
-            ``{"main_jsx_path", "bytes", "query_refs"}``.
-        """
-        not_bound = self._require_active("append_jsx_chunk")
-        if not_bound is not None:
-            return not_bound
-
-        if position not in ("first", "middle", "last"):
+        # Walk the render tree.
+        all_files: List[Path] = sorted(
+            [p for p in self.render_dir.rglob("*") if p.is_file() and p.suffix.lower() in {".jsx", ".js"}]
+        )
+        if not all_files:
             return FuncToolResult(
                 success=0,
-                error=f"position must be 'first', 'middle', or 'last'; got {position!r}",
+                error=(
+                    "render/ has no .jsx / .js files. Write at least an app.jsx with "
+                    "write_file before calling validate_render."
+                ),
             )
-        if not isinstance(chunk, str):
-            return FuncToolResult(success=0, error="chunk must be a string")
 
-        if position == "first":
-            self._jsx_chunks = [chunk]
-        else:
-            if not self._jsx_chunks:
+        app_jsx_path = self.render_dir / "app.jsx"
+        if not app_jsx_path.is_file():
+            return FuncToolResult(
+                success=0,
+                error="render/app.jsx is required as the entry module but is missing.",
+            )
+
+        modules: Dict[str, Dict[str, Any]] = {}
+        for path in all_files:
+            rel = path.relative_to(self.render_dir).as_posix()
+            try:
+                source = path.read_text(encoding="utf-8")
+            except OSError as exc:
                 return FuncToolResult(
                     success=0,
-                    error=(
-                        f"append_jsx_chunk(position={position!r}) called without an earlier "
-                        "position='first' chunk. Start streaming with position='first'."
-                    ),
+                    error=f"Failed to read render file {rel}: {exc}",
                 )
-            self._jsx_chunks.append(chunk)
+            modules[_module_key(rel)] = {
+                "rel": rel,
+                "source": source,
+                "imports": [],
+                "query_refs": [],
+            }
 
-        if position != "last":
-            bytes_buffered = sum(len(c.encode("utf-8")) for c in self._jsx_chunks)
-            return FuncToolResult(
-                result={
-                    "bytes_buffered": bytes_buffered,
-                    "chunks_so_far": len(self._jsx_chunks),
-                    "position": position,
-                }
+        module_keys: Set[str] = set(modules.keys())
+        issues: List[str] = []
+        query_refs: Set[str] = set()
+
+        for key, mod in modules.items():
+            source = mod["source"]
+
+            # ---- useQuerySql literal slugs
+            for match in _USE_QUERY_SQL_LITERAL_RE.finditer(source):
+                literal = match.group(1)
+                slug = extract_query_slug(literal)
+                if slug is None:
+                    issues.append(
+                        f"render/{mod['rel']}: useQuerySql received an invalid literal sqlId "
+                        f"{literal!r}. Use 'queries/<slug>' where <slug> matches ^[a-z0-9_]+$."
+                    )
+                    continue
+                query_refs.add(f"queries/{slug}")
+                json_path = self.queries_dir / f"{slug}.json"
+                if not json_path.is_file():
+                    issues.append(
+                        f"render/{mod['rel']}: useQuerySql('queries/{slug}') points to a query "
+                        "not produced via save_query."
+                    )
+
+            # ---- import / export … from paths
+            for match in _IMPORT_PATH_RE.finditer(source):
+                spec = match.group(1)
+                if spec in ALLOWED_BARE_MODULES:
+                    continue
+                if spec.startswith("./") or spec.startswith("../"):
+                    resolved = _resolve_relative_import(key, spec, module_keys)
+                    if resolved is None:
+                        issues.append(
+                            f"render/{mod['rel']}: relative import {spec!r} does not resolve to a file under render/."
+                        )
+                    else:
+                        mod["imports"].append(resolved)
+                    continue
+                # Bare specifier outside the allowed list.
+                issues.append(
+                    f"render/{mod['rel']}: import {spec!r} is not allowed. Only bare specifiers "
+                    f"{sorted(ALLOWED_BARE_MODULES)} or relative paths under render/ are allowed."
+                )
+
+        if not _DEFAULT_EXPORT_RE.search(modules["app"]["source"]):
+            issues.append(
+                "render/app.jsx must include an `export default` (the renderer mounts the "
+                "default export as the report's root component)."
             )
 
-        assembled = "".join(self._jsx_chunks)
-        # Reset the buffer immediately so a retry after a validation failure
-        # can restart cleanly with position='first' instead of inheriting
-        # whatever was just rejected.
-        self._jsx_chunks = []
-        return self._validate_and_write_main_jsx(assembled)
-
-    # -- internal ------------------------------------------------------------
-
-    def _validate_and_write_main_jsx(self, jsx_code: str) -> FuncToolResult:
-        """Shared validation + atomic write for save_main_jsx / append_jsx_chunk."""
-        size = len(jsx_code.encode("utf-8"))
-        if size > _MAX_MAIN_JSX_BYTES:
+        if issues:
             return FuncToolResult(
                 success=0,
-                error=(
-                    f"main.jsx exceeds the {_MAX_MAIN_JSX_BYTES // 1024} KB limit "
-                    f"({size // 1024} KB). Split helpers/data into smaller pieces or simplify the layout."
-                ),
+                error="validate_render found "
+                + ("1 issue:\n  - " if len(issues) == 1 else f"{len(issues)} issues:\n  - ")
+                + "\n  - ".join(issues),
             )
 
-        if not _looks_like_react_component(jsx_code):
-            return FuncToolResult(
-                success=0,
-                error=(
-                    "jsx_code does not look like a React component module. "
-                    "It must include `export default function ...` (or an arrow-form default export)."
-                ),
-            )
-
-        # Static check: every literal useQuerySql('queries/<slug>') must
-        # resolve to a saved query file. Template strings (backticks with
-        # ${...}) are tolerated because they encode enumerable filter values.
-        referenced_slugs: List[str] = []
-        missing: List[str] = []
-        seen: set[str] = set()
-        for match in _USE_QUERY_SQL_LITERAL_RE.finditer(jsx_code):
-            literal = match.group(1)
-            slug = extract_query_slug(literal)
-            if slug is None:
-                return FuncToolResult(
-                    success=0,
-                    error=(
-                        f"useQuerySql received an invalid literal sqlId: {literal!r}. "
-                        "Use 'queries/<slug>' where <slug> matches ^[a-z0-9_]+$."
-                    ),
-                )
-            if slug in seen:
+        # Reachability from app.jsx via static imports — anything not visited
+        # is a warning (the LLM can choose to delete_file or leave it).
+        reachable: Set[str] = set()
+        stack: List[str] = ["app"]
+        while stack:
+            k = stack.pop()
+            if k in reachable:
                 continue
-            seen.add(slug)
-            referenced_slugs.append(f"queries/{slug}")
-            json_path = self.queries_dir / f"{slug}.json"
-            if not json_path.is_file():
-                missing.append(f"queries/{slug}")
-
-        if missing:
-            return FuncToolResult(
-                success=0,
-                error=(
-                    "These useQuerySql references point to queries that were not produced via save_query: "
-                    + ", ".join(missing)
-                    + ". Run save_query for each missing query before save_main_jsx."
-                ),
-            )
-
-        main_jsx_path = self.report_dir / "main.jsx"
-        try:
-            _atomic_write_text(main_jsx_path, jsx_code)
-        except OSError as exc:
-            return FuncToolResult(success=0, error=f"Failed to write main.jsx: {exc}")
+            reachable.add(k)
+            stack.extend(modules[k]["imports"])
+        unreferenced = sorted(modules.keys() - reachable)
+        warnings = [
+            f"render/{modules[k]['rel']} is not imported by render/app.jsx (directly or transitively)"
+            for k in unreferenced
+        ]
 
         return FuncToolResult(
             result={
-                "main_jsx_path": main_jsx_path.relative_to(self._project_root).as_posix(),
-                "bytes": size,
-                "query_refs": referenced_slugs,
+                "app_jsx_path": app_jsx_path.relative_to(self._project_root).as_posix(),
+                "render_files": [f"render/{modules[k]['rel']}" for k in sorted(modules.keys())],
+                "query_refs": sorted(query_refs),
+                "warnings": warnings,
             }
         )

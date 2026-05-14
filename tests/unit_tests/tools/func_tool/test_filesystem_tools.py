@@ -587,15 +587,22 @@ class TestGrep:
 
 
 class TestAvailableTools:
-    def test_available_tools_returns_five(self, tmp_path):
+    def test_available_tools_returns_expected_set(self, tmp_path):
         tool = _make_tool(str(tmp_path))
         tools = tool.available_tools()
         names = [t.name for t in tools]
-        assert set(names) == {"read_file", "write_file", "edit_file", "glob", "grep"}
+        assert set(names) == {
+            "read_file",
+            "write_file",
+            "edit_file",
+            "delete_file",
+            "glob",
+            "grep",
+        }
 
     def test_available_tools_count(self, tmp_path):
         tool = _make_tool(str(tmp_path))
-        assert len(tool.available_tools()) == 5
+        assert len(tool.available_tools()) == 6
 
 
 # ---------------------------------------------------------------------------

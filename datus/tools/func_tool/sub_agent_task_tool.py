@@ -97,18 +97,19 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
     ),
     "gen_visual_report": (
         "Produce a visualizable report artifact under "
-        "<project_root>/reports/<id>/ (main.jsx + queries/<slug>.sql/.json). "
-        "The subagent writes a self-contained React component (default export) that "
-        "imports from react / recharts / lucide-react / d3-format / dayjs / "
-        "@datus/web-artifact and reads pre-executed query JSON via useQuerySql. "
+        "<project_root>/reports/<id>/ (render/*.jsx + queries/<slug>.sql/.json). "
+        "The subagent writes a render/ tree of React modules — the entry "
+        "render/app.jsx imports siblings like render/kpi-banner.jsx via relative "
+        "paths and pulls pre-executed query JSON via useQuerySql. "
         "Use this — instead of writing HTML/Markdown directly — whenever the user asks "
         "for a *report* with charts/tables, a dashboard, or any answer that benefits "
         "from persisted SQL + rendered visualisations (the artifact is consumed by "
         "Datus-CLI HTML export and Datus-SaaS dynamic iframe renderer). "
         "Prompt: provide the analytical question and any context (time range, scope, "
         "metrics of interest); the agent will discover data, save queries via save_query, "
-        "and emit the component via save_main_jsx. "
-        "Returns JSON with {response, report_id, main_jsx_path, html_path, query_count, tokens_used}."
+        "write_file the render/*.jsx components, then finalize with validate_render. "
+        "Returns JSON with {response, report_id, app_jsx_path, render_file_count, "
+        "html_path, query_count, tokens_used}."
     ),
     "gen_semantic_model": (
         "Generate MetricFlow semantic model YAML files from database table structures. "

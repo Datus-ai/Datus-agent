@@ -13,15 +13,23 @@ import pytest
 
 from datus.agent.node.report_html_renderer import render_report_html
 
-_SAMPLE_MAIN_JSX = """\
+_APP_JSX = """\
 /** @datus-title Demo report </script> */
 import React from 'react';
+import KpiBanner from './kpi-banner';
 import { useDatusArtifact } from '@datus/web-artifact';
 
-export default function Demo() {
+export default function App() {
   const { useQuerySql } = useDatusArtifact();
   const { data } = useQuerySql('queries/q');
-  return React.createElement('pre', null, JSON.stringify(data?.rows ?? []));
+  return React.createElement(KpiBanner, { rows: data?.rows ?? [] });
+}
+"""
+
+_KPI_BANNER_JSX = """\
+import React from 'react';
+export default function KpiBanner({ rows }) {
+  return React.createElement('div', null, rows.length, ' rows');
 }
 """
 
@@ -29,7 +37,9 @@ export default function Demo() {
 def _seed_report(project_root: Path, *, report_id: str = "rpt_demo_001") -> Path:
     report_dir = project_root / "reports" / report_id
     (report_dir / "queries").mkdir(parents=True)
-    (report_dir / "main.jsx").write_text(_SAMPLE_MAIN_JSX, encoding="utf-8")
+    (report_dir / "render").mkdir()
+    (report_dir / "render" / "app.jsx").write_text(_APP_JSX, encoding="utf-8")
+    (report_dir / "render" / "kpi-banner.jsx").write_text(_KPI_BANNER_JSX, encoding="utf-8")
     (report_dir / "queries" / "q.sql").write_text("SELECT 1", encoding="utf-8")
     (report_dir / "queries" / "q.json").write_text('{"row_count":0,"rows":[]}', encoding="utf-8")
     return report_dir
@@ -41,7 +51,6 @@ def test_render_report_html_substitutes_payload(tmp_path: Path):
     body = out_path.read_text(encoding="utf-8")
     assert "__DATUS_REPORT_DATA__" not in body
     assert "__DATUS_REPORT_TITLE__" not in body
-    # Title extracted from the @datus-title annotation.
     assert "Demo report" in body
     # </script> from the title must be escaped so it doesn't close the data block.
     assert "</script></script>" not in body
@@ -54,7 +63,7 @@ def test_render_report_html_writes_index_file(tmp_path: Path):
     assert out_path.is_file()
 
 
-def test_render_report_html_includes_main_jsx_and_queries(tmp_path: Path):
+def test_render_report_html_includes_render_files_and_queries(tmp_path: Path):
     _seed_report(tmp_path, report_id="rpt_demo_003")
     out_path = render_report_html(project_root=tmp_path, report_id="rpt_demo_003")
     body = out_path.read_text(encoding="utf-8")
@@ -62,20 +71,39 @@ def test_render_report_html_includes_main_jsx_and_queries(tmp_path: Path):
     start = body.index('id="datus-report-data">') + len('id="datus-report-data">')
     end = body.index("</script>", start)
     payload_raw = body[start:end]
-    # The renderer escapes `</` so the embedded JSON doesn't close the script tag.
     payload_unescaped = payload_raw.replace("<\\/", "</")
     data = json.loads(payload_unescaped)
 
     assert data["id"] == "rpt_demo_003"
-    assert "useDatusArtifact" in data["main_jsx"]
+    render_names = {f["name"] for f in data["render_files"]}
+    assert render_names == {"app.jsx", "kpi-banner.jsx"}
+    app_entry = next(f for f in data["render_files"] if f["name"] == "app.jsx")
+    assert "useDatusArtifact" in app_entry["content"]
     query_names = {q["name"] for q in data["queries"]}
     assert query_names == {"q.sql", "q.json"}
-    # created_at is derived from the main.jsx mtime — must be a usable ISO string.
     assert "T" in data["created_at"] and data["created_at"].endswith("Z")
 
 
-def test_render_report_html_missing_main_jsx_raises(tmp_path: Path):
+def test_render_report_html_walks_nested_render_dirs(tmp_path: Path):
+    _seed_report(tmp_path, report_id="rpt_nested_001")
+    report_dir = tmp_path / "reports" / "rpt_nested_001"
+    (report_dir / "render" / "charts").mkdir()
+    (report_dir / "render" / "charts" / "trend.jsx").write_text(
+        "import React from 'react';\nexport default () => React.createElement('div');\n",
+        encoding="utf-8",
+    )
+    out_path = render_report_html(project_root=tmp_path, report_id="rpt_nested_001")
+    body = out_path.read_text(encoding="utf-8")
+    start = body.index('id="datus-report-data">') + len('id="datus-report-data">')
+    end = body.index("</script>", start)
+    data = json.loads(body[start:end].replace("<\\/", "</"))
+    render_names = {f["name"] for f in data["render_files"]}
+    assert "charts/trend.jsx" in render_names
+
+
+def test_render_report_html_missing_app_jsx_raises(tmp_path: Path):
     (tmp_path / "reports" / "rpt_missing" / "queries").mkdir(parents=True)
+    (tmp_path / "reports" / "rpt_missing" / "render").mkdir()
     with pytest.raises(FileNotFoundError):
         render_report_html(project_root=tmp_path, report_id="rpt_missing")
 
@@ -133,11 +161,7 @@ def test_render_report_html_invalid_dist_falls_back_to_cdn(tmp_path: Path):
 
 
 def test_render_report_html_ignores_environment_variables(tmp_path: Path, monkeypatch):
-    """``DATUS_REPORT_DIST`` was removed — the renderer must not read it.
-
-    Locks the contract so a future revert of the env-var fallback fails this
-    test rather than silently re-enabling the legacy code path.
-    """
+    """``DATUS_REPORT_DIST`` was removed — the renderer must not read it."""
     _seed_report(tmp_path, report_id="rpt_no_env_lookup")
     dist_dir = tmp_path / "vendor" / "would-be-env"
     _seed_dist(dist_dir)
@@ -150,10 +174,11 @@ def test_render_report_html_ignores_environment_variables(tmp_path: Path, monkey
 
 
 def test_render_report_html_falls_back_to_report_id_for_title(tmp_path: Path):
-    """When main.jsx omits the @datus-title annotation, the report id is used."""
+    """When app.jsx omits the @datus-title annotation, the report id is used."""
     report_dir = tmp_path / "reports" / "rpt_no_title"
     (report_dir / "queries").mkdir(parents=True)
-    (report_dir / "main.jsx").write_text(
+    (report_dir / "render").mkdir()
+    (report_dir / "render" / "app.jsx").write_text(
         "import React from 'react';\nexport default function R() { return null; }\n",
         encoding="utf-8",
     )

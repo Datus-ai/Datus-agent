@@ -4,21 +4,19 @@
 
 """Unit tests for ``GenVisualReportAgenticNode``.
 
-Design principle: NO mocks except LLM (same as test_gen_report_agentic_node).
+Design principle: NO mocks except LLM.
 
 Covers:
 * Node initialization wires the expected tools.
 * ``ReportFilesystemFuncTool`` replaces the default filesystem tool.
 * ``_prepare_report_artifacts`` registers the artifact tools but leaves the
   report id unbound — the LLM owns the new/edit decision at runtime.
-* End-to-end streaming run where the LLM calls ``start_new_report``,
-  ``save_query``, and ``save_main_jsx`` against a real SQLite database,
-  persisting the artifact under ``project_root/reports/<id>/``.
+* End-to-end streaming run: LLM calls start_new_report, save_query,
+  write_file (for render/*.jsx) and finally validate_render.
 * The LLM-facing hint surfaces when the user references existing reports on disk.
-* CLI mode compiles ``index.html`` after a successful run.
-* When the LLM never binds a report, the run reports a binding-error.
-* When the LLM binds but never calls ``save_main_jsx``, the run reports an
-  incomplete-artifact error.
+* CLI mode compiles ``index.html`` after a successful validate_render.
+* Binding-required failure when the LLM never calls start/bind_report.
+* Incomplete-artifact failure when validate_render is never called.
 """
 
 from __future__ import annotations
@@ -39,13 +37,8 @@ from datus.tools.func_tool import (
 )
 from tests.unit_tests.mock_llm_model import (
     MockToolCall,
-    build_simple_response,
     build_tool_then_response,
 )
-
-# --------------------------------------------------------------------------- #
-# Initialization                                                              #
-# --------------------------------------------------------------------------- #
 
 
 def _make_node(real_agent_config, **overrides):
@@ -62,12 +55,12 @@ def _make_node(real_agent_config, **overrides):
     return GenVisualReportAgenticNode(**kwargs)
 
 
-_MAIN_JSX_SOURCE_TEMPLATE = """\
+_APP_JSX_TEMPLATE = """\
 /** @datus-title {title} */
 import React from 'react';
 import {{ useDatusArtifact }} from '@datus/web-artifact';
 
-export default function Demo() {{
+export default function App() {{
   const {{ useQuerySql }} = useDatusArtifact();
   const {{ data }} = useQuerySql('{data_ref}');
   return React.createElement('pre', null, JSON.stringify(data?.rows ?? []));
@@ -75,20 +68,27 @@ export default function Demo() {{
 """
 
 
-def _seed_main_jsx_on_disk(project_root: Path, report_id: str) -> None:
-    """Seed a minimal main.jsx + queries pair so renderer-side tests find them."""
+def _seed_render_on_disk(project_root: Path, report_id: str, *, data_ref: str = "queries/q") -> None:
+    """Seed a minimal validated render tree + matching query so renderer-side tests run."""
     report_dir = project_root / "reports" / report_id
     (report_dir / "queries").mkdir(parents=True, exist_ok=True)
-    (report_dir / "main.jsx").write_text(
-        _MAIN_JSX_SOURCE_TEMPLATE.format(title="stub", data_ref="queries/q"),
+    (report_dir / "render").mkdir(exist_ok=True)
+    (report_dir / "render" / "app.jsx").write_text(
+        _APP_JSX_TEMPLATE.format(title="stub", data_ref=data_ref),
         encoding="utf-8",
     )
-    (report_dir / "queries" / "q.sql").write_text("SELECT 1", encoding="utf-8")
-    (report_dir / "queries" / "q.json").write_text(
+    slug = data_ref.split("/", 1)[-1]
+    (report_dir / "queries" / f"{slug}.sql").write_text("SELECT 1", encoding="utf-8")
+    (report_dir / "queries" / f"{slug}.json").write_text(
         '{"executed_at":"2026-05-13T00:00:00Z","datasource":"x","row_count":0,'
         '"columns":[{"name":"a","type":"integer"}],"rows":[]}',
         encoding="utf-8",
     )
+
+
+# --------------------------------------------------------------------------- #
+# Initialization                                                              #
+# --------------------------------------------------------------------------- #
 
 
 class TestGenVisualReportInit:
@@ -98,7 +98,6 @@ class TestGenVisualReportInit:
         assert isinstance(node.db_func_tool, DBFuncTool)
         assert isinstance(node.semantic_tools, SemanticTools)
         assert isinstance(node.filesystem_func_tool, ReportFilesystemFuncTool)
-        # Artifact tools are bound at execute_stream time, not init.
         assert node.report_artifact_tools is None
         assert node._active_report_id is None
 
@@ -107,12 +106,14 @@ class TestGenVisualReportInit:
         tool_names = {t.name for t in node.tools}
         # DB tool surface
         assert "list_tables" in tool_names
-        # Filesystem tool surface
+        # Filesystem tool surface — write_file is how the LLM authors render/
         assert "read_file" in tool_names
         assert "write_file" in tool_names
+        assert "edit_file" in tool_names
+        assert "delete_file" in tool_names
         # Pre-execution: artifact tools are not registered yet
         assert "save_query" not in tool_names
-        assert "save_main_jsx" not in tool_names
+        assert "validate_render" not in tool_names
 
 
 # --------------------------------------------------------------------------- #
@@ -137,19 +138,17 @@ class TestPrepareReportArtifacts:
         assert "start_new_report" in tool_names
         assert "bind_existing_report" in tool_names
         assert "save_query" in tool_names
-        assert "save_main_jsx" in tool_names
+        assert "validate_render" in tool_names
 
-        # No rpt_<...> subdirectory created prematurely.
         reports_root = Path(real_agent_config.project_root) / "reports"
-        report_subdirs = sorted(p.name for p in reports_root.glob("rpt_*"))
-        assert report_subdirs == []
+        assert sorted(p.name for p in reports_root.glob("rpt_*")) == []
 
 
 class TestEnhancedMessageHint:
     def test_hint_added_when_user_references_existing_report(self, real_agent_config, mock_llm_create):
         project_root = Path(real_agent_config.project_root)
         existing_id = "rpt_existing_demo_260513_aaaaaa"
-        _seed_main_jsx_on_disk(project_root, existing_id)
+        _seed_render_on_disk(project_root, existing_id)
 
         node = _make_node(real_agent_config)
         user_input = GenVisualReportNodeInput(user_message=f"修改 {existing_id} 报告，补充一个 YoY 分析章节")
@@ -174,36 +173,37 @@ class TestEnhancedMessageHint:
 
 @pytest.mark.asyncio
 async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
-    """LLM binds a fresh report, saves one query, then a valid main.jsx."""
+    """LLM binds an existing report (pre-seeded on disk) and validates the render tree.
 
-    start_new_args = json.dumps({"title": "California SAT"})
-    save_query_args = json.dumps(
-        {
-            "name": "avg_sat_reading",
-            "sql": "SELECT 'state' AS scope, AVG(AvgScrRead) AS avg_read FROM satscores GROUP BY 'state'",
-            "description": "Average SAT reading score statewide",
-        }
-    )
-
-    jsx_source = _MAIN_JSX_SOURCE_TEMPLATE.format(title="California SAT report", data_ref="queries/avg_sat_reading")
-    save_main_jsx_args = json.dumps({"jsx_code": jsx_source})
+    This covers the agentic node's result-extraction + html-compile path
+    without needing the mock LLM to reference a dynamically-allocated id
+    (the write_file authoring path is exercised end-to-end in the artifact
+    tools tests). Pre-seeding ``render/`` + ``queries/`` and using
+    ``bind_existing_report`` keeps the test purely additive over the unit
+    coverage and avoids brittle id placeholder gymnastics.
+    """
+    project_root = Path(real_agent_config.project_root)
+    existing_id = "rpt_e2e_demo_260514_aabbcc"
+    _seed_render_on_disk(project_root, existing_id, data_ref="queries/avg_sat_reading")
 
     mock_llm_create.reset(
         responses=[
             build_tool_then_response(
                 tool_calls=[
-                    MockToolCall(name="start_new_report", arguments=start_new_args),
-                    MockToolCall(name="save_query", arguments=save_query_args),
-                    MockToolCall(name="save_main_jsx", arguments=save_main_jsx_args),
+                    MockToolCall(
+                        name="bind_existing_report",
+                        arguments=json.dumps({"report_id": existing_id}),
+                    ),
+                    MockToolCall(name="validate_render", arguments="{}"),
                 ],
-                content="Report generated.",
+                content="Report validated.",
             ),
         ]
     )
 
     node = _make_node(real_agent_config)
     node.input = GenVisualReportNodeInput(
-        user_message="Average SAT reading score statewide",
+        user_message=f"check {existing_id}",
         database="california_schools",
     )
 
@@ -218,81 +218,15 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
     result = final.output
     assert isinstance(result, dict)
     assert result["success"] is True
-    assert result["report_id"].startswith("rpt_")
-    assert result["main_jsx_path"].endswith("main.jsx")
-    assert result["query_count"] == 1
+    assert result["report_id"] == existing_id
+    assert result["app_jsx_path"] == f"reports/{existing_id}/render/app.jsx"
+    assert result["render_file_count"] == 1
+    # No save_query in this run — the seed wrote the query file directly.
+    assert result["query_count"] == 0
 
-    report_dir = Path(real_agent_config.project_root) / "reports" / result["report_id"]
-    assert (report_dir / "main.jsx").is_file()
-    assert (report_dir / "queries" / "avg_sat_reading.sql").is_file()
-    assert (report_dir / "queries" / "avg_sat_reading.json").is_file()
-
-    expected_html_rel = f"reports/{result['report_id']}/index.html"
+    report_dir = project_root / "reports" / existing_id
+    expected_html_rel = f"reports/{existing_id}/index.html"
     assert result["html_path"] == expected_html_rel
-    assert (report_dir / "index.html").is_file()
-
-
-@pytest.mark.asyncio
-async def test_execute_stream_with_streamed_jsx(real_agent_config, mock_llm_create):
-    """LLM finalizes via append_jsx_chunk(position='last') instead of save_main_jsx.
-
-    Exercises the chunked-write path the node uses when the JSX is too
-    large to fit in a single tool-call argument: the result still has to
-    surface main_jsx_path, success=True, and an index.html compile.
-    """
-
-    start_new_args = json.dumps({"title": "Streamed SAT"})
-    save_query_args = json.dumps(
-        {
-            "name": "avg_sat_reading",
-            "sql": "SELECT 'state' AS scope, AVG(AvgScrRead) AS avg_read FROM satscores GROUP BY 'state'",
-            "description": "Average SAT reading score statewide",
-        }
-    )
-
-    jsx_source = _MAIN_JSX_SOURCE_TEMPLATE.format(title="Streamed SAT", data_ref="queries/avg_sat_reading")
-    midpoint = len(jsx_source) // 2
-    chunks = [jsx_source[:midpoint], jsx_source[midpoint:]]
-
-    mock_llm_create.reset(
-        responses=[
-            build_tool_then_response(
-                tool_calls=[
-                    MockToolCall(name="start_new_report", arguments=start_new_args),
-                    MockToolCall(name="save_query", arguments=save_query_args),
-                    MockToolCall(
-                        name="append_jsx_chunk",
-                        arguments=json.dumps({"chunk": chunks[0], "position": "first"}),
-                    ),
-                    MockToolCall(
-                        name="append_jsx_chunk",
-                        arguments=json.dumps({"chunk": chunks[1], "position": "last"}),
-                    ),
-                ],
-                content="Report streamed in two chunks.",
-            ),
-        ]
-    )
-
-    node = _make_node(real_agent_config)
-    node.input = GenVisualReportNodeInput(
-        user_message="Average SAT reading score statewide (streamed)",
-        database="california_schools",
-    )
-
-    actions = []
-    async for action in node.execute_stream(ActionHistoryManager()):
-        actions.append(action)
-
-    final = actions[-1]
-    assert final.status == ActionStatus.SUCCESS
-    result = final.output
-    assert result["success"] is True
-    assert result["main_jsx_path"].endswith("main.jsx")
-    report_dir = Path(real_agent_config.project_root) / "reports" / result["report_id"]
-    assert (report_dir / "main.jsx").read_text(encoding="utf-8") == jsx_source
-    # HTML compilation should still kick in — the path doesn't care which tool
-    # wrote main.jsx.
     assert (report_dir / "index.html").is_file()
 
 
@@ -315,7 +249,7 @@ class TestReportDistResolution:
         real_agent_config.report_dist_cli_override = str(cli_dist)
 
         report_id = "rpt_priority_check_001"
-        _seed_main_jsx_on_disk(Path(real_agent_config.project_root), report_id)
+        _seed_render_on_disk(Path(real_agent_config.project_root), report_id)
         node._active_report_id = report_id
 
         html_rel = node._maybe_compile_html(report_id)
@@ -333,7 +267,7 @@ class TestReportDistResolution:
             delattr(real_agent_config, "report_dist_cli_override")
 
         report_id = "rpt_priority_check_002"
-        _seed_main_jsx_on_disk(Path(real_agent_config.project_root), report_id)
+        _seed_render_on_disk(Path(real_agent_config.project_root), report_id)
         node._active_report_id = report_id
 
         node._maybe_compile_html(report_id)
@@ -360,7 +294,7 @@ class TestAutoOpenInBrowser:
         node = _make_node(real_agent_config)
         real_agent_config.report_auto_open = True
         report_id = "rpt_auto_open_yes"
-        _seed_main_jsx_on_disk(Path(real_agent_config.project_root), report_id)
+        _seed_render_on_disk(Path(real_agent_config.project_root), report_id)
         node._active_report_id = report_id
 
         opened = []
@@ -377,7 +311,7 @@ class TestAutoOpenInBrowser:
         node = _make_node(real_agent_config)
         real_agent_config.report_auto_open = False
         report_id = "rpt_auto_open_no"
-        _seed_main_jsx_on_disk(Path(real_agent_config.project_root), report_id)
+        _seed_render_on_disk(Path(real_agent_config.project_root), report_id)
         node._active_report_id = report_id
 
         opened = []
@@ -393,7 +327,7 @@ class TestAutoOpenInBrowser:
         if hasattr(real_agent_config, "report_auto_open"):
             delattr(real_agent_config, "report_auto_open")
         report_id = "rpt_auto_open_default"
-        _seed_main_jsx_on_disk(Path(real_agent_config.project_root), report_id)
+        _seed_render_on_disk(Path(real_agent_config.project_root), report_id)
         node._active_report_id = report_id
 
         opened = []
@@ -408,6 +342,8 @@ class TestAutoOpenInBrowser:
 @pytest.mark.asyncio
 async def test_execute_stream_without_binding_marks_failure(real_agent_config, mock_llm_create):
     """LLM never binds a report → run reports a binding-required failure."""
+    from tests.unit_tests.mock_llm_model import build_simple_response
+
     mock_llm_create.reset(
         responses=[
             build_simple_response("I gathered context but never bound a report."),
@@ -425,7 +361,7 @@ async def test_execute_stream_without_binding_marks_failure(real_agent_config, m
     result = final.output
     assert isinstance(result, dict)
     assert result["success"] is False
-    assert result["main_jsx_path"] is None
+    assert result["app_jsx_path"] is None
     assert result["report_id"] is None
     assert result["query_count"] == 0
     error = result.get("error") or ""
@@ -434,15 +370,15 @@ async def test_execute_stream_without_binding_marks_failure(real_agent_config, m
 
 
 @pytest.mark.asyncio
-async def test_execute_stream_bound_but_no_main_jsx_marks_failure(real_agent_config, mock_llm_create):
-    """LLM binds but never calls save_main_jsx → distinct incomplete-artifact failure."""
+async def test_execute_stream_bound_but_no_validate_marks_failure(real_agent_config, mock_llm_create):
+    """LLM binds but never calls validate_render → distinct incomplete-artifact failure."""
     mock_llm_create.reset(
         responses=[
             build_tool_then_response(
                 tool_calls=[
                     MockToolCall(name="start_new_report", arguments=json.dumps({"title": "halfway"})),
                 ],
-                content="I bound a report but forgot to finalize the JSX.",
+                content="I bound a report but forgot to finalize.",
             ),
         ]
     )
@@ -458,7 +394,7 @@ async def test_execute_stream_bound_but_no_main_jsx_marks_failure(real_agent_con
     result = final.output
     assert isinstance(result, dict)
     assert result["success"] is False
-    assert result["main_jsx_path"] is None
+    assert result["app_jsx_path"] is None
     assert result["report_id"] is not None and result["report_id"].startswith("rpt_halfway_")
     assert result["query_count"] == 0
-    assert "save_main_jsx was never called" in (result.get("error") or "")
+    assert "validate_render never returned success" in (result.get("error") or "")

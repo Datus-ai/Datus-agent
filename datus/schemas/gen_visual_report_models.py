@@ -87,7 +87,8 @@ class GenVisualReportNodeResult(BaseResult):
 
     response: str = Field(default="", description="Natural language summary shown after the artifact is produced")
     report_id: Optional[str] = Field(None, description="Generated report id (matches the folder name)")
-    main_jsx_path: Optional[str] = Field(None, description="Relative path to main.jsx under project_root")
+    app_jsx_path: Optional[str] = Field(None, description="Relative path to render/app.jsx under project_root")
+    render_file_count: int = Field(default=0, description="Number of files persisted under reports/<id>/render/")
     html_path: Optional[str] = Field(None, description="Path to compiled index.html (CLI mode only)")
     query_count: int = Field(default=0, description="Number of queries persisted under queries/")
     tokens_used: int = Field(default=0, description="Total tokens used during this run")

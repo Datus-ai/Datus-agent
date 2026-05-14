@@ -9,13 +9,14 @@ Replacement track for the legacy ``gen_report`` subagent. Instead of
 returning a Markdown blob, this node produces a React-JSX report artifact
 under ``<project_root>/reports/<id>/``:
 
-* ``main.jsx`` — the React component the LLM authored (default export).
+* ``render/app.jsx`` — the React entry module the LLM authors (default export);
+  it imports any additional ``render/*.jsx`` components the report needs.
 * ``queries/<slug>.sql`` + ``queries/<slug>.json`` — per-query source + result.
 
 The artifact is consumed by:
 
 * Datus-CLI — compiles to a self-contained ``index.html`` that embeds
-  ``main.jsx`` + queries and loads them in a sandboxed iframe.
+  ``render/`` files + queries and loads them in a sandboxed iframe.
 * Datus-SaaS — served by the backend ``GET /api/v1/report/detail`` endpoint
   and rendered dynamically by ``@datus/web-common/modules/report`` (also
   iframe-sandboxed).
@@ -80,7 +81,7 @@ def _detect_referenced_report_ids(user_message: str, project_root: Path) -> List
         if candidate in seen or not REPORT_ID_RE.fullmatch(candidate):
             continue
         candidate_dir = reports_root / candidate
-        if candidate_dir.is_dir() and (candidate_dir / "main.jsx").is_file():
+        if candidate_dir.is_dir() and (candidate_dir / "render" / "app.jsx").is_file():
             seen.add(candidate)
             found.append(candidate)
     return found
@@ -91,7 +92,7 @@ class GenVisualReportAgenticNode(AgenticNode):
     Visual report subagent.
 
     Sets up semantic / db / context-search tools plus the report-specific
-    ``ReportArtifactTools`` (save_query / save_main_jsx) and a hardened
+    ``ReportArtifactTools`` (save_query / validate_render) and a hardened
     ``ReportFilesystemFuncTool`` that denies direct writes to report
     artifact paths.
 
@@ -174,8 +175,8 @@ class GenVisualReportAgenticNode(AgenticNode):
             self._setup_tool_pattern(pattern)
 
         # Always provide the hardened filesystem tool — the node needs it
-        # both for second-round main.jsx edits (read_file the existing
-        # file, rewrite, save_main_jsx) and for general exploration.
+        # for authoring render/*.jsx (write_file / edit_file / delete_file)
+        # and for general exploration.
         if not self.filesystem_func_tool:
             self._setup_filesystem_tools()
 
@@ -391,7 +392,7 @@ class GenVisualReportAgenticNode(AgenticNode):
                     f"{ref_list}. Decide whether they want to EDIT one of these in place "
                     "(call bind_existing_report) or PRODUCE A NEW report that draws on "
                     "them as references (call start_new_report and use the filesystem "
-                    "read tool on reports/<id>/main.jsx and reports/<id>/queries/* "
+                    "read tool on reports/<id>/render/*.jsx and reports/<id>/queries/* "
                     "to learn from them). When unclear, default to start_new_report."
                 )
 
@@ -561,19 +562,21 @@ class GenVisualReportAgenticNode(AgenticNode):
                         tokens_used = int(usage["total_tokens"])
                         break
 
-            # Find the most recent successful main.jsx finalizer. Either
-            # save_main_jsx (one-shot) or append_jsx_chunk(position='last')
-            # writes the file; the result envelope of the call that did the
-            # write has main_jsx_path set. Earlier failed calls have it null
-            # and are skipped.
+            # Find the most recent successful validate_render call. That's
+            # the terminal action of this subagent; its result envelope
+            # carries app_jsx_path on success. Failed validations (the LLM
+            # may iterate) have no app_jsx_path and are skipped.
             query_actions = [a for a in tool_calls if a.action_type == "save_query"]
-            main_jsx_rel_path: Optional[str] = None
+            app_jsx_rel_path: Optional[str] = None
+            render_file_count = 0
             for action in reversed(tool_calls):
-                if action.action_type not in ("save_main_jsx", "append_jsx_chunk"):
+                if action.action_type != "validate_render":
                     continue
-                candidate = self._extract_artifact_result_field(action, "main_jsx_path")
+                candidate = self._extract_artifact_result_field(action, "app_jsx_path")
                 if candidate:
-                    main_jsx_rel_path = candidate
+                    app_jsx_rel_path = candidate
+                    render_files = self._extract_artifact_result_list(action, "render_files")
+                    render_file_count = len(render_files) if render_files else 0
                     break
 
             # The LLM picked the active report by calling start_new_report or
@@ -582,14 +585,15 @@ class GenVisualReportAgenticNode(AgenticNode):
                 self._active_report_id = self.report_artifact_tools.report_id
 
             html_rel_path: Optional[str] = None
-            if main_jsx_rel_path and self._active_report_id:
+            if app_jsx_rel_path and self._active_report_id:
                 html_rel_path = self._maybe_compile_html(self._active_report_id)
 
             result = GenVisualReportNodeResult(
-                success=main_jsx_rel_path is not None,
+                success=app_jsx_rel_path is not None,
                 response=response_content,
                 report_id=self._active_report_id,
-                main_jsx_path=main_jsx_rel_path,
+                app_jsx_path=app_jsx_rel_path,
+                render_file_count=render_file_count,
                 html_path=html_rel_path,
                 query_count=len(query_actions),
                 tokens_used=tokens_used,
@@ -601,7 +605,7 @@ class GenVisualReportAgenticNode(AgenticNode):
                     "total_tokens": tokens_used,
                 },
             )
-            if main_jsx_rel_path is None:
+            if app_jsx_rel_path is None:
                 if self._active_report_id is None:
                     result.error = (
                         "Run finished without binding a report. The LLM must call either "
@@ -609,14 +613,18 @@ class GenVisualReportAgenticNode(AgenticNode):
                         "the artifact."
                     )
                 else:
-                    result.error = "save_main_jsx was never called — the report artifact is incomplete."
+                    result.error = (
+                        "validate_render never returned success — the report artifact is incomplete. "
+                        "The LLM must write_file the render/*.jsx components and then call "
+                        "validate_render() to finalize."
+                    )
 
             self.actions.extend(all_actions)
 
             summary_messages = (
-                f"Visual report generated: reports/{self._active_report_id}/main.jsx"
-                if main_jsx_rel_path
-                else "Visual report run finished without main.jsx."
+                f"Visual report generated: reports/{self._active_report_id}/render/app.jsx"
+                if app_jsx_rel_path
+                else "Visual report run finished without a validated render/ tree."
             )
             final_action = ActionHistory.create_action(
                 role=ActionRole.ASSISTANT,
@@ -624,7 +632,7 @@ class GenVisualReportAgenticNode(AgenticNode):
                 messages=summary_messages,
                 input_data=user_input.model_dump(),
                 output_data=result.model_dump(),
-                status=ActionStatus.SUCCESS if main_jsx_rel_path else ActionStatus.FAILED,
+                status=ActionStatus.SUCCESS if app_jsx_rel_path else ActionStatus.FAILED,
             )
             action_history_manager.add_action(final_action)
             yield final_action
@@ -693,6 +701,36 @@ class GenVisualReportAgenticNode(AgenticNode):
                 for value in obj.values():
                     found = _scan(value)
                     if found:
+                        return found
+            elif isinstance(obj, str):
+                try:
+                    parsed = json.loads(obj)
+                except (TypeError, json.JSONDecodeError):
+                    return None
+                return _scan(parsed)
+            return None
+
+        return _scan(output)
+
+    @staticmethod
+    def _extract_artifact_result_list(action: ActionHistory, field: str) -> Optional[List[Any]]:
+        """Like :meth:`_extract_artifact_result_field` but returns a list value."""
+        output = action.output
+        if not isinstance(output, dict):
+            return None
+
+        def _scan(obj: Any) -> Optional[List[Any]]:
+            if isinstance(obj, dict):
+                if field in obj and isinstance(obj[field], list):
+                    return obj[field]
+                for key in ("result", "raw_output", "output", "data"):
+                    if key in obj:
+                        found = _scan(obj[key])
+                        if found is not None:
+                            return found
+                for value in obj.values():
+                    found = _scan(value)
+                    if found is not None:
                         return found
             elif isinstance(obj, str):
                 try:

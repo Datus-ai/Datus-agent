@@ -10,12 +10,15 @@ the backend ``/api/v1/report/detail`` endpoint and do not call this function.
 
 The generated HTML inlines two payloads next to ``@datus/web-report``:
 
-* ``main.jsx`` source as a ``<script type="application/json">`` tag (the
-  agent's ``save_main_jsx`` output, untouched).
-* ``queries/<slug>.sql`` + ``.json`` as ``[{name, content}, ...]`` entries.
+* The agent's ``render/`` tree as ``render_files: [{name, content}, ...]``
+  inside a single ``<script type="application/json">`` block. ``name`` is
+  the path relative to ``render/`` (e.g. ``app.jsx``, ``kpi-banner.jsx``,
+  ``charts/trend.jsx``).
+* ``queries/<slug>.sql`` + ``.json`` as ``queries: [{name, content}, ...]``.
 
 ``@datus/web-report`` boots the standalone viewer, which spins up the
-sandboxed iframe runtime that Babel-compiles ``main.jsx`` and renders it.
+sandboxed iframe runtime; the runtime Babel-compiles each module on demand
+and renders the default export of ``render/app.jsx``.
 
 Two asset-loading modes, mirroring ``datus.cli.web.chatbot``:
 
@@ -48,9 +51,11 @@ _CSS_URL_PLACEHOLDER = "__DATUS_REPORT_CSS_URL__"
 _JS_URL_PLACEHOLDER = "__DATUS_REPORT_JS_URL__"
 
 # Best-effort title extraction from a JSDoc-style annotation at the top of
-# main.jsx, e.g. ``/** @datus-title 2026 Q1 NA Sales Report */``. The runtime
-# falls back to the report id when this isn't present.
+# render/app.jsx, e.g. ``/** @datus-title 2026 Q1 NA Sales Report */``. The
+# runtime falls back to the report id when this isn't present.
 _TITLE_ANNOTATION_RE = re.compile(r"@datus-title\s+([^\n*/]+?)(?:\s*\*/|\s*\n|$)")
+
+_RENDER_ALLOWED_SUFFIXES = {".jsx", ".js", ".css"}
 
 # CDN URLs used when no offline dist is supplied. Keep the pinned version in
 # lockstep with ``packages/web-report/package.json``.
@@ -67,8 +72,8 @@ _DIST_JS_NAME = "datus-report.umd.js"
 _ASSETS_SUBDIR = "_assets"
 
 
-def _extract_title(main_jsx: str, fallback: str) -> str:
-    match = _TITLE_ANNOTATION_RE.search(main_jsx[:2048])
+def _extract_title(app_jsx: str, fallback: str) -> str:
+    match = _TITLE_ANNOTATION_RE.search(app_jsx[:2048])
     if match:
         title = match.group(1).strip()
         if title:
@@ -85,6 +90,21 @@ def _read_queries(queries_dir: Path) -> List[Dict[str, str]]:
         if path.suffix not in {".sql", ".json"} or not path.is_file():
             continue
         entries.append({"name": path.name, "content": path.read_text(encoding="utf-8")})
+    return entries
+
+
+def _read_render_files(render_dir: Path) -> List[Dict[str, str]]:
+    """Return render/ files keyed by path relative to render/, deterministically sorted.
+
+    ``name`` mirrors the iframe's module key convention (path-with-extension,
+    e.g. ``app.jsx``, ``charts/trend.jsx``); ``content`` is the raw source.
+    """
+    entries: List[Dict[str, str]] = []
+    for path in sorted(render_dir.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in _RENDER_ALLOWED_SUFFIXES:
+            continue
+        rel = path.relative_to(render_dir).as_posix()
+        entries.append({"name": rel, "content": path.read_text(encoding="utf-8")})
     return entries
 
 
@@ -142,7 +162,7 @@ def render_report_html(
     report_dist: Optional[Path] = None,
 ) -> Path:
     """
-    Compile ``reports/<report_id>/index.html`` from main.jsx + queries.
+    Compile ``reports/<report_id>/index.html`` from render/ + queries.
 
     Args:
         project_root: ``AgentConfig.project_root``; resolved absolute path.
@@ -159,16 +179,18 @@ def render_report_html(
         Absolute path to the generated ``index.html``.
 
     Raises:
-        FileNotFoundError: if ``main.jsx`` is missing.
+        FileNotFoundError: if ``render/app.jsx`` is missing.
         OSError: on read/write failures.
     """
     project_root = project_root.resolve()
     report_dir = project_root / "reports" / report_id
-    main_jsx_path = report_dir / "main.jsx"
-    if not main_jsx_path.is_file():
-        raise FileNotFoundError(f"main.jsx not found under {report_dir}")
+    render_dir = report_dir / "render"
+    app_jsx_path = render_dir / "app.jsx"
+    if not app_jsx_path.is_file():
+        raise FileNotFoundError(f"render/app.jsx not found under {report_dir}")
 
-    main_jsx = main_jsx_path.read_text(encoding="utf-8")
+    app_jsx = app_jsx_path.read_text(encoding="utf-8")
+    render_files = _read_render_files(render_dir)
     queries = _read_queries(report_dir / "queries")
 
     dist_dir = _resolve_dist(report_dist)
@@ -179,15 +201,15 @@ def render_report_html(
         css_url, js_url = _CDN_REPORT_CSS, _CDN_REPORT_JS
 
     template_html = _TEMPLATE_PATH.read_text(encoding="utf-8")
-    created_at = _dt.datetime.fromtimestamp(main_jsx_path.stat().st_mtime, tz=_dt.timezone.utc).strftime(
+    created_at = _dt.datetime.fromtimestamp(app_jsx_path.stat().st_mtime, tz=_dt.timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
-    title = _extract_title(main_jsx, report_id)
+    title = _extract_title(app_jsx, report_id)
     payload = {
         "id": report_id,
         "title": title,
         "created_at": created_at,
-        "main_jsx": main_jsx,
+        "render_files": render_files,
         "queries": queries,
     }
     payload_json = _escape_for_script_tag(json.dumps(payload, ensure_ascii=False))
