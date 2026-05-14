@@ -59,6 +59,7 @@ class Node(ABC):
         tools: Optional[List[Tool]] = None,
         node_name: Optional[str] = None,
         is_subagent: bool = False,
+        session_id: Optional[str] = None,
     ):
         from datus.agent.node import (
             BeginNode,
@@ -123,6 +124,7 @@ class Node(ABC):
                 tools,
                 execution_mode="workflow",
                 is_subagent=is_subagent,
+                session_id=session_id,
             )
         elif node_type == NodeType.TYPE_GENSQL:
             return GenSQLAgenticNode(
@@ -135,6 +137,7 @@ class Node(ABC):
                 node_name,
                 execution_mode="workflow",
                 is_subagent=is_subagent,
+                session_id=session_id,
             )
         elif node_type == NodeType.TYPE_GEN_REPORT:
             from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
@@ -149,6 +152,7 @@ class Node(ABC):
                 node_name,
                 execution_mode="workflow",
                 is_subagent=is_subagent,
+                session_id=session_id,
             )
         elif node_type == NodeType.TYPE_EXPLORE:
             from datus.agent.node.explore_agentic_node import ExploreAgenticNode
@@ -162,6 +166,7 @@ class Node(ABC):
                 tools,
                 node_name,
                 is_subagent=is_subagent,
+                session_id=session_id,
             )
         elif node_type == NodeType.TYPE_GEN_TABLE:
             from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
@@ -172,6 +177,7 @@ class Node(ABC):
                 node_id=node_id,
                 node_name=node_name,
                 is_subagent=is_subagent,
+                session_id=session_id,
             )
             if input_data is not None:
                 node.input = input_data
@@ -179,7 +185,12 @@ class Node(ABC):
         elif node_type == NodeType.TYPE_GEN_JOB:
             from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-            node = GenJobAgenticNode(agent_config=agent_config, execution_mode="workflow", is_subagent=is_subagent)
+            node = GenJobAgenticNode(
+                agent_config=agent_config,
+                execution_mode="workflow",
+                is_subagent=is_subagent,
+                session_id=session_id,
+            )
             if input_data is not None:
                 node.input = input_data
             return node
@@ -195,6 +206,7 @@ class Node(ABC):
                 tools,
                 node_name,
                 is_subagent=is_subagent,
+                session_id=session_id,
             )
         elif node_type == NodeType.TYPE_GEN_DASHBOARD:
             from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
@@ -205,6 +217,7 @@ class Node(ABC):
                 node_id=node_id,
                 node_name=node_name,
                 is_subagent=is_subagent,
+                session_id=session_id,
             )
             if input_data is not None:
                 node.input = input_data
@@ -218,6 +231,7 @@ class Node(ABC):
                 node_id=node_id,
                 node_name=node_name,
                 is_subagent=is_subagent,
+                session_id=session_id,
             )
             if input_data is not None:
                 node.input = input_data
@@ -225,7 +239,7 @@ class Node(ABC):
         elif node_type == NodeType.TYPE_FEEDBACK:
             from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
 
-            node = FeedbackAgenticNode(agent_config=agent_config, execution_mode="workflow")
+            node = FeedbackAgenticNode(agent_config=agent_config, execution_mode="workflow", session_id=session_id)
             if input_data is not None:
                 node.input = input_data
             return node

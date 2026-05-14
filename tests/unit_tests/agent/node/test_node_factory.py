@@ -67,20 +67,28 @@ class TestCreateInteractiveNode:
     def test_gen_semantic_model(self, mock_init):
         config = _mock_agent_config()
         create_interactive_node("gen_semantic_model", config)
-        mock_init.assert_called_once_with(agent_config=config, execution_mode="interactive", scope=None)
+        mock_init.assert_called_once_with(
+            agent_config=config, execution_mode="interactive", scope=None, session_id=None
+        )
 
     @patch("datus.agent.node.gen_metrics_agentic_node.GenMetricsAgenticNode.__init__", return_value=None)
     def test_gen_metrics(self, mock_init):
         config = _mock_agent_config()
         create_interactive_node("gen_metrics", config)
-        mock_init.assert_called_once_with(agent_config=config, execution_mode="interactive", scope=None)
+        mock_init.assert_called_once_with(
+            agent_config=config, execution_mode="interactive", scope=None, session_id=None
+        )
 
     @patch("datus.agent.node.sql_summary_agentic_node.SqlSummaryAgenticNode.__init__", return_value=None)
     def test_gen_sql_summary(self, mock_init):
         config = _mock_agent_config()
         create_interactive_node("gen_sql_summary", config)
         mock_init.assert_called_once_with(
-            node_name="gen_sql_summary", agent_config=config, execution_mode="interactive", scope=None
+            node_name="gen_sql_summary",
+            agent_config=config,
+            execution_mode="interactive",
+            scope=None,
+            session_id=None,
         )
 
     @patch("datus.agent.node.gen_ext_knowledge_agentic_node.GenExtKnowledgeAgenticNode.__init__", return_value=None)
@@ -88,7 +96,11 @@ class TestCreateInteractiveNode:
         config = _mock_agent_config()
         create_interactive_node("gen_ext_knowledge", config)
         mock_init.assert_called_once_with(
-            node_name="gen_ext_knowledge", agent_config=config, execution_mode="interactive", scope=None
+            node_name="gen_ext_knowledge",
+            agent_config=config,
+            execution_mode="interactive",
+            scope=None,
+            session_id=None,
         )
 
     @patch("datus.agent.node.gen_report_agentic_node.GenReportAgenticNode.__init__", return_value=None)
@@ -112,7 +124,9 @@ class TestCreateInteractiveNode:
     def test_gen_table(self, mock_init):
         config = _mock_agent_config()
         create_interactive_node("gen_table", config)
-        mock_init.assert_called_once_with(agent_config=config, execution_mode="interactive", node_name=None, scope=None)
+        mock_init.assert_called_once_with(
+            agent_config=config, execution_mode="interactive", node_name=None, scope=None, session_id=None
+        )
 
     @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
     def test_default_subagent_is_gensql(self, mock_init):
@@ -133,6 +147,7 @@ class TestCreateInteractiveNode:
             execution_mode="interactive",
             node_name="wide_table_builder",
             scope=None,
+            session_id=None,
         )
 
     @patch("datus.agent.node.gen_skill_agentic_node.SkillCreatorAgenticNode.__init__", return_value=None)
@@ -175,7 +190,9 @@ class TestCreateInteractiveNode:
         """`/feedback` must land on FeedbackAgenticNode, not the gensql fallback."""
         config = _mock_agent_config()
         create_interactive_node("feedback", config)
-        mock_init.assert_called_once_with(agent_config=config, execution_mode="interactive", scope=None)
+        mock_init.assert_called_once_with(
+            agent_config=config, execution_mode="interactive", scope=None, session_id=None
+        )
 
     @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
     def test_execution_mode_workflow_propagates(self, mock_init):
@@ -190,7 +207,7 @@ class TestCreateInteractiveNode:
         """Workflow flag also propagates to nodes that take agent_config-only signatures."""
         config = _mock_agent_config()
         create_interactive_node("feedback", config, execution_mode="workflow")
-        mock_init.assert_called_once_with(agent_config=config, execution_mode="workflow", scope=None)
+        mock_init.assert_called_once_with(agent_config=config, execution_mode="workflow", scope=None, session_id=None)
 
     @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
     def test_node_id_override(self, mock_init):
@@ -218,7 +235,9 @@ class TestCreateInteractiveNode:
         """gen_job session files must land under the per-user shard on the API path."""
         config = _mock_agent_config()
         create_interactive_node("gen_job", config, scope="user-42")
-        mock_init.assert_called_once_with(agent_config=config, execution_mode="interactive", scope="user-42")
+        mock_init.assert_called_once_with(
+            agent_config=config, execution_mode="interactive", scope="user-42", session_id=None
+        )
 
     @patch("datus.agent.node.gen_skill_agentic_node.SkillCreatorAgenticNode.__init__", return_value=None)
     def test_gen_skill_scope_propagates(self, mock_init):

@@ -97,7 +97,7 @@ class TestChatTaskManagerCreateNodeInteractive:
         node = manager._create_node(
             real_agent_config,
             subagent_id=None,
-            session_id="sess-1",
+            node_id="sess-1",
             user_id=None,
             interactive=False,
         )
@@ -110,7 +110,7 @@ class TestChatTaskManagerCreateNodeInteractive:
         node = manager._create_node(
             real_agent_config,
             subagent_id=None,
-            session_id="sess-2",
+            node_id="sess-2",
             user_id=None,
             interactive=True,
         )
@@ -1140,11 +1140,11 @@ class TestRunLoopPathManagerContext:
 
         original_create_node = ChatTaskManager._create_node
 
-        def _capturing_create_node(self, agent_config, subagent_id, session_id, **kwargs):
+        def _capturing_create_node(self, agent_config, subagent_id, node_id, **kwargs):
             # Simulate what BaseSubjectEmbeddingStore.__init__ does at line 692:
             # rely on the ambient ContextVar to find the project name.
             captured["project_name"] = get_path_manager().project_name
-            return original_create_node(self, agent_config, subagent_id, session_id, **kwargs)
+            return original_create_node(self, agent_config, subagent_id, node_id, **kwargs)
 
         manager = ChatTaskManager()
         manager._create_node = _capturing_create_node.__get__(manager, ChatTaskManager)  # type: ignore[method-assign]

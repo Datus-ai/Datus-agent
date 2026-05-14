@@ -53,6 +53,7 @@ class GenSQLAgenticNode(AgenticNode):
         execution_mode: Literal["interactive", "workflow"] = "interactive",
         scope: Optional[str] = None,
         is_subagent: bool = False,
+        session_id: Optional[str] = None,
     ):
         """
         Initialize the GenSQLAgenticNode as a workflow-compatible node.
@@ -106,6 +107,7 @@ class GenSQLAgenticNode(AgenticNode):
             mcp_servers={},  # Initialize empty, will setup after parent init
             scope=scope,
             is_subagent=is_subagent,
+            session_id=session_id,
         )
 
         # Initialize MCP servers based on configuration (after node_config is available)

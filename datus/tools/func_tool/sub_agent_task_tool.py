@@ -321,17 +321,20 @@ class SubAgentTaskTool:
 
     # ── node creation ─────────────────────────────────────────────────
 
-    def _create_node(self, subagent_type: str):
+    def _create_node(self, subagent_type: str, session_id: Optional[str] = None):
         """Create a new AgenticNode instance for the given subagent type.
 
         Both builtin (SYS_SUB_AGENTS) and custom agents propagate
         ``is_subagent=True`` so the child's constructor skips SubAgentTaskTool
         setup entirely — enforcing strict 2-level depth at the source rather
         than stripping tools post-construction.
+
+        ``session_id`` is forwarded to the constructor so resume flows open the
+        existing session DB on first turn — no post-construct mutation.
         """
         # Builtin system subagents have non-standard constructors
         if subagent_type in SYS_SUB_AGENTS:
-            return self._create_builtin_node(subagent_type)
+            return self._create_builtin_node(subagent_type, session_id=session_id)
 
         node_type, node_name = self._resolve_node_type(subagent_type)
         node_id = f"task_{subagent_type}_{uuid.uuid4().hex[:8]}"
@@ -346,6 +349,7 @@ class SubAgentTaskTool:
             agent_config=self.agent_config,
             node_name=node_name,
             is_subagent=True,
+            session_id=session_id,
         )
 
     def _resolve_execution_mode(self) -> Literal["interactive", "workflow"]:
@@ -356,7 +360,7 @@ class SubAgentTaskTool:
                 return mode
         return "interactive"
 
-    def _create_builtin_node(self, subagent_type: str):
+    def _create_builtin_node(self, subagent_type: str, session_id: Optional[str] = None):
         """Create a builtin system subagent node with its non-standard constructor."""
         if subagent_type == "gen_semantic_model":
             from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
@@ -365,6 +369,7 @@ class SubAgentTaskTool:
                 agent_config=self.agent_config,
                 execution_mode=self._resolve_execution_mode(),
                 is_subagent=True,
+                session_id=session_id,
             )
         elif subagent_type == "gen_metrics":
             from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
@@ -373,6 +378,7 @@ class SubAgentTaskTool:
                 agent_config=self.agent_config,
                 execution_mode=self._resolve_execution_mode(),
                 is_subagent=True,
+                session_id=session_id,
             )
         elif subagent_type == "gen_sql_summary":
             from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
@@ -382,6 +388,7 @@ class SubAgentTaskTool:
                 agent_config=self.agent_config,
                 execution_mode=self._resolve_execution_mode(),
                 is_subagent=True,
+                session_id=session_id,
             )
         elif subagent_type == "gen_ext_knowledge":
             from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
@@ -391,6 +398,7 @@ class SubAgentTaskTool:
                 agent_config=self.agent_config,
                 execution_mode=self._resolve_execution_mode(),
                 is_subagent=True,
+                session_id=session_id,
             )
         elif subagent_type == "gen_sql":
             from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
@@ -405,6 +413,7 @@ class SubAgentTaskTool:
                 node_name="gen_sql",
                 execution_mode=self._resolve_execution_mode(),
                 is_subagent=True,
+                session_id=session_id,
             )
         elif subagent_type == "gen_report":
             from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
@@ -419,6 +428,7 @@ class SubAgentTaskTool:
                 node_name="gen_report",
                 execution_mode=self._resolve_execution_mode(),
                 is_subagent=True,
+                session_id=session_id,
             )
         elif subagent_type == "gen_visual_report":
             from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
@@ -442,6 +452,7 @@ class SubAgentTaskTool:
                 execution_mode=self._resolve_execution_mode(),
                 node_id=f"task_gen_table_{uuid.uuid4().hex[:8]}",
                 is_subagent=True,
+                session_id=session_id,
             )
         elif subagent_type == "gen_job":
             from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
@@ -450,6 +461,7 @@ class SubAgentTaskTool:
                 agent_config=self.agent_config,
                 execution_mode=self._resolve_execution_mode(),
                 is_subagent=True,
+                session_id=session_id,
             )
         elif subagent_type == "gen_skill":
             from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
@@ -464,6 +476,7 @@ class SubAgentTaskTool:
                 node_name="gen_skill",
                 execution_mode=self._resolve_execution_mode(),
                 is_subagent=True,
+                session_id=session_id,
             )
         elif subagent_type == "gen_dashboard":
             from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
@@ -473,6 +486,7 @@ class SubAgentTaskTool:
                 execution_mode=self._resolve_execution_mode(),
                 node_id=f"task_gen_dashboard_{uuid.uuid4().hex[:8]}",
                 is_subagent=True,
+                session_id=session_id,
             )
         elif subagent_type == "scheduler":
             from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
@@ -482,6 +496,7 @@ class SubAgentTaskTool:
                 execution_mode=self._resolve_execution_mode(),
                 node_id=f"task_scheduler_{uuid.uuid4().hex[:8]}",
                 is_subagent=True,
+                session_id=session_id,
             )
         else:
             raise ValueError(f"Unknown builtin subagent type: {subagent_type}")
@@ -624,7 +639,31 @@ class SubAgentTaskTool:
                 return FuncToolResult(success=0, error=f"Invalid session_id format: {e}")
 
         with effective_subagent(subagent_type, effective_cfg), inherited_cm:
-            node = self._create_node(subagent_type)
+            # Resume an existing session when caller provides a session_id of the SAME type.
+            # Ownership validation runs *before* node construction so a mismatched
+            # session_id never reaches __init__ (where it would trigger an
+            # unnecessary ``restore_plan_mode_state`` for the wrong session).
+            if session_id is not None:
+                actual_owner = extract_agent_from_session_id(session_id)
+                if subagent_type in SYS_SUB_AGENTS:
+                    expected_owner = subagent_type
+                else:
+                    _, expected_owner = self._resolve_node_type(subagent_type)
+                # Accept gen_sql/gensql alias (resolved per agent_config.agentic_nodes)
+                allowed_owners = {expected_owner}
+                if expected_owner in ("gen_sql", "gensql"):
+                    allowed_owners |= {"gen_sql", "gensql"}
+                if actual_owner not in allowed_owners:
+                    return FuncToolResult(
+                        success=0,
+                        error=(
+                            f"session_id {session_id!r} belongs to subagent type {actual_owner!r} "
+                            f"but task requested type {subagent_type!r}. Each session is bound "
+                            "to one subagent type."
+                        ),
+                    )
+
+            node = self._create_node(subagent_type, session_id=session_id)
 
             # Nest this subagent's session under the launching main session so the
             # parent LLM can later resume by passing back the returned session_id.
@@ -640,33 +679,17 @@ class SubAgentTaskTool:
                         parent_sid,
                     )
 
-            # Resume an existing session when caller provides a session_id of the SAME type.
-            if session_id is not None:
-                actual_owner = extract_agent_from_session_id(session_id)
-                expected_owner = node.get_node_name()
-                # Accept gen_sql/gensql alias (resolved per agent_config.agentic_nodes)
-                allowed_owners = {expected_owner}
-                if expected_owner in ("gen_sql", "gensql"):
-                    allowed_owners |= {"gen_sql", "gensql"}
-                if actual_owner not in allowed_owners:
-                    return FuncToolResult(
-                        success=0,
-                        error=(
-                            f"session_id {session_id!r} belongs to subagent type {actual_owner!r} "
-                            f"but task requested type {subagent_type!r}. Each session is bound "
-                            "to one subagent type."
-                        ),
-                    )
-                if not node.session_manager.session_exists(session_id):
-                    return FuncToolResult(
-                        success=0,
-                        error=(
-                            f"session_id {session_id!r} not found on disk under the current "
-                            "main session. It may have been cleaned up or never existed."
-                        ),
-                    )
-                # Pre-set so AgenticNode._get_or_create_session loads from disk
-                node.session_id = session_id
+            # Verify the .db file actually exists after session_subdir is wired up
+            # — session_manager resolves the nested directory layout per
+            # ``AgenticNode.session_manager``.
+            if session_id is not None and not node.session_manager.session_exists(session_id):
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        f"session_id {session_id!r} not found on disk under the current "
+                        "main session. It may have been cleaned up or never existed."
+                    ),
+                )
 
             # Set input on the node
             node.input = self._build_node_input(node, prompt)

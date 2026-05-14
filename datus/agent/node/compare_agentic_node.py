@@ -30,6 +30,7 @@ class CompareAgenticNode(AgenticNode):
         node_name: str = "compare",
         agent_config: Optional[AgentConfig] = None,
         is_subagent: bool = False,
+        session_id: Optional[str] = None,
     ):
         """
         Initialize CompareAgenticNode.
@@ -56,6 +57,7 @@ class CompareAgenticNode(AgenticNode):
             tools=[],
             mcp_servers={},
             is_subagent=is_subagent,
+            session_id=session_id,
         )
 
         # Get max_turns from agentic_nodes configuration, default to 30

@@ -60,9 +60,13 @@ class PrintModeRunner:
         if self.session_id:
             self._validate_and_resolve_session()
 
-        node = create_interactive_node(self.subagent_name, self.agent_config, node_id_suffix="_print", scope=self.scope)
-        if self.session_id:
-            node.session_id = self.session_id
+        node = create_interactive_node(
+            self.subagent_name,
+            self.agent_config,
+            node_id_suffix="_print",
+            scope=self.scope,
+            session_id=self.session_id,
+        )
 
         if self.proxy_tool_patterns:
             from datus.tools.proxy.proxy_tool import apply_proxy_tools

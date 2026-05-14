@@ -46,8 +46,7 @@ class TestPlanModeStatePersistence:
     """``activate_plan_mode`` / ``deactivate_plan_mode`` flush to disk."""
 
     def test_activate_writes_state_file(self, chdir_tmp, real_agent_config):
-        node = _make_chat_node(real_agent_config)
-        node.session_id = "chat_session_aaaa"  # setter restore is a no-op (no file)
+        node = _make_chat_node(real_agent_config, session_id="chat_session_aaaa")
 
         node.activate_plan_mode()
 
@@ -59,8 +58,7 @@ class TestPlanModeStatePersistence:
         assert data["workflow_prompt_sent"] is False
 
     def test_deactivate_writes_state_file(self, chdir_tmp, real_agent_config):
-        node = _make_chat_node(real_agent_config)
-        node.session_id = "chat_session_bbbb"
+        node = _make_chat_node(real_agent_config, session_id="chat_session_bbbb")
         node.activate_plan_mode()
         node.deactivate_plan_mode()
 
@@ -71,41 +69,22 @@ class TestPlanModeStatePersistence:
         assert data["plan_file_path"] == node.plan_file_path
         assert data["workflow_prompt_sent"] is False
 
-    def test_activate_without_session_id_skips_disk(self, chdir_tmp, real_agent_config):
+    def test_fresh_node_generates_session_id(self, chdir_tmp, real_agent_config):
+        """When caller omits ``session_id``, ``__init__`` allocates one eagerly
+        so persistence has a stable key from the very first turn."""
         node = _make_chat_node(real_agent_config)  # no session_id
-        assert node.session_id is None
+
+        assert node.session_id  # always non-empty after construction
+        assert node.session_id.startswith("chat_session_")
 
         node.activate_plan_mode()
-        # No state files anywhere under data/state — disk write was skipped.
-        state_dir = _path_manager(node).project_data_dir / "state"
-        assert not state_dir.exists() or not any(state_dir.iterdir())
+        # State file lands under the generated id.
+        state_path = _state_path(node, node.session_id)
+        assert state_path.exists()
 
 
-class TestSessionIdSetterTriggersRestore:
-    """Assigning ``session_id`` to an existing node rehydrates plan-mode."""
-
-    def test_setter_restores_persisted_state(self, chdir_tmp, real_agent_config):
-        # We need to know the state path before constructing the node, so
-        # build a throwaway node just to resolve the project-scoped path.
-        anchor = _make_chat_node(real_agent_config)
-        plan_file = "./.datus/plans/feed.md"
-        PlanModeState(
-            plan_mode_active=True,
-            plan_file_path=plan_file,
-            workflow_prompt_sent=True,
-        ).save(_state_path(anchor, "chat_session_cccc"))
-
-        # Build a fresh node without session_id, then assign.
-        node = _make_chat_node(real_agent_config)
-        assert node.plan_mode_active is False
-        assert node.plan_file_path is None
-
-        node.session_id = "chat_session_cccc"
-
-        assert node.plan_mode_active is True
-        assert node.plan_file_path == plan_file
-        assert node.workflow_prompt_sent is True
-        assert node._plan_just_confirmed is False  # one-shot flag never restored
+class TestSessionIdConstructorTriggersRestore:
+    """Passing ``session_id`` to ``__init__`` rehydrates persisted plan-mode."""
 
     def test_constructor_session_id_restores(self, chdir_tmp, real_agent_config):
         anchor = _make_chat_node(real_agent_config)
@@ -119,30 +98,11 @@ class TestSessionIdSetterTriggersRestore:
 
         assert node.plan_mode_active is True
         assert node.plan_file_path == "./.datus/plans/init.md"
+        assert node._plan_just_confirmed is False  # one-shot flag never restored
 
-    def test_setter_no_state_file_keeps_defaults(self, chdir_tmp, real_agent_config):
-        node = _make_chat_node(real_agent_config)
-        node.session_id = "chat_session_unknown"
+    def test_constructor_no_state_file_keeps_defaults(self, chdir_tmp, real_agent_config):
+        node = _make_chat_node(real_agent_config, session_id="chat_session_unknown")
         # No file present → defaults remain (False/None/False).
         assert node.plan_mode_active is False
         assert node.plan_file_path is None
         assert node.workflow_prompt_sent is False
-
-    def test_setter_idempotent_for_same_value(self, chdir_tmp, real_agent_config):
-        node = _make_chat_node(real_agent_config)
-        node.session_id = "chat_session_xxxx"
-        node.activate_plan_mode()
-        original_path = node.plan_file_path
-
-        # Re-assigning the same value should NOT trigger a restore that
-        # wipes the in-memory state we just set.
-        node.session_id = "chat_session_xxxx"
-        assert node.plan_mode_active is True
-        assert node.plan_file_path == original_path
-
-    def test_setter_to_none_does_not_restore(self, chdir_tmp, real_agent_config):
-        node = _make_chat_node(real_agent_config, session_id="chat_session_yyyy")
-        node.activate_plan_mode()
-        # Clearing back to None must not crash and must not load any state.
-        node.session_id = None
-        assert node.session_id is None

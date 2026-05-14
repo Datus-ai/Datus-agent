@@ -146,24 +146,33 @@ class ChatCommands:
         effective_new = subagent_name or ""
         return effective_current != effective_new
 
-    def _copy_session_for_switch(self, prev_session_id: str, new_node) -> str:
+    def _copy_session_for_switch(self, prev_session_id: str, new_node_name: str) -> Optional[str]:
         """Copy session data from the previous node to a new session matching the new node's name prefix.
 
         Uses :meth:`SessionManager.copy_session` so that the new session_id prefix
-        matches ``new_node.get_node_name()`` and :meth:`_extract_node_type_from_session_id`
+        matches ``new_node_name`` and :meth:`_extract_node_type_from_session_id`
         resolves the correct type on ``.resume``.
 
+        Args:
+            prev_session_id: Source session id to clone from.
+            new_node_name: Target node name (``get_node_name()``) — used as the
+                copied session id's prefix. Resolved via
+                :func:`datus.agent.node.node_factory.resolve_node_name` so the
+                copy happens before the new node is constructed.
+
         Returns:
-            New session_id with the correct node-name prefix.
+            New session_id with the correct node-name prefix, or ``None`` when
+            the copy fails — callers should then let the new node generate a
+            fresh id eagerly in ``__init__``.
         """
         from datus.models.session_manager import SessionManager
 
         try:
             session_manager = SessionManager(self.cli.agent_config.session_dir, scope=self.cli.scope)
-            return session_manager.copy_session(prev_session_id, new_node.get_node_name())
+            return session_manager.copy_session(prev_session_id, new_node_name)
         except Exception as e:
             logger.warning(f"Failed to copy session on agent switch, starting fresh: {e}")
-            return new_node.session_id  # fall back to whatever the node already has (None → auto-generate)
+            return None
 
     def _create_new_node(self, subagent_name: str = None, session_id: Optional[str] = None):
         """Create new node based on subagent_name and configuration.
@@ -306,15 +315,22 @@ class ChatCommands:
                 # Get or create node
                 if need_new_node:
                     # Copy session when switching agents to preserve conversation
-                    # while keeping the session_id prefix consistent with the new node type.
+                    # while keeping the session_id prefix consistent with the new
+                    # node type. The copy runs *before* construction so the new
+                    # node opens the cloned .db directly — no post-construct mutation.
+                    from datus.agent.node.node_factory import resolve_node_name
+
                     prev_session_id = None
                     prev_node_name = None
+                    new_session_id: Optional[str] = None
                     if is_switch and self.current_node:
                         prev_session_id = getattr(self.current_node, "session_id", None)
                         prev_node_name = self.current_node.get_node_name()
-                    self.current_node = self._create_new_node(subagent_name)
                     if prev_session_id:
-                        self.current_node.session_id = self._copy_session_for_switch(prev_session_id, self.current_node)
+                        new_session_id = self._copy_session_for_switch(
+                            prev_session_id, resolve_node_name(subagent_name)
+                        )
+                    self.current_node = self._create_new_node(subagent_name, session_id=new_session_id)
                     if prev_node_name:
                         # Pass the previous node's name explicitly so downstream
                         # nodes (e.g. feedback) can route memory to the caller
@@ -1575,8 +1591,7 @@ class ChatCommands:
             node_name = self._extract_node_type_from_session_id(new_session_id)
             subagent_name = node_name if node_name != "chat" else None
 
-            new_node = self._create_new_node(subagent_name)
-            new_node.session_id = new_session_id
+            new_node = self._create_new_node(subagent_name, session_id=new_session_id)
 
             self.current_node = new_node
             self.current_subagent_name = subagent_name

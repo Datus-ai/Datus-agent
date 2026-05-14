@@ -54,6 +54,7 @@ class GenReportAgenticNode(AgenticNode):
         execution_mode: Literal["interactive", "workflow"] = "interactive",
         scope: Optional[str] = None,
         is_subagent: bool = False,
+        session_id: Optional[str] = None,
     ):
         """
         Initialize the GenReportAgenticNode.
@@ -98,6 +99,7 @@ class GenReportAgenticNode(AgenticNode):
             mcp_servers={},  # No MCP servers for report nodes by default
             scope=scope,
             is_subagent=is_subagent,
+            session_id=session_id,
         )
 
         # Setup tools based on configuration (includes subagent task tool wiring)

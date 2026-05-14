@@ -555,7 +555,7 @@ class TestTaskExecution:
 
         assert result.success == 1
         # The normalized (stripped) type is what gets passed to _create_node.
-        create.assert_called_once_with("gen_sql")
+        create.assert_called_once_with("gen_sql", session_id=None)
 
     @pytest.mark.asyncio
     async def test_execute_type_with_quotes_is_normalized(self, task_tool):
@@ -577,7 +577,7 @@ class TestTaskExecution:
                 result = await task_tool.task(type='"gen_sql"', prompt="test")
 
         assert result.success == 1
-        create.assert_called_once_with("gen_sql")
+        create.assert_called_once_with("gen_sql", session_id=None)
 
     @pytest.mark.asyncio
     async def test_execute_missing_type(self, task_tool):
@@ -1078,6 +1078,7 @@ class TestCreateBuiltinNode:
             agent_config=task_tool.agent_config,
             execution_mode="interactive",
             is_subagent=True,
+            session_id=None,
         )
 
     @patch("datus.agent.node.gen_metrics_agentic_node.GenMetricsAgenticNode.__init__", return_value=None)
@@ -1087,6 +1088,7 @@ class TestCreateBuiltinNode:
             agent_config=task_tool.agent_config,
             execution_mode="interactive",
             is_subagent=True,
+            session_id=None,
         )
 
     @patch("datus.agent.node.sql_summary_agentic_node.SqlSummaryAgenticNode.__init__", return_value=None)
@@ -1097,6 +1099,7 @@ class TestCreateBuiltinNode:
             agent_config=task_tool.agent_config,
             execution_mode="interactive",
             is_subagent=True,
+            session_id=None,
         )
 
     @patch("datus.agent.node.gen_ext_knowledge_agentic_node.GenExtKnowledgeAgenticNode.__init__", return_value=None)
@@ -1107,6 +1110,7 @@ class TestCreateBuiltinNode:
             agent_config=task_tool.agent_config,
             execution_mode="interactive",
             is_subagent=True,
+            session_id=None,
         )
 
     @patch("datus.agent.node.gen_table_agentic_node.GenTableAgenticNode.__init__", return_value=None)
@@ -1119,6 +1123,7 @@ class TestCreateBuiltinNode:
             execution_mode="interactive",
             node_id=ANY,
             is_subagent=True,
+            session_id=None,
         )
 
     @patch("datus.agent.node.gen_job_agentic_node.GenJobAgenticNode.__init__", return_value=None)
@@ -1128,6 +1133,7 @@ class TestCreateBuiltinNode:
             agent_config=task_tool.agent_config,
             execution_mode="interactive",
             is_subagent=True,
+            session_id=None,
         )
 
     @patch("datus.agent.node.gen_dashboard_agentic_node.GenDashboardAgenticNode.__init__", return_value=None)
@@ -1140,6 +1146,7 @@ class TestCreateBuiltinNode:
             execution_mode="interactive",
             node_id=ANY,
             is_subagent=True,
+            session_id=None,
         )
 
     @patch("datus.agent.node.scheduler_agentic_node.SchedulerAgenticNode.__init__", return_value=None)
@@ -1152,6 +1159,7 @@ class TestCreateBuiltinNode:
             execution_mode="interactive",
             node_id=ANY,
             is_subagent=True,
+            session_id=None,
         )
 
     def test_unknown_builtin_raises(self, task_tool):
@@ -1162,7 +1170,7 @@ class TestCreateBuiltinNode:
         """_create_node delegates to _create_builtin_node for SYS_SUB_AGENTS."""
         with patch.object(task_tool, "_create_builtin_node", return_value=Mock()) as mock_builtin:
             task_tool._create_node("gen_semantic_model")
-            mock_builtin.assert_called_once_with("gen_semantic_model")
+            mock_builtin.assert_called_once_with("gen_semantic_model", session_id=None)
 
     def test_create_node_custom_passes_is_subagent_true(self, task_tool):
         """Custom agents must receive ``is_subagent=True`` via Node.new_instance.

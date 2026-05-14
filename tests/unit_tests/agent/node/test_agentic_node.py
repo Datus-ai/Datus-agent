@@ -343,7 +343,9 @@ class TestDeleteSession:
         node.delete_session()
         mock_sm.delete_session.assert_called_once_with("real_1")
         assert node._session is None
-        assert node.session_id is None
+        # session_id is immutable — stays set so logs/tracebacks can still
+        # identify which session was deleted. The node itself is unusable.
+        assert node.session_id == "real_1"
 
 
 # ---------------------------------------------------------------------------
@@ -1089,7 +1091,8 @@ class TestSessionManagement:
         node.delete_session()
         mock_sm.delete_session.assert_called_once_with("sess_5")
         assert node._session is None
-        assert node.session_id is None
+        # session_id is immutable — preserved post-delete for log traceability.
+        assert node.session_id == "sess_5"
 
 
 # ---------------------------------------------------------------------------
@@ -1152,16 +1155,20 @@ class TestGetOrCreateSession:
         assert session is mock_session
         mock_sm.create_session.assert_called_once_with("my_session")
 
-    def test_generates_session_id_when_none(self):
+    def test_uses_existing_session_id(self):
+        """``session_id`` is allocated in ``__init__`` (or supplied by the
+        caller) and never mutated thereafter. ``_get_or_create_session`` opens
+        the .db file under that id; it does not generate or rotate ids."""
         node = _make_simple_node()
         mock_sm = MagicMock()
         mock_session = MagicMock()
         mock_sm.create_session.return_value = mock_session
         node._session_manager = mock_sm
-        # session_id is None - should be generated
+        node.session_id = "preset_session_xyz"
 
-        session, _ = node._get_or_create_session()
-        assert node.session_id.startswith("_simple_session_")
+        node._get_or_create_session()
+        assert node.session_id == "preset_session_xyz"
+        mock_sm.create_session.assert_called_once_with("preset_session_xyz")
 
     def test_summary_is_no_longer_returned_via_get_or_create_session(self):
         """Compacted summary now lives inside the session history itself, not

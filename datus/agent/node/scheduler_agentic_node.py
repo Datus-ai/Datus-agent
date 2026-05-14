@@ -45,6 +45,7 @@ class SchedulerAgenticNode(DeliverableAgenticNode):
         node_name: Optional[str] = None,
         scope: Optional[str] = None,
         is_subagent: bool = False,
+        session_id: Optional[str] = None,
     ):
         # Populated by ``_setup_domain_tools`` on success. Initialized here so
         # the attribute exists when the base ``setup_tools`` chain runs during
@@ -58,6 +59,7 @@ class SchedulerAgenticNode(DeliverableAgenticNode):
             node_name=node_name,
             scope=scope,
             is_subagent=is_subagent,
+            session_id=session_id,
         )
         # Scheduler service override resolved after base init so
         # ``self.node_config`` exists.

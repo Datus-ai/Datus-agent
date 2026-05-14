@@ -54,6 +54,7 @@ class GenDashboardAgenticNode(DeliverableAgenticNode):
         node_name: Optional[str] = None,
         scope: Optional[str] = None,
         is_subagent: bool = False,
+        session_id: Optional[str] = None,
     ):
         # Populated by ``_setup_domain_tools`` on success / ``_bi_setup_error``
         # on failure. Initialized here so the attributes exist when the base
@@ -67,6 +68,7 @@ class GenDashboardAgenticNode(DeliverableAgenticNode):
             node_name=node_name,
             scope=scope,
             is_subagent=is_subagent,
+            session_id=session_id,
         )
 
     # ── tool setup ────────────────────────────────────────────────────

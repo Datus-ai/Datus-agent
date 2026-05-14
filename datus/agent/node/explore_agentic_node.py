@@ -59,6 +59,7 @@ class ExploreAgenticNode(AgenticNode):
         node_name: Optional[str] = None,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
         is_subagent: bool = False,
+        session_id: Optional[str] = None,
     ):
         self.configured_node_name = node_name
         # Surface to permission-hook code paths so workflow callers (API /
@@ -89,6 +90,7 @@ class ExploreAgenticNode(AgenticNode):
             tools=tools or [],
             mcp_servers={},
             is_subagent=is_subagent,
+            session_id=session_id,
         )
 
         # Setup read-only tools. When input_data is None (e.g. factory path),

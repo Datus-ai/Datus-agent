@@ -159,6 +159,23 @@ def _create_session_on_disk(session_id, messages=None):
     return db_path
 
 
+@pytest.fixture(autouse=True)
+def _mute_clipboard_side_effects():
+    """Prevent _display_sql_with_copy from writing real SQL to the host clipboard.
+
+    Why: pbcopy/xclip/clip and pyperclip.copy run for real otherwise, leaving
+    mock SQL like ``SELECT count(*) FROM schools`` in the developer's clipboard.
+    """
+    with patch("datus.cli.chat_commands.subprocess.run") as run_patch:
+        try:
+            import pyperclip  # noqa: F401
+
+            with patch("pyperclip.copy") as copy_patch:
+                yield run_patch, copy_patch
+        except ImportError:
+            yield run_patch, None
+
+
 # ===========================================================================
 # TestChatCommandsInit
 # ===========================================================================
@@ -995,20 +1012,19 @@ class TestCmdChatInfo:
         assert "No active session" in output
 
     def test_with_session_displays_info(self, real_agent_config, mock_llm_create):
-        """With an active session, displays session info."""
+        """Freshly created node has an eagerly-generated session id, so
+        cmd_chat_info renders the session block."""
         console = Console(file=io.StringIO(), no_color=True)
         cmds = _make_chat_commands(real_agent_config, console=console)
 
-        # Create a node and give it a session
         cmds.current_node = cmds._create_new_node()
+        assert cmds.current_node.session_id  # immutable, set in __init__
 
-        # cmd_chat_info calls asyncio.run(get_session_info())
-        # For ChatAgenticNode, this may or may not have a session_id yet
-        # If no session_id, it prints "No active session"
         cmds.cmd_chat_info("")
 
         output = _get_console_output(console)
-        assert "No active session" in output
+        assert cmds.current_node.session_id in output
+        assert "Session Info" in output
 
 
 # ===========================================================================
@@ -1513,11 +1529,14 @@ class TestCmdCompact:
         output = _get_console_output(console)
         assert "No active session" in output
 
-    def test_compact_node_without_session(self, real_agent_config, mock_llm_create):
-        """Node exists but no session_id prints 'No active session'."""
+    def test_compact_without_current_node(self, real_agent_config, mock_llm_create):
+        """``current_node`` is None (REPL never created one) prints
+        'No active session to compact'. A constructed node always carries a
+        non-empty ``session_id``, so that branch is only reachable when no
+        node has been instantiated yet."""
         console = Console(file=io.StringIO(), no_color=True)
         cmds = _make_chat_commands(real_agent_config, console=console)
-        cmds.current_node = cmds._create_new_node()
+        cmds.current_node = None
 
         cmds.cmd_compact("")
 
@@ -3371,18 +3390,26 @@ class TestIsAgentSwitch:
 
 class TestSessionPreservationOnSwitch:
     def test_session_copied_on_switch_with_correct_prefix(self, chat_cmd):
-        """When switching agents, session is copied and new id has the target node prefix."""
+        """When switching agents, session is copied and the new id has the target node prefix.
+
+        The copy must happen *before* node construction so the new id flows into
+        the constructor — no post-construct mutation.
+        """
+        from datus.agent.node.node_factory import resolve_node_name
+
         old_node = MagicMock()
         old_node.session_id = "chat_session_abc123"
+        old_node.get_node_name.return_value = "chat"
         chat_cmd.current_node = old_node
         chat_cmd.current_subagent_name = None  # was on chat
 
-        new_node = MagicMock()
-        new_node.session_id = None
-        new_node.get_node_name.return_value = "gensql"
-        chat_cmd._create_new_node = MagicMock(return_value=new_node)
+        # Capture session_id forwarded to factory and return a stub node with that id.
+        def _create_new_node(name, session_id=None):
+            stub = MagicMock()
+            stub.session_id = session_id
+            return stub
 
-        # Mock _copy_session_for_switch to return a properly-prefixed session_id
+        chat_cmd._create_new_node = MagicMock(side_effect=_create_new_node)
         chat_cmd._copy_session_for_switch = MagicMock(return_value="gensql_session_def456")
 
         # Simulate _execute_chat logic for agent switch
@@ -3393,41 +3420,35 @@ class TestSessionPreservationOnSwitch:
         assert need_new_node is True
         assert is_switch is True
 
-        prev_session_id = None
-        if is_switch and chat_cmd.current_node and hasattr(chat_cmd.current_node, "session_id"):
-            prev_session_id = chat_cmd.current_node.session_id
-        chat_cmd.current_node = chat_cmd._create_new_node(subagent_name)
-        if prev_session_id:
-            chat_cmd.current_node.session_id = chat_cmd._copy_session_for_switch(prev_session_id, chat_cmd.current_node)
+        prev_session_id = chat_cmd.current_node.session_id if is_switch and chat_cmd.current_node else None
+        new_session_id = (
+            chat_cmd._copy_session_for_switch(prev_session_id, resolve_node_name(subagent_name))
+            if prev_session_id
+            else None
+        )
+        chat_cmd.current_node = chat_cmd._create_new_node(subagent_name, session_id=new_session_id)
 
         # Verify the new session_id has the target node prefix, not the source prefix
         assert chat_cmd.current_node.session_id == "gensql_session_def456"
-        chat_cmd._copy_session_for_switch.assert_called_once_with("chat_session_abc123", new_node)
+        chat_cmd._copy_session_for_switch.assert_called_once_with("chat_session_abc123", "gensql")
 
     def test_copy_session_delegates_to_session_manager(self, chat_cmd):
         """_copy_session_for_switch delegates to SessionManager.copy_session."""
-        new_node = MagicMock()
-        new_node.get_node_name.return_value = "gensql"
-
         with patch("datus.models.session_manager.SessionManager") as mock_sm_cls:
             mock_sm = mock_sm_cls.return_value
             mock_sm.copy_session.return_value = "gensql_session_xyz789"
 
-            result = chat_cmd._copy_session_for_switch("chat_session_abc123", new_node)
+            result = chat_cmd._copy_session_for_switch("chat_session_abc123", "gensql")
 
         assert result == "gensql_session_xyz789"
         mock_sm.copy_session.assert_called_once_with("chat_session_abc123", "gensql")
 
     def test_copy_session_fallback_on_error(self, chat_cmd):
-        """If copy_session fails, fall back to the node's existing session_id."""
-        new_node = MagicMock()
-        new_node.session_id = "fallback_session_id"
-        new_node.get_node_name.return_value = "gensql"
-
+        """If copy_session fails, return None so the new node generates fresh."""
         with patch("datus.models.session_manager.SessionManager", side_effect=Exception("no dir")):
-            result = chat_cmd._copy_session_for_switch("chat_session_abc123", new_node)
+            result = chat_cmd._copy_session_for_switch("chat_session_abc123", "gensql")
 
-        assert result == "fallback_session_id"
+        assert result is None
 
     def test_session_id_not_carried_on_fresh_start(self, chat_cmd):
         """First node creation (no previous node) does not carry session_id."""

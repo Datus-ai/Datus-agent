@@ -77,6 +77,7 @@ class DeliverableAgenticNode(AgenticNode):
         node_name: Optional[str] = None,
         scope: Optional[str] = None,
         is_subagent: bool = False,
+        session_id: Optional[str] = None,
     ):
         self.execution_mode = execution_mode
         # ``node_name`` supports custom aliases (``my_table: {node_class: gen_table}``).
@@ -99,6 +100,7 @@ class DeliverableAgenticNode(AgenticNode):
             mcp_servers={},
             scope=scope,
             is_subagent=is_subagent,
+            session_id=session_id,
         )
 
         self.db_func_tool: Optional[DBFuncTool] = None

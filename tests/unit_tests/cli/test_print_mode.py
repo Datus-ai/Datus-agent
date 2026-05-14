@@ -273,14 +273,14 @@ class TestResumeSessionId:
         mock_session_mgr.session_exists.return_value = True
 
         with (
-            patch("datus.cli.print_mode.create_interactive_node", return_value=mock_node),
+            patch("datus.cli.print_mode.create_interactive_node", return_value=mock_node) as mock_create_node,
             patch("datus.cli.print_mode.create_node_input", return_value=MagicMock()),
             patch("datus.models.session_manager.SessionManager", return_value=mock_session_mgr),
         ):
             runner.run()
 
-        # session_id should be set on the node
-        assert mock_node.session_id == "session_abc"
+        # session_id is forwarded at construction time — no post-construct mutation.
+        assert mock_create_node.call_args.kwargs["session_id"] == "session_abc"
 
     def test_resume_nonexistent_session_continues(self):
         """Verify that a non-existent session_id logs a warning and continues (creates new session)."""
@@ -308,13 +308,14 @@ class TestResumeSessionId:
 
         with (
             patch("datus.models.session_manager.SessionManager", return_value=mock_session_mgr),
-            patch("datus.cli.print_mode.create_interactive_node", return_value=mock_node),
+            patch("datus.cli.print_mode.create_interactive_node", return_value=mock_node) as mock_create_node,
             patch("datus.cli.print_mode.create_node_input", return_value=MagicMock()),
         ):
             runner.run()  # should not raise
 
-        # session_id is still set on the node even for new sessions
-        assert mock_node.session_id == "no_such_session"
+        # session_id is forwarded at construction time even when the session doesn't exist —
+        # the node generates a fresh DB under that id on first turn.
+        assert mock_create_node.call_args.kwargs["session_id"] == "no_such_session"
 
     def test_resume_subagent_name_from_args(self):
         """Verify that subagent_name comes from args, not derived from session_id."""
@@ -349,8 +350,13 @@ class TestResumeSessionId:
         ):
             runner.run()
 
-        mock_create_node.assert_called_once_with("gen_sql", runner.agent_config, node_id_suffix="_print", scope=None)
-        assert mock_node.session_id == "session_uuid123"
+        mock_create_node.assert_called_once_with(
+            "gen_sql",
+            runner.agent_config,
+            node_id_suffix="_print",
+            scope=None,
+            session_id="session_uuid123",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +392,9 @@ class TestRunUsesFactory:
         ):
             runner.run()
 
-        mock_create_node.assert_called_once_with(None, runner.agent_config, node_id_suffix="_print", scope=None)
+        mock_create_node.assert_called_once_with(
+            None, runner.agent_config, node_id_suffix="_print", scope=None, session_id=None
+        )
         mock_create_input.assert_called_once()
         assert mock_node.input == mock_input
 

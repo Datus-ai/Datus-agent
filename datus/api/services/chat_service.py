@@ -185,8 +185,8 @@ class ChatService:
                 agent_config=self.agent_config,
                 tools=None,
                 scope=user_id,
+                session_id=session_id,
             )
-            node.session_id = session_id
 
             # Load the existing SQLite session so _session is populated
             node._get_or_create_session()

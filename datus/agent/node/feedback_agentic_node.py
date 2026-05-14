@@ -44,6 +44,7 @@ class FeedbackAgenticNode(AgenticNode):
         agent_config: Optional[AgentConfig] = None,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
         scope: Optional[str] = None,
+        session_id: Optional[str] = None,
     ):
         self.execution_mode = execution_mode
         self.configured_node_name = "feedback"
@@ -72,6 +73,7 @@ class FeedbackAgenticNode(AgenticNode):
             tools=[],
             mcp_servers={},
             scope=scope,
+            session_id=session_id,
         )
 
         self.setup_tools()
@@ -235,15 +237,11 @@ class FeedbackAgenticNode(AgenticNode):
         yield action
 
         try:
-            # Copy source session if provided and no session exists yet
-            if user_input.source_session_id and not self.session_id:
-                from datus.models.session_manager import SessionManager
-
-                sm = SessionManager(session_dir=self.model.session_dir, scope=self.scope)
-                self.session_id = sm.copy_session(user_input.source_session_id, target_node_name="feedback")
-                logger.info(f"Copied source session {user_input.source_session_id} -> {self.session_id}")
-
-            # Session management
+            # Session management. ``user_input.source_session_id`` is advisory
+            # — the caller (chat_task_manager / CLI) is responsible for pre-
+            # copying the source session and passing the resulting id at node
+            # construction time. By the time we get here, ``self.session_id``
+            # already points at the right .db file (or a fresh one).
             session = None
             conversation_summary = None
             if self.execution_mode == "interactive":

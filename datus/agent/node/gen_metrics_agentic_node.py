@@ -51,6 +51,7 @@ class GenMetricsAgenticNode(AgenticNode):
         subject_tree: Optional[list] = None,
         scope: Optional[str] = None,
         is_subagent: bool = False,
+        session_id: Optional[str] = None,
     ):
         """
         Initialize the GenMetricsAgenticNode.
@@ -88,6 +89,7 @@ class GenMetricsAgenticNode(AgenticNode):
             mcp_servers={},
             scope=scope,
             is_subagent=is_subagent,
+            session_id=session_id,
         )
 
         # Initialize metrics storage for context queries

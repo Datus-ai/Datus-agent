@@ -38,10 +38,9 @@ def create_interactive_node(
             HTTP session.
         session_id: Optional resume target. When provided, forwarded into the
             node constructor so :meth:`AgenticNode.restore_plan_mode_state` runs
-            before the first turn, rehydrating persisted plan-mode fields.
-            For subclasses whose constructor doesn't accept ``session_id``
-            yet, callers fall back to the ``node.session_id = ...`` setter
-            (which also triggers restore — see ``AgenticNode.session_id``).
+            before the first turn, rehydrating persisted plan-mode fields. When
+            omitted, the node eagerly generates a fresh ``session_id`` in its
+            ``__init__``.
     """
     if subagent_name:
         node_class_type = _resolve_node_class_type(subagent_name, agent_config)
@@ -49,25 +48,37 @@ def create_interactive_node(
         if subagent_name == "gen_semantic_model":
             from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 
-            return GenSemanticModelAgenticNode(agent_config=agent_config, execution_mode=execution_mode, scope=scope)
+            return GenSemanticModelAgenticNode(
+                agent_config=agent_config, execution_mode=execution_mode, scope=scope, session_id=session_id
+            )
 
         elif subagent_name == "gen_metrics":
             from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
-            return GenMetricsAgenticNode(agent_config=agent_config, execution_mode=execution_mode, scope=scope)
+            return GenMetricsAgenticNode(
+                agent_config=agent_config, execution_mode=execution_mode, scope=scope, session_id=session_id
+            )
 
         elif subagent_name == "gen_sql_summary":
             from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 
             return SqlSummaryAgenticNode(
-                node_name=subagent_name, agent_config=agent_config, execution_mode=execution_mode, scope=scope
+                node_name=subagent_name,
+                agent_config=agent_config,
+                execution_mode=execution_mode,
+                scope=scope,
+                session_id=session_id,
             )
 
         elif subagent_name == "gen_ext_knowledge":
             from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
 
             return GenExtKnowledgeAgenticNode(
-                node_name=subagent_name, agent_config=agent_config, execution_mode=execution_mode, scope=scope
+                node_name=subagent_name,
+                agent_config=agent_config,
+                execution_mode=execution_mode,
+                scope=scope,
+                session_id=session_id,
             )
 
         elif subagent_name == "gen_table" or node_class_type == "gen_table":
@@ -78,12 +89,15 @@ def create_interactive_node(
                 execution_mode=execution_mode,
                 node_name=subagent_name if node_class_type == "gen_table" else None,
                 scope=scope,
+                session_id=session_id,
             )
 
         elif subagent_name == "gen_job":
             from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-            return GenJobAgenticNode(agent_config=agent_config, execution_mode=execution_mode, scope=scope)
+            return GenJobAgenticNode(
+                agent_config=agent_config, execution_mode=execution_mode, scope=scope, session_id=session_id
+            )
 
         elif subagent_name == "gen_report" or node_class_type == "gen_report":
             from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
@@ -98,6 +112,7 @@ def create_interactive_node(
                 node_name=subagent_name,
                 scope=scope,
                 execution_mode=execution_mode,
+                session_id=session_id,
             )
 
         elif subagent_name == "gen_visual_report" or node_class_type == "gen_visual_report":
@@ -149,6 +164,7 @@ def create_interactive_node(
                 tools=None,
                 node_name=subagent_name,
                 execution_mode=execution_mode,
+                session_id=session_id,
             )
 
         elif subagent_name == "gen_skill" or node_class_type == "gen_skill":
@@ -164,6 +180,7 @@ def create_interactive_node(
                 node_name=subagent_name if node_class_type == "gen_skill" else "gen_skill",
                 execution_mode=execution_mode,
                 scope=scope,
+                session_id=session_id,
             )
 
         elif subagent_name == "gen_dashboard" or node_class_type == "gen_dashboard":
@@ -175,6 +192,7 @@ def create_interactive_node(
                 node_id=node_id if node_id is not None else f"{subagent_name}{node_id_suffix}",
                 node_name=subagent_name if node_class_type == "gen_dashboard" else None,
                 scope=scope,
+                session_id=session_id,
             )
 
         elif subagent_name == "scheduler" or node_class_type == "scheduler":
@@ -186,6 +204,7 @@ def create_interactive_node(
                 node_id=node_id if node_id is not None else f"{subagent_name}{node_id_suffix}",
                 node_name=subagent_name if node_class_type == "scheduler" else None,
                 scope=scope,
+                session_id=session_id,
             )
 
         elif subagent_name == "feedback":
@@ -195,6 +214,7 @@ def create_interactive_node(
                 agent_config=agent_config,
                 execution_mode=execution_mode,
                 scope=scope,
+                session_id=session_id,
             )
 
         else:
@@ -210,6 +230,7 @@ def create_interactive_node(
                 node_name=subagent_name,
                 scope=scope,
                 execution_mode=execution_mode,
+                session_id=session_id,
             )
     else:
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
@@ -404,6 +425,22 @@ def create_node_input(
             reference_sql=at_sqls,
             plan_mode=plan_mode,
         )
+
+
+def resolve_node_name(subagent_name: Optional[str]) -> str:
+    """Return the canonical ``get_node_name()`` for a factory-produced node.
+
+    Mirrors :func:`create_interactive_node` so callers that need the node name
+    *before* construction (e.g. to compute a session_id prefix via
+    :meth:`SessionManager.copy_session`) don't have to instantiate the node.
+
+    For every subagent dispatched by :func:`create_interactive_node`, the
+    resulting node's ``get_node_name()`` equals ``subagent_name`` (or ``"chat"``
+    when ``subagent_name`` is ``None``). Aliased custom subagents are no
+    exception: the factory threads ``subagent_name`` into ``node_name``,
+    which becomes ``configured_node_name``.
+    """
+    return subagent_name or "chat"
 
 
 def _resolve_node_class_type(subagent_name: str, agent_config: "AgentConfig") -> Optional[str]:

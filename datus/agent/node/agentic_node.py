@@ -125,9 +125,11 @@ class AgenticNode(Node):
                 gen_report, feedback, etc.) default to ``False``; only ``chat`` and
                 custom/user-defined subagents default to ``True``. Pass an explicit
                 bool to override.
-            session_id: Optional resume target. When provided, the node's
-                ``session_id`` property is set to this value and any
-                persisted plan-mode state on disk is restored automatically.
+            session_id: Optional resume target. When provided, the node opens
+                this session id and persisted plan-mode state on disk is
+                restored automatically. When ``None``, a fresh id is generated
+                eagerly here so ``session_id`` is guaranteed non-empty after
+                construction and never changes for the lifetime of the node.
         """
         # Initialize Node base class
         super().__init__(node_id, description, node_type, input_data, agent_config, tools)
@@ -136,11 +138,12 @@ class AgenticNode(Node):
         self.scope = scope
         self.mcp_servers = mcp_servers or {}
         self.actions: List[ActionHistory] = []
-        # Backing store for the ``session_id`` property below; assignment via
-        # the setter triggers ``restore_plan_mode_state`` so callers that
-        # write ``node.session_id = ...`` after construction (resume / rewind /
-        # switch flows) still get persisted plan-mode state loaded.
-        self._session_id: Optional[str] = None
+        # Resume target (or freshly generated id when caller passes ``None``).
+        # ``session_id`` is set once below — after ``get_node_name()`` is wired
+        # up — and is treated as immutable for the node's lifetime: resume /
+        # rewind / agent-switch flows allocate a NEW node with the desired id
+        # rather than rewriting this attribute.
+        self.session_id: str = session_id or ""
         self._session: Optional[AdvancedSQLiteSession] = None
         # Optional extra path layer between {sessions_dir}/{user_scope}/ and the .db
         # file. Set by SubAgentTaskTool to the parent's session_id so subagent dbs
@@ -235,36 +238,17 @@ class AgenticNode(Node):
         # ``_build_enhanced_message`` after the reminder is injected.
         self._plan_just_confirmed: bool = False
 
-        # Assign session_id last: the setter calls ``restore_plan_mode_state``
-        # which reads disk and overwrites the plan-mode fields above. Doing
-        # it after the defaults are in place keeps initialization order clean.
-        if session_id:
-            self.session_id = session_id
-
-    @property
-    def session_id(self) -> Optional[str]:
-        """The agent session identifier this node owns.
-
-        Assigning to ``session_id`` (either via constructor or via the
-        post-construction ``node.session_id = ...`` pattern used by resume
-        / rewind / switch flows) triggers an automatic
-        :meth:`restore_plan_mode_state` so persisted plan-mode fields are
-        re-hydrated whenever a node "adopts" an existing session.
-        """
-        return self._session_id
-
-    @session_id.setter
-    def session_id(self, value: Optional[str]) -> None:
-        # ``getattr`` (rather than ``self._session_id``) so test doubles that
-        # skip ``__init__`` (e.g. ``Mock(spec=...)``) don't blow up when the
-        # production code later writes to ``self.session_id``.
-        prev = getattr(self, "_session_id", None)
-        self._session_id = value
-        if value and value != prev and hasattr(self, "plan_mode_active"):
-            try:
-                self.restore_plan_mode_state()
-            except Exception as exc:  # noqa: BLE001 — restore must never crash session adoption
-                logger.warning("Failed to restore plan-mode state for %s: %s", value, exc)
+        # Finalize session_id: caller-supplied id wins; otherwise generate
+        # eagerly so ``session_id`` is non-empty and stable from here on. We
+        # then re-hydrate any persisted plan-mode state — for fresh sessions
+        # the state file does not exist and ``restore_plan_mode_state`` is a
+        # no-op, preserving the defaults set above.
+        if not self.session_id:
+            self.session_id = self._generate_session_id()
+        try:
+            self.restore_plan_mode_state()
+        except Exception as exc:  # noqa: BLE001 — restore must never crash construction
+            logger.warning("Failed to restore plan-mode state for %s: %s", self.session_id, exc)
 
     @property
     def model(self) -> Optional[LLMBaseModel]:
@@ -964,10 +948,6 @@ class AgenticNode(Node):
             with existing call sites that unpack two values.
         """
         if self._session is None:
-            if self.session_id is None:
-                self.session_id = self._generate_session_id()
-                logger.info(f"Generated new session ID: {self.session_id}")
-
             self._session = self.session_manager.create_session(self.session_id)
             logger.debug(f"Created session: {self.session_id}")
 
@@ -1833,12 +1813,17 @@ class AgenticNode(Node):
             logger.info(f"Cleared session: {self.session_id}")
 
     def delete_session(self) -> None:
-        """Delete the current session completely."""
+        """Delete the current session completely.
+
+        The node becomes unusable after this call — callers (REPL ``/delete``,
+        API ``DELETE /sessions/{id}``) discard it and either build a fresh node
+        or end the conversation. ``session_id`` stays set (it is immutable) so
+        log lines and tracebacks can still reference which session was deleted.
+        """
         if self.session_id:
             self.session_manager.delete_session(self.session_id)
             self._session = None
-            self.session_id = None
-            logger.info("Deleted session")
+            logger.info("Deleted session: %s", self.session_id)
 
     async def get_session_info(self) -> Dict[str, Any]:
         """

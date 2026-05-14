@@ -447,21 +447,29 @@ class ChatTaskManager:
             interactive_enabled = request.interactive if request.interactive is not None else self._default_interactive
 
             def _init_node():
-                n = self._create_node(
+                # Feedback runs triggered with a source_session_id pre-copy the
+                # source conversation into a fresh feedback session file BEFORE
+                # node construction. The node then opens that cloned id directly
+                # — no post-construction mutation needed.
+                feedback_session_id: Optional[str] = None
+                if sub_agent_id == "feedback" and request.source_session_id:
+                    from datus.models.session_manager import SessionManager
+                    from datus.utils.path_manager import get_path_manager
+
+                    base_dir = getattr(agent_config, "session_dir", None) or str(
+                        get_path_manager(agent_config=agent_config).sessions_dir
+                    )
+                    sm = SessionManager(session_dir=base_dir, scope=user_id)
+                    feedback_session_id = sm.copy_session(request.source_session_id, "feedback")
+
+                return self._create_node(
                     agent_config,
                     subagent_id=sub_agent_id,
-                    session_id=session_id,
+                    node_id=session_id,
                     user_id=user_id,
                     interactive=interactive_enabled,
+                    session_id=feedback_session_id,
                 )
-                # Feedback runs triggered with a source_session_id must start with
-                # no session_id so FeedbackAgenticNode.execute_stream copies the
-                # source session into a fresh feedback_session_ id.
-                if sub_agent_id == "feedback" and request.source_session_id:
-                    n.session_id = None
-                else:
-                    n.session_id = session_id
-                return n
 
             node = await asyncio.to_thread(_init_node)
             task.node = node
@@ -664,9 +672,10 @@ class ChatTaskManager:
         self,
         agent_config: AgentConfig,
         subagent_id: Optional[str],
-        session_id: str,
+        node_id: str,
         user_id: Optional[str] = None,
         interactive: bool = True,
+        session_id: Optional[str] = None,
     ) -> AgenticNode:
         """Create a fresh AgenticNode based on subagent_id (builtin name or custom DB ID).
 
@@ -678,7 +687,10 @@ class ChatTaskManager:
         to ``GenSQLAgenticNode``.
 
         ``user_id`` is propagated as the node ``scope`` so that session files
-        are isolated per user under ``{session_dir}/{user_id}/``.
+        are isolated per user under ``{session_dir}/{user_id}/``. ``session_id``
+        becomes the on-disk session identifier (defaults to ``node_id``); the
+        feedback flow passes a pre-copied id so the new node opens the cloned
+        session file directly instead of mutating ``node.session_id`` later.
         """
         from datus.agent.node.node_factory import create_interactive_node
 
@@ -701,7 +713,8 @@ class ChatTaskManager:
             agent_config=agent_config,
             scope=user_id,
             execution_mode=execution_mode,
-            node_id=session_id,
+            node_id=node_id,
+            session_id=session_id if session_id is not None else node_id,
         )
 
     # ------------------------------------------------------------------
