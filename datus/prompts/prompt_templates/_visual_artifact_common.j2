@@ -101,7 +101,20 @@ Always read rows as `data?.rows ?? []` and columns as `data?.columns ?? []`. Coe
   The validator only static-checks **literal** spec strings. Template strings resolve at runtime; the iframe will surface unknown slugs as `errorMessage`.
 
 - Place every `useQuerySql` call at the top of the component body, before conditionals or early returns. One declaration per query.
-- Render a skeleton placeholder when `isLoading`; an inline error block when `errorMessage`; the chart/table otherwise.
+- **React Rules of Hooks — non-negotiable.** *All* hooks (`useQuerySql`, `useState`, `useRef`, `useMemo`, `useCallback`, `useEffect`, `useContext`, custom hooks, etc.) must be called unconditionally, in the same order, at the top of the component body — **before** any `if (...) return …`, `if (isLoading) return <Skeleton />`, `if (errorMessage) return <Error />`, or other early return. Violating this surfaces at runtime as `Minified React error #310` ("Rendered more hooks than during the previous render") and crashes the whole artifact. Pattern:
+
+  ```jsx
+  function RevenueTrend() {
+    const { isLoading, errorMessage, data } = useQuerySql('queries/revenue_trend'); // hook
+    const cardRef = useRef(null);                                                   // hook — BEFORE early returns
+    const rows = useMemo(() => data?.rows ?? [], [data]);                           // hook — BEFORE early returns
+    if (isLoading) return <Skeleton />;            // ← early returns AFTER every hook
+    if (errorMessage) return <ErrorBlock msg={errorMessage} />;
+    return <Card ref={cardRef}>…{rows.length}…</Card>;
+  }
+  ```
+
+- Render a skeleton placeholder when `isLoading`; an inline error block when `errorMessage`; the chart/table otherwise. Place those `return` statements after the full hook block, never between hooks.
 
 ### Visual design
 

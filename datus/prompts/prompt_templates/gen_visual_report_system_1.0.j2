@@ -201,4 +201,5 @@ Before you stop, confirm:
 - [ ] Every relative import resolves to a file under `render/`; no foreign npm packages.
 - [ ] Numeric columns are coerced with `Number(...)` before arithmetic / Recharts.
 - [ ] Loading / error states are rendered for every `useQuerySql` call.
+- [ ] In every component, **all** `use*` hook calls precede every `if (...) return …` / early return — no hook is reachable only on some renders (would crash with React error #310).
 - [ ] `validate_render()` returned `success: 1`.
