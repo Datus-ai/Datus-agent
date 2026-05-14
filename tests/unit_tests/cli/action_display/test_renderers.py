@@ -13,7 +13,13 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.text import Text
 
-from datus.cli.action_display.renderers import ActionContentGenerator, ActionRenderer, _get_assistant_content
+from datus.cli.action_display.renderers import (
+    ActionContentGenerator,
+    ActionRenderer,
+    _get_assistant_content,
+    is_task_anchor_input,
+    parse_task_tool_input,
+)
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.text_utils import LITELLM_EMPTY_PLACEHOLDER
 
@@ -64,6 +70,63 @@ def _plain(renderables):
     return "\n".join(parts)
 
 
+# ── parse_task_tool_input / is_task_anchor_input ──────────────────
+
+
+@pytest.mark.ci
+class TestParseTaskToolInput:
+    """Helpers that decide whether a TOOL action is a real subagent anchor.
+
+    Both functions must agree on the two layouts emitted in production:
+    direct (``bootstrap_subagent``) and wrapped (model adapters). The bug
+    they replaced was that ``streaming.py`` only checked the direct layout
+    via ``input.get("type")`` and silently fell through for wrapped tasks,
+    letting depth>0 children seed misnamed groups.
+    """
+
+    def test_direct_layout_extracts_all_fields(self):
+        data = {"type": "gen_sql", "prompt": "rev?", "description": "revenue"}
+        assert parse_task_tool_input(data) == ("gen_sql", "rev?", "revenue")
+        assert is_task_anchor_input(data) is True
+
+    def test_wrapped_layout_with_dict_arguments(self):
+        data = {
+            "function_name": "task",
+            "arguments": {"type": "gen_table", "prompt": "rollup", "description": "sales"},
+        }
+        assert parse_task_tool_input(data) == ("gen_table", "rollup", "sales")
+        assert is_task_anchor_input(data) is True
+
+    def test_wrapped_layout_with_json_string_arguments(self):
+        data = {
+            "function_name": "task",
+            "arguments": '{"type": "gen_skill", "prompt": "make", "description": "create"}',
+        }
+        assert parse_task_tool_input(data) == ("gen_skill", "make", "create")
+        assert is_task_anchor_input(data) is True
+
+    def test_missing_type_falls_back_to_sentinel(self):
+        assert parse_task_tool_input({}) == ("subagent", "", "")
+        assert is_task_anchor_input({}) is False
+
+    def test_wrapped_arguments_with_invalid_json_is_not_anchor(self):
+        data = {"function_name": "task", "arguments": "not-json"}
+        assert parse_task_tool_input(data) == ("subagent", "", "")
+        assert is_task_anchor_input(data) is False
+
+    def test_non_dict_input_is_not_anchor(self):
+        assert parse_task_tool_input(None) == ("subagent", "", "")
+        assert is_task_anchor_input(None) is False
+        assert is_task_anchor_input("string-input") is False
+
+    def test_empty_type_string_is_not_anchor(self):
+        # Edge case: empty-string ``type`` should hit the fallback branch
+        # instead of yielding ``("", ...)`` and being treated as an anchor.
+        data = {"type": "", "arguments": {"type": ""}}
+        assert parse_task_tool_input(data) == ("subagent", "", "")
+        assert is_task_anchor_input(data) is False
+
+
 # ── render_subagent_header ─────────────────────────────────────────
 
 
@@ -73,13 +136,20 @@ class TestRenderSubagentHeader:
 
     def test_compact_with_description(self):
         """Compact mode shows description in header."""
+        # Under the cleaned-up grouping contract the group's first_action
+        # is the outer task PROCESSING action — never the inner USER —
+        # so renderer fixtures synthesise that shape directly.
         action = _make_action(
-            ActionRole.USER,
+            ActionRole.TOOL,
             ActionStatus.PROCESSING,
-            depth=1,
-            action_type="gen_sql",
-            messages="User: What is total revenue?",
-            input_data={"_task_description": "Generate SQL for revenue"},
+            depth=0,
+            action_type="task",
+            messages="task(gen_sql, What is total revenue?)",
+            input_data={
+                "type": "gen_sql",
+                "prompt": "What is total revenue?",
+                "description": "Generate SQL for revenue",
+            },
         )
         result = _renderer().render_subagent_header(action, verbose=False)
         text = _plain(result)
@@ -89,11 +159,12 @@ class TestRenderSubagentHeader:
     def test_compact_without_description(self):
         """Compact mode shows truncated prompt when no description."""
         action = _make_action(
-            ActionRole.USER,
+            ActionRole.TOOL,
             ActionStatus.PROCESSING,
-            depth=1,
-            action_type="gen_sql",
-            messages="User: What is total revenue?",
+            depth=0,
+            action_type="task",
+            messages="task(gen_sql, What is total revenue?)",
+            input_data={"type": "gen_sql", "prompt": "What is total revenue?"},
         )
         result = _renderer().render_subagent_header(action, verbose=False)
         text = _plain(result)
@@ -131,11 +202,12 @@ class TestRenderSubagentHeader:
     def test_no_goal_shows_type_only(self):
         """When no prompt or description, show type only."""
         action = _make_action(
-            ActionRole.USER,
+            ActionRole.TOOL,
             ActionStatus.PROCESSING,
-            depth=1,
-            action_type="gen_sql",
+            depth=0,
+            action_type="task",
             messages="",
+            input_data={"type": "gen_sql"},
         )
         result = _renderer().render_subagent_header(action, verbose=False)
         text = _plain(result)
@@ -168,6 +240,41 @@ class TestRenderSubagentHeader:
         assert "orders.sql" in text
         # The literal "task" must NOT replace the real subagent name.
         assert "⏺ task(" not in text
+
+    @pytest.mark.parametrize(
+        "input_data",
+        [
+            {"type": "gen_sql_summary", "description": "summary"},
+            {
+                "function_name": "task",
+                "arguments": {"type": "gen_sql_summary", "description": "summary"},
+            },
+            {
+                "function_name": "task",
+                "arguments": '{"type": "gen_sql_summary", "description": "summary"}',
+            },
+        ],
+        ids=["direct", "wrapped_dict", "wrapped_json_string"],
+    )
+    def test_both_layouts_render_identical_header(self, input_data):
+        """Header text is independent of input layout.
+
+        Regression for the user-reported double-wrap: the streaming gate
+        and the renderer must canonicalise both layouts through the same
+        helper so wrapped-input tasks never fall back to rendering the
+        inner tool's ``action_type`` / ``messages``.
+        """
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            depth=0,
+            action_type="task",
+            messages="",
+            input_data=input_data,
+        )
+        text = _plain(_renderer().render_subagent_header(action, verbose=False))
+        assert "gen_sql_summary" in text
+        assert "summary" in text
 
 
 # ── render_subagent_action ─────────────────────────────────────────
@@ -286,12 +393,15 @@ class TestRenderSubagentCollapsed:
     def test_collapsed_format(self):
         """Collapsed group shows header and Done line."""
         now = datetime.now()
+        # first_action is the outer task PROCESSING action under the
+        # cleaned-up grouping contract (never the inner USER).
         first = _make_action(
-            ActionRole.USER,
+            ActionRole.TOOL,
             ActionStatus.PROCESSING,
-            depth=1,
-            action_type="gen_sql",
-            messages="User: revenue query",
+            depth=0,
+            action_type="task",
+            messages="task(gen_sql, revenue query)",
+            input_data={"type": "gen_sql", "prompt": "revenue query"},
         )
         end = _make_action(ActionRole.TOOL, ActionStatus.SUCCESS, end_time=now + timedelta(seconds=5))
         result = _renderer().render_subagent_collapsed(first, 3, now, end)

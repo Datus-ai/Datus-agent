@@ -397,6 +397,61 @@ class ActionContentGenerator(BaseActionContentGenerator):
         return self.tool_content_builder._format_output_preview(output_data, function_name)
 
 
+# ── Task tool input parsing ─────────────────────────────────────────────────
+
+# Sentinel returned by :func:`parse_task_tool_input` when neither input layout
+# yields a real subagent_type. :func:`is_task_anchor_input` uses it to tell
+# "no anchor" apart from a legitimate subagent name.
+_TASK_SUBAGENT_FALLBACK = "subagent"
+
+
+def parse_task_tool_input(input_data) -> tuple:
+    """Extract ``(subagent_type, prompt, description)`` from a task action's input.
+
+    Two layouts are produced by the codebase:
+
+    1. **Direct** — used by :func:`datus.cli.bootstrap_subagent._outer_action`:
+       ``{"type": "gen_sql", "prompt": "...", "description": "..."}``
+    2. **Wrapped** — used by model adapters (``claude_model``, ``codex_model``,
+       ``openai_compatible``) when the LLM calls the ``task`` function tool:
+       ``{"function_name": "task", "arguments": {"type": "gen_sql", ...}}``
+       (``arguments`` may also be a JSON-encoded string.)
+
+    Returns :data:`_TASK_SUBAGENT_FALLBACK` as ``subagent_type`` when neither
+    layout yields one.
+    """
+    if not isinstance(input_data, dict):
+        return _TASK_SUBAGENT_FALLBACK, "", ""
+    subagent_type = input_data.get("type", "")
+    prompt = input_data.get("prompt", "")
+    description = input_data.get("description", "")
+    if not subagent_type:
+        args = input_data.get("arguments", "")
+        if isinstance(args, str) and args:
+            try:
+                args = _json.loads(args)
+            except (ValueError, TypeError):
+                args = {}
+        if isinstance(args, dict):
+            subagent_type = args.get("type", "")
+            prompt = prompt or args.get("prompt", "")
+            description = description or args.get("description", "")
+    return subagent_type or _TASK_SUBAGENT_FALLBACK, prompt, description
+
+
+def is_task_anchor_input(input_data) -> bool:
+    """True when ``input_data`` represents a real task-tool invocation.
+
+    Used by :mod:`datus.cli.action_display.streaming` to decide whether a
+    depth=0 PROCESSING ``task`` action should anchor a subagent group.
+    Returns ``False`` when :func:`parse_task_tool_input` falls back to the
+    sentinel — i.e. the action carries no resolvable subagent_type and must
+    not seed a group.
+    """
+    subagent_type, _prompt, _description = parse_task_tool_input(input_data)
+    return subagent_type != _TASK_SUBAGENT_FALLBACK
+
+
 # ── Unified Renderer ────────────────────────────────────────────────────────
 
 
@@ -418,20 +473,23 @@ class ActionRenderer:
     # -- subagent group primitives ------------------------------------------
 
     def render_subagent_header(self, action: ActionHistory, verbose: bool) -> List[Text]:
-        """Render sub-agent group header (type + prompt/description)."""
-        subagent_type = action.action_type or "subagent"
-        # When the group's ``first_action`` is the outer task tool itself
-        # (action_type=="task"), the user-meaningful subagent name lives
-        # in ``input["type"]`` (e.g. ``"gen_sql_summary"``). Falling back
-        # to a literal "task" label here would lose that information.
-        if subagent_type == "task" and isinstance(action.input, dict):
-            subagent_type = action.input.get("type") or "task"
-        prompt = action.messages or ""
-        if prompt.startswith("User: "):
-            prompt = prompt[6:]
-        description = ""
-        if action.input and isinstance(action.input, dict):
-            description = action.input.get("_task_description", "")
+        """Render sub-agent group header (type + prompt/description).
+
+        Under the cleaned-up grouping contract (see ``streaming.py``) the
+        group's ``first_action`` is always a task-tool PROCESSING action,
+        so :func:`parse_task_tool_input` resolves the real subagent_type
+        (e.g. ``gen_table``) from either input layout. ``_task_description``
+        — a legacy field that ``sub_agent_task_tool`` still injects on
+        the inner USER action — is honoured as a goal source when present.
+        """
+        input_data = action.input if isinstance(action.input, dict) else {}
+        subagent_type, parsed_prompt, parsed_description = parse_task_tool_input(input_data)
+        description = input_data.get("_task_description", "") or parsed_description
+        prompt = parsed_prompt
+        if not prompt:
+            prompt = action.messages or ""
+            if prompt.startswith("User: "):
+                prompt = prompt[6:]
 
         goal = description or (("" if verbose else _truncate_middle(prompt, max_len=200)) if prompt else "")
         goal_esc = rich_escape(goal) if goal else ""
@@ -497,15 +555,14 @@ class ActionRenderer:
         end_action: ActionHistory,
     ) -> List[Text]:
         """Render a completed subagent group as collapsed: header + Done summary."""
-        subagent_type = first_action.action_type or "subagent"
-        if subagent_type == "task" and isinstance(first_action.input, dict):
-            subagent_type = first_action.input.get("type") or "task"
-        prompt = first_action.messages or ""
-        if prompt.startswith("User: "):
-            prompt = prompt[6:]
-        description = ""
-        if first_action.input and isinstance(first_action.input, dict):
-            description = first_action.input.get("_task_description", "")
+        input_data = first_action.input if isinstance(first_action.input, dict) else {}
+        subagent_type, parsed_prompt, parsed_description = parse_task_tool_input(input_data)
+        description = input_data.get("_task_description", "") or parsed_description
+        prompt = parsed_prompt
+        if not prompt:
+            prompt = first_action.messages or ""
+            if prompt.startswith("User: "):
+                prompt = prompt[6:]
         goal = description or (_truncate_middle(prompt, max_len=200) if prompt else "")
         goal_esc = rich_escape(goal) if goal else ""
         header = (
@@ -726,29 +783,8 @@ class ActionRenderer:
 
     @staticmethod
     def _parse_task_tool_input(input_data: dict) -> tuple:
-        """Extract (subagent_type, prompt, description) from a task tool action's input.
-
-        The task tool input has two possible layouts:
-        1. Direct: {"type": "gen_sql", "prompt": "...", "description": "..."}
-        2. Wrapped: {"function_name": "task", "arguments": '{"type": "gen_sql", ...}'}
-        """
-        subagent_type = input_data.get("type", "")
-        prompt = input_data.get("prompt", "")
-        description = input_data.get("description", "")
-
-        if not subagent_type:
-            args = input_data.get("arguments", "")
-            if isinstance(args, str) and args:
-                try:
-                    args = _json.loads(args)
-                except (ValueError, TypeError):
-                    args = {}
-            if isinstance(args, dict):
-                subagent_type = args.get("type", "")
-                prompt = prompt or args.get("prompt", "")
-                description = description or args.get("description", "")
-
-        return subagent_type or "subagent", prompt, description
+        """Backwards-compat shim. Prefer :func:`parse_task_tool_input`."""
+        return parse_task_tool_input(input_data)
 
     def render_task_tool_as_subagent(self, action: ActionHistory, verbose: bool) -> List[Union[Text, Markdown, Syntax]]:
         """Render a standalone 'task' tool action as a subagent summary."""

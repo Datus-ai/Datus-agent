@@ -17,7 +17,7 @@ from rich.markdown import Markdown
 from rich.text import Text
 
 from datus.cli.action_display.markdown_stream import MarkdownStreamBuffer
-from datus.cli.action_display.renderers import _truncate_middle
+from datus.cli.action_display.renderers import _truncate_middle, is_task_anchor_input
 from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
 
@@ -235,6 +235,27 @@ class InlineStreamingContext:
         """
         self._process_actions_sync()
 
+    def _log_orphan_subagent_action(self, action: ActionHistory) -> None:
+        """Warn-and-drop a depth>0 action whose group never got anchored.
+
+        The cleaned-up subagent-grouping contract says: every depth>0 action's
+        ``parent_action_id`` must point to a group seeded by a preceding task
+        PROCESSING action. An orphan here means upstream code produced a
+        depth>0 action without first emitting the outer task action — a real
+        protocol violation that we log loudly rather than paper over with an
+        on-the-fly group whose header would mis-derive from the orphan's
+        ``action_type`` / ``messages``.
+        """
+        logger.warning(
+            "orphan depth>0 action: no task PROCESSING anchor "
+            "(action_id=%s parent_action_id=%s depth=%s role=%s action_type=%s)",
+            action.action_id,
+            action.parent_action_id,
+            action.depth,
+            action.role,
+            action.action_type,
+        )
+
     def _process_actions_sync(self) -> None:
         """Synchronous version of _process_actions.
 
@@ -266,8 +287,7 @@ class InlineStreamingContext:
                 action.role == ActionRole.TOOL
                 and action.status == ActionStatus.PROCESSING
                 and action.action_type == "task"
-                and isinstance(action.input, dict)
-                and action.input.get("type")
+                and is_task_anchor_input(action.input)
             ):
                 group_key = action.action_id
                 if group_key not in self._subagent_groups:
@@ -287,11 +307,17 @@ class InlineStreamingContext:
                 self._end_subagent_group_sync(group_key, action)
                 continue
 
-            # Sub-agent action (depth > 0)
+            # Sub-agent action (depth > 0). Group must already exist —
+            # anchored by the matching task PROCESSING earlier in the
+            # action list. An orphan here is a protocol violation; warn
+            # and drop rather than synthesise a misleading group whose
+            # header derives from this action's ``action_type``.
             if action.depth > 0:
                 group_key = action.parent_action_id
                 if group_key not in self._subagent_groups:
-                    self._start_subagent_group_sync(action, group_key)
+                    self._log_orphan_subagent_action(action)
+                    self._processed_index += 1
+                    continue
                 self._update_subagent_display_sync(action, group_key)
                 self._processed_index += 1
                 continue
@@ -689,16 +715,22 @@ class InlineStreamingContext:
                 continue
 
             # -- Sub-agent action (depth > 0) --
+            # The group must already exist — anchored by the matching task
+            # PROCESSING action earlier in the stream (see Path A above).
+            # An orphan here is a protocol violation; warn and drop rather
+            # than synthesise a group whose header would mis-derive from
+            # this action's ``action_type`` / ``messages``.
             if action.depth > 0:
                 group_key = action.parent_action_id
+                if group_key not in self._subagent_groups:
+                    self._log_orphan_subagent_action(action)
+                    self._processed_index += 1
+                    continue
                 # PROCESSING tool inside subagent: record as the group's
                 # current blinking row without adding it to the completed
                 # tool list (the paired SUCCESS/FAILED follows with the
                 # same action_id and clears the slot).
                 if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
-                    if group_key not in self._subagent_groups:
-                        self._stop_processing_live()
-                        self._start_subagent_group(action, group_key)
                     group = self._subagent_groups.get(group_key)
                     if group is not None:
                         group["processing_action"] = action
@@ -706,10 +738,6 @@ class InlineStreamingContext:
                             self._update_subagent_groups_live()
                     self._processed_index += 1
                     continue
-                if group_key not in self._subagent_groups:
-                    # New sub-agent group: stop current Live, print header
-                    self._stop_processing_live()
-                    self._start_subagent_group(action, group_key)
                 # Update current action display
                 self._update_subagent_display(action, group_key)
                 self._processed_index += 1
@@ -736,8 +764,7 @@ class InlineStreamingContext:
                 action.role == ActionRole.TOOL
                 and action.status == ActionStatus.PROCESSING
                 and action.action_type == "task"
-                and isinstance(action.input, dict)
-                and action.input.get("type")
+                and is_task_anchor_input(action.input)
             ):
                 group_key = action.action_id
                 if group_key not in self._subagent_groups:
@@ -778,8 +805,7 @@ class InlineStreamingContext:
                 action.role == ActionRole.TOOL
                 and action.status == ActionStatus.PROCESSING
                 and action.action_type == "task"
-                and isinstance(action.input, dict)
-                and action.input.get("type")
+                and is_task_anchor_input(action.input)
             ):
                 group_key = action.action_id
                 if group_key not in self._subagent_groups:
@@ -799,11 +825,15 @@ class InlineStreamingContext:
                 self._end_subagent_group_by_key(group_key, action)
                 continue
 
-            # depth>0: render inside the sub-agent group
+            # depth>0: render inside the sub-agent group. Group must
+            # already exist (anchored by task PROCESSING). Orphans are
+            # warned and dropped.
             if action.depth > 0:
                 group_key = action.parent_action_id
                 if group_key not in self._subagent_groups:
-                    self._start_subagent_group(action, group_key)
+                    self._log_orphan_subagent_action(action)
+                    self._processed_index += 1
+                    continue
                 self._update_subagent_display(action, group_key)
                 self._processed_index += 1
                 continue
@@ -918,6 +948,13 @@ class InlineStreamingContext:
 
     def _end_subagent_group_by_key(self, group_key: Optional[str], end_action: ActionHistory) -> None:
         """End sub-agent group: stop Live, permanently print completed group, restart Live for remaining.
+
+        ``group_key`` is the task action's ``action_id`` by construction —
+        Path A (task PROCESSING anchor) seeds the group with that key, and
+        :func:`datus.cli.bootstrap_subagent` / ``sub_agent_task_tool`` both
+        propagate that same id as the ``parent_action_id`` on every
+        depth>0 child action and on the closing ``subagent_complete``
+        action. No fallback group-keying scheme exists.
 
         In compact mode, triggers a full reprint with completed groups collapsed.
         In verbose mode, permanently prints the completed group (header + actions + Done).
