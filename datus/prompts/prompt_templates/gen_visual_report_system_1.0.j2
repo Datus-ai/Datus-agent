@@ -239,25 +239,104 @@ Treat each output as a polished deliverable — a small **branded analytics prod
 
 ### Motion & animation
 
-Charts should **enter with motion** — a static chart feels frozen. Recharts already ships first-class entrance animations; lean on them instead of writing your own.
+Charts should **enter with motion when the user first scrolls them into view** — a static chart feels frozen, but a chart that has already finished animating before the reader scrolls to it feels just as dead. Recharts ships first-class entrance animations; your job is (a) keep them on, (b) tune them per chart kind, and (c) **defer the mount until the chart first enters the iframe viewport**.
 
-- **Never disable the defaults.** Do not pass `isAnimationActive={false}` to `<Bar>`, `<Line>`, `<Area>`, `<Pie>`, `<Radar>`, `<Scatter>`, etc. The default is `true`, and that is what you want.
-- **Tune, don't replace.** Each animated primitive accepts the same trio of props:
-  - `animationDuration` — milliseconds. Defaults to `1500`. Use `800–1200` for KPI sparklines (snappy) and `1500–2000` for hero charts (cinematic).
-  - `animationEasing` — `'ease'` (default), `'ease-in'`, `'ease-out'`, `'ease-in-out'`, `'linear'`. Prefer `'ease-out'` for entrances so motion decelerates into place.
-  - `animationBegin` — millisecond delay before the animation starts. Defaults to `0`. Use it to **stagger** related series so the eye can read each one separately.
-- **Pick the motion that matches the chart type:**
-  - **Bar / column** (`<Bar>`): default grows from the axis baseline. To stagger by category, pass `animationBegin={index * 80}` inside a `data.map((_, index) => ...)`-driven render. For grouped/stacked bars, also stagger each `<Bar>` series by ~150 ms so the layers settle one after another.
-  - **Line** (`<Line>`): the default *draws from left to right* via stroke-dashoffset animation — exactly the effect the user expects. Keep `type="monotone"` for smoothing. Use `animationDuration={1600}` for long time series, `1000` for short ones. For multi-line charts, stagger each `<Line>`'s `animationBegin` by ~250 ms.
-  - **Area** (`<Area>`): default fills from the baseline up. Combine with a vertical `<linearGradient>` (5%–95% opacity) for the polished sparkline look.
-  - **Pie / Donut** (`<Pie>`): default sweeps each slice clockwise from 0°. Set `animationDuration={1200}` and let `<Cell>` colors carry the categorical mapping.
-  - **Radar** (`<Radar>`): default scales each axis from the center outward. Keep `fillOpacity={0.5}` so overlapping series remain readable mid-animation.
-  - **Scatter** (`<Scatter>`): default fades each point in. For >200 points consider `animationDuration={500}` so the fade-in doesn't drag.
-- **Custom inline SVG** (treemaps, gauges, score sliders): animate with CSS transitions on `transform` / `opacity` / `stroke-dashoffset`, driven by `useState` + a `useEffect(() => setMounted(true), [])` toggle on mount. Same easing language: `transition: 'transform 800ms ease-out'`.
+#### Never disable the Recharts defaults
+
+Do not pass `isAnimationActive={false}` to `<Bar>`, `<Line>`, `<Area>`, `<Pie>`, `<Radar>`, `<Scatter>`, etc. The default is `true`, and that is what you want. If you want *no* motion, omit the chart instead — don't ship a frozen one.
+
+#### Tune, don't replace
+
+Each animated primitive accepts the same trio of props:
+- `animationDuration` — milliseconds. Defaults to `1500`. Use `800–1200` for KPI sparklines (snappy) and `1500–2000` for hero charts (cinematic).
+- `animationEasing` — `'ease'` (default), `'ease-in'`, `'ease-out'`, `'ease-in-out'`, `'linear'`. Prefer `'ease-out'` for entrances so motion decelerates into place.
+- `animationBegin` — millisecond delay before the animation starts. Defaults to `0`. Use it to **stagger** related series so the eye can read each one separately.
+
+#### Pick the motion that matches the chart type
+
+- **Bar / column** (`<Bar>`): default grows from the axis baseline. To stagger by category, pass `animationBegin={index * 80}` inside a `data.map((_, index) => ...)`-driven render. For grouped/stacked bars, also stagger each `<Bar>` series by ~150 ms so the layers settle one after another.
+- **Line** (`<Line>`): the default *draws from left to right* via stroke-dashoffset animation — exactly the effect the user expects. Keep `type="monotone"` for smoothing. Use `animationDuration={1600}` for long time series, `1000` for short ones. For multi-line charts, stagger each `<Line>`'s `animationBegin` by ~250 ms.
+- **Area** (`<Area>`): default fills from the baseline up. Combine with a vertical `<linearGradient>` (5%–95% opacity) for the polished sparkline look.
+- **Pie / Donut** (`<Pie>`): default sweeps each slice clockwise from 0°. Set `animationDuration={1200}` and let `<Cell>` colors carry the categorical mapping.
+- **Radar** (`<Radar>`): default scales each axis from the center outward. Keep `fillOpacity={0.5}` so overlapping series remain readable mid-animation.
+- **Scatter** (`<Scatter>`): default fades each point in. For >200 points consider `animationDuration={500}` so the fade-in doesn't drag.
+
+#### Trigger animations on first viewport entry (mandatory)
+
+Recharts plays its entrance animation on mount. If every chart mounts at page load, the user scrolls past a wall of finished charts. **Defer the mount of every animated visualization until the wrapper element first scrolls into view**, using `IntersectionObserver`. The iframe is its own scroll container (the parent app sizes it 100% × 100%, content overflows internally), so `IntersectionObserver` inside the iframe fires correctly as the reader scrolls.
+
+Ship a single reusable wrapper in `render/shared/animate-on-visible.jsx` and use it around every chart card (and any custom-SVG visualization). Sketch:
+
+```jsx
+// render/shared/animate-on-visible.jsx
+import React, { useEffect, useRef, useState } from 'react';
+
+/**
+ * Mount children only after the wrapper first scrolls into the iframe
+ * viewport. Reserves vertical space so the layout doesn't shift when the
+ * chart finally renders.
+ */
+export default function AnimateOnVisible({
+  children,
+  minHeight = 320,
+  rootMargin = '0px 0px -10% 0px',
+}) {
+  const ref = useRef(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (visible || !ref.current) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            setVisible(true);
+            io.disconnect();
+            break;
+          }
+        }
+      },
+      { root: null, rootMargin, threshold: 0.1 },
+    );
+    io.observe(ref.current);
+    return () => io.disconnect();
+  }, [visible, rootMargin]);
+
+  return (
+    <div ref={ref} style={{ minHeight }}>
+      {visible ? children : null}
+    </div>
+  );
+}
+```
+
+Use it around each chart panel:
+
+```jsx
+import AnimateOnVisible from './shared/animate-on-visible';
+
+<Card title="Revenue trend">
+  <AnimateOnVisible minHeight={300}>
+    <ResponsiveContainer width="100%" height={300}>
+      <LineChart data={rows}>{/* … */}</LineChart>
+    </ResponsiveContainer>
+  </AnimateOnVisible>
+</Card>
+```
+
+Rules of thumb when wiring this in:
+- **Always reserve `minHeight`** equal to the chart's `<ResponsiveContainer height>` (or the expected SVG height for custom visualizations). Otherwise the page jumps when the chart finally mounts.
+- **Above-the-fold charts** (typically the first KPI strip + first hero chart) will satisfy `IntersectionObserver` on initial layout, so they animate immediately — no extra config needed.
+- **One observer per chart**, not one wrapping the whole report. The point is each chart animating *when it first comes into view*, not all of them when the report starts.
+- **`rootMargin: '0px 0px -10% 0px'`** delays the trigger until the chart is 10% inside the viewport, so the animation starts the instant the reader actually focuses on it, not the millisecond its top edge appears.
+
+#### Other motion concerns
+
+- **Custom inline SVG** (treemaps, gauges, score sliders): also wrap in `<AnimateOnVisible>`. Inside, animate with CSS transitions on `transform` / `opacity` / `stroke-dashoffset`, driven by `useState` + a `useEffect(() => setMounted(true), [])` toggle on mount. Same easing language: `transition: 'transform 800ms ease-out'`.
 - **Loading skeletons** should pulse, not animate full charts. A subtle `@keyframes pulse { 0%, 100% { opacity: 0.6 } 50% { opacity: 1 } }` on the skeleton block is enough — defined via an inline `<style>` tag at the top of the file or in a shared `card.jsx`.
-- **Respect reduced motion.** Wrap motion-heavy primitives so they fall back to instant render when `window.matchMedia('(prefers-reduced-motion: reduce)').matches` (compute it once via `useState` + `useEffect` and pass `animationDuration={prefersReducedMotion ? 0 : 1500}`).
+- **Respect reduced motion.** Compute `window.matchMedia('(prefers-reduced-motion: reduce)').matches` once at the top of `app.jsx` (via `useState` + `useEffect`) and pass `animationDuration={prefersReducedMotion ? 0 : 1500}` to Recharts primitives. `AnimateOnVisible` itself is fine to keep on — it only delays mount, never adds motion.
 
-Animation is part of the visual polish — the same way you'd pick a palette and a card primitive. A report whose charts pop in feels alive; one whose charts appear pre-rendered feels like a screenshot.
+Animation is part of the visual polish — the same way you'd pick a palette and a card primitive. A report whose charts pop in *as the reader reaches them* feels alive; one whose charts have already finished by the time they're seen feels like a screenshot.
 
 ### Formatting helpers
 
