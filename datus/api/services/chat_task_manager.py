@@ -505,7 +505,17 @@ class ChatTaskManager:
             if effective_source == "vscode":
                 apply_proxy_tools(node, ["filesystem_tools.*"])
             elif effective_source == "web":
-                apply_proxy_tools(node, ["write_file", "edit_file"])
+                # gen_visual_report / gen_visual_dashboard author their
+                # render/*.jsx tree server-side and surface it via
+                # ``/api/v1/(report|dashboard)/detail`` — proxying
+                # write_file / edit_file to the browser would round-trip
+                # every chunk for no benefit, so leave their filesystem
+                # tools directly bound to the server filesystem.
+                from datus.agent.node.gen_visual_dashboard_agentic_node import GenVisualDashboardAgenticNode
+                from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
+
+                if not isinstance(node, (GenVisualReportAgenticNode, GenVisualDashboardAgenticNode)):
+                    apply_proxy_tools(node, ["write_file", "edit_file"])
             elif effective_source:
                 logger.warning("Unsupported source '%s'; skipping proxy shortcut", effective_source)
 
