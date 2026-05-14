@@ -1373,6 +1373,104 @@ class TestAgentConfigBashToolEnabled:
         cfg.bash_tool_enabled = 1
         assert cfg.bash_tool_enabled is True
 
+    @pytest.mark.parametrize("yaml_value", ["false", "False", "FALSE", "0", "no", "off"])
+    def test_string_false_disables(self, tmp_path, yaml_value):
+        # YAML-loaded scalars frequently arrive as strings. ``bool("false")``
+        # is ``True`` in Python, which would silently enable BashTool when
+        # the operator intended to turn it off.
+        cfg = self._make(tmp_path, bash={"enabled": yaml_value})
+        assert cfg.bash_tool_enabled is False
+
+    @pytest.mark.parametrize("yaml_value", ["true", "True", "1", "yes", "on"])
+    def test_string_true_enables(self, tmp_path, yaml_value):
+        cfg = self._make(tmp_path, bash={"enabled": yaml_value})
+        assert cfg.bash_tool_enabled is True
+
+    def test_non_mapping_bash_section_falls_back_to_default(self, tmp_path):
+        # If ``agent.bash`` is a non-mapping truthy value (e.g. accidentally
+        # set to a string), AgentConfig must not raise — it falls back to
+        # the default-on behaviour rather than crashing config load.
+        cfg = self._make(tmp_path, bash="false")
+        assert cfg.bash_tool_enabled is True
+
+    def test_setter_accepts_string_false(self, tmp_path):
+        cfg = self._make(tmp_path)
+        cfg.bash_tool_enabled = "false"
+        assert cfg.bash_tool_enabled is False
+        cfg.bash_tool_enabled = "true"
+        assert cfg.bash_tool_enabled is True
+
+
+class TestAgentConfigTavilyApiKey:
+    """``document.tavily_api_key`` resolution prefers the YAML value, falls
+    back to ``TAVILY_API_KEY`` env only when the key is absent, and never
+    persists unresolved ``${ENV}`` placeholders.
+    """
+
+    def _make(self, tmp_path, **extra_kwargs):
+        from datus.configuration.agent_config import AgentConfig, NodeConfig
+
+        kwargs = dict(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={
+                "mock": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "m",
+                    "base_url": "http://localhost:0",
+                }
+            },
+            skip_init_dirs=True,
+        )
+        kwargs.update(extra_kwargs)
+        return AgentConfig(**kwargs)
+
+    def test_absent_key_falls_back_to_env(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("TAVILY_API_KEY", "env-key")
+        cfg = self._make(tmp_path)
+        assert cfg.tavily_api_key == "env-key"
+
+    def test_absent_key_without_env_is_none(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        cfg = self._make(tmp_path)
+        assert cfg.tavily_api_key is None
+
+    def test_explicit_none_disables_key(self, tmp_path, monkeypatch):
+        # Explicit ``tavily_api_key: ~`` must NOT fall through to the env var
+        # — the user asked for no key, period.
+        monkeypatch.setenv("TAVILY_API_KEY", "env-key")
+        cfg = self._make(tmp_path, document={"tavily_api_key": None})
+        assert cfg.tavily_api_key is None
+
+    def test_explicit_empty_string_disables_key(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("TAVILY_API_KEY", "env-key")
+        cfg = self._make(tmp_path, document={"tavily_api_key": ""})
+        assert cfg.tavily_api_key is None
+
+    def test_unresolved_placeholder_is_dropped(self, tmp_path, monkeypatch):
+        # ``${MISSING_VAR}`` resolves to ``<MISSING:MISSING_VAR>``. That
+        # placeholder must not be persisted as a real API key.
+        monkeypatch.delenv("DEFINITELY_UNSET_TAVILY_VAR", raising=False)
+        cfg = self._make(
+            tmp_path,
+            document={"tavily_api_key": "${DEFINITELY_UNSET_TAVILY_VAR}"},
+        )
+        assert cfg.tavily_api_key is None
+
+    def test_resolved_placeholder_is_kept(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("TAVILY_API_KEY_FROM_ENV", "resolved-secret")
+        cfg = self._make(
+            tmp_path,
+            document={"tavily_api_key": "${TAVILY_API_KEY_FROM_ENV}"},
+        )
+        assert cfg.tavily_api_key == "resolved-secret"
+
+    def test_literal_value_is_kept(self, tmp_path):
+        cfg = self._make(tmp_path, document={"tavily_api_key": "literal-key"})
+        assert cfg.tavily_api_key == "literal-key"
+
 
 class TestAgentConfigLanguage:
     """``agent.language`` is the default response language for all agentic

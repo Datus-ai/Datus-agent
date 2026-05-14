@@ -1134,6 +1134,14 @@ class AgenticNode(Node):
             logger.debug("Bash tool disabled via agent.bash.enabled=false")
             self.bash_tool = None
             return
+        # Fail closed: ``allowed_patterns=["*"]`` relies on the ``bash_tools``
+        # ASK/DENY rule wired by ``_ensure_permission_hooks``. When no
+        # ``permission_manager`` exists those hooks are a no-op, so creating
+        # the tool would expose unrestricted shell execution to the model.
+        if self.permission_manager is None:
+            logger.warning("Skipping bash tool because permission enforcement is unavailable")
+            self.bash_tool = None
+            return
         try:
             from datus.tools.func_tool.bash_tool import BashTool
 

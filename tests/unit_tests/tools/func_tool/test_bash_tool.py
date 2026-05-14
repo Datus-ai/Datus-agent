@@ -178,6 +178,22 @@ class TestBashToolPatternMatching:
         assert empty_tool._is_command_allowed("python anything.py") is False
         assert empty_tool._is_command_allowed("echo hello") is False
 
+    def test_no_bypass_via_trailing_matching_arg(self, python_tool):
+        # ``python:scripts/*.py`` must NOT allow a command that smuggles in a
+        # disallowed ``-c "..."`` payload as long as some later argument matches
+        # the glob. Only the first positional after the executable counts.
+        assert python_tool._is_command_allowed("python -c \"import os; os.system('echo pwn')\" scripts/ok.py") is False
+
+    def test_no_bypass_via_trailing_matching_arg_with_options(self, python_tool):
+        # Even when a benign-looking matching path appears after flags, the
+        # first positional is still ``-m``, so the command must be rejected.
+        assert python_tool._is_command_allowed("python -m http.server scripts/ok.py") is False
+
+    def test_first_arg_match_is_still_allowed(self, python_tool):
+        # Sanity check: the legitimate use case (``python scripts/ok.py``)
+        # continues to pass after the bypass fix.
+        assert python_tool._is_command_allowed("python scripts/ok.py") is True
+
 
 class TestBashToolExecution:
     def test_execute_allowed_command(self, python_tool):

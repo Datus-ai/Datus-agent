@@ -212,10 +212,12 @@ class BashTool:
 
         try:
             parts = shlex.split(full_command)
-            if len(parts) > 1:
-                for arg in parts[1:]:
-                    if fnmatch.fnmatch(arg, glob_pattern):
-                        return True
+            # Only validate the first positional argument after the executable.
+            # Matching against arbitrary later args would let a caller smuggle
+            # a disallowed flag/script in (e.g. ``python -c "..." scripts/ok.py``
+            # against a ``python:scripts/*.py`` rule).
+            if len(parts) > 1 and fnmatch.fnmatch(parts[1], glob_pattern):
+                return True
         except ValueError:
             pass
 
