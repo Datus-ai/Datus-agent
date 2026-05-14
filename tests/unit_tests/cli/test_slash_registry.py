@@ -101,16 +101,25 @@ class TestHandlerMapAlignment:
             assert needle in source, f"Handler for '{spec.name}' missing in _build_slash_handler_map"
 
 
-def test_profile_command_registered():
+def test_permission_command_registered():
     from datus.cli.slash_registry import SLASH_COMMANDS
 
     names = {spec.name for spec in SLASH_COMMANDS}
-    assert "profile" in names
+    assert "permission" in names
 
 
-def test_profile_command_is_in_system_group():
+def test_permission_command_is_in_system_group():
+    from datus.cli.slash_registry import SLASH_COMMANDS
+
+    spec = next(s for s in SLASH_COMMANDS if s.name == "permission")
+    assert spec.group == "system"
+    assert "permission" in spec.summary.lower()  # non-empty and autocomplete-relevant
+
+
+def test_profile_command_is_hidden_deprecated_compatibility_entry():
     from datus.cli.slash_registry import SLASH_COMMANDS
 
     spec = next(s for s in SLASH_COMMANDS if s.name == "profile")
     assert spec.group == "system"
-    assert "profile" in spec.summary.lower()  # non-empty and autocomplete-relevant
+    assert spec.hidden is True
+    assert "deprecated" in spec.summary.lower()

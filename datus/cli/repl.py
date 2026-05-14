@@ -174,7 +174,7 @@ class DatusCLI:
         self.configuration_manager = configuration_manager()
 
         # Active permission profile name. Initialized from agent_config;
-        # mutated by /profile. StatusBarProvider reads this for display.
+        # mutated by /permission. StatusBarProvider reads this for display.
         self.active_profile: str = getattr(self.agent_config, "active_profile_name", "normal")
 
         # Bind the process-wide path-manager ContextVar once so implicit callers
@@ -351,6 +351,7 @@ class DatusCLI:
             "effort": self.effort_commands.cmd_effort,
             "init": self.init_commands.cmd_init,
             "services": self.service_commands.cmd_services,
+            "permission": self._cmd_permission,
             "profile": self._cmd_profile,
         }
 
@@ -1930,7 +1931,13 @@ class DatusCLI:
         return EXIT_SENTINEL
 
     def _cmd_profile(self, args: str) -> None:
-        """Open the profile selection picker and apply the choice.
+        """Deprecated alias for :meth:`_cmd_permission`."""
+
+        print_warning(self.console, "/profile is deprecated; use /permission instead.")
+        return DatusCLI._cmd_permission(self, args)
+
+    def _cmd_permission(self, args: str) -> None:
+        """Open the permission profile picker and apply the choice.
 
         Delegates to ``_run_profile_picker`` / ``_run_dangerous_confirm``
         (inline prompt_toolkit pickers mirroring ``/agent``). Selecting

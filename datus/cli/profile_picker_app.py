@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Self-contained ``/profile`` pickers rendered as prompt_toolkit ``Application``s.
+"""Self-contained ``/permission`` pickers rendered as prompt_toolkit ``Application``s.
 
 Mirrors the dual-mode pattern of the other migrated wizards
 (:mod:`datus.cli.effort_app` et al): :meth:`run` constructs a transient
@@ -85,7 +85,7 @@ class ProfilePickerApp:
             return None
         except Exception as exc:
             logger.error("ProfilePickerApp crashed: %s", exc)
-            print_error(self._console, f"/profile error: {exc}")
+            print_error(self._console, f"/permission error: {exc}")
             return None
         finally:
             self._on_done = None
@@ -234,7 +234,7 @@ class DangerousConfirmApp:
             return False
         except Exception as exc:
             logger.error("DangerousConfirmApp crashed: %s", exc)
-            print_error(self._console, f"/profile confirm error: {exc}")
+            print_error(self._console, f"/permission confirm error: {exc}")
             return False
         finally:
             self._on_done = None

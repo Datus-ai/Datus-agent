@@ -248,7 +248,7 @@ class StatusBarProvider:
         """Return the active profile name from the CLI, defaulting to ``normal``.
 
         The CLI owns the mutable ``active_profile`` string (initialized from
-        ``agent_config.active_profile_name`` and mutated by ``/profile``).
+        ``agent_config.active_profile_name`` and mutated by ``/permission``).
         If the attribute is not yet wired (tests, early init, non-REPL paths),
         fall back to ``normal`` rather than raising.
         """

@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Tests for the /profile slash command handler.
+"""Tests for the /permission slash command handler and legacy /profile alias.
 
 Injects stub picker callables onto the CLI stub so we exercise handler
 logic without spinning up prompt_toolkit.
@@ -14,9 +14,9 @@ from datus.tools.permission.permission_manager import PermissionManager
 
 
 class _FakeCLI:
-    """Minimal CLI surface for /profile handler tests.
+    """Minimal CLI surface for permission command handler tests.
 
-    Exposes picker callables as instance attributes; ``_cmd_profile``
+    Exposes picker callables as instance attributes; ``_cmd_permission``
     reads them via ``self._run_profile_picker(current)`` /
     ``self._run_dangerous_confirm()`` which finds them on the instance
     before falling through to the class method.
@@ -35,7 +35,7 @@ class _FakeCLI:
         self.picker_calls = 0
         self.confirm_calls = 0
 
-    # Instance-level overrides that _cmd_profile will find via normal
+    # Instance-level overrides that the command handler finds via normal
     # attribute lookup before hitting DatusCLI's class methods.
     def _run_profile_picker(self, current):
         self.picker_calls += 1
@@ -70,6 +70,34 @@ def test_profile_switch_to_auto():
     assert manager.active_profile == "auto"
     assert manager._session_approvals == {}
     assert agent_config.active_profile_name == "auto"
+
+
+def test_permission_switch_to_auto():
+    from datus.cli.repl import DatusCLI
+
+    manager = PermissionManager(active_profile="normal")
+    agent_config = _make_agent_config("normal")
+    cli = _FakeCLI(manager, agent_config, profile_responses=["auto"])
+
+    DatusCLI._cmd_permission(cli, "")
+
+    assert cli.active_profile == "auto"
+    assert manager.active_profile == "auto"
+    assert agent_config.active_profile_name == "auto"
+
+
+def test_profile_alias_warns_then_switches():
+    from datus.cli.repl import DatusCLI
+
+    manager = PermissionManager(active_profile="normal")
+    agent_config = _make_agent_config("normal")
+    cli = _FakeCLI(manager, agent_config, profile_responses=["auto"])
+
+    DatusCLI._cmd_profile(cli, "")
+
+    assert cli.active_profile == "auto"
+    assert manager.active_profile == "auto"
+    assert any("/profile is deprecated" in str(call.args[0]) for call in cli.console.print.call_args_list)
 
 
 def test_profile_switch_dangerous_requires_confirmation():
@@ -277,7 +305,7 @@ def test_run_profile_picker_embeds_in_tui_when_loop_active(monkeypatch):
 
 
 def test_profile_malformed_rules_fails_closed_to_normal():
-    """``/profile dangerous`` with a broken rules list must refuse to apply.
+    """``/permission dangerous`` with a broken rules list must refuse to apply.
 
     Mirrors startup's fail-closed: expanding permissions while silently
     dropping restrictive user overrides is the worst-case outcome.

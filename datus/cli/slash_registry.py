@@ -86,9 +86,15 @@ SLASH_COMMANDS: tuple[SlashSpec, ...] = (
     SlashSpec("init", "Generate AGENTS.md for the current project", "system"),
     SlashSpec("services", "Configure dashboards/schedulers (TUI) or list read-only methods", "system"),
     SlashSpec(
-        "profile",
+        "permission",
         "Switch the permission profile (normal / auto / dangerous)",
         "system",
+    ),
+    SlashSpec(
+        "profile",
+        "Deprecated: use /permission",
+        "system",
+        hidden=True,
     ),
 )
 

@@ -77,7 +77,8 @@ agent:
 
   # ---------------------------------------------------------------------------
   # Permission profile — pick a base security posture, layer user-defined
-  # rules on top via ``rules``. Override at runtime with ``/profile``.
+  # rules on top via ``rules``. Override at runtime with ``/permission``.
+  # ``/profile`` remains as a deprecated CLI alias for compatibility.
   #
   # Profiles:
   #   normal    — Read-only allowed; all writes prompt; named destructive deny

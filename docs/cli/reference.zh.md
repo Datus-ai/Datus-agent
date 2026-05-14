@@ -53,4 +53,5 @@ Datus-CLI 中所有可用的斜杠命令，按类别分组。
 | `/skill` | | 管理技能和市场 | [Skill 命令](skill_command.zh.md) |
 | `/bootstrap-bi` | | 为子 agent 上下文提取 BI 仪表盘资产 | |
 | `/services` | | 列出已配置的服务平台及其只读方法 | |
-| `/profile` | | 切换当前 CLI / agent profile | |
+| `/permission` | | 切换当前 CLI / agent 权限配置文件 | |
+| `/profile` | | 已废弃的 `/permission` 兼容别名 | |

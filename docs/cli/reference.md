@@ -53,4 +53,5 @@ All slash commands available in Datus-CLI, grouped by category.
 | `/skill` | | Manage skills and marketplace | [Skill Command](skill_command.md) |
 | `/bootstrap-bi` | | Extract BI dashboard assets for sub-agent context | |
 | `/services` | | List configured service platforms and their read-only methods | |
-| `/profile` | | Switch the active CLI / agent profile | |
+| `/permission` | | Switch the active CLI / agent permission profile | |
+| `/profile` | | Deprecated alias for `/permission` | |
