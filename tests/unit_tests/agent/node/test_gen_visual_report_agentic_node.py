@@ -232,6 +232,70 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
     assert (report_dir / "index.html").is_file()
 
 
+@pytest.mark.asyncio
+async def test_execute_stream_with_streamed_jsx(real_agent_config, mock_llm_create):
+    """LLM finalizes via append_jsx_chunk(position='last') instead of save_main_jsx.
+
+    Exercises the chunked-write path the node uses when the JSX is too
+    large to fit in a single tool-call argument: the result still has to
+    surface main_jsx_path, success=True, and an index.html compile.
+    """
+
+    start_new_args = json.dumps({"title": "Streamed SAT"})
+    save_query_args = json.dumps(
+        {
+            "name": "avg_sat_reading",
+            "sql": "SELECT 'state' AS scope, AVG(AvgScrRead) AS avg_read FROM satscores GROUP BY 'state'",
+            "description": "Average SAT reading score statewide",
+        }
+    )
+
+    jsx_source = _MAIN_JSX_SOURCE_TEMPLATE.format(title="Streamed SAT", data_ref="queries/avg_sat_reading")
+    midpoint = len(jsx_source) // 2
+    chunks = [jsx_source[:midpoint], jsx_source[midpoint:]]
+
+    mock_llm_create.reset(
+        responses=[
+            build_tool_then_response(
+                tool_calls=[
+                    MockToolCall(name="start_new_report", arguments=start_new_args),
+                    MockToolCall(name="save_query", arguments=save_query_args),
+                    MockToolCall(
+                        name="append_jsx_chunk",
+                        arguments=json.dumps({"chunk": chunks[0], "position": "first"}),
+                    ),
+                    MockToolCall(
+                        name="append_jsx_chunk",
+                        arguments=json.dumps({"chunk": chunks[1], "position": "last"}),
+                    ),
+                ],
+                content="Report streamed in two chunks.",
+            ),
+        ]
+    )
+
+    node = _make_node(real_agent_config)
+    node.input = GenVisualReportNodeInput(
+        user_message="Average SAT reading score statewide (streamed)",
+        database="california_schools",
+    )
+
+    actions = []
+    async for action in node.execute_stream(ActionHistoryManager()):
+        actions.append(action)
+
+    final = actions[-1]
+    assert final.status == ActionStatus.SUCCESS
+    result = final.output
+    assert result["success"] is True
+    assert result["main_jsx_path"].endswith("main.jsx")
+    report_dir = Path(real_agent_config.project_root) / "reports" / result["report_id"]
+    assert (report_dir / "main.jsx").read_text(encoding="utf-8") == jsx_source
+    # HTML compilation should still kick in — the path doesn't care which tool
+    # wrote main.jsx.
+    assert (report_dir / "index.html").is_file()
+
+
 class TestReportDistResolution:
     """Verify the CLI flag → node_config priority for offline asset overrides."""
 

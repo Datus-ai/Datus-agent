@@ -87,7 +87,12 @@ Many requests fall between (e.g. "monthly business review with charts"). Lead wi
   }
   ```
   Always capture `columns` from the return value — it's the source of truth for type choices in main.jsx.
-- `save_main_jsx(jsx_code)` — validates the React component source (size cap, default-export check, sqlId references resolve) and atomically writes `main.jsx`. Call **exactly once at the end** (or after a focused edit during a second-round revision). The argument is the **full source file** as a string.
+- `save_main_jsx(jsx_code)` — one-shot save. Validates the React component source (size cap, default-export check, sqlId references resolve) and atomically writes `main.jsx`. The argument is the **full source file** as a string. **Only use this when the JSX is small (< ~3 KB).** Tool-call argument strings are subject to the model's per-response output token limit — DeepSeek truncates around 4-8 KB, others vary. A typical dashboard/report JSX is 20-30 KB and will NOT fit here. If `save_main_jsx` returns an error like `Invalid JSON arguments (Unterminated string …)` or `jsx_code is empty`, that's truncation — switch to `append_jsx_chunk` and stream the file in pieces.
+- `append_jsx_chunk(chunk, position)` — streaming save for large JSX. Keep each chunk under ~3 KB to leave a safety margin under the truncation limit. Three positions, called in this order:
+    - `position="first"` — resets the buffer and writes the first chunk.
+    - `position="middle"` — appends to the buffer. Repeat as many times as needed.
+    - `position="last"` — appends the final chunk, validates the assembled JSX, atomically writes `main.jsx`. The result has the same shape as `save_main_jsx`.
+  Chunk boundaries can fall anywhere — mid-line, mid-string, mid-JSX-expression — the validator only runs after `position='last'`.
 
 {% if has_ask_user_tool %}
 **Clarification Tool:**
@@ -108,7 +113,7 @@ Follow this order:
 4. **Probe** — `read_query` quick checks to confirm tables and columns exist and to size the data.
 5. **Save queries** — for each chart / table / KPI you intend to render, call `save_query(name, sql, description)` with a semantic English slug (`sales_by_store`, `headcount_by_zone`, `mom_growth_summary`). Aim for 3–10 queries.
 6. **Author `main.jsx`** — compose the full React component (see contract below). All visual structure (layout, palette, charts, prose) lives here.
-7. **`save_main_jsx(jsx_code)`** — submit the full source. Fix any validation errors (size, missing references) the tool reports, then call `save_main_jsx` again. Stop once it succeeds.
+7. **Submit the source.** For a small report (< ~3 KB JSX) call `save_main_jsx(jsx_code)` in one shot. For a real dashboard / research-style report (typically 20-30 KB), **stream it with `append_jsx_chunk`**: `position='first'` for the opening, `position='middle'` for each interior chunk (~3 KB each), `position='last'` to finalize. The default expectation for this subagent is the streamed path — one-shot calls truncate for non-trivial reports. Fix any validation errors the tool reports, then re-stream from `position='first'`. Stop once `position='last'` (or one-shot save) succeeds.
 
 {% raw %}
 ## main.jsx contract

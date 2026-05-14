@@ -305,6 +305,12 @@ class ReportArtifactTools:
         # "fresh artifact" from "edit in-place" in their final response.
         self.mode: Optional[str] = None
 
+        # Chunked main.jsx buffer. Populated by append_jsx_chunk(position=...)
+        # so the LLM can stream the source past the model's per-tool-call
+        # output token limit (DeepSeek truncates tool-call arguments around
+        # 4-8 KB; a real report's main.jsx is ~25-30 KB).
+        self._jsx_chunks: List[str] = []
+
     # -- public --------------------------------------------------------------
 
     def available_tools(self) -> List[Tool]:
@@ -314,6 +320,7 @@ class ReportArtifactTools:
             trans_to_function_tool(self.bind_existing_report),
             trans_to_function_tool(self.save_query),
             trans_to_function_tool(self.save_main_jsx),
+            trans_to_function_tool(self.append_jsx_chunk),
         ]
 
     # -- intent declaration --------------------------------------------------
@@ -581,9 +588,16 @@ class ReportArtifactTools:
             }
         )
 
-    def save_main_jsx(self, jsx_code: str) -> FuncToolResult:
+    def save_main_jsx(self, jsx_code: str = "") -> FuncToolResult:
         """
         Validate a candidate React component source and atomically write it to disk.
+
+        ONE-SHOT mode (small JSX): pass the full source as ``jsx_code``.
+        Tool-call argument strings get truncated by most LLM providers
+        around 4-8 KB — if the JSX is larger than that, this single-shot
+        call will fail with "Invalid JSON arguments (Unterminated string …)".
+        When that happens, fall back to ``append_jsx_chunk(chunk, position)``
+        and stream the file in pieces.
 
         Args:
             jsx_code: The full ``main.jsx`` source. Must:
@@ -611,11 +625,104 @@ class ReportArtifactTools:
         if not_bound is not None:
             return not_bound
 
-        if not isinstance(jsx_code, str):
-            return FuncToolResult(success=0, error="jsx_code must be a string")
-        if not jsx_code.strip():
-            return FuncToolResult(success=0, error="jsx_code must not be empty")
+        if not isinstance(jsx_code, str) or not jsx_code.strip():
+            return FuncToolResult(
+                success=0,
+                error=(
+                    "jsx_code is empty. If the JSX is too large to fit in a single tool-"
+                    "call argument (most providers truncate around 4-8 KB), stream it "
+                    "with append_jsx_chunk(chunk, position) instead: position='first' to "
+                    "start, position='middle' for each interior chunk, position='last' "
+                    "to finalize + validate + write."
+                ),
+            )
 
+        # Reset any half-finished streaming buffer so a one-shot save after a
+        # failed stream doesn't accidentally prepend stale chunks.
+        self._jsx_chunks = []
+        return self._validate_and_write_main_jsx(jsx_code)
+
+    def append_jsx_chunk(self, chunk: str, position: str = "middle") -> FuncToolResult:
+        """
+        Stream main.jsx in chunks for reports too large for one save_main_jsx call.
+
+        Tool-call argument strings emitted by the LLM are subject to the
+        model's per-response output-token limit. DeepSeek truncates around
+        4-8 KB; other providers vary. A polished dashboard / report JSX is
+        typically 20-30 KB and **will not fit in one call**. Stream it
+        instead:
+
+        ::
+
+            append_jsx_chunk("/** @datus-title ... */\\nimport ...", position="first")
+            append_jsx_chunk("...", position="middle")    # repeat as needed
+            append_jsx_chunk("...", position="last")      # validate + write
+
+        Keep each chunk under ~3 KB to leave a safety margin under the
+        truncation limit. Chunk boundaries can fall anywhere in the source
+        (mid-line, mid-string-literal) — the validator runs against the
+        concatenation only on ``position='last'``.
+
+        Args:
+            chunk: source text to append. Plain str — no JSON wrapping.
+            position: "first" resets the buffer and starts streaming.
+                "middle" appends without validating. "last" appends the
+                final chunk, validates the assembled JSX, and atomically
+                writes ``main.jsx``.
+
+        Returns:
+            For ``position`` in {"first", "middle"}: ``{"bytes_buffered": N,
+            "chunks_so_far": N, "position": "first"|"middle"}``.
+
+            For ``position='last'``: same shape as ``save_main_jsx`` —
+            ``{"main_jsx_path", "bytes", "query_refs"}``.
+        """
+        not_bound = self._require_active("append_jsx_chunk")
+        if not_bound is not None:
+            return not_bound
+
+        if position not in ("first", "middle", "last"):
+            return FuncToolResult(
+                success=0,
+                error=f"position must be 'first', 'middle', or 'last'; got {position!r}",
+            )
+        if not isinstance(chunk, str):
+            return FuncToolResult(success=0, error="chunk must be a string")
+
+        if position == "first":
+            self._jsx_chunks = [chunk]
+        else:
+            if not self._jsx_chunks:
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        f"append_jsx_chunk(position={position!r}) called without an earlier "
+                        "position='first' chunk. Start streaming with position='first'."
+                    ),
+                )
+            self._jsx_chunks.append(chunk)
+
+        if position != "last":
+            bytes_buffered = sum(len(c.encode("utf-8")) for c in self._jsx_chunks)
+            return FuncToolResult(
+                result={
+                    "bytes_buffered": bytes_buffered,
+                    "chunks_so_far": len(self._jsx_chunks),
+                    "position": position,
+                }
+            )
+
+        assembled = "".join(self._jsx_chunks)
+        # Reset the buffer immediately so a retry after a validation failure
+        # can restart cleanly with position='first' instead of inheriting
+        # whatever was just rejected.
+        self._jsx_chunks = []
+        return self._validate_and_write_main_jsx(assembled)
+
+    # -- internal ------------------------------------------------------------
+
+    def _validate_and_write_main_jsx(self, jsx_code: str) -> FuncToolResult:
+        """Shared validation + atomic write for save_main_jsx / append_jsx_chunk."""
         size = len(jsx_code.encode("utf-8"))
         if size > _MAX_MAIN_JSX_BYTES:
             return FuncToolResult(
@@ -645,8 +752,6 @@ class ReportArtifactTools:
             literal = match.group(1)
             slug = extract_query_slug(literal)
             if slug is None:
-                # Loud signal — the LLM passed a malformed literal. Better
-                # to flag than to silently skip.
                 return FuncToolResult(
                     success=0,
                     error=(

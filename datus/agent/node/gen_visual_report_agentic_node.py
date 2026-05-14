@@ -561,17 +561,25 @@ class GenVisualReportAgenticNode(AgenticNode):
                         tokens_used = int(usage["total_tokens"])
                         break
 
-            main_jsx_action = self._find_artifact_tool_call(tool_calls, "save_main_jsx")
+            # Find the most recent successful main.jsx finalizer. Either
+            # save_main_jsx (one-shot) or append_jsx_chunk(position='last')
+            # writes the file; the result envelope of the call that did the
+            # write has main_jsx_path set. Earlier failed calls have it null
+            # and are skipped.
             query_actions = [a for a in tool_calls if a.action_type == "save_query"]
+            main_jsx_rel_path: Optional[str] = None
+            for action in reversed(tool_calls):
+                if action.action_type not in ("save_main_jsx", "append_jsx_chunk"):
+                    continue
+                candidate = self._extract_artifact_result_field(action, "main_jsx_path")
+                if candidate:
+                    main_jsx_rel_path = candidate
+                    break
 
             # The LLM picked the active report by calling start_new_report or
             # bind_existing_report; the tools instance owns the resulting id.
             if self.report_artifact_tools is not None and self.report_artifact_tools.report_id:
                 self._active_report_id = self.report_artifact_tools.report_id
-
-            main_jsx_rel_path: Optional[str] = None
-            if main_jsx_action is not None:
-                main_jsx_rel_path = self._extract_artifact_result_field(main_jsx_action, "main_jsx_path")
 
             html_rel_path: Optional[str] = None
             if main_jsx_rel_path and self._active_report_id:

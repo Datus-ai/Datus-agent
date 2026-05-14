@@ -206,6 +206,11 @@ class TestRequireActive:
         assert result.success == 0
         assert "no active report" in (result.error or "").lower()
 
+    def test_append_jsx_chunk_rejects_when_unbound(self, unbound_tools: ReportArtifactTools):
+        result = unbound_tools.append_jsx_chunk("export default", position="first")
+        assert result.success == 0
+        assert "no active report" in (result.error or "").lower()
+
 
 # ----------------------------------------------------------------------------- #
 # _infer_column_type                                                            #
@@ -379,6 +384,153 @@ export default function R() {
         result = report_tools.save_main_jsx(big)
         assert result.success == 0
         assert "exceeds" in (result.error or "").lower()
+
+    def test_empty_source_points_at_chunk_streaming(self, report_tools: ReportArtifactTools):
+        """Empty save_main_jsx must redirect the LLM to append_jsx_chunk.
+
+        The truncation failure mode (DeepSeek cutting tool-call args at the
+        token limit) shows up as args_dict == {} on our side. Without this
+        hint, the LLM can't tell whether the call is empty-on-purpose or
+        empty-because-truncated, and gets stuck.
+        """
+        result = report_tools.save_main_jsx("")
+        assert result.success == 0
+        error = (result.error or "").lower()
+        assert "append_jsx_chunk" in error
+        assert "position" in error
+
+
+# ----------------------------------------------------------------------------- #
+# append_jsx_chunk — streaming write protocol                                   #
+# ----------------------------------------------------------------------------- #
+
+
+class TestAppendJsxChunk:
+    def test_streams_first_middle_last_writes_file(self, report_tools: ReportArtifactTools, project_root: Path):
+        # Seed the query the JSX will reference, then stream the source.
+        run = report_tools.save_query(name="sales_by_store", sql="SELECT store_name FROM sales")
+        assert run.success == 1
+        report_id = report_tools.report_id
+
+        chunk1 = "import React from 'react';\nimport { useDatusArtifact } from '@datus/web-artifact';\n"
+        chunk2 = "export default function Demo() {\n  const { useQuerySql } = useDatusArtifact();\n"
+        chunk3 = (
+            "  const { data } = useQuerySql('queries/sales_by_store');\n"
+            "  return React.createElement('pre', null, JSON.stringify(data?.rows ?? []));\n"
+            "}\n"
+        )
+
+        first = report_tools.append_jsx_chunk(chunk1, position="first")
+        assert first.success == 1
+        assert first.result["chunks_so_far"] == 1
+        assert first.result["bytes_buffered"] == len(chunk1.encode("utf-8"))
+
+        middle = report_tools.append_jsx_chunk(chunk2, position="middle")
+        assert middle.success == 1
+        assert middle.result["chunks_so_far"] == 2
+
+        last = report_tools.append_jsx_chunk(chunk3, position="last")
+        assert last.success == 1, last.error
+        assert last.result["main_jsx_path"] == f"reports/{report_id}/main.jsx"
+        assert last.result["query_refs"] == ["queries/sales_by_store"]
+
+        on_disk = (project_root / "reports" / report_id / "main.jsx").read_text()
+        assert on_disk == chunk1 + chunk2 + chunk3
+
+    def test_middle_before_first_rejected(self, report_tools: ReportArtifactTools):
+        result = report_tools.append_jsx_chunk("anything", position="middle")
+        assert result.success == 0
+        assert "position='first'" in (result.error or "")
+
+    def test_last_before_first_rejected(self, report_tools: ReportArtifactTools):
+        result = report_tools.append_jsx_chunk("anything", position="last")
+        assert result.success == 0
+        assert "position='first'" in (result.error or "")
+
+    def test_invalid_position_rejected(self, report_tools: ReportArtifactTools):
+        result = report_tools.append_jsx_chunk("anything", position="anywhere")
+        assert result.success == 0
+        assert "first" in (result.error or "") and "last" in (result.error or "")
+
+    def test_first_resets_previous_buffer(self, report_tools: ReportArtifactTools, project_root: Path):
+        """A new `position='first'` must discard whatever was streamed before.
+
+        Otherwise a retry after a validation failure would prepend the rejected
+        content. Streaming protocols this leaky are a known foot-gun.
+        """
+        report_tools.save_query(name="sales_by_store", sql="SELECT store_name FROM sales")
+        stale = report_tools.append_jsx_chunk("/* stale leftover */\n", position="first")
+        assert stale.success == 1
+
+        valid_jsx = (
+            "import React from 'react';\n"
+            "import { useDatusArtifact } from '@datus/web-artifact';\n"
+            "export default function Demo() {\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            "  useQuerySql('queries/sales_by_store');\n"
+            "  return null;\n"
+            "}\n"
+        )
+        # Restart cleanly with a fresh position='first' carrying the real content.
+        first = report_tools.append_jsx_chunk(valid_jsx, position="first")
+        assert first.success == 1
+        commit = report_tools.append_jsx_chunk("", position="last")
+        assert commit.success == 1, commit.error
+
+        on_disk = (project_root / "reports" / report_tools.report_id / "main.jsx").read_text()
+        assert "stale leftover" not in on_disk
+
+    def test_validation_failure_on_last_resets_buffer(self, report_tools: ReportArtifactTools, project_root: Path):
+        """If `position='last'` rejects (e.g. dangling sqlId), the buffer is cleared.
+
+        A subsequent retry must start cleanly with `position='first'`.
+        """
+        chunk = (
+            "import React from 'react';\n"
+            "import { useDatusArtifact } from '@datus/web-artifact';\n"
+            "export default function Demo() {\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            "  useQuerySql('queries/nonexistent_slug');\n"
+            "  return null;\n"
+            "}\n"
+        )
+        report_tools.append_jsx_chunk(chunk, position="first")
+        rejected = report_tools.append_jsx_chunk("", position="last")
+        assert rejected.success == 0
+        assert "save_query" in (rejected.error or "")
+
+        # File was not written.
+        assert not (project_root / "reports" / report_tools.report_id / "main.jsx").exists()
+        # Buffer is empty — a second 'middle' without a fresh 'first' must fail.
+        retry_middle = report_tools.append_jsx_chunk("anything", position="middle")
+        assert retry_middle.success == 0
+        assert "position='first'" in (retry_middle.error or "")
+
+    def test_one_shot_save_clears_streaming_buffer(self, report_tools: ReportArtifactTools, project_root: Path):
+        """A successful save_main_jsx must reset any in-flight stream.
+
+        Mixing modes after a failure is plausible (LLM retries a small JSX
+        one-shot after streaming attempts). Leftover buffer state would
+        corrupt the next stream.
+        """
+        report_tools.save_query(name="sales_by_store", sql="SELECT store_name FROM sales")
+        report_tools.append_jsx_chunk("/* leftover */\n", position="first")
+
+        small_jsx = (
+            "import React from 'react';\n"
+            "import { useDatusArtifact } from '@datus/web-artifact';\n"
+            "export default function Demo() {\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            "  useQuerySql('queries/sales_by_store');\n"
+            "  return null;\n"
+            "}\n"
+        )
+        oneshot = report_tools.save_main_jsx(small_jsx)
+        assert oneshot.success == 1, oneshot.error
+
+        # Now any append must fail until we explicitly restart with 'first'.
+        result = report_tools.append_jsx_chunk("anything", position="middle")
+        assert result.success == 0
 
 
 # ----------------------------------------------------------------------------- #
