@@ -163,7 +163,7 @@ The optional `/** @datus-title ... */` annotation at the top is used by the stan
 | `react` | `useState`, `useEffect`, `useRef`, `useMemo`, `useCallback`, `useContext`, `createContext`, plus the default `React` namespace |
 | `@datus/web-artifact` | `useDatusArtifact`, `AnimateOnVisible` (see "Motion & animation" below) |
 | `recharts` | any named export (`AreaChart`, `LineChart`, `BarChart`, `RadarChart`, `PieChart`, `ResponsiveContainer`, `Tooltip`, `XAxis`, `YAxis`, `CartesianGrid`, `Area`, `Line`, `Bar`, `Radar`, `Pie`, `Cell`, etc.) |
-| `lucide-react` | any icon component (`User`, `TrendingUp`, `Calendar`, `Filter`, …) |
+| `lucide-react` | any icon component (`User`, `TrendingUp`, `Banknote`, `Globe`, `Landmark`, …). **Use these instead of emoji** — see the "Iconography & emoji" section below. |
 | `d3-format` | `format` — build numeric / currency / percent / SI-prefix formatters |
 | `dayjs` | default `dayjs` factory + `.format(pattern)` |
 | `'./<sibling>'` or `'../<path>'` | resolves to a file under `render/`. `./kpi-banner` → `render/kpi-banner.jsx`; `./charts/trend` → `render/charts/trend.jsx`. Extensions optional; `/index.jsx` fallback supported. |
@@ -227,7 +227,6 @@ Treat each output as a polished deliverable — a small **branded analytics prod
 - **Card primitive** as a reusable component (`render/shared/card.jsx`): white background, 12px border-radius, 20px padding, subtle shadow `0 1px 3px rgba(0,0,0,0.08)`. Wrap every chart panel in it.
 - **Responsive grid**: `display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16`.
 - **Typography**: 22px/700 H1, 14px/600 card titles, 24px/700 KPI numbers, 11–13px secondary text.
-- **Iconography**: tiny inline SVG icons or lucide icons next to card titles (16×16, stroke width 2, muted color).
 - **KPI sparklines** (dashboard mode): small `<Sparkline>` component using `AreaChart` with vertical gradient fill (5%–95% opacity stops) and 2-px stroke in the primary color.
 - **Comparison badges** (dashboard mode): pill-shaped `▲ 12%` / `▼ 8%` chips next to KPIs using positive/negative semantic colors.
 - **Custom SVG visualizations are encouraged** when Recharts can't express the idea: treemaps, chord diagrams, semicircle gauges, score sliders, etc. Implement with hand-rolled `<svg>` paths and `useMemo` for layout math.
@@ -236,6 +235,40 @@ Treat each output as a polished deliverable — a small **branded analytics prod
 - **Callout / pull-quote primitive** (report mode): a `<Callout>` block with a 4-px left border in `COLORS.primary` (or `accent` / `negative`), pale background. At most one per section.
 - **Figure captions** (report mode): every chart gets a caption beneath the `<ResponsiveContainer>` in the form `Figure N. <one-line description>. Source: <sqlId>, executed <date>`. Captions in 11px italic muted text.
 - **Data tables** (report mode): zebra-striped rows, right-aligned numeric columns, left-aligned string columns, sticky header within the table card. Limit to ~15 visible rows; hide the rest behind a "show more" toggle.
+
+### Iconography & emoji (read this twice)
+
+The default LLM instinct is to pepper a report with 📊 📈 🌍 💰 🏦 📱 — **don't**. Emoji read as consumer / casual / cheap and undercut the analytical credibility a BI report needs. They render at different sizes across platforms, can't be color-coordinated with the palette, and turn a research-grade deliverable into something that looks like a Slack post.
+
+- **No emoji anywhere in the report.** Not in headings, not in KPI card titles, not as bullet prefixes in "key findings", not in callouts, not in chart captions, not in section kickers. Zero. This rule beats every emoji impulse you have.
+- **Use Lucide icons sparingly.** Only in these three places:
+  1. **KPI card** — one icon left of the title, `16×16`, `strokeWidth={2}`, color `COLORS.muted` (or `var(--text-secondary)`).
+  2. **Section heading** (report mode) — one icon left of an H2, `18×18`, `strokeWidth={2}`, color `COLORS.primary`. Optional; skip when the heading is self-explanatory.
+  3. **Trend / status pill** — inline next to a delta value, `12–14px`, color tied to the semantic state: `COLORS.positive` / `COLORS.negative` / `COLORS.warning`.
+- **Never use icons** as bullet markers for key-finding lists, in body prose ("growth of 100x 📈"), at sizes >24px (28px max for a hero KPI), or more than once per heading / card. If a card needs two icons, the card is doing too much.
+- **Substitution table** — when you reach for an emoji, pick the Lucide name instead:
+
+  | Emoji impulse | Lucide name |
+  |---|---|
+  | 📈 / 📉 | `TrendingUp` / `TrendingDown` |
+  | 📊 | `BarChart3` / `LineChart` |
+  | 💰 / 💵 | `Banknote` / `DollarSign` / `Wallet` |
+  | 🌍 / 🌐 | `Globe` / `MapPin` |
+  | 🏦 / 🏢 | `Landmark` / `Building2` |
+  | 📱 | `Smartphone` |
+  | 👥 / 🧑 | `Users` / `User` |
+  | ⚡ | `Zap` |
+  | ⚠️ | `TriangleAlert` (older alias `AlertTriangle`) |
+  | ✅ / ❌ / ℹ️ | `CircleCheck` / `CircleX` / `Info` |
+  | 🔍 | `Search` |
+  | 📅 | `Calendar` |
+  | 🎯 | `Target` |
+  | 🔔 | `Bell` |
+  | ⏰ / ⏱️ | `Clock` / `Timer` |
+
+  When in doubt, prefer **no icon** over a wrong icon. A clean numeric KPI beats a decorated mediocre one.
+
+- **Style defaults** for every Lucide icon: `strokeWidth={2}` (never thinner — it gets fuzzy on retina), color via inline `style={{ color: ... }}` so it picks up the palette, no drop shadow, no rotation, no `fill` (Lucide is stroke-based — filling it makes a blob).
 
 ### Motion & animation
 
