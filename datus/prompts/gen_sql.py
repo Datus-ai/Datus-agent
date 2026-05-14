@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from datus.schemas.node_models import Metric, TableSchema, TableValue
 from datus.utils.loggings import get_logger
-from datus.utils.message_utils import MessagePart, build_structured_content
+from datus.utils.message_utils import build_structured_content
 
 from ..utils.json_utils import to_pretty_str
 from .prompt_manager import get_prompt_manager
@@ -94,12 +94,7 @@ def get_sql_prompt(
         current_date=current_date,
         date_ranges=date_ranges,
     )
-    user_content = build_structured_content(
-        [
-            MessagePart(type="enhanced", content=enhanced_context),
-            MessagePart(type="user", content=question),
-        ]
-    )
+    user_content = build_structured_content(enhanced_context, question)
 
     return [
         {"role": "system", "content": system_content},

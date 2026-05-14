@@ -1,9 +1,8 @@
-import json
-from unittest.mock import patch
-
 import pytest
 
 from datus.utils.message_utils import (
+    SYSTEM_REMINDER_CLOSE,
+    SYSTEM_REMINDER_OPEN,
     build_structured_content,
     extract_enhanced_context,
     extract_user_input,
@@ -15,29 +14,39 @@ from datus.utils.message_utils import (
 # ---------------------------------------------------------------------------
 
 
-def test_build_structured_content_roundtrip_with_unicode():
-    """Serialized parts can be round-tripped back through json.loads and preserve unicode."""
-    parts = [
-        {"type": "user", "content": "你好世界"},
-        {"type": "enhanced", "content": "Context: greeting"},
-    ]
-    result = build_structured_content(parts)
-    parsed = json.loads(result)
+def test_build_structured_content_produces_expected_layout():
+    result = build_structured_content("Context: greeting", "你好世界")
 
-    assert parsed == parts
-    assert "你好世界" in result  # ensure_ascii=False keeps raw characters
+    assert result == "<system_reminder>Context: greeting</system_reminder>\n你好世界"
+    assert result.startswith(SYSTEM_REMINDER_OPEN)
+    assert SYSTEM_REMINDER_CLOSE in result
 
 
-def test_build_structured_content_empty_list():
-    """An empty parts list produces a valid JSON array string."""
-    result = build_structured_content([])
+def test_build_structured_content_preserves_newlines_inside_enhanced():
+    enhanced = "Database Context: mysql\n\nAvailable tables:\n- t1\n- t2"
+    result = build_structured_content(enhanced, "list tables")
 
-    assert result == "[]"
-    assert json.loads(result) == []
+    assert result == f"{SYSTEM_REMINDER_OPEN}{enhanced}{SYSTEM_REMINDER_CLOSE}list tables"
+    # Closing tag separates enhanced from user verbatim — newlines inside
+    # the enhanced section must NOT be collapsed.
+    assert "Available tables:\n- t1\n- t2" in result
+
+
+def test_build_structured_content_empty_enhanced_still_wraps():
+    """build helper itself does not skip empty enhanced — callers must guard."""
+    result = build_structured_content("", "raw question")
+
+    assert result == "<system_reminder></system_reminder>\nraw question"
+
+
+def test_build_structured_content_empty_user_input():
+    result = build_structured_content("ctx", "")
+
+    assert result == "<system_reminder>ctx</system_reminder>\n"
 
 
 # ---------------------------------------------------------------------------
-# is_structured_content  (covers lines 50, 55-57)
+# is_structured_content
 # ---------------------------------------------------------------------------
 
 
@@ -46,97 +55,47 @@ def test_build_structured_content_empty_list():
     [
         "",
         "plain text message",
-        '{"type": "user", "content": "hello"}',  # dict, not array
-        "  { not array }",
-        "123",
-        "null",
+        "<system_reminder>only opening tag",
+        "no opening</system_reminder>\n suffix",
+        '[{"type": "user", "content": "legacy json"}]',  # legacy JSON envelope — no longer recognised
+        "  <system_reminder>leading whitespace</system_reminder>\nuser",
     ],
     ids=[
         "empty_string",
         "plain_text",
-        "json_object_not_array",
-        "curly_brace_start",
-        "numeric_string",
-        "null_string",
+        "only_open_tag",
+        "only_close_tag",
+        "legacy_json_array",
+        "leading_whitespace",
     ],
 )
-def test_is_structured_content_string_not_starting_with_bracket_returns_false(value):
-    """Non-array-like strings must return False (covers line 50)."""
+def test_is_structured_content_returns_false_for_non_envelopes(value):
     assert is_structured_content(value) is False
-    assert isinstance(is_structured_content(value), bool)
 
 
 @pytest.mark.parametrize(
     "value",
-    [
-        None,
-        42,
-        3.14,
-        True,
-        ["not", "a", "string"],
-        {"key": "value"},
-    ],
-    ids=[
-        "none",
-        "int",
-        "float",
-        "bool",
-        "list",
-        "dict",
-    ],
+    [None, 42, 3.14, True, ["not", "a", "string"], {"key": "value"}],
+    ids=["none", "int", "float", "bool", "list", "dict"],
 )
-def test_is_structured_content_non_string_input_returns_false(value):
-    """Non-string inputs must return False without raising (covers line 50)."""
+def test_is_structured_content_non_string_returns_false(value):
     assert is_structured_content(value) is False
-    assert isinstance(is_structured_content(value), bool)
 
 
-def test_is_structured_content_malformed_json_returns_false():
-    """Malformed JSON that starts with '[' must return False (covers lines 55-57)."""
-    malformed = "[{this is not valid json!!!"
-    result = is_structured_content(malformed)
+def test_is_structured_content_complete_envelope_returns_true():
+    content = "<system_reminder>ctx</system_reminder>\nuser"
 
-    assert result is False
-    assert isinstance(result, bool)
+    assert is_structured_content(content) is True
 
 
-def test_is_structured_content_array_without_user_type_returns_false():
-    """A valid JSON array without a 'type: user' element returns False."""
-    content = json.dumps([{"type": "enhanced", "content": "ctx"}])
-    result = is_structured_content(content)
+def test_is_structured_content_envelope_with_multiline_enhanced():
+    content = "<system_reminder>line1\nline2</system_reminder>\nuser"
 
-    assert result is False
-    assert isinstance(result, bool)
-
-
-def test_is_structured_content_empty_json_array_returns_false():
-    """An empty JSON array returns False since there is no user part."""
-    result = is_structured_content("[]")
-
-    assert result is False
-    assert isinstance(result, bool)
-
-
-def test_is_structured_content_valid_structured_returns_true():
-    """A well-formed structured message returns True."""
-    content = json.dumps([{"type": "user", "content": "hello"}])
-    result = is_structured_content(content)
-
-    assert result is True
-    assert isinstance(result, bool)
-
-
-def test_is_structured_content_array_of_non_dict_items_returns_false():
-    """A JSON array of primitives (no dicts) returns False (covers lines 55-57 TypeError path)."""
-    content = json.dumps(["just", "a", "list", "of", "strings"])
-    result = is_structured_content(content)
-
-    assert result is False
-    assert isinstance(result, bool)
+    assert is_structured_content(content) is True
 
 
 # ---------------------------------------------------------------------------
-# extract_user_input  (covers lines 68, 74-76)
+# extract_user_input
 # ---------------------------------------------------------------------------
 
 
@@ -145,82 +104,56 @@ def test_is_structured_content_array_of_non_dict_items_returns_false():
     [
         ("hello world", "hello world"),
         ("", ""),
-        ("  some plain text  ", "  some plain text  "),
+        ("  padded  ", "  padded  "),
         ('{"key": "value"}', '{"key": "value"}'),
+        ('[{"type": "user", "content": "legacy"}]', '[{"type": "user", "content": "legacy"}]'),
     ],
-    ids=[
-        "plain_text",
-        "empty_string",
-        "whitespace_padded",
-        "json_object_string",
-    ],
+    ids=["plain", "empty", "padded", "json_object", "legacy_json_array"],
 )
-def test_extract_user_input_non_structured_returns_content_unchanged(value, expected):
-    """When content is not structured, return it unchanged (covers line 68)."""
+def test_extract_user_input_non_envelope_returns_unchanged(value, expected):
     result = extract_user_input(value)
 
     assert result == expected
     assert isinstance(result, str)
 
 
-def test_extract_user_input_valid_structured_returns_user_part():
-    """When content is structured, extract the user part."""
-    content = json.dumps(
-        [
-            {"type": "user", "content": "original question"},
-            {"type": "enhanced", "content": "Context: extra info"},
-        ]
-    )
+def test_extract_user_input_envelope_returns_user_portion():
+    content = "<system_reminder>Context: greeting</system_reminder>\noriginal question"
+
     result = extract_user_input(content)
 
     assert result == "original question"
     assert "Context" not in result
 
 
-def test_extract_user_input_structured_missing_content_key_returns_fallback():
-    """User part without a 'content' key falls back to the raw content string."""
-    parts = [{"type": "user"}]
-    content = json.dumps(parts)
-    result = extract_user_input(content)
+def test_extract_user_input_envelope_with_empty_user_section():
+    content = build_structured_content("ctx", "")
 
-    # part.get("content", content) returns the full raw content as fallback
-    assert result == content
-    assert isinstance(result, str)
+    assert extract_user_input(content) == ""
 
 
-def test_extract_user_input_malformed_json_returns_content_unchanged():
-    """A string starting with '[' but containing invalid JSON returns unchanged (line 68)."""
-    broken = "[not valid json"
-    result = extract_user_input(broken)
+def test_extract_user_input_envelope_user_section_contains_newlines():
+    user = "line1\nline2\nline3"
+    content = build_structured_content("ctx", user)
 
-    assert result == broken
-    assert isinstance(result, str)
+    assert extract_user_input(content) == user
 
 
-def test_extract_user_input_json_decode_error_returns_fallback():
-    """When json.loads raises inside extract_user_input, the raw content is returned (covers lines 74-76).
+def test_extract_user_input_envelope_user_section_contains_literal_close_tag():
+    """A second ``</system_reminder>\\n`` inside user text is left untouched —
+    only the first occurrence terminates the envelope."""
+    user = "weird user text </system_reminder>\nstill user"
+    content = build_structured_content("ctx", user)
 
-    Patch is_structured_content to return True so we enter the try block, then
-    patch json.loads to raise JSONDecodeError to exercise the except branch.
-    """
-    raw = '[{"type": "user", "content": "hello"}]'
-    with patch("datus.utils.message_utils.is_structured_content", return_value=True):
-        with patch("datus.utils.message_utils.json.loads", side_effect=json.JSONDecodeError("err", "doc", 0)):
-            result = extract_user_input(raw)
-
-    assert result == raw
-    assert isinstance(result, str)
+    assert extract_user_input(content) == user
 
 
-def test_extract_user_input_type_error_returns_fallback():
-    """When json.loads raises TypeError inside extract_user_input, the raw content is returned (covers lines 74-76)."""
-    raw = '[{"type": "user", "content": "hello"}]'
-    with patch("datus.utils.message_utils.is_structured_content", return_value=True):
-        with patch("datus.utils.message_utils.json.loads", side_effect=TypeError("bad type")):
-            result = extract_user_input(raw)
+def test_extract_user_input_none_returns_empty_string():
+    assert extract_user_input(None) == ""
 
-    assert result == raw
-    assert isinstance(result, str)
+
+def test_extract_user_input_non_string_scalar_is_coerced_to_str():
+    assert extract_user_input(42) == "42"
 
 
 # ---------------------------------------------------------------------------
@@ -229,113 +162,68 @@ def test_extract_user_input_type_error_returns_fallback():
 # ---------------------------------------------------------------------------
 
 
-def test_extract_user_input_anthropic_text_blocks_returns_concatenated_text():
-    """A list of Anthropic ``text`` blocks must collapse to a single str."""
-    blocks = [
-        {"type": "text", "text": "未来两年的趋势是什么？"},
-    ]
-    result = extract_user_input(blocks)
+def test_extract_user_input_anthropic_single_text_block():
+    blocks = [{"type": "text", "text": "未来两年的趋势是什么？"}]
 
-    assert result == "未来两年的趋势是什么？"
-    assert isinstance(result, str)
+    assert extract_user_input(blocks) == "未来两年的趋势是什么？"
 
 
-def test_extract_user_input_anthropic_multiple_text_blocks_joined_with_newline():
-    """Multiple ``text`` blocks join with newline so no information is lost."""
+def test_extract_user_input_anthropic_multiple_text_blocks_join_with_newline():
     blocks = [
         {"type": "text", "text": "first line"},
         {"type": "text", "text": "second line"},
     ]
-    result = extract_user_input(blocks)
 
-    assert result == "first line\nsecond line"
-    assert isinstance(result, str)
+    assert extract_user_input(blocks) == "first line\nsecond line"
 
 
-def test_extract_user_input_openai_output_text_block_returns_text():
-    """OpenAI Responses-API ``output_text``/``input_text`` blocks are honoured."""
+def test_extract_user_input_openai_input_and_output_text_blocks():
     blocks = [
         {"type": "input_text", "text": "user typed this"},
         {"type": "output_text", "text": "assistant said this"},
     ]
-    result = extract_user_input(blocks)
 
-    assert result == "user typed this\nassistant said this"
-    assert isinstance(result, str)
+    assert extract_user_input(blocks) == "user typed this\nassistant said this"
 
 
-def test_extract_user_input_text_block_with_structured_json_extracts_user_part():
-    """Provider text blocks may wrap Datus structured content; titles must show the user text."""
-    structured = build_structured_content(
-        [
-            {"type": "enhanced", "content": "Database Context: mysql"},
-            {"type": "user", "content": "现在有哪些表"},
-        ]
-    )
-    blocks = [{"type": "input_text", "text": structured}]
+def test_extract_user_input_text_block_wrapping_envelope_recursively_unwraps():
+    inner = build_structured_content("Database Context: mysql", "现在有哪些表")
+    blocks = [{"type": "input_text", "text": inner}]
 
-    result = extract_user_input(blocks)
-
-    assert result == "现在有哪些表"
-    assert "Database Context" not in result
+    assert extract_user_input(blocks) == "现在有哪些表"
 
 
-def test_extract_user_input_block_list_with_non_text_blocks_skips_them():
-    """Tool-call / tool-result / unrelated blocks are ignored, text is preserved."""
+def test_extract_user_input_block_list_skips_non_text_blocks():
     blocks = [
         {"type": "text", "text": "explain"},
         {"type": "tool_use", "id": "t1", "name": "x", "input": {}},
         {"type": "tool_result", "tool_use_id": "t1", "content": "ignored"},
     ]
-    result = extract_user_input(blocks)
 
-    assert result == "explain"
-    assert isinstance(result, str)
-
-
-def test_extract_user_input_block_list_unencoded_user_part_takes_precedence():
-    """A datus ``user`` part stored as a list element returns its content directly."""
-    blocks = [
-        {"type": "text", "text": "noise"},
-        {"type": "user", "content": "原始问题"},
-    ]
-    result = extract_user_input(blocks)
-
-    assert result == "原始问题"
-    assert isinstance(result, str)
+    assert extract_user_input(blocks) == "explain"
 
 
 def test_extract_user_input_empty_list_returns_empty_string():
-    """An empty content list must not raise and must return ``""`` (not the list)."""
-    result = extract_user_input([])
-
-    assert result == ""
-    assert isinstance(result, str)
+    assert extract_user_input([]) == ""
 
 
-def test_extract_user_input_block_list_with_non_dict_items_is_ignored():
-    """Non-dict items (e.g. raw strings) are skipped without raising."""
+def test_extract_user_input_block_list_with_non_dict_items_is_skipped():
     blocks = [
         "raw string slipped in",
         {"type": "text", "text": "real content"},
         42,
     ]
-    result = extract_user_input(blocks)
 
-    assert result == "real content"
-    assert isinstance(result, str)
+    assert extract_user_input(blocks) == "real content"
 
 
 def test_extract_user_input_block_list_text_field_non_string_is_skipped():
-    """A block whose ``text`` field is not a string is skipped, not coerced."""
     blocks = [
         {"type": "text", "text": ["not", "a", "string"]},
         {"type": "text", "text": "real text"},
     ]
-    result = extract_user_input(blocks)
 
-    assert result == "real text"
-    assert isinstance(result, str)
+    assert extract_user_input(blocks) == "real text"
 
 
 def test_extract_user_input_pydantic_compatible_for_chat_session_item_info():
@@ -347,12 +235,11 @@ def test_extract_user_input_pydantic_compatible_for_chat_session_item_info():
     blocks = [{"type": "text", "text": "anything"}]
     result = extract_user_input(blocks)
 
-    # Mirror what ChatSessionItemInfo's user_query: Optional[str] enforces.
     assert isinstance(result, str), f"expected str, got {type(result).__name__}: {result!r}"
 
 
 # ---------------------------------------------------------------------------
-# extract_enhanced_context  (covers lines 86, 92-94)
+# extract_enhanced_context
 # ---------------------------------------------------------------------------
 
 
@@ -363,86 +250,41 @@ def test_extract_user_input_pydantic_compatible_for_chat_session_item_info():
         "",
         '{"type": "enhanced", "content": "ctx"}',
         "42",
-        "[not valid json",
+        "<system_reminder>missing close",
+        '[{"type": "enhanced", "content": "legacy"}]',
     ],
-    ids=[
-        "plain_text",
-        "empty_string",
-        "json_object_string",
-        "numeric_string",
-        "broken_array_prefix",
-    ],
+    ids=["plain", "empty", "json_object", "numeric", "open_tag_only", "legacy_json_array"],
 )
-def test_extract_enhanced_context_non_structured_returns_none(value):
-    """When content is not structured, return None (covers line 86)."""
-    result = extract_enhanced_context(value)
-
-    assert result is None
-    assert not isinstance(result, str)
+def test_extract_enhanced_context_non_envelope_returns_none(value):
+    assert extract_enhanced_context(value) is None
 
 
-def test_extract_enhanced_context_valid_structured_returns_enhanced_part():
-    """When content is structured with an enhanced part, extract it."""
-    content = json.dumps(
-        [
-            {"type": "user", "content": "question"},
-            {"type": "enhanced", "content": "Context: relevant info"},
-        ]
-    )
-    result = extract_enhanced_context(content)
+def test_extract_enhanced_context_returns_enhanced_section():
+    content = "<system_reminder>Context: relevant info</system_reminder>\nquestion"
 
-    assert result == "Context: relevant info"
-    assert "question" not in result
+    assert extract_enhanced_context(content) == "Context: relevant info"
 
 
-def test_extract_enhanced_context_structured_without_enhanced_returns_none():
-    """Structured content without an enhanced part returns None."""
-    content = json.dumps([{"type": "user", "content": "just a question"}])
-    result = extract_enhanced_context(content)
+def test_extract_enhanced_context_preserves_multiline_and_unicode():
+    enhanced = "数据库上下文：mysql\n表：用户表, 订单表"
+    content = build_structured_content(enhanced, "查一下")
 
-    assert result is None
-    assert not isinstance(result, str)
+    assert extract_enhanced_context(content) == enhanced
 
 
-def test_extract_enhanced_context_multiple_enhanced_returns_first():
-    """When multiple enhanced parts exist, the first one is returned."""
-    content = json.dumps(
-        [
-            {"type": "user", "content": "q"},
-            {"type": "enhanced", "content": "first context"},
-            {"type": "enhanced", "content": "second context"},
-        ]
-    )
-    result = extract_enhanced_context(content)
+def test_extract_enhanced_context_first_close_tag_terminates_section():
+    """If the user portion happens to contain another ``</system_reminder>\\n``,
+    the enhanced section ends at the FIRST close tag (str.index)."""
+    user = "user text </system_reminder>\nmore"
+    content = build_structured_content("real-enhanced", user)
 
-    assert result == "first context"
-    assert result != "second context"
+    assert extract_enhanced_context(content) == "real-enhanced"
 
 
-def test_extract_enhanced_context_json_decode_error_returns_none():
-    """When json.loads raises inside extract_enhanced_context, None is returned (covers lines 92-94).
+def test_extract_enhanced_context_empty_enhanced_section():
+    content = "<system_reminder></system_reminder>\nuser"
 
-    Patch is_structured_content to return True so we enter the try block, then
-    patch json.loads to raise JSONDecodeError to exercise the except branch.
-    """
-    raw = '[{"type": "user", "content": "q"}, {"type": "enhanced", "content": "ctx"}]'
-    with patch("datus.utils.message_utils.is_structured_content", return_value=True):
-        with patch("datus.utils.message_utils.json.loads", side_effect=json.JSONDecodeError("err", "doc", 0)):
-            result = extract_enhanced_context(raw)
-
-    assert result is None
-    assert not isinstance(result, str)
-
-
-def test_extract_enhanced_context_type_error_returns_none():
-    """When json.loads raises TypeError inside extract_enhanced_context, None is returned (covers lines 92-94)."""
-    raw = '[{"type": "user", "content": "q"}, {"type": "enhanced", "content": "ctx"}]'
-    with patch("datus.utils.message_utils.is_structured_content", return_value=True):
-        with patch("datus.utils.message_utils.json.loads", side_effect=TypeError("bad type")):
-            result = extract_enhanced_context(raw)
-
-    assert result is None
-    assert not isinstance(result, str)
+    assert extract_enhanced_context(content) == ""
 
 
 # ---------------------------------------------------------------------------
@@ -450,13 +292,11 @@ def test_extract_enhanced_context_type_error_returns_none():
 # ---------------------------------------------------------------------------
 
 
-def test_roundtrip_build_then_extract_user_and_context():
-    """Build structured content and verify both user input and context can be extracted."""
-    parts = [
-        {"type": "user", "content": "What is 2+2?"},
-        {"type": "enhanced", "content": "The user is asking a math question."},
-    ]
-    structured = build_structured_content(parts)
+def test_roundtrip_build_then_extract_both_sides():
+    enhanced = "The user is asking a math question."
+    user = "What is 2+2?"
+    structured = build_structured_content(enhanced, user)
 
-    assert extract_user_input(structured) == "What is 2+2?"
-    assert extract_enhanced_context(structured) == "The user is asking a math question."
+    assert extract_user_input(structured) == user
+    assert extract_enhanced_context(structured) == enhanced
+    assert is_structured_content(structured) is True

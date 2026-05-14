@@ -32,7 +32,7 @@ from datus.schemas.base import BaseInput, BaseResult
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
-from datus.utils.message_utils import MessagePart, build_structured_content
+from datus.utils.message_utils import build_structured_content
 from datus.utils.node_utils import build_database_context
 
 if TYPE_CHECKING:
@@ -543,9 +543,7 @@ class AgenticNode(Node):
         # Lambda resolves session_id lazily — at setup time it's still None,
         # ``_get_or_create_session`` allocates it on the first turn. Snapshot
         # would leave the storage permanently unbound and never persist.
-        tools: List[Tool] = list(
-            PlanTool(self._session, session_id=lambda: self.session_id).available_tools()
-        )
+        tools: List[Tool] = list(PlanTool(self._session, session_id=lambda: self.session_id).available_tools())
         tools.extend(ConfirmPlanTool(self).available_tools())
         return tools
 
@@ -689,12 +687,7 @@ class AgenticNode(Node):
             return user_message
 
         enhanced_context = "\n\n".join(enhanced_parts)
-        return build_structured_content(
-            [
-                MessagePart(type="enhanced", content=enhanced_context),
-                MessagePart(type="user", content=user_message),
-            ]
-        )
+        return build_structured_content(enhanced_context, user_message)
 
     def get_node_name(self) -> str:
         """

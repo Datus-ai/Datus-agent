@@ -27,7 +27,7 @@ from datus.schemas.semantic_agentic_node_models import SemanticNodeResult
 from datus.tools.func_tool import DBFuncTool, FilesystemFuncTool
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
-from datus.utils.message_utils import MessagePart, build_structured_content
+from datus.utils.message_utils import build_structured_content
 from datus.validation import ValidationHook
 from datus.validation.report import build_retry_prompt
 
@@ -492,10 +492,5 @@ class DeliverableAgenticNode(AgenticNode):
 
         if enhanced_parts:
             enhanced_context = "\n\n".join(enhanced_parts)
-            return build_structured_content(
-                [
-                    MessagePart(type="enhanced", content=enhanced_context),
-                    MessagePart(type="user", content=user_input.user_message),
-                ]
-            )
+            return build_structured_content(enhanced_context, user_input.user_message)
         return user_input.user_message
