@@ -2,10 +2,12 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Shared helpers for the visual-artifact subagents (report + dashboard).
+"""Shared helpers for the visual-artifact subagents (report + dashboard)
+and the matching artifact tool implementations.
 
-Both ``GenVisualReportAgenticNode`` and ``GenVisualDashboardAgenticNode``
-need to:
+Both ``GenVisualReportAgenticNode`` / ``GenVisualDashboardAgenticNode``
+*and* the underlying ``ReportArtifactTools`` / ``DashboardArtifactTools``
+need a small set of byte-identical helpers:
 
 * Detect inline ``rpt_<id>`` / ``dash_<id>`` mentions in the user message
   so the LLM can decide between "edit existing" and "create new that
@@ -13,15 +15,20 @@ need to:
 * Walk the recorded :class:`ActionHistory.output` envelope produced by
   artifact tool calls to pull out fields like ``app_jsx_path`` or
   ``render_files``.
+* Allocate a fresh artifact id collision-free under the project root,
+  and stamp an ISO-8601 UTC timestamp for ``executed_at`` / ``saved_at``
+  fields.
 
-Keeping these in one module so the two subagents stay byte-identical on
-the logic the LLM observes.
+Keeping all of the above in one module so the two subagents stay
+byte-identical on the logic the LLM observes.
 """
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import re
+import uuid
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -79,6 +86,82 @@ def detect_referenced_artifact_ids(
             seen.add(candidate)
             found.append(candidate)
     return found
+
+
+def utc_now_iso() -> str:
+    """ISO-8601 UTC timestamp at second precision (``YYYY-MM-DDTHH:MM:SSZ``).
+
+    Used for ``executed_at`` (report queries) and ``saved_at`` (dashboard
+    template metadata). Stamped to the second so two saves within the
+    same minute don't appear identical.
+    """
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+_SLUG_NON_ASCII_RE = re.compile(r"[^a-z0-9]+")
+
+
+def slugify_title(title: str, max_len: int = 32) -> str:
+    """Best-effort ASCII slug from an LLM-supplied artifact title.
+
+    Non-ASCII characters are stripped, runs of separators collapse to a
+    single underscore, leading/trailing underscores are trimmed, and the
+    result is truncated to ``max_len`` chars. Returns an empty string
+    when the title contains no usable characters — callers fall back to
+    a literal default (``"report"`` / ``"dashboard"``).
+    """
+    ascii_only = title.encode("ascii", errors="ignore").decode("ascii")
+    slug = _SLUG_NON_ASCII_RE.sub("_", ascii_only.lower()).strip("_")
+    return slug[:max_len]
+
+
+def allocate_artifact_id(
+    *,
+    title: str,
+    project_root: Path,
+    prefix: str,
+    root_dir_name: str,
+    default_base_slug: str,
+    max_total_len: int,
+    attempts: int = 8,
+) -> str:
+    """Generate ``<prefix><title-slug>_<yymmdd>_<rand6>`` not colliding on disk.
+
+    Parameters
+    ----------
+    title:
+        Raw LLM-supplied title. Slugified via :func:`slugify_title`; empty
+        result falls back to ``default_base_slug``.
+    project_root:
+        Resolved project root; the candidate is checked against
+        ``project_root/<root_dir_name>/<candidate>``.
+    prefix:
+        ``"rpt_"`` for reports, ``"dash_"`` for dashboards.
+    root_dir_name:
+        ``"reports"`` for reports, ``"dashboards"`` for dashboards.
+    default_base_slug:
+        Slug to use when ``title`` reduces to an empty string after
+        ASCII filtering.
+    max_total_len:
+        Hard cap on the final id length. Mirrors the legacy values
+        (report = 83, dashboard = 84) so we don't shorten existing ids.
+    attempts:
+        Number of unique-id rolls before giving up. Default 8.
+
+    Raises
+    ------
+    RuntimeError
+        If no collision-free candidate is found within ``attempts``.
+    """
+    stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%y%m%d")
+    base_slug = slugify_title(title) or default_base_slug
+    artifact_root = project_root / root_dir_name
+    for _ in range(attempts):
+        suffix = uuid.uuid4().hex[:6]
+        candidate = f"{prefix}{base_slug}_{stamp}_{suffix}"[:max_total_len]
+        if not (artifact_root / candidate).exists():
+            return candidate
+    raise RuntimeError(f"Failed to allocate a unique {root_dir_name.rstrip('s')} id after {attempts} attempts")
 
 
 def extract_artifact_result_field(action: ActionHistory, field: str) -> Optional[str]:

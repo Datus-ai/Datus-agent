@@ -34,16 +34,16 @@ from typing import Any, AsyncGenerator, ClassVar, Dict, Generic, List, Literal, 
 
 from pydantic import BaseModel
 
-from datus.agent.node._visual_artifact_helpers import (
-    detect_referenced_artifact_ids,
-    extract_artifact_result_field,
-    extract_artifact_result_list,
-)
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool
+from datus.tools.func_tool._visual_artifact_helpers import (
+    detect_referenced_artifact_ids,
+    extract_artifact_result_field,
+    extract_artifact_result_list,
+)
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import MessagePart, build_structured_content

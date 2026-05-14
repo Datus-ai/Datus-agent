@@ -166,7 +166,7 @@ class GenVisualDashboardAgenticNode(
 # Module-level back-compat for legacy callers that imported the free
 # function (kept thin — the heavy logic lives on the base class).
 def _detect_referenced_dashboard_ids(user_message: str, project_root: Path) -> List[str]:
-    from datus.agent.node._visual_artifact_helpers import detect_referenced_artifact_ids
+    from datus.tools.func_tool._visual_artifact_helpers import detect_referenced_artifact_ids
 
     return detect_referenced_artifact_ids(
         user_message=user_message,

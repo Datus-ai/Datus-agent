@@ -24,10 +24,8 @@ Three complementary tools live here:
 
 from __future__ import annotations
 
-import datetime as _dt
 import json
 import re
-import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
@@ -44,20 +42,22 @@ from datus.schemas.gen_visual_dashboard_models import (
     extract_query_slug,
     parse_datus_params_header,
 )
+from datus.tools.func_tool._artifact_filesystem_base import ArtifactFilesystemFuncTool
+from datus.tools.func_tool._visual_artifact_helpers import (
+    allocate_artifact_id,
+    utc_now_iso,
+)
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
-from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.report_artifact_tools import (
     _DEFAULT_EXPORT_RE,
     _IMPORT_PATH_RE,
     ALLOWED_BARE_MODULES,
-    RENDER_ALLOWED_SUFFIXES,
     _atomic_write_text,
     _infer_column_type,
     _looks_like_select,
     _module_key,
     _normalize_value,
     _resolve_relative_import,
-    _slugify_title,
 )
 from datus.utils.loggings import get_logger
 
@@ -102,21 +102,18 @@ _PARAMS_KEY_RE = re.compile(
 
 
 def _allocate_dashboard_id(title: str, project_root: Path) -> str:
-    """Generate ``dash_<title-slug>_<yymmdd>_<rand6>`` not colliding on disk."""
-    stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%y%m%d")
-    base_slug = _slugify_title(title) or "dashboard"
-    dashboards_root = project_root / "dashboards"
-    for _ in range(8):
-        suffix = uuid.uuid4().hex[:6]
-        candidate = f"dash_{base_slug}_{stamp}_{suffix}"
-        candidate = candidate[:84]
-        if not (dashboards_root / candidate).exists():
-            return candidate
-    raise RuntimeError("Failed to allocate a unique dashboard id after 8 attempts")
+    """Generate ``dash_<title-slug>_<yymmdd>_<rand6>`` not colliding on disk.
 
-
-def _utc_now_iso() -> str:
-    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    Thin wrapper around :func:`allocate_artifact_id`.
+    """
+    return allocate_artifact_id(
+        title=title,
+        project_root=project_root,
+        prefix="dash_",
+        root_dir_name="dashboards",
+        default_base_slug="dashboard",
+        max_total_len=84,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -238,7 +235,7 @@ _render_template_for_trial = render_dashboard_template
 # --------------------------------------------------------------------------- #
 
 
-class DashboardFilesystemFuncTool(FilesystemFuncTool):
+class DashboardFilesystemFuncTool(ArtifactFilesystemFuncTool):
     """Filesystem tool that protects the dashboard artifact tree.
 
     * ``dashboards/<id>/queries/*`` — read-only via the filesystem layer.
@@ -250,88 +247,9 @@ class DashboardFilesystemFuncTool(FilesystemFuncTool):
     * Anything else under the project root inherits the parent's policy.
     """
 
-    _RENDER_PATH_RE = re.compile(r"^dashboards/[^/]+/render(?:/.+)?$")
-    _QUERIES_PATH_RE = re.compile(r"^dashboards/[^/]+/queries/.+$")
-
-    def _is_queries_path(self, path: str) -> bool:
-        try:
-            resolved = self._classify(path)
-        except Exception:  # pragma: no cover - defensive
-            return False
-        try:
-            rel = resolved.resolved.relative_to(self._root_resolved)
-        except ValueError:
-            return False
-        return bool(self._QUERIES_PATH_RE.match(rel.as_posix()))
-
-    def _classify_render_path(self, path: str) -> Optional[str]:
-        try:
-            resolved = self._classify(path)
-        except Exception:  # pragma: no cover - defensive
-            return None
-        try:
-            rel = resolved.resolved.relative_to(self._root_resolved)
-        except ValueError:
-            return None
-        if not self._RENDER_PATH_RE.match(rel.as_posix()):
-            return None
-        return "render"
-
-    def _render_extension_reject(self, display: str) -> FuncToolResult:
-        return FuncToolResult(
-            success=0,
-            error=(
-                f"{display}: only .jsx / .js / .css files are allowed under dashboards/<id>/render/. "
-                "Data files belong under queries/ and must be produced via save_query_template."
-            ),
-        )
-
-    def write_file(self, path: str, content: str, file_type: str = "") -> FuncToolResult:  # type: ignore[override]
-        if self._is_queries_path(path):
-            return FuncToolResult(
-                success=0,
-                error=(
-                    "Files under dashboards/<id>/queries/ must not be written directly. "
-                    "Use the `save_query_template` tool, which renders the template, runs it, "
-                    "and persists both .sql.j2 and .params.json."
-                ),
-            )
-        if self._classify_render_path(path) == "render":
-            suffix = Path(path).suffix.lower()
-            if suffix not in RENDER_ALLOWED_SUFFIXES:
-                return self._render_extension_reject(path)
-        return super().write_file(path, content, file_type)
-
-    def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:  # type: ignore[override]
-        if self._is_queries_path(path):
-            return FuncToolResult(
-                success=0,
-                error=(
-                    "Query template artifact files cannot be edited in place. Re-run "
-                    "`save_query_template` with the same name to regenerate them."
-                ),
-            )
-        if self._classify_render_path(path) == "render":
-            suffix = Path(path).suffix.lower()
-            if suffix not in RENDER_ALLOWED_SUFFIXES:
-                return self._render_extension_reject(path)
-        return super().edit_file(path, old_string, new_string)
-
-    def delete_file(self, path: str) -> FuncToolResult:  # type: ignore[override]
-        if self._is_queries_path(path):
-            return FuncToolResult(
-                success=0,
-                error=(
-                    "Query template artifact files cannot be deleted via delete_file. "
-                    "Re-run save_query_template for the desired final state, or remove the "
-                    "dashboard directory via the filesystem outside the agent."
-                ),
-            )
-        if self._classify_render_path(path) == "render":
-            suffix = Path(path).suffix.lower()
-            if suffix not in RENDER_ALLOWED_SUFFIXES:
-                return self._render_extension_reject(path)
-        return super().delete_file(path)
+    ARTIFACT_ROOT_DIR_NAME = "dashboards"
+    SAVE_QUERY_TOOL_NAME = "save_query_template"
+    ARTIFACT_KIND = "dashboard"
 
 
 # --------------------------------------------------------------------------- #
@@ -670,7 +588,7 @@ class DashboardArtifactTools:
             "columns": columns_meta,
             "sample_params": sample_params,
             "sample_row_count": len(rows),
-            "saved_at": _utc_now_iso(),
+            "saved_at": utc_now_iso(),
         }
 
         try:

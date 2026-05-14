@@ -26,12 +26,10 @@ real-world (~25 KB) reports.
 
 from __future__ import annotations
 
-import datetime as _dt
 import json
 import os
 import re
 import tempfile
-import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
@@ -44,8 +42,13 @@ from datus.schemas.gen_visual_report_models import (
     QueryResultFile,
     extract_query_slug,
 )
+from datus.tools.func_tool._artifact_filesystem_base import ArtifactFilesystemFuncTool
+from datus.tools.func_tool._visual_artifact_helpers import (
+    allocate_artifact_id,
+    slugify_title,
+    utc_now_iso,
+)
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
-from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -53,8 +56,6 @@ logger = get_logger(__name__)
 
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+\-]\d{2}:?\d{2})?)?$")
 _MAX_QUERY_BYTES = 5 * 1024 * 1024  # 5 MB hard cap per query result file
-
-_SLUG_NON_ASCII_RE = re.compile(r"[^a-z0-9]+")
 
 # Catches every literal-string argument to useQuerySql(...). Template strings
 # and dynamic expressions are intentionally skipped (the system prompt allows
@@ -98,35 +99,29 @@ ALLOWED_BARE_MODULES: frozenset[str] = frozenset(
     }
 )
 
-# File extensions the LLM may write under `reports/<id>/render/`. JSON / data
-# files are intentionally excluded — those belong under `queries/` and only
-# `save_query` should produce them.
-RENDER_ALLOWED_SUFFIXES: frozenset[str] = frozenset({".jsx", ".js", ".css"})
-
-
-def _slugify_title(title: str, max_len: int = 32) -> str:
-    """Best-effort ASCII slug from an LLM-supplied report title."""
-    ascii_only = title.encode("ascii", errors="ignore").decode("ascii")
-    slug = _SLUG_NON_ASCII_RE.sub("_", ascii_only.lower()).strip("_")
-    return slug[:max_len]
-
 
 def _allocate_report_id(title: str, project_root: Path) -> str:
-    """Generate ``rpt_<title-slug>_<yymmdd>_<rand6>`` not colliding on disk."""
-    stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%y%m%d")
-    base_slug = _slugify_title(title) or "report"
-    reports_root = project_root / "reports"
-    for _ in range(8):
-        suffix = uuid.uuid4().hex[:6]
-        candidate = f"rpt_{base_slug}_{stamp}_{suffix}"
-        candidate = candidate[:83]
-        if not (reports_root / candidate).exists():
-            return candidate
-    raise RuntimeError("Failed to allocate a unique report id after 8 attempts")
+    """Generate ``rpt_<title-slug>_<yymmdd>_<rand6>`` not colliding on disk.
+
+    Thin wrapper around :func:`allocate_artifact_id` kept under its
+    historical name so internal callers / tests don't need to change.
+    """
+    return allocate_artifact_id(
+        title=title,
+        project_root=project_root,
+        prefix="rpt_",
+        root_dir_name="reports",
+        default_base_slug="report",
+        max_total_len=83,
+    )
 
 
-def _utc_now_iso() -> str:
-    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+# Module-level aliases preserved so existing internal imports
+# (``dashboard_artifact_tools`` pulls ``_slugify_title``) keep working
+# without forcing every call site to switch to the new public names
+# in lockstep with this refactor.
+_slugify_title = slugify_title
+_utc_now_iso = utc_now_iso
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
@@ -279,7 +274,7 @@ def _resolve_relative_import(caller_key: str, spec: str, module_keys: Set[str]) 
 # --------------------------------------------------------------------------- #
 
 
-class ReportFilesystemFuncTool(FilesystemFuncTool):
+class ReportFilesystemFuncTool(ArtifactFilesystemFuncTool):
     """Filesystem tool that protects the report artifact tree.
 
     * ``reports/<id>/queries/*`` — read-only via the filesystem layer.
@@ -291,88 +286,9 @@ class ReportFilesystemFuncTool(FilesystemFuncTool):
     * Anything else under the project root inherits the parent's policy.
     """
 
-    _RENDER_PATH_RE = re.compile(r"^reports/[^/]+/render(?:/.+)?$")
-    _QUERIES_PATH_RE = re.compile(r"^reports/[^/]+/queries/.+$")
-
-    def _is_queries_path(self, path: str) -> bool:
-        try:
-            resolved = self._classify(path)
-        except Exception:  # pragma: no cover - defensive
-            return False
-        try:
-            rel = resolved.resolved.relative_to(self._root_resolved)
-        except ValueError:
-            return False
-        return bool(self._QUERIES_PATH_RE.match(rel.as_posix()))
-
-    def _classify_render_path(self, path: str) -> Optional[str]:
-        """Return ``"render"`` when path lives under the report's render dir."""
-        try:
-            resolved = self._classify(path)
-        except Exception:  # pragma: no cover - defensive
-            return None
-        try:
-            rel = resolved.resolved.relative_to(self._root_resolved)
-        except ValueError:
-            return None
-        if not self._RENDER_PATH_RE.match(rel.as_posix()):
-            return None
-        return "render"
-
-    def _render_extension_reject(self, display: str) -> FuncToolResult:
-        return FuncToolResult(
-            success=0,
-            error=(
-                f"{display}: only .jsx / .js / .css files are allowed under reports/<id>/render/. "
-                "Data files belong under queries/ and must be produced via save_query."
-            ),
-        )
-
-    def write_file(self, path: str, content: str, file_type: str = "") -> FuncToolResult:  # type: ignore[override]
-        if self._is_queries_path(path):
-            return FuncToolResult(
-                success=0,
-                error=(
-                    "Files under reports/<id>/queries/ must not be written directly. "
-                    "Use the `save_query` tool, which runs the SQL and writes both .sql and .json."
-                ),
-            )
-        if self._classify_render_path(path) == "render":
-            suffix = Path(path).suffix.lower()
-            if suffix not in RENDER_ALLOWED_SUFFIXES:
-                return self._render_extension_reject(path)
-        return super().write_file(path, content, file_type)
-
-    def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:  # type: ignore[override]
-        if self._is_queries_path(path):
-            return FuncToolResult(
-                success=0,
-                error=(
-                    "Query artifact files cannot be edited in place. Re-run `save_query` with "
-                    "the same name to regenerate them."
-                ),
-            )
-        if self._classify_render_path(path) == "render":
-            suffix = Path(path).suffix.lower()
-            if suffix not in RENDER_ALLOWED_SUFFIXES:
-                return self._render_extension_reject(path)
-        return super().edit_file(path, old_string, new_string)
-
-    def delete_file(self, path: str) -> FuncToolResult:  # type: ignore[override]
-        if self._is_queries_path(path):
-            return FuncToolResult(
-                success=0,
-                error=(
-                    "Query artifact files cannot be deleted via delete_file. "
-                    "Re-run save_query for the desired final state, or remove the report "
-                    "directory via the filesystem outside the agent."
-                ),
-            )
-        if self._classify_render_path(path) == "render":
-            suffix = Path(path).suffix.lower()
-            if suffix not in RENDER_ALLOWED_SUFFIXES:
-                return self._render_extension_reject(path)
-        return super().delete_file(path)
+    ARTIFACT_ROOT_DIR_NAME = "reports"
+    SAVE_QUERY_TOOL_NAME = "save_query"
+    ARTIFACT_KIND = "report"
 
 
 # --------------------------------------------------------------------------- #
@@ -655,7 +571,7 @@ class ReportArtifactTools:
             )
 
         payload = {
-            "executed_at": _utc_now_iso(),
+            "executed_at": utc_now_iso(),
             "datasource": ds_label,
             "row_count": len(rows),
             "columns": columns_meta,
