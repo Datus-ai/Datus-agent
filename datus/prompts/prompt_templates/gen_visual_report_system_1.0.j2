@@ -353,7 +353,7 @@ Animation is part of the visual polish — the same way you'd pick a palette and
 
 Every chart card that's backed by a real `useQuerySql(...)` call should expose a small "..." menu in its top-right corner, letting the reader inspect the underlying SQL, export the data, or grab a PNG. `@datus/web-artifact` ships a ready-made `<ChartEntryMore>` component for exactly this — use it; don't roll your own menu.
 
-Usage:
+Usage — **always wrap your card in a plain `<div ref={cardRef}>`**; do not pass `ref` directly to your `<Card>` primitive:
 
 ```jsx
 import { useRef } from 'react';
@@ -367,25 +367,33 @@ function RevenueTrend() {
   const rows = data?.rows ?? [];
 
   return (
-    <Card ref={cardRef}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Revenue trend</h3>
-        <ChartEntryMore sqlId="queries/revenue_by_month" cardRef={cardRef} />
-      </div>
-      <ResponsiveContainer width="100%" height={300}>
-        <LineChart data={rows}>{/* … */}</LineChart>
-      </ResponsiveContainer>
-    </Card>
+    // The wrapper div is the screenshot root. Do NOT put `ref={cardRef}` on
+    // `<Card>` directly — function components don't forward `ref` as a prop
+    // unless they're built with `React.forwardRef`, and your shared/card.jsx
+    // typically isn't. The wrapper-div pattern sidesteps that entirely.
+    <div ref={cardRef}>
+      <Card
+        title="Revenue trend"
+        titleRight={<ChartEntryMore sqlId="queries/revenue_by_month" cardRef={cardRef} />}
+      >
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={rows}>{/* … */}</LineChart>
+        </ResponsiveContainer>
+      </Card>
+    </div>
   );
 }
 ```
+
+If your `<Card>` already accepts a `titleRight` slot (recommended — every shared `card.jsx` should expose one), put `<ChartEntryMore>` there and it shows up cleanly right of the title. Otherwise lay it out yourself inside the card with `display: 'flex'` + `justifyContent: 'space-between'`.
 
 Props:
 
 | Prop | Required | Notes |
 |---|---|---|
 | `sqlId` | yes | The same literal you passed to `useQuerySql`. The component looks up the cached query result and the raw `.sql` text by this id. |
-| `cardRef` | yes | Ref attached to the **outer card element**. Used as the screenshot root for "Export PNG" / "Copy PNG", so the export includes title + chart together. |
+| `cardRef` | recommended | Ref attached to the **outer wrapper div** around the card. Used as the screenshot root for "Export PNG" / "Copy PNG", so the export includes title + chart together. Strongly preferred over the `cardSelector` fallback below. |
+| `cardSelector` | no | If `cardRef` is omitted or isn't attached, the component walks up from the trigger button via `triggerEl.closest(cardSelector)`. Default: `'[data-datus-chart-card]'`. If you don't want to manage a ref at all, mark the card root with the attribute: `<div data-datus-chart-card>…</div>`. |
 | `filenameBase` | no | Override the downloaded basename (default: the slug). Extensions are added automatically. |
 
 What the menu does — all entirely client-side, no host round-trip:
@@ -400,7 +408,8 @@ Rules of thumb:
 - **Add `<ChartEntryMore>` to every visualization backed by a `useQuerySql` call**, with no exceptions. That covers line / bar / area / pie / scatter / radar charts, KPI cards, KPI sparklines, custom inline SVG visualizations, and **data tables** — the table header row gets a trigger right of the title too. The "view SQL" action is the single best credibility move you can make for an analytical deliverable; do not gate it on whether the chart "looks important enough".
 - **Trigger placement**: align it to the right side of the visualization's title row in a `flex` container — `<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>` with the H3/title on the left and `<ChartEntryMore>` on the right. Never float it over the chart canvas. For data tables, the trigger lives in the header strip above the `<table>`, not inside `<thead>`. The 26×26 button is sized to slot into the flex row cleanly.
 - **One trigger per card**: don't add multiple `<ChartEntryMore>` for different sub-charts inside one card. Combine them into one card per query, or pick the most-prominent sqlId.
-- **Don't pass any other ref** as `cardRef` — must be the outer card, otherwise PNG export crops out the title.
+- **Don't pass `ref` directly to `<Card>`** — React 18 strips `ref` from props on function components, so `cardRef.current` would stay null and PNG export would throw. Always use the `<div ref={cardRef}>` wrapper, or add `data-datus-chart-card` to the card root.
+- **Don't pass any other ref** as `cardRef` — must be the wrapper div around the outer card, otherwise PNG export crops out the title.
 
 ### Formatting helpers
 
