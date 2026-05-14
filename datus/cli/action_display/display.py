@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Set, Tuple
 
 from rich.console import Console
 
-from datus.cli.action_display.renderers import ActionContentGenerator, ActionRenderer
+from datus.cli.action_display.renderers import ActionContentGenerator, ActionRenderer, is_task_anchor_input
 from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
 
@@ -178,6 +178,13 @@ class ActionHistoryDisplay:
         # when the SUCCESS action carries the ``complete_`` prefix or
         # arrives in a reversed order.
         task_actions_by_call_id: Dict[Optional[str], ActionHistory] = {}
+        # PROCESSING anchors indexed by their bare ``action_id`` so the
+        # depth>0 group-building loop can pick the *outer* task action as
+        # ``first_action`` instead of falling back to the first arriving
+        # inner action. Without this Ctrl+O reprint renders the subagent
+        # header as ``⏺ subagent(<inner messages>)`` because the inner
+        # action has no task ``input["type"]`` to parse.
+        task_processing_by_call_id: Dict[Optional[str], ActionHistory] = {}
         for a in actions:
             if a.role != ActionRole.TOOL or not a.action_id:
                 continue
@@ -187,6 +194,8 @@ class ActionHistoryDisplay:
             fn = a.input.get("function_name", "") if a.input else ""
             if fn == "task":
                 task_actions_by_call_id[normalized] = a
+            if a.action_type == "task" and a.status == ActionStatus.PROCESSING and is_task_anchor_input(a.input):
+                task_processing_by_call_id[normalized] = a
 
         # Locate the trailing plain ``response`` action (depth=0). Its body is
         # the same text the wrapping ``*_response`` carries, and the wrapper's
@@ -276,11 +285,20 @@ class ActionHistoryDisplay:
             if action.depth > 0:
                 group_key = action.parent_action_id
                 if group_key not in subagent_groups:
+                    # Prefer the outer task PROCESSING action as
+                    # ``first_action`` so :meth:`render_subagent_header` can
+                    # resolve the real subagent_type via
+                    # ``parse_task_tool_input``. Fall back to the inner action
+                    # only when no anchor is present in the replay slice
+                    # (best-effort — unlike the live streaming path which
+                    # warn-drops orphans, history replay keeps them visible).
+                    anchor = task_processing_by_call_id.get(group_key)
+                    first_action = anchor if anchor is not None else action
                     subagent_groups[group_key] = {
-                        "start_time": action.start_time,
+                        "start_time": first_action.start_time,
                         "tool_count": 0,
-                        "subagent_type": action.action_type or "subagent",
-                        "first_action": action,
+                        "subagent_type": first_action.action_type or "subagent",
+                        "first_action": first_action,
                         "actions": [],
                     }
                 if action.role == ActionRole.TOOL:

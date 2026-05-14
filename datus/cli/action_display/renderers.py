@@ -476,14 +476,25 @@ class ActionRenderer:
         """Render sub-agent group header (type + prompt/description).
 
         Under the cleaned-up grouping contract (see ``streaming.py``) the
-        group's ``first_action`` is always a task-tool PROCESSING action,
+        group's ``first_action`` is normally a task-tool PROCESSING action,
         so :func:`parse_task_tool_input` resolves the real subagent_type
         (e.g. ``gen_table``) from either input layout. ``_task_description``
         — a legacy field that ``sub_agent_task_tool`` still injects on
         the inner USER action — is honoured as a goal source when present.
+
+        Reprint fallback: when ``render_action_history`` builds a group
+        from a replay slice that does not contain the outer task
+        PROCESSING anchor (e.g. truncated history), the inner action is
+        used as ``first_action``. In that case fall back to
+        ``action.action_type`` so the header still says something
+        meaningful instead of the ``"subagent"`` sentinel.
         """
         input_data = action.input if isinstance(action.input, dict) else {}
-        subagent_type, parsed_prompt, parsed_description = parse_task_tool_input(input_data)
+        if action.action_type == "task":
+            subagent_type, parsed_prompt, parsed_description = parse_task_tool_input(input_data)
+        else:
+            subagent_type = action.action_type or "subagent"
+            parsed_prompt, parsed_description = "", ""
         description = input_data.get("_task_description", "") or parsed_description
         prompt = parsed_prompt
         if not prompt:
@@ -554,9 +565,20 @@ class ActionRenderer:
         start_time: Optional[datetime],
         end_action: ActionHistory,
     ) -> List[Text]:
-        """Render a completed subagent group as collapsed: header + Done summary."""
+        """Render a completed subagent group as collapsed: header + Done summary.
+
+        ``first_action`` may be the outer task PROCESSING anchor (the
+        normal case) or — in reprint fallback when the replay slice has
+        no anchor — an inner action. The header logic mirrors
+        :meth:`render_subagent_header` so both renderers fall back to
+        ``action_type`` cleanly when no task input is available.
+        """
         input_data = first_action.input if isinstance(first_action.input, dict) else {}
-        subagent_type, parsed_prompt, parsed_description = parse_task_tool_input(input_data)
+        if first_action.action_type == "task":
+            subagent_type, parsed_prompt, parsed_description = parse_task_tool_input(input_data)
+        else:
+            subagent_type = first_action.action_type or "subagent"
+            parsed_prompt, parsed_description = "", ""
         description = input_data.get("_task_description", "") or parsed_description
         prompt = parsed_prompt
         if not prompt:

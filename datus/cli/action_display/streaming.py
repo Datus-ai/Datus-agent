@@ -1147,7 +1147,12 @@ class InlineStreamingContext:
         ``"Tool call: task(...)"`` messages string as the goal.
         """
         input_data = first_action.input if isinstance(first_action.input, dict) else {}
-        subagent_type, parsed_prompt, parsed_description = parse_task_tool_input(input_data)
+        if first_action.action_type == "task":
+            subagent_type, parsed_prompt, parsed_description = parse_task_tool_input(input_data)
+        else:
+            # Reprint fallback for replay slices without a task anchor.
+            subagent_type = first_action.action_type or "subagent"
+            parsed_prompt, parsed_description = "", ""
         description = input_data.get("_task_description", "") or parsed_description
         prompt = parsed_prompt
         if not prompt:

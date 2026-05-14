@@ -104,13 +104,25 @@ class TestSubAgentGroupStart:
         ctx._processed_index = 0
         ctx._tick = 0
 
+        call_id = "call_1"
+        task_anchor = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            depth=0,
+            action_id=call_id,
+            action_type="task",
+            messages="task(gen_sql, What is the total revenue?)",
+            input_data={"type": "gen_sql", "prompt": "What is the total revenue?"},
+        )
         first_action = _make_action(
             ActionRole.USER,
             ActionStatus.PROCESSING,
             depth=1,
             action_type="gen_sql",
             messages="User: What is the total revenue?",
+            parent_action_id=call_id,
         )
+        actions.append(task_anchor)
         actions.append(first_action)
 
         with patch("datus.cli.action_display.streaming.Live"):
@@ -121,7 +133,7 @@ class TestSubAgentGroupStart:
         group = next(iter(ctx._subagent_groups.values()))
         assert group["subagent_type"] == "gen_sql"
         assert group["tool_count"] == 0
-        assert group["first_action"] is first_action
+        assert group["first_action"] is task_anchor
 
         # Live renderable should contain subagent type and prompt
         renderable = ctx._build_subagent_groups_renderable()
@@ -135,14 +147,26 @@ class TestSubAgentGroupStart:
         ctx._processed_index = 0
         ctx._tick = 0
 
-        long_prompt = "User: " + "A" * 300
+        call_id = "call_1"
+        long_prompt = "A" * 300
+        task_anchor = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            depth=0,
+            action_id=call_id,
+            action_type="task",
+            messages=f"task(gen_sql, {long_prompt})",
+            input_data={"type": "gen_sql", "prompt": long_prompt},
+        )
         first_action = _make_action(
             ActionRole.USER,
             ActionStatus.PROCESSING,
             depth=1,
             action_type="gen_sql",
-            messages=long_prompt,
+            messages=f"User: {long_prompt}",
+            parent_action_id=call_id,
         )
+        actions.append(task_anchor)
         actions.append(first_action)
 
         with patch("datus.cli.action_display.streaming.Live"):
@@ -191,8 +215,28 @@ class TestSubAgentDisplayUpdates:
         ctx._processed_index = 0
         ctx._tick = 0
 
-        # First action starts the group
-        actions.append(_make_action(ActionRole.USER, ActionStatus.PROCESSING, depth=1, action_type="gen_sql"))
+        call_id = "call_1"
+        # Task PROCESSING action starts the group
+        actions.append(
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.PROCESSING,
+                depth=0,
+                action_id=call_id,
+                action_type="task",
+                messages="task(gen_sql, query)",
+                input_data={"type": "gen_sql", "prompt": "query"},
+            )
+        )
+        actions.append(
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.PROCESSING,
+                depth=1,
+                action_type="gen_sql",
+                parent_action_id=call_id,
+            )
+        )
         # Two TOOL actions with messages containing args (same format as main agent)
         actions.append(
             _make_action(
@@ -202,6 +246,7 @@ class TestSubAgentDisplayUpdates:
                 action_type="describe_table",
                 messages="Tool call: describe_table('users')",
                 input_data={"function_name": "describe_table"},
+                parent_action_id=call_id,
             )
         )
         actions.append(
@@ -212,6 +257,7 @@ class TestSubAgentDisplayUpdates:
                 action_type="read_query",
                 messages="Tool call: read_query('SELECT * FROM users')",
                 input_data={"function_name": "read_query"},
+                parent_action_id=call_id,
             )
         )
 
@@ -237,8 +283,36 @@ class TestSubAgentDisplayUpdates:
         ctx._processed_index = 0
         ctx._tick = 0
 
-        actions.append(_make_action(ActionRole.USER, ActionStatus.PROCESSING, depth=1, action_type="gen_sql"))
-        actions.append(_make_action(ActionRole.ASSISTANT, ActionStatus.SUCCESS, depth=1, action_type="gen_sql"))
+        call_id = "call_1"
+        actions.append(
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.PROCESSING,
+                depth=0,
+                action_id=call_id,
+                action_type="task",
+                messages="task(gen_sql, query)",
+                input_data={"type": "gen_sql", "prompt": "query"},
+            )
+        )
+        actions.append(
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.PROCESSING,
+                depth=1,
+                action_type="gen_sql",
+                parent_action_id=call_id,
+            )
+        )
+        actions.append(
+            _make_action(
+                ActionRole.ASSISTANT,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type="gen_sql",
+                parent_action_id=call_id,
+            )
+        )
 
         with patch.object(display.console, "print"):
             with patch("datus.cli.action_display.streaming.Live"):
@@ -264,9 +338,30 @@ class TestSubAgentGroupEnd:
         ctx._tick = 0
         ctx._verbose = True  # verbose mode keeps Done lines
 
+        call_id = "call_1"
+
         # Sub-agent group
         actions.append(
-            _make_action(ActionRole.USER, ActionStatus.PROCESSING, depth=1, action_type="gen_sql", start_time=t0)
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.PROCESSING,
+                depth=0,
+                action_id=call_id,
+                action_type="task",
+                messages="task(gen_sql, query)",
+                input_data={"type": "gen_sql", "prompt": "query"},
+                start_time=t0,
+            )
+        )
+        actions.append(
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.PROCESSING,
+                depth=1,
+                action_type="gen_sql",
+                start_time=t0,
+                parent_action_id=call_id,
+            )
         )
         actions.append(
             _make_action(
@@ -276,6 +371,7 @@ class TestSubAgentGroupEnd:
                 action_type="describe_table",
                 input_data={"function_name": "describe_table"},
                 start_time=t0,
+                parent_action_id=call_id,
             )
         )
         actions.append(
@@ -286,6 +382,18 @@ class TestSubAgentGroupEnd:
                 action_type="read_query",
                 input_data={"function_name": "read_query"},
                 start_time=t0,
+                parent_action_id=call_id,
+            )
+        )
+        actions.append(
+            _make_action(
+                ActionRole.SYSTEM,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+                start_time=t0,
+                end_time=t1,
+                parent_action_id=call_id,
             )
         )
         # depth=0 task result ends the group
@@ -294,8 +402,10 @@ class TestSubAgentGroupEnd:
                 ActionRole.TOOL,
                 ActionStatus.SUCCESS,
                 depth=0,
+                action_id=call_id,
                 action_type="task",
                 messages="task result",
+                input_data={"function_name": "task"},
                 end_time=t1,
             )
         )
@@ -329,9 +439,30 @@ class TestSubAgentFlushOnExit:
         ctx._processed_index = 0
         ctx._tick = 0
 
+        call_id = "call_1"
+
         # Start a group via _process_actions
         actions.append(
-            _make_action(ActionRole.USER, ActionStatus.PROCESSING, depth=1, action_type="gen_sql", start_time=t0)
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.PROCESSING,
+                depth=0,
+                action_id=call_id,
+                action_type="task",
+                messages="task(gen_sql, query)",
+                input_data={"type": "gen_sql", "prompt": "query"},
+                start_time=t0,
+            )
+        )
+        actions.append(
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.PROCESSING,
+                depth=1,
+                action_type="gen_sql",
+                start_time=t0,
+                parent_action_id=call_id,
+            )
         )
         actions.append(
             _make_action(
@@ -341,6 +472,7 @@ class TestSubAgentFlushOnExit:
                 action_type="describe_table",
                 input_data={"function_name": "describe_table"},
                 start_time=t0,
+                parent_action_id=call_id,
             )
         )
 
@@ -444,9 +576,31 @@ class TestMultipleSubAgentGroups:
         ctx._tick = 0
         ctx._verbose = True  # verbose mode keeps Done lines
 
+        call_id_1 = "call_1"
+        call_id_2 = "call_2"
+
         # Group 1
         actions.append(
-            _make_action(ActionRole.USER, ActionStatus.PROCESSING, depth=1, action_type="gen_sql", start_time=t0)
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.PROCESSING,
+                depth=0,
+                action_id=call_id_1,
+                action_type="task",
+                messages="task(gen_sql, query)",
+                input_data={"type": "gen_sql", "prompt": "query"},
+                start_time=t0,
+            )
+        )
+        actions.append(
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.PROCESSING,
+                depth=1,
+                action_type="gen_sql",
+                start_time=t0,
+                parent_action_id=call_id_1,
+            )
         )
         actions.append(
             _make_action(
@@ -455,13 +609,54 @@ class TestMultipleSubAgentGroups:
                 depth=1,
                 input_data={"function_name": "describe_table"},
                 start_time=t0,
+                parent_action_id=call_id_1,
             )
         )
         # End group 1
-        actions.append(_make_action(ActionRole.TOOL, ActionStatus.SUCCESS, depth=0, action_type="task", end_time=t1))
+        actions.append(
+            _make_action(
+                ActionRole.SYSTEM,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+                start_time=t0,
+                end_time=t1,
+                parent_action_id=call_id_1,
+            )
+        )
+        actions.append(
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=0,
+                action_id=call_id_1,
+                action_type="task",
+                input_data={"function_name": "task"},
+                end_time=t1,
+            )
+        )
         # Group 2
         actions.append(
-            _make_action(ActionRole.USER, ActionStatus.PROCESSING, depth=1, action_type="fix_sql", start_time=t1)
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.PROCESSING,
+                depth=0,
+                action_id=call_id_2,
+                action_type="task",
+                messages="task(fix_sql, fix query)",
+                input_data={"type": "fix_sql", "prompt": "fix query"},
+                start_time=t1,
+            )
+        )
+        actions.append(
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.PROCESSING,
+                depth=1,
+                action_type="fix_sql",
+                start_time=t1,
+                parent_action_id=call_id_2,
+            )
         )
         actions.append(
             _make_action(
@@ -470,10 +665,32 @@ class TestMultipleSubAgentGroups:
                 depth=1,
                 input_data={"function_name": "read_query"},
                 start_time=t1,
+                parent_action_id=call_id_2,
             )
         )
         # End group 2
-        actions.append(_make_action(ActionRole.TOOL, ActionStatus.SUCCESS, depth=0, action_type="task", end_time=t2))
+        actions.append(
+            _make_action(
+                ActionRole.SYSTEM,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+                start_time=t1,
+                end_time=t2,
+                parent_action_id=call_id_2,
+            )
+        )
+        actions.append(
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=0,
+                action_id=call_id_2,
+                action_type="task",
+                input_data={"function_name": "task"},
+                end_time=t2,
+            )
+        )
 
         printed = []
         with patch.object(display.console, "print", side_effect=lambda *a, **kw: printed.append(str(a[0]))):
@@ -505,16 +722,49 @@ class TestTaskSuccessSkippedAfterDone:
         ctx._tick = 0
         ctx._verbose = True  # verbose mode keeps Done lines
 
+        call_id = "call_1"
         actions.append(
-            _make_action(ActionRole.USER, ActionStatus.PROCESSING, depth=1, action_type="gen_sql", start_time=t0)
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.PROCESSING,
+                depth=0,
+                action_id=call_id,
+                action_type="task",
+                messages="task(gen_sql, query)",
+                input_data={"type": "gen_sql", "prompt": "query"},
+                start_time=t0,
+            )
+        )
+        actions.append(
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.PROCESSING,
+                depth=1,
+                action_type="gen_sql",
+                start_time=t0,
+                parent_action_id=call_id,
+            )
+        )
+        actions.append(
+            _make_action(
+                ActionRole.SYSTEM,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+                start_time=t0,
+                end_time=t1,
+                parent_action_id=call_id,
+            )
         )
         actions.append(
             _make_action(
                 ActionRole.TOOL,
                 ActionStatus.SUCCESS,
                 depth=0,
+                action_id=call_id,
                 action_type="task",
                 messages="task result",
+                input_data={"function_name": "task"},
                 end_time=t1,
             )
         )
@@ -1093,6 +1343,18 @@ class TestSubAgentCompleteAction:
         # Sub-agent group with parent_action_id
         actions.append(
             _make_action(
+                ActionRole.TOOL,
+                ActionStatus.PROCESSING,
+                depth=0,
+                action_id=call_id,
+                action_type="task",
+                messages="task(gen_sql, What is total revenue?)",
+                input_data={"type": "gen_sql", "prompt": "What is total revenue?"},
+                start_time=t0,
+            )
+        )
+        actions.append(
+            _make_action(
                 ActionRole.USER,
                 ActionStatus.PROCESSING,
                 depth=1,
@@ -1188,6 +1450,92 @@ class TestSubAgentCompleteAction:
         assert "Done" in combined
         assert "1 tool uses" in combined
 
+    def test_reprint_uses_task_processing_anchor_for_header(self):
+        """Ctrl+O reprint must derive the subagent header from the outer
+        task PROCESSING anchor, not the first depth>0 inner action.
+
+        Regression: closed groups previously rendered as
+        ``⏺ subagent(<inner messages>)`` after Ctrl+O — the renderer
+        picked the inner action as ``first_action``, and
+        :func:`parse_task_tool_input` returned the ``"subagent"`` sentinel
+        because the inner action carried no task ``input["type"]``.
+        """
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = t0 + timedelta(seconds=2.0)
+        display = ActionHistoryDisplay()
+        call_id = "call-explore-1"
+
+        actions = [
+            # Outer task PROCESSING (wrapped layout, as model adapters emit)
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.PROCESSING,
+                depth=0,
+                action_id=call_id,
+                action_type="task",
+                messages='Tool call: task(\'{"type": "explore", ...}\')',
+                input_data={
+                    "function_name": "task",
+                    "arguments": {
+                        "type": "explore",
+                        "prompt": "scan EDWICL_DATA tables",
+                        "description": "读取需求文档CSV文件内容",
+                    },
+                },
+                start_time=t0,
+            ),
+            # Inner depth=1 TOOL — under the cleaned-up contract this is
+            # NOT the group anchor any more, even though it arrives first
+            # after PROCESSING skip filtering.
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type="read_file",
+                messages="read_file",
+                input_data={"function_name": "read_file"},
+                start_time=t0,
+                parent_action_id=call_id,
+            ),
+            # Outer task SUCCESS (used by verbose deferred render)
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=0,
+                action_id=f"complete_{call_id}",
+                action_type="task",
+                input_data={"function_name": "task"},
+                output_data={"response": "done"},
+                start_time=t0,
+                end_time=t1,
+            ),
+            # subagent_complete closes the group
+            _make_action(
+                ActionRole.SYSTEM,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+                output_data={"subagent_type": "explore", "tool_count": 1},
+                start_time=t0,
+                end_time=t1,
+                parent_action_id=call_id,
+            ),
+        ]
+
+        printed = []
+        with patch.object(display.console, "print", side_effect=lambda *a, **kw: printed.append(str(a[0]))):
+            display.render_action_history(actions, verbose=False)
+        combined = "\n".join(printed)
+
+        # Header label comes from the task anchor's parsed type, NOT the
+        # ``"subagent"`` fallback sentinel.
+        assert "explore" in combined
+        assert "读取需求文档CSV文件内容" in combined
+        # The pre-fix symptom was a bare ``subagent`` label; ensure it
+        # never appears as a standalone token in the header line.
+        assert "⏴ subagent(" not in combined
+        assert "1 tool uses" in combined
+
 
 # ── Parallel sub-agent groups ─────────────────────────────────────
 
@@ -1215,6 +1563,18 @@ class TestParallelSubAgentGroups:
         # Group A starts
         actions.append(
             _make_action(
+                ActionRole.TOOL,
+                ActionStatus.PROCESSING,
+                depth=0,
+                action_id=call_id_a,
+                action_type="task",
+                messages="task(gen_sql, Revenue query)",
+                input_data={"type": "gen_sql", "prompt": "Revenue query"},
+                start_time=t0,
+            )
+        )
+        actions.append(
+            _make_action(
                 ActionRole.USER,
                 ActionStatus.PROCESSING,
                 depth=1,
@@ -1225,6 +1585,18 @@ class TestParallelSubAgentGroups:
             )
         )
         # Group B starts (interleaved)
+        actions.append(
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.PROCESSING,
+                depth=0,
+                action_id=call_id_b,
+                action_type="task",
+                messages="task(fix_sql, Fix query)",
+                input_data={"type": "fix_sql", "prompt": "Fix query"},
+                start_time=t0,
+            )
+        )
         actions.append(
             _make_action(
                 ActionRole.USER,
@@ -3325,6 +3697,16 @@ class TestInlineStreamingContextFlush:
         call_id = "flush_call"
         actions = [
             _make_action(
+                ActionRole.TOOL,
+                ActionStatus.PROCESSING,
+                depth=0,
+                action_id=call_id,
+                action_type="task",
+                messages="task(gen_sql, query)",
+                input_data={"type": "gen_sql", "prompt": "query"},
+                start_time=t0,
+            ),
+            _make_action(
                 ActionRole.USER,
                 ActionStatus.PROCESSING,
                 depth=1,
@@ -3357,7 +3739,7 @@ class TestInlineStreamingContextFlush:
 
         output = buf.getvalue()
         assert "Done" in output
-        assert ctx._processed_index == 3
+        assert ctx._processed_index == 4
 
     def test_flush_closes_unclosed_groups(self):
         """Flush closes groups that never received subagent_complete."""
@@ -3366,14 +3748,25 @@ class TestInlineStreamingContextFlush:
         console = Console(file=buf, no_color=True)
         display = ActionHistoryDisplay(console)
 
+        call_id = "orphan"
         actions = [
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.PROCESSING,
+                depth=0,
+                action_id=call_id,
+                action_type="task",
+                messages="task(gen_sql, query)",
+                input_data={"type": "gen_sql", "prompt": "query"},
+                start_time=t0,
+            ),
             _make_action(
                 ActionRole.USER,
                 ActionStatus.PROCESSING,
                 depth=1,
                 action_type="gen_sql",
                 start_time=t0,
-                parent_action_id="orphan",
+                parent_action_id=call_id,
             ),
             _make_action(
                 ActionRole.TOOL,
@@ -3381,7 +3774,7 @@ class TestInlineStreamingContextFlush:
                 depth=1,
                 input_data={"function_name": "read_query"},
                 start_time=t0,
-                parent_action_id="orphan",
+                parent_action_id=call_id,
             ),
         ]
         ctx = InlineStreamingContext(actions, display)
