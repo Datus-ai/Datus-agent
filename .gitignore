@@ -70,3 +70,4 @@ conf/agent.yml.bak
 /subject/
 build/
 .datus/
+/build_scripts/cache/
