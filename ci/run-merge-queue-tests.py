@@ -22,16 +22,15 @@ OUT_DIR = REPO_ROOT / "ci"
 DEFAULT_REPORT = OUT_DIR / "merge-queue-results.json"
 DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("MERGE_QUEUE_TEST_TIMEOUT", "1800"))
 
-FULL_UNIT_TARGETS = ("tests/unit_tests/",)
-FULL_UNIT_MARK_EXPR = "not nightly and not quarantine"
 ACCEPTANCE_MARK_EXPR = "acceptance"
+DEFAULT_PR_HARNESS_MARK_EXPR = "acceptance or component or llm_harness"
 
 
 def log(message: str) -> None:
     print(f"[merge-queue] {message}", flush=True)
 
 
-def load_pr_acceptance_targets() -> list[str]:
+def load_pr_harness_config() -> tuple[list[str], str]:
     """Reuse the PR harness target list so PR and merge-queue coverage stay aligned."""
     module_path = REPO_ROOT / "ci" / "run-pr-tests.py"
     module_spec = importlib.util.spec_from_file_location("_run_pr_tests_for_merge_queue", module_path)
@@ -43,7 +42,14 @@ def load_pr_acceptance_targets() -> list[str]:
     targets = getattr(module, "PR_ACCEPTANCE_TARGETS", None)
     if not isinstance(targets, list) or not all(isinstance(target, str) for target in targets):
         raise RuntimeError("ci/run-pr-tests.py PR_ACCEPTANCE_TARGETS must be a list of strings")
-    return targets
+    mark_expr = getattr(module, "PR_HARNESS_MARK_EXPR", DEFAULT_PR_HARNESS_MARK_EXPR)
+    if not isinstance(mark_expr, str) or not mark_expr:
+        raise RuntimeError("ci/run-pr-tests.py PR_HARNESS_MARK_EXPR must be a non-empty string")
+    return targets, mark_expr
+
+
+def acceptance_unit_targets(targets: Sequence[str]) -> list[str]:
+    return [target for target in targets if target.startswith("tests/unit_tests/")]
 
 
 def acceptance_integration_targets(targets: Sequence[str]) -> list[str]:
@@ -95,18 +101,20 @@ def run_command(command: Sequence[str], *, suite_name: str, timeout: int) -> int
 
 
 def suite_definitions() -> dict[str, dict[str, Any]]:
-    acceptance_targets = acceptance_integration_targets(load_pr_acceptance_targets())
+    pr_acceptance_targets, pr_harness_mark_expr = load_pr_harness_config()
+    unit_targets = acceptance_unit_targets(pr_acceptance_targets)
+    integration_targets = acceptance_integration_targets(pr_acceptance_targets)
     return {
-        "full-unit": {
-            "description": "Full deterministic unit suite excluding nightly and quarantined tests.",
-            "targets": list(FULL_UNIT_TARGETS),
-            "mark_expr": FULL_UNIT_MARK_EXPR,
-            "junit_xml": OUT_DIR / "test-results-merge-full-unit.xml",
+        "acceptance-unit": {
+            "description": "Deterministic unit harness targets reused from the PR acceptance list.",
+            "targets": unit_targets,
+            "mark_expr": pr_harness_mark_expr,
+            "junit_xml": OUT_DIR / "test-results-merge-acceptance-unit.xml",
             "extra_args": ["--timeout=300", "--dist=loadscope", "-n", "auto"],
         },
         "acceptance-integration": {
             "description": "Deterministic acceptance integration coverage reused from the PR harness.",
-            "targets": acceptance_targets,
+            "targets": integration_targets,
             "mark_expr": ACCEPTANCE_MARK_EXPR,
             "junit_xml": OUT_DIR / "test-results-merge-acceptance.xml",
             "extra_args": ["--timeout=300"],
@@ -150,7 +158,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--suite",
         action="append",
-        choices=("full-unit", "acceptance-integration"),
+        choices=("acceptance-unit", "acceptance-integration"),
         help="Run one suite. Defaults to all merge queue suites.",
     )
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS, help="Per-suite timeout in seconds")

@@ -31,6 +31,18 @@ def test_acceptance_integration_targets_filters_unit_targets(run_merge_queue_tes
     ]
 
 
+def test_acceptance_unit_targets_filters_integration_targets(run_merge_queue_tests):
+    targets = [
+        "tests/unit_tests/agent/node/test_chat_agentic_node.py",
+        "tests/integration/api/test_api.py",
+        "tests/integration/cli/test_cli_commands.py",
+    ]
+
+    assert run_merge_queue_tests.acceptance_unit_targets(targets) == [
+        "tests/unit_tests/agent/node/test_chat_agentic_node.py",
+    ]
+
+
 def test_build_pytest_command_includes_marker_junit_and_extra_args(tmp_path, run_merge_queue_tests):
     junit_xml = tmp_path / "results.xml"
 
@@ -68,18 +80,18 @@ def test_main_runs_selected_suite_and_writes_report(tmp_path, monkeypatch, run_m
     monkeypatch.setattr(run_merge_queue_tests.subprocess, "run", fake_run)
     monkeypatch.setattr(
         run_merge_queue_tests,
-        "load_pr_acceptance_targets",
-        lambda: ["tests/integration/api/test_api.py"],
+        "load_pr_harness_config",
+        lambda: (["tests/unit_tests/"], "acceptance or component or llm_harness"),
     )
 
-    assert run_merge_queue_tests.main(["--suite", "full-unit", "--timeout", "10"]) == 0
+    assert run_merge_queue_tests.main(["--suite", "acceptance-unit", "--timeout", "10"]) == 0
 
     assert calls == [
         {
             "command": run_merge_queue_tests.build_pytest_command(
                 ["tests/unit_tests/"],
-                mark_expr="not nightly and not quarantine",
-                junit_xml=out_dir / "test-results-merge-full-unit.xml",
+                mark_expr="acceptance or component or llm_harness",
+                junit_xml=out_dir / "test-results-merge-acceptance-unit.xml",
                 extra_args=["--timeout=300", "--dist=loadscope", "-n", "auto"],
             ),
             "cwd": repo_root,
