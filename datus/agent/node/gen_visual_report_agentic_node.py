@@ -134,6 +134,10 @@ class GenVisualReportAgenticNode(AgenticNode):
         self.filesystem_func_tool: Optional[ReportFilesystemFuncTool] = None
         self.report_artifact_tools: Optional[ReportArtifactTools] = None
         self._active_report_id: Optional[str] = None
+        # Captures the root cause when ``_setup_db_tools`` fails so
+        # ``_prepare_report_artifacts`` can surface it instead of the
+        # generic "db_tools not configured" message.
+        self._db_tool_setup_error: Optional[BaseException] = None
 
         super().__init__(
             node_id=node_id,
@@ -255,7 +259,8 @@ class GenVisualReportAgenticNode(AgenticNode):
             )
             self.tools.extend(self.db_func_tool.available_tools())
         except Exception as exc:
-            logger.error("Failed to setup db tools: %s", exc)
+            logger.error("Failed to setup db tools: %s", exc, exc_info=True)
+            self._db_tool_setup_error = exc
 
     def _setup_semantic_tools(self) -> None:
         try:
@@ -419,6 +424,13 @@ class GenVisualReportAgenticNode(AgenticNode):
             raise ValueError("agent_config.project_root is required for gen_visual_report")
         if not self.db_func_tool:
             # save_query needs a connector; fail loud rather than silently produce a no-op tool.
+            root_cause = self._db_tool_setup_error
+            if root_cause is not None:
+                raise ValueError(
+                    "gen_visual_report requires db_tools to be configured "
+                    "(DEFAULT_TOOLS includes db_tools.*); DBFuncTool initialization failed: "
+                    f"{type(root_cause).__name__}: {root_cause}"
+                ) from root_cause
             raise ValueError(
                 "gen_visual_report requires db_tools to be configured (DEFAULT_TOOLS includes db_tools.*)."
             )

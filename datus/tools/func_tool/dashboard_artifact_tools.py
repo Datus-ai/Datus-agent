@@ -385,7 +385,12 @@ class DashboardArtifactTools:
         return [
             trans_to_function_tool(self.start_new_dashboard),
             trans_to_function_tool(self.bind_existing_dashboard),
-            trans_to_function_tool(self.save_query_template),
+            # ``save_query_template.sample_params`` is a free-form ``Dict[str, Any]``
+            # — the keys are whatever the LLM declared in ``-- @datus-params`` and
+            # the values are scalars / arrays. Strict mode would reject the
+            # ``additionalProperties: true`` JSON schema this produces; we
+            # validate keys + types ourselves once the call lands.
+            trans_to_function_tool(self.save_query_template, strict_mode=False),
             trans_to_function_tool(self.validate_render),
         ]
 

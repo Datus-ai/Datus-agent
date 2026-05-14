@@ -91,12 +91,20 @@ class FuncToolListResult(BaseModel):
     )
 
 
-def trans_to_function_tool(bound_method: Callable) -> FunctionTool:
+def trans_to_function_tool(bound_method: Callable, *, strict_mode: bool = True) -> FunctionTool:
     """
     Transfer a bound method to a function tool.
     This method is to solve the problem that '@function_tool' can only be applied to static methods
+
+    Args:
+        bound_method: The instance method to wrap.
+        strict_mode: When True (default), the OpenAI Agents SDK enforces a strict JSON schema
+            (no extra properties, no free-form ``Dict[str, Any]`` parameters). Set to False
+            for tools that genuinely need an open-ended object parameter — e.g. a
+            ``sample_params``-style dict where the LLM provides arbitrary keys matching
+            a declaration the tool itself validates.
     """
-    tool_template = function_tool(bound_method)
+    tool_template = function_tool(bound_method, strict_mode=strict_mode)
 
     corrected_schema = json.loads(json.dumps(tool_template.params_json_schema))
     if "self" in corrected_schema.get("properties", {}):
@@ -168,5 +176,6 @@ def trans_to_function_tool(bound_method: Callable) -> FunctionTool:
         description=tool_template.description,
         params_json_schema=corrected_schema,
         on_invoke_tool=async_invoker,  # <--- Assign the async function
+        strict_json_schema=strict_mode,
     )
     return final_tool
