@@ -161,7 +161,7 @@ The optional `/** @datus-title ... */` annotation at the top is used by the stan
 | Module | Notes |
 |---|---|
 | `react` | `useState`, `useEffect`, `useRef`, `useMemo`, `useCallback`, `useContext`, `createContext`, plus the default `React` namespace |
-| `@datus/web-artifact` | `useDatusArtifact` |
+| `@datus/web-artifact` | `useDatusArtifact`, `AnimateOnVisible` (see "Motion & animation" below) |
 | `recharts` | any named export (`AreaChart`, `LineChart`, `BarChart`, `RadarChart`, `PieChart`, `ResponsiveContainer`, `Tooltip`, `XAxis`, `YAxis`, `CartesianGrid`, `Area`, `Line`, `Bar`, `Radar`, `Pie`, `Cell`, etc.) |
 | `lucide-react` | any icon component (`User`, `TrendingUp`, `Calendar`, `Filter`, …) |
 | `d3-format` | `format` — build numeric / currency / percent / SI-prefix formatters |
@@ -263,76 +263,54 @@ Each animated primitive accepts the same trio of props:
 
 #### Trigger animations on first viewport entry (mandatory)
 
-Recharts plays its entrance animation on mount. If every chart mounts at page load, the user scrolls past a wall of finished charts. **Defer the mount of every animated visualization until the wrapper element first scrolls into view**, using `IntersectionObserver`. The iframe is its own scroll container (the parent app sizes it 100% × 100%, content overflows internally), so `IntersectionObserver` inside the iframe fires correctly as the reader scrolls.
+Recharts plays its entrance animation on mount. If every chart mounts at page load, the user scrolls past a wall of finished charts. **Defer the mount of every animated visualization until the wrapper element first scrolls into view.** The iframe is its own scroll container (the parent app sizes it 100% × 100%, content overflows internally), so `IntersectionObserver` inside the iframe fires correctly as the reader scrolls.
 
-Ship a single reusable wrapper in `render/shared/animate-on-visible.jsx` and use it around every chart card (and any custom-SVG visualization). Sketch:
+Do **not** write your own wrapper. Use the ready-made `AnimateOnVisible` exported by `@datus/web-artifact` — it's already wired with the right `IntersectionObserver` defaults (`rootMargin: '0px 0px -10% 0px'`, `threshold: 0.1`), disconnects after the first hit, and reserves vertical space via `minHeight` so layout doesn't shift on mount.
 
 ```jsx
-// render/shared/animate-on-visible.jsx
-import React, { useEffect, useRef, useState } from 'react';
+import { useDatusArtifact, AnimateOnVisible } from '@datus/web-artifact';
+import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
 
-/**
- * Mount children only after the wrapper first scrolls into the iframe
- * viewport. Reserves vertical space so the layout doesn't shift when the
- * chart finally renders.
- */
-export default function AnimateOnVisible({
-  children,
-  minHeight = 320,
-  rootMargin = '0px 0px -10% 0px',
-}) {
-  const ref = useRef(null);
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    if (visible || !ref.current) return;
-    const io = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            setVisible(true);
-            io.disconnect();
-            break;
-          }
-        }
-      },
-      { root: null, rootMargin, threshold: 0.1 },
-    );
-    io.observe(ref.current);
-    return () => io.disconnect();
-  }, [visible, rootMargin]);
+function RevenueTrend() {
+  const { useQuerySql } = useDatusArtifact();
+  const { data } = useQuerySql('queries/revenue_by_month');
+  const rows = data?.rows ?? [];
 
   return (
-    <div ref={ref} style={{ minHeight }}>
-      {visible ? children : null}
-    </div>
+    <Card title="Revenue trend">
+      <AnimateOnVisible minHeight={300}>
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={rows}>
+            <XAxis dataKey="month" />
+            <YAxis />
+            <Tooltip />
+            <Line type="monotone" dataKey="revenue" stroke="#6051F5" />
+          </LineChart>
+        </ResponsiveContainer>
+      </AnimateOnVisible>
+    </Card>
   );
 }
 ```
 
-Use it around each chart panel:
+Props (all optional):
 
-```jsx
-import AnimateOnVisible from './shared/animate-on-visible';
-
-<Card title="Revenue trend">
-  <AnimateOnVisible minHeight={300}>
-    <ResponsiveContainer width="100%" height={300}>
-      <LineChart data={rows}>{/* … */}</LineChart>
-    </ResponsiveContainer>
-  </AnimateOnVisible>
-</Card>
-```
+| Prop | Default | When to override |
+|---|---|---|
+| `minHeight` | `320` | Set this to the chart's `<ResponsiveContainer height>` (or the expected SVG height). A wrong value causes a layout jump when the chart mounts. |
+| `rootMargin` | `'0px 0px -10% 0px'` | Rarely; the default fires when the chart is ~10% inside the viewport. |
+| `threshold` | `0.1` | Rarely. |
+| `immediate` | `false` | Set to `true` for an above-the-fold chart you want to animate right away without waiting for the observer callback, or as a `prefers-reduced-motion` escape hatch. |
 
 Rules of thumb when wiring this in:
-- **Always reserve `minHeight`** equal to the chart's `<ResponsiveContainer height>` (or the expected SVG height for custom visualizations). Otherwise the page jumps when the chart finally mounts.
+- **One `AnimateOnVisible` per chart panel**, not one wrapping the whole report. The point is each chart animating *when it first comes into view*, not all of them when the report starts.
 - **Above-the-fold charts** (typically the first KPI strip + first hero chart) will satisfy `IntersectionObserver` on initial layout, so they animate immediately — no extra config needed.
-- **One observer per chart**, not one wrapping the whole report. The point is each chart animating *when it first comes into view*, not all of them when the report starts.
-- **`rootMargin: '0px 0px -10% 0px'`** delays the trigger until the chart is 10% inside the viewport, so the animation starts the instant the reader actually focuses on it, not the millisecond its top edge appears.
+- **Reserve `minHeight`** equal to the chart's `<ResponsiveContainer height>`. Otherwise the page jumps when the chart finally mounts.
+- Do **not** invent your own `useInView`/`IntersectionObserver` hook in `render/`. Import the shared `AnimateOnVisible` and move on.
 
 #### Other motion concerns
 
-- **Custom inline SVG** (treemaps, gauges, score sliders): also wrap in `<AnimateOnVisible>`. Inside, animate with CSS transitions on `transform` / `opacity` / `stroke-dashoffset`, driven by `useState` + a `useEffect(() => setMounted(true), [])` toggle on mount. Same easing language: `transition: 'transform 800ms ease-out'`.
+- **Custom inline SVG** (treemaps, gauges, score sliders): also wrap in `AnimateOnVisible` (imported from `@datus/web-artifact`). Inside, animate with CSS transitions on `transform` / `opacity` / `stroke-dashoffset`, driven by `useState` + a `useEffect(() => setMounted(true), [])` toggle on mount. Same easing language: `transition: 'transform 800ms ease-out'`.
 - **Loading skeletons** should pulse, not animate full charts. A subtle `@keyframes pulse { 0%, 100% { opacity: 0.6 } 50% { opacity: 1 } }` on the skeleton block is enough — defined via an inline `<style>` tag at the top of the file or in a shared `card.jsx`.
 - **Respect reduced motion.** Compute `window.matchMedia('(prefers-reduced-motion: reduce)').matches` once at the top of `app.jsx` (via `useState` + `useEffect`) and pass `animationDuration={prefersReducedMotion ? 0 : 1500}` to Recharts primitives. `AnimateOnVisible` itself is fine to keep on — it only delays mount, never adds motion.
 
