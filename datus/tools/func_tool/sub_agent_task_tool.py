@@ -96,18 +96,19 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "Returns JSON with {response, report_result, tokens_used}."
     ),
     "gen_visual_report": (
-        "Produce a structured visualizable report artifact under "
-        "<project_root>/reports/<id>/ (manifest.json + queries/<slug>.sql/.json). "
-        "Sections support markdown / chart (Vega-Lite) / table (custom column spec with "
-        "format + color_scale) / layout (multi-column grid) / divider. "
+        "Produce a visualizable report artifact under "
+        "<project_root>/reports/<id>/ (main.jsx + queries/<slug>.sql/.json). "
+        "The subagent writes a self-contained React component (default export) that "
+        "imports from react / recharts / lucide-react / d3-format / dayjs / "
+        "@datus/web-artifact and reads pre-executed query JSON via useQuerySql. "
         "Use this — instead of writing HTML/Markdown directly — whenever the user asks "
-        "for a *report* with charts/tables, a dashboard-like deliverable, or any answer "
-        "that benefits from persisted SQL + rendered visualisations (the artifact is "
-        "consumed by Datus-CLI HTML export and Datus-SaaS dynamic renderer). "
+        "for a *report* with charts/tables, a dashboard, or any answer that benefits "
+        "from persisted SQL + rendered visualisations (the artifact is consumed by "
+        "Datus-CLI HTML export and Datus-SaaS dynamic iframe renderer). "
         "Prompt: provide the analytical question and any context (time range, scope, "
         "metrics of interest); the agent will discover data, save queries via save_query, "
-        "and emit the manifest via save_manifest. "
-        "Returns JSON with {response, report_id, manifest_path, html_path, query_count, tokens_used}."
+        "and emit the component via save_main_jsx. "
+        "Returns JSON with {response, report_id, main_jsx_path, html_path, query_count, tokens_used}."
     ),
     "gen_semantic_model": (
         "Generate MetricFlow semantic model YAML files from database table structures. "

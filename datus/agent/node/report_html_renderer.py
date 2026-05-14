@@ -8,6 +8,15 @@ Compile a Datus report artifact into a single self-contained ``index.html``.
 Used only by the Datus-CLI path. SaaS deployments render dynamically through
 the backend ``/api/v1/report/detail`` endpoint and do not call this function.
 
+The generated HTML inlines two payloads next to ``@datus/web-report``:
+
+* ``main.jsx`` source as a ``<script type="application/json">`` tag (the
+  agent's ``save_main_jsx`` output, untouched).
+* ``queries/<slug>.sql`` + ``.json`` as ``[{name, content}, ...]`` entries.
+
+``@datus/web-report`` boots the standalone viewer, which spins up the
+sandboxed iframe runtime that Babel-compiles ``main.jsx`` and renders it.
+
 Two asset-loading modes, mirroring ``datus.cli.web.chatbot``:
 
 * **CDN mode (default)** — the rendered HTML loads ``@datus/web-report`` from
@@ -21,10 +30,12 @@ Two asset-loading modes, mirroring ``datus.cli.web.chatbot``:
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
+import re
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from datus.utils.loggings import get_logger
 
@@ -35,6 +46,11 @@ _DATA_PLACEHOLDER = "__DATUS_REPORT_DATA__"
 _TITLE_PLACEHOLDER = "__DATUS_REPORT_TITLE__"
 _CSS_URL_PLACEHOLDER = "__DATUS_REPORT_CSS_URL__"
 _JS_URL_PLACEHOLDER = "__DATUS_REPORT_JS_URL__"
+
+# Best-effort title extraction from a JSDoc-style annotation at the top of
+# main.jsx, e.g. ``/** @datus-title 2026 Q1 NA Sales Report */``. The runtime
+# falls back to the report id when this isn't present.
+_TITLE_ANNOTATION_RE = re.compile(r"@datus-title\s+([^\n*/]+?)(?:\s*\*/|\s*\n|$)")
 
 # CDN URLs used when no offline dist is supplied. Keep the pinned version in
 # lockstep with ``packages/web-report/package.json``.
@@ -51,9 +67,13 @@ _DIST_JS_NAME = "datus-report.umd.js"
 _ASSETS_SUBDIR = "_assets"
 
 
-def _read_manifest(manifest_path: Path) -> Dict[str, Any]:
-    with manifest_path.open("r", encoding="utf-8") as fh:
-        return json.load(fh)
+def _extract_title(main_jsx: str, fallback: str) -> str:
+    match = _TITLE_ANNOTATION_RE.search(main_jsx[:2048])
+    if match:
+        title = match.group(1).strip()
+        if title:
+            return title
+    return fallback
 
 
 def _read_queries(queries_dir: Path) -> List[Dict[str, str]]:
@@ -122,7 +142,7 @@ def render_report_html(
     report_dist: Optional[Path] = None,
 ) -> Path:
     """
-    Compile ``reports/<report_id>/index.html`` from manifest + queries.
+    Compile ``reports/<report_id>/index.html`` from main.jsx + queries.
 
     Args:
         project_root: ``AgentConfig.project_root``; resolved absolute path.
@@ -139,16 +159,16 @@ def render_report_html(
         Absolute path to the generated ``index.html``.
 
     Raises:
-        FileNotFoundError: if ``manifest.json`` is missing.
+        FileNotFoundError: if ``main.jsx`` is missing.
         OSError: on read/write failures.
     """
     project_root = project_root.resolve()
     report_dir = project_root / "reports" / report_id
-    manifest_path = report_dir / "manifest.json"
-    if not manifest_path.is_file():
-        raise FileNotFoundError(f"manifest.json not found under {report_dir}")
+    main_jsx_path = report_dir / "main.jsx"
+    if not main_jsx_path.is_file():
+        raise FileNotFoundError(f"main.jsx not found under {report_dir}")
 
-    manifest = _read_manifest(manifest_path)
+    main_jsx = main_jsx_path.read_text(encoding="utf-8")
     queries = _read_queries(report_dir / "queries")
 
     dist_dir = _resolve_dist(report_dist)
@@ -159,9 +179,18 @@ def render_report_html(
         css_url, js_url = _CDN_REPORT_CSS, _CDN_REPORT_JS
 
     template_html = _TEMPLATE_PATH.read_text(encoding="utf-8")
-    payload = {"manifest": manifest, "queries": queries}
+    created_at = _dt.datetime.fromtimestamp(main_jsx_path.stat().st_mtime, tz=_dt.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    title = _extract_title(main_jsx, report_id)
+    payload = {
+        "id": report_id,
+        "title": title,
+        "created_at": created_at,
+        "main_jsx": main_jsx,
+        "queries": queries,
+    }
     payload_json = _escape_for_script_tag(json.dumps(payload, ensure_ascii=False))
-    title = manifest.get("title", report_id)
     rendered = (
         template_html.replace(_DATA_PLACEHOLDER, payload_json)
         .replace(_TITLE_PLACEHOLDER, title)

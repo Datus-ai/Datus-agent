@@ -118,7 +118,7 @@ class NodeType:
         TYPE_SEMANTIC: "Semantic model generation with conversational AI",
         TYPE_SQL_SUMMARY: "SQL summary generation with conversational AI",
         TYPE_GEN_REPORT: "Generic report generation with semantic and database tools",
-        TYPE_GEN_VISUAL_REPORT: ("Visualizable report generation producing manifest.json + queries/* artifacts"),
+        TYPE_GEN_VISUAL_REPORT: ("Visualizable report generation producing main.jsx + queries/* artifacts"),
         TYPE_EXT_KNOWLEDGE: "External knowledge generation with conversational AI",
         TYPE_EXPLORE: "Read-only data exploration and context gathering",
         TYPE_GEN_TABLE: "Wide table generation from JOIN SQL with CTAS",

@@ -2,8 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""
-Tools for producing report artifacts (manifest.json + queries/*).
+"""Tools for producing report artifacts (main.jsx + queries/*).
 
 Two complementary tools live here:
 
@@ -11,14 +10,14 @@ Two complementary tools live here:
   existing ``DBFuncTool`` connector, infers column semantic types, and
   atomically persists ``<slug>.sql`` and ``<slug>.json`` under the
   report's ``queries/`` directory.
-* ``ReportArtifactTools.save_manifest`` — validates a candidate manifest
-  against :class:`ReportManifest` (cross-checking referenced ``data_ref``
-  values against on-disk query files) and atomically writes
-  ``manifest.json``.
+* ``ReportArtifactTools.save_main_jsx`` — validates a candidate React
+  component source (cross-checking ``useQuerySql('queries/...')``
+  references against on-disk query files) and atomically writes
+  ``main.jsx``.
 
 ``ReportFilesystemFuncTool`` wraps the standard ``FilesystemFuncTool`` to
 reject writes/edits targeting paths that should only be touched via
-``save_query`` / ``save_manifest``.
+``save_query`` / ``save_main_jsx``.
 """
 
 from __future__ import annotations
@@ -39,7 +38,7 @@ from datus.schemas.gen_visual_report_models import (
     REPORT_ID_RE,
     ColumnSemanticType,
     QueryResultFile,
-    ReportManifest,
+    extract_query_slug,
 )
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
@@ -50,17 +49,18 @@ logger = get_logger(__name__)
 
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+\-]\d{2}:?\d{2})?)?$")
 _MAX_QUERY_BYTES = 5 * 1024 * 1024  # 5 MB hard cap per query result file
+_MAX_MAIN_JSX_BYTES = 512 * 1024  # 512 KB ceiling for the React source file
 
 _SLUG_NON_ASCII_RE = re.compile(r"[^a-z0-9]+")
 
+# Captures the literal-string argument of useQuerySql(...). Template strings
+# and dynamic expressions are intentionally skipped (the system prompt allows
+# them for enumerable filter selectors that resolve at runtime).
+_USE_QUERY_SQL_LITERAL_RE = re.compile(r"useQuerySql\s*\(\s*['\"]([^'\"\\\n]+)['\"]\s*\)")
+
 
 def _slugify_title(title: str, max_len: int = 32) -> str:
-    """Best-effort ASCII slug from an LLM-supplied report title.
-
-    Returns ``""`` for titles that yield no usable characters; callers fall
-    back to a default like ``"report"`` so the resulting id always has a
-    non-empty middle segment.
-    """
+    """Best-effort ASCII slug from an LLM-supplied report title."""
     ascii_only = title.encode("ascii", errors="ignore").decode("ascii")
     slug = _SLUG_NON_ASCII_RE.sub("_", ascii_only.lower()).strip("_")
     return slug[:max_len]
@@ -74,7 +74,7 @@ def _allocate_report_id(title: str, project_root: Path) -> str:
     for _ in range(8):
         suffix = uuid.uuid4().hex[:6]
         candidate = f"rpt_{base_slug}_{stamp}_{suffix}"
-        candidate = candidate[:83]  # stay under the 84-char regex cap
+        candidate = candidate[:83]
         if not (reports_root / candidate).exists():
             return candidate
     raise RuntimeError("Failed to allocate a unique report id after 8 attempts")
@@ -102,16 +102,7 @@ def _atomic_write_text(path: Path, content: str) -> None:
 
 
 def _infer_column_type(values: List[Any]) -> ColumnSemanticType:
-    """Infer a semantic column type from a sample of values.
-
-    Heuristic:
-        * all-None -> string
-        * any bool -> boolean (handled before int because bool is int subclass)
-        * all int -> integer
-        * any float (or mixed numeric) -> number
-        * all str matching ISO date/datetime -> date
-        * otherwise -> string
-    """
+    """Infer a semantic column type from a sample of values."""
     saw_bool = False
     saw_int = False
     saw_float = False
@@ -133,7 +124,6 @@ def _infer_column_type(values: List[Any]) -> ColumnSemanticType:
             if _ISO_DATE_RE.match(value):
                 saw_str_iso_date += 1
         else:
-            # datetime / date objects from DB drivers, etc.
             type_name = type(value).__name__
             if type_name in {"datetime", "date"}:
                 saw_str_total += 1
@@ -177,7 +167,6 @@ def _normalize_value(value: Any) -> Any:
 
 def _looks_like_select(sql: str) -> bool:
     head = sql.lstrip()
-    # strip leading SQL comments
     while head.startswith("--") or head.startswith("/*"):
         if head.startswith("--"):
             nl = head.find("\n")
@@ -187,6 +176,13 @@ def _looks_like_select(sql: str) -> bool:
             head = head[end + 2 :] if end >= 0 else ""
         head = head.lstrip()
     return head[:6].upper().startswith(("SELECT", "WITH", "SHOW", "DESCRI", "EXPLAI", "PRAGMA"))
+
+
+def _looks_like_react_component(jsx: str) -> bool:
+    """Tiny syntactic smoke test — catch obvious "wrong file" submissions."""
+    if "export default" not in jsx:
+        return False
+    return ("function " in jsx) or ("=> {" in jsx) or ("=>" in jsx and "(" in jsx)
 
 
 # --------------------------------------------------------------------------- #
@@ -199,14 +195,14 @@ class ReportFilesystemFuncTool(FilesystemFuncTool):
 
     Two patterns are write-protected (read/glob/grep still work):
 
-    * ``reports/<id>/manifest.json``
+    * ``reports/<id>/main.jsx``
     * ``reports/<id>/queries/<anything>``
 
     Any attempt to ``write_file`` or ``edit_file`` against these paths returns
-    a clear error pointing the LLM at ``save_manifest`` / ``save_query``.
+    a clear error pointing the LLM at ``save_main_jsx`` / ``save_query``.
     """
 
-    _DENY_RE = re.compile(r"^reports/[^/]+/(manifest\.json|queries/.+)$")
+    _DENY_RE = re.compile(r"^reports/[^/]+/(main\.jsx|queries/.+)$")
 
     def _is_report_artifact_path(self, path: str) -> Optional[str]:
         """Return the matching pattern label, or None when the path is free."""
@@ -222,16 +218,16 @@ class ReportFilesystemFuncTool(FilesystemFuncTool):
         match = self._DENY_RE.match(rel_str)
         if not match:
             return None
-        return "manifest.json" if match.group(1) == "manifest.json" else "queries/*"
+        return "main.jsx" if match.group(1) == "main.jsx" else "queries/*"
 
     def write_file(self, path: str, content: str, file_type: str = "") -> FuncToolResult:  # type: ignore[override]
         match = self._is_report_artifact_path(path)
-        if match == "manifest.json":
+        if match == "main.jsx":
             return FuncToolResult(
                 success=0,
                 error=(
-                    "manifest.json must not be written directly. Use the `save_manifest` tool, "
-                    "which validates the schema before writing."
+                    "main.jsx must not be written directly. Use the `save_main_jsx` tool, "
+                    "which validates the component before writing."
                 ),
             )
         if match == "queries/*":
@@ -246,12 +242,13 @@ class ReportFilesystemFuncTool(FilesystemFuncTool):
 
     def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:  # type: ignore[override]
         match = self._is_report_artifact_path(path)
-        if match == "manifest.json":
+        if match == "main.jsx":
             return FuncToolResult(
                 success=0,
                 error=(
-                    "manifest.json cannot be edited in place. Use `read_file` to load it, "
-                    "modify the structure in your reasoning, then call `save_manifest` to overwrite."
+                    "main.jsx cannot be edited in place. Use `read_file` to load it, "
+                    "produce the full replacement source in your reasoning, then call "
+                    "`save_main_jsx` with the new content."
                 ),
             )
         if match == "queries/*":
@@ -277,16 +274,13 @@ class ReportArtifactTools:
 
     1. The owning node constructs one instance per execution with no
        active report id.
-    2. The LLM decides intent and binds the active report by calling
+    2. The LLM declares intent and binds the active report by calling
        **exactly one** of ``start_new_report`` (create) or
-       ``bind_existing_report`` (edit). The system prompt enumerates
-       the decision criteria.
-    3. ``save_query`` and ``save_manifest`` operate against the active
+       ``bind_existing_report`` (edit). The system prompt enumerates the
+       decision criteria.
+    3. ``save_query`` and ``save_main_jsx`` operate against the active
        report. They fail-fast with a clear pointer when no report is
        bound, forcing the LLM to declare intent before writing.
-
-    The tools intentionally hide the disk layout: callers reference queries
-    by *slug* (e.g. ``"sales_by_store"``) and never see the absolute path.
     """
 
     def __init__(
@@ -307,10 +301,9 @@ class ReportArtifactTools:
         self.report_id: Optional[str] = None
         self.report_dir: Optional[Path] = None
         self.queries_dir: Optional[Path] = None
-        # Tracks how the active report became active, surfaced to callers
-        # that want to differentiate "fresh artifact" from "edit in-place"
-        # in their final response (e.g. the node's result payload).
-        self.mode: Optional[str] = None  # "new" | "edit"
+        # "new" | "edit" — surfaced to callers that want to differentiate
+        # "fresh artifact" from "edit in-place" in their final response.
+        self.mode: Optional[str] = None
 
     # -- public --------------------------------------------------------------
 
@@ -320,7 +313,7 @@ class ReportArtifactTools:
             trans_to_function_tool(self.start_new_report),
             trans_to_function_tool(self.bind_existing_report),
             trans_to_function_tool(self.save_query),
-            trans_to_function_tool(self.save_manifest),
+            trans_to_function_tool(self.save_main_jsx),
         ]
 
     # -- intent declaration --------------------------------------------------
@@ -332,8 +325,8 @@ class ReportArtifactTools:
         Call this when the user's request is to **produce a new report
         artifact**, even if they reference one or more existing reports
         for context. To learn from a reference report, read its
-        ``manifest.json`` / ``queries/*`` via the filesystem read tool
-        and then build the new artifact here.
+        ``main.jsx`` / ``queries/*`` via the filesystem read tool and then
+        build the new artifact here.
 
         Args:
             title: short ASCII title used to seed the report id's slug
@@ -360,15 +353,15 @@ class ReportArtifactTools:
         Switch the active report to an existing one and bind subsequent saves there.
 
         Call this when the user asks to **modify / update / edit /
-        append to** a specific named report. ``save_query`` will
-        overwrite same-named queries; ``save_manifest`` will replace
-        ``manifest.json``. The filesystem read tool is the recommended
-        way to load the current manifest before mutating it.
+        append to** a specific named report. ``save_query`` will overwrite
+        same-named queries; ``save_main_jsx`` will replace ``main.jsx``.
+        Use the filesystem read tool to load the current ``main.jsx``
+        before mutating it.
 
         Args:
             report_id: target report id, e.g. ``"rpt_2026q1_na_sales"``.
                 Must match ``^rpt_[a-z0-9_-]{1,80}$`` and the directory
-                (including ``manifest.json``) must already exist under
+                (including ``main.jsx``) must already exist under
                 ``<project_root>/reports/``.
 
         Returns:
@@ -394,12 +387,10 @@ class ReportArtifactTools:
                     "Use start_new_report() if you intended to create a new report."
                 ),
             )
-        if not (candidate / "manifest.json").is_file():
+        if not (candidate / "main.jsx").is_file():
             return FuncToolResult(
                 success=0,
-                error=(
-                    f"reports/{report_id}/manifest.json is missing — the report is incomplete. Cannot bind for editing."
-                ),
+                error=(f"reports/{report_id}/main.jsx is missing — the report is incomplete. Cannot bind for editing."),
             )
         return self._activate(report_id, mode="edit", create_dirs=False)
 
@@ -464,8 +455,8 @@ class ReportArtifactTools:
                     "columns": [{"name": "...", "type": "..."}, ...],
                 }
 
-            The ``columns`` block is the authoritative source for Vega-Lite
-            encoding ``type`` decisions in subsequent ``save_manifest`` calls.
+            The ``columns`` block is the authoritative source for axis-type
+            decisions in subsequent ``save_main_jsx`` calls.
         """
         not_bound = self._require_active("save_query")
         if not_bound is not None:
@@ -590,85 +581,107 @@ class ReportArtifactTools:
             }
         )
 
-    def save_manifest(self, manifest_json: str) -> FuncToolResult:
+    def save_main_jsx(self, jsx_code: str) -> FuncToolResult:
         """
-        Validate a candidate manifest and atomically write it to disk.
+        Validate a candidate React component source and atomically write it to disk.
 
         Args:
-            manifest_json: The full manifest object encoded as a JSON string.
-                Schema follows ``ReportManifest``. ``id`` must equal the
-                currently-active ``report_id`` (omit it and we set it for
-                you). Every chart/table ``data_ref`` must point to a query
-                file present in this report's ``queries/`` directory —
-                either produced via ``save_query`` in the current turn or
-                left over from a previous run when in edit mode.
+            jsx_code: The full ``main.jsx`` source. Must:
+                * include ``export default function ...`` (or arrow form),
+                * stay under 512 KB,
+                * reference only ``queries/<slug>`` sqlIds that already
+                  exist on disk via prior ``save_query`` calls.
 
         Returns:
             FuncToolResult.result is a dict like::
 
                 {
-                    "manifest_path": "reports/<id>/manifest.json",
-                    "section_count": <int>,
-                    "data_refs": [...],
+                    "main_jsx_path": "reports/<id>/main.jsx",
+                    "bytes": <int>,
+                    "query_refs": ["queries/foo", "queries/bar"],
                 }
+
+        Template-string sqlIds (``\\`queries/by_month_${month}\\```) are
+        intentionally NOT statically checked — they resolve from a literal
+        enumeration at runtime. The system prompt warns the LLM that these
+        will surface as ``errorMessage`` if the enumerated slug isn't
+        actually published.
         """
-        not_bound = self._require_active("save_manifest")
+        not_bound = self._require_active("save_main_jsx")
         if not_bound is not None:
             return not_bound
-        if isinstance(manifest_json, dict):
-            # Allow direct dict input from internal callers and tests.
-            manifest: Dict[str, Any] = manifest_json
-        elif isinstance(manifest_json, str):
-            try:
-                manifest = json.loads(manifest_json)
-            except json.JSONDecodeError as exc:
-                return FuncToolResult(success=0, error=f"manifest_json is not valid JSON: {exc}")
-            if not isinstance(manifest, dict):
-                return FuncToolResult(success=0, error="manifest_json must decode to a JSON object")
-        else:
-            return FuncToolResult(success=0, error="manifest_json must be a JSON object string")
 
-        manifest.setdefault("id", self.report_id)
-        manifest.setdefault("version", "1.0")
-        manifest.setdefault("created_at", _utc_now_iso())
+        if not isinstance(jsx_code, str):
+            return FuncToolResult(success=0, error="jsx_code must be a string")
+        if not jsx_code.strip():
+            return FuncToolResult(success=0, error="jsx_code must not be empty")
 
-        if manifest.get("id") != self.report_id:
-            return FuncToolResult(
-                success=0,
-                error=(f"manifest.id must equal the current report id {self.report_id!r}; got {manifest.get('id')!r}"),
-            )
-
-        try:
-            parsed = ReportManifest.model_validate(manifest)
-        except Exception as exc:
-            return FuncToolResult(success=0, error=f"manifest schema validation failed: {exc}")
-
-        missing_refs: List[str] = []
-        for ref in parsed.collect_data_refs():
-            slug = ref.split("/", 1)[1]
-            if not (self.queries_dir / f"{slug}.sql").exists() or not (self.queries_dir / f"{slug}.json").exists():
-                missing_refs.append(ref)
-        if missing_refs:
+        size = len(jsx_code.encode("utf-8"))
+        if size > _MAX_MAIN_JSX_BYTES:
             return FuncToolResult(
                 success=0,
                 error=(
-                    "These data_ref values point to queries that were not produced via save_query: "
-                    + ", ".join(missing_refs)
-                    + ". Run save_query for each missing query before save_manifest."
+                    f"main.jsx exceeds the {_MAX_MAIN_JSX_BYTES // 1024} KB limit "
+                    f"({size // 1024} KB). Split helpers/data into smaller pieces or simplify the layout."
                 ),
             )
 
-        manifest_path = self.report_dir / "manifest.json"
+        if not _looks_like_react_component(jsx_code):
+            return FuncToolResult(
+                success=0,
+                error=(
+                    "jsx_code does not look like a React component module. "
+                    "It must include `export default function ...` (or an arrow-form default export)."
+                ),
+            )
+
+        # Static check: every literal useQuerySql('queries/<slug>') must
+        # resolve to a saved query file. Template strings (backticks with
+        # ${...}) are tolerated because they encode enumerable filter values.
+        referenced_slugs: List[str] = []
+        missing: List[str] = []
+        seen: set[str] = set()
+        for match in _USE_QUERY_SQL_LITERAL_RE.finditer(jsx_code):
+            literal = match.group(1)
+            slug = extract_query_slug(literal)
+            if slug is None:
+                # Loud signal — the LLM passed a malformed literal. Better
+                # to flag than to silently skip.
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        f"useQuerySql received an invalid literal sqlId: {literal!r}. "
+                        "Use 'queries/<slug>' where <slug> matches ^[a-z0-9_]+$."
+                    ),
+                )
+            if slug in seen:
+                continue
+            seen.add(slug)
+            referenced_slugs.append(f"queries/{slug}")
+            json_path = self.queries_dir / f"{slug}.json"
+            if not json_path.is_file():
+                missing.append(f"queries/{slug}")
+
+        if missing:
+            return FuncToolResult(
+                success=0,
+                error=(
+                    "These useQuerySql references point to queries that were not produced via save_query: "
+                    + ", ".join(missing)
+                    + ". Run save_query for each missing query before save_main_jsx."
+                ),
+            )
+
+        main_jsx_path = self.report_dir / "main.jsx"
         try:
-            blob = parsed.model_dump_json(indent=2)
-            _atomic_write_text(manifest_path, blob)
+            _atomic_write_text(main_jsx_path, jsx_code)
         except OSError as exc:
-            return FuncToolResult(success=0, error=f"Failed to write manifest: {exc}")
+            return FuncToolResult(success=0, error=f"Failed to write main.jsx: {exc}")
 
         return FuncToolResult(
             result={
-                "manifest_path": manifest_path.relative_to(self._project_root).as_posix(),
-                "section_count": len(parsed.sections),
-                "data_refs": parsed.collect_data_refs(),
+                "main_jsx_path": main_jsx_path.relative_to(self._project_root).as_posix(),
+                "bytes": size,
+                "query_refs": referenced_slugs,
             }
         )

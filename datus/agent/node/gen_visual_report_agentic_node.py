@@ -6,20 +6,22 @@
 GenVisualReportAgenticNode — visualizable report generation.
 
 Replacement track for the legacy ``gen_report`` subagent. Instead of
-returning a single Markdown blob, this node produces a structured report
-artifact under ``<project_root>/reports/<id>/``:
+returning a Markdown blob, this node produces a React-JSX report artifact
+under ``<project_root>/reports/<id>/``:
 
-* ``manifest.json`` — section block tree (markdown / chart / table / layout / divider)
-* ``queries/<slug>.sql`` and ``queries/<slug>.json`` — per-query source + result
+* ``main.jsx`` — the React component the LLM authored (default export).
+* ``queries/<slug>.sql`` + ``queries/<slug>.json`` — per-query source + result.
 
 The artifact is consumed by:
 
-* Datus-CLI — compiles to a self-contained ``index.html`` next to the manifest.
+* Datus-CLI — compiles to a self-contained ``index.html`` that embeds
+  ``main.jsx`` + queries and loads them in a sandboxed iframe.
 * Datus-SaaS — served by the backend ``GET /api/v1/report/detail`` endpoint
-  and rendered dynamically by ``@datus/web-common/modules/report``.
+  and rendered dynamically by ``@datus/web-common/modules/report`` (also
+  iframe-sandboxed).
 
-See ``docs/gen-report-artifact.md`` (in the SaaS repo) for the full
-contract this node enforces.
+See ``Datus-saas/docs/gen-report-artifact.md`` for the full contract this
+node enforces.
 """
 
 from __future__ import annotations
@@ -78,7 +80,7 @@ def _detect_referenced_report_ids(user_message: str, project_root: Path) -> List
         if candidate in seen or not REPORT_ID_RE.fullmatch(candidate):
             continue
         candidate_dir = reports_root / candidate
-        if candidate_dir.is_dir() and (candidate_dir / "manifest.json").is_file():
+        if candidate_dir.is_dir() and (candidate_dir / "main.jsx").is_file():
             seen.add(candidate)
             found.append(candidate)
     return found
@@ -89,7 +91,7 @@ class GenVisualReportAgenticNode(AgenticNode):
     Visual report subagent.
 
     Sets up semantic / db / context-search tools plus the report-specific
-    ``ReportArtifactTools`` (save_query / save_manifest) and a hardened
+    ``ReportArtifactTools`` (save_query / save_main_jsx) and a hardened
     ``ReportFilesystemFuncTool`` that denies direct writes to report
     artifact paths.
 
@@ -172,8 +174,8 @@ class GenVisualReportAgenticNode(AgenticNode):
             self._setup_tool_pattern(pattern)
 
         # Always provide the hardened filesystem tool — the node needs it
-        # both for second-round manifest edits (read_file the existing
-        # manifest, modify, save_manifest) and for general exploration.
+        # both for second-round main.jsx edits (read_file the existing
+        # file, rewrite, save_main_jsx) and for general exploration.
         if not self.filesystem_func_tool:
             self._setup_filesystem_tools()
 
@@ -389,7 +391,7 @@ class GenVisualReportAgenticNode(AgenticNode):
                     f"{ref_list}. Decide whether they want to EDIT one of these in place "
                     "(call bind_existing_report) or PRODUCE A NEW report that draws on "
                     "them as references (call start_new_report and use the filesystem "
-                    "read tool on reports/<id>/manifest.json and reports/<id>/queries/* "
+                    "read tool on reports/<id>/main.jsx and reports/<id>/queries/* "
                     "to learn from them). When unclear, default to start_new_report."
                 )
 
@@ -559,7 +561,7 @@ class GenVisualReportAgenticNode(AgenticNode):
                         tokens_used = int(usage["total_tokens"])
                         break
 
-            manifest_action = self._find_artifact_tool_call(tool_calls, "save_manifest")
+            main_jsx_action = self._find_artifact_tool_call(tool_calls, "save_main_jsx")
             query_actions = [a for a in tool_calls if a.action_type == "save_query"]
 
             # The LLM picked the active report by calling start_new_report or
@@ -567,19 +569,19 @@ class GenVisualReportAgenticNode(AgenticNode):
             if self.report_artifact_tools is not None and self.report_artifact_tools.report_id:
                 self._active_report_id = self.report_artifact_tools.report_id
 
-            manifest_rel_path: Optional[str] = None
-            if manifest_action is not None:
-                manifest_rel_path = self._extract_artifact_result_field(manifest_action, "manifest_path")
+            main_jsx_rel_path: Optional[str] = None
+            if main_jsx_action is not None:
+                main_jsx_rel_path = self._extract_artifact_result_field(main_jsx_action, "main_jsx_path")
 
             html_rel_path: Optional[str] = None
-            if manifest_rel_path and self._active_report_id:
+            if main_jsx_rel_path and self._active_report_id:
                 html_rel_path = self._maybe_compile_html(self._active_report_id)
 
             result = GenVisualReportNodeResult(
-                success=manifest_rel_path is not None,
+                success=main_jsx_rel_path is not None,
                 response=response_content,
                 report_id=self._active_report_id,
-                manifest_path=manifest_rel_path,
+                main_jsx_path=main_jsx_rel_path,
                 html_path=html_rel_path,
                 query_count=len(query_actions),
                 tokens_used=tokens_used,
@@ -591,7 +593,7 @@ class GenVisualReportAgenticNode(AgenticNode):
                     "total_tokens": tokens_used,
                 },
             )
-            if manifest_rel_path is None:
+            if main_jsx_rel_path is None:
                 if self._active_report_id is None:
                     result.error = (
                         "Run finished without binding a report. The LLM must call either "
@@ -599,14 +601,14 @@ class GenVisualReportAgenticNode(AgenticNode):
                         "the artifact."
                     )
                 else:
-                    result.error = "save_manifest was never called — the report artifact is incomplete."
+                    result.error = "save_main_jsx was never called — the report artifact is incomplete."
 
             self.actions.extend(all_actions)
 
             summary_messages = (
-                f"Visual report generated: reports/{self._active_report_id}/manifest.json"
-                if manifest_rel_path
-                else "Visual report run finished without a manifest."
+                f"Visual report generated: reports/{self._active_report_id}/main.jsx"
+                if main_jsx_rel_path
+                else "Visual report run finished without main.jsx."
             )
             final_action = ActionHistory.create_action(
                 role=ActionRole.ASSISTANT,
@@ -614,7 +616,7 @@ class GenVisualReportAgenticNode(AgenticNode):
                 messages=summary_messages,
                 input_data=user_input.model_dump(),
                 output_data=result.model_dump(),
-                status=ActionStatus.SUCCESS if manifest_rel_path else ActionStatus.FAILED,
+                status=ActionStatus.SUCCESS if main_jsx_rel_path else ActionStatus.FAILED,
             )
             action_history_manager.add_action(final_action)
             yield final_action

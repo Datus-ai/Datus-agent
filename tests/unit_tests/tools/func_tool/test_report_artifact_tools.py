@@ -2,20 +2,19 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""
-Unit tests for report artifact tools.
+"""Unit tests for report artifact tools.
 
 Covers:
 * ``ReportArtifactTools.start_new_report`` / ``bind_existing_report`` — the
   LLM-driven intent declaration that picks "create new" vs "edit existing"
   before any write tool runs.
-* ``_require_active`` guard — save_query / save_manifest fail-fast when no
+* ``_require_active`` guard — save_query / save_main_jsx fail-fast when no
   report is bound.
 * ``save_query`` — column inference, SQL persistence, schema validation,
   datasource resolution failures, slug overwrite.
-* ``save_manifest`` — schema validation, data_ref cross-check against
-  persisted queries, atomic rewrite.
-* ``ReportFilesystemFuncTool`` — deny rules for ``manifest.json`` and
+* ``save_main_jsx`` — basic syntax check, sqlId reference cross-check
+  against persisted queries, atomic rewrite, byte cap.
+* ``ReportFilesystemFuncTool`` — deny rules for ``main.jsx`` and
   ``queries/*`` paths; allow rules for everything else.
 
 No mocks; we use a real SQLite database wired through ``DBFuncTool`` so
@@ -116,7 +115,6 @@ class TestAllocateReportId:
     def test_format_matches_pattern(self, project_root: Path):
         new_id = _allocate_report_id("sales report", project_root)
         assert new_id.startswith("rpt_sales_report_")
-        # rpt_<slug>_<yymmdd>_<rand6>: at minimum slug + date + 6 hex chars.
         parts = new_id.split("_")
         assert parts[0] == "rpt"
         assert parts[-1] != "" and len(parts[-1]) == 6
@@ -125,7 +123,7 @@ class TestAllocateReportId:
         new_id = _allocate_report_id("销售", project_root)
         assert new_id.startswith("rpt_report_")
 
-    def test_avoids_collision(self, project_root: Path, monkeypatch):
+    def test_avoids_collision(self, project_root: Path):
         first = _allocate_report_id("collision", project_root)
         (project_root / "reports" / first).mkdir(parents=True)
         # The next call must pick a different id, not return first again.
@@ -148,7 +146,6 @@ class TestStartNewReport:
         assert payload["mode"] == "new"
         assert payload["report_dir"] == f"reports/{new_id}"
 
-        # Tool state is now active.
         assert unbound_tools.report_id == new_id
         assert unbound_tools.mode == "new"
         assert (project_root / "reports" / new_id / "queries").is_dir()
@@ -160,10 +157,10 @@ class TestStartNewReport:
 
 
 class TestBindExistingReport:
-    def test_binds_when_directory_and_manifest_exist(self, unbound_tools: ReportArtifactTools, project_root: Path):
+    def test_binds_when_directory_and_main_jsx_exist(self, unbound_tools: ReportArtifactTools, project_root: Path):
         existing = project_root / "reports" / "rpt_existing_demo_260513_aaaaaa"
         (existing / "queries").mkdir(parents=True)
-        (existing / "manifest.json").write_text('{"id":"rpt_existing_demo_260513_aaaaaa"}')
+        (existing / "main.jsx").write_text("export default function R() { return null; }\n")
 
         result = unbound_tools.bind_existing_report("rpt_existing_demo_260513_aaaaaa")
         assert result.success == 1, result.error
@@ -175,17 +172,16 @@ class TestBindExistingReport:
         result = unbound_tools.bind_existing_report("rpt_nope_260513_bbbbbb")
         assert result.success == 0
         assert "not found" in (result.error or "").lower()
-        # Tool stays unbound — must not partially apply.
         assert unbound_tools.report_id is None
 
-    def test_rejects_missing_manifest(self, unbound_tools: ReportArtifactTools, project_root: Path):
-        # Directory exists but no manifest.json — caller never finished a previous run.
+    def test_rejects_missing_main_jsx(self, unbound_tools: ReportArtifactTools, project_root: Path):
+        # Directory exists but no main.jsx — caller never finished a previous run.
         incomplete = project_root / "reports" / "rpt_partial_260513_cccccc"
         (incomplete / "queries").mkdir(parents=True)
 
         result = unbound_tools.bind_existing_report("rpt_partial_260513_cccccc")
         assert result.success == 0
-        assert "manifest.json" in (result.error or "")
+        assert "main.jsx" in (result.error or "")
         assert unbound_tools.report_id is None
 
     def test_rejects_invalid_id_format(self, unbound_tools: ReportArtifactTools):
@@ -195,7 +191,7 @@ class TestBindExistingReport:
 
 
 class TestRequireActive:
-    """save_query / save_manifest must fail-fast when no report is bound."""
+    """save_query / save_main_jsx must fail-fast when no report is bound."""
 
     def test_save_query_rejects_when_unbound(self, unbound_tools: ReportArtifactTools):
         result = unbound_tools.save_query(name="q", sql="SELECT 1 AS a")
@@ -205,8 +201,8 @@ class TestRequireActive:
         assert "start_new_report" in error
         assert "bind_existing_report" in error
 
-    def test_save_manifest_rejects_when_unbound(self, unbound_tools: ReportArtifactTools):
-        result = unbound_tools.save_manifest(json.dumps({"id": "rpt_x_260513_aaaaaa", "title": "x", "sections": []}))
+    def test_save_main_jsx_rejects_when_unbound(self, unbound_tools: ReportArtifactTools):
+        result = unbound_tools.save_main_jsx("export default function R() { return null; }")
         assert result.success == 0
         assert "no active report" in (result.error or "").lower()
 
@@ -257,8 +253,6 @@ class TestSaveQuery:
         assert payload["data_ref"] == "queries/sales_by_store"
         assert payload["row_count"] == 3
 
-        # The `demo test` title (set in the report_tools fixture) seeds the
-        # slug, so the active id must match the canonical pattern.
         report_id = report_tools.report_id or ""
         assert report_id.startswith("rpt_demo_test_"), f"unexpected report id: {report_id!r}"
         sql_file = project_root / "reports" / report_id / "queries" / "sales_by_store.sql"
@@ -303,132 +297,88 @@ class TestSaveQuery:
 
 
 # ----------------------------------------------------------------------------- #
-# save_manifest                                                                 #
+# save_main_jsx                                                                 #
 # ----------------------------------------------------------------------------- #
 
 
-def _basic_manifest(report_id: str) -> dict:
-    return {
-        "id": report_id,
-        "title": "demo",
-        "created_at": "2026-05-13T10:00:00Z",
-        "sections": [
-            {"id": "blk_001", "type": "markdown", "content": "# hi"},
-            {
-                "id": "blk_002",
-                "type": "chart",
-                "data_ref": "queries/sales_by_store",
-                "spec": {
-                    "mark": "bar",
-                    "encoding": {
-                        "x": {"field": "month", "type": "ordinal"},
-                        "y": {"field": "sales", "type": "quantitative"},
-                    },
-                },
-            },
-        ],
-    }
+_VALID_JSX = """\
+import React from 'react';
+import { useDatusArtifact } from '@datus/web-artifact';
+
+export default function Demo() {
+  const { useQuerySql } = useDatusArtifact();
+  const { data } = useQuerySql('queries/sales_by_store');
+  return React.createElement('div', null, JSON.stringify(data?.rows ?? []));
+}
+"""
 
 
-class TestSaveManifest:
-    def test_writes_validated_manifest(self, report_tools: ReportArtifactTools, project_root: Path):
-        run = report_tools.save_query(
-            name="sales_by_store",
-            sql="SELECT store_name, month, sales FROM sales",
-        )
-        assert run.success == 1
-
-        report_id = report_tools.report_id
-        result = report_tools.save_manifest(_basic_manifest(report_id))
-        assert result.success == 1, result.error
-        manifest_path = project_root / "reports" / report_id / "manifest.json"
-        assert manifest_path.exists()
-        on_disk = json.loads(manifest_path.read_text())
-        assert on_disk["id"] == report_id
-        assert len(on_disk["sections"]) == 2
-
-    def test_accepts_json_string_payload(self, report_tools: ReportArtifactTools, project_root: Path):
-        """The LLM-facing tool signature accepts a JSON string; smoke-test the parser."""
+class TestSaveMainJsx:
+    def test_writes_validated_source(self, report_tools: ReportArtifactTools, project_root: Path):
+        # Provide the referenced query first so the cross-check passes.
         run = report_tools.save_query(name="sales_by_store", sql="SELECT store_name, month, sales FROM sales")
         assert run.success == 1
         report_id = report_tools.report_id
 
-        result = report_tools.save_manifest(json.dumps(_basic_manifest(report_id)))
+        result = report_tools.save_main_jsx(_VALID_JSX)
         assert result.success == 1, result.error
-        manifest_path = project_root / "reports" / report_id / "manifest.json"
-        assert manifest_path.exists()
+        payload = result.result
+        assert payload["main_jsx_path"] == f"reports/{report_id}/main.jsx"
+        assert "queries/sales_by_store" in payload["query_refs"]
 
-    def test_invalid_json_string_rejected(self, report_tools: ReportArtifactTools):
-        result = report_tools.save_manifest("not valid json {")
-        assert result.success == 0
-        assert "json" in (result.error or "").lower()
+        main_jsx_file = project_root / "reports" / report_id / "main.jsx"
+        assert main_jsx_file.exists()
+        assert "useDatusArtifact" in main_jsx_file.read_text()
 
-    def test_missing_data_ref_blocks_write(self, report_tools: ReportArtifactTools, project_root: Path):
-        report_id = report_tools.report_id
-        manifest_path = project_root / "reports" / report_id / "manifest.json"
-        assert not manifest_path.exists()
-
-        result = report_tools.save_manifest(_basic_manifest(report_id))
+    def test_dangling_query_ref_rejected(self, report_tools: ReportArtifactTools, project_root: Path):
+        result = report_tools.save_main_jsx(_VALID_JSX)
         assert result.success == 0
         assert "save_query" in (result.error or "")
-        assert not manifest_path.exists()
-
-    def test_wrong_report_id_blocks_write(self, report_tools: ReportArtifactTools):
-        bad = _basic_manifest("rpt_other_260513_aaaaaa")
-        result = report_tools.save_manifest(bad)
-        assert result.success == 0
-        assert "report id" in (result.error or "").lower()
-
-    def test_invalid_manifest_blocks_write(self, report_tools: ReportArtifactTools, project_root: Path):
-        report_tools.save_query(name="q", sql="SELECT 1 AS a")
         report_id = report_tools.report_id
-        bad = _basic_manifest(report_id)
-        # Inject a layout with mismatched children/columns.
-        bad["sections"] = [
-            {
-                "id": "blk_layout",
-                "type": "layout",
-                "columns": [1, 1],
-                "children": [
-                    {"id": "blk_layout_c0", "type": "markdown", "content": "only one"},
-                ],
-            }
-        ]
-        result = report_tools.save_manifest(bad)
+        # The file MUST NOT have been written when validation fails.
+        assert not (project_root / "reports" / report_id / "main.jsx").exists()
+
+    def test_empty_source_rejected(self, report_tools: ReportArtifactTools):
+        result = report_tools.save_main_jsx("   ")
         assert result.success == 0
-        assert "validation" in (result.error or "").lower()
-        manifest_path = project_root / "reports" / report_id / "manifest.json"
-        assert not manifest_path.exists()
+        assert "empty" in (result.error or "").lower()
 
-    def test_edit_mode_can_overwrite_existing_manifest(self, unbound_tools: ReportArtifactTools, project_root: Path):
-        """bind_existing_report + save_manifest replaces the prior manifest in-place."""
-        existing_id = "rpt_editable_demo_260513_aaaaaa"
-        existing_dir = project_root / "reports" / existing_id
-        (existing_dir / "queries").mkdir(parents=True)
-        # Seed an old manifest + matching query so the cross-check passes.
-        (existing_dir / "manifest.json").write_text(json.dumps({"id": existing_id, "title": "old", "sections": []}))
-        (existing_dir / "queries" / "sales_by_store.sql").write_text("-- placeholder\nSELECT 1\n")
-        (existing_dir / "queries" / "sales_by_store.json").write_text(
-            json.dumps(
-                {
-                    "executed_at": "2026-05-13T00:00:00Z",
-                    "row_count": 0,
-                    "columns": [{"name": "a", "type": "integer"}],
-                    "rows": [],
-                }
-            )
-        )
+    def test_missing_default_export_rejected(self, report_tools: ReportArtifactTools):
+        no_export = "import React from 'react';\nfunction X() { return null; }\n"
+        result = report_tools.save_main_jsx(no_export)
+        assert result.success == 0
+        assert "export default" in (result.error or "")
 
-        bound = unbound_tools.bind_existing_report(existing_id)
-        assert bound.success == 1, bound.error
-        assert unbound_tools.mode == "edit"
-
-        result = unbound_tools.save_manifest(_basic_manifest(existing_id))
+    def test_template_literal_sqlid_skipped_in_static_check(
+        self, report_tools: ReportArtifactTools, project_root: Path
+    ):
+        """Template-string sqlIds resolve at runtime; static check should not block them."""
+        run = report_tools.save_query(name="sales_by_store", sql="SELECT store_name, month, sales FROM sales")
+        assert run.success == 1
+        jsx_with_template = """\
+import React, { useState } from 'react';
+import { useDatusArtifact } from '@datus/web-artifact';
+const MONTHS = ['jan', 'feb'];
+export default function R() {
+  const { useQuerySql } = useDatusArtifact();
+  const [m] = useState('jan');
+  // literal that must resolve:
+  const a = useQuerySql('queries/sales_by_store');
+  // template that must NOT trigger the static check:
+  const b = useQuerySql(`queries/sales_by_month_${m}`);
+  return null;
+}
+"""
+        result = report_tools.save_main_jsx(jsx_with_template)
         assert result.success == 1, result.error
+        # Only the literal slug is reported back.
+        assert result.result["query_refs"] == ["queries/sales_by_store"]
 
-        on_disk = json.loads((existing_dir / "manifest.json").read_text())
-        assert on_disk["title"] == "demo"
-        assert len(on_disk["sections"]) == 2
+    def test_oversize_source_rejected(self, report_tools: ReportArtifactTools):
+        big = "export default function R(){return null}\n" + ("// padding line\n" * 40000)
+        result = report_tools.save_main_jsx(big)
+        assert result.success == 0
+        assert "exceeds" in (result.error or "").lower()
 
 
 # ----------------------------------------------------------------------------- #
@@ -437,12 +387,12 @@ class TestSaveManifest:
 
 
 class TestReportFilesystemFuncTool:
-    def test_write_manifest_rejected(self, project_root: Path):
+    def test_write_main_jsx_rejected(self, project_root: Path):
         (project_root / "reports" / "rpt_x").mkdir(parents=True)
         fs = ReportFilesystemFuncTool(root_path=str(project_root))
-        result = fs.write_file("reports/rpt_x/manifest.json", '{"id":"rpt_x"}')
+        result = fs.write_file("reports/rpt_x/main.jsx", "export default () => null;")
         assert result.success == 0
-        assert "save_manifest" in (result.error or "")
+        assert "save_main_jsx" in (result.error or "")
 
     def test_write_queries_rejected(self, project_root: Path):
         (project_root / "reports" / "rpt_x" / "queries").mkdir(parents=True)
@@ -457,20 +407,20 @@ class TestReportFilesystemFuncTool:
         assert result.success == 1
         assert (project_root / "notes.md").exists()
 
-    def test_edit_manifest_rejected(self, project_root: Path):
+    def test_edit_main_jsx_rejected(self, project_root: Path):
         (project_root / "reports" / "rpt_x").mkdir(parents=True)
-        manifest = project_root / "reports" / "rpt_x" / "manifest.json"
-        manifest.write_text('{"id":"rpt_x"}')
+        main_jsx = project_root / "reports" / "rpt_x" / "main.jsx"
+        main_jsx.write_text("export default () => null;\n")
         fs = ReportFilesystemFuncTool(root_path=str(project_root))
-        result = fs.edit_file("reports/rpt_x/manifest.json", "rpt_x", "rpt_y")
+        result = fs.edit_file("reports/rpt_x/main.jsx", "null", "false")
         assert result.success == 0
-        assert "save_manifest" in (result.error or "")
+        assert "save_main_jsx" in (result.error or "")
 
-    def test_read_manifest_still_allowed(self, project_root: Path):
+    def test_read_main_jsx_still_allowed(self, project_root: Path):
         (project_root / "reports" / "rpt_x").mkdir(parents=True)
-        manifest = project_root / "reports" / "rpt_x" / "manifest.json"
-        manifest.write_text('{"id":"rpt_x"}')
+        main_jsx = project_root / "reports" / "rpt_x" / "main.jsx"
+        main_jsx.write_text("export default function R(){return null;}\n")
         fs = ReportFilesystemFuncTool(root_path=str(project_root))
-        result = fs.read_file("reports/rpt_x/manifest.json")
+        result = fs.read_file("reports/rpt_x/main.jsx")
         assert result.success == 1
-        assert "rpt_x" in (result.result or "")
+        assert "export default" in (result.result or "")
