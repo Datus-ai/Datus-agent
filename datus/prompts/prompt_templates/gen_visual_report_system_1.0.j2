@@ -161,7 +161,7 @@ The optional `/** @datus-title ... */` annotation at the top is used by the stan
 | Module | Notes |
 |---|---|
 | `react` | `useState`, `useEffect`, `useRef`, `useMemo`, `useCallback`, `useContext`, `createContext`, plus the default `React` namespace |
-| `@datus/web-artifact` | `useDatusArtifact`, `AnimateOnVisible` (see "Motion & animation" below) |
+| `@datus/web-artifact` | `useDatusArtifact`, `AnimateOnVisible` (see "Motion & animation"), `ChartEntryMore` (see "Chart action menu") |
 | `recharts` | any named export (`AreaChart`, `LineChart`, `BarChart`, `RadarChart`, `PieChart`, `ResponsiveContainer`, `Tooltip`, `XAxis`, `YAxis`, `CartesianGrid`, `Area`, `Line`, `Bar`, `Radar`, `Pie`, `Cell`, etc.) |
 | `lucide-react` | any icon component (`User`, `TrendingUp`, `Banknote`, `Globe`, `Landmark`, …). **Use these instead of emoji** — see the "Iconography & emoji" section below. |
 | `d3-format` | `format` — build numeric / currency / percent / SI-prefix formatters |
@@ -348,6 +348,60 @@ Rules of thumb when wiring this in:
 - **Respect reduced motion.** Compute `window.matchMedia('(prefers-reduced-motion: reduce)').matches` once at the top of `app.jsx` (via `useState` + `useEffect`) and pass `animationDuration={prefersReducedMotion ? 0 : 1500}` to Recharts primitives. `AnimateOnVisible` itself is fine to keep on — it only delays mount, never adds motion.
 
 Animation is part of the visual polish — the same way you'd pick a palette and a card primitive. A report whose charts pop in *as the reader reaches them* feels alive; one whose charts have already finished by the time they're seen feels like a screenshot.
+
+### Chart action menu (recommended)
+
+Every chart card that's backed by a real `useQuerySql(...)` call should expose a small "..." menu in its top-right corner, letting the reader inspect the underlying SQL, export the data, or grab a PNG. `@datus/web-artifact` ships a ready-made `<ChartEntryMore>` component for exactly this — use it; don't roll your own menu.
+
+Usage:
+
+```jsx
+import { useRef } from 'react';
+import { useDatusArtifact, ChartEntryMore } from '@datus/web-artifact';
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip } from 'recharts';
+
+function RevenueTrend() {
+  const cardRef = useRef(null);
+  const { useQuerySql } = useDatusArtifact();
+  const { data } = useQuerySql('queries/revenue_by_month');
+  const rows = data?.rows ?? [];
+
+  return (
+    <Card ref={cardRef}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Revenue trend</h3>
+        <ChartEntryMore sqlId="queries/revenue_by_month" cardRef={cardRef} />
+      </div>
+      <ResponsiveContainer width="100%" height={300}>
+        <LineChart data={rows}>{/* … */}</LineChart>
+      </ResponsiveContainer>
+    </Card>
+  );
+}
+```
+
+Props:
+
+| Prop | Required | Notes |
+|---|---|---|
+| `sqlId` | yes | The same literal you passed to `useQuerySql`. The component looks up the cached query result and the raw `.sql` text by this id. |
+| `cardRef` | yes | Ref attached to the **outer card element**. Used as the screenshot root for "Export PNG" / "Copy PNG", so the export includes title + chart together. |
+| `filenameBase` | no | Override the downloaded basename (default: the slug). Extensions are added automatically. |
+
+What the menu does — all entirely client-side, no host round-trip:
+
+- **View SQL** opens an in-iframe modal with the raw SQL rendered through a Prism-highlighted `<code>` block.
+- **Export SQL / CSV / JSON** triggers a Blob download in the reader's browser. CSV follows RFC 4180; JSON is the pretty-printed query result.
+- **Export PNG** screenshots `cardRef.current` via `html-to-image` (2× pixel ratio) and downloads it.
+- **Copy PNG** screenshots the same element and writes it to the system clipboard. On browsers that block clipboard writes from sandboxed iframes (mainly Safari), it falls back to a download and toasts the user.
+
+Rules of thumb:
+
+- **Add it to every chart that's backed by a real query** — line / bar / area / pie / scatter / radar charts, sortable tables. The "view SQL" action is the single best credibility move you can make for an analytical deliverable.
+- **Skip it on pure decoration** — KPI sparklines, tiny mini-charts that are visual texture rather than primary data, hand-rolled diagrams that don't have a single backing query.
+- **Trigger placement**: align it to the right side of the chart's title row, not floating over the chart canvas. The 26×26 button is sized to slot into a `flex` row alongside the H3 cleanly.
+- **One trigger per card**: don't add multiple `<ChartEntryMore>` for different sub-charts inside one card. Combine them into one card per query or pick the most-prominent sqlId.
+- **Don't pass any other ref** as `cardRef` — must be the outer card, otherwise PNG export crops out the title.
 
 ### Formatting helpers
 
