@@ -17,7 +17,7 @@ from rich.markdown import Markdown
 from rich.text import Text
 
 from datus.cli.action_display.markdown_stream import MarkdownStreamBuffer
-from datus.cli.action_display.renderers import _truncate_middle, is_task_anchor_input
+from datus.cli.action_display.renderers import _truncate_middle, is_task_anchor_input, parse_task_tool_input
 from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
 
@@ -334,7 +334,7 @@ class InlineStreamingContext:
 
     def _start_subagent_group_sync(self, first_action: ActionHistory, group_key: Optional[str] = None) -> None:
         """Create sub-agent group state (sync mode — no Live display)."""
-        subagent_type = first_action.action_type or "subagent"
+        subagent_type, _prompt, _description = parse_task_tool_input(first_action.input)
         self._subagent_groups[group_key] = {
             "start_time": first_action.start_time,
             "tool_count": 0,
@@ -916,7 +916,7 @@ class InlineStreamingContext:
         :meth:`_end_subagent_group_by_key` appends a ``header + Done``
         summary to the scrollback so a permanent trace remains.
         """
-        subagent_type = first_action.action_type or "subagent"
+        subagent_type, _prompt, _description = parse_task_tool_input(first_action.input)
 
         with self._print_lock:
             self._subagent_groups[group_key] = {
@@ -1139,19 +1139,21 @@ class InlineStreamingContext:
         Mirrors the field layout of
         :meth:`ActionRenderer.render_subagent_header` so the pinned-region
         header stays in lock-step with the scrollback header without
-        re-parsing Rich markup back into prompt_toolkit styles.
+        re-parsing Rich markup back into prompt_toolkit styles. Both routes
+        go through :func:`parse_task_tool_input` so wrapped and direct task
+        input layouts resolve identically — the previous inline branch only
+        handled the direct case and let wrapped tasks fall back to the
+        literal ``"task"`` label plus the model adapter's
+        ``"Tool call: task(...)"`` messages string as the goal.
         """
-        subagent_type = first_action.action_type or "subagent"
-        # Outer task tool gets its label from ``input["type"]``; see
-        # ``ActionRenderer.render_subagent_header`` for rationale.
-        if subagent_type == "task" and isinstance(first_action.input, dict):
-            subagent_type = first_action.input.get("type") or "task"
-        prompt = first_action.messages or ""
-        if prompt.startswith("User: "):
-            prompt = prompt[6:]
-        description = ""
-        if first_action.input and isinstance(first_action.input, dict):
-            description = first_action.input.get("_task_description", "")
+        input_data = first_action.input if isinstance(first_action.input, dict) else {}
+        subagent_type, parsed_prompt, parsed_description = parse_task_tool_input(input_data)
+        description = input_data.get("_task_description", "") or parsed_description
+        prompt = parsed_prompt
+        if not prompt:
+            prompt = first_action.messages or ""
+            if prompt.startswith("User: "):
+                prompt = prompt[6:]
         goal = description or (_truncate_middle(prompt, max_len=200) if prompt else "")
 
         segments: List[Tuple[str, str]] = [("class:subagent-header-live", f"\u23fa {subagent_type}")]

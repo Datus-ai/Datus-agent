@@ -471,6 +471,59 @@ class TestPathAGate:
         assert "parent_action_id=no-anchor-call-id" in msg
         assert "action_type=load_skill" in msg
 
+    @pytest.mark.parametrize(
+        "input_data,expected_type,expected_goal",
+        [
+            (
+                {"type": "explore", "description": "schema discovery"},
+                "explore",
+                "schema discovery",
+            ),
+            (
+                {
+                    "function_name": "task",
+                    "arguments": {"type": "explore", "description": "schema discovery"},
+                },
+                "explore",
+                "schema discovery",
+            ),
+            (
+                {
+                    "function_name": "task",
+                    "arguments": '{"type": "explore", "description": "schema discovery"}',
+                },
+                "explore",
+                "schema discovery",
+            ),
+        ],
+        ids=["direct", "wrapped_dict", "wrapped_json_string"],
+    )
+    def test_tui_live_header_segments_use_parsed_task_type(self, input_data, expected_type, expected_goal):
+        """TUI pinned-region header (``_build_subagent_header_segments``)
+        must canonicalise both layouts through :func:`parse_task_tool_input`,
+        matching ``ActionRenderer.render_subagent_header``. Regression for
+        the user-reported live header rendering as
+        ``⏺ task(Tool call: task('...'))`` instead of ``⏺ explore(...)`` —
+        the segment builder previously only handled the direct layout.
+        """
+        first_action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            depth=0,
+            action_type="task",
+            messages='Tool call: task(\'{"type": "explore"...}...\')',
+            input_data=input_data,
+        )
+        segments = InlineStreamingContext._build_subagent_header_segments(first_action)
+        # Segment 0 carries the cyan name; segment 1 (if present) carries
+        # the goal. Together they form the visible ⏺ header.
+        rendered = "".join(text for _style, text in segments)
+        assert f"\u23fa {expected_type}" in rendered
+        assert f"({expected_goal})" in rendered
+        # The model adapter's "Tool call: task(..." messages must NOT leak
+        # into the goal — that was the original double-wrap symptom.
+        assert "Tool call:" not in rendered
+
 
 # ── Unified reprint ──────────────────────────────────────────────
 
@@ -776,13 +829,17 @@ class TestTuiPath:
 
         ctx = InlineStreamingContext([], display, live_state=live_state)
         parent_id = "parent-tui"
+        # first_action is the outer task PROCESSING under the cleaned-up
+        # grouping contract — the subagent_type comes from ``input["type"]``,
+        # not from a depth=1 inner action's ``action_type``.
         first = _make_action(
             ActionRole.TOOL,
             ActionStatus.PROCESSING,
-            depth=1,
-            action_type="gen_metrics",
-            messages="task",
-            parent_action_id=parent_id,
+            depth=0,
+            action_id=parent_id,
+            action_type="task",
+            messages="task(gen_metrics)",
+            input_data={"type": "gen_metrics", "prompt": "compute base metrics"},
         )
         ctx._start_subagent_group(first, group_key=parent_id)
 
@@ -817,13 +874,16 @@ class TestTuiPath:
         ctx = InlineStreamingContext([], display, live_state=live_state)
 
         for parent_id, label in (("parent-A", "alpha"), ("parent-B", "beta")):
+            # Each subagent group is seeded by its own outer task
+            # PROCESSING action — same shape as production Path A.
             first = _make_action(
                 ActionRole.TOOL,
                 ActionStatus.PROCESSING,
-                depth=1,
-                action_type=label,
-                messages="task",
-                parent_action_id=parent_id,
+                depth=0,
+                action_id=parent_id,
+                action_type="task",
+                messages=f"task({label})",
+                input_data={"type": label, "prompt": f"{label} prompt"},
             )
             ctx._start_subagent_group(first, group_key=parent_id)
             for i in range(3):
