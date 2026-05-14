@@ -16,7 +16,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from datus.schemas.base import BaseInput, BaseResult
 
-REPORT_ID_RE = re.compile(r"^rpt_[a-z0-9_-]{1,80}$")
+# LLM-supplied slug doubles as the on-disk directory name; constrained
+# to a filesystem-friendly subset so we never need to URL-escape it.
+REPORT_SLUG_RE = re.compile(r"^[a-z0-9_]{1,80}$")
 QUERY_SLUG_RE = re.compile(r"^[a-z0-9_]{1,64}$")
 # Permissive sqlId form accepted by ``useQuerySql`` inside main.jsx — the
 # runtime normalizes any of ``queries/foo``, ``queries/foo.json``, ``foo`` to
@@ -90,9 +92,9 @@ class GenVisualReportNodeResult(BaseResult):
     """Result model for GenVisualReportAgenticNode."""
 
     response: str = Field(default="", description="Natural language summary shown after the artifact is produced")
-    report_id: Optional[str] = Field(None, description="Generated report id (matches the folder name)")
+    report_slug: Optional[str] = Field(None, description="LLM-chosen slug; doubles as the report's directory name.")
     app_jsx_path: Optional[str] = Field(None, description="Relative path to render/app.jsx under project_root")
-    render_file_count: int = Field(default=0, description="Number of files persisted under reports/<id>/render/")
+    render_file_count: int = Field(default=0, description="Number of files persisted under reports/<slug>/render/")
     html_path: Optional[str] = Field(None, description="Path to compiled index.html (CLI mode only)")
     query_count: int = Field(default=0, description="Number of queries persisted under queries/")
     tokens_used: int = Field(default=0, description="Total tokens used during this run")

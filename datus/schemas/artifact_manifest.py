@@ -20,21 +20,35 @@ just says ``Untitled report``.
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 ArtifactKind = Literal["report", "dashboard"]
 
+# LLM-supplied slug used directly as the artifact's directory name (no
+# random suffix, no prefix). Constrained to filesystem-friendly chars so
+# we never need to URL-escape it; max 80 keeps the full ``reports/<slug>/render/app.jsx``
+# path under typical OS limits.
+ARTIFACT_SLUG_PATTERN = r"^[a-z0-9_]{1,80}$"
+ARTIFACT_SLUG_RE = re.compile(ARTIFACT_SLUG_PATTERN)
+
 
 class ArtifactManifest(BaseModel):
-    """Persisted at ``<root>/<id>/manifest.json``.
+    """Persisted at ``<root>/<slug>/manifest.json``.
 
     Field choices:
 
-    * ``name`` and ``description`` are **required, non-empty**. The system
-      prompt forces the LLM to produce both at ``start_new_*`` time so
-      the artifact is never orphaned without a display name.
+    * ``slug`` is the LLM-supplied stable identifier; it doubles as the
+      on-disk directory name (``reports/<slug>/`` /
+      ``dashboards/<slug>/``). The LLM is responsible for choosing a
+      slug that doesn't collide with any existing artifact directory
+      (system prompt mandates a ``glob`` of the kind root before
+      calling ``start_new_*``).
+    * ``name`` and ``description`` are **required, non-empty**. The
+      system prompt forces the LLM to produce both at ``start_new_*``
+      time so the artifact is never orphaned without a display name.
     * ``kind`` mirrors the parent directory (``"reports"`` →
       ``"report"``, ``"dashboards"`` → ``"dashboard"``); callers that
       read the file by path already know which kind it is, but keeping
@@ -47,6 +61,11 @@ class ArtifactManifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    slug: str = Field(
+        ...,
+        pattern=ARTIFACT_SLUG_PATTERN,
+        description="Filesystem-friendly slug; doubles as the artifact's directory name.",
+    )
     name: str = Field(..., min_length=1, max_length=200, description="Human-readable display name (any language).")
     description: str = Field(
         ...,

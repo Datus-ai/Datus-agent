@@ -7,11 +7,12 @@ GenVisualReportAgenticNode — visualizable report generation.
 
 Replacement track for the legacy ``gen_report`` subagent. Instead of
 returning a Markdown blob, this node produces a React-JSX report artifact
-under ``<project_root>/reports/<id>/``:
+under ``<project_root>/reports/<slug>/``:
 
 * ``render/app.jsx`` — the React entry module the LLM authors (default export);
   it imports any additional ``render/*.jsx`` components the report needs.
 * ``queries/<slug>.sql`` + ``queries/<slug>.json`` — per-query source + result.
+* ``manifest.json`` — ``{slug, name, description, kind, created_at}``.
 
 The artifact is consumed by:
 
@@ -31,14 +32,12 @@ path that has no analogue in dashboard mode.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import List, Optional
 
 from datus.agent.node.base_visual_artifact_agentic_node import BaseVisualArtifactAgenticNode
 from datus.schemas.action_history import ActionHistory
 from datus.schemas.gen_visual_report_models import (
-    REPORT_ID_RE,
     GenVisualReportNodeInput,
     GenVisualReportNodeResult,
 )
@@ -51,14 +50,6 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-# Inline scan for ``rpt_<id>`` mentions in the user prompt. The result is
-# fed to the LLM as an awareness hint (not used to auto-bind) so the model
-# can decide between editing the existing report and producing a new one
-# that references it. Validation against the strict ``REPORT_ID_RE``
-# happens after the dir-exists check.
-_REPORT_ID_INLINE_RE = re.compile(r"(?:(?<=[^a-z0-9])|^)rpt_[a-z0-9][a-z0-9_-]{0,80}")
-
-
 class GenVisualReportAgenticNode(BaseVisualArtifactAgenticNode[GenVisualReportNodeInput, GenVisualReportNodeResult]):
     """
     Visual report subagent.
@@ -68,15 +59,14 @@ class GenVisualReportAgenticNode(BaseVisualArtifactAgenticNode[GenVisualReportNo
     ``ReportFilesystemFuncTool`` that denies direct writes to report
     artifact paths.
 
-    A fresh ``report_id`` is allocated on every ``execute_stream`` call so
-    repeated runs against the same node produce independent artifacts.
+    The LLM chooses the ``report_slug`` on every fresh ``start_new_report``
+    call; the system prompt directs it to ``glob('reports/*')`` first so the
+    chosen slug doesn't collide with an existing one.
     """
 
     NODE_NAME = "gen_visual_report"
     ARTIFACT_KIND = "report"
     ARTIFACT_ROOT_DIR_NAME = "reports"
-    ARTIFACT_ID_INLINE_REGEX = _REPORT_ID_INLINE_RE
-    ARTIFACT_ID_FULL_REGEX = REPORT_ID_RE
     FILESYSTEM_TOOL_CLS = ReportFilesystemFuncTool
     QUERY_SAVE_ACTION_TYPE = "save_query"
     FALLBACK_TEMPLATE_NAME = "gen_visual_report_system"
@@ -86,18 +76,15 @@ class GenVisualReportAgenticNode(BaseVisualArtifactAgenticNode[GenVisualReportNo
     def get_node_name(self) -> str:
         return self.configured_node_name or self.NODE_NAME
 
-    # ────────── Legacy attribute aliases (preserved for tests / callers) ──────────
-    # External callers and the unit tests reach in via ``_active_report_id``
-    # and ``report_artifact_tools``. Forward both to the base class's
-    # generic storage so the public surface is unchanged.
+    # ────────── Convenience accessors ──────────
 
     @property
-    def _active_report_id(self) -> Optional[str]:
-        return self._active_artifact_id
+    def _active_report_slug(self) -> Optional[str]:
+        return self._active_artifact_slug
 
-    @_active_report_id.setter
-    def _active_report_id(self, value: Optional[str]) -> None:
-        self._active_artifact_id = value
+    @_active_report_slug.setter
+    def _active_report_slug(self, value: Optional[str]) -> None:
+        self._active_artifact_slug = value
 
     @property
     def report_artifact_tools(self) -> Optional[ReportArtifactTools]:
@@ -115,24 +102,18 @@ class GenVisualReportAgenticNode(BaseVisualArtifactAgenticNode[GenVisualReportNo
             db_func_tool=self.db_func_tool,
         )
 
-    def _read_artifact_id_from_tools(self) -> Optional[str]:
+    def _read_artifact_slug_from_tools(self) -> Optional[str]:
         tools = self.artifact_tools
         if tools is None:
             return None
-        return getattr(tools, "report_id", None)
-
-    def _build_enhanced_message(self, user_input: GenVisualReportNodeInput) -> str:
-        # Same default flow as the base; the message-hint phrasing also
-        # already names "report" / "start_new_report" via ARTIFACT_KIND,
-        # so we don't need to override _format_referenced_ids_hint.
-        return super()._build_enhanced_message(user_input)
+        return getattr(tools, "report_slug", None)
 
     def _build_success_result(
         self,
         *,
         user_input: GenVisualReportNodeInput,
         response_content: str,
-        artifact_id: Optional[str],
+        artifact_slug: Optional[str],
         app_jsx_rel_path: Optional[str],
         render_file_count: int,
         query_actions: List[ActionHistory],
@@ -143,7 +124,7 @@ class GenVisualReportAgenticNode(BaseVisualArtifactAgenticNode[GenVisualReportNo
         return GenVisualReportNodeResult(
             success=app_jsx_rel_path is not None,
             response=response_content,
-            report_id=artifact_id,
+            report_slug=artifact_slug,
             app_jsx_path=app_jsx_rel_path,
             render_file_count=render_file_count,
             html_path=None,  # filled in by _post_validate_hook on success
@@ -163,18 +144,18 @@ class GenVisualReportAgenticNode(BaseVisualArtifactAgenticNode[GenVisualReportNo
             success=False,
             error=str(exc),
             response="Sorry, I encountered an error while generating the visual report.",
-            report_id=self._active_artifact_id,
+            report_slug=self._active_artifact_slug,
             tokens_used=0,
         )
 
-    def _post_validate_hook(self, artifact_id: str, result: GenVisualReportNodeResult) -> None:
+    def _post_validate_hook(self, artifact_slug: str, result: GenVisualReportNodeResult) -> None:
         """CLI-mode side effect: compile a standalone HTML and open it.
 
         Dashboard mode has no analogue (its queries are templates that
         must run against a live datasource), so this stays in the report
         subclass and the base class skips the hook in dashboard mode.
         """
-        html_rel_path = self._maybe_compile_html(artifact_id)
+        html_rel_path = self._maybe_compile_html(artifact_slug)
         if html_rel_path:
             result.html_path = html_rel_path
 
@@ -191,7 +172,7 @@ class GenVisualReportAgenticNode(BaseVisualArtifactAgenticNode[GenVisualReportNo
         # treat that as SaaS mode and skip the HTML compile.
         return not bool(getattr(self.agent_config, "filesystem_strict", False))
 
-    def _maybe_compile_html(self, report_id: str) -> Optional[str]:
+    def _maybe_compile_html(self, report_slug: str) -> Optional[str]:
         if not self._is_cli_mode():
             return None
         try:
@@ -208,13 +189,13 @@ class GenVisualReportAgenticNode(BaseVisualArtifactAgenticNode[GenVisualReportNo
             report_dist = Path(report_dist_value).expanduser() if report_dist_value else None
             html_path = render_report_html(
                 project_root=project_root,
-                report_id=report_id,
+                report_slug=report_slug,
                 report_dist=report_dist,
             )
             self._maybe_open_in_browser(html_path)
             return str(html_path.relative_to(project_root))
         except Exception as exc:
-            logger.error("Failed to compile report HTML for %s: %s", report_id, exc, exc_info=True)
+            logger.error("Failed to compile report HTML for %s: %s", report_slug, exc, exc_info=True)
             return None
 
     def _maybe_open_in_browser(self, html_path: Path) -> None:
@@ -244,32 +225,3 @@ class GenVisualReportAgenticNode(BaseVisualArtifactAgenticNode[GenVisualReportNo
             logger.info("Opening report in browser: %s", url)
         except Exception as exc:
             logger.debug("Failed to schedule browser open: %s", exc)
-
-    # ---------------------------------------------------------- back-compat
-
-    def _detect_referenced_report_ids(self, user_message: str, project_root: Path) -> List[str]:
-        """Back-compat alias around the generic helper.
-
-        Older tests may reach this method by name; the base class
-        already implements the same behaviour as
-        :meth:`_detect_referenced_artifact_ids`.
-        """
-        return self._detect_referenced_artifact_ids(user_message, project_root)
-
-    def _prepare_report_artifacts(self, user_input: GenVisualReportNodeInput) -> None:
-        """Back-compat alias for the historical method name."""
-        self._prepare_artifacts(user_input)
-
-
-# Module-level back-compat for legacy callers that imported the free
-# function (kept thin — the heavy logic lives on the base class).
-def _detect_referenced_report_ids(user_message: str, project_root: Path) -> List[str]:
-    from datus.tools.func_tool._visual_artifact_helpers import detect_referenced_artifact_ids
-
-    return detect_referenced_artifact_ids(
-        user_message=user_message,
-        project_root=project_root,
-        root_dir_name="reports",
-        id_inline_regex=_REPORT_ID_INLINE_RE,
-        id_full_regex=REPORT_ID_RE,
-    )

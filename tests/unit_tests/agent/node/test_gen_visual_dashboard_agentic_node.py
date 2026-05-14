@@ -9,12 +9,10 @@ Design principle: NO mocks except LLM.
 Covers:
 * Node initialization wires the expected tools (db, filesystem, semantic).
 * ``DashboardFilesystemFuncTool`` replaces the default filesystem tool.
-* ``_prepare_dashboard_artifacts`` registers the artifact tools without
-  binding a dashboard id.
-* The bugfix: repeated ``_prepare_dashboard_artifacts`` calls on the same
-  node instance must NOT stack duplicate tool wrappers.
-* ``_detect_referenced_dashboard_ids`` surfaces on-disk ids mentioned in
-  the user message; the LLM-facing hint includes them.
+* ``_prepare_artifacts`` registers the artifact tools without binding a
+  dashboard slug.
+* The bugfix: repeated ``_prepare_artifacts`` calls on the same node
+  instance must NOT stack duplicate tool wrappers.
 """
 
 from __future__ import annotations
@@ -53,9 +51,9 @@ def _make_node(real_agent_config, **overrides):
     return GenVisualDashboardAgenticNode(**kwargs)
 
 
-def _seed_dashboard_on_disk(project_root: Path, dashboard_id: str) -> None:
-    """Seed a minimal dashboard layout so referenced-id detection finds it."""
-    dash_dir = project_root / "dashboards" / dashboard_id
+def _seed_dashboard_on_disk(project_root: Path, dashboard_slug: str) -> None:
+    """Seed a minimal dashboard layout for end-to-end tests."""
+    dash_dir = project_root / "dashboards" / dashboard_slug
     (dash_dir / "queries").mkdir(parents=True, exist_ok=True)
     (dash_dir / "render").mkdir(exist_ok=True)
     (dash_dir / "render" / "app.jsx").write_text(
@@ -65,7 +63,7 @@ def _seed_dashboard_on_disk(project_root: Path, dashboard_id: str) -> None:
     # manifest.json is part of the dashboard contract — validate_render
     # rejects the artifact when it's missing.
     (dash_dir / "manifest.json").write_text(
-        '{"name":"seeded dashboard","description":"Unit-test seeded dashboard.",'
+        f'{{"slug":"{dashboard_slug}","name":"seeded dashboard","description":"Unit-test seeded dashboard.",'
         '"kind":"dashboard","created_at":"2026-05-13T00:00:00Z"}\n',
         encoding="utf-8",
     )
@@ -84,7 +82,7 @@ class TestGenVisualDashboardInit:
         assert isinstance(node.semantic_tools, SemanticTools)
         assert isinstance(node.filesystem_func_tool, DashboardFilesystemFuncTool)
         assert node.dashboard_artifact_tools is None
-        assert node._active_dashboard_id is None
+        assert node._active_dashboard_slug is None
 
     def test_tools_include_filesystem_and_db(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config)
@@ -111,11 +109,11 @@ class TestPrepareDashboardArtifacts:
         user_input = GenVisualDashboardNodeInput(user_message="一个销售概览 dashboard")
         node.input = user_input
 
-        node._prepare_dashboard_artifacts(user_input)
+        node._prepare_artifacts(user_input)
 
         assert isinstance(node.dashboard_artifact_tools, DashboardArtifactTools)
-        assert node._active_dashboard_id is None
-        assert node.dashboard_artifact_tools.dashboard_id is None
+        assert node._active_artifact_slug is None
+        assert node.dashboard_artifact_tools.dashboard_slug is None
 
         tool_names = {t.name for t in node.tools}
         assert "start_new_dashboard" in tool_names
@@ -124,7 +122,7 @@ class TestPrepareDashboardArtifacts:
         assert "validate_render" in tool_names
 
         dashboards_root = Path(real_agent_config.project_root) / "dashboards"
-        assert sorted(p.name for p in dashboards_root.glob("dash_*")) == []
+        assert not dashboards_root.exists() or sorted(p.name for p in dashboards_root.iterdir()) == []
 
     def test_repeated_calls_do_not_duplicate_tools(self, real_agent_config, mock_llm_create):
         """Bugfix regression: ``execute_stream`` may run twice per instance.
@@ -137,12 +135,12 @@ class TestPrepareDashboardArtifacts:
         user_input = GenVisualDashboardNodeInput(user_message="dashboard please")
         node.input = user_input
 
-        node._prepare_dashboard_artifacts(user_input)
+        node._prepare_artifacts(user_input)
         first_tool_count = len(node.tools)
         first_dashboard_artifact_tools = node.dashboard_artifact_tools
 
         # Run preparation again — should swap the instance, not stack tools.
-        node._prepare_dashboard_artifacts(user_input)
+        node._prepare_artifacts(user_input)
         assert len(node.tools) == first_tool_count
         assert node.dashboard_artifact_tools is not first_dashboard_artifact_tools
 
@@ -156,38 +154,11 @@ class TestPrepareDashboardArtifacts:
 
 
 # --------------------------------------------------------------------------- #
-# Enhanced-message hint                                                       #
+# Enhanced-message wiring                                                     #
 # --------------------------------------------------------------------------- #
 
 
-class TestEnhancedMessageHint:
-    def test_hint_added_when_user_references_existing_dashboard(self, real_agent_config, mock_llm_create):
-        project_root = Path(real_agent_config.project_root)
-        existing_id = "dash_existing_demo_260514_aabbcc"
-        _seed_dashboard_on_disk(project_root, existing_id)
-
-        node = _make_node(real_agent_config)
-        user_input = GenVisualDashboardNodeInput(user_message=f"修改 {existing_id}，加一个 region 过滤器")
-
-        message = node._build_enhanced_message(user_input)
-        assert existing_id in message
-        assert "bind_existing_dashboard" in message
-        assert "start_new_dashboard" in message
-
-    def test_no_hint_when_no_dashboards_directory(self, real_agent_config, mock_llm_create):
-        node = _make_node(real_agent_config)
-        user_input = GenVisualDashboardNodeInput(user_message="generate a new revenue dashboard")
-        message = node._build_enhanced_message(user_input)
-        assert "bind_existing_dashboard" not in message
-        assert "start_new_dashboard" not in message
-
-    def test_referenced_id_must_exist_on_disk_to_surface(self, real_agent_config, mock_llm_create):
-        # Reference an id whose folder does not exist; no hint should appear.
-        node = _make_node(real_agent_config)
-        user_input = GenVisualDashboardNodeInput(user_message="参考 dash_nonexistent_260514_aaaaaa 生成新的")
-        message = node._build_enhanced_message(user_input)
-        assert "bind_existing_dashboard" not in message
-
+class TestEnhancedMessage:
     def test_extra_message_parts_added_when_db_context_present(self, real_agent_config, mock_llm_create):
         """Catalog / database / schema all surface on the enhanced message header."""
         node = _make_node(real_agent_config)
@@ -205,16 +176,10 @@ class TestEnhancedMessageHint:
 
 @pytest.mark.asyncio
 async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
-    """LLM binds an existing dashboard (pre-seeded on disk) and validates the render tree.
-
-    Mirrors the ``test_execute_stream_end_to_end`` pattern in the report
-    suite: pre-seed disk so the LLM can use ``bind_existing_dashboard``
-    without having to know a dynamically-allocated id, then drive a
-    minimal ``bind → validate_render`` script via the mock LLM.
-    """
+    """LLM binds an existing dashboard (pre-seeded on disk) and validates the render tree."""
     project_root = Path(real_agent_config.project_root)
-    existing_id = "dash_e2e_demo_260514_abcdef"
-    dash_dir = project_root / "dashboards" / existing_id
+    existing_slug = "e2e_demo"
+    dash_dir = project_root / "dashboards" / existing_slug
     (dash_dir / "queries").mkdir(parents=True, exist_ok=True)
     (dash_dir / "render").mkdir(exist_ok=True)
     (dash_dir / "render" / "app.jsx").write_text(
@@ -249,7 +214,7 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
     )
     # Seed manifest.json — validate_render requires it on disk.
     (dash_dir / "manifest.json").write_text(
-        '{"name":"e2e demo dashboard","description":"End-to-end seeded dashboard.",'
+        f'{{"slug":"{existing_slug}","name":"e2e demo dashboard","description":"End-to-end seeded dashboard.",'
         '"kind":"dashboard","created_at":"2026-05-14T00:00:00Z"}\n',
         encoding="utf-8",
     )
@@ -260,7 +225,7 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
                 tool_calls=[
                     MockToolCall(
                         name="bind_existing_dashboard",
-                        arguments=json.dumps({"dashboard_id": existing_id}),
+                        arguments=json.dumps({"dashboard_slug": existing_slug}),
                     ),
                     MockToolCall(name="validate_render", arguments="{}"),
                 ],
@@ -271,7 +236,7 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
 
     node = _make_node(real_agent_config)
     node.input = GenVisualDashboardNodeInput(
-        user_message=f"check {existing_id}",
+        user_message=f"check {existing_slug}",
         database="california_schools",
     )
 
@@ -286,8 +251,8 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
     result = final.output
     assert isinstance(result, dict)
     assert result["success"] is True
-    assert result["dashboard_id"] == existing_id
-    assert result["app_jsx_path"] == f"dashboards/{existing_id}/render/app.jsx"
+    assert result["dashboard_slug"] == existing_slug
+    assert result["app_jsx_path"] == f"dashboards/{existing_slug}/render/app.jsx"
     assert result["render_file_count"] == 1
     # No save_query_template in this run — the seed wrote the template directly.
     assert result["template_count"] == 0
@@ -320,14 +285,7 @@ async def test_execute_stream_fails_when_no_binding(real_agent_config, mock_llm_
 
 
 class TestNodeFactoryDashboardBranch:
-    """Exercises the ``gen_visual_*`` cases in ``node_factory``.
-
-    Kept here (rather than in ``test_node.py``) so the visual-artifact
-    factory coverage doesn't ride on the pre-existing brittle
-    ``TestNodeFactory`` fixtures. Covers both ``gen_visual_dashboard`` and
-    ``gen_visual_report`` branches since diff-cover bundles both as part
-    of this feature branch's introduction.
-    """
+    """Exercises the ``gen_visual_*`` cases in ``node_factory``."""
 
     def test_factory_returns_dashboard_node(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_visual_dashboard_agentic_node import GenVisualDashboardAgenticNode
@@ -403,6 +361,7 @@ async def test_execute_stream_fails_when_validate_render_not_called(real_agent_c
                         name="start_new_dashboard",
                         arguments=json.dumps(
                             {
+                                "slug": "incomplete",
                                 "name": "incomplete",
                                 "description": "Bound but never validated — unit-test fixture.",
                             }
@@ -424,6 +383,6 @@ async def test_execute_stream_fails_when_validate_render_not_called(real_agent_c
     assert final.status == ActionStatus.FAILED
     result = final.output
     assert result["success"] is False
-    # ``_active_dashboard_id`` got captured even though validate_render didn't run.
-    assert result["dashboard_id"] is not None
+    # ``_active_dashboard_slug`` got captured even though validate_render didn't run.
+    assert result["dashboard_slug"] == "incomplete"
     assert "validate_render" in (result.get("error") or "")

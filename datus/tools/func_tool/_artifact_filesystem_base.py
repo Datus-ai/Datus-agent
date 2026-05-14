@@ -65,8 +65,11 @@ class ArtifactFilesystemFuncTool(FilesystemFuncTool):
         if not cls.ARTIFACT_ROOT_DIR_NAME:
             return
         root = re.escape(cls.ARTIFACT_ROOT_DIR_NAME)
-        cls._RENDER_PATH_RE = re.compile(rf"^{root}/[^/]+/render(?:/.+)?$")
-        cls._QUERIES_PATH_RE = re.compile(rf"^{root}/[^/]+/queries/.+$")
+        # Slug is constrained to ``[a-z0-9_]{1,80}`` — matches
+        # ARTIFACT_SLUG_PATTERN in datus.schemas.artifact_manifest.
+        slug = r"[a-z0-9_]{1,80}"
+        cls._RENDER_PATH_RE = re.compile(rf"^{root}/{slug}/render(?:/.+)?$")
+        cls._QUERIES_PATH_RE = re.compile(rf"^{root}/{slug}/queries/.+$")
 
     # ── Path classification ──────────────────────────────────────────────
 

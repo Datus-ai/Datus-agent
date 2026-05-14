@@ -28,8 +28,6 @@ Anything that's *byte-identical* between the two node files lives here.
 
 from __future__ import annotations
 
-import re
-from pathlib import Path
 from typing import Any, AsyncGenerator, ClassVar, Dict, Generic, List, Literal, Optional, Type, TypeVar
 
 from pydantic import BaseModel
@@ -40,7 +38,6 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool
 from datus.tools.func_tool._visual_artifact_helpers import (
-    detect_referenced_artifact_ids,
     extract_artifact_result_field,
     extract_artifact_result_list,
 )
@@ -68,17 +65,11 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
     # ── Artifact-specific class variables (subclass MUST override) ─────────
 
     #: ``"report"`` | ``"dashboard"`` — used for error messages and the
-    #: fallback prompt-context key (``report_id`` / ``dashboard_id``).
+    #: fallback prompt-context key (``report_slug`` / ``dashboard_slug``).
     ARTIFACT_KIND: ClassVar[str] = ""
 
     #: Top-level workspace directory, e.g. ``"reports"`` or ``"dashboards"``.
     ARTIFACT_ROOT_DIR_NAME: ClassVar[str] = ""
-
-    #: Regex matching candidate ids inside the user message body (loose).
-    ARTIFACT_ID_INLINE_REGEX: ClassVar[re.Pattern[str]] = re.compile(r"")
-
-    #: Strict full-match regex for valid artifact ids.
-    ARTIFACT_ID_FULL_REGEX: ClassVar[re.Pattern[str]] = re.compile(r"")
 
     #: Concrete :class:`FilesystemFuncTool` subclass (e.g.
     #: ``ReportFilesystemFuncTool``) that locks out direct writes to
@@ -132,7 +123,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         # ``ReportArtifactTools`` / ``DashboardArtifactTools``); the
         # subclass instantiates it in ``_make_artifact_tools``.
         self.artifact_tools: Optional[Any] = None
-        self._active_artifact_id: Optional[str] = None
+        self._active_artifact_slug: Optional[str] = None
         # Captures the root cause when ``_setup_db_tools`` fails so
         # ``_prepare_artifacts`` can surface it instead of the generic
         # "db_tools not configured" message.
@@ -332,13 +323,14 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
 
     # ── Prompt + message wiring ───────────────────────────────────────────
 
-    def _artifact_id_prompt_key(self) -> str:
-        """Prompt-context key for the active artifact id.
+    def _artifact_slug_prompt_key(self) -> str:
+        """Prompt-context key for the active artifact slug.
 
-        Default: ``"<kind>_id"`` (i.e. ``report_id`` or ``dashboard_id``)
-        so existing Jinja templates keep working unchanged.
+        Default: ``"<kind>_slug"`` (i.e. ``report_slug`` or
+        ``dashboard_slug``) — matches what the system prompt templates
+        expect.
         """
-        return f"{self.ARTIFACT_KIND}_id"
+        return f"{self.ARTIFACT_KIND}_slug"
 
     def _get_system_prompt(
         self,
@@ -353,7 +345,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             "has_task_tool": bool(self.sub_agent_task_tool),
             "agent_config": self.agent_config,
             "conversation_summary": conversation_summary,
-            self._artifact_id_prompt_key(): self._active_artifact_id,
+            self._artifact_slug_prompt_key(): self._active_artifact_slug,
             "rules": self.node_config.get("rules", []),
             "agent_description": self.node_config.get("agent_description", ""),
         }
@@ -387,35 +379,6 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
 
         return self._finalize_system_prompt(base_prompt)
 
-    def _detect_referenced_artifact_ids(self, user_message: str, project_root: Path) -> List[str]:
-        return detect_referenced_artifact_ids(
-            user_message=user_message,
-            project_root=project_root,
-            root_dir_name=self.ARTIFACT_ROOT_DIR_NAME,
-            id_inline_regex=self.ARTIFACT_ID_INLINE_REGEX,
-            id_full_regex=self.ARTIFACT_ID_FULL_REGEX,
-        )
-
-    def _format_referenced_ids_hint(self, ids: List[str]) -> str:
-        """Build the "user mentioned existing artifact ids" awareness hint.
-
-        Default phrasing references ``ARTIFACT_KIND`` so both report and
-        dashboard read naturally without the subclass having to override
-        this. Subclasses can override for finer-grained wording.
-        """
-        kind = self.ARTIFACT_KIND
-        verb_new = f"start_new_{kind}"
-        verb_edit = f"bind_existing_{kind}"
-        return (
-            f"The user's message references existing {kind} id(s) on disk: "
-            f"{', '.join(ids)}. Decide whether they want to EDIT one of these in place "
-            f"(call {verb_edit}) or PRODUCE A NEW {kind} that draws on "
-            f"them as references (call {verb_new} and use the filesystem "
-            f"read tool on {self.ARTIFACT_ROOT_DIR_NAME}/<id>/render/*.jsx and "
-            f"{self.ARTIFACT_ROOT_DIR_NAME}/<id>/queries/* to learn from them). "
-            f"When unclear, default to {verb_new}."
-        )
-
     def _build_enhanced_message(self, user_input: InputT) -> str:
         parts: List[str] = []
         catalog = getattr(user_input, "catalog", None)
@@ -429,12 +392,6 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             parts.append(f"Database context: {database}")
         if db_schema:
             parts.append(f"Schema: {db_schema}")
-
-        if self.agent_config and getattr(self.agent_config, "project_root", None):
-            project_root = Path(self.agent_config.project_root).resolve()
-            referenced = self._detect_referenced_artifact_ids(user_message, project_root)
-            if referenced:
-                parts.append(self._format_referenced_ids_hint(referenced))
 
         if parts:
             return build_structured_content(
@@ -452,33 +409,33 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
 
         The tools instance must expose ``available_tools()`` returning the
         list of bound function-tools to add to ``self.tools``; the active
-        artifact id (after ``start_new_*`` / ``bind_existing_*``) must
+        artifact slug (after ``start_new_*`` / ``bind_existing_*``) must
         live on an attribute the subclass knows how to read (it is fetched
-        via :meth:`_read_artifact_id_from_tools`).
+        via :meth:`_read_artifact_slug_from_tools`).
         """
         raise NotImplementedError
 
-    def _read_artifact_id_from_tools(self) -> Optional[str]:
-        """Return the active artifact id off the artifact tools instance.
+    def _read_artifact_slug_from_tools(self) -> Optional[str]:
+        """Return the active artifact slug off the artifact tools instance.
 
-        Subclasses know the attribute name (``report_id`` /
-        ``dashboard_id``). Default looks for either, in priority order,
+        Subclasses know the attribute name (``report_slug`` /
+        ``dashboard_slug``). Default looks for either, in priority order,
         so a minimal subclass can rely on naming convention.
         """
         if self.artifact_tools is None:
             return None
-        for attr in (f"{self.ARTIFACT_KIND}_id", "artifact_id"):
+        for attr in (f"{self.ARTIFACT_KIND}_slug", "artifact_slug"):
             value = getattr(self.artifact_tools, attr, None)
             if value:
                 return value
         return None
 
     def _prepare_artifacts(self, user_input: InputT) -> None:
-        """Wire artifact tools into ``self.tools`` and reset the active id.
+        """Wire artifact tools into ``self.tools`` and reset the active slug.
 
         The LLM decides between ``start_new_<kind>`` (create) and
         ``bind_existing_<kind>`` (edit) at execution time; we just make
-        both tools available. ``_active_artifact_id`` stays ``None``
+        both tools available. ``_active_artifact_slug`` stays ``None``
         until the LLM commits to one or the other.
         """
         if not self.agent_config or not getattr(self.agent_config, "project_root", None):
@@ -498,7 +455,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                 "(DEFAULT_TOOLS includes db_tools.*)."
             )
 
-        self._active_artifact_id = None
+        self._active_artifact_slug = None
         self.artifact_tools = self._make_artifact_tools()
         # Repeated ``execute_stream`` calls on the same node instance
         # would otherwise stack stale tool wrappers bound to the previous
@@ -517,7 +474,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         *,
         user_input: InputT,
         response_content: str,
-        artifact_id: Optional[str],
+        artifact_slug: Optional[str],
         app_jsx_rel_path: Optional[str],
         render_file_count: int,
         query_actions: List[ActionHistory],
@@ -532,7 +489,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         """Construct the result returned when ``execute_stream`` raises."""
         raise NotImplementedError
 
-    def _post_validate_hook(self, artifact_id: str, result: ResultT) -> None:
+    def _post_validate_hook(self, artifact_slug: str, result: ResultT) -> None:
         """Run artifact-specific work after a successful ``validate_render``.
 
         The report subagent uses this to compile a standalone HTML and
@@ -557,9 +514,11 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             "call validate_render() to finalize."
         )
 
-    def _final_summary_message(self, artifact_id: Optional[str], app_jsx_rel_path: Optional[str]) -> str:
+    def _final_summary_message(self, artifact_slug: Optional[str], app_jsx_rel_path: Optional[str]) -> str:
         if app_jsx_rel_path:
-            return f"Visual {self.ARTIFACT_KIND} generated: {self.ARTIFACT_ROOT_DIR_NAME}/{artifact_id}/render/app.jsx"
+            return (
+                f"Visual {self.ARTIFACT_KIND} generated: {self.ARTIFACT_ROOT_DIR_NAME}/{artifact_slug}/render/app.jsx"
+            )
         return f"Visual {self.ARTIFACT_KIND} run finished without a validated render/ tree."
 
     # ── Helpers re-exposed as static methods (legacy API preserved) ──────
@@ -663,17 +622,17 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                     render_file_count = len(render_files) if render_files else 0
                     break
 
-            # The LLM picked the active artifact id by calling
+            # The LLM picked the active artifact slug by calling
             # start_new_<kind> / bind_existing_<kind>; the tools instance
-            # owns the resulting id.
-            picked = self._read_artifact_id_from_tools()
+            # owns the resulting slug.
+            picked = self._read_artifact_slug_from_tools()
             if picked:
-                self._active_artifact_id = picked
+                self._active_artifact_slug = picked
 
             result = self._build_success_result(
                 user_input=user_input,
                 response_content=response_content,
-                artifact_id=self._active_artifact_id,
+                artifact_slug=self._active_artifact_slug,
                 app_jsx_rel_path=app_jsx_rel_path,
                 render_file_count=render_file_count,
                 query_actions=query_actions,
@@ -685,21 +644,21 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             if app_jsx_rel_path is None:
                 error_msg = (
                     self._missing_binding_error()
-                    if self._active_artifact_id is None
+                    if self._active_artifact_slug is None
                     else self._incomplete_render_error()
                 )
                 # Both result models expose ``error: Optional[str]``.
                 if hasattr(result, "error"):
                     result.error = error_msg  # type: ignore[attr-defined]
-            elif self._active_artifact_id:
-                self._post_validate_hook(self._active_artifact_id, result)
+            elif self._active_artifact_slug:
+                self._post_validate_hook(self._active_artifact_slug, result)
 
             self.actions.extend(all_actions)
 
             final_action = ActionHistory.create_action(
                 role=ActionRole.ASSISTANT,
                 action_type=f"{self.get_node_name()}_response",
-                messages=self._final_summary_message(self._active_artifact_id, app_jsx_rel_path),
+                messages=self._final_summary_message(self._active_artifact_slug, app_jsx_rel_path),
                 input_data=user_input.model_dump(),
                 output_data=result.model_dump(),
                 status=ActionStatus.SUCCESS if app_jsx_rel_path else ActionStatus.FAILED,

@@ -148,7 +148,7 @@ class TestNodeIO:
         result = GenVisualReportNodeResult(success=True)
         assert result.success is True
         assert result.response == ""
-        assert result.report_id is None
+        assert result.report_slug is None
         assert result.app_jsx_path is None
         assert result.render_file_count == 0
         assert result.html_path is None
@@ -158,11 +158,11 @@ class TestNodeIO:
     def test_result_with_app_jsx_path(self):
         result = GenVisualReportNodeResult(
             success=True,
-            report_id="rpt_demo",
-            app_jsx_path="reports/rpt_demo/render/app.jsx",
+            report_slug="demo",
+            app_jsx_path="reports/demo/render/app.jsx",
             render_file_count=3,
             query_count=5,
         )
-        assert result.app_jsx_path == "reports/rpt_demo/render/app.jsx"
+        assert result.app_jsx_path == "reports/demo/render/app.jsx"
         assert result.render_file_count == 3
         assert result.query_count == 5

@@ -188,7 +188,7 @@ class TestNodeIO:
         result = GenVisualDashboardNodeResult(success=True)
         assert result.success is True
         assert result.response == ""
-        assert result.dashboard_id is None
+        assert result.dashboard_slug is None
         assert result.app_jsx_path is None
         assert result.render_file_count == 0
         assert result.template_count == 0
@@ -197,11 +197,11 @@ class TestNodeIO:
     def test_result_with_app_jsx_path(self):
         result = GenVisualDashboardNodeResult(
             success=True,
-            dashboard_id="dash_demo_260514_abcdef",
-            app_jsx_path="dashboards/dash_demo_260514_abcdef/render/app.jsx",
+            dashboard_slug="demo",
+            app_jsx_path="dashboards/demo/render/app.jsx",
             render_file_count=4,
             template_count=3,
         )
-        assert result.app_jsx_path == "dashboards/dash_demo_260514_abcdef/render/app.jsx"
+        assert result.app_jsx_path == "dashboards/demo/render/app.jsx"
         assert result.render_file_count == 4
         assert result.template_count == 3

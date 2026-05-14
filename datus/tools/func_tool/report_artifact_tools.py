@@ -38,17 +38,13 @@ from agents import Tool
 from datus.schemas.artifact_manifest import ArtifactManifest
 from datus.schemas.gen_visual_report_models import (
     QUERY_SLUG_RE,
-    REPORT_ID_RE,
+    REPORT_SLUG_RE,
     ColumnSemanticType,
     QueryResultFile,
     extract_query_slug,
 )
 from datus.tools.func_tool._artifact_filesystem_base import ArtifactFilesystemFuncTool
-from datus.tools.func_tool._visual_artifact_helpers import (
-    allocate_artifact_id,
-    slugify_title,
-    utc_now_iso,
-)
+from datus.tools.func_tool._visual_artifact_helpers import utc_now_iso
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
 
@@ -99,31 +95,6 @@ ALLOWED_BARE_MODULES: frozenset[str] = frozenset(
         "@datus/web-artifact",
     }
 )
-
-
-def _allocate_report_id(name: str, project_root: Path) -> str:
-    """Generate ``rpt_<name-slug>_<yymmdd>_<rand6>`` not colliding on disk.
-
-    ``name`` is the LLM-supplied display name (may contain non-ASCII);
-    we slugify it best-effort and fall back to ``"report"`` when the
-    slug reduces to an empty string (e.g. an all-Chinese name).
-    """
-    return allocate_artifact_id(
-        title=name,
-        project_root=project_root,
-        prefix="rpt_",
-        root_dir_name="reports",
-        default_base_slug="report",
-        max_total_len=83,
-    )
-
-
-# Module-level aliases preserved so existing internal imports
-# (``dashboard_artifact_tools`` pulls ``_slugify_title``) keep working
-# without forcing every call site to switch to the new public names
-# in lockstep with this refactor.
-_slugify_title = slugify_title
-_utc_now_iso = utc_now_iso
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
@@ -304,14 +275,14 @@ class ReportArtifactTools:
     Lifecycle:
 
     1. The owning node constructs one instance per execution with no
-       active report id.
+       active report slug.
     2. The LLM declares intent and binds the active report by calling
        **exactly one** of ``start_new_report`` (create) or
        ``bind_existing_report`` (edit). The system prompt enumerates the
        decision criteria.
     3. ``save_query`` writes query artifacts. ``write_file`` /
        ``edit_file`` / ``delete_file`` (from the filesystem tool) put
-       JSX/JS/CSS under ``reports/<id>/render/``.
+       JSX/JS/CSS under ``reports/<slug>/render/``.
     4. ``validate_render`` is the terminal action: it walks the render
        tree, checks the entry point, verifies every ``useQuerySql``
        slug exists, and confirms every relative import resolves. The
@@ -333,7 +304,7 @@ class ReportArtifactTools:
         self._project_root = project_root
 
         # Lazy state — populated by start_new_report / bind_existing_report.
-        self.report_id: Optional[str] = None
+        self.report_slug: Optional[str] = None
         self.report_dir: Optional[Path] = None
         self.queries_dir: Optional[Path] = None
         self.render_dir: Optional[Path] = None
@@ -354,23 +325,26 @@ class ReportArtifactTools:
 
     # -- intent declaration --------------------------------------------------
 
-    def start_new_report(self, name: str, description: str) -> FuncToolResult:
+    def start_new_report(self, slug: str, name: str, description: str) -> FuncToolResult:
         """
-        Allocate a fresh report directory, write its manifest, and bind subsequent saves to it.
+        Create a fresh report directory at ``reports/<slug>/``, write its manifest, and bind it.
 
-        Call this when the user's request is to **produce a new report
-        artifact**, even if they reference one or more existing reports
-        for context. To learn from a reference report, read its
-        ``render/*`` / ``queries/*`` via the filesystem read tool and
-        then build the new artifact here.
+        The LLM picks the ``slug`` — it doubles as the on-disk directory
+        name and as the stable identifier surfaced everywhere downstream
+        (SaaS list pages, IDE explorer, backend routes). **Before calling
+        this tool the LLM must ``glob('reports/*')`` and confirm the
+        chosen slug doesn't collide** — this tool refuses to overwrite
+        an existing directory.
 
         Args:
+            slug: Lowercase ASCII identifier matching ``^[a-z0-9_]{1,80}$``.
+                Becomes the directory name (``reports/<slug>/``). Pick
+                something semantic and stable (e.g.
+                ``account_activity_q1_2026``); do NOT include personal
+                information or timestamps unless they're load-bearing
+                for disambiguation.
             name: Human-readable display name (any language is fine —
-                Chinese / mixed scripts welcome). Used both as the
-                ``manifest.json`` display name AND as the seed for the
-                report id slug (non-ASCII characters are stripped from
-                the slug; the manifest preserves the original name).
-                Required, max 200 chars.
+                Chinese / mixed scripts welcome). Required, max 200 chars.
             description: One-paragraph description of what the report
                 argues / covers. Surfaced in list pages and IDE
                 explorers next to the name. Required, max 1000 chars.
@@ -379,14 +353,23 @@ class ReportArtifactTools:
             FuncToolResult.result is a dict like::
 
                 {
-                    "report_id": "rpt_<slug>_<yymmdd>_<rand>",
-                    "report_dir": "reports/<report_id>",
-                    "render_dir": "reports/<report_id>/render",
-                    "queries_dir": "reports/<report_id>/queries",
-                    "manifest_path": "reports/<report_id>/manifest.json",
+                    "report_slug": "<slug>",
+                    "report_dir": "reports/<slug>",
+                    "render_dir": "reports/<slug>/render",
+                    "queries_dir": "reports/<slug>/queries",
+                    "manifest_path": "reports/<slug>/manifest.json",
                     "mode": "new",
                 }
         """
+        if not slug or not REPORT_SLUG_RE.fullmatch(slug):
+            return FuncToolResult(
+                success=0,
+                error=(
+                    f"slug must match {REPORT_SLUG_RE.pattern} (lowercase letters / digits / underscores, "
+                    f"1–80 chars); got {slug!r}. Pick a semantic identifier; the LLM is responsible for "
+                    "uniqueness within reports/."
+                ),
+            )
         if not name or not name.strip():
             return FuncToolResult(success=0, error="name must be a non-empty display name (any language).")
         if not description or not description.strip():
@@ -394,8 +377,18 @@ class ReportArtifactTools:
                 success=0,
                 error="description must be a non-empty one-paragraph description of what the report covers.",
             )
+        candidate = self._project_root / "reports" / slug
+        if candidate.exists():
+            return FuncToolResult(
+                success=0,
+                error=(
+                    f"reports/{slug}/ already exists. Pick a different slug — first `glob('reports/*')` "
+                    "to see what's taken, or call `bind_existing_report` if you meant to edit it."
+                ),
+            )
         try:
             manifest = ArtifactManifest(
+                slug=slug,
                 name=name.strip(),
                 description=description.strip(),
                 kind="report",
@@ -403,13 +396,9 @@ class ReportArtifactTools:
             )
         except Exception as exc:
             return FuncToolResult(success=0, error=f"Manifest validation failed: {exc}")
-        try:
-            new_id = _allocate_report_id(name, self._project_root)
-        except RuntimeError as exc:
-            return FuncToolResult(success=0, error=str(exc))
-        return self._activate(new_id, mode="new", create_dirs=True, manifest=manifest)
+        return self._activate(slug, mode="new", create_dirs=True, manifest=manifest)
 
-    def bind_existing_report(self, report_id: str) -> FuncToolResult:
+    def bind_existing_report(self, report_slug: str) -> FuncToolResult:
         """
         Switch the active report to an existing one and bind subsequent saves there.
 
@@ -419,9 +408,15 @@ class ReportArtifactTools:
         ``delete_file`` mutate ``render/`` in-place. Use ``read_file``
         + ``glob`` to inspect the existing tree before mutating it.
 
+        When the user references the report by its display name rather
+        than its slug (``"update the account activity report"``), the LLM
+        should first ``glob('reports/*/manifest.json')`` and read each
+        manifest's ``name`` to find the matching slug, then call this
+        tool with that slug.
+
         Args:
-            report_id: target report id, e.g. ``"rpt_2026q1_na_sales"``.
-                Must match ``^rpt_[a-z0-9_-]{1,80}$`` and the directory
+            report_slug: target report slug, e.g. ``"account_activity_q1"``.
+                Must match ``^[a-z0-9_]{1,80}$`` and the directory
                 (including ``render/app.jsx``) must already exist under
                 ``<project_root>/reports/``.
 
@@ -429,24 +424,24 @@ class ReportArtifactTools:
             FuncToolResult.result is a dict like::
 
                 {
-                    "report_id": "<report_id>",
-                    "report_dir": "reports/<report_id>",
-                    "render_dir": "reports/<report_id>/render",
-                    "queries_dir": "reports/<report_id>/queries",
+                    "report_slug": "<slug>",
+                    "report_dir": "reports/<slug>",
+                    "render_dir": "reports/<slug>/render",
+                    "queries_dir": "reports/<slug>/queries",
                     "mode": "edit",
                 }
         """
-        if not report_id or not REPORT_ID_RE.fullmatch(report_id):
+        if not report_slug or not REPORT_SLUG_RE.fullmatch(report_slug):
             return FuncToolResult(
                 success=0,
-                error=f"report_id must match {REPORT_ID_RE.pattern}; got {report_id!r}",
+                error=f"report_slug must match {REPORT_SLUG_RE.pattern}; got {report_slug!r}",
             )
-        candidate = self._project_root / "reports" / report_id
+        candidate = self._project_root / "reports" / report_slug
         if not candidate.is_dir():
             return FuncToolResult(
                 success=0,
                 error=(
-                    f"Report directory not found: reports/{report_id}. "
+                    f"Report directory not found: reports/{report_slug}. "
                     "Use start_new_report() if you intended to create a new report."
                 ),
             )
@@ -454,20 +449,21 @@ class ReportArtifactTools:
             return FuncToolResult(
                 success=0,
                 error=(
-                    f"reports/{report_id}/render/app.jsx is missing — the report is incomplete. Cannot bind for editing."
+                    f"reports/{report_slug}/render/app.jsx is missing — the report is incomplete. "
+                    "Cannot bind for editing."
                 ),
             )
-        return self._activate(report_id, mode="edit", create_dirs=False)
+        return self._activate(report_slug, mode="edit", create_dirs=False)
 
     def _activate(
         self,
-        report_id: str,
+        report_slug: str,
         *,
         mode: str,
         create_dirs: bool,
         manifest: Optional[ArtifactManifest] = None,
     ) -> FuncToolResult:
-        report_dir = self._project_root / "reports" / report_id
+        report_dir = self._project_root / "reports" / report_slug
         queries_dir = report_dir / "queries"
         render_dir = report_dir / "render"
         manifest_path = report_dir / "manifest.json"
@@ -484,16 +480,16 @@ class ReportArtifactTools:
             except OSError as exc:
                 return FuncToolResult(success=0, error=f"Failed to write manifest.json: {exc}")
             manifest_rel = manifest_path.relative_to(self._project_root).as_posix()
-        self.report_id = report_id
+        self.report_slug = report_slug
         self.report_dir = report_dir
         self.queries_dir = queries_dir
         self.render_dir = render_dir
         self.mode = mode
         result: Dict[str, Any] = {
-            "report_id": report_id,
-            "report_dir": f"reports/{report_id}",
-            "render_dir": f"reports/{report_id}/render",
-            "queries_dir": f"reports/{report_id}/queries",
+            "report_slug": report_slug,
+            "report_dir": f"reports/{report_slug}",
+            "render_dir": f"reports/{report_slug}/render",
+            "queries_dir": f"reports/{report_slug}/queries",
             "mode": mode,
         }
         if manifest_rel:
@@ -502,12 +498,12 @@ class ReportArtifactTools:
 
     def _require_active(self, tool_name: str) -> Optional[FuncToolResult]:
         """Return a failure result when no report is bound, else ``None``."""
-        if self.report_id is None or self.report_dir is None or self.queries_dir is None:
+        if self.report_slug is None or self.report_dir is None or self.queries_dir is None:
             return FuncToolResult(
                 success=0,
                 error=(
-                    f"No active report bound. Call start_new_report(name=..., description=...) to create one, "
-                    f"or bind_existing_report(report_id=...) to edit an existing one, "
+                    f"No active report bound. Call start_new_report(slug=..., name=..., description=...) "
+                    f"to create one, or bind_existing_report(report_slug=...) to edit an existing one, "
                     f"before calling {tool_name}()."
                 ),
             )
@@ -646,7 +642,7 @@ class ReportArtifactTools:
         header_parts: List[str] = []
         if description:
             header_parts.append(f"-- {description.strip()}")
-        header_parts.append(f"-- generated at {payload['executed_at']} for report {self.report_id}")
+        header_parts.append(f"-- generated at {payload['executed_at']} for report {self.report_slug}")
         sql_text = "\n".join(header_parts) + "\n" + sql.rstrip() + "\n"
 
         try:
@@ -712,7 +708,7 @@ class ReportArtifactTools:
             return FuncToolResult(
                 success=0,
                 error=(
-                    f"reports/{self.report_id}/manifest.json is missing. A report must always "
+                    f"reports/{self.report_slug}/manifest.json is missing. A report must always "
                     "have a manifest with name + description. Re-run start_new_report or "
                     "restore the manifest from a previous version."
                 ),
@@ -722,14 +718,14 @@ class ReportArtifactTools:
         except Exception as exc:
             return FuncToolResult(
                 success=0,
-                error=f"reports/{self.report_id}/manifest.json is corrupt or off-spec: {exc}",
+                error=f"reports/{self.report_slug}/manifest.json is corrupt or off-spec: {exc}",
             )
 
         if not self.render_dir.is_dir():
             return FuncToolResult(
                 success=0,
                 error=(
-                    f"render/ directory missing under reports/{self.report_id}. "
+                    f"render/ directory missing under reports/{self.report_slug}. "
                     "Write at least an app.jsx with write_file before calling validate_render."
                 ),
             )

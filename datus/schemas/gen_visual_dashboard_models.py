@@ -30,7 +30,9 @@ from datus.schemas.gen_visual_report_models import (  # re-use the cross-artifac
     extract_query_slug,
 )
 
-DASHBOARD_ID_RE = re.compile(r"^dash_[a-z0-9_-]{1,80}$")
+# LLM-supplied slug doubles as the on-disk directory name; constrained
+# to a filesystem-friendly subset so we never need to URL-escape it.
+DASHBOARD_SLUG_RE = re.compile(r"^[a-z0-9_]{1,80}$")
 
 # Header line that declares the params a template body references. The
 # first non-blank line of a saved template must begin with this prefix.
@@ -61,7 +63,7 @@ ParamFullType = Literal[
 ]
 
 __all__ = [
-    "DASHBOARD_ID_RE",
+    "DASHBOARD_SLUG_RE",
     "DATA_REF_RE",
     "QUERY_SLUG_RE",
     "DATUS_PARAMS_HEADER_RE",
@@ -138,9 +140,12 @@ class GenVisualDashboardNodeResult(BaseResult):
     """Result model for GenVisualDashboardAgenticNode."""
 
     response: str = Field(default="", description="Natural language summary shown after the artifact is produced")
-    dashboard_id: Optional[str] = Field(None, description="Generated dashboard id (matches the folder name)")
+    dashboard_slug: Optional[str] = Field(
+        None,
+        description="LLM-chosen slug; doubles as the dashboard's directory name.",
+    )
     app_jsx_path: Optional[str] = Field(None, description="Relative path to render/app.jsx under project_root")
-    render_file_count: int = Field(default=0, description="Number of files persisted under dashboards/<id>/render/")
+    render_file_count: int = Field(default=0, description="Number of files persisted under dashboards/<slug>/render/")
     template_count: int = Field(default=0, description="Number of templates persisted under queries/")
     tokens_used: int = Field(default=0, description="Total tokens used during this run")
 

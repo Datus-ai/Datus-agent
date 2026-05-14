@@ -9,11 +9,10 @@ Design principle: NO mocks except LLM.
 Covers:
 * Node initialization wires the expected tools.
 * ``ReportFilesystemFuncTool`` replaces the default filesystem tool.
-* ``_prepare_report_artifacts`` registers the artifact tools but leaves the
-  report id unbound — the LLM owns the new/edit decision at runtime.
-* End-to-end streaming run: LLM calls start_new_report, save_query,
-  write_file (for render/*.jsx) and finally validate_render.
-* The LLM-facing hint surfaces when the user references existing reports on disk.
+* ``_prepare_artifacts`` registers the artifact tools but leaves the
+  report slug unbound — the LLM owns the new/edit decision at runtime.
+* End-to-end streaming run: LLM calls bind_existing_report (against a
+  pre-seeded dir) and validate_render.
 * CLI mode compiles ``index.html`` after a successful validate_render.
 * Binding-required failure when the LLM never calls start/bind_report.
 * Incomplete-artifact failure when validate_render is never called.
@@ -68,9 +67,9 @@ export default function App() {{
 """
 
 
-def _seed_render_on_disk(project_root: Path, report_id: str, *, data_ref: str = "queries/q") -> None:
+def _seed_render_on_disk(project_root: Path, report_slug: str, *, data_ref: str = "queries/q") -> None:
     """Seed a minimal validated render tree + matching query so renderer-side tests run."""
-    report_dir = project_root / "reports" / report_id
+    report_dir = project_root / "reports" / report_slug
     (report_dir / "queries").mkdir(parents=True, exist_ok=True)
     (report_dir / "render").mkdir(exist_ok=True)
     (report_dir / "render" / "app.jsx").write_text(
@@ -87,7 +86,7 @@ def _seed_render_on_disk(project_root: Path, report_id: str, *, data_ref: str = 
     # manifest.json is part of the report contract — validate_render rejects
     # the artifact if it's missing.
     (report_dir / "manifest.json").write_text(
-        '{"name":"seeded report","description":"Unit-test seeded report.",'
+        f'{{"slug":"{report_slug}","name":"seeded report","description":"Unit-test seeded report.",'
         '"kind":"report","created_at":"2026-05-13T00:00:00Z"}\n',
         encoding="utf-8",
     )
@@ -106,7 +105,7 @@ class TestGenVisualReportInit:
         assert isinstance(node.semantic_tools, SemanticTools)
         assert isinstance(node.filesystem_func_tool, ReportFilesystemFuncTool)
         assert node.report_artifact_tools is None
-        assert node._active_report_id is None
+        assert node._active_report_slug is None
 
     def test_tools_include_filesystem_and_db(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config)
@@ -134,11 +133,11 @@ class TestPrepareReportArtifacts:
         user_input = GenVisualReportNodeInput(user_message="北美一季度门店销售分析")
         node.input = user_input
 
-        node._prepare_report_artifacts(user_input)
+        node._prepare_artifacts(user_input)
 
         assert isinstance(node.report_artifact_tools, ReportArtifactTools)
-        assert node._active_report_id is None
-        assert node.report_artifact_tools.report_id is None
+        assert node._active_artifact_slug is None
+        assert node.report_artifact_tools.report_slug is None
         assert node.report_artifact_tools.mode is None
 
         tool_names = {t.name for t in node.tools}
@@ -148,29 +147,8 @@ class TestPrepareReportArtifacts:
         assert "validate_render" in tool_names
 
         reports_root = Path(real_agent_config.project_root) / "reports"
-        assert sorted(p.name for p in reports_root.glob("rpt_*")) == []
-
-
-class TestEnhancedMessageHint:
-    def test_hint_added_when_user_references_existing_report(self, real_agent_config, mock_llm_create):
-        project_root = Path(real_agent_config.project_root)
-        existing_id = "rpt_existing_demo_260513_aaaaaa"
-        _seed_render_on_disk(project_root, existing_id)
-
-        node = _make_node(real_agent_config)
-        user_input = GenVisualReportNodeInput(user_message=f"修改 {existing_id} 报告，补充一个 YoY 分析章节")
-
-        message = node._build_enhanced_message(user_input)
-        assert existing_id in message
-        assert "bind_existing_report" in message
-        assert "start_new_report" in message
-
-    def test_no_hint_when_no_reports_directory(self, real_agent_config, mock_llm_create):
-        node = _make_node(real_agent_config)
-        user_input = GenVisualReportNodeInput(user_message="generate a new sales overview")
-        message = node._build_enhanced_message(user_input)
-        assert "bind_existing_report" not in message
-        assert "start_new_report" not in message
+        # No directories are created until the LLM commits to a slug.
+        assert not reports_root.exists() or sorted(p.name for p in reports_root.iterdir()) == []
 
 
 # --------------------------------------------------------------------------- #
@@ -183,15 +161,15 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
     """LLM binds an existing report (pre-seeded on disk) and validates the render tree.
 
     This covers the agentic node's result-extraction + html-compile path
-    without needing the mock LLM to reference a dynamically-allocated id
-    (the write_file authoring path is exercised end-to-end in the artifact
-    tools tests). Pre-seeding ``render/`` + ``queries/`` and using
+    without needing the mock LLM to author a fresh render tree end-to-end
+    (that path is exercised in the artifact-tools tests). Pre-seeding
+    ``render/`` + ``queries/`` + ``manifest.json`` and using
     ``bind_existing_report`` keeps the test purely additive over the unit
-    coverage and avoids brittle id placeholder gymnastics.
+    coverage.
     """
     project_root = Path(real_agent_config.project_root)
-    existing_id = "rpt_e2e_demo_260514_aabbcc"
-    _seed_render_on_disk(project_root, existing_id, data_ref="queries/avg_sat_reading")
+    existing_slug = "e2e_demo"
+    _seed_render_on_disk(project_root, existing_slug, data_ref="queries/avg_sat_reading")
 
     mock_llm_create.reset(
         responses=[
@@ -199,7 +177,7 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
                 tool_calls=[
                     MockToolCall(
                         name="bind_existing_report",
-                        arguments=json.dumps({"report_id": existing_id}),
+                        arguments=json.dumps({"report_slug": existing_slug}),
                     ),
                     MockToolCall(name="validate_render", arguments="{}"),
                 ],
@@ -210,7 +188,7 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
 
     node = _make_node(real_agent_config)
     node.input = GenVisualReportNodeInput(
-        user_message=f"check {existing_id}",
+        user_message=f"check {existing_slug}",
         database="california_schools",
     )
 
@@ -225,14 +203,14 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
     result = final.output
     assert isinstance(result, dict)
     assert result["success"] is True
-    assert result["report_id"] == existing_id
-    assert result["app_jsx_path"] == f"reports/{existing_id}/render/app.jsx"
+    assert result["report_slug"] == existing_slug
+    assert result["app_jsx_path"] == f"reports/{existing_slug}/render/app.jsx"
     assert result["render_file_count"] == 1
     # No save_query in this run — the seed wrote the query file directly.
     assert result["query_count"] == 0
 
-    report_dir = project_root / "reports" / existing_id
-    expected_html_rel = f"reports/{existing_id}/index.html"
+    report_dir = project_root / "reports" / existing_slug
+    expected_html_rel = f"reports/{existing_slug}/index.html"
     assert result["html_path"] == expected_html_rel
     assert (report_dir / "index.html").is_file()
 
@@ -255,14 +233,14 @@ class TestReportDistResolution:
         node.node_config["report_dist"] = str(node_dist)
         real_agent_config.report_dist_cli_override = str(cli_dist)
 
-        report_id = "rpt_priority_check_001"
-        _seed_render_on_disk(Path(real_agent_config.project_root), report_id)
-        node._active_report_id = report_id
+        report_slug = "priority_check_001"
+        _seed_render_on_disk(Path(real_agent_config.project_root), report_slug)
+        node._active_artifact_slug = report_slug
 
-        html_rel = node._maybe_compile_html(report_id)
-        assert html_rel == f"reports/{report_id}/index.html"
+        html_rel = node._maybe_compile_html(report_slug)
+        assert html_rel == f"reports/{report_slug}/index.html"
 
-        copied_css = Path(real_agent_config.project_root) / "reports" / report_id / "_assets" / "index.css"
+        copied_css = Path(real_agent_config.project_root) / "reports" / report_slug / "_assets" / "index.css"
         assert copied_css.read_text(encoding="utf-8") == "/* from-cli-flag css */"
 
     def test_node_config_used_when_cli_flag_absent(self, real_agent_config, mock_llm_create, tmp_path):
@@ -273,12 +251,12 @@ class TestReportDistResolution:
         if hasattr(real_agent_config, "report_dist_cli_override"):
             delattr(real_agent_config, "report_dist_cli_override")
 
-        report_id = "rpt_priority_check_002"
-        _seed_render_on_disk(Path(real_agent_config.project_root), report_id)
-        node._active_report_id = report_id
+        report_slug = "priority_check_002"
+        _seed_render_on_disk(Path(real_agent_config.project_root), report_slug)
+        node._active_artifact_slug = report_slug
 
-        node._maybe_compile_html(report_id)
-        copied_css = Path(real_agent_config.project_root) / "reports" / report_id / "_assets" / "index.css"
+        node._maybe_compile_html(report_slug)
+        copied_css = Path(real_agent_config.project_root) / "reports" / report_slug / "_assets" / "index.css"
         assert copied_css.read_text(encoding="utf-8") == "/* node-only css */"
 
 
@@ -300,32 +278,32 @@ class TestAutoOpenInBrowser:
     def test_opens_browser_when_flag_enabled(self, real_agent_config, mock_llm_create, monkeypatch):
         node = _make_node(real_agent_config)
         real_agent_config.report_auto_open = True
-        report_id = "rpt_auto_open_yes"
-        _seed_render_on_disk(Path(real_agent_config.project_root), report_id)
-        node._active_report_id = report_id
+        report_slug = "auto_open_yes"
+        _seed_render_on_disk(Path(real_agent_config.project_root), report_slug)
+        node._active_artifact_slug = report_slug
 
         opened = []
         monkeypatch.setattr("threading.Thread", _InlineThread)
         monkeypatch.setattr("webbrowser.open", lambda url, *a, **kw: opened.append(url) or True)
 
-        node._maybe_compile_html(report_id)
+        node._maybe_compile_html(report_slug)
 
         assert len(opened) == 1, f"expected one webbrowser.open call, got {opened}"
         assert opened[0].startswith("file://")
-        assert opened[0].endswith(f"reports/{report_id}/index.html")
+        assert opened[0].endswith(f"reports/{report_slug}/index.html")
 
     def test_does_not_open_when_flag_disabled(self, real_agent_config, mock_llm_create, monkeypatch):
         node = _make_node(real_agent_config)
         real_agent_config.report_auto_open = False
-        report_id = "rpt_auto_open_no"
-        _seed_render_on_disk(Path(real_agent_config.project_root), report_id)
-        node._active_report_id = report_id
+        report_slug = "auto_open_no"
+        _seed_render_on_disk(Path(real_agent_config.project_root), report_slug)
+        node._active_artifact_slug = report_slug
 
         opened = []
         monkeypatch.setattr("threading.Thread", _InlineThread)
         monkeypatch.setattr("webbrowser.open", lambda url, *a, **kw: opened.append(url) or True)
 
-        node._maybe_compile_html(report_id)
+        node._maybe_compile_html(report_slug)
 
         assert opened == [], f"webbrowser.open must not be called; got {opened}"
 
@@ -333,15 +311,15 @@ class TestAutoOpenInBrowser:
         node = _make_node(real_agent_config)
         if hasattr(real_agent_config, "report_auto_open"):
             delattr(real_agent_config, "report_auto_open")
-        report_id = "rpt_auto_open_default"
-        _seed_render_on_disk(Path(real_agent_config.project_root), report_id)
-        node._active_report_id = report_id
+        report_slug = "auto_open_default"
+        _seed_render_on_disk(Path(real_agent_config.project_root), report_slug)
+        node._active_artifact_slug = report_slug
 
         opened = []
         monkeypatch.setattr("threading.Thread", _InlineThread)
         monkeypatch.setattr("webbrowser.open", lambda url, *a, **kw: opened.append(url) or True)
 
-        node._maybe_compile_html(report_id)
+        node._maybe_compile_html(report_slug)
 
         assert opened == []
 
@@ -369,7 +347,7 @@ async def test_execute_stream_without_binding_marks_failure(real_agent_config, m
     assert isinstance(result, dict)
     assert result["success"] is False
     assert result["app_jsx_path"] is None
-    assert result["report_id"] is None
+    assert result["report_slug"] is None
     assert result["query_count"] == 0
     error = result.get("error") or ""
     assert "start_new_report" in error
@@ -387,6 +365,7 @@ async def test_execute_stream_bound_but_no_validate_marks_failure(real_agent_con
                         name="start_new_report",
                         arguments=json.dumps(
                             {
+                                "slug": "halfway",
                                 "name": "halfway",
                                 "description": "Bound but never validated — unit-test fixture.",
                             }
@@ -410,6 +389,6 @@ async def test_execute_stream_bound_but_no_validate_marks_failure(real_agent_con
     assert isinstance(result, dict)
     assert result["success"] is False
     assert result["app_jsx_path"] is None
-    assert result["report_id"] is not None and result["report_id"].startswith("rpt_halfway_")
+    assert result["report_slug"] == "halfway"
     assert result["query_count"] == 0
     assert "validate_render never returned success" in (result.get("error") or "")

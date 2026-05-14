@@ -7,7 +7,9 @@
 Covers:
 * ``ReportArtifactTools.start_new_report`` / ``bind_existing_report`` — the
   LLM-driven intent declaration that picks "create new" vs "edit existing"
-  before any write tool runs.
+  before any write tool runs. ``start_new_report`` takes an LLM-supplied
+  ``slug`` that doubles as the directory name; ``bind_existing_report``
+  takes the same slug.
 * ``_require_active`` guard — save_query / validate_render fail-fast when no
   report is bound.
 * ``save_query`` — column inference, SQL persistence, schema validation,
@@ -32,10 +34,8 @@ import pytest
 
 from datus.tools.func_tool import DBFuncTool, ReportArtifactTools, ReportFilesystemFuncTool
 from datus.tools.func_tool.report_artifact_tools import (
-    _allocate_report_id,
     _infer_column_type,
     _resolve_relative_import,
-    _slugify_title,
 )
 
 # ----------------------------------------------------------------------------- #
@@ -88,6 +88,7 @@ def unbound_tools(db_func_tool: DBFuncTool, project_root: Path) -> ReportArtifac
 @pytest.fixture
 def report_tools(unbound_tools: ReportArtifactTools) -> ReportArtifactTools:
     result = unbound_tools.start_new_report(
+        slug="demo_test",
         name="demo test",
         description="Smoke-test report used by the report-artifact-tools unit tests.",
     )
@@ -98,40 +99,6 @@ def report_tools(unbound_tools: ReportArtifactTools) -> ReportArtifactTools:
 # ----------------------------------------------------------------------------- #
 # helpers                                                                       #
 # ----------------------------------------------------------------------------- #
-
-
-class TestSlugifyTitle:
-    def test_ascii_lowercased_and_underscored(self):
-        assert _slugify_title("Sales By Store") == "sales_by_store"
-
-    def test_strips_non_ascii(self):
-        assert _slugify_title("销售分析") == ""
-
-    def test_collapses_punctuation(self):
-        assert _slugify_title("Q1 — North/East Sales!!") == "q1_north_east_sales"
-
-    def test_caps_length(self):
-        very_long = "a" * 200
-        assert _slugify_title(very_long, max_len=32) == "a" * 32
-
-
-class TestAllocateReportId:
-    def test_format_matches_pattern(self, project_root: Path):
-        new_id = _allocate_report_id("sales report", project_root)
-        assert new_id.startswith("rpt_sales_report_")
-        parts = new_id.split("_")
-        assert parts[0] == "rpt"
-        assert parts[-1] != "" and len(parts[-1]) == 6
-
-    def test_falls_back_to_report_when_slug_empty(self, project_root: Path):
-        new_id = _allocate_report_id("销售", project_root)
-        assert new_id.startswith("rpt_report_")
-
-    def test_avoids_collision(self, project_root: Path):
-        first = _allocate_report_id("collision", project_root)
-        (project_root / "reports" / first).mkdir(parents=True)
-        second = _allocate_report_id("collision", project_root)
-        assert second != first
 
 
 class TestResolveRelativeImport:
@@ -169,93 +136,118 @@ class TestResolveRelativeImport:
 
 
 class TestStartNewReport:
-    def test_allocates_id_and_writes_manifest(self, unbound_tools: ReportArtifactTools, project_root: Path):
+    def test_uses_supplied_slug_and_writes_manifest(self, unbound_tools: ReportArtifactTools, project_root: Path):
         result = unbound_tools.start_new_report(
+            slug="east_sales_q1",
             name="east sales",
             description="Quarterly review of east-region direct sales.",
         )
         assert result.success == 1
         payload = result.result
-        new_id = payload["report_id"]
-        assert new_id.startswith("rpt_east_sales_")
+        assert payload["report_slug"] == "east_sales_q1"
         assert payload["mode"] == "new"
-        assert payload["report_dir"] == f"reports/{new_id}"
-        assert payload["render_dir"] == f"reports/{new_id}/render"
-        assert payload["queries_dir"] == f"reports/{new_id}/queries"
-        assert payload["manifest_path"] == f"reports/{new_id}/manifest.json"
+        assert payload["report_dir"] == "reports/east_sales_q1"
+        assert payload["render_dir"] == "reports/east_sales_q1/render"
+        assert payload["queries_dir"] == "reports/east_sales_q1/queries"
+        assert payload["manifest_path"] == "reports/east_sales_q1/manifest.json"
 
-        assert unbound_tools.report_id == new_id
+        assert unbound_tools.report_slug == "east_sales_q1"
         assert unbound_tools.mode == "new"
-        assert (project_root / "reports" / new_id / "queries").is_dir()
-        assert (project_root / "reports" / new_id / "render").is_dir()
+        assert (project_root / "reports" / "east_sales_q1" / "queries").is_dir()
+        assert (project_root / "reports" / "east_sales_q1" / "render").is_dir()
 
-        manifest_path = project_root / "reports" / new_id / "manifest.json"
+        manifest_path = project_root / "reports" / "east_sales_q1" / "manifest.json"
         assert manifest_path.is_file()
         import json as _json
 
         manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert manifest["slug"] == "east_sales_q1"
         assert manifest["name"] == "east sales"
         assert manifest["description"] == "Quarterly review of east-region direct sales."
         assert manifest["kind"] == "report"
         assert manifest["created_at"].endswith("Z")
 
-    def test_chinese_name_slug_falls_back_to_report(self, unbound_tools: ReportArtifactTools, project_root: Path):
+    def test_chinese_name_is_preserved_in_manifest(self, unbound_tools: ReportArtifactTools, project_root: Path):
+        # The slug is always pure ASCII; the manifest's display name preserves
+        # the original (potentially Chinese) text verbatim.
         result = unbound_tools.start_new_report(
+            slug="sales_q1_review",
             name="销售季度复盘",
             description="第一季度区域销售业绩复盘。",
         )
         assert result.success == 1, result.error
-        new_id = result.result["report_id"]
-        # Non-ASCII name slugifies to nothing → fall back to the literal "report" base slug.
-        assert new_id.startswith("rpt_report_")
-        # But the manifest preserves the original name verbatim.
         import json as _json
 
-        manifest = _json.loads((project_root / "reports" / new_id / "manifest.json").read_text(encoding="utf-8"))
+        manifest = _json.loads(
+            (project_root / "reports" / "sales_q1_review" / "manifest.json").read_text(encoding="utf-8")
+        )
+        assert manifest["slug"] == "sales_q1_review"
         assert manifest["name"] == "销售季度复盘"
 
     def test_empty_name_rejected(self, unbound_tools: ReportArtifactTools):
-        result = unbound_tools.start_new_report(name="", description="x")
+        result = unbound_tools.start_new_report(slug="ok", name="", description="x")
         assert result.success == 0
         assert "name" in (result.error or "").lower()
 
     def test_empty_description_rejected(self, unbound_tools: ReportArtifactTools):
-        result = unbound_tools.start_new_report(name="ok name", description="   ")
+        result = unbound_tools.start_new_report(slug="ok", name="ok name", description="   ")
         assert result.success == 0
         assert "description" in (result.error or "").lower()
+
+    @pytest.mark.parametrize(
+        "bad_slug",
+        [
+            "",  # empty
+            "Has-Hyphen",  # uppercase + dash
+            "has space",  # whitespace
+            "中文",  # non-ASCII
+            "a" * 81,  # length cap
+        ],
+    )
+    def test_invalid_slug_rejected(self, unbound_tools: ReportArtifactTools, bad_slug: str):
+        result = unbound_tools.start_new_report(slug=bad_slug, name="ok", description="ok")
+        assert result.success == 0
+        assert "slug" in (result.error or "").lower()
+
+    def test_existing_directory_rejected(self, unbound_tools: ReportArtifactTools, project_root: Path):
+        (project_root / "reports" / "preexisting").mkdir(parents=True)
+        result = unbound_tools.start_new_report(slug="preexisting", name="x", description="y")
+        assert result.success == 0
+        assert "already exists" in (result.error or "").lower()
 
 
 class TestBindExistingReport:
     def test_binds_when_directory_and_app_jsx_exist(self, unbound_tools: ReportArtifactTools, project_root: Path):
-        existing = project_root / "reports" / "rpt_existing_demo_260513_aaaaaa"
+        existing = project_root / "reports" / "existing_demo"
         (existing / "queries").mkdir(parents=True)
         (existing / "render").mkdir()
         (existing / "render" / "app.jsx").write_text("export default function R() { return null; }\n")
 
-        result = unbound_tools.bind_existing_report("rpt_existing_demo_260513_aaaaaa")
+        result = unbound_tools.bind_existing_report("existing_demo")
         assert result.success == 1, result.error
         assert result.result["mode"] == "edit"
-        assert unbound_tools.report_id == "rpt_existing_demo_260513_aaaaaa"
+        assert result.result["report_slug"] == "existing_demo"
+        assert unbound_tools.report_slug == "existing_demo"
         assert unbound_tools.mode == "edit"
         assert unbound_tools.render_dir == existing / "render"
 
     def test_rejects_missing_directory(self, unbound_tools: ReportArtifactTools):
-        result = unbound_tools.bind_existing_report("rpt_nope_260513_bbbbbb")
+        result = unbound_tools.bind_existing_report("nope")
         assert result.success == 0
         assert "not found" in (result.error or "").lower()
-        assert unbound_tools.report_id is None
+        assert unbound_tools.report_slug is None
 
     def test_rejects_missing_app_jsx(self, unbound_tools: ReportArtifactTools, project_root: Path):
-        incomplete = project_root / "reports" / "rpt_partial_260513_cccccc"
+        incomplete = project_root / "reports" / "partial"
         (incomplete / "queries").mkdir(parents=True)
         (incomplete / "render").mkdir()
-        result = unbound_tools.bind_existing_report("rpt_partial_260513_cccccc")
+        result = unbound_tools.bind_existing_report("partial")
         assert result.success == 0
         assert "render/app.jsx" in (result.error or "")
-        assert unbound_tools.report_id is None
+        assert unbound_tools.report_slug is None
 
-    def test_rejects_invalid_id_format(self, unbound_tools: ReportArtifactTools):
-        result = unbound_tools.bind_existing_report("not-a-valid-id!")
+    def test_rejects_invalid_slug_format(self, unbound_tools: ReportArtifactTools):
+        result = unbound_tools.bind_existing_report("Not-A-Valid-Slug!")
         assert result.success == 0
         assert "match" in (result.error or "").lower()
 
@@ -321,10 +313,10 @@ class TestSaveQuery:
         assert payload["data_ref"] == "queries/sales_by_store"
         assert payload["row_count"] == 3
 
-        report_id = report_tools.report_id or ""
-        assert report_id.startswith("rpt_demo_test_")
-        sql_file = project_root / "reports" / report_id / "queries" / "sales_by_store.sql"
-        json_file = project_root / "reports" / report_id / "queries" / "sales_by_store.json"
+        report_slug = report_tools.report_slug or ""
+        assert report_slug == "demo_test"
+        sql_file = project_root / "reports" / report_slug / "queries" / "sales_by_store.sql"
+        json_file = project_root / "reports" / report_slug / "queries" / "sales_by_store.json"
         assert sql_file.exists()
         assert json_file.exists()
 
@@ -348,8 +340,8 @@ class TestSaveQuery:
 # ----------------------------------------------------------------------------- #
 
 
-def _write_render(project_root: Path, report_id: str, files: dict[str, str]) -> Path:
-    render = project_root / "reports" / report_id / "render"
+def _write_render(project_root: Path, report_slug: str, files: dict[str, str]) -> Path:
+    render = project_root / "reports" / report_slug / "render"
     render.mkdir(parents=True, exist_ok=True)
     for rel, content in files.items():
         target = render / rel
@@ -385,7 +377,7 @@ class TestValidateRender:
         report_tools.save_query(name="sales_by_store", sql="SELECT store_name FROM sales")
         _write_render(
             project_root,
-            report_tools.report_id,
+            report_tools.report_slug,
             {
                 "app.jsx": _VALID_APP_JSX,
                 "kpi-banner.jsx": _VALID_KPI_BANNER_JSX,
@@ -400,7 +392,7 @@ class TestValidateRender:
         assert result.result["warnings"] == []
 
     def test_rejects_missing_app_jsx(self, report_tools: ReportArtifactTools, project_root: Path):
-        _write_render(project_root, report_tools.report_id, {"kpi-banner.jsx": _VALID_KPI_BANNER_JSX})
+        _write_render(project_root, report_tools.report_slug, {"kpi-banner.jsx": _VALID_KPI_BANNER_JSX})
         result = report_tools.validate_render()
         assert result.success == 0
         assert "render/app.jsx" in (result.error or "")
@@ -413,14 +405,16 @@ class TestValidateRender:
     def test_rejects_missing_default_export(self, report_tools: ReportArtifactTools, project_root: Path):
         report_tools.save_query(name="sales_by_store", sql="SELECT store_name FROM sales")
         no_default = "import React from 'react';\nfunction App() { return null; }\n"
-        _write_render(project_root, report_tools.report_id, {"app.jsx": no_default})
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": no_default})
         result = report_tools.validate_render()
         assert result.success == 0
         assert "export default" in (result.error or "")
 
     def test_rejects_dangling_sqlid(self, report_tools: ReportArtifactTools, project_root: Path):
         _write_render(
-            project_root, report_tools.report_id, {"app.jsx": _VALID_APP_JSX, "kpi-banner.jsx": _VALID_KPI_BANNER_JSX}
+            project_root,
+            report_tools.report_slug,
+            {"app.jsx": _VALID_APP_JSX, "kpi-banner.jsx": _VALID_KPI_BANNER_JSX},
         )
         # No save_query → queries/sales_by_store.json does NOT exist.
         result = report_tools.validate_render()
@@ -439,7 +433,7 @@ class TestValidateRender:
             "  return null;\n"
             "}\n"
         )
-        _write_render(project_root, report_tools.report_id, {"app.jsx": bad_app})
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": bad_app})
         result = report_tools.validate_render()
         assert result.success == 0
         assert "lodash" in (result.error or "")
@@ -447,7 +441,7 @@ class TestValidateRender:
     def test_rejects_unresolved_relative_import(self, report_tools: ReportArtifactTools, project_root: Path):
         report_tools.save_query(name="sales_by_store", sql="SELECT store_name FROM sales")
         bad_app = _VALID_APP_JSX  # imports ./kpi-banner but we don't write it
-        _write_render(project_root, report_tools.report_id, {"app.jsx": bad_app})
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": bad_app})
         result = report_tools.validate_render()
         assert result.success == 0
         assert "./kpi-banner" in (result.error or "")
@@ -465,7 +459,7 @@ class TestValidateRender:
             "  return null;\n"
             "}\n"
         )
-        _write_render(project_root, report_tools.report_id, {"app.jsx": escape})
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": escape})
         result = report_tools.validate_render()
         assert result.success == 0
         # Either rejected as unresolved or as escape — both end in "does not resolve".
@@ -485,7 +479,7 @@ class TestValidateRender:
         )
         _write_render(
             project_root,
-            report_tools.report_id,
+            report_tools.report_slug,
             {
                 "app.jsx": minimal_app,
                 "legacy.jsx": "import React from 'react';\nexport default function L() { return null; }\n",
@@ -515,7 +509,7 @@ class TestValidateRender:
         colors = "export const COLORS = { primary: '#1A56DB' };\n"
         _write_render(
             project_root,
-            report_tools.report_id,
+            report_tools.report_slug,
             {
                 "app.jsx": app,
                 "charts/trend.jsx": trend,
@@ -545,7 +539,7 @@ class TestValidateRender:
             "  return null;\n"
             "}\n"
         )
-        _write_render(project_root, report_tools.report_id, {"app.jsx": app_with_template})
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": app_with_template})
         result = report_tools.validate_render()
         assert result.success == 1, result.error
         # Only the literal slug appears in query_refs.
@@ -559,60 +553,60 @@ class TestValidateRender:
 
 class TestReportFilesystemFuncTool:
     def test_write_queries_rejected(self, project_root: Path):
-        (project_root / "reports" / "rpt_x" / "queries").mkdir(parents=True)
+        (project_root / "reports" / "x" / "queries").mkdir(parents=True)
         fs = ReportFilesystemFuncTool(root_path=str(project_root))
-        result = fs.write_file("reports/rpt_x/queries/q.sql", "SELECT 1")
+        result = fs.write_file("reports/x/queries/q.sql", "SELECT 1")
         assert result.success == 0
         assert "save_query" in (result.error or "")
 
     def test_write_render_jsx_allowed(self, project_root: Path):
-        (project_root / "reports" / "rpt_x" / "render").mkdir(parents=True)
+        (project_root / "reports" / "x" / "render").mkdir(parents=True)
         fs = ReportFilesystemFuncTool(root_path=str(project_root))
-        result = fs.write_file("reports/rpt_x/render/app.jsx", "export default () => null;\n")
+        result = fs.write_file("reports/x/render/app.jsx", "export default () => null;\n")
         assert result.success == 1
-        assert (project_root / "reports" / "rpt_x" / "render" / "app.jsx").is_file()
+        assert (project_root / "reports" / "x" / "render" / "app.jsx").is_file()
 
     def test_write_render_nested_subdir_allowed(self, project_root: Path):
-        (project_root / "reports" / "rpt_x" / "render").mkdir(parents=True)
+        (project_root / "reports" / "x" / "render").mkdir(parents=True)
         fs = ReportFilesystemFuncTool(root_path=str(project_root))
         result = fs.write_file(
-            "reports/rpt_x/render/charts/trend.jsx",
+            "reports/x/render/charts/trend.jsx",
             "export default () => null;\n",
         )
         assert result.success == 1
-        assert (project_root / "reports" / "rpt_x" / "render" / "charts" / "trend.jsx").is_file()
+        assert (project_root / "reports" / "x" / "render" / "charts" / "trend.jsx").is_file()
 
     def test_write_render_json_rejected(self, project_root: Path):
-        (project_root / "reports" / "rpt_x" / "render").mkdir(parents=True)
+        (project_root / "reports" / "x" / "render").mkdir(parents=True)
         fs = ReportFilesystemFuncTool(root_path=str(project_root))
-        result = fs.write_file("reports/rpt_x/render/data.json", '{"x": 1}')
+        result = fs.write_file("reports/x/render/data.json", '{"x": 1}')
         assert result.success == 0
         assert ".jsx" in (result.error or "")
 
     def test_edit_queries_rejected(self, project_root: Path):
-        (project_root / "reports" / "rpt_x" / "queries").mkdir(parents=True)
-        existing = project_root / "reports" / "rpt_x" / "queries" / "q.sql"
+        (project_root / "reports" / "x" / "queries").mkdir(parents=True)
+        existing = project_root / "reports" / "x" / "queries" / "q.sql"
         existing.write_text("SELECT 1")
         fs = ReportFilesystemFuncTool(root_path=str(project_root))
-        result = fs.edit_file("reports/rpt_x/queries/q.sql", "1", "2")
+        result = fs.edit_file("reports/x/queries/q.sql", "1", "2")
         assert result.success == 0
         assert "save_query" in (result.error or "")
 
     def test_delete_render_jsx_allowed(self, project_root: Path):
-        (project_root / "reports" / "rpt_x" / "render").mkdir(parents=True)
-        target = project_root / "reports" / "rpt_x" / "render" / "old.jsx"
+        (project_root / "reports" / "x" / "render").mkdir(parents=True)
+        target = project_root / "reports" / "x" / "render" / "old.jsx"
         target.write_text("export default () => null;\n")
         fs = ReportFilesystemFuncTool(root_path=str(project_root))
-        result = fs.delete_file("reports/rpt_x/render/old.jsx")
+        result = fs.delete_file("reports/x/render/old.jsx")
         assert result.success == 1
         assert not target.exists()
 
     def test_delete_queries_rejected(self, project_root: Path):
-        (project_root / "reports" / "rpt_x" / "queries").mkdir(parents=True)
-        target = project_root / "reports" / "rpt_x" / "queries" / "q.sql"
+        (project_root / "reports" / "x" / "queries").mkdir(parents=True)
+        target = project_root / "reports" / "x" / "queries" / "q.sql"
         target.write_text("SELECT 1")
         fs = ReportFilesystemFuncTool(root_path=str(project_root))
-        result = fs.delete_file("reports/rpt_x/queries/q.sql")
+        result = fs.delete_file("reports/x/queries/q.sql")
         assert result.success == 0
         # Either rejected by the deny rule (preferred message) or by the parent
         # tool — accept any error response so the test stays robust to future
@@ -627,10 +621,10 @@ class TestReportFilesystemFuncTool:
         assert (project_root / "notes.md").exists()
 
     def test_read_render_jsx_allowed(self, project_root: Path):
-        (project_root / "reports" / "rpt_x" / "render").mkdir(parents=True)
-        target = project_root / "reports" / "rpt_x" / "render" / "app.jsx"
+        (project_root / "reports" / "x" / "render").mkdir(parents=True)
+        target = project_root / "reports" / "x" / "render" / "app.jsx"
         target.write_text("export default function App() { return null; }\n")
         fs = ReportFilesystemFuncTool(root_path=str(project_root))
-        result = fs.read_file("reports/rpt_x/render/app.jsx")
+        result = fs.read_file("reports/x/render/app.jsx")
         assert result.success == 1
         assert "export default" in (result.result or "")

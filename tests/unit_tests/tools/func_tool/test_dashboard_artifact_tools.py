@@ -5,10 +5,12 @@
 """Unit tests for dashboard artifact tools.
 
 Covers:
-* Helpers: ``_allocate_dashboard_id``, ``sql_quote_scalar``,
-  ``resolve_bind_placeholders``, ``render_dashboard_template``.
+* Helpers: ``sql_quote_scalar``, ``resolve_bind_placeholders``,
+  ``render_dashboard_template``.
 * ``DashboardArtifactTools.start_new_dashboard`` /
-  ``bind_existing_dashboard`` — LLM-driven intent declaration.
+  ``bind_existing_dashboard`` — LLM-driven intent declaration. The LLM
+  supplies the ``slug`` directly; the tool refuses to overwrite an
+  existing directory.
 * ``_require_active`` guard — save_query_template / validate_render fail
   fast when no dashboard is bound.
 * ``save_query_template`` — header parsing, type coercion through the
@@ -35,7 +37,6 @@ import pytest
 from datus.schemas.gen_visual_dashboard_models import TemplateParamDecl
 from datus.tools.func_tool import DashboardArtifactTools, DashboardFilesystemFuncTool, DBFuncTool
 from datus.tools.func_tool.dashboard_artifact_tools import (
-    _allocate_dashboard_id,
     render_dashboard_template,
     resolve_bind_placeholders,
     sql_quote_scalar,
@@ -92,6 +93,7 @@ def unbound_tools(db_func_tool: DBFuncTool, project_root: Path) -> DashboardArti
 @pytest.fixture
 def dashboard_tools(unbound_tools: DashboardArtifactTools) -> DashboardArtifactTools:
     result = unbound_tools.start_new_dashboard(
+        slug="demo_test",
         name="demo test",
         description="Smoke-test dashboard used by the dashboard-artifact-tools unit tests.",
     )
@@ -203,111 +205,113 @@ class TestRenderDashboardTemplate:
             render_dashboard_template("{% if x %}", decls, {"x": "v"})
 
 
-class TestAllocateDashboardId:
-    def test_format_matches_pattern(self, project_root: Path):
-        new_id = _allocate_dashboard_id("revenue overview", project_root)
-        assert new_id.startswith("dash_revenue_overview_")
-        parts = new_id.split("_")
-        assert parts[0] == "dash"
-        assert len(parts[-1]) == 6
-
-    def test_falls_back_to_dashboard_when_slug_empty(self, project_root: Path):
-        new_id = _allocate_dashboard_id("销售", project_root)
-        assert new_id.startswith("dash_dashboard_")
-
-    def test_avoids_collision(self, project_root: Path):
-        first = _allocate_dashboard_id("collision", project_root)
-        (project_root / "dashboards" / first).mkdir(parents=True)
-        second = _allocate_dashboard_id("collision", project_root)
-        assert second != first
-
-
 # ----------------------------------------------------------------------------- #
 # start_new_dashboard / bind_existing_dashboard                                 #
 # ----------------------------------------------------------------------------- #
 
 
 class TestStartNewDashboard:
-    def test_allocates_id_and_writes_manifest(self, unbound_tools: DashboardArtifactTools, project_root: Path):
+    def test_uses_supplied_slug_and_writes_manifest(self, unbound_tools: DashboardArtifactTools, project_root: Path):
         result = unbound_tools.start_new_dashboard(
+            slug="north_sales",
             name="north sales",
             description="Live north-region sales dashboard with date and channel filters.",
         )
         assert result.success == 1
         payload = result.result
-        new_id = payload["dashboard_id"]
-        assert new_id.startswith("dash_north_sales_")
+        assert payload["dashboard_slug"] == "north_sales"
         assert payload["mode"] == "new"
-        assert payload["dashboard_dir"] == f"dashboards/{new_id}"
-        assert payload["render_dir"] == f"dashboards/{new_id}/render"
-        assert payload["queries_dir"] == f"dashboards/{new_id}/queries"
-        assert payload["manifest_path"] == f"dashboards/{new_id}/manifest.json"
+        assert payload["dashboard_dir"] == "dashboards/north_sales"
+        assert payload["render_dir"] == "dashboards/north_sales/render"
+        assert payload["queries_dir"] == "dashboards/north_sales/queries"
+        assert payload["manifest_path"] == "dashboards/north_sales/manifest.json"
 
-        assert unbound_tools.dashboard_id == new_id
-        assert (project_root / "dashboards" / new_id / "queries").is_dir()
-        assert (project_root / "dashboards" / new_id / "render").is_dir()
+        assert unbound_tools.dashboard_slug == "north_sales"
+        assert (project_root / "dashboards" / "north_sales" / "queries").is_dir()
+        assert (project_root / "dashboards" / "north_sales" / "render").is_dir()
 
-        manifest_path = project_root / "dashboards" / new_id / "manifest.json"
+        manifest_path = project_root / "dashboards" / "north_sales" / "manifest.json"
         assert manifest_path.is_file()
-        import json as _json
-
-        manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert manifest["slug"] == "north_sales"
         assert manifest["name"] == "north sales"
         assert manifest["description"] == "Live north-region sales dashboard with date and channel filters."
         assert manifest["kind"] == "dashboard"
         assert manifest["created_at"].endswith("Z")
 
-    def test_chinese_name_slug_falls_back_to_dashboard(self, unbound_tools: DashboardArtifactTools, project_root: Path):
+    def test_chinese_name_is_preserved_in_manifest(self, unbound_tools: DashboardArtifactTools, project_root: Path):
         result = unbound_tools.start_new_dashboard(
+            slug="sales_live",
             name="销售看板",
             description="实时销售看板，按地区过滤。",
         )
         assert result.success == 1, result.error
-        new_id = result.result["dashboard_id"]
-        assert new_id.startswith("dash_dashboard_")
-        import json as _json
-
-        manifest = _json.loads((project_root / "dashboards" / new_id / "manifest.json").read_text(encoding="utf-8"))
+        manifest = json.loads(
+            (project_root / "dashboards" / "sales_live" / "manifest.json").read_text(encoding="utf-8")
+        )
+        assert manifest["slug"] == "sales_live"
         assert manifest["name"] == "销售看板"
 
     def test_empty_name_rejected(self, unbound_tools: DashboardArtifactTools):
-        result = unbound_tools.start_new_dashboard(name=" ", description="x")
+        result = unbound_tools.start_new_dashboard(slug="ok", name=" ", description="x")
         assert result.success == 0
         assert "name" in (result.error or "").lower()
 
     def test_empty_description_rejected(self, unbound_tools: DashboardArtifactTools):
-        result = unbound_tools.start_new_dashboard(name="ok", description="")
+        result = unbound_tools.start_new_dashboard(slug="ok", name="ok", description="")
         assert result.success == 0
         assert "description" in (result.error or "").lower()
+
+    @pytest.mark.parametrize(
+        "bad_slug",
+        [
+            "",
+            "Has-Hyphen",
+            "has space",
+            "中文",
+            "a" * 81,
+        ],
+    )
+    def test_invalid_slug_rejected(self, unbound_tools: DashboardArtifactTools, bad_slug: str):
+        result = unbound_tools.start_new_dashboard(slug=bad_slug, name="ok", description="ok")
+        assert result.success == 0
+        assert "slug" in (result.error or "").lower()
+
+    def test_existing_directory_rejected(self, unbound_tools: DashboardArtifactTools, project_root: Path):
+        (project_root / "dashboards" / "preexisting").mkdir(parents=True)
+        result = unbound_tools.start_new_dashboard(slug="preexisting", name="x", description="y")
+        assert result.success == 0
+        assert "already exists" in (result.error or "").lower()
 
 
 class TestBindExistingDashboard:
     def test_binds_when_directory_and_app_jsx_exist(self, unbound_tools: DashboardArtifactTools, project_root: Path):
-        existing = project_root / "dashboards" / "dash_existing_demo_260514_aabbcc"
+        existing = project_root / "dashboards" / "existing_demo"
         (existing / "queries").mkdir(parents=True)
         (existing / "render").mkdir()
         (existing / "render" / "app.jsx").write_text("export default function D() { return null; }\n")
 
-        result = unbound_tools.bind_existing_dashboard("dash_existing_demo_260514_aabbcc")
+        result = unbound_tools.bind_existing_dashboard("existing_demo")
         assert result.success == 1, result.error
         assert result.result["mode"] == "edit"
-        assert unbound_tools.dashboard_id == "dash_existing_demo_260514_aabbcc"
+        assert result.result["dashboard_slug"] == "existing_demo"
+        assert unbound_tools.dashboard_slug == "existing_demo"
 
     def test_rejects_missing_directory(self, unbound_tools: DashboardArtifactTools):
-        result = unbound_tools.bind_existing_dashboard("dash_nope_260514_bbbbbb")
+        result = unbound_tools.bind_existing_dashboard("nope")
         assert result.success == 0
         assert "not found" in (result.error or "").lower()
 
     def test_rejects_missing_app_jsx(self, unbound_tools: DashboardArtifactTools, project_root: Path):
-        incomplete = project_root / "dashboards" / "dash_partial_260514_cccccc"
+        incomplete = project_root / "dashboards" / "partial"
         (incomplete / "queries").mkdir(parents=True)
         (incomplete / "render").mkdir()
-        result = unbound_tools.bind_existing_dashboard("dash_partial_260514_cccccc")
+        result = unbound_tools.bind_existing_dashboard("partial")
         assert result.success == 0
         assert "render/app.jsx" in (result.error or "")
 
-    def test_rejects_invalid_id_format(self, unbound_tools: DashboardArtifactTools):
-        result = unbound_tools.bind_existing_dashboard("not-a-valid-id!")
+    def test_rejects_invalid_slug_format(self, unbound_tools: DashboardArtifactTools):
+        result = unbound_tools.bind_existing_dashboard("Not-A-Valid-Slug!")
         assert result.success == 0
         assert "match" in (result.error or "").lower()
 
@@ -361,9 +365,9 @@ class TestSaveQueryTemplate:
         # 2 rows are inside NA / EU + month >= 2026-01.
         assert payload["sample_row_count"] == 2
 
-        dash_id = dashboard_tools.dashboard_id or ""
-        sql_path = project_root / "dashboards" / dash_id / "queries" / "revenue_by_region.sql.j2"
-        params_path = project_root / "dashboards" / dash_id / "queries" / "revenue_by_region.params.json"
+        dash_slug = dashboard_tools.dashboard_slug or ""
+        sql_path = project_root / "dashboards" / dash_slug / "queries" / "revenue_by_region.sql.j2"
+        params_path = project_root / "dashboards" / dash_slug / "queries" / "revenue_by_region.params.json"
         assert sql_path.exists()
         assert params_path.exists()
         meta = json.loads(params_path.read_text())
@@ -439,8 +443,8 @@ def _seed_template(dashboard_tools: DashboardArtifactTools, slug: str = "revenue
     assert result.success == 1, result.error
 
 
-def _write_render(project_root: Path, dashboard_id: str, files: dict[str, str]) -> Path:
-    render = project_root / "dashboards" / dashboard_id / "render"
+def _write_render(project_root: Path, dashboard_slug: str, files: dict[str, str]) -> Path:
+    render = project_root / "dashboards" / dashboard_slug / "render"
     render.mkdir(parents=True, exist_ok=True)
     for rel, content in files.items():
         target = render / rel
@@ -464,7 +468,7 @@ export default function App() {
 class TestValidateRender:
     def test_happy_path(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
         _seed_template(dashboard_tools)
-        _write_render(project_root, dashboard_tools.dashboard_id, {"app.jsx": _VALID_APP_JSX})
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": _VALID_APP_JSX})
 
         result = dashboard_tools.validate_render()
         assert result.success == 1, result.error
@@ -482,7 +486,7 @@ class TestValidateRender:
             "  return null;\n"
             "}\n"
         )
-        _write_render(project_root, dashboard_tools.dashboard_id, {"app.jsx": app_no_params})
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app_no_params})
         result = dashboard_tools.validate_render()
         assert result.success == 0
         assert "second `params` argument" in (result.error or "")
@@ -498,7 +502,7 @@ class TestValidateRender:
             "  return null;\n"
             "}\n"
         )
-        _write_render(project_root, dashboard_tools.dashboard_id, {"app.jsx": app_missing_key})
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app_missing_key})
         result = dashboard_tools.validate_render()
         assert result.success == 0
         assert "missing required" in (result.error or "")
@@ -515,7 +519,7 @@ class TestValidateRender:
             "  return null;\n"
             "}\n"
         )
-        _write_render(project_root, dashboard_tools.dashboard_id, {"app.jsx": app_extra_key})
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app_extra_key})
         result = dashboard_tools.validate_render()
         assert result.success == 0
         assert "unknown" in (result.error or "")
@@ -523,7 +527,7 @@ class TestValidateRender:
 
     def test_rejects_dangling_slug(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
         # No save_query_template — but app.jsx references one.
-        _write_render(project_root, dashboard_tools.dashboard_id, {"app.jsx": _VALID_APP_JSX})
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": _VALID_APP_JSX})
         result = dashboard_tools.validate_render()
         assert result.success == 0
         assert "queries/revenue_by_region" in (result.error or "")
@@ -531,7 +535,7 @@ class TestValidateRender:
     def test_rejects_missing_default_export(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
         _seed_template(dashboard_tools)
         no_default = "import React from 'react';\nfunction App() { return null; }\n"
-        _write_render(project_root, dashboard_tools.dashboard_id, {"app.jsx": no_default})
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": no_default})
         result = dashboard_tools.validate_render()
         assert result.success == 0
         assert "export default" in (result.error or "")
@@ -548,7 +552,7 @@ class TestValidateRender:
             "  return null;\n"
             "}\n"
         )
-        _write_render(project_root, dashboard_tools.dashboard_id, {"app.jsx": bad_app})
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": bad_app})
         result = dashboard_tools.validate_render()
         assert result.success == 0
         assert "lodash" in (result.error or "")
@@ -566,40 +570,40 @@ class TestValidateRender:
 
 class TestDashboardFilesystemFuncTool:
     def test_write_queries_rejected(self, project_root: Path):
-        (project_root / "dashboards" / "dash_x" / "queries").mkdir(parents=True)
+        (project_root / "dashboards" / "x" / "queries").mkdir(parents=True)
         fs = DashboardFilesystemFuncTool(root_path=str(project_root))
-        result = fs.write_file("dashboards/dash_x/queries/q.sql.j2", "-- @datus-params x:string\nSELECT :x")
+        result = fs.write_file("dashboards/x/queries/q.sql.j2", "-- @datus-params x:string\nSELECT :x")
         assert result.success == 0
         assert "save_query_template" in (result.error or "")
 
     def test_write_render_jsx_allowed(self, project_root: Path):
-        (project_root / "dashboards" / "dash_x" / "render").mkdir(parents=True)
+        (project_root / "dashboards" / "x" / "render").mkdir(parents=True)
         fs = DashboardFilesystemFuncTool(root_path=str(project_root))
-        result = fs.write_file("dashboards/dash_x/render/app.jsx", "export default () => null;\n")
+        result = fs.write_file("dashboards/x/render/app.jsx", "export default () => null;\n")
         assert result.success == 1
-        assert (project_root / "dashboards" / "dash_x" / "render" / "app.jsx").is_file()
+        assert (project_root / "dashboards" / "x" / "render" / "app.jsx").is_file()
 
     def test_write_render_json_rejected(self, project_root: Path):
-        (project_root / "dashboards" / "dash_x" / "render").mkdir(parents=True)
+        (project_root / "dashboards" / "x" / "render").mkdir(parents=True)
         fs = DashboardFilesystemFuncTool(root_path=str(project_root))
-        result = fs.write_file("dashboards/dash_x/render/data.json", '{"x": 1}')
+        result = fs.write_file("dashboards/x/render/data.json", '{"x": 1}')
         assert result.success == 0
         assert ".jsx" in (result.error or "")
 
     def test_edit_queries_rejected(self, project_root: Path):
-        (project_root / "dashboards" / "dash_x" / "queries").mkdir(parents=True)
-        existing = project_root / "dashboards" / "dash_x" / "queries" / "q.sql.j2"
+        (project_root / "dashboards" / "x" / "queries").mkdir(parents=True)
+        existing = project_root / "dashboards" / "x" / "queries" / "q.sql.j2"
         existing.write_text("-- @datus-params x:string\nSELECT :x")
         fs = DashboardFilesystemFuncTool(root_path=str(project_root))
-        result = fs.edit_file("dashboards/dash_x/queries/q.sql.j2", ":x", ":x AS v")
+        result = fs.edit_file("dashboards/x/queries/q.sql.j2", ":x", ":x AS v")
         assert result.success == 0
         assert "save_query_template" in (result.error or "")
 
     def test_delete_queries_rejected(self, project_root: Path):
-        (project_root / "dashboards" / "dash_x" / "queries").mkdir(parents=True)
-        target = project_root / "dashboards" / "dash_x" / "queries" / "q.params.json"
+        (project_root / "dashboards" / "x" / "queries").mkdir(parents=True)
+        target = project_root / "dashboards" / "x" / "queries" / "q.params.json"
         target.write_text("{}")
         fs = DashboardFilesystemFuncTool(root_path=str(project_root))
-        result = fs.delete_file("dashboards/dash_x/queries/q.params.json")
+        result = fs.delete_file("dashboards/x/queries/q.params.json")
         assert result.success == 0
         assert target.exists()

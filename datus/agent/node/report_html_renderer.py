@@ -72,10 +72,11 @@ _DIST_JS_NAME = "index.umd.js"
 # Subdirectory under ``reports/<id>/`` where local assets are copied.
 _ASSETS_SUBDIR = "_assets"
 
-# Accepted shape for ``report_id``. Restricting this up front prevents path
-# traversal (``..``) or absolute-path components from escaping ``reports/``
-# when the id is joined into ``project_root / "reports" / report_id``.
-_REPORT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+# Accepted shape for ``report_slug``. Restricting this up front prevents
+# path traversal (``..``) or absolute-path components from escaping
+# ``reports/`` when the slug is joined into
+# ``project_root / "reports" / report_slug``.
+_REPORT_SLUG_RE = re.compile(r"^[a-z0-9_]{1,80}$")
 
 
 def _extract_title(app_jsx: str, fallback: str) -> str:
@@ -164,15 +165,15 @@ def _copy_offline_assets(report_dir: Path, dist_dir: Path) -> tuple[str, str]:
 def render_report_html(
     *,
     project_root: Path,
-    report_id: str,
+    report_slug: str,
     report_dist: Optional[Path] = None,
 ) -> Path:
     """
-    Compile ``reports/<report_id>/index.html`` from render/ + queries.
+    Compile ``reports/<report_slug>/index.html`` from render/ + queries.
 
     Args:
         project_root: ``AgentConfig.project_root``; resolved absolute path.
-        report_id: target report id (matches the directory name).
+        report_slug: target report slug (matches the directory name).
         report_dist: optional path to a local ``@datus/web-report`` ``dist/``
             directory containing ``index.css`` and
             ``index.umd.js``. When provided and valid, the two files
@@ -188,10 +189,12 @@ def render_report_html(
         FileNotFoundError: if ``render/app.jsx`` is missing.
         OSError: on read/write failures.
     """
-    if not _REPORT_ID_RE.fullmatch(report_id):
-        raise ValueError(f"invalid report_id {report_id!r}; expected only [A-Za-z0-9_-]")
+    if not _REPORT_SLUG_RE.fullmatch(report_slug):
+        raise ValueError(
+            f"invalid report_slug {report_slug!r}; expected lowercase letters / digits / underscores, 1–80 chars"
+        )
     project_root = project_root.resolve()
-    report_dir = project_root / "reports" / report_id
+    report_dir = project_root / "reports" / report_slug
     render_dir = report_dir / "render"
     app_jsx_path = render_dir / "app.jsx"
     if not app_jsx_path.is_file():
@@ -212,9 +215,9 @@ def render_report_html(
     created_at = _dt.datetime.fromtimestamp(app_jsx_path.stat().st_mtime, tz=_dt.timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
-    title = _extract_title(app_jsx, report_id)
+    title = _extract_title(app_jsx, report_slug)
     payload = {
-        "id": report_id,
+        "slug": report_slug,
         "title": title,
         "created_at": created_at,
         "render_files": render_files,

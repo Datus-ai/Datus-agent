@@ -38,8 +38,8 @@ export default function KpiBanner({ rows }) {
 """
 
 
-def _seed_report(project_root: Path, *, report_id: str = "rpt_demo_001") -> Path:
-    report_dir = project_root / "reports" / report_id
+def _seed_report(project_root: Path, *, report_slug: str = "demo_001") -> Path:
+    report_dir = project_root / "reports" / report_slug
     (report_dir / "queries").mkdir(parents=True)
     (report_dir / "render").mkdir()
     (report_dir / "render" / "app.jsx").write_text(_APP_JSX, encoding="utf-8")
@@ -51,7 +51,7 @@ def _seed_report(project_root: Path, *, report_id: str = "rpt_demo_001") -> Path
 
 def test_render_report_html_substitutes_payload(tmp_path: Path):
     _seed_report(tmp_path)
-    out_path = render_report_html(project_root=tmp_path, report_id="rpt_demo_001")
+    out_path = render_report_html(project_root=tmp_path, report_slug="demo_001")
     body = out_path.read_text(encoding="utf-8")
     assert "__DATUS_REPORT_DATA__" not in body
     assert "__DATUS_REPORT_TITLE__" not in body
@@ -65,15 +65,15 @@ def test_render_report_html_substitutes_payload(tmp_path: Path):
 
 
 def test_render_report_html_writes_index_file(tmp_path: Path):
-    _seed_report(tmp_path, report_id="rpt_demo_002")
-    out_path = render_report_html(project_root=tmp_path, report_id="rpt_demo_002")
-    assert out_path == tmp_path / "reports" / "rpt_demo_002" / "index.html"
+    _seed_report(tmp_path, report_slug="demo_002")
+    out_path = render_report_html(project_root=tmp_path, report_slug="demo_002")
+    assert out_path == tmp_path / "reports" / "demo_002" / "index.html"
     assert out_path.is_file()
 
 
 def test_render_report_html_includes_render_files_and_queries(tmp_path: Path):
-    _seed_report(tmp_path, report_id="rpt_demo_003")
-    out_path = render_report_html(project_root=tmp_path, report_id="rpt_demo_003")
+    _seed_report(tmp_path, report_slug="demo_003")
+    out_path = render_report_html(project_root=tmp_path, report_slug="demo_003")
     body = out_path.read_text(encoding="utf-8")
 
     start = body.index('id="datus-report-data">') + len('id="datus-report-data">')
@@ -82,7 +82,7 @@ def test_render_report_html_includes_render_files_and_queries(tmp_path: Path):
     payload_unescaped = payload_raw.replace("<\\/", "</")
     data = json.loads(payload_unescaped)
 
-    assert data["id"] == "rpt_demo_003"
+    assert data["slug"] == "demo_003"
     render_names = {f["name"] for f in data["render_files"]}
     assert render_names == {"app.jsx", "kpi-banner.jsx"}
     app_entry = next(f for f in data["render_files"] if f["name"] == "app.jsx")
@@ -93,14 +93,14 @@ def test_render_report_html_includes_render_files_and_queries(tmp_path: Path):
 
 
 def test_render_report_html_walks_nested_render_dirs(tmp_path: Path):
-    _seed_report(tmp_path, report_id="rpt_nested_001")
-    report_dir = tmp_path / "reports" / "rpt_nested_001"
+    _seed_report(tmp_path, report_slug="nested_001")
+    report_dir = tmp_path / "reports" / "nested_001"
     (report_dir / "render" / "charts").mkdir()
     (report_dir / "render" / "charts" / "trend.jsx").write_text(
         "import React from 'react';\nexport default () => React.createElement('div');\n",
         encoding="utf-8",
     )
-    out_path = render_report_html(project_root=tmp_path, report_id="rpt_nested_001")
+    out_path = render_report_html(project_root=tmp_path, report_slug="nested_001")
     body = out_path.read_text(encoding="utf-8")
     start = body.index('id="datus-report-data">') + len('id="datus-report-data">')
     end = body.index("</script>", start)
@@ -110,20 +110,20 @@ def test_render_report_html_walks_nested_render_dirs(tmp_path: Path):
 
 
 def test_render_report_html_missing_app_jsx_raises(tmp_path: Path):
-    (tmp_path / "reports" / "rpt_missing" / "queries").mkdir(parents=True)
-    (tmp_path / "reports" / "rpt_missing" / "render").mkdir()
+    (tmp_path / "reports" / "missing" / "queries").mkdir(parents=True)
+    (tmp_path / "reports" / "missing" / "render").mkdir()
     with pytest.raises(FileNotFoundError):
-        render_report_html(project_root=tmp_path, report_id="rpt_missing")
+        render_report_html(project_root=tmp_path, report_slug="missing")
 
 
 def test_render_report_html_defaults_to_cdn(tmp_path: Path):
-    _seed_report(tmp_path, report_id="rpt_cdn_default")
-    out_path = render_report_html(project_root=tmp_path, report_id="rpt_cdn_default")
+    _seed_report(tmp_path, report_slug="cdn_default")
+    out_path = render_report_html(project_root=tmp_path, report_slug="cdn_default")
     body = out_path.read_text(encoding="utf-8")
     assert "https://unpkg.com/@datus/web-report" in body
     assert "index.css" in body
     assert "index.umd.js" in body
-    assert not (tmp_path / "reports" / "rpt_cdn_default" / "_assets").exists()
+    assert not (tmp_path / "reports" / "cdn_default" / "_assets").exists()
 
 
 def _seed_dist(dist_dir: Path) -> None:
@@ -133,13 +133,13 @@ def _seed_dist(dist_dir: Path) -> None:
 
 
 def test_render_report_html_offline_kwarg_copies_assets(tmp_path: Path):
-    _seed_report(tmp_path, report_id="rpt_offline_001")
+    _seed_report(tmp_path, report_slug="offline_001")
     dist_dir = tmp_path / "vendor" / "datus-report-dist"
     _seed_dist(dist_dir)
 
     out_path = render_report_html(
         project_root=tmp_path,
-        report_id="rpt_offline_001",
+        report_slug="offline_001",
         report_dist=dist_dir,
     )
     body = out_path.read_text(encoding="utf-8")
@@ -147,49 +147,49 @@ def test_render_report_html_offline_kwarg_copies_assets(tmp_path: Path):
     assert "_assets/index.umd.js" in body
     assert "https://unpkg.com/" not in body
 
-    copied_assets = tmp_path / "reports" / "rpt_offline_001" / "_assets"
+    copied_assets = tmp_path / "reports" / "offline_001" / "_assets"
     assert (copied_assets / "index.css").read_text(encoding="utf-8") == "/* offline css */"
     assert (copied_assets / "index.umd.js").read_text(encoding="utf-8") == "/* offline js */"
 
 
 def test_render_report_html_invalid_dist_falls_back_to_cdn(tmp_path: Path):
-    _seed_report(tmp_path, report_id="rpt_invalid_dist")
+    _seed_report(tmp_path, report_slug="invalid_dist")
     incomplete = tmp_path / "vendor" / "incomplete"
     incomplete.mkdir(parents=True)
     (incomplete / "index.css").write_text("/* partial */", encoding="utf-8")
 
     out_path = render_report_html(
         project_root=tmp_path,
-        report_id="rpt_invalid_dist",
+        report_slug="invalid_dist",
         report_dist=incomplete,
     )
     body = out_path.read_text(encoding="utf-8")
     assert "https://unpkg.com/@datus/web-report" in body
-    assert not (tmp_path / "reports" / "rpt_invalid_dist" / "_assets").exists()
+    assert not (tmp_path / "reports" / "invalid_dist" / "_assets").exists()
 
 
 def test_render_report_html_ignores_environment_variables(tmp_path: Path, monkeypatch):
     """``DATUS_REPORT_DIST`` was removed — the renderer must not read it."""
-    _seed_report(tmp_path, report_id="rpt_no_env_lookup")
+    _seed_report(tmp_path, report_slug="no_env_lookup")
     dist_dir = tmp_path / "vendor" / "would-be-env"
     _seed_dist(dist_dir)
     monkeypatch.setenv("DATUS_REPORT_DIST", str(dist_dir))
 
-    out_path = render_report_html(project_root=tmp_path, report_id="rpt_no_env_lookup")
+    out_path = render_report_html(project_root=tmp_path, report_slug="no_env_lookup")
     body = out_path.read_text(encoding="utf-8")
     assert "https://unpkg.com/@datus/web-report" in body
-    assert not (tmp_path / "reports" / "rpt_no_env_lookup" / "_assets").exists()
+    assert not (tmp_path / "reports" / "no_env_lookup" / "_assets").exists()
 
 
-def test_render_report_html_falls_back_to_report_id_for_title(tmp_path: Path):
-    """When app.jsx omits the @datus-title annotation, the report id is used."""
-    report_dir = tmp_path / "reports" / "rpt_no_title"
+def test_render_report_html_falls_back_to_report_slug_for_title(tmp_path: Path):
+    """When app.jsx omits the @datus-title annotation, the report slug is used."""
+    report_dir = tmp_path / "reports" / "no_title"
     (report_dir / "queries").mkdir(parents=True)
     (report_dir / "render").mkdir()
     (report_dir / "render" / "app.jsx").write_text(
         "import React from 'react';\nexport default function R() { return null; }\n",
         encoding="utf-8",
     )
-    out_path = render_report_html(project_root=tmp_path, report_id="rpt_no_title")
+    out_path = render_report_html(project_root=tmp_path, report_slug="no_title")
     body = out_path.read_text(encoding="utf-8")
-    assert "<title>Datus Report — rpt_no_title</title>" in body
+    assert "<title>Datus Report — no_title</title>" in body

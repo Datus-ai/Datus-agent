@@ -20,6 +20,7 @@ from datus.schemas.artifact_manifest import ArtifactManifest
 
 def _base_payload(**overrides):
     base = {
+        "slug": "q1_revenue_review",
         "name": "Q1 revenue review",
         "description": "Quarterly revenue review for the east region.",
         "kind": "report",
@@ -32,6 +33,7 @@ def _base_payload(**overrides):
 class TestArtifactManifest:
     def test_round_trip(self):
         manifest = ArtifactManifest.model_validate(_base_payload())
+        assert manifest.slug == "q1_revenue_review"
         assert manifest.name == "Q1 revenue review"
         assert manifest.kind == "report"
 
@@ -67,3 +69,18 @@ class TestArtifactManifest:
     def test_chinese_name_accepted(self):
         manifest = ArtifactManifest.model_validate(_base_payload(name="销售季度复盘"))
         assert manifest.name == "销售季度复盘"
+
+    @pytest.mark.parametrize(
+        "bad_slug",
+        [
+            "",
+            "Has-Hyphen",
+            "has space",
+            "Q1_Revenue",  # uppercase
+            "中文",
+            "a" * 81,
+        ],
+    )
+    def test_invalid_slug_rejected(self, bad_slug):
+        with pytest.raises(ValidationError):
+            ArtifactManifest.model_validate(_base_payload(slug=bad_slug))
