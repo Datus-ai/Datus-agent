@@ -67,6 +67,20 @@ class TUIOutputBuffer:
         # the two calls could make ``cursor.y`` exceed ``len(fragment_lines)``
         # and crash prompt_toolkit's render loop with an IndexError.
         self._last_line_count: int = 0
+        # Render cache. ``FormattedTextControl`` keys ``processed_lines`` on
+        # the *identity* of the fragment list, so as long as nothing visible
+        # has changed since the last paint we return the same list object
+        # and the control skips re-layout entirely. Without this every
+        # scroll wheel tick triggers a full O(N) rebuild — the dominant
+        # cost when the verbose-mode scrollback contains thousands of lines.
+        # ``_committed_version`` is bumped on every committed-history
+        # mutation; ``_cache_partial`` / ``_cache_live_lines`` track the
+        # other two inputs to ``tokens()``.
+        self._committed_version: int = 0
+        self._cache_tokens: Optional[List[_StyledToken]] = None
+        self._cache_committed_version: int = -1
+        self._cache_partial: Optional[str] = None
+        self._cache_live_lines: Optional[List[LiveDisplayLine]] = None
 
     # ── Rich file-like contract ───────────────────────────────────
 
@@ -81,6 +95,7 @@ class TUIOutputBuffer:
                 new_lines.append(list(to_formatted_text(ANSI(line))))
             if new_lines:
                 self._committed.extend(new_lines)
+                self._committed_version += 1
         self._on_change()
         return len(text)
 
@@ -120,11 +135,25 @@ class TUIOutputBuffer:
         :meth:`line_count` call returns a value consistent with the
         tokens this call produced.
         """
-        with self._lock:
-            committed = list(self._committed)
-            partial = self._partial
-
+        # Snapshot live state outside the buffer lock — the LiveDisplayState
+        # callback acquires its own lock, and holding both at once invites
+        # deadlock with writers that flow buffer → live state.
         live_lines = list(self._live_state_snapshot_fn() or [])
+
+        with self._lock:
+            partial = self._partial
+            committed_version = self._committed_version
+            # Cache hit: every input that feeds the token stream is byte-for-
+            # byte identical. Return the exact same list object so
+            # ``FormattedTextControl`` short-circuits its per-frame layout.
+            if (
+                self._cache_tokens is not None
+                and self._cache_committed_version == committed_version
+                and self._cache_partial == partial
+                and self._cache_live_lines == live_lines
+            ):
+                return self._cache_tokens
+            committed = list(self._committed)
 
         out: List[_StyledToken] = []
         last_was_newline = False
@@ -148,6 +177,10 @@ class TUIOutputBuffer:
         line_count = len(committed) + len(live_lines) + (1 if partial else 0)
         with self._lock:
             self._last_line_count = line_count
+            self._cache_tokens = out
+            self._cache_committed_version = committed_version
+            self._cache_partial = partial
+            self._cache_live_lines = live_lines
 
         return out
 
@@ -198,6 +231,13 @@ class TUIOutputBuffer:
             self._committed = []
             self._partial = ""
             self._last_line_count = 0
+            self._committed_version += 1
+            # Drop the render cache so the next ``tokens()`` rebuilds against
+            # the empty state instead of handing the renderer a stale list.
+            self._cache_tokens = None
+            self._cache_committed_version = -1
+            self._cache_partial = None
+            self._cache_live_lines = None
         if had_content:
             self._on_change()
 

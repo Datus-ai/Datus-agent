@@ -238,3 +238,56 @@ def test_set_live_state_snapshot_fn_swaps_source():
     assert _flatten_text(buf.tokens()) == "hist\nA"
     buf.set_live_state_snapshot_fn(src_b)
     assert _flatten_text(buf.tokens()) == "hist\nB"
+
+
+def test_tokens_returns_same_list_object_when_state_unchanged():
+    """Repeated paints over an unchanged buffer must hand back the *same*
+    list instance — that's how ``FormattedTextControl`` knows to skip
+    re-layout. Without it every scroll-wheel tick rebuilds the full token
+    stream and the verbose-mode pane stalls under load."""
+    live = []
+    buf = TUIOutputBuffer(live_state_snapshot_fn=lambda: list(live))
+    buf.write("line-1\nline-2\n")
+    first = buf.tokens()
+    second = buf.tokens()
+    third = buf.tokens()
+    assert first is second is third
+
+    # Adding a partial mutates the inputs → cache invalidates → new list.
+    buf.write("partial-tail")
+    fourth = buf.tokens()
+    assert fourth is not first
+
+    # Stable again after the second paint — the renderer keeps reusing it.
+    fifth = buf.tokens()
+    assert fifth is fourth
+
+
+def test_tokens_cache_invalidates_when_live_state_changes():
+    """The live tail flips between paints during streaming. The cache key
+    must include the snapshot so the next ``tokens()`` rebuilds — otherwise
+    the user sees a stale rolling window."""
+    live = []
+    buf = TUIOutputBuffer(live_state_snapshot_fn=lambda: list(live))
+    buf.write("hist\n")
+    before = buf.tokens()
+    assert _flatten_text(before) == "hist"
+
+    live.append(LiveDisplayLine(segments=[("", "live-1")]))
+    after = buf.tokens()
+    assert after is not before
+    assert _flatten_text(after) == "hist\nlive-1"
+
+
+def test_tokens_cache_drops_on_clear():
+    """``clear()`` is the Ctrl+O reset path; after it the next paint must
+    not return the pre-clear token list even if subsequent writes recreate
+    the same line count."""
+    buf = TUIOutputBuffer()
+    buf.write("a\nb\n")
+    before = buf.tokens()
+    buf.clear()
+    buf.write("a\nb\n")
+    after = buf.tokens()
+    assert after is not before
+    assert _flatten_text(after) == "a\nb"
