@@ -463,11 +463,17 @@ class TestStatusBarProviderTokens:
 
 
 class TestStatusBarProviderPlanMode:
-    def _make_cli(self, node=None, plan_mode=False):
+    @staticmethod
+    def _fake_tui_app(running: bool):
+        """Return a stand-in ``tui_app`` whose ``agent_running.is_set()`` is fixed."""
+        return SimpleNamespace(agent_running=SimpleNamespace(is_set=lambda: running))
+
+    def _make_cli(self, node=None, plan_mode=False, agent_running=False):
         cli = SimpleNamespace(
             chat_commands=SimpleNamespace(current_subagent_name=None, current_node=node),
             default_agent="",
             agent_config=None,
+            tui_app=self._fake_tui_app(agent_running),
         )
         if plan_mode is not None:
             cli.plan_mode_active = plan_mode
@@ -489,21 +495,32 @@ class TestStatusBarProviderPlanMode:
         but the REPL toggle is only synced *after* the turn. Until then the
         status bar must follow the node, not the stale REPL toggle."""
         node = SimpleNamespace(plan_mode_active=True, plan_file_path="./.datus/plans/x.md")
-        cli = self._make_cli(node=node, plan_mode=False)
+        cli = self._make_cli(node=node, plan_mode=False, agent_running=True)
         assert StatusBarProvider(cli).current_state().plan_mode is True
 
-    def test_node_inactive_overrides_cli_toggle_on_after_confirm(self):
-        """Regression: after ``confirm_plan`` the node is back to chat mode
-        even though the REPL toggle hasn't synced yet — show CHAT."""
+    def test_node_inactive_overrides_cli_toggle_on_after_confirm_mid_turn(self):
+        """Regression: mid-turn ``confirm_plan`` flipped the node off; the REPL
+        toggle is still stale. While the agent is running, trust the node and
+        show CHAT."""
         node = SimpleNamespace(plan_mode_active=False, plan_file_path="./.datus/plans/x.md")
-        cli = self._make_cli(node=node, plan_mode=True)
+        cli = self._make_cli(node=node, plan_mode=True, agent_running=True)
         assert StatusBarProvider(cli).current_state().plan_mode is False
 
     def test_cli_toggle_on_before_first_turn_shows_plan(self):
         """User hits Shift+Tab; node hasn't run ``_sync_plan_mode_state`` yet
         (plan_file_path still None). Status bar should follow the toggle."""
         node = SimpleNamespace(plan_mode_active=False, plan_file_path=None)
-        cli = self._make_cli(node=node, plan_mode=True)
+        cli = self._make_cli(node=node, plan_mode=True, agent_running=False)
+        assert StatusBarProvider(cli).current_state().plan_mode is True
+
+    def test_cli_toggle_reactivated_after_confirm_plan_shows_plan(self):
+        """Regression for the user-visible bug: after ``confirm_plan`` exits
+        plan mode and the REPL toggle is synced off, pressing Shift+Tab again
+        between turns must re-light the PLAN segment even though the node
+        still carries the previous ``plan_file_path`` (it is intentionally
+        preserved so the next plan session reuses the same markdown file)."""
+        node = SimpleNamespace(plan_mode_active=False, plan_file_path="./.datus/plans/x.md")
+        cli = self._make_cli(node=node, plan_mode=True, agent_running=False)
         assert StatusBarProvider(cli).current_state().plan_mode is True
 
 
