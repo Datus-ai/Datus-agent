@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import shlex
 import shutil
-from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import httpx

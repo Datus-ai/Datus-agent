@@ -1483,9 +1483,7 @@ class TestChatAgenticNodePlanMode:
         finally:
             os.chdir(cwd)
 
-    def test_plan_file_path_is_never_reset_within_session(
-        self, real_agent_config, mock_llm_create, tmp_path
-    ):
+    def test_plan_file_path_is_never_reset_within_session(self, real_agent_config, mock_llm_create, tmp_path):
         """plan_file_path is allocated once per session and survives toggle/confirm cycles."""
         import os
 

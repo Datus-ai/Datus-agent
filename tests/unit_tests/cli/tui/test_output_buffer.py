@@ -227,8 +227,12 @@ def test_render_line_count_matches_last_tokens_snapshot():
 
 
 def test_set_live_state_snapshot_fn_swaps_source():
-    src_a = lambda: [LiveDisplayLine(segments=[("", "A")])]
-    src_b = lambda: [LiveDisplayLine(segments=[("", "B")])]
+    def src_a():
+        return [LiveDisplayLine(segments=[("", "A")])]
+
+    def src_b():
+        return [LiveDisplayLine(segments=[("", "B")])]
+
     buf = TUIOutputBuffer(live_state_snapshot_fn=src_a)
     buf.write("hist\n")
     assert _flatten_text(buf.tokens()) == "hist\nA"
