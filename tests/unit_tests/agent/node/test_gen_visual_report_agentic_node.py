@@ -236,8 +236,8 @@ class TestReportDistResolution:
     def _make_dist(self, base: Path, name: str) -> Path:
         d = base / name
         d.mkdir(parents=True, exist_ok=True)
-        (d / "datus-report.css").write_text(f"/* {name} css */", encoding="utf-8")
-        (d / "datus-report.umd.js").write_text(f"/* {name} js */", encoding="utf-8")
+        (d / "index.css").write_text(f"/* {name} css */", encoding="utf-8")
+        (d / "index.umd.js").write_text(f"/* {name} js */", encoding="utf-8")
         return d
 
     def test_cli_override_wins_over_node_config(self, real_agent_config, mock_llm_create, tmp_path):
@@ -255,7 +255,7 @@ class TestReportDistResolution:
         html_rel = node._maybe_compile_html(report_id)
         assert html_rel == f"reports/{report_id}/index.html"
 
-        copied_css = Path(real_agent_config.project_root) / "reports" / report_id / "_assets" / "datus-report.css"
+        copied_css = Path(real_agent_config.project_root) / "reports" / report_id / "_assets" / "index.css"
         assert copied_css.read_text(encoding="utf-8") == "/* from-cli-flag css */"
 
     def test_node_config_used_when_cli_flag_absent(self, real_agent_config, mock_llm_create, tmp_path):
@@ -271,7 +271,7 @@ class TestReportDistResolution:
         node._active_report_id = report_id
 
         node._maybe_compile_html(report_id)
-        copied_css = Path(real_agent_config.project_root) / "reports" / report_id / "_assets" / "datus-report.css"
+        copied_css = Path(real_agent_config.project_root) / "reports" / report_id / "_assets" / "index.css"
         assert copied_css.read_text(encoding="utf-8") == "/* node-only css */"
 
 

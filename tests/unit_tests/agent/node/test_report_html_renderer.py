@@ -113,15 +113,15 @@ def test_render_report_html_defaults_to_cdn(tmp_path: Path):
     out_path = render_report_html(project_root=tmp_path, report_id="rpt_cdn_default")
     body = out_path.read_text(encoding="utf-8")
     assert "https://unpkg.com/@datus/web-report" in body
-    assert "datus-report.css" in body
-    assert "datus-report.umd.js" in body
+    assert "index.css" in body
+    assert "index.umd.js" in body
     assert not (tmp_path / "reports" / "rpt_cdn_default" / "_assets").exists()
 
 
 def _seed_dist(dist_dir: Path) -> None:
     dist_dir.mkdir(parents=True, exist_ok=True)
-    (dist_dir / "datus-report.css").write_text("/* offline css */", encoding="utf-8")
-    (dist_dir / "datus-report.umd.js").write_text("/* offline js */", encoding="utf-8")
+    (dist_dir / "index.css").write_text("/* offline css */", encoding="utf-8")
+    (dist_dir / "index.umd.js").write_text("/* offline js */", encoding="utf-8")
 
 
 def test_render_report_html_offline_kwarg_copies_assets(tmp_path: Path):
@@ -135,20 +135,20 @@ def test_render_report_html_offline_kwarg_copies_assets(tmp_path: Path):
         report_dist=dist_dir,
     )
     body = out_path.read_text(encoding="utf-8")
-    assert "_assets/datus-report.css" in body
-    assert "_assets/datus-report.umd.js" in body
+    assert "_assets/index.css" in body
+    assert "_assets/index.umd.js" in body
     assert "https://unpkg.com/" not in body
 
     copied_assets = tmp_path / "reports" / "rpt_offline_001" / "_assets"
-    assert (copied_assets / "datus-report.css").read_text(encoding="utf-8") == "/* offline css */"
-    assert (copied_assets / "datus-report.umd.js").read_text(encoding="utf-8") == "/* offline js */"
+    assert (copied_assets / "index.css").read_text(encoding="utf-8") == "/* offline css */"
+    assert (copied_assets / "index.umd.js").read_text(encoding="utf-8") == "/* offline js */"
 
 
 def test_render_report_html_invalid_dist_falls_back_to_cdn(tmp_path: Path):
     _seed_report(tmp_path, report_id="rpt_invalid_dist")
     incomplete = tmp_path / "vendor" / "incomplete"
     incomplete.mkdir(parents=True)
-    (incomplete / "datus-report.css").write_text("/* partial */", encoding="utf-8")
+    (incomplete / "index.css").write_text("/* partial */", encoding="utf-8")
 
     out_path = render_report_html(
         project_root=tmp_path,

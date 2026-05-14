@@ -60,13 +60,13 @@ _RENDER_ALLOWED_SUFFIXES = {".jsx", ".js", ".css"}
 # CDN URLs used when no offline dist is supplied. Keep the pinned version in
 # lockstep with ``packages/web-report/package.json``.
 _CDN_REPORT_VERSION = "0.1.0"
-_CDN_REPORT_CSS = f"https://unpkg.com/@datus/web-report@{_CDN_REPORT_VERSION}/dist/datus-report.css"
-_CDN_REPORT_JS = f"https://unpkg.com/@datus/web-report@{_CDN_REPORT_VERSION}/dist/datus-report.umd.js"
+_CDN_REPORT_CSS = f"https://unpkg.com/@datus/web-report@{_CDN_REPORT_VERSION}/dist/index.css"
+_CDN_REPORT_JS = f"https://unpkg.com/@datus/web-report@{_CDN_REPORT_VERSION}/dist/index.umd.js"
 
 # Filename pair we expect inside ``report_dist``. Same names as those emitted
 # by ``packages/web-report`` (``vite build``).
-_DIST_CSS_NAME = "datus-report.css"
-_DIST_JS_NAME = "datus-report.umd.js"
+_DIST_CSS_NAME = "index.css"
+_DIST_JS_NAME = "index.umd.js"
 
 # Subdirectory under ``reports/<id>/`` where local assets are copied.
 _ASSETS_SUBDIR = "_assets"
@@ -168,8 +168,8 @@ def render_report_html(
         project_root: ``AgentConfig.project_root``; resolved absolute path.
         report_id: target report id (matches the directory name).
         report_dist: optional path to a local ``@datus/web-report`` ``dist/``
-            directory containing ``datus-report.css`` and
-            ``datus-report.umd.js``. When provided and valid, the two files
+            directory containing ``index.css`` and
+            ``index.umd.js``. When provided and valid, the two files
             are copied next to the generated HTML and the template links to
             them via relative paths (so the page works offline through
             ``file://``). When ``None`` (or the directory is missing /
