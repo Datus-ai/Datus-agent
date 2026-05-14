@@ -1,0 +1,617 @@
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+# See http://www.apache.org/licenses/LICENSE-2.0 for details.
+
+"""
+GenVisualDashboardAgenticNode — parameterized dashboard generation.
+
+Companion to ``GenVisualReportAgenticNode``. Instead of pre-baked JSON
+result files, this node produces a parameterized React-JSX dashboard
+artifact under ``<project_root>/dashboards/<id>/``:
+
+* ``render/app.jsx`` — the React entry module the LLM authors (default
+  export); it owns the filter state and imports the chart components.
+* ``queries/<slug>.sql.j2`` + ``queries/<slug>.params.json`` — per-query
+  Jinja2 SQL template plus its declared parameter metadata.
+
+At view time the backend renders the template with user-selected filter
+values and executes it live against the bound datasource — see
+``Datus-backend/datus_backend/services/dashboard_service.py``.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
+
+from datus.agent.node.agentic_node import AgenticNode
+from datus.cli.execution_state import ExecutionInterrupted
+from datus.configuration.agent_config import AgentConfig
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.gen_visual_dashboard_models import (
+    DASHBOARD_ID_RE,
+    GenVisualDashboardNodeInput,
+    GenVisualDashboardNodeResult,
+)
+from datus.tools.func_tool import (
+    ContextSearchTools,
+    DBFuncTool,
+)
+from datus.tools.func_tool.dashboard_artifact_tools import (
+    DashboardArtifactTools,
+    DashboardFilesystemFuncTool,
+)
+from datus.tools.func_tool.semantic_tools import SemanticTools
+from datus.utils.loggings import get_logger
+from datus.utils.message_utils import MessagePart, build_structured_content
+
+logger = get_logger(__name__)
+
+
+# Inline scan for ``dash_<id>`` mentions in the user prompt — fed to the LLM
+# as an awareness hint so it can decide between editing the referenced
+# dashboard and producing a new one inspired by it.
+_DASHBOARD_ID_INLINE_RE = re.compile(r"(?:(?<=[^a-z0-9])|^)dash_[a-z0-9][a-z0-9_-]{0,80}")
+
+
+def _detect_referenced_dashboard_ids(user_message: str, project_root: Path) -> List[str]:
+    dashboards_root = project_root / "dashboards"
+    if not dashboards_root.is_dir():
+        return []
+    seen: set[str] = set()
+    found: List[str] = []
+    for match in _DASHBOARD_ID_INLINE_RE.finditer(user_message.lower()):
+        candidate = match.group(0)
+        if candidate in seen or not DASHBOARD_ID_RE.fullmatch(candidate):
+            continue
+        candidate_dir = dashboards_root / candidate
+        if candidate_dir.is_dir() and (candidate_dir / "render" / "app.jsx").is_file():
+            seen.add(candidate)
+            found.append(candidate)
+    return found
+
+
+class GenVisualDashboardAgenticNode(AgenticNode):
+    """
+    Visual dashboard subagent.
+
+    Sets up semantic / db / context-search tools plus the dashboard-specific
+    ``DashboardArtifactTools`` (save_query_template / validate_render) and a
+    hardened ``DashboardFilesystemFuncTool`` that denies direct writes to
+    dashboard artifact paths.
+
+    A fresh ``dashboard_id`` is allocated on every ``execute_stream`` call
+    so repeated runs against the same node produce independent artifacts.
+    """
+
+    NODE_NAME = "gen_visual_dashboard"
+
+    DEFAULT_TOOLS = "semantic_tools.*, db_tools.*, context_search_tools.list_subject_tree"
+
+    def __init__(
+        self,
+        node_id: str,
+        description: str,
+        node_type: str,
+        input_data: Optional[GenVisualDashboardNodeInput] = None,
+        agent_config: Optional[AgentConfig] = None,
+        tools: Optional[list] = None,
+        node_name: Optional[str] = None,
+        execution_mode: Literal["interactive", "workflow"] = "interactive",
+        scope: Optional[str] = None,
+        is_subagent: bool = False,
+    ):
+        self.execution_mode = execution_mode
+        self.configured_node_name = node_name
+
+        self.max_turns = 40
+        if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
+            cfg = agent_config.agentic_nodes[node_name]
+            if isinstance(cfg, dict):
+                self.max_turns = cfg.get("max_turns", 40)
+
+        self.db_func_tool: Optional[DBFuncTool] = None
+        self.semantic_tools: Optional[SemanticTools] = None
+        self.context_search_tools: Optional[ContextSearchTools] = None
+        self.filesystem_func_tool: Optional[DashboardFilesystemFuncTool] = None
+        self.dashboard_artifact_tools: Optional[DashboardArtifactTools] = None
+        self._active_dashboard_id: Optional[str] = None
+
+        super().__init__(
+            node_id=node_id,
+            description=description,
+            node_type=node_type,
+            input_data=input_data,
+            agent_config=agent_config,
+            tools=tools or [],
+            mcp_servers={},
+            scope=scope,
+            is_subagent=is_subagent,
+        )
+
+        self.setup_tools()
+
+        if self.execution_mode == "interactive":
+            self._setup_ask_user_tool()
+
+        logger.debug(
+            "GenVisualDashboardAgenticNode tools: %d - %s",
+            len(self.tools),
+            [t.name for t in self.tools],
+        )
+
+    def get_node_name(self) -> str:
+        return self.configured_node_name or self.NODE_NAME
+
+    # ------------------------------------------------------------ tool setup
+
+    def setup_tools(self) -> None:
+        if not self.agent_config:
+            return
+
+        self.tools = []
+        config_value = self.node_config.get("tools") or self.DEFAULT_TOOLS
+        for pattern in (p.strip() for p in config_value.split(",") if p.strip()):
+            self._setup_tool_pattern(pattern)
+
+        if not self.filesystem_func_tool:
+            self._setup_filesystem_tools()
+
+        self._setup_sub_agent_task_tool()
+        if self.sub_agent_task_tool:
+            self.tools.extend(self.sub_agent_task_tool.available_tools())
+
+        logger.info("setup_tools done: %d tools - %s", len(self.tools), [t.name for t in self.tools])
+
+    def _make_filesystem_tool(self, **kwargs):  # type: ignore[override]
+        """Swap in :class:`DashboardFilesystemFuncTool` for write-protection on artifact paths."""
+        from datus.configuration.inherited_memory_overrides import get_inherited_memory
+
+        root_path = kwargs.pop("root_path", None) or self._resolve_workspace_root()
+        datus_home = kwargs.pop("datus_home", None)
+        if datus_home is None and self.agent_config is not None:
+            path_manager = getattr(self.agent_config, "path_manager", None)
+            if path_manager is not None:
+                try:
+                    datus_home = str(path_manager.datus_home)
+                except Exception:
+                    datus_home = None
+        strict = kwargs.pop("strict", None)
+        if strict is None:
+            strict = self._resolve_filesystem_strict()
+        current_node = kwargs.pop("current_node", None) or self.get_node_name()
+        inherited_memory_node = kwargs.pop("inherited_memory_node", None)
+        if inherited_memory_node is None:
+            inherited_memory_node = get_inherited_memory(current_node)
+        return DashboardFilesystemFuncTool(
+            root_path=root_path,
+            current_node=current_node,
+            datus_home=datus_home,
+            strict=strict,
+            inherited_memory_node=inherited_memory_node,
+            **kwargs,
+        )
+
+    def _setup_tool_pattern(self, pattern: str) -> None:
+        try:
+            if pattern.endswith(".*"):
+                base = pattern[:-2]
+                if base == "semantic_tools":
+                    self._setup_semantic_tools()
+                elif base == "db_tools":
+                    self._setup_db_tools()
+                elif base == "context_search_tools":
+                    self._setup_context_search_tools()
+                elif base == "filesystem_tools":
+                    self._setup_filesystem_tools()
+                else:
+                    logger.warning("Unknown tool type: %s", base)
+                return
+
+            if pattern == "semantic_tools":
+                self._setup_semantic_tools()
+            elif pattern == "db_tools":
+                self._setup_db_tools()
+            elif pattern == "context_search_tools":
+                self._setup_context_search_tools()
+            elif pattern == "filesystem_tools":
+                self._setup_filesystem_tools()
+            elif "." in pattern:
+                tool_type, method_name = pattern.split(".", 1)
+                self._setup_specific_tool_method(tool_type, method_name)
+            else:
+                logger.warning("Unknown tool pattern: %s", pattern)
+        except Exception as exc:
+            logger.error("Failed to setup tool pattern %r: %s", pattern, exc)
+
+    def _setup_db_tools(self) -> None:
+        try:
+            self.db_func_tool = DBFuncTool(
+                agent_config=self.agent_config,
+                sub_agent_name=self.node_config.get("system_prompt"),
+            )
+            self.tools.extend(self.db_func_tool.available_tools())
+        except Exception as exc:
+            logger.error("Failed to setup db tools: %s", exc)
+
+    def _setup_semantic_tools(self) -> None:
+        try:
+            adapter_type = self.node_config.get("adapter_type", "metricflow")
+            self.semantic_tools = SemanticTools(
+                agent_config=self.agent_config,
+                sub_agent_name=self.node_config.get("system_prompt"),
+                adapter_type=adapter_type,
+            )
+            self.tools.extend(self.semantic_tools.available_tools())
+        except Exception as exc:
+            logger.error("Failed to setup semantic tools: %s", exc)
+
+    def _setup_context_search_tools(self) -> None:
+        try:
+            self.context_search_tools = ContextSearchTools(
+                self.agent_config, sub_agent_name=self.node_config.get("system_prompt")
+            )
+            self.tools.extend(self.context_search_tools.available_tools())
+        except Exception as exc:
+            logger.error("Failed to setup context search tools: %s", exc)
+
+    def _setup_filesystem_tools(self) -> None:
+        try:
+            self.filesystem_func_tool = self._make_filesystem_tool()
+            self.tools.extend(self.filesystem_func_tool.available_tools())
+        except Exception as exc:
+            logger.error("Failed to setup filesystem tools: %s", exc)
+
+    def _setup_specific_tool_method(self, tool_type: str, method_name: str) -> None:
+        try:
+            if tool_type == "semantic_tools":
+                if not self.semantic_tools:
+                    self.semantic_tools = SemanticTools(
+                        agent_config=self.agent_config,
+                        sub_agent_name=self.node_config.get("system_prompt"),
+                        adapter_type=self.node_config.get("adapter_type", "metricflow"),
+                    )
+                tool_instance = self.semantic_tools
+            elif tool_type == "db_tools":
+                if not self.db_func_tool:
+                    self.db_func_tool = DBFuncTool(
+                        agent_config=self.agent_config,
+                        sub_agent_name=self.node_config.get("system_prompt"),
+                    )
+                tool_instance = self.db_func_tool
+            elif tool_type == "context_search_tools":
+                if not self.context_search_tools:
+                    self.context_search_tools = ContextSearchTools(
+                        self.agent_config, sub_agent_name=self.node_config.get("system_prompt")
+                    )
+                tool_instance = self.context_search_tools
+            elif tool_type == "filesystem_tools":
+                if not self.filesystem_func_tool:
+                    self.filesystem_func_tool = self._make_filesystem_tool()
+                tool_instance = self.filesystem_func_tool
+            else:
+                logger.warning("Unknown tool type: %s", tool_type)
+                return
+
+            if hasattr(tool_instance, method_name):
+                from datus.tools.func_tool import trans_to_function_tool
+
+                self.tools.append(trans_to_function_tool(getattr(tool_instance, method_name)))
+            else:
+                logger.warning("Method %r not found in %s", method_name, tool_type)
+        except Exception as exc:
+            logger.error("Failed to setup %s.%s: %s", tool_type, method_name, exc)
+
+    # ---------------------------------------------- prompt + message helpers
+
+    def _get_system_prompt(
+        self,
+        conversation_summary: Optional[str] = None,
+        prompt_version: Optional[str] = None,
+    ) -> str:
+        context: Dict[str, Any] = {
+            "has_semantic_tools": bool(self.semantic_tools),
+            "has_db_tools": bool(self.db_func_tool),
+            "has_context_search_tools": bool(self.context_search_tools),
+            "has_ask_user_tool": self.ask_user_tool is not None,
+            "has_task_tool": bool(self.sub_agent_task_tool),
+            "agent_config": self.agent_config,
+            "conversation_summary": conversation_summary,
+            "dashboard_id": self._active_dashboard_id,
+            "rules": self.node_config.get("rules", []),
+            "agent_description": self.node_config.get("agent_description", ""),
+        }
+
+        if self.agent_config:
+            from datus.utils.node_utils import build_datasource_prompt_context
+
+            context.update(build_datasource_prompt_context(self.agent_config))
+            context["db_name"] = context.get("datasource")
+
+        from datus.utils.time_utils import get_default_current_date
+
+        context["current_date"] = get_default_current_date(None)
+
+        version = None if prompt_version in (None, "") else str(prompt_version)
+        system_prompt_name = self.node_config.get("system_prompt") or self.get_node_name()
+        template_name = f"{system_prompt_name}_system"
+
+        from datus.prompts.prompt_manager import get_prompt_manager
+
+        pm = get_prompt_manager(agent_config=self.agent_config)
+        try:
+            base_prompt = pm.render_template(template_name=template_name, version=version, **context)
+        except FileNotFoundError:
+            logger.warning(
+                "Template %r missing, falling back to gen_visual_dashboard_system",
+                system_prompt_name,
+            )
+            base_prompt = pm.render_template(template_name="gen_visual_dashboard_system", version=version, **context)
+
+        return self._finalize_system_prompt(base_prompt)
+
+    def _build_enhanced_message(self, user_input: GenVisualDashboardNodeInput) -> str:
+        parts: List[str] = []
+        if user_input.catalog:
+            parts.append(f"Catalog: {user_input.catalog}")
+        if user_input.database:
+            parts.append(f"Database context: {user_input.database}")
+        if user_input.db_schema:
+            parts.append(f"Schema: {user_input.db_schema}")
+
+        if self.agent_config and getattr(self.agent_config, "project_root", None):
+            project_root = Path(self.agent_config.project_root).resolve()
+            referenced = _detect_referenced_dashboard_ids(user_input.user_message, project_root)
+            if referenced:
+                ref_list = ", ".join(referenced)
+                parts.append(
+                    "The user's message references existing dashboard id(s) on disk: "
+                    f"{ref_list}. Decide whether they want to EDIT one of these in place "
+                    "(call bind_existing_dashboard) or PRODUCE A NEW dashboard that draws on "
+                    "them as references (call start_new_dashboard and use the filesystem "
+                    "read tool on dashboards/<id>/render/*.jsx and dashboards/<id>/queries/* "
+                    "to learn from them). When unclear, default to start_new_dashboard."
+                )
+
+        if parts:
+            return build_structured_content(
+                [
+                    MessagePart(type="enhanced", content=chr(10).join(parts)),
+                    MessagePart(type="user", content=user_input.user_message),
+                ]
+            )
+        return user_input.user_message
+
+    # ------------------------------------------------ artifact tools wiring
+
+    def _prepare_dashboard_artifacts(self, user_input: GenVisualDashboardNodeInput) -> None:
+        if not self.agent_config or not getattr(self.agent_config, "project_root", None):
+            raise ValueError("agent_config.project_root is required for gen_visual_dashboard")
+        if not self.db_func_tool:
+            raise ValueError(
+                "gen_visual_dashboard requires db_tools to be configured (DEFAULT_TOOLS includes db_tools.*)."
+            )
+
+        self._active_dashboard_id = None
+        self.dashboard_artifact_tools = DashboardArtifactTools(
+            agent_config=self.agent_config,
+            db_func_tool=self.db_func_tool,
+        )
+        self.tools.extend(self.dashboard_artifact_tools.available_tools())
+
+    # ----------------------------------------------------------- execution
+
+    async def execute_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        if not action_history_manager:
+            action_history_manager = ActionHistoryManager()
+        if not self.input:
+            raise ValueError("Visual dashboard input not set. Provide GenVisualDashboardNodeInput via setup_input().")
+        user_input: GenVisualDashboardNodeInput = self.input
+
+        self._prepare_dashboard_artifacts(user_input)
+
+        action = ActionHistory.create_action(
+            role=ActionRole.USER,
+            action_type=self.get_node_name(),
+            messages=f"User: {user_input.user_message}",
+            input_data=user_input.model_dump(),
+            status=ActionStatus.PROCESSING,
+        )
+        action_history_manager.add_action(action)
+        yield action
+
+        try:
+            await self._auto_compact()
+            session, conversation_summary = self._get_or_create_session()
+            prompt_version = getattr(user_input, "prompt_version", None) or self.node_config.get("prompt_version")
+            system_instruction = self._get_system_prompt(conversation_summary, prompt_version)
+            enhanced_message = self._build_enhanced_message(user_input)
+
+            response_content = ""
+            tokens_used = 0
+
+            async for stream_action in self.model.generate_with_tools_stream(
+                prompt=enhanced_message,
+                tools=self.tools,
+                mcp_servers=self.mcp_servers,
+                instruction=system_instruction,
+                max_turns=self.max_turns,
+                session=session,
+                action_history_manager=action_history_manager,
+                agent_name=self.get_node_name(),
+                interrupt_controller=self.interrupt_controller,
+            ):
+                if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
+                    if isinstance(stream_action.output, dict):
+                        response_content = (
+                            stream_action.output.get("content")
+                            or stream_action.output.get("response")
+                            or stream_action.output.get("raw_output")
+                            or response_content
+                        )
+                yield stream_action
+
+            all_actions = action_history_manager.get_actions()
+            tool_calls = [a for a in all_actions if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS]
+
+            for past in reversed(all_actions):
+                if past.role == ActionRole.ASSISTANT and isinstance(past.output, dict):
+                    usage = past.output.get("usage") or {}
+                    if isinstance(usage, dict) and usage.get("total_tokens"):
+                        tokens_used = int(usage["total_tokens"])
+                        break
+
+            template_actions = [a for a in tool_calls if a.action_type == "save_query_template"]
+            app_jsx_rel_path: Optional[str] = None
+            render_file_count = 0
+            for tc in reversed(tool_calls):
+                if tc.action_type != "validate_render":
+                    continue
+                candidate = self._extract_artifact_result_field(tc, "app_jsx_path")
+                if candidate:
+                    app_jsx_rel_path = candidate
+                    render_files = self._extract_artifact_result_list(tc, "render_files")
+                    render_file_count = len(render_files) if render_files else 0
+                    break
+
+            if self.dashboard_artifact_tools is not None and self.dashboard_artifact_tools.dashboard_id:
+                self._active_dashboard_id = self.dashboard_artifact_tools.dashboard_id
+
+            result = GenVisualDashboardNodeResult(
+                success=app_jsx_rel_path is not None,
+                response=response_content,
+                dashboard_id=self._active_dashboard_id,
+                app_jsx_path=app_jsx_rel_path,
+                render_file_count=render_file_count,
+                template_count=len(template_actions),
+                tokens_used=tokens_used,
+                action_history=[a.model_dump() for a in all_actions],
+                execution_stats={
+                    "total_actions": len(all_actions),
+                    "tool_calls_count": len(tool_calls),
+                    "tools_used": sorted({a.action_type for a in tool_calls}),
+                    "total_tokens": tokens_used,
+                },
+            )
+            if app_jsx_rel_path is None:
+                if self._active_dashboard_id is None:
+                    result.error = (
+                        "Run finished without binding a dashboard. The LLM must call either "
+                        "start_new_dashboard(...) or bind_existing_dashboard(...) before producing "
+                        "the artifact."
+                    )
+                else:
+                    result.error = (
+                        "validate_render never returned success — the dashboard artifact is incomplete. "
+                        "The LLM must write_file the render/*.jsx components and then call "
+                        "validate_render() to finalize."
+                    )
+
+            self.actions.extend(all_actions)
+
+            summary_messages = (
+                f"Visual dashboard generated: dashboards/{self._active_dashboard_id}/render/app.jsx"
+                if app_jsx_rel_path
+                else "Visual dashboard run finished without a validated render/ tree."
+            )
+            final_action = ActionHistory.create_action(
+                role=ActionRole.ASSISTANT,
+                action_type=f"{self.get_node_name()}_response",
+                messages=summary_messages,
+                input_data=user_input.model_dump(),
+                output_data=result.model_dump(),
+                status=ActionStatus.SUCCESS if app_jsx_rel_path else ActionStatus.FAILED,
+            )
+            action_history_manager.add_action(final_action)
+            yield final_action
+
+        except ExecutionInterrupted:
+            raise
+        except Exception as exc:
+            logger.error("%s execution error: %s", self.get_node_name(), exc, exc_info=True)
+            error_result = GenVisualDashboardNodeResult(
+                success=False,
+                error=str(exc),
+                response="Sorry, I encountered an error while generating the visual dashboard.",
+                dashboard_id=self._active_dashboard_id,
+                tokens_used=0,
+            )
+            action_history_manager.update_current_action(
+                status=ActionStatus.FAILED,
+                output=error_result.model_dump(),
+                messages=f"Error: {exc}",
+            )
+            error_action = ActionHistory.create_action(
+                role=ActionRole.ASSISTANT,
+                action_type="error",
+                messages=f"{self.get_node_name()} failed: {exc}",
+                input_data=user_input.model_dump(),
+                output_data=error_result.model_dump(),
+                status=ActionStatus.FAILED,
+            )
+            action_history_manager.add_action(error_action)
+            yield error_action
+
+    # --------------------------------------------------------------- helpers
+
+    @staticmethod
+    def _extract_artifact_result_field(action: ActionHistory, field: str) -> Optional[str]:
+        output = action.output
+        if not isinstance(output, dict):
+            return None
+
+        def _scan(obj: Any) -> Optional[str]:
+            if isinstance(obj, dict):
+                if field in obj and isinstance(obj[field], str):
+                    return obj[field]
+                for key in ("result", "raw_output", "output", "data"):
+                    if key in obj:
+                        found = _scan(obj[key])
+                        if found:
+                            return found
+                for value in obj.values():
+                    found = _scan(value)
+                    if found:
+                        return found
+            elif isinstance(obj, str):
+                try:
+                    parsed = json.loads(obj)
+                except (TypeError, json.JSONDecodeError):
+                    return None
+                return _scan(parsed)
+            return None
+
+        return _scan(output)
+
+    @staticmethod
+    def _extract_artifact_result_list(action: ActionHistory, field: str) -> Optional[List[Any]]:
+        output = action.output
+        if not isinstance(output, dict):
+            return None
+
+        def _scan(obj: Any) -> Optional[List[Any]]:
+            if isinstance(obj, dict):
+                if field in obj and isinstance(obj[field], list):
+                    return obj[field]
+                for key in ("result", "raw_output", "output", "data"):
+                    if key in obj:
+                        found = _scan(obj[key])
+                        if found is not None:
+                            return found
+                for value in obj.values():
+                    found = _scan(value)
+                    if found is not None:
+                        return found
+            elif isinstance(obj, str):
+                try:
+                    parsed = json.loads(obj)
+                except (TypeError, json.JSONDecodeError):
+                    return None
+                return _scan(parsed)
+            return None
+
+        return _scan(output)

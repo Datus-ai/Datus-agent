@@ -5,6 +5,7 @@
 from datus.tools.func_tool.ask_user_tools import AskUserTool
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.context_search import ContextSearchTools
+from datus.tools.func_tool.dashboard_artifact_tools import DashboardArtifactTools, DashboardFilesystemFuncTool
 from datus.tools.func_tool.database import DBFuncTool, db_function_tool_instance, db_function_tools
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool, filesystem_function_tools
@@ -32,6 +33,8 @@ __all__ = [
     "FilesystemFuncTool",
     "ReportFilesystemFuncTool",
     "ReportArtifactTools",
+    "DashboardFilesystemFuncTool",
+    "DashboardArtifactTools",
     "SemanticTools",
     "GenSemanticModelTools",
     "PlatformDocSearchTool",

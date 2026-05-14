@@ -1,0 +1,339 @@
+{# Shared rendering / data-layer / visual-design instructions for both
+   gen_visual_report and gen_visual_dashboard system prompts. Included by
+   each parent under its "Render tree contract" H2 heading.
+
+   Parent prompts may set the following variables *before* `{% include %}`:
+     - artifact_kind : 'report' | 'dashboard' — used to disambiguate "you are
+       authoring a <kind>"-style sentences. Default 'report'.
+     - artifact_root : the filesystem root for the active artifact, e.g.
+       'reports/<report_id>' or 'dashboards/<dashboard_id>'. Default
+       'reports/<report_id>'.
+     - supports_query_params : true when the runtime provider supports
+       parameterized queries (dashboard mode). Default false.
+
+   Everything else here is shared verbatim. #}
+{% set artifact_kind = artifact_kind | default('report') %}
+{% set artifact_root = artifact_root | default('reports/<report_id>') %}
+{% set supports_query_params = supports_query_params | default(false) %}
+{% raw %}
+### Entry point
+
+`render/app.jsx` is required. It must include `export default` — the renderer mounts that default export as the artifact's root component.
+
+```jsx
+/** @datus-title Northeast 2026 Q1 Sales Review */
+import React from 'react';
+import KpiBanner from './kpi-banner';
+import RevenueTrend from './revenue-trend';
+import SalesTable from './sales-table';
+import Footer from './footer';
+
+export default function App() {
+  return (
+    <div style={{ padding: 32, fontFamily: 'system-ui' }}>
+      <KpiBanner />
+      <RevenueTrend />
+      <SalesTable />
+      <Footer />
+    </div>
+  );
+}
+```
+
+The optional `/** @datus-title ... */` annotation at the top is used by the standalone viewer for the browser tab title; falls back to the artifact id when absent.
+
+### Allowed imports
+
+| Module | Notes |
+|---|---|
+| `react` | `useState`, `useEffect`, `useRef`, `useMemo`, `useCallback`, `useContext`, `createContext`, plus the default `React` namespace |
+| `@datus/web-artifact` | `useDatusArtifact`, `AnimateOnVisible` (see "Motion & animation"), `ChartEntryMore` (see "Chart action menu") |
+| `recharts` | any named export (`AreaChart`, `LineChart`, `BarChart`, `RadarChart`, `PieChart`, `ResponsiveContainer`, `Tooltip`, `XAxis`, `YAxis`, `CartesianGrid`, `Area`, `Line`, `Bar`, `Radar`, `Pie`, `Cell`, etc.) |
+| `lucide-react` | any icon component (`User`, `TrendingUp`, `Banknote`, `Globe`, `Landmark`, …). **Use these instead of emoji** — see the "Iconography & emoji" section below. |
+| `d3-format` | `format` — build numeric / currency / percent / SI-prefix formatters |
+| `dayjs` | default `dayjs` factory + `.format(pattern)` |
+| `'./<sibling>'` or `'../<path>'` | resolves to a file under `render/`. `./kpi-banner` → `render/kpi-banner.jsx`; `./charts/trend` → `render/charts/trend.jsx`. Extensions optional; `/index.jsx` fallback supported. |
+
+Do **not** import from: `react-dom`, `next/*`, `react-router*`, state-management (`zustand`, `redux`, `jotai`), CSS-in-JS (`styled-components`, `emotion`), data-fetching (`swr`, `react-query`), or utility libraries (`lodash`, `date-fns`, `moment`). Reimplement what you need inline. The validator rejects every other bare specifier; the iframe runtime would also throw.
+
+Relative paths must stay under `render/` — `../../../escape` is rejected.
+
+### Data layer — `useDatusArtifact`
+
+All data access goes through one hook:
+
+```jsx
+import { useDatusArtifact } from '@datus/web-artifact';
+
+const { useQuerySql } = useDatusArtifact();
+const { isLoading, errorMessage, data } = useQuerySql('queries/account_activity_by_city');
+```
+
+Returns:
+- `isLoading: boolean` — true until the artifact resolves.
+- `errorMessage: string | null` — non-null when the sqlId is unpublished or the JSON is malformed.
+- `data: ISqlQueryResult | null` — null until ready.
+
+```ts
+type ColumnSemanticType = 'string' | 'integer' | 'number' | 'date' | 'boolean';
+interface IQueryColumnMeta { name: string; type: ColumnSemanticType }
+interface ISqlQueryResult {
+  executed_at: string;
+  datasource: string;
+  row_count: number;
+  columns: IQueryColumnMeta[];
+  rows: Array<Record<string, unknown>>;
+}
+```
+
+Always read rows as `data?.rows ?? []` and columns as `data?.columns ?? []`. Coerce numeric cells with `Number(value)` before arithmetic — BIGINT columns may serialize as JS `BigInt`, which breaks Recharts and `Math.*`.
+
+#### sqlId conventions
+
+- `useQuerySql(spec)` accepts a literal string `'queries/<slug>'` (the canonical form) or a template string built from a finite enumeration declared as a `const` in the same file:
+
+  ```jsx
+  const AVAILABLE_MONTHS = ['2025-01', '2025-02', '2025-03'];
+  const [month, setMonth] = useState('2025-01');
+  const { data } = useQuerySql(`queries/revenue_by_month_${month}`);
+  ```
+
+  The validator only static-checks **literal** spec strings. Template strings resolve at runtime; the iframe will surface unknown slugs as `errorMessage`.
+
+- Place every `useQuerySql` call at the top of the component body, before conditionals or early returns. One declaration per query.
+- Render a skeleton placeholder when `isLoading`; an inline error block when `errorMessage`; the chart/table otherwise.
+
+### Visual design
+
+Treat each output as a polished deliverable — a small **branded analytics product** for dashboards, a **research-style document** for reports. Quality bar:
+
+- **Cohesive palette** at the top of a shared module (`render/shared/colors.js` or inline in `app.jsx`) as a `COLORS` const (primary, secondary, accent, navy/heading, background, text, muted, positive, negative). Pick a palette that fits the domain.
+- **Map categorical dimensions to consistent colors** via dedicated constants (`REGION_COLORS`, `SEGMENT_COLORS`, `STATUS_COLORS`, …). Reuse the same color for the same category across every chart.
+- **Inline styles only** for layout and chrome — no Tailwind utility classes for layout, no external stylesheets. Use `style={{ ... }}` objects for everything visual.
+- **Card primitive** as a reusable component (`render/shared/card.jsx`): white background, 12px border-radius, 20px padding, subtle shadow `0 1px 3px rgba(0,0,0,0.08)`. Wrap every chart panel in it.
+- **Responsive grid**: `display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16`.
+- **Typography**: 22px/700 H1, 14px/600 card titles, 24px/700 KPI numbers, 11–13px secondary text.
+- **KPI sparklines** (dashboard mode): small `<Sparkline>` component using `AreaChart` with vertical gradient fill (5%–95% opacity stops) and 2-px stroke in the primary color.
+- **Comparison badges** (dashboard mode): pill-shaped `▲ 12%` / `▼ 8%` chips next to KPIs using positive/negative semantic colors.
+- **Custom SVG visualizations are encouraged** when Recharts can't express the idea: treemaps, chord diagrams, semicircle gauges, score sliders, etc. Implement with hand-rolled `<svg>` paths and `useMemo` for layout math.
+- **Report prose typography** (report mode): body text at 15px / 1.6 line-height inside `maxWidth: 720` for comfortable reading. H2 at 18px/600 with a thin bottom border in the primary color; H3 at 14px/600 with extra top margin.
+- **Section primitive** (report mode): a `<Section>` wrapper with optional kicker, title, and body slot. Insert a subtle divider rule between sections.
+- **Callout / pull-quote primitive** (report mode): a `<Callout>` block with a 4-px left border in `COLORS.primary` (or `accent` / `negative`), pale background. At most one per section.
+- **Figure captions** (report mode): every chart gets a caption beneath the `<ResponsiveContainer>` in the form `Figure N. <one-line description>. Source: <sqlId>, executed <date>`. Captions in 11px italic muted text.
+- **Data tables**: zebra-striped rows, right-aligned numeric columns, left-aligned string columns, sticky header within the table card. When the dataset has **more than 15 rows, paginate** at 15 rows/page. Render a small pagination footer beneath the table with `‹ Prev`, a centered `<current> / <total>` page indicator, and `Next ›` — keep the current page in component-local `useState`, disable the boundary button at page 1 / last page. Don't use a "show more" toggle and don't render all rows at once; paginating is the cleaner read for the user and keeps the rendered DOM small.
+
+### Iconography & emoji (read this twice)
+
+The default LLM instinct is to pepper an artifact with 📊 📈 🌍 💰 🏦 📱 — **don't**. Emoji read as consumer / casual / cheap and undercut the analytical credibility a BI deliverable needs. They render at different sizes across platforms, can't be color-coordinated with the palette, and turn a research-grade deliverable into something that looks like a Slack post.
+
+- **No emoji anywhere in the artifact.** Not in headings, not in KPI card titles, not as bullet prefixes in "key findings", not in callouts, not in chart captions, not in section kickers. Zero. This rule beats every emoji impulse you have.
+- **Use Lucide icons sparingly.** Only in these three places:
+  1. **KPI card** — one icon left of the title, `16×16`, `strokeWidth={2}`, color `COLORS.muted` (or `var(--text-secondary)`).
+  2. **Section heading** (report mode) — one icon left of an H2, `18×18`, `strokeWidth={2}`, color `COLORS.primary`. Optional; skip when the heading is self-explanatory.
+  3. **Trend / status pill** — inline next to a delta value, `12–14px`, color tied to the semantic state: `COLORS.positive` / `COLORS.negative` / `COLORS.warning`.
+- **Never use icons** as bullet markers for key-finding lists, in body prose ("growth of 100x 📈"), at sizes >24px (28px max for a hero KPI), or more than once per heading / card. If a card needs two icons, the card is doing too much.
+- **Substitution table** — when you reach for an emoji, pick the Lucide name instead:
+
+  | Emoji impulse | Lucide name |
+  |---|---|
+  | 📈 / 📉 | `TrendingUp` / `TrendingDown` |
+  | 📊 | `BarChart3` / `LineChart` |
+  | 💰 / 💵 | `Banknote` / `DollarSign` / `Wallet` |
+  | 🌍 / 🌐 | `Globe` / `MapPin` |
+  | 🏦 / 🏢 | `Landmark` / `Building2` |
+  | 📱 | `Smartphone` |
+  | 👥 / 🧑 | `Users` / `User` |
+  | ⚡ | `Zap` |
+  | ⚠️ | `TriangleAlert` (older alias `AlertTriangle`) |
+  | ✅ / ❌ / ℹ️ | `CircleCheck` / `CircleX` / `Info` |
+  | 🔍 | `Search` |
+  | 📅 | `Calendar` |
+  | 🎯 | `Target` |
+  | 🔔 | `Bell` |
+  | ⏰ / ⏱️ | `Clock` / `Timer` |
+
+  When in doubt, prefer **no icon** over a wrong icon. A clean numeric KPI beats a decorated mediocre one.
+
+- **Style defaults** for every Lucide icon: `strokeWidth={2}` (never thinner — it gets fuzzy on retina), color via inline `style={{ color: ... }}` so it picks up the palette, no drop shadow, no rotation, no `fill` (Lucide is stroke-based — filling it makes a blob).
+
+### Motion & animation
+
+Charts should **enter with motion when the user first scrolls them into view** — a static chart feels frozen, but a chart that has already finished animating before the reader scrolls to it feels just as dead. Recharts ships first-class entrance animations; your job is (a) keep them on, (b) tune them per chart kind, and (c) **defer the mount until the chart first enters the iframe viewport**.
+
+#### Never disable the Recharts defaults
+
+Do not pass `isAnimationActive={false}` to `<Bar>`, `<Line>`, `<Area>`, `<Pie>`, `<Radar>`, `<Scatter>`, etc. The default is `true`, and that is what you want. If you want *no* motion, omit the chart instead — don't ship a frozen one.
+
+#### Tune, don't replace
+
+Each animated primitive accepts the same trio of props:
+- `animationDuration` — milliseconds. Defaults to `1500`. Use `800–1200` for KPI sparklines (snappy) and `1500–2000` for hero charts (cinematic).
+- `animationEasing` — `'ease'` (default), `'ease-in'`, `'ease-out'`, `'ease-in-out'`, `'linear'`. Prefer `'ease-out'` for entrances so motion decelerates into place.
+- `animationBegin` — millisecond delay before the animation starts. Defaults to `0`. Use it to **stagger** related series so the eye can read each one separately.
+
+#### Pick the motion that matches the chart type
+
+- **Bar / column** (`<Bar>`): default grows from the axis baseline. To stagger by category, pass `animationBegin={index * 80}` inside a `data.map((_, index) => ...)`-driven render. For grouped/stacked bars, also stagger each `<Bar>` series by ~150 ms so the layers settle one after another.
+- **Line** (`<Line>`): the default *draws from left to right* via stroke-dashoffset animation — exactly the effect the user expects. Keep `type="monotone"` for smoothing. Use `animationDuration={1600}` for long time series, `1000` for short ones. For multi-line charts, stagger each `<Line>`'s `animationBegin` by ~250 ms.
+- **Area** (`<Area>`): default fills from the baseline up. Combine with a vertical `<linearGradient>` (5%–95% opacity) for the polished sparkline look.
+- **Pie / Donut** (`<Pie>`): default sweeps each slice clockwise from 0°. Set `animationDuration={1200}` and let `<Cell>` colors carry the categorical mapping.
+- **Radar** (`<Radar>`): default scales each axis from the center outward. Keep `fillOpacity={0.5}` so overlapping series remain readable mid-animation.
+- **Scatter** (`<Scatter>`): default fades each point in. For >200 points consider `animationDuration={500}` so the fade-in doesn't drag.
+
+#### Trigger animations on first viewport entry (mandatory)
+
+Recharts plays its entrance animation on mount. If every chart mounts at page load, the user scrolls past a wall of finished charts. **Defer the mount of every animated visualization until the wrapper element first scrolls into view.** The iframe is its own scroll container (the parent app sizes it 100% × 100%, content overflows internally), so `IntersectionObserver` inside the iframe fires correctly as the reader scrolls.
+
+Do **not** write your own wrapper. Use the ready-made `AnimateOnVisible` exported by `@datus/web-artifact` — it's already wired with the right `IntersectionObserver` defaults (`rootMargin: '0px 0px -10% 0px'`, `threshold: 0.1`), disconnects after the first hit, and reserves vertical space via `minHeight` so layout doesn't shift on mount.
+
+```jsx
+import { useDatusArtifact, AnimateOnVisible } from '@datus/web-artifact';
+import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
+
+function RevenueTrend() {
+  const { useQuerySql } = useDatusArtifact();
+  const { data } = useQuerySql('queries/revenue_by_month');
+  const rows = data?.rows ?? [];
+
+  return (
+    <Card title="Revenue trend">
+      <AnimateOnVisible minHeight={300}>
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={rows}>
+            <XAxis dataKey="month" />
+            <YAxis />
+            <Tooltip />
+            <Line type="monotone" dataKey="revenue" stroke="#6051F5" />
+          </LineChart>
+        </ResponsiveContainer>
+      </AnimateOnVisible>
+    </Card>
+  );
+}
+```
+
+Props (all optional):
+
+| Prop | Default | When to override |
+|---|---|---|
+| `minHeight` | `320` | Set this to the chart's `<ResponsiveContainer height>` (or the expected SVG height). A wrong value causes a layout jump when the chart mounts. |
+| `rootMargin` | `'0px 0px -10% 0px'` | Rarely; the default fires when the chart is ~10% inside the viewport. |
+| `threshold` | `0.1` | Rarely. |
+| `immediate` | `false` | Set to `true` for an above-the-fold chart you want to animate right away without waiting for the observer callback, or as a `prefers-reduced-motion` escape hatch. |
+
+Rules of thumb when wiring this in:
+- **One `AnimateOnVisible` per chart panel**, not one wrapping the whole artifact. The point is each chart animating *when it first comes into view*, not all of them when the artifact starts.
+- **Above-the-fold charts** (typically the first KPI strip + first hero chart) will satisfy `IntersectionObserver` on initial layout, so they animate immediately — no extra config needed.
+- **Reserve `minHeight`** equal to the chart's `<ResponsiveContainer height>`. Otherwise the page jumps when the chart finally mounts.
+- Do **not** invent your own `useInView`/`IntersectionObserver` hook in `render/`. Import the shared `AnimateOnVisible` and move on.
+
+#### Other motion concerns
+
+- **Custom inline SVG** (treemaps, gauges, score sliders): also wrap in `AnimateOnVisible` (imported from `@datus/web-artifact`). Inside, animate with CSS transitions on `transform` / `opacity` / `stroke-dashoffset`, driven by `useState` + a `useEffect(() => setMounted(true), [])` toggle on mount. Same easing language: `transition: 'transform 800ms ease-out'`.
+- **Loading skeletons** should pulse, not animate full charts. A subtle `@keyframes pulse { 0%, 100% { opacity: 0.6 } 50% { opacity: 1 } }` on the skeleton block is enough — defined via an inline `<style>` tag at the top of the file or in a shared `card.jsx`.
+- **Respect reduced motion.** Compute `window.matchMedia('(prefers-reduced-motion: reduce)').matches` once at the top of `app.jsx` (via `useState` + `useEffect`) and pass `animationDuration={prefersReducedMotion ? 0 : 1500}` to Recharts primitives. `AnimateOnVisible` itself is fine to keep on — it only delays mount, never adds motion.
+
+Animation is part of the visual polish — the same way you'd pick a palette and a card primitive. An artifact whose charts pop in *as the reader reaches them* feels alive; one whose charts have already finished by the time they're seen feels like a screenshot.
+
+### Chart action menu (recommended)
+
+Every chart card that's backed by a real `useQuerySql(...)` call should expose a small "..." menu in its top-right corner, letting the reader inspect the underlying SQL, export the data, or grab a PNG. `@datus/web-artifact` ships a ready-made `<ChartEntryMore>` component for exactly this — use it; don't roll your own menu.
+
+Usage — **always wrap your card in a plain `<div ref={cardRef}>`**; do not pass `ref` directly to your `<Card>` primitive:
+
+```jsx
+import { useRef } from 'react';
+import { useDatusArtifact, ChartEntryMore } from '@datus/web-artifact';
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip } from 'recharts';
+
+function RevenueTrend() {
+  const cardRef = useRef(null);
+  const { useQuerySql } = useDatusArtifact();
+  const { data } = useQuerySql('queries/revenue_by_month');
+  const rows = data?.rows ?? [];
+
+  return (
+    // The wrapper div is the screenshot root. Do NOT put `ref={cardRef}` on
+    // `<Card>` directly — function components don't forward `ref` as a prop
+    // unless they're built with `React.forwardRef`, and your shared/card.jsx
+    // typically isn't. The wrapper-div pattern sidesteps that entirely.
+    <div ref={cardRef}>
+      <Card
+        title="Revenue trend"
+        titleRight={<ChartEntryMore sqlId="queries/revenue_by_month" cardRef={cardRef} />}
+      >
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={rows}>{/* … */}</LineChart>
+        </ResponsiveContainer>
+      </Card>
+    </div>
+  );
+}
+```
+
+If your `<Card>` already accepts a `titleRight` slot (recommended — every shared `card.jsx` should expose one), put `<ChartEntryMore>` there and it shows up cleanly right of the title. Otherwise lay it out yourself inside the card with `display: 'flex'` + `justifyContent: 'space-between'`.
+
+Props:
+
+| Prop | Required | Notes |
+|---|---|---|
+| `sqlId` | yes | The same literal you passed to `useQuerySql`. The component looks up the cached query result and the raw `.sql` text by this id. |
+| `cardRef` | recommended | Ref attached to the **outer wrapper div** around the card. Used as the screenshot root for "Export PNG" / "Copy PNG", so the export includes title + chart together. Strongly preferred over the `cardSelector` fallback below. |
+| `cardSelector` | no | If `cardRef` is omitted or isn't attached, the component walks up from the trigger button via `triggerEl.closest(cardSelector)`. Default: `'[data-datus-chart-card]'`. If you don't want to manage a ref at all, mark the card root with the attribute: `<div data-datus-chart-card>…</div>`. |
+| `filenameBase` | no | Override the downloaded basename (default: the slug). Extensions are added automatically. |
+
+What the menu does — all entirely client-side, no host round-trip:
+
+- **View SQL** opens an in-iframe modal with the raw SQL rendered through a Prism-highlighted `<code>` block.
+- **Export SQL / CSV / JSON** triggers a Blob download in the reader's browser. CSV follows RFC 4180; JSON is the pretty-printed query result.
+- **Export PNG** screenshots `cardRef.current` via `html-to-image` (2× pixel ratio) and downloads it.
+- **Copy PNG** screenshots the same element and writes it to the system clipboard. On browsers that block clipboard writes from sandboxed iframes (mainly Safari), it falls back to a download and toasts the user.
+
+Rules of thumb:
+
+- **Add `<ChartEntryMore>` to every visualization backed by a `useQuerySql` call**, with no exceptions. That covers line / bar / area / pie / scatter / radar charts, KPI cards, KPI sparklines, custom inline SVG visualizations, and **data tables** — the table header row gets a trigger right of the title too. The "view SQL" action is the single best credibility move you can make for an analytical deliverable; do not gate it on whether the chart "looks important enough".
+- **Trigger placement**: align it to the right side of the visualization's title row in a `flex` container — `<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>` with the H3/title on the left and `<ChartEntryMore>` on the right. Never float it over the chart canvas. For data tables, the trigger lives in the header strip above the `<table>`, not inside `<thead>`. The 26×26 button is sized to slot into the flex row cleanly.
+- **One trigger per card**: don't add multiple `<ChartEntryMore>` for different sub-charts inside one card. Combine them into one card per query, or pick the most-prominent sqlId.
+- **Don't pass `ref` directly to `<Card>`** — React 18 strips `ref` from props on function components, so `cardRef.current` would stay null and PNG export would throw. Always use the `<div ref={cardRef}>` wrapper, or add `data-datus-chart-card` to the card root.
+- **Don't pass any other ref** as `cardRef` — must be the wrapper div around the outer card, otherwise PNG export crops out the title.
+
+### Formatting helpers
+
+Centralise formatters in a shared module (e.g. `render/shared/formatters.js`) and import them where needed:
+
+```js
+import { format as d3Format } from 'd3-format';
+import dayjs from 'dayjs';
+
+export const N = (v) => (v != null ? Number(v) : 0);
+export const pctChange = (cur, prior) => (prior === 0 ? 0 : (cur - prior) / prior);
+
+const _money = d3Format('$,.3~s');
+const _count = d3Format(',.3~s');
+const _int   = d3Format(',.0f');
+const _pct   = d3Format('+.1%');
+
+export const formatCurrency = (v) => _money(N(v)).replace('k', 'K');
+export const formatNumber   = (v) => _count(N(v)).replace('k', 'K');
+export const formatInt      = (v) => _int(N(v));
+export const formatPct      = (v) => _pct(N(v));
+
+export const formatMonth = (v) => dayjs(v).format('MMM YYYY');
+export const formatDate  = (v) => dayjs(v).format('MMM D, YYYY');
+```
+
+Guidelines:
+- Always coerce numeric cells with `N(...)` before arithmetic — BIGINT lands as JS `BigInt`, which breaks `Math.*` / `d3-format` / Recharts.
+- Build `d3Format(spec)` specifiers at module scope (parses on every call otherwise).
+- Pick the specifier from the column's semantic type: `integer` → `_int`, `number` → `_count` or `_money`, ratios stored as fractions → `_pct`.
+
+### Sandbox constraints
+
+The viewer iframe runs with `sandbox="allow-scripts"` only — null origin, no `allow-same-origin`. That means:
+- No `window.parent` access. No `localStorage` / `sessionStorage`.
+- No `fetch` — data comes only from `useQuerySql`.
+- No `eval` / `new Function` in your code.
+- No router — the rendered page is a single view.
+
+Stick to React state for everything interactive.
+{% endraw %}
