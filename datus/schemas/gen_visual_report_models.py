@@ -66,9 +66,13 @@ class QueryResultFile(BaseModel):
             raise ValueError(f"row_count={self.row_count} does not match len(rows)={len(self.rows)}")
         column_names = {c.name for c in self.columns}
         for idx, row in enumerate(self.rows):
-            extra = set(row.keys()) - column_names
+            row_keys = set(row.keys())
+            extra = row_keys - column_names
             if extra:
                 raise ValueError(f"row {idx} contains keys not declared in columns: {sorted(extra)}")
+            missing = column_names - row_keys
+            if missing:
+                raise ValueError(f"row {idx} is missing keys declared in columns: {sorted(missing)}")
         return self
 
 
