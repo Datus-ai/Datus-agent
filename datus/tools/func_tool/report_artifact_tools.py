@@ -35,6 +35,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from agents import Tool
 
+from datus.schemas.artifact_manifest import ArtifactManifest
 from datus.schemas.gen_visual_report_models import (
     QUERY_SLUG_RE,
     REPORT_ID_RE,
@@ -100,14 +101,15 @@ ALLOWED_BARE_MODULES: frozenset[str] = frozenset(
 )
 
 
-def _allocate_report_id(title: str, project_root: Path) -> str:
-    """Generate ``rpt_<title-slug>_<yymmdd>_<rand6>`` not colliding on disk.
+def _allocate_report_id(name: str, project_root: Path) -> str:
+    """Generate ``rpt_<name-slug>_<yymmdd>_<rand6>`` not colliding on disk.
 
-    Thin wrapper around :func:`allocate_artifact_id` kept under its
-    historical name so internal callers / tests don't need to change.
+    ``name`` is the LLM-supplied display name (may contain non-ASCII);
+    we slugify it best-effort and fall back to ``"report"`` when the
+    slug reduces to an empty string (e.g. an all-Chinese name).
     """
     return allocate_artifact_id(
-        title=title,
+        title=name,
         project_root=project_root,
         prefix="rpt_",
         root_dir_name="reports",
@@ -352,9 +354,9 @@ class ReportArtifactTools:
 
     # -- intent declaration --------------------------------------------------
 
-    def start_new_report(self, title: str = "") -> FuncToolResult:
+    def start_new_report(self, name: str, description: str) -> FuncToolResult:
         """
-        Allocate a fresh report directory and bind subsequent saves to it.
+        Allocate a fresh report directory, write its manifest, and bind subsequent saves to it.
 
         Call this when the user's request is to **produce a new report
         artifact**, even if they reference one or more existing reports
@@ -363,9 +365,15 @@ class ReportArtifactTools:
         then build the new artifact here.
 
         Args:
-            title: short ASCII title used to seed the report id's slug
-                segment. Non-ASCII characters are stripped. Optional —
-                pass an empty string to fall back to ``"report"``.
+            name: Human-readable display name (any language is fine —
+                Chinese / mixed scripts welcome). Used both as the
+                ``manifest.json`` display name AND as the seed for the
+                report id slug (non-ASCII characters are stripped from
+                the slug; the manifest preserves the original name).
+                Required, max 200 chars.
+            description: One-paragraph description of what the report
+                argues / covers. Surfaced in list pages and IDE
+                explorers next to the name. Required, max 1000 chars.
 
         Returns:
             FuncToolResult.result is a dict like::
@@ -375,14 +383,31 @@ class ReportArtifactTools:
                     "report_dir": "reports/<report_id>",
                     "render_dir": "reports/<report_id>/render",
                     "queries_dir": "reports/<report_id>/queries",
+                    "manifest_path": "reports/<report_id>/manifest.json",
                     "mode": "new",
                 }
         """
+        if not name or not name.strip():
+            return FuncToolResult(success=0, error="name must be a non-empty display name (any language).")
+        if not description or not description.strip():
+            return FuncToolResult(
+                success=0,
+                error="description must be a non-empty one-paragraph description of what the report covers.",
+            )
         try:
-            new_id = _allocate_report_id(title, self._project_root)
+            manifest = ArtifactManifest(
+                name=name.strip(),
+                description=description.strip(),
+                kind="report",
+                created_at=utc_now_iso(),
+            )
+        except Exception as exc:
+            return FuncToolResult(success=0, error=f"Manifest validation failed: {exc}")
+        try:
+            new_id = _allocate_report_id(name, self._project_root)
         except RuntimeError as exc:
             return FuncToolResult(success=0, error=str(exc))
-        return self._activate(new_id, mode="new", create_dirs=True)
+        return self._activate(new_id, mode="new", create_dirs=True, manifest=manifest)
 
     def bind_existing_report(self, report_id: str) -> FuncToolResult:
         """
@@ -434,27 +459,46 @@ class ReportArtifactTools:
             )
         return self._activate(report_id, mode="edit", create_dirs=False)
 
-    def _activate(self, report_id: str, *, mode: str, create_dirs: bool) -> FuncToolResult:
+    def _activate(
+        self,
+        report_id: str,
+        *,
+        mode: str,
+        create_dirs: bool,
+        manifest: Optional[ArtifactManifest] = None,
+    ) -> FuncToolResult:
         report_dir = self._project_root / "reports" / report_id
         queries_dir = report_dir / "queries"
         render_dir = report_dir / "render"
+        manifest_path = report_dir / "manifest.json"
         if create_dirs:
             queries_dir.mkdir(parents=True, exist_ok=True)
             render_dir.mkdir(parents=True, exist_ok=True)
+        manifest_rel: Optional[str] = None
+        if manifest is not None:
+            try:
+                _atomic_write_text(
+                    manifest_path,
+                    json.dumps(manifest.model_dump(), ensure_ascii=False, indent=2) + "\n",
+                )
+            except OSError as exc:
+                return FuncToolResult(success=0, error=f"Failed to write manifest.json: {exc}")
+            manifest_rel = manifest_path.relative_to(self._project_root).as_posix()
         self.report_id = report_id
         self.report_dir = report_dir
         self.queries_dir = queries_dir
         self.render_dir = render_dir
         self.mode = mode
-        return FuncToolResult(
-            result={
-                "report_id": report_id,
-                "report_dir": f"reports/{report_id}",
-                "render_dir": f"reports/{report_id}/render",
-                "queries_dir": f"reports/{report_id}/queries",
-                "mode": mode,
-            }
-        )
+        result: Dict[str, Any] = {
+            "report_id": report_id,
+            "report_dir": f"reports/{report_id}",
+            "render_dir": f"reports/{report_id}/render",
+            "queries_dir": f"reports/{report_id}/queries",
+            "mode": mode,
+        }
+        if manifest_rel:
+            result["manifest_path"] = manifest_rel
+        return FuncToolResult(result=result)
 
     def _require_active(self, tool_name: str) -> Optional[FuncToolResult]:
         """Return a failure result when no report is bound, else ``None``."""
@@ -462,7 +506,7 @@ class ReportArtifactTools:
             return FuncToolResult(
                 success=0,
                 error=(
-                    f"No active report bound. Call start_new_report(title=...) to create one, "
+                    f"No active report bound. Call start_new_report(name=..., description=...) to create one, "
                     f"or bind_existing_report(report_id=...) to edit an existing one, "
                     f"before calling {tool_name}()."
                 ),
@@ -659,6 +703,28 @@ class ReportArtifactTools:
         if not_bound is not None:
             return not_bound
 
+        # Manifest must exist before render-tree validation — it's part of
+        # the artifact contract that the list pages / IDE rely on. For
+        # ``mode="new"`` runs ``start_new_report`` already wrote it; for
+        # ``mode="edit"`` we expect it on disk from a previous create run.
+        manifest_path = self.report_dir / "manifest.json"
+        if not manifest_path.is_file():
+            return FuncToolResult(
+                success=0,
+                error=(
+                    f"reports/{self.report_id}/manifest.json is missing. A report must always "
+                    "have a manifest with name + description. Re-run start_new_report or "
+                    "restore the manifest from a previous version."
+                ),
+            )
+        try:
+            ArtifactManifest.model_validate(json.loads(manifest_path.read_text(encoding="utf-8")))
+        except Exception as exc:
+            return FuncToolResult(
+                success=0,
+                error=f"reports/{self.report_id}/manifest.json is corrupt or off-spec: {exc}",
+            )
+
         if not self.render_dir.is_dir():
             return FuncToolResult(
                 success=0,
@@ -783,6 +849,7 @@ class ReportArtifactTools:
         return FuncToolResult(
             result={
                 "app_jsx_path": app_jsx_path.relative_to(self._project_root).as_posix(),
+                "manifest_path": manifest_path.relative_to(self._project_root).as_posix(),
                 "render_files": [f"render/{modules[k]['rel']}" for k in sorted(modules.keys())],
                 "query_refs": sorted(query_refs),
                 "warnings": warnings,

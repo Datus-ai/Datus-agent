@@ -84,6 +84,13 @@ def _seed_render_on_disk(project_root: Path, report_id: str, *, data_ref: str = 
         '"columns":[{"name":"a","type":"integer"}],"rows":[]}',
         encoding="utf-8",
     )
+    # manifest.json is part of the report contract — validate_render rejects
+    # the artifact if it's missing.
+    (report_dir / "manifest.json").write_text(
+        '{"name":"seeded report","description":"Unit-test seeded report.",'
+        '"kind":"report","created_at":"2026-05-13T00:00:00Z"}\n',
+        encoding="utf-8",
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -376,7 +383,15 @@ async def test_execute_stream_bound_but_no_validate_marks_failure(real_agent_con
         responses=[
             build_tool_then_response(
                 tool_calls=[
-                    MockToolCall(name="start_new_report", arguments=json.dumps({"title": "halfway"})),
+                    MockToolCall(
+                        name="start_new_report",
+                        arguments=json.dumps(
+                            {
+                                "name": "halfway",
+                                "description": "Bound but never validated — unit-test fixture.",
+                            }
+                        ),
+                    ),
                 ],
                 content="I bound a report but forgot to finalize.",
             ),

@@ -87,7 +87,10 @@ def unbound_tools(db_func_tool: DBFuncTool, project_root: Path) -> ReportArtifac
 
 @pytest.fixture
 def report_tools(unbound_tools: ReportArtifactTools) -> ReportArtifactTools:
-    result = unbound_tools.start_new_report(title="demo test")
+    result = unbound_tools.start_new_report(
+        name="demo test",
+        description="Smoke-test report used by the report-artifact-tools unit tests.",
+    )
     assert result.success == 1, result.error
     return unbound_tools
 
@@ -166,8 +169,11 @@ class TestResolveRelativeImport:
 
 
 class TestStartNewReport:
-    def test_allocates_id_and_creates_dirs(self, unbound_tools: ReportArtifactTools, project_root: Path):
-        result = unbound_tools.start_new_report(title="east sales")
+    def test_allocates_id_and_writes_manifest(self, unbound_tools: ReportArtifactTools, project_root: Path):
+        result = unbound_tools.start_new_report(
+            name="east sales",
+            description="Quarterly review of east-region direct sales.",
+        )
         assert result.success == 1
         payload = result.result
         new_id = payload["report_id"]
@@ -176,16 +182,47 @@ class TestStartNewReport:
         assert payload["report_dir"] == f"reports/{new_id}"
         assert payload["render_dir"] == f"reports/{new_id}/render"
         assert payload["queries_dir"] == f"reports/{new_id}/queries"
+        assert payload["manifest_path"] == f"reports/{new_id}/manifest.json"
 
         assert unbound_tools.report_id == new_id
         assert unbound_tools.mode == "new"
         assert (project_root / "reports" / new_id / "queries").is_dir()
         assert (project_root / "reports" / new_id / "render").is_dir()
 
-    def test_empty_title_falls_back_to_report(self, unbound_tools: ReportArtifactTools):
-        result = unbound_tools.start_new_report(title="")
-        assert result.success == 1
-        assert result.result["report_id"].startswith("rpt_report_")
+        manifest_path = project_root / "reports" / new_id / "manifest.json"
+        assert manifest_path.is_file()
+        import json as _json
+
+        manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert manifest["name"] == "east sales"
+        assert manifest["description"] == "Quarterly review of east-region direct sales."
+        assert manifest["kind"] == "report"
+        assert manifest["created_at"].endswith("Z")
+
+    def test_chinese_name_slug_falls_back_to_report(self, unbound_tools: ReportArtifactTools, project_root: Path):
+        result = unbound_tools.start_new_report(
+            name="销售季度复盘",
+            description="第一季度区域销售业绩复盘。",
+        )
+        assert result.success == 1, result.error
+        new_id = result.result["report_id"]
+        # Non-ASCII name slugifies to nothing → fall back to the literal "report" base slug.
+        assert new_id.startswith("rpt_report_")
+        # But the manifest preserves the original name verbatim.
+        import json as _json
+
+        manifest = _json.loads((project_root / "reports" / new_id / "manifest.json").read_text(encoding="utf-8"))
+        assert manifest["name"] == "销售季度复盘"
+
+    def test_empty_name_rejected(self, unbound_tools: ReportArtifactTools):
+        result = unbound_tools.start_new_report(name="", description="x")
+        assert result.success == 0
+        assert "name" in (result.error or "").lower()
+
+    def test_empty_description_rejected(self, unbound_tools: ReportArtifactTools):
+        result = unbound_tools.start_new_report(name="ok name", description="   ")
+        assert result.success == 0
+        assert "description" in (result.error or "").lower()
 
 
 class TestBindExistingReport:

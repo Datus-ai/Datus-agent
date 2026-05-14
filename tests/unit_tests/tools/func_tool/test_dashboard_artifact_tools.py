@@ -91,7 +91,10 @@ def unbound_tools(db_func_tool: DBFuncTool, project_root: Path) -> DashboardArti
 
 @pytest.fixture
 def dashboard_tools(unbound_tools: DashboardArtifactTools) -> DashboardArtifactTools:
-    result = unbound_tools.start_new_dashboard(title="demo test")
+    result = unbound_tools.start_new_dashboard(
+        name="demo test",
+        description="Smoke-test dashboard used by the dashboard-artifact-tools unit tests.",
+    )
     assert result.success == 1, result.error
     return unbound_tools
 
@@ -225,8 +228,11 @@ class TestAllocateDashboardId:
 
 
 class TestStartNewDashboard:
-    def test_allocates_id_and_creates_dirs(self, unbound_tools: DashboardArtifactTools, project_root: Path):
-        result = unbound_tools.start_new_dashboard(title="north sales")
+    def test_allocates_id_and_writes_manifest(self, unbound_tools: DashboardArtifactTools, project_root: Path):
+        result = unbound_tools.start_new_dashboard(
+            name="north sales",
+            description="Live north-region sales dashboard with date and channel filters.",
+        )
         assert result.success == 1
         payload = result.result
         new_id = payload["dashboard_id"]
@@ -235,15 +241,44 @@ class TestStartNewDashboard:
         assert payload["dashboard_dir"] == f"dashboards/{new_id}"
         assert payload["render_dir"] == f"dashboards/{new_id}/render"
         assert payload["queries_dir"] == f"dashboards/{new_id}/queries"
+        assert payload["manifest_path"] == f"dashboards/{new_id}/manifest.json"
 
         assert unbound_tools.dashboard_id == new_id
         assert (project_root / "dashboards" / new_id / "queries").is_dir()
         assert (project_root / "dashboards" / new_id / "render").is_dir()
 
-    def test_empty_title_falls_back(self, unbound_tools: DashboardArtifactTools):
-        result = unbound_tools.start_new_dashboard(title="")
-        assert result.success == 1
-        assert result.result["dashboard_id"].startswith("dash_dashboard_")
+        manifest_path = project_root / "dashboards" / new_id / "manifest.json"
+        assert manifest_path.is_file()
+        import json as _json
+
+        manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert manifest["name"] == "north sales"
+        assert manifest["description"] == "Live north-region sales dashboard with date and channel filters."
+        assert manifest["kind"] == "dashboard"
+        assert manifest["created_at"].endswith("Z")
+
+    def test_chinese_name_slug_falls_back_to_dashboard(self, unbound_tools: DashboardArtifactTools, project_root: Path):
+        result = unbound_tools.start_new_dashboard(
+            name="销售看板",
+            description="实时销售看板，按地区过滤。",
+        )
+        assert result.success == 1, result.error
+        new_id = result.result["dashboard_id"]
+        assert new_id.startswith("dash_dashboard_")
+        import json as _json
+
+        manifest = _json.loads((project_root / "dashboards" / new_id / "manifest.json").read_text(encoding="utf-8"))
+        assert manifest["name"] == "销售看板"
+
+    def test_empty_name_rejected(self, unbound_tools: DashboardArtifactTools):
+        result = unbound_tools.start_new_dashboard(name=" ", description="x")
+        assert result.success == 0
+        assert "name" in (result.error or "").lower()
+
+    def test_empty_description_rejected(self, unbound_tools: DashboardArtifactTools):
+        result = unbound_tools.start_new_dashboard(name="ok", description="")
+        assert result.success == 0
+        assert "description" in (result.error or "").lower()
 
 
 class TestBindExistingDashboard:

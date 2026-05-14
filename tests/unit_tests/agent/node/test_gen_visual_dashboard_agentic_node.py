@@ -62,6 +62,13 @@ def _seed_dashboard_on_disk(project_root: Path, dashboard_id: str) -> None:
         "export default function App() { return null; }\n",
         encoding="utf-8",
     )
+    # manifest.json is part of the dashboard contract — validate_render
+    # rejects the artifact when it's missing.
+    (dash_dir / "manifest.json").write_text(
+        '{"name":"seeded dashboard","description":"Unit-test seeded dashboard.",'
+        '"kind":"dashboard","created_at":"2026-05-13T00:00:00Z"}\n',
+        encoding="utf-8",
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -240,6 +247,12 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
         ),
         encoding="utf-8",
     )
+    # Seed manifest.json — validate_render requires it on disk.
+    (dash_dir / "manifest.json").write_text(
+        '{"name":"e2e demo dashboard","description":"End-to-end seeded dashboard.",'
+        '"kind":"dashboard","created_at":"2026-05-14T00:00:00Z"}\n',
+        encoding="utf-8",
+    )
 
     mock_llm_create.reset(
         responses=[
@@ -388,7 +401,12 @@ async def test_execute_stream_fails_when_validate_render_not_called(real_agent_c
                 tool_calls=[
                     MockToolCall(
                         name="start_new_dashboard",
-                        arguments=json.dumps({"title": "incomplete"}),
+                        arguments=json.dumps(
+                            {
+                                "name": "incomplete",
+                                "description": "Bound but never validated — unit-test fixture.",
+                            }
+                        ),
                     ),
                 ],
                 content="started but never validated",

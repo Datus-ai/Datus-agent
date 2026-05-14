@@ -34,6 +34,7 @@ from jinja2 import StrictUndefined
 from jinja2.exceptions import TemplateError
 from jinja2.sandbox import SandboxedEnvironment
 
+from datus.schemas.artifact_manifest import ArtifactManifest
 from datus.schemas.gen_visual_dashboard_models import (
     DASHBOARD_ID_RE,
     QUERY_SLUG_RE,
@@ -101,13 +102,14 @@ _PARAMS_KEY_RE = re.compile(
 )
 
 
-def _allocate_dashboard_id(title: str, project_root: Path) -> str:
-    """Generate ``dash_<title-slug>_<yymmdd>_<rand6>`` not colliding on disk.
+def _allocate_dashboard_id(name: str, project_root: Path) -> str:
+    """Generate ``dash_<name-slug>_<yymmdd>_<rand6>`` not colliding on disk.
 
-    Thin wrapper around :func:`allocate_artifact_id`.
+    ``name`` is the LLM-supplied display name; non-ASCII characters are
+    stripped from the slug, falling back to ``"dashboard"``.
     """
     return allocate_artifact_id(
-        title=title,
+        title=name,
         project_root=project_root,
         prefix="dash_",
         root_dir_name="dashboards",
@@ -314,14 +316,21 @@ class DashboardArtifactTools:
 
     # -- intent declaration --------------------------------------------------
 
-    def start_new_dashboard(self, title: str = "") -> FuncToolResult:
+    def start_new_dashboard(self, name: str, description: str) -> FuncToolResult:
         """
-        Allocate a fresh dashboard directory and bind subsequent saves to it.
+        Allocate a fresh dashboard directory, write its manifest, and bind subsequent saves to it.
 
         Args:
-            title: short ASCII title used to seed the dashboard id's slug
-                segment. Non-ASCII characters are stripped. Optional —
-                pass an empty string to fall back to ``"dashboard"``.
+            name: Human-readable display name (any language — Chinese
+                / mixed scripts welcome). Used both as the manifest
+                display name AND as the seed for the dashboard id slug
+                (non-ASCII characters are stripped from the slug; the
+                manifest preserves the original name). Required, max
+                200 chars.
+            description: One-paragraph description of what the
+                dashboard tracks / answers. Surfaced in list pages and
+                IDE explorers next to the name. Required, max 1000
+                chars.
 
         Returns:
             FuncToolResult.result is a dict like::
@@ -331,14 +340,31 @@ class DashboardArtifactTools:
                     "dashboard_dir": "dashboards/<dashboard_id>",
                     "render_dir": "dashboards/<dashboard_id>/render",
                     "queries_dir": "dashboards/<dashboard_id>/queries",
+                    "manifest_path": "dashboards/<dashboard_id>/manifest.json",
                     "mode": "new",
                 }
         """
+        if not name or not name.strip():
+            return FuncToolResult(success=0, error="name must be a non-empty display name (any language).")
+        if not description or not description.strip():
+            return FuncToolResult(
+                success=0,
+                error="description must be a non-empty one-paragraph description of what the dashboard covers.",
+            )
         try:
-            new_id = _allocate_dashboard_id(title, self._project_root)
+            manifest = ArtifactManifest(
+                name=name.strip(),
+                description=description.strip(),
+                kind="dashboard",
+                created_at=utc_now_iso(),
+            )
+        except Exception as exc:
+            return FuncToolResult(success=0, error=f"Manifest validation failed: {exc}")
+        try:
+            new_id = _allocate_dashboard_id(name, self._project_root)
         except RuntimeError as exc:
             return FuncToolResult(success=0, error=str(exc))
-        return self._activate(new_id, mode="new", create_dirs=True)
+        return self._activate(new_id, mode="new", create_dirs=True, manifest=manifest)
 
     def bind_existing_dashboard(self, dashboard_id: str) -> FuncToolResult:
         """
@@ -385,36 +411,55 @@ class DashboardArtifactTools:
             )
         return self._activate(dashboard_id, mode="edit", create_dirs=False)
 
-    def _activate(self, dashboard_id: str, *, mode: str, create_dirs: bool) -> FuncToolResult:
+    def _activate(
+        self,
+        dashboard_id: str,
+        *,
+        mode: str,
+        create_dirs: bool,
+        manifest: Optional[ArtifactManifest] = None,
+    ) -> FuncToolResult:
         dashboard_dir = self._project_root / "dashboards" / dashboard_id
         queries_dir = dashboard_dir / "queries"
         render_dir = dashboard_dir / "render"
+        manifest_path = dashboard_dir / "manifest.json"
         if create_dirs:
             queries_dir.mkdir(parents=True, exist_ok=True)
             render_dir.mkdir(parents=True, exist_ok=True)
+        manifest_rel: Optional[str] = None
+        if manifest is not None:
+            try:
+                _atomic_write_text(
+                    manifest_path,
+                    json.dumps(manifest.model_dump(), ensure_ascii=False, indent=2) + "\n",
+                )
+            except OSError as exc:
+                return FuncToolResult(success=0, error=f"Failed to write manifest.json: {exc}")
+            manifest_rel = manifest_path.relative_to(self._project_root).as_posix()
         self.dashboard_id = dashboard_id
         self.dashboard_dir = dashboard_dir
         self.queries_dir = queries_dir
         self.render_dir = render_dir
         self.mode = mode
-        return FuncToolResult(
-            result={
-                "dashboard_id": dashboard_id,
-                "dashboard_dir": f"dashboards/{dashboard_id}",
-                "render_dir": f"dashboards/{dashboard_id}/render",
-                "queries_dir": f"dashboards/{dashboard_id}/queries",
-                "mode": mode,
-            }
-        )
+        result: Dict[str, Any] = {
+            "dashboard_id": dashboard_id,
+            "dashboard_dir": f"dashboards/{dashboard_id}",
+            "render_dir": f"dashboards/{dashboard_id}/render",
+            "queries_dir": f"dashboards/{dashboard_id}/queries",
+            "mode": mode,
+        }
+        if manifest_rel:
+            result["manifest_path"] = manifest_rel
+        return FuncToolResult(result=result)
 
     def _require_active(self, tool_name: str) -> Optional[FuncToolResult]:
         if self.dashboard_id is None or self.dashboard_dir is None or self.queries_dir is None:
             return FuncToolResult(
                 success=0,
                 error=(
-                    f"No active dashboard bound. Call start_new_dashboard(title=...) to create one, "
-                    f"or bind_existing_dashboard(dashboard_id=...) to edit an existing one, "
-                    f"before calling {tool_name}()."
+                    f"No active dashboard bound. Call start_new_dashboard(name=..., description=...) "
+                    f"to create one, or bind_existing_dashboard(dashboard_id=...) to edit an "
+                    f"existing one, before calling {tool_name}()."
                 ),
             )
         return None
@@ -667,6 +712,26 @@ class DashboardArtifactTools:
         if not_bound is not None:
             return not_bound
 
+        # Manifest must exist before render-tree validation — it's part
+        # of the artifact contract that the list pages / IDE rely on.
+        manifest_path = self.dashboard_dir / "manifest.json"
+        if not manifest_path.is_file():
+            return FuncToolResult(
+                success=0,
+                error=(
+                    f"dashboards/{self.dashboard_id}/manifest.json is missing. A dashboard must "
+                    "always have a manifest with name + description. Re-run start_new_dashboard "
+                    "or restore the manifest from a previous version."
+                ),
+            )
+        try:
+            ArtifactManifest.model_validate(json.loads(manifest_path.read_text(encoding="utf-8")))
+        except Exception as exc:
+            return FuncToolResult(
+                success=0,
+                error=f"dashboards/{self.dashboard_id}/manifest.json is corrupt or off-spec: {exc}",
+            )
+
         if not self.render_dir.is_dir():
             return FuncToolResult(
                 success=0,
@@ -850,6 +915,7 @@ class DashboardArtifactTools:
         return FuncToolResult(
             result={
                 "app_jsx_path": app_jsx_path.relative_to(self._project_root).as_posix(),
+                "manifest_path": manifest_path.relative_to(self._project_root).as_posix(),
                 "render_files": [f"render/{modules[k]['rel']}" for k in sorted(modules.keys())],
                 "query_refs": sorted(query_refs),
                 "warnings": warnings,
