@@ -22,6 +22,7 @@ def create_interactive_node(
     *,
     execution_mode: Literal["interactive", "workflow"] = "interactive",
     node_id: Optional[str] = None,
+    session_id: Optional[str] = None,
 ):
     """Create an interactive agentic node based on subagent_name.
 
@@ -35,6 +36,12 @@ def create_interactive_node(
         node_id: Override the auto-generated ``f"{subagent_name}{node_id_suffix}"``
             id. API path passes ``session_id`` here so the node's id matches the
             HTTP session.
+        session_id: Optional resume target. When provided, forwarded into the
+            node constructor so :meth:`AgenticNode.restore_plan_mode_state` runs
+            before the first turn, rehydrating persisted plan-mode fields.
+            For subclasses whose constructor doesn't accept ``session_id``
+            yet, callers fall back to the ``node.session_id = ...`` setter
+            (which also triggers restore — see ``AgenticNode.session_id``).
     """
     if subagent_name:
         node_class_type = _resolve_node_class_type(subagent_name, agent_config)
@@ -216,6 +223,7 @@ def create_interactive_node(
             tools=None,
             scope=scope,
             execution_mode=execution_mode,
+            session_id=session_id,
         )
 
 

@@ -1202,6 +1202,49 @@ class TestStreamingMarkdown:
         assert buf.getvalue().count("final body text") == 1
         assert "wrapper-xyz" in ctx._markdown_stream_consumed_ids
 
+    def test_plan_preview_renders_after_streamed_preamble(self):
+        """Regression: ``broker.send`` plan_preview must NOT be swallowed by the same-turn dedup latch.
+
+        Reproduces the original report: LLM streams a "let me confirm" preamble,
+        then calls ``confirm_plan`` which pushes the plan markdown via
+        ``broker.send``. That action is also ASSISTANT/SUCCESS/depth=0 in TUI
+        mode, so the dedupe condition would have dropped it without the
+        ``action_type != "plan_preview"`` carve-out.
+        """
+        ctx, _live_state, buf = self._make_ctx()
+        # Step 1 — LLM streams preamble, finalize sets ``_turn_finalized``.
+        ctx._handle_thinking_delta(self._make_delta("Let me confirm the plan.\n\n", action_id="stream-1"))
+        ctx._print_completed_action(
+            _make_action(
+                ActionRole.ASSISTANT,
+                ActionStatus.SUCCESS,
+                action_type="response",
+                messages="Let me confirm the plan.",
+                output_data={"raw_output": "Let me confirm the plan."},
+                action_id="stream-1",
+            )
+        )
+        assert ctx._turn_finalized is True
+
+        # Step 2 — ``broker.send`` pushes the plan preview content.
+        plan_md = "# Final Plan\n\nStep A\nStep B"
+        ctx._print_completed_action(
+            _make_action(
+                ActionRole.ASSISTANT,
+                ActionStatus.SUCCESS,
+                action_type="plan_preview",
+                messages=plan_md,
+                input_data={"content": plan_md, "content_type": "markdown"},
+                output_data={"content": plan_md, "content_type": "markdown"},
+                action_id="preview-1",
+            )
+        )
+
+        # The plan body must actually land in the scrollback this time.
+        assert "Final Plan" in buf.getvalue()
+        assert "Step A" in buf.getvalue()
+        assert "Step B" in buf.getvalue()
+
     def test_unterminated_tail_with_paired_response_prints_once(self):
         """Regression: last paragraph without trailing ``\\n\\n`` must not duplicate.
 

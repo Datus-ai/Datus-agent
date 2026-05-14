@@ -197,11 +197,42 @@ class StatusBarProvider:
             cached_tokens=cached,
             context_used=self._resolve_context_used(),
             context_total=self._resolve_context_total(),
-            plan_mode=bool(getattr(self._cli, "plan_mode_active", False)),
+            plan_mode=self._resolve_plan_mode(),
             agent_running=agent_running,
             profile=self._resolve_profile(),
             schema_sync_running=schema_sync_running,
         )
+
+    def _resolve_plan_mode(self) -> bool:
+        """Reflect plan-mode in real time, merging node and REPL signals.
+
+        Two sources can flip plan-mode mid-session:
+
+        1. ``confirm_plan`` (LLM tool call) calls ``node.deactivate_plan_mode()``
+           **synchronously while the turn is still running** — the REPL-side
+           ``self._cli.plan_mode_active`` toggle isn't synced back until the
+           turn ends (see ``chat_commands._execute_chat_command``). Reading
+           ``node.plan_mode_active`` first lets the status bar's next paint
+           reflect the change within the timer tick instead of lagging a turn.
+
+        2. ``Shift+Tab`` flips ``self._cli.plan_mode_active`` before any
+           prompt is sent, so the node hasn't run ``_sync_plan_mode_state``
+           yet and ``node.plan_mode_active`` is still False. We treat the
+           REPL toggle as authoritative *only* when the node has not yet
+           been moved through plan mode (``plan_file_path is None``);
+           otherwise we'd keep showing PLAN forever after ``confirm_plan``
+           because the toggle hasn't been re-synced.
+        """
+        node = self._current_node()
+        node_active = bool(getattr(node, "plan_mode_active", False)) if node is not None else False
+        if node_active:
+            return True
+        cli_toggle = bool(getattr(self._cli, "plan_mode_active", False))
+        if cli_toggle and node is not None and getattr(node, "plan_file_path", None) is None:
+            return True
+        if cli_toggle and node is None:
+            return True
+        return False
 
     def _resolve_profile(self) -> str:
         """Return the active profile name from the CLI, defaulting to ``normal``.

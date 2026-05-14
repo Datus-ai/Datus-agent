@@ -15,6 +15,7 @@ import asyncio
 import os
 import uuid
 from abc import abstractmethod
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional
 
 from agents import Tool
@@ -103,6 +104,7 @@ class AgenticNode(Node):
         scope: Optional[str] = None,
         is_subagent: bool = False,
         memory_enabled: Optional[bool] = None,
+        session_id: Optional[str] = None,
     ):
         """
         Initialize the agentic node.
@@ -123,6 +125,9 @@ class AgenticNode(Node):
                 gen_report, feedback, etc.) default to ``False``; only ``chat`` and
                 custom/user-defined subagents default to ``True``. Pass an explicit
                 bool to override.
+            session_id: Optional resume target. When provided, the node's
+                ``session_id`` property is set to this value and any
+                persisted plan-mode state on disk is restored automatically.
         """
         # Initialize Node base class
         super().__init__(node_id, description, node_type, input_data, agent_config, tools)
@@ -131,7 +136,11 @@ class AgenticNode(Node):
         self.scope = scope
         self.mcp_servers = mcp_servers or {}
         self.actions: List[ActionHistory] = []
-        self.session_id: Optional[str] = None
+        # Backing store for the ``session_id`` property below; assignment via
+        # the setter triggers ``restore_plan_mode_state`` so callers that
+        # write ``node.session_id = ...`` after construction (resume / rewind /
+        # switch flows) still get persisted plan-mode state loaded.
+        self._session_id: Optional[str] = None
         self._session: Optional[AdvancedSQLiteSession] = None
         # Optional extra path layer between {sessions_dir}/{user_scope}/ and the .db
         # file. Set by SubAgentTaskTool to the parent's session_id so subagent dbs
@@ -225,6 +234,37 @@ class AgenticNode(Node):
         # carries an "execute the confirmed plan" reminder. Cleared by
         # ``_build_enhanced_message`` after the reminder is injected.
         self._plan_just_confirmed: bool = False
+
+        # Assign session_id last: the setter calls ``restore_plan_mode_state``
+        # which reads disk and overwrites the plan-mode fields above. Doing
+        # it after the defaults are in place keeps initialization order clean.
+        if session_id:
+            self.session_id = session_id
+
+    @property
+    def session_id(self) -> Optional[str]:
+        """The agent session identifier this node owns.
+
+        Assigning to ``session_id`` (either via constructor or via the
+        post-construction ``node.session_id = ...`` pattern used by resume
+        / rewind / switch flows) triggers an automatic
+        :meth:`restore_plan_mode_state` so persisted plan-mode fields are
+        re-hydrated whenever a node "adopts" an existing session.
+        """
+        return self._session_id
+
+    @session_id.setter
+    def session_id(self, value: Optional[str]) -> None:
+        # ``getattr`` (rather than ``self._session_id``) so test doubles that
+        # skip ``__init__`` (e.g. ``Mock(spec=...)``) don't blow up when the
+        # production code later writes to ``self.session_id``.
+        prev = getattr(self, "_session_id", None)
+        self._session_id = value
+        if value and value != prev and hasattr(self, "plan_mode_active"):
+            try:
+                self.restore_plan_mode_state()
+            except Exception as exc:  # noqa: BLE001 — restore must never crash session adoption
+                logger.warning("Failed to restore plan-mode state for %s: %s", value, exc)
 
     @property
     def model(self) -> Optional[LLMBaseModel]:
@@ -340,6 +380,7 @@ class AgenticNode(Node):
         # available — this lets the user re-enter the same plan session.
         if self.plan_file_path:
             logger.info(f"Plan mode reactivated: plan_file_path={self.plan_file_path}")
+            self._persist_plan_mode_state()
             return self.plan_file_path
 
         plan_dir = os.path.join(".", ".datus", "plans")
@@ -356,6 +397,7 @@ class AgenticNode(Node):
         except OSError as exc:
             logger.warning(f"Failed to pre-create plan file {self.plan_file_path}: {exc}")
         logger.info(f"Plan mode activated: plan_file_path={self.plan_file_path}")
+        self._persist_plan_mode_state()
         return self.plan_file_path
 
     def deactivate_plan_mode(self) -> None:
@@ -374,6 +416,7 @@ class AgenticNode(Node):
             logger.info(f"Plan mode paused: plan_file_path={self.plan_file_path}")
         self.plan_mode_active = False
         self.workflow_prompt_sent = False
+        self._persist_plan_mode_state()
 
     def is_in_plan_mode(self) -> bool:
         """Return True when plan mode is currently active for this node."""
@@ -411,7 +454,72 @@ class AgenticNode(Node):
                 )
         # Flip the flag so future prompts only carry the short reminder.
         self.workflow_prompt_sent = True
+        self._persist_plan_mode_state()
         return rendered
+
+    def _agent_state_file(self) -> Optional[Path]:
+        """Return the session-bound state file path, or ``None`` when unavailable.
+
+        Returns ``None`` when ``session_id`` has not been allocated yet, or
+        when the path manager fails (e.g. empty ``project_name``). Callers
+        treat ``None`` as "skip persistence this turn".
+        """
+        if not self.session_id:
+            return None
+        try:
+            from datus.utils.path_manager import get_path_manager
+
+            return get_path_manager(agent_config=self.agent_config).agent_state_path(self.session_id)
+        except Exception as exc:  # noqa: BLE001 — persistence must never crash node logic
+            logger.debug("agent_state_path unavailable: %s", exc)
+            return None
+
+    def _persist_plan_mode_state(self) -> None:
+        """Flush current plan-mode fields to disk. No-op without session_id."""
+        state_path = self._agent_state_file()
+        if state_path is None:
+            return
+        from datus.storage.session_state import PlanModeState
+
+        PlanModeState(
+            plan_mode_active=self.plan_mode_active,
+            plan_file_path=self.plan_file_path,
+            workflow_prompt_sent=self.workflow_prompt_sent,
+        ).save(state_path)
+
+    def restore_plan_mode_state(self) -> None:
+        """Re-hydrate plan-mode fields from disk into this node.
+
+        Idempotent; safe to call multiple times. Invoked automatically by:
+          1. ``__init__`` when caller passes ``session_id``
+          2. The ``session_id`` setter when value transitions to non-empty
+
+        When no on-disk state file exists yet (fresh session), this is a
+        no-op — the in-memory defaults / values already on the node are
+        preserved. This matters because ``_get_or_create_session`` may
+        allocate a new ``session_id`` *after* the user already activated
+        plan mode, and we must not wipe their in-flight plan_file_path.
+
+        ``_plan_just_confirmed`` is intentionally NOT restored — it is a
+        turn-local one-shot flag and should always start False on resume.
+        """
+        state_path = self._agent_state_file()
+        if state_path is None or not state_path.exists():
+            return
+        from datus.storage.session_state import PlanModeState
+
+        loaded = PlanModeState.load(state_path)
+        self.plan_mode_active = loaded.plan_mode_active
+        self.plan_file_path = loaded.plan_file_path
+        self.workflow_prompt_sent = loaded.workflow_prompt_sent
+        self._plan_just_confirmed = False
+        logger.info(
+            "Plan mode state restored for session %s: active=%s path=%s prompt_sent=%s",
+            self.session_id,
+            self.plan_mode_active,
+            self.plan_file_path,
+            self.workflow_prompt_sent,
+        )
 
     def _get_plan_mode_tools(self) -> List[Tool]:
         """Build the plan-mode func tools (``confirm_plan`` + ``todo_*``).
@@ -432,7 +540,12 @@ class AgenticNode(Node):
         # PlanTool keeps a reference to the agents-SDK session for backward-
         # compat but does not actually read it, so passing the current value
         # (which may still be None at setup time) is safe.
-        tools: List[Tool] = list(PlanTool(self._session).available_tools())
+        # Lambda resolves session_id lazily — at setup time it's still None,
+        # ``_get_or_create_session`` allocates it on the first turn. Snapshot
+        # would leave the storage permanently unbound and never persist.
+        tools: List[Tool] = list(
+            PlanTool(self._session, session_id=lambda: self.session_id).available_tools()
+        )
         tools.extend(ConfirmPlanTool(self).available_tools())
         return tools
 

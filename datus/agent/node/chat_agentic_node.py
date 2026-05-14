@@ -58,6 +58,7 @@ class ChatAgenticNode(AgenticNode):
         scope: Optional[str] = None,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
         is_subagent: bool = False,
+        session_id: Optional[str] = None,
     ):
         """
         Initialize the ChatAgenticNode.
@@ -105,6 +106,7 @@ class ChatAgenticNode(AgenticNode):
             mcp_servers={},
             scope=scope,
             is_subagent=is_subagent,
+            session_id=session_id,
         )
 
         # Execution mode: "interactive" enables ask_user tool; "workflow"

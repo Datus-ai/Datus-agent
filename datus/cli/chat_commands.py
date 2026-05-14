@@ -165,15 +165,23 @@ class ChatCommands:
             logger.warning(f"Failed to copy session on agent switch, starting fresh: {e}")
             return new_node.session_id  # fall back to whatever the node already has (None → auto-generate)
 
-    def _create_new_node(self, subagent_name: str = None):
+    def _create_new_node(self, subagent_name: str = None, session_id: Optional[str] = None):
         """Create new node based on subagent_name and configuration.
 
         Delegates to the shared node factory for actual node creation.
+
+        ``session_id`` is forwarded so the node's plan-mode state and
+        todolist (persisted under ``~/.datus/data/{project}/``) are
+        rehydrated *before* the first turn — used by the resume flow.
         """
         from datus.agent.node.node_factory import create_interactive_node
 
         return create_interactive_node(
-            subagent_name, self.cli.agent_config, node_id_suffix="_cli", scope=self.cli.scope
+            subagent_name,
+            self.cli.agent_config,
+            node_id_suffix="_cli",
+            scope=self.cli.scope,
+            session_id=session_id,
         )
 
     def create_node_input(
@@ -1387,12 +1395,19 @@ class ChatCommands:
 
             self.console.print(f"[dim]Resuming session: {target_session_id} (type: {node_name})...[/]")
 
-            new_node = self._create_new_node(subagent_name)
-            new_node.session_id = target_session_id
+            # Pass session_id at construction so ``AgenticNode.__init__`` can
+            # rehydrate persisted plan-mode state (and the todolist disk-load
+            # path) before the first turn — see ``restore_plan_mode_state``.
+            new_node = self._create_new_node(subagent_name, session_id=target_session_id)
 
             # Update state
             self.current_node = new_node
             self.current_subagent_name = subagent_name
+
+            # Mirror restored plan-mode flag back to the REPL toggle so the
+            # bottom status bar reflects what the node believes (PLAN vs CHAT).
+            if hasattr(self.cli, "plan_mode_active"):
+                self.cli.plan_mode_active = bool(getattr(new_node, "plan_mode_active", False))
 
             # Show conversation history with full formatting
             from rich.rule import Rule

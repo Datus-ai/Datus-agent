@@ -463,14 +463,18 @@ class TestStatusBarProviderTokens:
 
 
 class TestStatusBarProviderPlanMode:
-    def test_plan_mode_flag_propagates(self):
+    def _make_cli(self, node=None, plan_mode=False):
         cli = SimpleNamespace(
-            chat_commands=SimpleNamespace(current_subagent_name=None, current_node=None),
+            chat_commands=SimpleNamespace(current_subagent_name=None, current_node=node),
             default_agent="",
             agent_config=None,
-            plan_mode_active=True,
         )
-        assert StatusBarProvider(cli).current_state().plan_mode is True
+        if plan_mode is not None:
+            cli.plan_mode_active = plan_mode
+        return cli
+
+    def test_plan_mode_flag_propagates_when_no_node(self):
+        assert StatusBarProvider(self._make_cli(node=None, plan_mode=True)).current_state().plan_mode is True
 
     def test_plan_mode_default_false(self):
         cli = SimpleNamespace(
@@ -479,6 +483,28 @@ class TestStatusBarProviderPlanMode:
             agent_config=None,
         )
         assert StatusBarProvider(cli).current_state().plan_mode is False
+
+    def test_node_active_overrides_cli_toggle_off(self):
+        """Regression: ``confirm_plan`` flips ``node.plan_mode_active`` mid-turn
+        but the REPL toggle is only synced *after* the turn. Until then the
+        status bar must follow the node, not the stale REPL toggle."""
+        node = SimpleNamespace(plan_mode_active=True, plan_file_path="./.datus/plans/x.md")
+        cli = self._make_cli(node=node, plan_mode=False)
+        assert StatusBarProvider(cli).current_state().plan_mode is True
+
+    def test_node_inactive_overrides_cli_toggle_on_after_confirm(self):
+        """Regression: after ``confirm_plan`` the node is back to chat mode
+        even though the REPL toggle hasn't synced yet — show CHAT."""
+        node = SimpleNamespace(plan_mode_active=False, plan_file_path="./.datus/plans/x.md")
+        cli = self._make_cli(node=node, plan_mode=True)
+        assert StatusBarProvider(cli).current_state().plan_mode is False
+
+    def test_cli_toggle_on_before_first_turn_shows_plan(self):
+        """User hits Shift+Tab; node hasn't run ``_sync_plan_mode_state`` yet
+        (plan_file_path still None). Status bar should follow the toggle."""
+        node = SimpleNamespace(plan_mode_active=False, plan_file_path=None)
+        cli = self._make_cli(node=node, plan_mode=True)
+        assert StatusBarProvider(cli).current_state().plan_mode is True
 
 
 class TestStatusBarProviderNoNode:

@@ -98,6 +98,134 @@ class TestSessionTodoStorage:
         assert storage.has_todo_list() is False
 
 
+class TestSessionTodoStoragePersistence:
+    """Persistence path: ``session_id`` -> ``project_data_dir/todos/{session_id}.json``."""
+
+    @pytest.fixture
+    def path_manager(self, tmp_path):
+        from datus.utils.path_manager import DatusPathManager, reset_path_manager, set_current_path_manager
+
+        reset_path_manager()
+        pm = DatusPathManager(
+            datus_home=str(tmp_path / "datus"),
+            project_name="proj",
+            project_root=str(tmp_path / "project"),
+        )
+        set_current_path_manager(pm)
+        yield pm
+        reset_path_manager()
+
+    def test_save_list_writes_to_disk(self, path_manager):
+        storage = SessionTodoStorage(session=Mock(), session_id="chat_session_aaaa")
+        todo_list = TodoList()
+        todo_list.add_item("Task")
+
+        assert storage.save_list(todo_list) is True
+
+        path = path_manager.todo_list_path("chat_session_aaaa")
+        assert path.exists()
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert len(data["items"]) == 1
+        assert data["items"][0]["content"] == "Task"
+
+    def test_save_list_keeps_cjk_readable(self, path_manager):
+        """Regression: non-ASCII content must be saved as raw UTF-8, not ``\\uXXXX`` escapes."""
+        storage = SessionTodoStorage(session=Mock(), session_id="chat_session_cjk")
+        todo_list = TodoList()
+        todo_list.add_item("生成报表脚本")
+
+        storage.save_list(todo_list)
+
+        raw = path_manager.todo_list_path("chat_session_cjk").read_text(encoding="utf-8")
+        assert "生成报表脚本" in raw
+        assert "\\u" not in raw  # No JSON unicode escapes for CJK characters.
+
+    def test_new_instance_lazy_loads_from_disk(self, path_manager):
+        # First instance persists.
+        s1 = SessionTodoStorage(session=Mock(), session_id="chat_session_bbbb")
+        list1 = TodoList()
+        list1.add_item("Existing")
+        s1.save_list(list1)
+
+        # Fresh instance with same session_id reconstructs the list from disk.
+        s2 = SessionTodoStorage(session=Mock(), session_id="chat_session_bbbb")
+        restored = s2.get_todo_list()
+        assert restored is not None
+        assert restored.items[0].content == "Existing"
+        assert s2.has_todo_list() is True
+
+    def test_clear_all_removes_disk_file(self, path_manager):
+        storage = SessionTodoStorage(session=Mock(), session_id="chat_session_cccc")
+        storage.save_list(TodoList())
+        path = path_manager.todo_list_path("chat_session_cccc")
+        assert path.exists()
+
+        storage.clear_all()
+        assert not path.exists()
+        assert storage.get_todo_list() is None
+
+    def test_no_session_id_falls_back_to_memory(self, path_manager):
+        storage = SessionTodoStorage(session=Mock(), session_id=None)
+        storage.save_list(TodoList())
+        # Disk dir has no per-session file written.
+        todos_dir = path_manager.project_data_dir / "todos"
+        assert not todos_dir.exists() or not any(todos_dir.iterdir())
+
+    def test_session_id_resolver_callable_defers_until_save(self, path_manager):
+        """Regression: storage constructed during setup_tools (session_id=None
+        at that moment) must still persist to disk once the agent has
+        allocated a real session_id later. We pass a callable so each call
+        re-resolves instead of snapshotting ``None`` forever."""
+        sid_holder = {"value": None}
+        storage = SessionTodoStorage(
+            session=Mock(),
+            session_id=lambda: sid_holder["value"],
+        )
+
+        # Before id allocation: no disk write.
+        storage.save_list(TodoList())
+        todos_dir = path_manager.project_data_dir / "todos"
+        assert not todos_dir.exists() or not any(todos_dir.iterdir())
+
+        # Agent allocates the session id; next save_list must hit disk.
+        sid_holder["value"] = "chat_session_late"
+        todo_list = TodoList()
+        todo_list.add_item("Persisted late")
+        assert storage.save_list(todo_list) is True
+
+        path = path_manager.todo_list_path("chat_session_late")
+        assert path.exists()
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert data["items"][0]["content"] == "Persisted late"
+
+    def test_session_id_change_reloads_from_disk(self, path_manager):
+        """When the resolver returns a different session_id (e.g. cmd_resume
+        swaps the active session), the next ``get_todo_list`` must re-read
+        disk for the new session rather than serve cached state from the
+        previous one."""
+        # Seed disk for two distinct sessions.
+        a_path = path_manager.todo_list_path("session_a")
+        b_path = path_manager.todo_list_path("session_b")
+        a_path.write_text(json.dumps(TodoList(items=[]).model_dump()))
+        b = TodoList()
+        b.add_item("From B")
+        b_path.write_text(json.dumps(b.model_dump()))
+
+        sid_holder = {"value": "session_a"}
+        storage = SessionTodoStorage(
+            session=Mock(),
+            session_id=lambda: sid_holder["value"],
+        )
+        # Initial load reads session_a (empty).
+        assert storage.get_todo_list().items == []
+
+        # Resolver flips to session_b; storage must re-load.
+        sid_holder["value"] = "session_b"
+        loaded = storage.get_todo_list()
+        assert loaded is not None
+        assert loaded.items[0].content == "From B"
+
+
 class TestPlanTool:
     @pytest.fixture
     def plan_tool(self):
@@ -172,7 +300,24 @@ class TestPlanTool:
         )
         result = plan_tool.todo_write(todos_json)
         assert result.success == 1
-        assert "1 already completed" in result.result["message"]
+        # Append-mode reports per-call totals.
+        assert "1 completed, 1 pending" in result.result["message"]
+
+    def test_todo_write_appends_to_existing_list(self, plan_tool):
+        """Regression: ``todo_write`` is incremental — second call must not wipe first batch."""
+        first = json.dumps([{"content": "Step A", "status": "pending"}])
+        plan_tool.todo_write(first)
+
+        second = json.dumps([{"content": "Step B", "status": "completed"}])
+        result = plan_tool.todo_write(second)
+
+        items = result.result["todo_list"]["items"]
+        assert [i["content"] for i in items] == ["Step A", "Step B"]
+        assert items[0]["status"] == "pending"
+        assert items[1]["status"] == "completed"
+        # Message reflects per-call counts, not list totals.
+        assert "Appended 1 item" in result.result["message"]
+        assert "list now has 2 item(s)" in result.result["message"]
 
     def test_todo_update_to_completed(self, plan_tool):
         todos_json = json.dumps([{"content": "Task A", "status": "pending"}])

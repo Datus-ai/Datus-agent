@@ -343,6 +343,26 @@ class DatusPathManager:
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         return self.sessions_dir / f"{session_id}.db"
 
+    def agent_state_path(self, session_id: str) -> Path:
+        """Per-session plan-mode state file.
+
+        Returns:
+            Path: ``{project_data_dir}/state/{session_id}.json``
+        """
+        path = self.project_data_dir / "state" / f"{session_id}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def todo_list_path(self, session_id: str) -> Path:
+        """Per-session todolist persistence file.
+
+        Returns:
+            Path: ``{project_data_dir}/todos/{session_id}.json``
+        """
+        path = self.project_data_dir / "todos" / f"{session_id}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
     def semantic_model_path(self, datasource: str) -> Path:
         """
         Semantic model directory for a specific datasource.

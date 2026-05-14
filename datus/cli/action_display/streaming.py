@@ -1387,11 +1387,17 @@ class InlineStreamingContext:
         # dropped. Without this latch the wrapper's body hits
         # ``render_main_action`` and appears in the scrollback a second
         # time right below the streamed version.
+        # ``plan_preview`` is pushed by ``InteractionBroker.send`` as a
+        # standalone content card (the plan markdown shown before a
+        # confirm_plan prompt) — not as the LLM's main response. Excluding
+        # it from the dedupe condition prevents the same-turn latch from
+        # swallowing it whenever the LLM streamed any preamble first.
         is_main_assistant_success = (
             self._tui_mode
             and action.role == ActionRole.ASSISTANT
             and action.status == ActionStatus.SUCCESS
             and action.depth == 0
+            and action.action_type != "plan_preview"
         )
         # Drain any trailing deltas in this message's bucket before the
         # terminal-response branches below run. Covers the race where the

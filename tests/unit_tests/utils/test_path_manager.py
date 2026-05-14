@@ -205,6 +205,16 @@ class TestDatusPathManagerDataPaths:
         assert path == pm.ext_knowledge_dir
         assert path.exists()
 
+    def test_agent_state_path(self, pm):
+        path = pm.agent_state_path("chat_session_abc123")
+        assert path == pm.project_data_dir / "state" / "chat_session_abc123.json"
+        assert path.parent.exists()
+
+    def test_todo_list_path(self, pm):
+        path = pm.todo_list_path("chat_session_abc123")
+        assert path == pm.project_data_dir / "todos" / "chat_session_abc123.json"
+        assert path.parent.exists()
+
 
 class TestResolveRunDir:
     """Tests for DatusPathManager.resolve_run_dir."""

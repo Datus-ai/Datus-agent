@@ -6,13 +6,14 @@
 Simplified plan tools - merged from multiple files into single module
 """
 
+import json
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Callable, List, Optional, Union
 from uuid import uuid4
 
 from agents import SQLiteSession, Tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
@@ -68,46 +69,158 @@ class TodoList(BaseModel):
 
 
 class SessionTodoStorage:
-    """In-memory storage for todo lists to avoid conflicts with agents library session"""
+    """Per-session todo list storage with on-disk persistence.
 
-    def __init__(self, session: SQLiteSession):
-        """Initialize storage with session"""
+    The ``session_id`` argument accepts either a ``str`` (immediate value)
+    or a zero-arg callable that returns the current session id when
+    invoked. The callable form is what main-agent setup uses: ``PlanTool``
+    is constructed during ``setup_tools`` *before* ``_get_or_create_session``
+    has allocated a session_id, so we must defer resolution until each
+    actual ``todo_*`` call — otherwise the storage would snapshot
+    ``None`` forever and never persist to disk.
+
+    When the resolver returns a non-empty session_id, the todo list is
+    written through to ``{project_data_dir}/todos/{session_id}.json`` on
+    every ``save_list`` / ``clear_all`` call, and lazily reloaded from disk
+    the first time ``get_todo_list`` / ``has_todo_list`` is invoked. This
+    is what lets ``datus chat --resume`` recover the todolist after the
+    process exits.
+
+    When the resolver returns ``None`` (e.g. tests that bypass the agentic
+    flow), the storage falls back to a pure in-memory dict.
+    """
+
+    def __init__(
+        self,
+        session: SQLiteSession,
+        session_id: Union[Optional[str], Callable[[], Optional[str]]] = None,
+    ):
         self.session = session
+        # Keep the original value (str or callable) so ``_resolve_session_id``
+        # can re-evaluate on every disk access.
+        self._session_id_source = session_id
         self._current_todo_list: Optional[TodoList] = None
+        # Lazy-load flag — disk is read at most once per instance unless
+        # ``save_list`` / ``clear_all`` already wrote authoritative state.
+        # Note: this latch keys off the *first* non-empty session_id; if
+        # session_id transitions from None to a real value we still want
+        # the first real ``get_todo_list`` to attempt a disk load, so
+        # ``_ensure_loaded`` resets the flag when the resolved id changes.
+        self._loaded_from_disk = False
+        self._loaded_for_session_id: Optional[str] = None
+
+    @property
+    def session_id(self) -> Optional[str]:
+        """Resolve the current session_id (re-invokes the callable each access)."""
+        src = self._session_id_source
+        if callable(src):
+            try:
+                return src()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("session_id resolver raised: %s", exc)
+                return None
+        return src
+
+    @session_id.setter
+    def session_id(self, value: Optional[str]) -> None:
+        self._session_id_source = value
+
+    def _disk_path(self) -> Optional[Path]:
+        sid = self.session_id
+        if not sid:
+            return None
+        try:
+            from datus.utils.path_manager import get_path_manager
+
+            return get_path_manager().todo_list_path(sid)
+        except Exception as exc:  # noqa: BLE001 — never crash todo IO over a path-manager hiccup
+            logger.debug("todo_list_path unavailable: %s", exc)
+            return None
+
+    def _ensure_loaded(self) -> None:
+        # Re-attempt disk load when the resolved session_id changes (e.g.
+        # PlanTool was constructed before ``_get_or_create_session``
+        # generated the id). Without this, the latch from the initial
+        # session_id=None call would prevent the first real lookup from
+        # ever hitting disk.
+        sid = self.session_id
+        if self._loaded_from_disk and self._loaded_for_session_id == sid:
+            return
+        self._loaded_from_disk = True
+        self._loaded_for_session_id = sid
+        path = self._disk_path()
+        if path is None or not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            self._current_todo_list = TodoList(**data)
+            logger.debug("Loaded todo list from %s with %d items", path, len(self._current_todo_list.items))
+        except (OSError, json.JSONDecodeError, ValidationError) as exc:
+            logger.warning("Failed to load todolist from %s: %s", path, exc)
 
     def save_list(self, todo_list: TodoList) -> bool:
-        """Save the todo list to in-memory storage"""
+        """Persist the todo list to memory and (if session-bound) to disk."""
         try:
             self._current_todo_list = todo_list
-            logger.debug(f"Saved todo list to memory with {len(todo_list.items)} items")
+            self._loaded_from_disk = True
+            self._loaded_for_session_id = self.session_id
+            path = self._disk_path()
+            if path is not None:
+                try:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    # ensure_ascii=False keeps CJK / accents readable on disk.
+                    path.write_text(
+                        json.dumps(todo_list.model_dump(), indent=2, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                except OSError as exc:
+                    logger.warning("Failed to persist todolist to %s: %s", path, exc)
+            logger.debug("Saved todo list with %d items", len(todo_list.items))
             return True
         except Exception as e:
-            logger.error(f"Failed to save todo list to memory: {e}")
+            logger.error(f"Failed to save todo list: {e}")
             return False
 
     def get_todo_list(self) -> Optional[TodoList]:
-        """Get the todo list from in-memory storage"""
+        self._ensure_loaded()
         return self._current_todo_list
 
     def clear_all(self) -> None:
-        """Clear the todo list from in-memory storage"""
         try:
             self._current_todo_list = None
-            logger.debug("Cleared todo list from memory")
+            self._loaded_from_disk = True
+            self._loaded_for_session_id = self.session_id
+            path = self._disk_path()
+            if path is not None and path.exists():
+                try:
+                    path.unlink()
+                except OSError as exc:
+                    logger.warning("Failed to delete todolist %s: %s", path, exc)
+            logger.debug("Cleared todo list")
         except Exception as e:
-            logger.error(f"Failed to clear todo list from memory: {e}")
+            logger.error(f"Failed to clear todo list: {e}")
 
     def has_todo_list(self) -> bool:
-        """Check if storage has a todo list"""
+        self._ensure_loaded()
         return self._current_todo_list is not None
 
 
 class PlanTool:
     """Main tool for todo list management with read, write, and update capabilities"""
 
-    def __init__(self, session: SQLiteSession):
-        """Initialize the plan tool with session"""
-        self.storage = SessionTodoStorage(session)
+    def __init__(
+        self,
+        session: SQLiteSession,
+        session_id: Union[Optional[str], Callable[[], Optional[str]]] = None,
+    ):
+        """Initialize the plan tool with session.
+
+        ``session_id`` is forwarded to :class:`SessionTodoStorage` so the
+        todolist persists across process restarts (resume support). It may
+        be a string or a zero-arg callable — see ``SessionTodoStorage`` for
+        why the callable form matters during setup_tools().
+        """
+        self.storage = SessionTodoStorage(session, session_id=session_id)
 
     def available_tools(self) -> List[Tool]:
         """Get list of available plan tools"""
@@ -144,19 +257,24 @@ class PlanTool:
             )
 
     def todo_write(self, todos_json: str) -> FuncToolResult:
-        """Create or update the todo list from todo items with explicit status
+        """Append new todo items to the current list (does NOT overwrite).
+
+        ``todo_write`` is incremental: pass only the items you want to add.
+        Existing items stay untouched — use ``todo_update`` to change a
+        single item's status, or call this again later to add more.
 
         Args:
-            todos_json: JSON string of list of dicts with 'content' and 'status' keys.
-                       Status can be 'pending' or 'completed'.
+            todos_json: JSON string of list of dicts with 'content' and
+                'status' keys. Status can be 'pending' or 'completed'
+                (default 'pending' if omitted).
 
-                       IMPORTANT: In replan mode, only include steps that are actually needed:
-                       - 'completed': Steps that were actually executed and finished
-                       - 'pending': Steps that still need to be executed (existing or new)
-                       - DISCARD: Don't include steps that are no longer needed
+                Example: '[{"content": "Query database", "status": "pending"}]'
 
-                       Example: '[{"content": "Query database", "status": "completed"},
-                                {"content": "Generate report", "status": "pending"}]'
+        Behaviour notes:
+            * Empty / whitespace-only ``content`` entries are skipped.
+            * Each new item is assigned a fresh uuid; no content dedupe is
+              performed, so callers are responsible for not re-submitting
+              the same task twice.
         """
         try:
             import json
@@ -168,9 +286,13 @@ class PlanTool:
         if not todos:
             return FuncToolResult(success=0, error="Cannot create todo list: no todo items provided")
 
-        todo_list = TodoList()
+        # Start from the existing list (read-modify-write append semantics).
+        # ``get_todo_list`` lazily loads from disk if needed, so a fresh
+        # PlanTool instance after resume still sees prior items.
+        todo_list = self.storage.get_todo_list() or TodoList()
 
-        # Create todo list with LLM-specified status
+        added = 0
+        added_completed = 0
         for todo_item in todos:
             content = todo_item.get("content", "").strip()
             status = todo_item.get("status", "pending").lower()
@@ -179,28 +301,30 @@ class PlanTool:
                 continue
 
             if status == "completed":
-                # Create completed item - should only be for actually executed steps
                 new_item = TodoItem(content=content, status=TodoStatus.COMPLETED)
                 todo_list.items.append(new_item)
-                logger.info(f"Keeping completed step: {content}")
+                added_completed += 1
+                logger.info(f"Appended completed step: {content}")
             else:
-                # Create pending step - for steps that still need execution
                 todo_list.add_item(content)
-                logger.info(f"Added pending step: {content}")
+                added += 1
+                logger.info(f"Appended pending step: {content}")
+
+        if added == 0 and added_completed == 0:
+            return FuncToolResult(success=0, error="Cannot append todo list: no valid items after filtering")
 
         if self.storage.save_list(todo_list):
-            completed_count = sum(1 for item in todo_list.items if item.status == TodoStatus.COMPLETED)
             return FuncToolResult(
                 result={
                     "message": (
-                        f"Successfully saved todo list with {len(todo_list.items)} items "
-                        f"({completed_count} already completed)"
+                        f"Appended {added + added_completed} item(s) "
+                        f"({added_completed} completed, {added} pending); "
+                        f"list now has {len(todo_list.items)} item(s)."
                     ),
                     "todo_list": todo_list.model_dump(),
                 }
             )
-        else:
-            return FuncToolResult(success=0, error="Failed to save todo list to storage")
+        return FuncToolResult(success=0, error="Failed to save todo list to storage")
 
     def todo_update(self, todo_id: str, status: str) -> FuncToolResult:
         """Update a todo item's status.

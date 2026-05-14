@@ -350,7 +350,10 @@ class GenSQLAgenticNode(AgenticNode):
             from datus.tools.func_tool.plan_tools import PlanTool
 
             session, _ = self._get_or_create_session()
-            self.plan_tool = PlanTool(session)
+            # Lazy resolver mirrors AgenticNode._get_plan_mode_tools — even
+            # though we've already called _get_or_create_session here, future
+            # session swaps (rewind / switch) should be picked up too.
+            self.plan_tool = PlanTool(session, session_id=lambda: self.session_id)
             self.tools.extend(self.plan_tool.available_tools())
         except Exception as e:
             logger.error(f"Failed to setup plan tools: {e}")
