@@ -189,9 +189,7 @@ def render_report_html(
         OSError: on read/write failures.
     """
     if not _REPORT_ID_RE.fullmatch(report_id):
-        raise ValueError(
-            f"invalid report_id {report_id!r}; expected only [A-Za-z0-9_-]"
-        )
+        raise ValueError(f"invalid report_id {report_id!r}; expected only [A-Za-z0-9_-]")
     project_root = project_root.resolve()
     report_dir = project_root / "reports" / report_id
     render_dir = report_dir / "render"

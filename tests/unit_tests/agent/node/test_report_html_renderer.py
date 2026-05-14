@@ -58,10 +58,7 @@ def test_render_report_html_substitutes_payload(tmp_path: Path):
     assert "Demo report" in body
     # The title is HTML-escaped before being injected into <title>, so the
     # raw '<', '&', '>' from the annotation must appear as entities.
-    assert (
-        "<title>Datus Report — Demo report &lt;update &amp; fix&gt;</title>"
-        in body
-    )
+    assert "<title>Datus Report — Demo report &lt;update &amp; fix&gt;</title>" in body
     # </script> from the source must be escaped in the JSON data block so it
     # doesn't close the embedded <script type="application/json"> prematurely.
     assert "</script></script>" not in body
