@@ -129,10 +129,17 @@ class LanguageCommands:
         return self._run_app(app)
 
     def _run_app(self, app: LanguageApp) -> Optional[LanguageSelection]:
+        """Embed inside the active TUI when one exists, else run standalone.
+
+        Mirrors :meth:`datus.cli.effort_commands.EffortCommands._run_app`:
+        the embedded path replaces the status bar / input row with the
+        wizard so output remains visible above; the standalone path is
+        the legacy ``Application(full_screen=False)`` modal used in
+        non-TUI fallback.
+        """
         tui_app = getattr(self.cli, "tui_app", None)
-        if tui_app is not None:
-            with tui_app.suspend_input():
-                return app.run()
+        if tui_app is not None and getattr(tui_app, "_loop", None) is not None:
+            return tui_app.run_wizard(app.build_embedded_panel)
         return app.run()
 
     def _save_global(self, code: str) -> None:

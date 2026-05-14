@@ -971,7 +971,8 @@ class ChatCommands:
 
                 with esc_guard.paused():
                     app = InteractionApp(events)
-                    result = app.run()
+                    tui_app = getattr(self.cli, "tui_app", None)
+                    result = app.run(tui_app=tui_app)
                     return result.answers
             except Exception as e:
                 logger.error(f"Error collecting interaction input: {e}")
@@ -1389,9 +1390,8 @@ class ChatCommands:
 
                 app = ListSelectorApp(title=f"Resume session ({agent_label})", items=items)
                 tui_app = getattr(self.cli, "tui_app", None)
-                if tui_app is not None:
-                    with tui_app.suspend_input():
-                        selection = app.run()
+                if tui_app is not None and getattr(tui_app, "_loop", None) is not None:
+                    selection = tui_app.run_wizard(app.build_embedded_panel)
                 else:
                     selection = app.run()
                 if selection is None:
@@ -1539,9 +1539,8 @@ class ChatCommands:
 
                 app = ListSelectorApp(title="Session Rewind", items=items)
                 tui_app = getattr(self.cli, "tui_app", None)
-                if tui_app is not None:
-                    with tui_app.suspend_input():
-                        selection = app.run()
+                if tui_app is not None and getattr(tui_app, "_loop", None) is not None:
+                    selection = tui_app.run_wizard(app.build_embedded_panel)
                 else:
                     selection = app.run()
                 if selection is None:

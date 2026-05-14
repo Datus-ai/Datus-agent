@@ -45,28 +45,35 @@ class TestCompletionsMenuWired:
         Any other ordering regresses the rendering. The pinned live
         region (now packed into ``top_row`` with the todo sidebar) sits
         at index 0 but doesn't affect the input ↔ menu adjacency that
-        this test guards."""
+        this test guards.
 
-        from prompt_toolkit.layout.containers import HSplit, VSplit
+        Root now has only 2 children: ``top_row`` and a
+        ``DynamicContainer`` that swaps between the normal bottom
+        section and an embedded wizard. Descend into the dynamic
+        container's currently-rendered HSplit to assert the input/menu
+        ordering is intact."""
+
+        from prompt_toolkit.layout.containers import DynamicContainer, HSplit, VSplit
 
         app = _build_app()
         root = app.application.layout.container
         assert isinstance(root, HSplit), f"root should be HSplit, got {type(root).__name__}"
         children = list(root.get_children())
-        # Expected order: top_row (live_region + sidebar), top_sep,
-        # status, mid_sep, input, menu, bottom_sep, hint.
-        assert len(children) == 8, f"unexpected HSplit child count: {len(children)}"
-        # Index 0 packs the live region and the todo sidebar
-        # side-by-side; assert it's a VSplit rather than touching
-        # internal references.
-        assert isinstance(children[0], VSplit), "index 0 must be the live_region + sidebar VSplit"
-        assert children[2] is app._status_window, "status bar must stay full-width below the output row"
+        assert len(children) == 2, f"root should have 2 children (top_row, dynamic); got {len(children)}"
+        assert isinstance(children[0], VSplit), "index 0 must be the output + sidebar VSplit"
         top_children = list(children[0].get_children())
         assert top_children == [app._output_window, app._todo_sidebar]
-        # The menu must sit at index 5, immediately after the input (index 4;
-        # the TextArea is flattened into its wrapping Window by prompt_toolkit
-        # so the identity check is made on the menu itself).
-        assert children[5] is app._completions_menu
+
+        assert isinstance(children[1], DynamicContainer), "index 1 must be the dynamic bottom slot"
+        bottom = children[1].get_container()
+        assert isinstance(bottom, HSplit), "no wizard active → bottom is the normal HSplit"
+        bottom_children = list(bottom.get_children())
+        # Expected order in normal bottom: top_sep, status, mid_sep, input, menu, bottom_sep, hint.
+        assert len(bottom_children) == 7, f"unexpected bottom HSplit child count: {len(bottom_children)}"
+        assert bottom_children[1] is app._status_window, "status bar must follow the leading separator"
+        # Menu (index 4) sits immediately after the input (index 3; the TextArea
+        # is flattened into its wrapping Window by prompt_toolkit).
+        assert bottom_children[4] is app._completions_menu
 
     def test_app_runs_in_full_screen_with_mouse_support(self):
         """Sidebar can only sit "next to" the output history when the

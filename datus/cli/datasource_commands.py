@@ -19,7 +19,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from datus.cli._cli_utils import _run_sub_application
 from datus.cli.cli_styles import print_error, print_info, print_success, print_warning
 from datus.cli.datasource_app import DatasourceApp, DatasourceSelection
 from datus.cli.datasource_manager import serialize_services_section
@@ -94,7 +93,17 @@ class DatasourceCommands:
             return
 
     def _run_app(self, app: DatasourceApp) -> Optional[DatasourceSelection]:
-        return _run_sub_application(app)
+        """Embed in active TUI when available, otherwise run standalone.
+
+        Note: the previous implementation passed the wizard directly to
+        ``_run_sub_application``, but with the dual-mode refactor the
+        wizard no longer owns an ``Application`` until ``run()`` builds
+        one — call ``run()``/``build_embedded_panel`` explicitly.
+        """
+        tui_app = getattr(self.cli, "tui_app", None)
+        if tui_app is not None and getattr(tui_app, "_loop", None) is not None:
+            return tui_app.run_wizard(app.build_embedded_panel)
+        return app.run()
 
     # ── Switch ───────────────────────────────────────────────────
 

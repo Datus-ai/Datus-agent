@@ -17,10 +17,11 @@ separator lines, and a footer hint row.
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.key_binding import KeyBindings
@@ -31,6 +32,7 @@ from prompt_toolkit.layout.dimension import Dimension
 from rich.console import Console
 
 from datus.cli.cli_styles import CLR_CURRENT, CLR_CURSOR, SYM_ARROW, print_error, render_tui_title_bar
+from datus.cli.tui.wizard_host import EmbeddedWizard, resolve_cancel, resolve_with
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -77,8 +79,12 @@ class LanguageSelection:
 class LanguageApp:
     """Two-step language picker: language code -> persistence scope.
 
-    The caller wraps ``app.run()`` in ``tui_app.suspend_input()`` when the
-    REPL is in TUI mode. Returns ``None`` on cancel (Escape / Ctrl-C).
+    Same dual-mode wiring as :class:`datus.cli.effort_app.EffortApp` —
+    :meth:`run` runs the legacy standalone Application; the host
+    (:class:`DatusApp`) calls :meth:`build_embedded_panel` to embed
+    the wizard in its bottom slot. ``self._on_done`` is the swap
+    point shared by both paths.
+    Returns ``None`` on cancel (Escape / Ctrl-C).
     """
 
     def __init__(
@@ -116,17 +122,49 @@ class LanguageApp:
                 max(0, len(self._lang_keys) - self._max_visible),
             )
 
-        self._app = self._build_app()
+        # Active "finish" callable — see EffortApp for the rationale.
+        self._on_done: Optional[Callable[[Optional[LanguageSelection]], None]] = None
+
+    # ── Standalone entry point ────────────────────────────────────
 
     def run(self) -> Optional[LanguageSelection]:
+        kb = self._build_key_bindings()
+        root, list_window = self._build_root_container(kb)
+        app = Application(
+            layout=Layout(root, focused_element=list_window),
+            key_bindings=kb,
+            full_screen=False,
+            mouse_support=False,
+            erase_when_done=True,
+        )
+        self._on_done = lambda result: app.exit(result=result)
         try:
-            return self._app.run()
+            return app.run()
         except KeyboardInterrupt:
             return None
         except Exception as exc:
             logger.error("LanguageApp crashed: %s", exc)
             print_error(self._console, f"/language error: {exc}")
             return None
+        finally:
+            self._on_done = None
+
+    # ── Embedded entry point ──────────────────────────────────────
+
+    def build_embedded_panel(self, done_future: "asyncio.Future") -> EmbeddedWizard:
+        self._on_done = lambda result: (
+            resolve_cancel(done_future) if result is None else resolve_with(done_future, result)
+        )
+        kb = self._build_key_bindings()
+        root, list_window = self._build_root_container(kb)
+        return EmbeddedWizard(
+            container=root,
+            key_bindings=kb,
+            first_focus=list_window,
+            done_future=done_future,
+        )
+
+    # ── Internals ────────────────────────────────────────────────
 
     def _default_lang_index(self) -> int:
         if self._current in self._lang_keys:
@@ -140,11 +178,16 @@ class LanguageApp:
             return idx - self._max_visible + 1
         return offset
 
-    def _build_app(self) -> Application:
+    def _finish(self, result: Optional[LanguageSelection]) -> None:
+        if self._on_done is None:
+            return
+        self._on_done(result)
+
+    def _build_key_bindings(self) -> KeyBindings:
         kb = KeyBindings()
 
         @kb.add("up")
-        def _up(event):
+        def _up(event):  # noqa: ANN001
             if self._phase == _Phase.LANGUAGE:
                 total = len(self._lang_keys)
                 self._lang_idx = (self._lang_idx - 1) % total
@@ -156,7 +199,7 @@ class LanguageApp:
                 self._scope_idx = max(0, self._scope_idx - 1)
 
         @kb.add("down")
-        def _down(event):
+        def _down(event):  # noqa: ANN001
             if self._phase == _Phase.LANGUAGE:
                 total = len(self._lang_keys)
                 self._lang_idx = (self._lang_idx + 1) % total
@@ -168,58 +211,58 @@ class LanguageApp:
                 self._scope_idx = min(len(self._scope_keys) - 1, self._scope_idx + 1)
 
         @kb.add("pageup")
-        def _page_up(event):
+        def _page_up(event):  # noqa: ANN001
             if self._phase == _Phase.LANGUAGE:
                 self._lang_idx = max(0, self._lang_idx - self._max_visible)
                 self._lang_offset = self._ensure_visible(self._lang_idx, self._lang_offset, len(self._lang_keys))
 
         @kb.add("pagedown")
-        def _page_down(event):
+        def _page_down(event):  # noqa: ANN001
             if self._phase == _Phase.LANGUAGE:
                 total = len(self._lang_keys)
                 self._lang_idx = min(total - 1, self._lang_idx + self._max_visible)
                 self._lang_offset = self._ensure_visible(self._lang_idx, self._lang_offset, total)
 
         @kb.add("enter")
-        def _enter(event):
+        def _enter(event):  # noqa: ANN001
             if self._phase == _Phase.LANGUAGE:
                 self._selected_code = self._lang_keys[self._lang_idx]
                 self._phase = _Phase.SCOPE
                 self._scope_idx = 0
                 self._scope_offset = 0
-            else:
-                scope = self._scope_keys[self._scope_idx]
-                event.app.exit(LanguageSelection(code=self._selected_code, scope=scope))
+                event.app.invalidate()
+                return
+            scope = self._scope_keys[self._scope_idx]
+            self._finish(LanguageSelection(code=self._selected_code, scope=scope))
 
         @kb.add("escape")
-        def _escape(event):
-            event.app.exit(None)
+        def _escape(event):  # noqa: ANN001
+            self._finish(None)
 
         @kb.add("c-c")
-        def _ctrl_c(event):
-            event.app.exit(None)
+        def _ctrl_c(event):  # noqa: ANN001
+            self._finish(None)
 
+        return kb
+
+    def _build_root_container(self, kb: KeyBindings) -> Tuple[HSplit, Window]:
         header_window = Window(
             content=FormattedTextControl(self._render_header, focusable=False),
             height=Dimension(min=1, max=2),
         )
-
         list_window = Window(
-            content=FormattedTextControl(self._render_list, focusable=True),
+            content=FormattedTextControl(self._render_list, focusable=True, key_bindings=kb),
             always_hide_cursor=True,
             height=Dimension(min=3),
         )
-
         hint_window = Window(
             content=FormattedTextControl(self._render_footer_hint, focusable=False),
             height=1,
         )
-
         title_bar = Window(
             content=FormattedTextControl(lambda: render_tui_title_bar("Language Selection")),
             height=1,
         )
-
         root = HSplit(
             [
                 title_bar,
@@ -230,14 +273,7 @@ class LanguageApp:
                 hint_window,
             ]
         )
-
-        return Application(
-            layout=Layout(root, focused_element=list_window),
-            key_bindings=kb,
-            full_screen=False,
-            mouse_support=False,
-            erase_when_done=True,
-        )
+        return root, list_window
 
     def _render_header(self) -> List[Tuple[str, str]]:
         lines: List[Tuple[str, str]] = []

@@ -1254,9 +1254,8 @@ class DatusCLI:
                 seed_tab=current_seed,
             )
             tui_app = getattr(self, "tui_app", None)
-            if tui_app is not None:
-                with tui_app.suspend_input():
-                    sel = app.run()
+            if tui_app is not None and getattr(tui_app, "_loop", None) is not None:
+                sel = tui_app.run_wizard(app.build_embedded_panel)
             else:
                 sel = app.run()
             if sel is None:
@@ -1394,26 +1393,27 @@ class DatusCLI:
             logger.warning("Failed to refresh in-memory agent config: %s", exc)
 
     def _run_profile_picker(self, current: str) -> Optional[str]:
-        """Run the standalone ProfilePickerApp; return selection or None."""
+        """Run ProfilePickerApp embedded in TUI when available."""
         from datus.cli.profile_picker_app import ProfilePickerApp
 
         app = ProfilePickerApp(console=self.console, current=current)
         tui_app = getattr(self, "tui_app", None)
-        if tui_app is not None:
-            with tui_app.suspend_input():
-                return app.run()
+        if tui_app is not None and getattr(tui_app, "_loop", None) is not None:
+            return tui_app.run_wizard(app.build_embedded_panel)
         return app.run()
 
     def _run_dangerous_confirm(self) -> bool:
-        """Run the standalone DangerousConfirmApp; return True only if
-        the user explicitly enabled Dangerous."""
+        """Run DangerousConfirmApp embedded in TUI when available.
+
+        Returns True only if the user explicitly enabled Dangerous.
+        """
         from datus.cli.profile_picker_app import DangerousConfirmApp
 
         app = DangerousConfirmApp(console=self.console)
         tui_app = getattr(self, "tui_app", None)
-        if tui_app is not None:
-            with tui_app.suspend_input():
-                return app.run()
+        if tui_app is not None and getattr(tui_app, "_loop", None) is not None:
+            result = tui_app.run_wizard(app.build_embedded_panel)
+            return result == "enable"
         return app.run()
 
     def _parse_command(self, text: str) -> Tuple[CommandType, str, str]:

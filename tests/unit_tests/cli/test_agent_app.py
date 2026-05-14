@@ -131,7 +131,7 @@ class TestSetDefault:
         app._apply_seed()
         gen_sql_idx = app._builtin_names.index("gen_sql")
         app._list_cursor = gen_sql_idx
-        with patch.object(app._app, "exit") as exit_mock, patch.object(app._app.layout, "focus"):
+        with patch.object(app, "_finish") as exit_mock, patch.object(app, "_focus"):
             app._on_list_enter()
         exit_mock.assert_not_called()
         assert app._view == _View.BUILTIN_EDIT
@@ -145,7 +145,7 @@ class TestSetDefault:
         app._apply_seed()
         chat_idx = app._builtin_names.index("chat")
         app._list_cursor = chat_idx
-        with patch.object(app._app, "exit") as exit_mock:
+        with patch.object(app, "_finish") as exit_mock:
             app._on_list_enter()
         exit_mock.assert_not_called()
         assert app._view == _View.AGENT_LIST
@@ -156,9 +156,9 @@ class TestSetDefault:
         app._apply_seed()
         app._tab = _Tab.CUSTOM
         app._list_cursor = 1  # beta
-        with patch.object(app._app, "exit") as exit_mock:
+        with patch.object(app, "_finish") as exit_mock:
             app._on_list_enter()
-        sel = exit_mock.call_args.kwargs["result"]
+        sel = exit_mock.call_args.args[0]
         assert sel.kind == "set_default"
         assert sel.name == "beta"
 
@@ -177,9 +177,9 @@ class TestCustomTabActions:
         app._apply_seed()
         app._tab = _Tab.CUSTOM
         app._list_cursor = len(app._custom_names)
-        with patch.object(app._app, "exit") as exit_mock:
+        with patch.object(app, "_finish") as exit_mock:
             app._on_list_enter()
-        sel = exit_mock.call_args.kwargs["result"]
+        sel = exit_mock.call_args.args[0]
         assert sel.kind == "new_custom"
         assert sel.return_to_tab == "custom"
 
@@ -188,9 +188,9 @@ class TestCustomTabActions:
         app._apply_seed()
         app._tab = _Tab.CUSTOM
         app._list_cursor = 0
-        with patch.object(app._app, "exit") as exit_mock:
+        with patch.object(app, "_finish") as exit_mock:
             app._on_list_edit()
-        sel = exit_mock.call_args.kwargs["result"]
+        sel = exit_mock.call_args.args[0]
         assert sel.kind == "edit_custom"
         assert sel.name == "alpha"
 
@@ -201,12 +201,12 @@ class TestCustomTabActions:
         app._apply_seed()
         app._tab = _Tab.CUSTOM
         app._list_cursor = 0
-        with patch.object(app._app, "exit") as exit_mock:
+        with patch.object(app, "_finish") as exit_mock:
             app._on_delete_custom()
             exit_mock.assert_not_called()
             assert app._pending_delete_custom == "alpha"
             app._on_delete_custom()
-        sel = exit_mock.call_args.kwargs["result"]
+        sel = exit_mock.call_args.args[0]
         assert sel.kind == "delete_custom"
         assert sel.name == "alpha"
         assert app._pending_delete_custom is None
@@ -224,7 +224,7 @@ class TestBuiltinEdit:
         # Pick a real built-in (not 'chat').
         gen_sql_idx = app._builtin_names.index("gen_sql")
         app._list_cursor = gen_sql_idx
-        with patch.object(app._app.layout, "focus"):
+        with patch.object(app, "_focus"):
             app._on_list_edit()
         assert app._view == _View.BUILTIN_EDIT
         assert app._edit_target == "gen_sql"
@@ -236,7 +236,7 @@ class TestBuiltinEdit:
         app._apply_seed()
         gen_sql_idx = app._builtin_names.index("gen_sql")
         app._list_cursor = gen_sql_idx
-        with patch.object(app._app.layout, "focus"):
+        with patch.object(app, "_focus"):
             app._on_list_edit()
         assert app._max_turns_input.text == "42"
 
@@ -249,7 +249,7 @@ class TestBuiltinEdit:
         app._apply_seed()
         gen_sql_idx = app._builtin_names.index("gen_sql")
         app._list_cursor = gen_sql_idx
-        with patch.object(app._app.layout, "focus"):
+        with patch.object(app, "_focus"):
             app._on_list_edit()
         app._max_turns_input.text = "15"
         app._submit_builtin_edit()
@@ -265,7 +265,7 @@ class TestBuiltinEdit:
         app._apply_seed()
         gen_sql_idx = app._builtin_names.index("gen_sql")
         app._list_cursor = gen_sql_idx
-        with patch.object(app._app.layout, "focus"):
+        with patch.object(app, "_focus"):
             app._on_list_edit()
         app._max_turns_input.text = "42"
         app._submit_builtin_edit()
@@ -276,7 +276,7 @@ class TestBuiltinEdit:
         app._apply_seed()
         gen_sql_idx = app._builtin_names.index("gen_sql")
         app._list_cursor = gen_sql_idx
-        with patch.object(app._app.layout, "focus"):
+        with patch.object(app, "_focus"):
             app._on_list_edit()
         app._max_turns_input.text = ""
         app._submit_builtin_edit()
@@ -287,7 +287,7 @@ class TestBuiltinEdit:
         app._apply_seed()
         gen_sql_idx = app._builtin_names.index("gen_sql")
         app._list_cursor = gen_sql_idx
-        with patch.object(app._app.layout, "focus"):
+        with patch.object(app, "_focus"):
             app._on_list_edit()
         app._max_turns_input.text = "not-a-number"
         app._submit_builtin_edit()
@@ -300,7 +300,7 @@ class TestBuiltinEdit:
         app._apply_seed()
         gen_sql_idx = app._builtin_names.index("gen_sql")
         app._list_cursor = gen_sql_idx
-        with patch.object(app._app.layout, "focus"):
+        with patch.object(app, "_focus"):
             app._on_list_edit()
         app._max_turns_input.text = "0"
         app._submit_builtin_edit()

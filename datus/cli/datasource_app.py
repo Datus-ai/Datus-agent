@@ -16,10 +16,14 @@ Follows the same architecture as :mod:`datus.cli.model_app`:
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from datus.cli.tui.wizard_host import EmbeddedWizard
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.filters import Condition
@@ -31,7 +35,7 @@ from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.widgets import TextArea
 from rich.console import Console
 
-from datus.cli.cli_styles import CLR_CURRENT, CLR_CURSOR
+from datus.cli.cli_styles import CLR_CURRENT, CLR_CURSOR, render_tui_title_bar
 from datus.configuration.agent_config import AgentConfig
 from datus.utils.loggings import get_logger
 
@@ -133,9 +137,22 @@ class DatasourceApp:
         self._form_focus_idx: int = 0
         self._form_container: Optional[HSplit] = None
 
-        self._app = self._build_application()
+        # Dual-mode finish hook — see EffortApp.
+        self._on_done: Optional[Callable[[Optional[DatasourceSelection]], None]] = None
+        self._app: Optional[Application] = None
 
     def run(self) -> Optional[DatasourceSelection]:
+        """Run as a transient standalone Application (non-TUI fallback)."""
+        kb = self._build_key_bindings()
+        root = self._build_root_container(kb)
+        self._app = Application(
+            layout=Layout(root),
+            key_bindings=kb,
+            full_screen=False,
+            mouse_support=False,
+            erase_when_done=True,
+        )
+        self._on_done = lambda result: self._app.exit(result=result)
         try:
             return self._app.run()
         except KeyboardInterrupt:
@@ -144,8 +161,21 @@ class DatasourceApp:
             logger.error("DatasourceApp crashed: %s", exc)
             self._console.print(f"[red]/datasource error:[/] {exc}")
             return None
+        finally:
+            self._on_done = None
+            self._app = None
 
     async def run_async(self) -> Optional[DatasourceSelection]:
+        kb = self._build_key_bindings()
+        root = self._build_root_container(kb)
+        self._app = Application(
+            layout=Layout(root),
+            key_bindings=kb,
+            full_screen=False,
+            mouse_support=False,
+            erase_when_done=True,
+        )
+        self._on_done = lambda result: self._app.exit(result=result)
         try:
             return await self._app.run_async()
         except KeyboardInterrupt:
@@ -153,6 +183,53 @@ class DatasourceApp:
         except Exception as exc:
             logger.error("DatasourceApp crashed: %s", exc)
             return None
+        finally:
+            self._on_done = None
+            self._app = None
+
+    def build_embedded_panel(self, done_future: "asyncio.Future") -> "EmbeddedWizard":
+        from datus.cli.tui.wizard_host import EmbeddedWizard, resolve_cancel, resolve_with
+
+        def _done(result):
+            if result is None:
+                resolve_cancel(done_future)
+            else:
+                resolve_with(done_future, result)
+
+        self._on_done = _done
+        kb = self._build_key_bindings()
+        root = self._build_root_container(kb)
+        return EmbeddedWizard(
+            container=root,
+            key_bindings=kb,
+            first_focus=self._list_window,
+            done_future=done_future,
+        )
+
+    def _finish(self, result: Optional["DatasourceSelection"]) -> None:
+        if self._on_done is None:
+            return
+        self._on_done(result)
+
+    def _layout(self) -> Optional[Layout]:
+        app = getattr(self, "_app", None)
+        if app is not None:
+            return app.layout
+        try:
+            from prompt_toolkit.application import get_app
+
+            return get_app().layout
+        except Exception:
+            return None
+
+    def _focus(self, target) -> None:
+        layout = self._layout()
+        if layout is None or target is None:
+            return
+        try:
+            layout.focus(target)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("DatasourceApp focus(%r) failed: %s", target, exc)
 
     # ── Data loading ──────────────────────────────────────────────
 
@@ -190,9 +267,9 @@ class DatasourceApp:
 
     # ── Layout ────────────────────────────────────────────────────
 
-    def _build_application(self) -> Application:
+    def _build_root_container(self, kb: KeyBindings) -> HSplit:
         self._list_window = Window(
-            content=FormattedTextControl(self._render_list, focusable=True),
+            content=FormattedTextControl(self._render_list, focusable=True, key_bindings=kb),
             always_hide_cursor=True,
             height=Dimension(min=3),
         )
@@ -210,21 +287,23 @@ class DatasourceApp:
             filter=Condition(lambda: bool(self._error_message)),
         )
 
-        root = HSplit(
+        # Match the visual chrome of /model, /effort, /language, …:
+        # title row + top separator above the body, bottom separator
+        # above the hint row.
+        title_bar = Window(
+            content=FormattedTextControl(lambda: render_tui_title_bar("Datasources")),
+            height=1,
+        )
+
+        return HSplit(
             [
+                title_bar,
+                Window(height=1, char="\u2500"),
                 DynamicContainer(self._body_container),
                 error_window,
                 Window(height=1, char="\u2500"),
                 hint_window,
             ]
-        )
-
-        return Application(
-            layout=Layout(root),
-            key_bindings=self._build_key_bindings(),
-            full_screen=False,
-            mouse_support=False,
-            erase_when_done=True,
         )
 
     def _body_container(self):
@@ -446,7 +525,7 @@ class DatasourceApp:
         self._error_message = None
 
         if self._form_textareas:
-            self._app.layout.focus(self._form_textareas[0])
+            self._focus(self._form_textareas[0])
 
     # ── Form helpers ──────────────────────────────────────────────
 
@@ -470,7 +549,7 @@ class DatasourceApp:
         if not self._form_focus_order:
             return
         self._form_focus_idx = (self._form_focus_idx + delta) % len(self._form_focus_order)
-        self._app.layout.focus(self._form_focus_order[self._form_focus_idx])
+        self._focus(self._form_focus_order[self._form_focus_idx])
 
     def _submit_form(self) -> None:
         payload: Dict[str, Any] = {"type": self._form_db_type}
@@ -484,18 +563,18 @@ class DatasourceApp:
                 if not value:
                     self._error_message = "Datasource name is required."
                     self._form_focus_idx = i
-                    self._app.layout.focus(self._form_textareas[i])
+                    self._focus(self._form_textareas[i])
                     return
                 if not _SAFE_NAME_RE.match(value):
                     self._error_message = "Name may only contain letters, digits, hyphens, and underscores."
                     self._form_focus_idx = i
-                    self._app.layout.focus(self._form_textareas[i])
+                    self._focus(self._form_textareas[i])
                     return
                 existing_names = {n for n, _, _ in self._datasources}
                 if value in existing_names:
                     self._error_message = f"Datasource '{value}' already exists."
                     self._form_focus_idx = i
-                    self._app.layout.focus(self._form_textareas[i])
+                    self._focus(self._form_textareas[i])
                     return
                 payload["_name"] = value
                 continue
@@ -504,7 +583,7 @@ class DatasourceApp:
                 label = fn.replace("_", " ").capitalize()
                 self._error_message = f"{label} is required."
                 self._form_focus_idx = i
-                self._app.layout.focus(self._form_textareas[i])
+                self._focus(self._form_textareas[i])
                 return
 
             is_pw = meta.get("input_type") == "password" or fn == "password"
@@ -519,22 +598,22 @@ class DatasourceApp:
                         if pk == "port" and not (1 <= int_val <= 65535):
                             self._error_message = "Port must be between 1 and 65535."
                             self._form_focus_idx = i
-                            self._app.layout.focus(self._form_textareas[i])
+                            self._focus(self._form_textareas[i])
                             return
                         payload[pk] = int_val
                     except ValueError:
                         label = fn.replace("_", " ").capitalize()
                         self._error_message = f"{label} must be a valid integer."
                         self._form_focus_idx = i
-                        self._app.layout.focus(self._form_textareas[i])
+                        self._focus(self._form_textareas[i])
                         return
                 else:
                     payload[pk] = value
 
         if self._form_edit_name:
-            self._app.exit(result=DatasourceSelection(kind="edit_submit", name=self._form_edit_name, payload=payload))
+            self._finish(DatasourceSelection(kind="edit_submit", name=self._form_edit_name, payload=payload))
         else:
-            self._app.exit(result=DatasourceSelection(kind="add_submit", db_type=self._form_db_type, payload=payload))
+            self._finish(DatasourceSelection(kind="add_submit", db_type=self._form_db_type, payload=payload))
 
     # ── Key bindings ──────────────────────────────────────────────
 
@@ -587,7 +666,7 @@ class DatasourceApp:
             idx = self._list_cursor
             if idx < len(self._datasources):
                 name, _, _ = self._datasources[idx]
-                event.app.exit(result=DatasourceSelection(kind="switch", name=name))
+                self._finish(DatasourceSelection(kind="switch", name=name))
             else:
                 self._enter_type_select()
 
@@ -616,14 +695,14 @@ class DatasourceApp:
                 self._enter_config_form(db_type, edit_name=name, existing=existing)
             elif action_key == _ACTION_DELETE:
                 if self._pending_delete:
-                    event.app.exit(result=DatasourceSelection(kind="delete", name=name))
+                    self._finish(DatasourceSelection(kind="delete", name=name))
                 else:
                     self._pending_delete = True
                     self._error_message = f"Delete '{name}'? Press Enter again to confirm, Esc to cancel."
             elif action_key == _ACTION_SET_DEFAULT:
-                event.app.exit(result=DatasourceSelection(kind="set_default", name=name))
+                self._finish(DatasourceSelection(kind="set_default", name=name))
             elif action_key == _ACTION_INSTALL:
-                event.app.exit(result=DatasourceSelection(kind="install", name=name, db_type=db_type))
+                self._finish(DatasourceSelection(kind="install", name=name, db_type=db_type))
 
         # ── Type select Enter ────────────────────────────────────
         @kb.add("enter", filter=Condition(lambda: self._view == _View.TYPE_SELECT))
@@ -632,14 +711,14 @@ class DatasourceApp:
                 return
             key, _, installed = self._db_types[self._list_cursor]
             if not installed:
-                event.app.exit(result=DatasourceSelection(kind="needs_install", db_type=key))
+                self._finish(DatasourceSelection(kind="needs_install", db_type=key))
             else:
                 self._enter_config_form(key)
 
         # ── Escape / back ────────────────────────────────────────
         @kb.add("escape", filter=is_ds_list)
         def _(event):
-            event.app.exit(result=None)
+            self._finish(None)
 
         @kb.add("escape", filter=is_action)
         def _(event):
@@ -691,7 +770,7 @@ class DatasourceApp:
         # ── Global cancel ────────────────────────────────────────
         @kb.add("c-c")
         def _(event):
-            event.app.exit(result=None)
+            self._finish(None)
 
         return kb
 

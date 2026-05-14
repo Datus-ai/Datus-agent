@@ -20,10 +20,14 @@ Mirrors :mod:`datus.cli.model_app`:
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from datus.cli.tui.wizard_host import EmbeddedWizard
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.filters import Condition
@@ -150,14 +154,27 @@ class SkillApp:
         term_height = shutil.get_terminal_size((120, 40)).lines
         self._max_visible: int = max(3, min(15, term_height - 7))
 
-        self._app = self._build_application()
+        # Dual-mode finish hook — see EffortApp for the pattern.
+        self._on_done: Optional[Callable[[Optional[SkillSelection]], None]] = None
+        self._app: Optional[Application] = None
+        self._list_window: Optional[Window] = None
 
     # ─────────────────────────────────────────────────────────────────
     # Public API
     # ─────────────────────────────────────────────────────────────────
 
     def run(self) -> Optional[SkillSelection]:
-        """Run the Application. Returns ``None`` on cancel / Ctrl-C."""
+        """Run as a transient standalone Application (non-TUI fallback)."""
+        kb = self._build_key_bindings()
+        root = self._build_root_container(kb)
+        self._app = Application(
+            layout=Layout(root, focused_element=None),
+            key_bindings=kb,
+            full_screen=False,
+            mouse_support=False,
+            erase_when_done=True,
+        )
+        self._on_done = lambda result: self._app.exit(result=result)
         try:
             return self._app.run()
         except KeyboardInterrupt:
@@ -166,24 +183,71 @@ class SkillApp:
             logger.error("SkillApp crashed: %s", exc)
             print_error(self._console, f"/skill error: {exc}")
             return None
+        finally:
+            self._on_done = None
+            self._app = None
+
+    def build_embedded_panel(self, done_future: "asyncio.Future") -> "EmbeddedWizard":
+        from datus.cli.tui.wizard_host import EmbeddedWizard, resolve_cancel, resolve_with
+
+        def _done(result):
+            if result is None:
+                resolve_cancel(done_future)
+            else:
+                resolve_with(done_future, result)
+
+        self._on_done = _done
+        kb = self._build_key_bindings()
+        root = self._build_root_container(kb)
+        return EmbeddedWizard(
+            container=root,
+            key_bindings=kb,
+            first_focus=self._list_window,
+            done_future=done_future,
+        )
+
+    def _finish(self, result: Optional["SkillSelection"]) -> None:
+        if self._on_done is None:
+            return
+        self._on_done(result)
+
+    def _layout(self) -> Optional[Layout]:
+        if self._app is not None:
+            return self._app.layout
+        try:
+            from prompt_toolkit.application import get_app
+
+            return get_app().layout
+        except Exception:
+            return None
+
+    def _focus(self, target) -> None:
+        layout = self._layout()
+        if layout is None or target is None:
+            return
+        try:
+            layout.focus(target)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("SkillApp focus(%r) failed: %s", target, exc)
 
     # ─────────────────────────────────────────────────────────────────
     # Layout
     # ─────────────────────────────────────────────────────────────────
 
-    def _build_application(self) -> Application:
+    def _build_root_container(self, kb: KeyBindings) -> HSplit:
         tab_window = Window(
             content=FormattedTextControl(self._render_tab_strip, focusable=False),
             height=1,
             style="class:skill-app.tabs",
         )
 
-        list_window = Window(
-            content=FormattedTextControl(self._render_list, focusable=True),
+        self._list_window = Window(
+            content=FormattedTextControl(self._render_list, focusable=True, key_bindings=kb),
             always_hide_cursor=True,
             style="class:skill-app.list",
             height=Dimension(min=3),
         )
+        list_window = self._list_window
 
         detail_window = Window(
             content=FormattedTextControl(self._render_detail, focusable=False),
@@ -245,7 +309,7 @@ class SkillApp:
             height=1,
         )
 
-        root = HSplit(
+        return HSplit(
             [
                 title_bar,
                 tab_window,
@@ -255,14 +319,6 @@ class SkillApp:
                 Window(height=1, char="\u2500", style="class:skill-app.separator"),
                 hint_window,
             ]
-        )
-
-        return Application(
-            layout=Layout(root, focused_element=None),
-            key_bindings=self._build_key_bindings(),
-            full_screen=False,
-            mouse_support=False,
-            erase_when_done=True,
         )
 
     # ─────────────────────────────────────────────────────────────────
@@ -505,7 +561,7 @@ class SkillApp:
         self._pending_remove = None
         self._form_focus_order = [self._login_email, self._login_password, self._login_url]
         self._form_focus_idx = 0
-        self._app.layout.focus(self._login_email)
+        self._focus(self._login_email)
 
     def _enter_search_bar(self) -> None:
         if self._tab != _Tab.MARKETPLACE:
@@ -515,7 +571,7 @@ class SkillApp:
         self._pending_remove = None
         self._form_focus_order = [self._search_input]
         self._form_focus_idx = 0
-        self._app.layout.focus(self._search_input)
+        self._focus(self._search_input)
 
     # ─────────────────────────────────────────────────────────────────
     # Actions
@@ -530,7 +586,7 @@ class SkillApp:
         if not name:
             return
         self._result = SkillSelection(kind="install", name=name, version=version)
-        self._app.exit(result=self._result)
+        self._finish(self._result)
 
     def _on_update(self) -> None:
         row = self._current_row()
@@ -540,7 +596,7 @@ class SkillApp:
             self._error_message = f"`{row.name}` is not marketplace-sourced — nothing to update."
             return
         self._result = SkillSelection(kind="update", name=row.name)
-        self._app.exit(result=self._result)
+        self._finish(self._result)
 
     def _on_remove(self) -> None:
         row = self._current_row()
@@ -549,18 +605,18 @@ class SkillApp:
         if self._pending_remove == row.name:
             self._pending_remove = None
             self._result = SkillSelection(kind="remove", name=row.name)
-            self._app.exit(result=self._result)
+            self._finish(self._result)
             return
         self._pending_remove = row.name
         self._error_message = f"Delete `{row.name}`? Press r again to confirm, any other key to cancel."
 
     def _on_logout(self) -> None:
         self._result = SkillSelection(kind="logout")
-        self._app.exit(result=self._result)
+        self._finish(self._result)
 
     def _on_refresh(self) -> None:
         self._result = SkillSelection(kind="refresh")
-        self._app.exit(result=self._result)
+        self._finish(self._result)
 
     def _submit_login_form(self) -> None:
         email = self._login_email.text.strip()
@@ -578,7 +634,7 @@ class SkillApp:
             password=password,
             marketplace_url=url,
         )
-        self._app.exit(result=self._result)
+        self._finish(self._result)
 
     def _apply_search_filter(self) -> None:
         self._filter_query = self._search_input.text.strip()
@@ -705,11 +761,11 @@ class SkillApp:
 
         @kb.add("q", filter=is_list)
         def _(event):
-            event.app.exit(result=SkillSelection(kind="cancel"))
+            self._finish(SkillSelection(kind="cancel"))
 
         @kb.add("escape", filter=is_list)
         def _(event):
-            event.app.exit(result=SkillSelection(kind="cancel"))
+            self._finish(SkillSelection(kind="cancel"))
 
         # ─── Detail view ─────────────────────────────────────────────
         @kb.add("escape", filter=is_detail)
@@ -776,7 +832,7 @@ class SkillApp:
         # ─── Global cancel ───────────────────────────────────────────
         @kb.add("c-c")
         def _(event):
-            event.app.exit(result=None)
+            self._finish(None)
 
         return kb
 
@@ -788,7 +844,7 @@ class SkillApp:
         if not self._form_focus_order:
             return
         self._form_focus_idx = (self._form_focus_idx + delta) % len(self._form_focus_order)
-        self._app.layout.focus(self._form_focus_order[self._form_focus_idx])
+        self._focus(self._form_focus_order[self._form_focus_idx])
 
     def _cycle_tab(self, direction: int = 1) -> None:
         try:

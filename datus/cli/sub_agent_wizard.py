@@ -8,11 +8,12 @@ It uses prompt_toolkit to create a terminal-based user interface (TUI)
 with side-by-side input and preview panes.
 """
 
+import asyncio
 import re
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Union
 
 import yaml
-from prompt_toolkit.application import Application
+from prompt_toolkit.application import Application, get_app
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer
 from prompt_toolkit.document import Document
@@ -44,6 +45,7 @@ logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from datus.cli import DatusCLI
+    from datus.cli.tui.wizard_host import EmbeddedWizard
 
 
 class LineCompleter(Completer):
@@ -114,7 +116,15 @@ class SubAgentWizard:
         self._init_key_bindings()
         self._init_layout()
 
-        self.app = Application(
+        # Dual-mode flag: when running embedded inside a parent
+        # ``DatusApp``, ``self.app`` (property) routes layout/loop/
+        # current_buffer queries through the parent so the wizard sees
+        # the active event loop. ``self._on_done`` is the embedded-mode
+        # finish hook; ``_finish()`` dispatches via either path.
+        self._embedded: bool = False
+        self._on_done: Optional[Callable[[Optional[SubAgentConfig]], None]] = None
+
+        self._standalone_app = Application(
             layout=self.layout,
             key_bindings=self.kb,
             style=self.style,
@@ -1060,7 +1070,7 @@ class SubAgentWizard:
         @self.kb.add("c-q")
         def _(event):
             self.done = True
-            event.app.exit(result=None)
+            self._finish(None)
 
         @self.kb.add("escape", filter=is_not_editing)
         def _(event):
@@ -1079,7 +1089,7 @@ class SubAgentWizard:
                     pass
             # Otherwise, cancel the wizard
             self.done = True
-            event.app.exit(result=None)
+            self._finish(None)
 
         @self.kb.add("c-n")
         def _(event):
@@ -1102,7 +1112,7 @@ class SubAgentWizard:
                     if self._validate_step():
                         self.done = True
                         result_config = self.data.model_copy(deep=True)
-                        event.app.exit(result=result_config)
+                        self._finish(result_config)
                 else:
                     if self._validate_step():
                         self.step += 1
@@ -1893,16 +1903,90 @@ class SubAgentWizard:
 
         self.style = Style.from_dict(SUB_AGENT_WIZARD_STYLE)
 
+    # ── Dual-mode plumbing ──────────────────────────────────────────────
+
+    @property
+    def app(self):
+        """Active prompt_toolkit Application.
+
+        Standalone mode: the wizard's own ``full_screen=True``
+        Application (constructed in ``__init__``). Embedded mode: the
+        currently-running parent app via ``get_app()`` — so calls like
+        ``self.app.layout.focus(...)``, ``self.app.invalidate()``,
+        ``self.app.current_buffer``, and ``self.app.loop`` route to
+        whichever event loop is actually rendering the wizard. The
+        wizard's windows are found by the parent's Layout because
+        ``EmbeddedWizard.container`` mounts them into the parent's
+        ``DynamicContainer`` slot.
+        """
+        if self._embedded:
+            try:
+                return get_app()
+            except Exception:
+                pass
+        return self._standalone_app
+
+    def _finish(self, result: Optional["SubAgentConfig"]) -> None:
+        """Dispatch the result through whichever path is active."""
+        if self._embedded:
+            if self._on_done is not None:
+                self._on_done(result)
+            return
+        # Standalone path: exit the wizard's own Application.
+        try:
+            self._standalone_app.exit(result=result)
+        except Exception as exc:  # pragma: no cover - defensive
+            print(f"SubAgentWizard exit failed: {exc}")
+
+    def build_embedded_panel(self, done_future: "asyncio.Future") -> "EmbeddedWizard":
+        """Build an :class:`EmbeddedWizard` for the parent DatusApp."""
+        from datus.cli.tui.wizard_host import EmbeddedWizard, resolve_cancel, resolve_with
+
+        self._embedded = True
+
+        def _done(result):
+            if result is None:
+                resolve_cancel(done_future)
+            else:
+                resolve_with(done_future, result)
+
+        self._on_done = _done
+
+        # The wizard's Layout root is a ``FloatContainer`` (Float dialogs
+        # for picker/error are mounted there). Embed it as-is so the
+        # picker dialogs still float over the wizard's own content,
+        # without polluting the parent TUI's float layer.
+        container = self.layout.container
+
+        # Selection watchers used to start via ``pre_run_callables``
+        # (which fire when the wizard's own Application starts its
+        # loop). In embedded mode the parent's loop is already running,
+        # so schedule the watcher tick immediately.
+        try:
+            self._start_selection_watchers()
+        except Exception as exc:  # pragma: no cover - defensive
+            print(f"SubAgentWizard selection watcher start failed: {exc}")
+
+        return EmbeddedWizard(
+            container=container,
+            key_bindings=self.kb,
+            first_focus=self.name_buffer,
+            done_future=done_future,
+        )
+
     def run(self) -> Optional[SubAgentConfig]:
-        """Run the wizard application."""
-        # Ensure selection watchers start exactly when the event loop is running.
-        # __init__ calls _start_selection_watchers() but the event loop is not
-        # yet active at that point, so call_later/call_soon silently fails.
-        # Register via pre_run_callables so the watcher starts once the loop is live.
+        """Run the wizard application as a standalone full-screen modal.
+
+        Used when no ``DatusApp`` is hosting (non-TUI fallback). The TUI
+        path goes through :meth:`build_embedded_panel` via
+        :meth:`DatusApp.run_wizard` so the wizard mounts inline below
+        the output pane instead of taking over the entire screen.
+        """
         from datus.cli._cli_utils import _run_sub_application
 
-        self.app.pre_run_callables = [self._start_selection_watchers]
-        return _run_sub_application(self.app)
+        self._embedded = False
+        self._standalone_app.pre_run_callables = [self._start_selection_watchers]
+        return _run_sub_application(self._standalone_app)
 
     def native_tools_choices(self) -> Dict[str, List[str]]:
         from datus.tools.func_tool import ContextSearchTools, DBFuncTool
@@ -1920,8 +2004,15 @@ class SubAgentWizard:
 def run_wizard(
     cli_instance: "DatusCLI", data: Optional[Union[SubAgentConfig, Dict[str, Any]]] = None
 ) -> Optional[SubAgentConfig]:
-    """
-    Initializes and runs the agent creation wizard.
+    """Initialize the agent-creation wizard and route it to the active TUI.
+
+    Embedded path (preferred): the parent ``DatusApp`` mounts the
+    wizard's layout in its bottom slot via ``run_wizard``. Standalone
+    path is the legacy ``Application(full_screen=True)`` modal used
+    when no TUI is running.
     """
     wizard = SubAgentWizard(cli_instance, data)
+    tui_app = getattr(cli_instance, "tui_app", None)
+    if tui_app is not None and getattr(tui_app, "_loop", None) is not None:
+        return tui_app.run_wizard(wizard.build_embedded_panel)
     return wizard.run()

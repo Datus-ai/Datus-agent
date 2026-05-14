@@ -34,21 +34,28 @@ import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
-from typing import Callable, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Iterator, List, Optional, Tuple
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.application.run_in_terminal import in_terminal
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer
-from prompt_toolkit.data_structures import Point
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition, has_completions, is_done, to_filter
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import History
-from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import Layout
-from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, ScrollOffsets, VSplit, Window
+from prompt_toolkit.layout.containers import (
+    AnyContainer,
+    ConditionalContainer,
+    DynamicContainer,
+    HSplit,
+    ScrollOffsets,
+    VSplit,
+    Window,
+)
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.menus import CompletionsMenuControl
@@ -60,6 +67,7 @@ from prompt_toolkit.widgets import TextArea
 
 from datus.cli.cli_styles import PASTE_COLLAPSE_THRESHOLD
 from datus.cli.tui.live_display_state import LiveDisplayState, compute_pinned_max_rows
+from datus.cli.tui.wizard_host import EmbeddedWizard
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -125,17 +133,16 @@ class DatusApp:
         # consulted by the sticky-bottom auto-scroll logic.
         self._output_tokens_fn = output_tokens_fn or (lambda: [])
         self._output_line_count_fn = output_line_count_fn or (lambda: 0)
-        # Sticky-bottom is driven by the FormattedTextControl cursor
-        # position. ``_output_at_bottom=True`` (the default) means the
-        # cursor tracks the very last logical line of content — every
-        # invalidate re-anchors the scroll viewport so freshly committed
-        # output stays in view. PgUp / wheel-up snapshot the logical
-        # cursor into ``_output_cursor_y`` and disengage; PgDn / wheel
-        # back to the last line re-engages. Wheel events come through the
-        # output Window's ``mouse_handler`` because FormattedTextControl
-        # has no built-in scroll behaviour.
+        # Sticky-bottom scroll model: ``_output_at_bottom=True`` (the
+        # default) means ``_get_output_scroll`` returns the max possible
+        # offset every frame, so new output is always in view. Wheel-up
+        # / PgUp snapshot the current top-of-viewport into
+        # ``_output_scroll_offset`` and disengage. Wheel-down / PgDn
+        # past the last row re-engages. Wheel events come through the
+        # output Window's ``mouse_handler`` (FormattedTextControl has
+        # no built-in scroll behaviour).
         self._output_at_bottom: bool = True
-        self._output_cursor_y: int = 0
+        self._output_scroll_offset: int = 0
 
         self._agent_running = threading.Event()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="datus-tui-worker")
@@ -216,15 +223,15 @@ class DatusApp:
         # so they appear at the bottom of the same pane, exactly where the
         # cursor would have rendered them in ``full_screen=False`` mode.
         #
-        # Sticky-bottom auto-scroll is achieved by pointing
-        # ``get_cursor_position`` at the last logical line of content and
-        # letting prompt_toolkit's built-in "scroll to keep cursor visible"
-        # do the work. PgUp / mouse-wheel-up disengage by moving the
-        # logical cursor up; PgDn / wheel-down back to the end re-engages.
-        # Using ``get_cursor_position`` instead of ``get_vertical_scroll``
-        # is required because ``wrap_lines=True`` makes logical-row counts
-        # mismatch visible-row counts, so a hand-rolled offset would
-        # systematically under-scroll on wrapped output.
+        # Scrolling model: explicit ``get_vertical_scroll`` callback +
+        # ``wrap_lines=False``. Rich is configured to wrap output at the
+        # pane width (see ``DatusCLI._init_tui_app`` setting
+        # ``Console(width=...)``), so each logical line in the buffer is
+        # already one visual row — ``vertical_scroll`` (counted in
+        # visual rows) maps 1:1 to our buffer's line count. This avoids
+        # the cursor-driven scroll's "wait for cursor to leave the
+        # viewport edge before shifting" hesitation that made trackpad
+        # scrolling feel like it stalled before suddenly jumping.
         self._output_window = Window(
             content=FormattedTextControl(
                 text=self._output_tokens_fn,
@@ -233,8 +240,9 @@ class DatusApp:
                 get_cursor_position=self._output_cursor_position,
             ),
             width=Dimension(weight=4),
-            wrap_lines=True,
-            scroll_offsets=ScrollOffsets(top=1, bottom=1),
+            wrap_lines=False,
+            scroll_offsets=ScrollOffsets(),
+            get_vertical_scroll=self._get_output_scroll,
             always_hide_cursor=to_filter(True),
             style="class:output-pane",
         )
@@ -257,9 +265,14 @@ class DatusApp:
         # terminal rows above the status bar / input / hint stack.
         top_row = VSplit([self._output_window, self._todo_sidebar])
 
-        root = HSplit(
+        # Bottom section is dynamic so sub-wizards can replace it. In
+        # normal operation we render status bar + input + hint; while
+        # an embedded wizard is active ``_active_wizard.container``
+        # takes the slot instead, hiding status + input and pushing the
+        # output row upward as much as the wizard needs. See
+        # ``datus/cli/tui/wizard_host.py`` for the embedding contract.
+        self._normal_bottom_section = HSplit(
             [
-                top_row,
                 self._make_separator(),
                 self._status_window,
                 self._make_separator(),
@@ -269,8 +282,25 @@ class DatusApp:
                 self._hint_window,
             ]
         )
+        self._active_wizard: Optional[EmbeddedWizard] = None
+        self._stashed_focus: Optional[Window] = None
+
+        root = HSplit(
+            [
+                top_row,
+                DynamicContainer(self._bottom_section),
+            ]
+        )
 
         self._kb = self._build_default_key_bindings()
+        # Mutable wizard-kb layer. Wizards push their bindings into this
+        # KeyBindings instance when mounted via :meth:`mount_wizard` and
+        # they are removed in :meth:`unmount_wizard`. We merge this into
+        # the app's key_bindings at construction time so it always wins
+        # over the focused widget's local bindings (e.g. a TextArea's
+        # built-in typing bindings don't shadow the wizard's Tab /
+        # Enter / Esc navigation).
+        self._wizard_kb_layer = KeyBindings()
 
         # ``full_screen=True`` so the output pane and sidebar share the
         # full terminal vertical real estate. ``mouse_support=True`` lights
@@ -279,7 +309,7 @@ class DatusApp:
         # inside the rendered area in exchange.
         self._app: Application = Application(
             layout=Layout(root, focused_element=self._input_area),
-            key_bindings=self._kb,
+            key_bindings=merge_key_bindings([self._kb, self._wizard_kb_layer]),
             style=style or Style([]),
             full_screen=True,
             mouse_support=True,
@@ -431,62 +461,85 @@ class DatusApp:
         """Rows to scroll on a single PageUp / PageDown keystroke."""
         return max(1, self._output_viewport_rows() - 1)
 
-    def _output_last_line_index(self) -> int:
-        """Index of the last logical line in the output token stream.
+    def _output_max_scroll(self) -> int:
+        """Max scroll offset given current content + viewport.
 
-        Returns 0 when there is no content so the cursor stays at the
-        origin instead of going negative (which would crash
-        prompt_toolkit's coordinate math).
+        Used by both ``_get_output_scroll`` (sticky-bottom anchor) and
+        the wheel/PgDn handlers (clamp). When content fits entirely in
+        the viewport this is ``0``; otherwise it's the offset that
+        puts the last line at the bottom row.
         """
-        return max(0, int(self._output_line_count_fn()) - 1)
+        total = int(self._output_line_count_fn())
+        viewport = self._output_viewport_rows()
+        return max(0, total - viewport)
 
-    def _output_cursor_position(self) -> Optional[Point]:
-        """Cursor position fed to ``FormattedTextControl``.
+    def _get_output_scroll(self, window) -> int:  # noqa: ANN001
+        """Window scroll callback — returns the top-row offset.
 
-        When sticky-bottom is engaged, the cursor sits on the last
-        logical line and prompt_toolkit's default behaviour (keep the
-        cursor visible within ``scroll_offsets``) auto-scrolls the pane
-        to show new output every paint. When the user has paged up the
-        cursor is clamped to ``_output_cursor_y`` so the viewport stays
-        where they left it. The cursor column is irrelevant; the
-        control is read-only and the cursor is hidden via
-        ``always_hide_cursor``.
-
-        Returns ``None`` when the buffer is empty — otherwise
-        prompt_toolkit's render loop dereferences ``fragment_lines[0]``
-        on an empty list (``controls.py:413``) and crashes the TUI.
+        Sticky-bottom: always pin to ``_output_max_scroll``. User
+        scrolled mode: return the snapshotted ``_output_scroll_offset``
+        clamped to current max so terminal resize / output growth
+        can't push the viewport into a negative gap.
         """
-        line_count = int(self._output_line_count_fn())
-        if line_count <= 0:
-            return None
-        last = line_count - 1
         if self._output_at_bottom:
-            return Point(x=0, y=last)
-        return Point(x=0, y=max(0, min(last, self._output_cursor_y)))
+            return self._output_max_scroll()
+        return max(0, min(self._output_scroll_offset, self._output_max_scroll()))
+
+    def _output_cursor_position(self):
+        """Match the cursor to our chosen scroll offset.
+
+        After ``get_vertical_scroll`` sets the viewport, prompt_toolkit's
+        ``do_scroll`` (in ``Window._scroll_without_linewrapping``) ALSO
+        pulls the scroll back to keep ``cursor_position`` visible. If
+        we leave the cursor at ``Point(0, 0)`` it ends up clamping the
+        viewport to row 0 every frame — sticky-bottom snaps to the top
+        the instant it's evaluated.
+        Returning a cursor synced to ``vertical_scroll`` (top of
+        viewport when scrolled, bottom of content when sticky) means
+        ``do_scroll`` sees the cursor as already-visible and leaves
+        the offset alone.
+        """
+        from prompt_toolkit.data_structures import Point
+
+        total = int(self._output_line_count_fn())
+        if total <= 0:
+            return None
+        scroll = self._get_output_scroll(self._output_window)
+        if self._output_at_bottom:
+            return Point(x=0, y=total - 1)  # last row → bottom of viewport
+        # Top of viewport — keeps do_scroll from pulling the offset down.
+        return Point(x=0, y=max(0, min(total - 1, scroll)))
 
     def _scroll_output_up(self, rows: int) -> None:
-        """Move the logical cursor up by ``rows``; disengage sticky-bottom."""
-        last = self._output_last_line_index()
-        # Snapshot the current scroll position into the explicit cursor
-        # state on the first PgUp so subsequent jumps are relative.
-        current = last if self._output_at_bottom else min(last, self._output_cursor_y)
-        self._output_cursor_y = max(0, current - max(1, rows))
-        self._output_at_bottom = False
+        """Shift viewport up by ``rows``; disengage sticky-bottom."""
+        rows = max(1, rows)
+        if self._output_at_bottom:
+            # Snapshot the current bottom-anchored position so the
+            # very first wheel-up tick moves visible content
+            # immediately (otherwise we'd start from a stale 0 offset
+            # and the user would feel a pause before the jump).
+            self._output_scroll_offset = self._output_max_scroll()
+            self._output_at_bottom = False
+        self._output_scroll_offset = max(0, self._output_scroll_offset - rows)
 
     def _scroll_output_down(self, rows: int) -> None:
-        """Move the logical cursor down by ``rows``; re-engage sticky-bottom on overshoot."""
-        last = self._output_last_line_index()
-        current = last if self._output_at_bottom else min(last, self._output_cursor_y)
-        new_y = current + max(1, rows)
-        if new_y >= last:
+        """Shift viewport down by ``rows``; re-engage sticky-bottom on overshoot."""
+        rows = max(1, rows)
+        if self._output_at_bottom:
+            return  # already at bottom; nothing to do
+        max_off = self._output_max_scroll()
+        new_off = self._output_scroll_offset + rows
+        if new_off >= max_off:
             self._output_at_bottom = True
-            self._output_cursor_y = last
+            self._output_scroll_offset = max_off
         else:
-            self._output_cursor_y = new_y
+            self._output_scroll_offset = new_off
 
-    # Wheel events scroll a small fixed step — matches what feels native
-    # in most terminal emulators.
-    _OUTPUT_WHEEL_STEP = 3
+    # Fixed step: every wheel event scrolls exactly one row. macOS
+    # trackpads emit dense streams of small events so they accumulate
+    # into smooth motion; a discrete mouse wheel click moves one row,
+    # which matches prompt_toolkit's built-in Window scroll cadence.
+    _OUTPUT_WHEEL_STEP = 1
 
     def _output_mouse_handler(self, event: MouseEvent):  # noqa: ANN001
         """Translate scroll-wheel events on the output pane into scroll motion.
@@ -657,6 +710,107 @@ class DatusApp:
         except RuntimeError:
             # Loop already closed; redraw is not meaningful anymore.
             pass
+
+    # ── Embedded sub-wizard host ─────────────────────────────────
+
+    def _bottom_section(self) -> AnyContainer:
+        """DynamicContainer callback for the root layout's bottom half.
+
+        Returns the active wizard's container when one is mounted,
+        otherwise the standard status+input+hint stack. Called on
+        every render so swapping the slot is a single field write
+        plus an ``invalidate``.
+        """
+        if self._active_wizard is not None:
+            return self._active_wizard.container
+        return self._normal_bottom_section
+
+    def mount_wizard(self, panel: EmbeddedWizard) -> None:
+        """Mount ``panel`` in the bottom slot. **Main-loop only**.
+
+        Worker threads must use :meth:`run_wizard` instead — it
+        marshals the call onto the loop and blocks on ``done_future``.
+
+        The wizard's key bindings are pushed into ``_wizard_kb_layer``
+        so they fire even when focus is on a TextArea (whose own
+        ``BufferControl`` has built-in typing bindings that would
+        otherwise shadow the wizard's Tab / Enter / Esc navigation).
+        ``unmount_wizard`` empties the layer.
+        """
+        self._active_wizard = panel
+        try:
+            self._stashed_focus = self._app.layout.current_window
+        except Exception:  # pragma: no cover - defensive
+            self._stashed_focus = None
+        # Inject the wizard's bindings into the global layer. We mutate
+        # ``bindings`` in place (the ``KeyBindings`` API doesn't expose
+        # a public ``extend``; the attribute is a public list).
+        if panel.key_bindings is not None:
+            self._wizard_kb_layer.bindings.extend(panel.key_bindings.bindings)
+            self._wizard_kb_layer._clear_cache()
+        if panel.first_focus is not None:
+            try:
+                self._app.layout.focus(panel.first_focus)
+            except Exception as exc:
+                logger.debug("mount_wizard: focus(panel.first_focus) failed: %s", exc)
+        self._app.invalidate()
+
+    def unmount_wizard(self) -> None:
+        """Restore the normal bottom section and input focus. Main-loop only."""
+        self._active_wizard = None
+        # Clear all wizard bindings from the layer.
+        self._wizard_kb_layer.bindings.clear()
+        self._wizard_kb_layer._clear_cache()
+        target: Optional[Any] = self._stashed_focus
+        if target is None:
+            target = self._input_area
+        try:
+            self._app.layout.focus(target)
+        except Exception:
+            try:
+                self._app.layout.focus(self._input_area)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("unmount_wizard: focus restore failed: %s", exc)
+        self._stashed_focus = None
+        self._app.invalidate()
+
+    def run_wizard(
+        self,
+        panel_factory: Callable[[asyncio.Future], EmbeddedWizard],
+    ) -> Any:
+        """Mount a wizard, block the calling thread until it resolves.
+
+        Worker-thread entry point for embedded sub-wizards. The
+        factory receives an ``asyncio.Future`` bound to the main loop
+        and returns the :class:`EmbeddedWizard` instance (its key
+        bindings should resolve the future via
+        :func:`datus.cli.tui.wizard_host.resolve_with` /
+        :func:`resolve_cancel`). The wizard sees the same event loop
+        as the parent app, so no nested ``asyncio.run`` is needed.
+
+        Returns the value passed to ``set_result``; ``None`` means
+        cancel.
+        """
+        loop = self._loop
+        if loop is None:
+            raise RuntimeError("DatusApp.run_wizard requires an active event loop")
+
+        done_future = loop.create_future()
+        panel = panel_factory(done_future)
+
+        loop.call_soon_threadsafe(self.mount_wizard, panel)
+        try:
+            cf = asyncio.run_coroutine_threadsafe(self._await_wizard_done(done_future), loop)
+            return cf.result()
+        finally:
+            loop.call_soon_threadsafe(self.unmount_wizard)
+
+    @staticmethod
+    async def _await_wizard_done(done_future: asyncio.Future) -> Any:
+        try:
+            return await done_future
+        except asyncio.CancelledError:
+            return None
 
     @contextmanager
     def suspend_input(self, ready_timeout: float = 2.0) -> Iterator[None]:

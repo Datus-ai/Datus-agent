@@ -129,7 +129,7 @@ class TestProviderList:
         app = ModelApp(cfg, Console(file=io.StringIO(), no_color=True))
         visible = app._providers_for_tab(_Tab.PROVIDERS)
         app._list_cursor = visible.index("openai")
-        with patch.object(app._app.layout, "focus"):
+        with patch.object(app, "_focus"):
             app._on_provider_enter()
         assert app._view == _View.PROVIDER_CRED_FORM
 
@@ -158,10 +158,10 @@ class TestProviderList:
         app._enter_provider_list(_Tab.PLANS)
         visible = app._providers_for_tab(_Tab.PLANS)
         app._list_cursor = visible.index("codex")
-        with patch.object(app._app, "exit") as mock_exit:
+        with patch.object(app, "_finish") as mock_exit:
             app._on_provider_enter()
         mock_exit.assert_called_once()
-        result = mock_exit.call_args.kwargs["result"]
+        result = mock_exit.call_args.args[0]
         assert isinstance(result, ModelSelection)
         assert result.kind == "needs_oauth"
         assert result.provider == "codex"
@@ -178,7 +178,7 @@ class TestEditCredentialsShortcut:
         app = _build()  # openai is configured via stub's provider_available side_effect
         visible = app._providers_for_tab(_Tab.PROVIDERS)
         app._list_cursor = visible.index("openai")
-        with patch.object(app._app.layout, "focus"):
+        with patch.object(app, "_focus"):
             app._on_edit_credentials()
         assert app._view == _View.PROVIDER_CRED_FORM
         assert app._active_provider == "openai"
@@ -190,7 +190,7 @@ class TestEditCredentialsShortcut:
         app = ModelApp(cfg, Console(file=io.StringIO(), no_color=True))
         visible = app._providers_for_tab(_Tab.PROVIDERS)
         app._list_cursor = visible.index("openai")
-        with patch.object(app._app.layout, "focus"):
+        with patch.object(app, "_focus"):
             app._on_edit_credentials()
         assert app._cred_base_url.text == "https://saved.example"
         from datus.cli.model_app import _MASKED_KEY_PLACEHOLDER
@@ -203,7 +203,7 @@ class TestEditCredentialsShortcut:
         visible = app._providers_for_tab(_Tab.PLANS)
         app._list_cursor = visible.index("claude_subscription")
         with (
-            patch.object(app._app.layout, "focus"),
+            patch.object(app, "_focus"),
             patch("datus.auth.claude_credential.get_claude_subscription_token") as auto_detect,
         ):
             app._on_edit_credentials()
@@ -215,9 +215,9 @@ class TestEditCredentialsShortcut:
         app._enter_provider_list(_Tab.PLANS)
         visible = app._providers_for_tab(_Tab.PLANS)
         app._list_cursor = visible.index("codex")
-        with patch.object(app._app, "exit") as mock_exit:
+        with patch.object(app, "_finish") as mock_exit:
             app._on_edit_credentials()
-        result = mock_exit.call_args.kwargs["result"]
+        result = mock_exit.call_args.args[0]
         assert result.kind == "needs_oauth"
         assert result.provider == "codex"
 
@@ -226,7 +226,7 @@ class TestEditCredentialsShortcut:
         app = _build()
         app._enter_provider_list(_Tab.PROVIDERS)
         app._list_cursor = 999  # out of range
-        with patch.object(app._app, "exit") as mock_exit:
+        with patch.object(app, "_finish") as mock_exit:
             app._on_edit_credentials()
         mock_exit.assert_not_called()
         assert app._view == _View.PROVIDER_LIST
@@ -237,9 +237,9 @@ class TestModelSelection:
         app = _build()
         app._enter_provider_models("openai")
         app._list_cursor = 0
-        with patch.object(app._app, "exit") as mock_exit:
+        with patch.object(app, "_finish") as mock_exit:
             app._on_model_enter()
-        result = mock_exit.call_args.kwargs["result"]
+        result = mock_exit.call_args.args[0]
         assert result.kind == "provider_model"
         assert (result.provider, result.model) == ("openai", "gpt-4.1")
 
@@ -262,9 +262,9 @@ class TestCustomTab:
         app = _build()
         app._enter_custom_list()
         app._list_cursor = app._custom_names.index("my-internal")
-        with patch.object(app._app, "exit") as mock_exit:
+        with patch.object(app, "_finish") as mock_exit:
             app._on_custom_enter()
-        result = mock_exit.call_args.kwargs["result"]
+        result = mock_exit.call_args.args[0]
         assert result.kind == "custom"
         assert result.name == "my-internal"
 
@@ -272,7 +272,7 @@ class TestCustomTab:
         app = _build()
         app._enter_custom_list()
         app._list_cursor = len(app._custom_names)  # cursor on the "+ Add model..." row
-        with patch.object(app._app.layout, "focus"):
+        with patch.object(app, "_focus"):
             app._on_custom_enter()
         assert app._view == _View.ADD_MODEL_FORM
 
@@ -282,7 +282,7 @@ class TestDeleteCustomShortcut:
         app = _build()
         app._enter_custom_list()
         app._list_cursor = app._custom_names.index("my-internal")
-        with patch.object(app._app, "exit") as mock_exit:
+        with patch.object(app, "_finish") as mock_exit:
             app._on_delete_custom()
         mock_exit.assert_not_called()
         assert app._pending_delete_custom == "my-internal"
@@ -293,9 +293,9 @@ class TestDeleteCustomShortcut:
         app._enter_custom_list()
         app._list_cursor = app._custom_names.index("my-internal")
         app._on_delete_custom()  # arms
-        with patch.object(app._app, "exit") as mock_exit:
+        with patch.object(app, "_finish") as mock_exit:
             app._on_delete_custom()  # confirms
-        result = mock_exit.call_args.kwargs["result"]
+        result = mock_exit.call_args.args[0]
         assert result.kind == "delete_custom"
         assert result.name == "my-internal"
         assert app._pending_delete_custom is None
@@ -314,7 +314,7 @@ class TestDeleteCustomShortcut:
         app._list_cursor = 1
         app._pending_delete_custom = None
         # Now a single press on "b" should only arm, not delete.
-        with patch.object(app._app, "exit") as mock_exit:
+        with patch.object(app, "_finish") as mock_exit:
             app._on_delete_custom()
         mock_exit.assert_not_called()
         assert app._pending_delete_custom == "b"
@@ -323,7 +323,7 @@ class TestDeleteCustomShortcut:
         app = _build()
         app._enter_custom_list()
         app._list_cursor = len(app._custom_names)  # "+ Add model..." row
-        with patch.object(app._app, "exit") as mock_exit:
+        with patch.object(app, "_finish") as mock_exit:
             app._on_delete_custom()
         mock_exit.assert_not_called()
         assert app._pending_delete_custom is None
@@ -361,7 +361,7 @@ class TestCredentialForm:
         cfg.providers = {"openai": saved}
         app = ModelApp(cfg, Console(file=io.StringIO(), no_color=True))
         app._active_provider = "openai"
-        with patch.object(app._app.layout, "focus"):
+        with patch.object(app, "_focus"):
             app._enter_cred_form("openai")
         assert app._cred_api_key.text == _MASKED_KEY_PLACEHOLDER
         app._submit_cred_form()
@@ -378,7 +378,7 @@ class TestCredentialForm:
         cfg.providers = {"openai": saved}
         app = ModelApp(cfg, Console(file=io.StringIO(), no_color=True))
         app._active_provider = "openai"
-        with patch.object(app._app.layout, "focus"):
+        with patch.object(app, "_focus"):
             app._enter_cred_form("openai")
         app._cred_api_key.text = ""
         cfg.provider_available.side_effect = lambda name: name == "openai"
@@ -396,7 +396,7 @@ class TestCredentialForm:
         cfg.providers = {"openai": saved}
         app = ModelApp(cfg, Console(file=io.StringIO(), no_color=True))
         app._active_provider = "openai"
-        with patch.object(app._app.layout, "focus"):
+        with patch.object(app, "_focus"):
             app._enter_cred_form("openai")
         app._cred_api_key.text = "sk-new"
         cfg.provider_available.side_effect = lambda name: name == "openai"
@@ -438,7 +438,7 @@ class TestCredentialForm:
         cfg.provider_available = MagicMock(return_value=False)
         app = ModelApp(cfg, Console(file=io.StringIO(), no_color=True))
         app._active_provider = "openai"
-        with patch.object(app._app.layout, "focus"):
+        with patch.object(app, "_focus"):
             app._enter_cred_form("openai")
         assert app._cred_api_key.text == ""
 
@@ -491,7 +491,7 @@ class TestAddModelForm:
     def _prepare(self, **fields):
         app = _build()
         app._enter_custom_list()
-        with patch.object(app._app.layout, "focus"):
+        with patch.object(app, "_focus"):
             app._enter_add_model_form()
         for attr, value in fields.items():
             getattr(app, f"_add_{attr}").text = value
@@ -499,9 +499,9 @@ class TestAddModelForm:
 
     def test_submit_exits_with_add_custom_payload(self):
         app = self._prepare(name="my-new", type="openai", model="gpt-4o", base_url="https://x", api_key="sk")
-        with patch.object(app._app, "exit") as mock_exit:
+        with patch.object(app, "_finish") as mock_exit:
             app._submit_add_model_form()
-        result = mock_exit.call_args.kwargs["result"]
+        result = mock_exit.call_args.args[0]
         assert result.kind == "add_custom"
         assert result.name == "my-new"
         assert result.payload["type"] == "openai"
@@ -511,34 +511,34 @@ class TestAddModelForm:
 
     def test_submit_rejects_empty_name(self):
         app = self._prepare(name="", type="openai", model="gpt-4o")
-        with patch.object(app._app, "exit") as mock_exit:
+        with patch.object(app, "_finish") as mock_exit:
             app._submit_add_model_form()
         mock_exit.assert_not_called()
         assert app._error_message and "name" in app._error_message.lower()
 
     def test_submit_rejects_duplicate_name(self):
         app = self._prepare(name="my-internal", type="openai", model="gpt-4o")
-        with patch.object(app._app, "exit") as mock_exit:
+        with patch.object(app, "_finish") as mock_exit:
             app._submit_add_model_form()
         mock_exit.assert_not_called()
         assert app._error_message and "already exists" in app._error_message
 
     def test_submit_rejects_missing_required_fields(self):
         app = self._prepare(name="x", type="", model="")
-        with patch.object(app._app, "exit") as mock_exit:
+        with patch.object(app, "_finish") as mock_exit:
             app._submit_add_model_form()
         mock_exit.assert_not_called()
 
     def test_multiline_custom_api_key_is_rejected(self):
         app = self._prepare(name="x", type="openai", model="gpt-4o", api_key="sk\nnext")
-        with patch.object(app._app, "exit") as mock_exit:
+        with patch.object(app, "_finish") as mock_exit:
             app._submit_add_model_form()
         mock_exit.assert_not_called()
         assert app._error_message == "api_key must be a single line"
 
     def test_non_ascii_custom_api_key_is_rejected(self):
         app = self._prepare(name="x", type="openai", model="gpt-4o", api_key="sk-\u7ffb\u8bd1")
-        with patch.object(app._app, "exit") as mock_exit:
+        with patch.object(app, "_finish") as mock_exit:
             app._submit_add_model_form()
         mock_exit.assert_not_called()
         assert app._error_message == "api_key must contain only ASCII characters"
@@ -594,7 +594,7 @@ class TestApplySeed:
         cfg = _stub_agent_config()
         cfg.provider_available = MagicMock(return_value=False)
         app = ModelApp(cfg, Console(file=io.StringIO(), no_color=True), seed_provider="openai")
-        with patch.object(app._app.layout, "focus"):
+        with patch.object(app, "_focus"):
             early = app._apply_seed()
         assert early is None
         assert app._view == _View.PROVIDER_CRED_FORM

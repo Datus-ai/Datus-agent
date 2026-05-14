@@ -18,9 +18,13 @@ unchecked → ``incremental``).
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
+
+if TYPE_CHECKING:
+    from datus.cli.tui.wizard_host import EmbeddedWizard
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.filters import Condition
@@ -171,11 +175,25 @@ class BootstrapApp:
         self._know_subject_tree = _make_field("subject_tree:      ")
         self._know_overwrite = _make_overwrite()
 
-        self._app = self._build_application()
+        # Dual-mode finish hook — see EffortApp.
+        self._on_done: Optional[Callable[[Optional[BootstrapPlan]], None]] = None
+        self._app: Optional[Application] = None
+        self._initial_focus: Optional[Any] = None
 
     # ── Public API ──────────────────────────────────────────────────────
 
     def run(self) -> Optional[BootstrapPlan]:
+        """Run as a transient standalone Application (non-TUI fallback)."""
+        kb = self._build_key_bindings()
+        root = self._build_root_container(kb)
+        self._app = Application(
+            layout=Layout(root, focused_element=self._initial_focus),
+            key_bindings=kb,
+            full_screen=False,
+            mouse_support=False,
+            erase_when_done=True,
+        )
+        self._on_done = lambda result: self._app.exit(result=result)
         try:
             return self._app.run()
         except KeyboardInterrupt:
@@ -183,10 +201,57 @@ class BootstrapApp:
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("BootstrapApp crashed: %s", exc, exc_info=True)
             return None
+        finally:
+            self._on_done = None
+            self._app = None
+
+    def build_embedded_panel(self, done_future: "asyncio.Future") -> "EmbeddedWizard":
+        from datus.cli.tui.wizard_host import EmbeddedWizard, resolve_cancel, resolve_with
+
+        def _done(result):
+            if result is None:
+                resolve_cancel(done_future)
+            else:
+                resolve_with(done_future, result)
+
+        self._on_done = _done
+        kb = self._build_key_bindings()
+        root = self._build_root_container(kb)
+        return EmbeddedWizard(
+            container=root,
+            key_bindings=kb,
+            first_focus=self._initial_focus,
+            done_future=done_future,
+        )
+
+    def _finish(self, result: Optional["BootstrapPlan"]) -> None:
+        if self._on_done is None:
+            return
+        self._on_done(result)
+
+    def _layout(self) -> Optional[Layout]:
+        app = getattr(self, "_app", None)
+        if app is not None:
+            return app.layout
+        try:
+            from prompt_toolkit.application import get_app
+
+            return get_app().layout
+        except Exception:
+            return None
+
+    def _focus(self, target) -> None:
+        layout = self._layout()
+        if layout is None or target is None:
+            return
+        try:
+            layout.focus(target)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("BootstrapApp focus(%r) failed: %s", target, exc)
 
     # ── Layout ──────────────────────────────────────────────────────────
 
-    def _build_application(self) -> Application:
+    def _build_root_container(self, kb: KeyBindings) -> HSplit:
         title_bar = Window(
             content=FormattedTextControl(lambda: render_tui_title_bar("Datus Bootstrap")),
             height=1,
@@ -273,7 +338,8 @@ class BootstrapApp:
             style="class:bootstrap.separator",
         )
 
-        root = HSplit(
+        self._initial_focus = self._schema_datasource
+        return HSplit(
             [
                 title_bar,
                 tab_window,
@@ -285,14 +351,6 @@ class BootstrapApp:
                 sep(),
                 hint_window,
             ]
-        )
-
-        return Application(
-            layout=Layout(root, focused_element=self._schema_datasource),
-            key_bindings=self._build_key_bindings(),
-            full_screen=False,
-            mouse_support=False,
-            erase_when_done=True,
         )
 
     _SECTION_DESCRIPTIONS: Dict[_Tab, str] = {
@@ -336,7 +394,7 @@ class BootstrapApp:
 
         @kb.add("escape", eager=True)
         def _(event):
-            event.app.exit(result=None)
+            self._finish(None)
 
         @kb.add("c-r")
         def _(event):
@@ -381,7 +439,7 @@ class BootstrapApp:
         self._tab = _TAB_ORDER[(idx + delta) % len(_TAB_ORDER)]
         self._error_message = None
         try:
-            self._app.layout.focus(self._focus_chain()[0])
+            self._focus(self._focus_chain()[0])
         except Exception:
             pass
 
@@ -454,7 +512,7 @@ class BootstrapApp:
             self._error_message = str(exc)
             return
         self._result = BootstrapPlan(task=TaskSpec(name=self._tab.value, options=options))
-        self._app.exit(result=self._result)
+        self._finish(self._result)
 
     def _collect_for(self, tab: _Tab) -> Dict[str, Any]:
         if tab == _Tab.SCHEMA:

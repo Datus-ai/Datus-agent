@@ -36,19 +36,28 @@ def _make_event():
 
 
 def _capture_kb(choices, default="", allow_free_text=False):
-    """Run select_choice and capture the KeyBindings object."""
+    """Run select_choice and capture the KeyBindings + exit mock.
+
+    Returns ``(kb, exit_mock)``. ``exit_mock`` is the captured
+    Application's ``.exit`` — handlers now go through an internal
+    ``_finish`` indirection that lands on this mock instead of
+    ``event.app.exit`` directly (which was the case before the
+    dual-mode refactor), so the test assertions need to verify on
+    the captured app's exit.
+    """
     captured = {}
 
     def fake_app(**kwargs):
         captured["kb"] = kwargs.get("key_bindings")
         app = MagicMock()
         app.run.return_value = default
+        captured["app"] = app
         return app
 
     with patch("prompt_toolkit.Application", side_effect=fake_app):
         select_choice(MagicMock(), choices, default=default, allow_free_text=allow_free_text)
 
-    return captured["kb"]
+    return captured["kb"], captured["app"].exit
 
 
 class TestSelectChoiceBasic:
@@ -118,117 +127,122 @@ class TestSelectChoiceKeyBindings:
 
     @pytest.mark.ci
     def test_enter_exits_with_selected_key(self):
-        kb = _capture_kb({"y": "Yes", "n": "No"}, default="y")
+        kb, exit_mock = _capture_kb({"y": "Yes", "n": "No"}, default="y")
         handler = _find_handler(kb, "enter")
         event = _make_event()
         handler(event)
-        event.app.exit.assert_called_once_with(result="y")
+        exit_mock.assert_called_once_with(result="y")
 
     @pytest.mark.ci
     def test_cancel_exits_with_default(self):
-        kb = _capture_kb({"y": "Yes", "n": "No"}, default="n")
+        kb, exit_mock = _capture_kb({"y": "Yes", "n": "No"}, default="n")
         handler = _find_handler(kb, "c-c")
         event = _make_event()
         handler(event)
-        event.app.exit.assert_called_once_with(result="n")
+        exit_mock.assert_called_once_with(result="n")
 
     @pytest.mark.ci
     def test_shortcut_key_exits(self):
-        kb = _capture_kb({"y": "Yes", "n": "No"}, default="y")
+        kb, exit_mock = _capture_kb({"y": "Yes", "n": "No"}, default="y")
         handler = _find_handler(kb, "n")
         event = _make_event()
         handler(event)
-        event.app.exit.assert_called_once_with(result="n")
+        exit_mock.assert_called_once_with(result="n")
 
     @pytest.mark.ci
     def test_up_navigates(self):
-        kb = _capture_kb({"y": "Yes", "n": "No"}, default="n")
+        kb, exit_mock = _capture_kb({"y": "Yes", "n": "No"}, default="n")
         handler = _find_handler(kb, "up")
         event = _make_event()
         # Should not crash and should not call exit
         handler(event)
-        event.app.exit.assert_not_called()
+        exit_mock.assert_not_called()
 
     @pytest.mark.ci
     def test_down_navigates(self):
-        kb = _capture_kb({"y": "Yes", "n": "No"}, default="y")
+        kb, exit_mock = _capture_kb({"y": "Yes", "n": "No"}, default="y")
         handler = _find_handler(kb, "down")
         event = _make_event()
         handler(event)
-        event.app.exit.assert_not_called()
+        exit_mock.assert_not_called()
 
     @pytest.mark.ci
     def test_slash_exits_with_free_text_sentinel(self):
         """Pressing '/' exits the selector with the free-text sentinel."""
-        kb = _capture_kb({"1": "A", "2": "B"}, default="1", allow_free_text=True)
+        kb, exit_mock = _capture_kb({"1": "A", "2": "B"}, default="1", allow_free_text=True)
         handler = _find_handler(kb, "/")
         event = _make_event()
         handler(event)
-        event.app.exit.assert_called_once_with(result=_FREE_TEXT_SENTINEL)
+        exit_mock.assert_called_once_with(result=_FREE_TEXT_SENTINEL)
 
     @pytest.mark.ci
     def test_up_navigates_with_free_text_enabled(self):
         """Up arrow still navigates normally when free text is enabled."""
-        kb = _capture_kb({"1": "A", "2": "B"}, default="1", allow_free_text=True)
+        kb, exit_mock = _capture_kb({"1": "A", "2": "B"}, default="1", allow_free_text=True)
         event = _make_event()
         _find_handler(kb, "up")(event)
-        event.app.exit.assert_not_called()
+        exit_mock.assert_not_called()
 
     @pytest.mark.ci
     def test_down_navigates_with_free_text_enabled(self):
         """Down arrow still navigates normally when free text is enabled."""
-        kb = _capture_kb({"1": "A", "2": "B"}, default="1", allow_free_text=True)
+        kb, exit_mock = _capture_kb({"1": "A", "2": "B"}, default="1", allow_free_text=True)
         event = _make_event()
         _find_handler(kb, "down")(event)
-        event.app.exit.assert_not_called()
+        exit_mock.assert_not_called()
 
     @pytest.mark.ci
     def test_ctrl_c_returns_default_with_free_text_enabled(self):
         """Ctrl-C exits with default even when free text is enabled."""
-        kb = _capture_kb({"1": "A", "2": "B"}, default="1", allow_free_text=True)
+        kb, exit_mock = _capture_kb({"1": "A", "2": "B"}, default="1", allow_free_text=True)
         event = _make_event()
         _find_handler(kb, "c-c")(event)
-        event.app.exit.assert_called_once_with(result="1")
+        exit_mock.assert_called_once_with(result="1")
 
     @pytest.mark.ci
     def test_shortcut_key_still_selects_option_with_free_text_enabled(self):
         """Existing shortcut keys still select the matching option immediately."""
-        kb = _capture_kb({"1": "A", "2": "B"}, default="1", allow_free_text=True)
+        kb, exit_mock = _capture_kb({"1": "A", "2": "B"}, default="1", allow_free_text=True)
         event = _make_event()
         _find_handler(kb, "1")(event)
-        event.app.exit.assert_called_once_with(result="1")
+        exit_mock.assert_called_once_with(result="1")
 
     @pytest.mark.ci
     def test_any_key_handler_absent_with_prompt_based_free_text(self):
         """Prompt-based free text mode no longer registers a raw <any> handler."""
-        kb = _capture_kb({"1": "A", "2": "B"}, default="1", allow_free_text=True)
+        kb, exit_mock = _capture_kb({"1": "A", "2": "B"}, default="1", allow_free_text=True)
         assert _find_handler(kb, "<any>") is None
 
     @pytest.mark.ci
     def test_enter_on_sentinel_exits_with_sentinel(self):
         """Pressing enter when free-text sentinel is selected exits with the sentinel."""
-        kb = _capture_kb({"1": "A"}, default="1", allow_free_text=True)
+        kb, exit_mock = _capture_kb({"1": "A"}, default="1", allow_free_text=True)
         # Navigate down to the sentinel
         _find_handler(kb, "down")(_make_event())
         event = _make_event()
         _find_handler(kb, "enter")(event)
-        event.app.exit.assert_called_once_with(result=_FREE_TEXT_SENTINEL)
+        exit_mock.assert_called_once_with(result=_FREE_TEXT_SENTINEL)
 
 
 def _capture_list_kb(items, **kwargs):
-    """Run select_list and capture the KeyBindings object and internal state."""
+    """Run select_list and capture the KeyBindings + exit mock.
+
+    Returns ``(kb, exit_mock)`` — see ``_capture_kb`` for the
+    dual-mode refactor rationale.
+    """
     captured = {}
 
     def fake_app(**app_kwargs):
         captured["kb"] = app_kwargs.get("key_bindings")
         app = MagicMock()
         app.run.return_value = 0
+        captured["app"] = app
         return app
 
     with patch("prompt_toolkit.Application", side_effect=fake_app):
         select_list(MagicMock(), items, **kwargs)
 
-    return captured.get("kb")
+    return captured.get("kb"), captured.get("app").exit if captured.get("app") else None
 
 
 class TestSelectList:
@@ -262,7 +276,7 @@ class TestSelectList:
     def test_wrap_around_up(self):
         """Up arrow at top wraps to bottom."""
         items = [["a"], ["b"], ["c"]]
-        kb = _capture_list_kb(items)
+        kb, exit_mock = _capture_list_kb(items)
         # Press up from index 0 → should wrap to index 2
         handler = _find_handler(kb, "up")
         event = _make_event()
@@ -271,26 +285,26 @@ class TestSelectList:
         enter = _find_handler(kb, "enter")
         enter_event = _make_event()
         enter(enter_event)
-        enter_event.app.exit.assert_called_once_with(result=2)
+        exit_mock.assert_called_once_with(result=2)
 
     @pytest.mark.ci
     def test_wrap_around_down(self):
         """Down arrow at bottom wraps to top."""
         items = [["a"], ["b"]]
-        kb = _capture_list_kb(items)
+        kb, exit_mock = _capture_list_kb(items)
         handler = _find_handler(kb, "down")
         # Press down twice from index 0 → index 1 → wraps to index 0
         handler(_make_event())
         handler(_make_event())
         enter_event = _make_event()
         _find_handler(kb, "enter")(enter_event)
-        enter_event.app.exit.assert_called_once_with(result=0)
+        exit_mock.assert_called_once_with(result=0)
 
     @pytest.mark.ci
     def test_scrolling_viewport(self):
         """Scrolling offset adjusts when selected goes past max_visible."""
         items = [[str(i)] for i in range(20)]
-        kb = _capture_list_kb(items, max_visible=5)
+        kb, exit_mock = _capture_list_kb(items, max_visible=5)
         handler = _find_handler(kb, "down")
         # Navigate down 6 times (past max_visible=5)
         for _ in range(6):
@@ -298,7 +312,7 @@ class TestSelectList:
         # Should not crash; confirm selection
         enter_event = _make_event()
         _find_handler(kb, "enter")(enter_event)
-        enter_event.app.exit.assert_called_once_with(result=6)
+        exit_mock.assert_called_once_with(result=6)
 
     @pytest.mark.ci
     def test_error_returns_none(self):
@@ -311,54 +325,54 @@ class TestSelectList:
     def test_escape_cancels(self):
         """Pressing Escape exits with None."""
         items = [["a"], ["b"]]
-        kb = _capture_list_kb(items)
+        kb, exit_mock = _capture_list_kb(items)
         handler = _find_handler(kb, "escape")
         event = _make_event()
         handler(event)
-        event.app.exit.assert_called_once_with(result=None)
+        exit_mock.assert_called_once_with(result=None)
 
     @pytest.mark.ci
     def test_ctrl_c_cancels(self):
         """Pressing Ctrl+C exits with None."""
         items = [["a"], ["b"]]
-        kb = _capture_list_kb(items)
+        kb, exit_mock = _capture_list_kb(items)
         handler = _find_handler(kb, "c-c")
         event = _make_event()
         handler(event)
-        event.app.exit.assert_called_once_with(result=None)
+        exit_mock.assert_called_once_with(result=None)
 
     @pytest.mark.ci
     def test_with_headers(self):
         """select_list works correctly with headers provided."""
         items = [["val1", "val2"], ["val3", "val4"]]
-        kb = _capture_list_kb(items, headers=["Col A", "Col B"])
+        kb, exit_mock = _capture_list_kb(items, headers=["Col A", "Col B"])
         # Confirm first item selected
         enter_event = _make_event()
         _find_handler(kb, "enter")(enter_event)
-        enter_event.app.exit.assert_called_once_with(result=0)
+        exit_mock.assert_called_once_with(result=0)
 
     @pytest.mark.ci
     def test_pagedown(self):
         """PageDown jumps forward."""
         items = [[str(i)] for i in range(20)]
-        kb = _capture_list_kb(items, max_visible=5)
+        kb, exit_mock = _capture_list_kb(items, max_visible=5)
         _find_handler(kb, "pagedown")(_make_event())
         enter_event = _make_event()
         _find_handler(kb, "enter")(enter_event)
-        enter_event.app.exit.assert_called_once_with(result=5)
+        exit_mock.assert_called_once_with(result=5)
 
     @pytest.mark.ci
     def test_pageup(self):
         """PageUp jumps backward."""
         items = [[str(i)] for i in range(20)]
-        kb = _capture_list_kb(items, max_visible=5)
+        kb, exit_mock = _capture_list_kb(items, max_visible=5)
         # Go down 10, then page up (max(0, 10-5) = 5)
         for _ in range(10):
             _find_handler(kb, "down")(_make_event())
         _find_handler(kb, "pageup")(_make_event())
         enter_event = _make_event()
         _find_handler(kb, "enter")(enter_event)
-        enter_event.app.exit.assert_called_once_with(result=5)
+        exit_mock.assert_called_once_with(result=5)
 
     @pytest.mark.ci
     def test_clip_truncates_long_text(self):
@@ -550,7 +564,12 @@ class TestPromptInputMultilineKeyBindings:
 
 
 def _capture_multi_kb(choices, default_selected=None, allow_free_text=False):
-    """Run select_multi_choice and capture the KeyBindings object."""
+    """Run select_multi_choice and capture the KeyBindings + exit mock.
+
+    Returns ``(kb, exit_mock)``. The dual-mode refactor moved the
+    "finish" call off of ``event.app.exit`` and onto the captured
+    Application's ``.exit`` via an internal ``_finish`` indirection.
+    """
     captured = {}
 
     def fake_app(**kwargs):
@@ -559,6 +578,7 @@ def _capture_multi_kb(choices, default_selected=None, allow_free_text=False):
         captured["layout"] = kwargs.get("layout")
         app = MagicMock()
         app.run.return_value = list(default_selected or [])
+        captured["app"] = app
         return app
 
     with patch("prompt_toolkit.Application", side_effect=fake_app):
@@ -569,7 +589,7 @@ def _capture_multi_kb(choices, default_selected=None, allow_free_text=False):
             allow_free_text=allow_free_text,
         )
 
-    return captured["kb"]
+    return captured["kb"], captured["app"].exit
 
 
 # ---------------------------------------------------------------------------
@@ -643,120 +663,120 @@ class TestSelectMultiChoiceKeyBindings:
 
     @pytest.mark.ci
     def test_enter_exits_with_checked(self):
-        kb = _capture_multi_kb({"y": "Yes", "n": "No"})
+        kb, exit_mock = _capture_multi_kb({"y": "Yes", "n": "No"})
         handler = _find_handler(kb, "enter")
         event = _make_event()
         handler(event)
-        event.app.exit.assert_called_once()
-        call_args = event.app.exit.call_args
+        exit_mock.assert_called_once()
+        call_args = exit_mock.call_args
         assert isinstance(call_args[1]["result"], list)
 
     @pytest.mark.ci
     def test_cancel_exits_with_empty(self):
-        kb = _capture_multi_kb({"y": "Yes", "n": "No"})
+        kb, exit_mock = _capture_multi_kb({"y": "Yes", "n": "No"})
         handler = _find_handler(kb, "c-c")
         event = _make_event()
         handler(event)
-        event.app.exit.assert_called_once_with(result=[])
+        exit_mock.assert_called_once_with(result=[])
 
     @pytest.mark.ci
     def test_up_navigates(self):
-        kb = _capture_multi_kb({"y": "Yes", "n": "No"})
+        kb, exit_mock = _capture_multi_kb({"y": "Yes", "n": "No"})
         handler = _find_handler(kb, "up")
         event = _make_event()
         handler(event)
-        event.app.exit.assert_not_called()
+        exit_mock.assert_not_called()
 
     @pytest.mark.ci
     def test_down_navigates(self):
-        kb = _capture_multi_kb({"y": "Yes", "n": "No"})
+        kb, exit_mock = _capture_multi_kb({"y": "Yes", "n": "No"})
         handler = _find_handler(kb, "down")
         event = _make_event()
         handler(event)
-        event.app.exit.assert_not_called()
+        exit_mock.assert_not_called()
 
     @pytest.mark.ci
     def test_space_toggles(self):
-        kb = _capture_multi_kb({"y": "Yes", "n": "No"})
+        kb, exit_mock = _capture_multi_kb({"y": "Yes", "n": "No"})
         handler = _find_handler(kb, "space")
         event = _make_event()
         handler(event)
-        event.app.exit.assert_not_called()
+        exit_mock.assert_not_called()
 
     @pytest.mark.ci
     def test_space_then_enter_returns_toggled(self):
         """Toggle a key with space, then confirm with enter."""
-        kb = _capture_multi_kb({"y": "Yes", "n": "No"})
+        kb, exit_mock = _capture_multi_kb({"y": "Yes", "n": "No"})
         # Toggle first item
         _find_handler(kb, "space")(_make_event())
         # Confirm
         enter_event = _make_event()
         _find_handler(kb, "enter")(enter_event)
-        enter_event.app.exit.assert_called_once()
-        result = enter_event.app.exit.call_args[1]["result"]
+        exit_mock.assert_called_once()
+        result = exit_mock.call_args[1]["result"]
         assert "y" in result
 
     @pytest.mark.ci
     def test_a_toggles_all(self):
-        kb = _capture_multi_kb({"y": "Yes", "n": "No"})
+        kb, exit_mock = _capture_multi_kb({"y": "Yes", "n": "No"})
         # Toggle all
         _find_handler(kb, "a")(_make_event())
         # Confirm
         enter_event = _make_event()
         _find_handler(kb, "enter")(enter_event)
-        result = enter_event.app.exit.call_args[1]["result"]
+        result = exit_mock.call_args[1]["result"]
         assert "y" in result
         assert "n" in result
 
     @pytest.mark.ci
     def test_a_toggles_all_then_clears(self):
         """Toggle all twice clears all selections."""
-        kb = _capture_multi_kb({"y": "Yes", "n": "No"})
+        kb, exit_mock = _capture_multi_kb({"y": "Yes", "n": "No"})
         _find_handler(kb, "a")(_make_event())
         _find_handler(kb, "a")(_make_event())
         enter_event = _make_event()
         _find_handler(kb, "enter")(enter_event)
-        result = enter_event.app.exit.call_args[1]["result"]
+        result = exit_mock.call_args[1]["result"]
         assert result == []
 
     @pytest.mark.ci
     def test_space_on_free_text_sentinel_does_nothing(self):
         """Space on the free-text sentinel should not toggle it."""
-        kb = _capture_multi_kb({"y": "Yes"}, allow_free_text=True)
+        kb, exit_mock = _capture_multi_kb({"y": "Yes"}, allow_free_text=True)
         # Navigate down to the sentinel
         _find_handler(kb, "down")(_make_event())
         # Space on sentinel should not crash
         _find_handler(kb, "space")(_make_event())
         enter_event = _make_event()
         _find_handler(kb, "enter")(enter_event)
-        result = enter_event.app.exit.call_args[1]["result"]
+        result = exit_mock.call_args[1]["result"]
         # Sentinel should NOT be in checked
         assert _FREE_TEXT_SENTINEL not in result
 
     @pytest.mark.ci
     def test_slash_shortcut_exits_with_sentinel(self):
-        kb = _capture_multi_kb({"y": "Yes"}, allow_free_text=True)
+        kb, exit_mock = _capture_multi_kb({"y": "Yes"}, allow_free_text=True)
         handler = _find_handler(kb, "/")
         event = _make_event()
         handler(event)
-        event.app.exit.assert_called_once_with(result=[_FREE_TEXT_SENTINEL])
+        exit_mock.assert_called_once_with(result=[_FREE_TEXT_SENTINEL])
 
     @pytest.mark.ci
     def test_no_slash_without_free_text(self):
         """Slash shortcut should not be registered without allow_free_text."""
-        kb = _capture_multi_kb({"y": "Yes"}, allow_free_text=False)
+        kb, exit_mock = _capture_multi_kb({"y": "Yes"}, allow_free_text=False)
         handler = _find_handler(kb, "/")
         assert handler is None
 
     @pytest.mark.ci
     def test_wrap_around_navigation(self):
         """Down from last item wraps to first."""
-        kb = _capture_multi_kb({"a": "A", "b": "B"})
+        kb, exit_mock = _capture_multi_kb({"a": "A", "b": "B"})
         _find_handler(kb, "down")(_make_event())
         _find_handler(kb, "down")(_make_event())
         # Now cursor should be back at 0
         _find_handler(kb, "space")(_make_event())
         enter_event = _make_event()
         _find_handler(kb, "enter")(enter_event)
-        result = enter_event.app.exit.call_args[1]["result"]
+        result = exit_mock.call_args[1]["result"]
         assert "a" in result

@@ -172,11 +172,11 @@ class SkillCommands:
             return
 
     def _run_app(self, app: SkillApp) -> Optional[SkillSelection]:
-        """Run ``app`` with stdin released by the outer TUI (if any)."""
+        """Embed in active TUI when available, otherwise run standalone."""
         tui_app = getattr(self.cli, "tui_app", None)
-        ctx = tui_app.suspend_input() if tui_app is not None else nullcontext()
-        with ctx:
-            return app.run()
+        if tui_app is not None and getattr(tui_app, "_loop", None) is not None:
+            return tui_app.run_wizard(app.build_embedded_panel)
+        return app.run()
 
     # ── Non-interactive subcommands ──────────────────────────────────────
 

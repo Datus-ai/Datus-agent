@@ -111,11 +111,16 @@ class ModelCommands:
             return
 
     def _run_app(self, app: ModelApp) -> Optional[ModelSelection]:
-        """Run ``app`` with stdin handed over by the outer TUI (if any)."""
+        """Run ``app`` embedded in the active TUI, or standalone as fallback.
+
+        The TUI path mounts the wizard via :meth:`DatusApp.run_wizard`
+        so it replaces the status bar / input row instead of taking
+        over the full screen. Non-TUI paths still build a transient
+        ``Application(full_screen=False)`` via ``app.run()``.
+        """
         tui_app = getattr(self.cli, "tui_app", None)
-        if tui_app is not None:
-            with tui_app.suspend_input():
-                return app.run()
+        if tui_app is not None and getattr(tui_app, "_loop", None) is not None:
+            return tui_app.run_wizard(app.build_embedded_panel)
         return app.run()
 
     # ── OAuth handoff ───────────────────────────────────────────────────

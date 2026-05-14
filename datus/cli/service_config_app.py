@@ -20,10 +20,14 @@ the new state.
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from datus.cli.tui.wizard_host import EmbeddedWizard
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.filters import Condition
@@ -197,13 +201,26 @@ class ServiceConfigApp:
         # title(1) + tabs(1) + 2 sep(2) + error(1) + status(1) + footer(1) = 7
         self._max_visible: int = max(3, min(15, term_height - 7))
 
-        self._app = self._build_application()
+        # Dual-mode finish hook (see EffortApp for rationale).
+        self._on_done: Optional[Callable[[Optional[ServiceConfigSelection]], None]] = None
+        self._app: Optional[Application] = None
 
     # ─────────────────────────────────────────────────────────────────
     # Public API
     # ─────────────────────────────────────────────────────────────────
 
     def run(self) -> Optional[ServiceConfigSelection]:
+        """Run as a transient standalone Application (non-TUI fallback)."""
+        kb = self._build_key_bindings()
+        root = self._build_root_container(kb)
+        self._app = Application(
+            layout=Layout(root, focused_element=None),
+            key_bindings=kb,
+            full_screen=False,
+            mouse_support=False,
+            erase_when_done=True,
+        )
+        self._on_done = lambda result: self._app.exit(result=result)
         try:
             return self._app.run()
         except KeyboardInterrupt:
@@ -211,6 +228,53 @@ class ServiceConfigApp:
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("ServiceConfigApp crashed: %s", exc)
             return None
+        finally:
+            self._on_done = None
+            self._app = None
+
+    def build_embedded_panel(self, done_future: "asyncio.Future") -> "EmbeddedWizard":
+        """Build the panel for the parent DatusApp's bottom slot."""
+        from datus.cli.tui.wizard_host import EmbeddedWizard, resolve_cancel, resolve_with
+
+        def _done(result):
+            if result is None:
+                resolve_cancel(done_future)
+            else:
+                resolve_with(done_future, result)
+
+        self._on_done = _done
+        kb = self._build_key_bindings()
+        root = self._build_root_container(kb)
+        return EmbeddedWizard(
+            container=root,
+            key_bindings=kb,
+            first_focus=self._list_window,
+            done_future=done_future,
+        )
+
+    def _finish(self, result: Optional["ServiceConfigSelection"]) -> None:
+        if self._on_done is None:
+            return
+        self._on_done(result)
+
+    def _layout(self) -> Optional[Layout]:
+        if self._app is not None:
+            return self._app.layout
+        try:
+            from prompt_toolkit.application import get_app
+
+            return get_app().layout
+        except Exception:
+            return None
+
+    def _focus(self, target) -> None:
+        layout = self._layout()
+        if layout is None or target is None:
+            return
+        try:
+            layout.focus(target)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("ServiceConfigApp focus(%r) failed: %s", target, exc)
 
     # ─────────────────────────────────────────────────────────────────
     # Data loading
@@ -310,7 +374,7 @@ class ServiceConfigApp:
     # Layout construction
     # ─────────────────────────────────────────────────────────────────
 
-    def _build_application(self) -> Application:
+    def _build_root_container(self, kb: KeyBindings) -> HSplit:
         title_bar = Window(
             content=FormattedTextControl(lambda: render_tui_title_bar("Datus Services")),
             height=1,
@@ -319,13 +383,14 @@ class ServiceConfigApp:
             content=FormattedTextControl(self._render_tab_strip, focusable=False),
             height=1,
         )
-        list_window = Window(
-            content=FormattedTextControl(self._render_list, focusable=True),
+        self._list_window = Window(
+            content=FormattedTextControl(self._render_list, focusable=True, key_bindings=kb),
             always_hide_cursor=True,
             height=Dimension(min=3),
         )
+        list_window = self._list_window
         type_window = Window(
-            content=FormattedTextControl(self._render_type_picker, focusable=True),
+            content=FormattedTextControl(self._render_type_picker, focusable=True, key_bindings=kb),
             always_hide_cursor=True,
             height=Dimension(min=3),
         )
@@ -380,7 +445,7 @@ class ServiceConfigApp:
             height=1,
         )
 
-        root = HSplit(
+        return HSplit(
             [
                 title_bar,
                 tab_window,
@@ -391,14 +456,6 @@ class ServiceConfigApp:
                 Window(height=1, char="\u2500"),
                 hint_window,
             ]
-        )
-
-        return Application(
-            layout=Layout(root, focused_element=None),
-            key_bindings=self._build_key_bindings(),
-            full_screen=False,
-            mouse_support=False,
-            erase_when_done=True,
         )
 
     # ─────────────────────────────────────────────────────────────────
@@ -567,7 +624,7 @@ class ServiceConfigApp:
                 name=adapter_type,
                 payload={"type": adapter_type},
             )
-            self._app.exit(result=self._result)
+            self._finish(self._result)
             return
         self._form_section = section
         self._form_type = adapter_type
@@ -639,7 +696,7 @@ class ServiceConfigApp:
                 self._fld_dags_folder,
             ]
         self._form_focus_idx = 0
-        self._app.layout.focus(self._form_focus_order[0])
+        self._focus(self._form_focus_order[0])
 
     # ─────────────────────────────────────────────────────────────────
     # Submit handlers
@@ -668,7 +725,7 @@ class ServiceConfigApp:
             name=name,
             payload=payload,
         )
-        self._app.exit(result=self._result)
+        self._finish(self._result)
 
     def _build_bi_payload(self) -> Optional[Dict[str, Any]]:
         api_base_url = self._fld_api_base_url.text.strip()
@@ -758,14 +815,14 @@ class ServiceConfigApp:
         if 0 <= self._list_cursor < len(entries):
             entry = entries[self._list_cursor]
             self._result = ServiceConfigSelection(action="delete", section=self._tab_section(), name=entry.name)
-            self._app.exit(result=self._result)
+            self._finish(self._result)
 
     def _on_test(self) -> None:
         entries = self._entries_for(self._tab)
         if 0 <= self._list_cursor < len(entries):
             entry = entries[self._list_cursor]
             self._result = ServiceConfigSelection(action="test", section=self._tab_section(), name=entry.name)
-            self._app.exit(result=self._result)
+            self._finish(self._result)
 
     def _on_set_default(self) -> None:
         entries = self._entries_for(self._tab)
@@ -776,7 +833,7 @@ class ServiceConfigApp:
                 section=self._tab_section(),
                 name=entry.name,
             )
-            self._app.exit(result=self._result)
+            self._finish(self._result)
 
     def _on_set_project_default(self) -> None:
         """Pin (or clear) the project-level default for the highlighted entry.
@@ -796,7 +853,7 @@ class ServiceConfigApp:
             section=self._tab_section(),
             name=target_name,
         )
-        self._app.exit(result=self._result)
+        self._finish(self._result)
 
     def _on_type_picker_enter(self) -> None:
         if not self._type_choices:
@@ -876,7 +933,7 @@ class ServiceConfigApp:
 
         @kb.add("escape", filter=is_list)
         def _(event):
-            event.app.exit(result=None)
+            self._finish(None)
 
         # Type-picker ----------------------------------------------------
         @kb.add("up", filter=is_type)
@@ -932,7 +989,7 @@ class ServiceConfigApp:
         # Global cancel --------------------------------------------------
         @kb.add("c-c")
         def _(event):
-            event.app.exit(result=None)
+            self._finish(None)
 
         return kb
 
@@ -940,7 +997,7 @@ class ServiceConfigApp:
         if not self._form_focus_order:
             return
         self._form_focus_idx = (self._form_focus_idx + delta) % len(self._form_focus_order)
-        self._app.layout.focus(self._form_focus_order[self._form_focus_idx])
+        self._focus(self._form_focus_order[self._form_focus_idx])
 
     def _cycle_tab(self, direction: int = 1) -> None:
         try:

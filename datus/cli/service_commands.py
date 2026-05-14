@@ -175,10 +175,10 @@ class ServiceCommands:
             self._refresh_after_change()
 
     def _run_app(self, app: ServiceConfigApp) -> Optional[ServiceConfigSelection]:
+        """Embed in active TUI when available, otherwise run standalone."""
         tui_app = getattr(self.cli, "tui_app", None)
-        if tui_app is not None:
-            with tui_app.suspend_input():
-                return app.run()
+        if tui_app is not None and getattr(tui_app, "_loop", None) is not None:
+            return tui_app.run_wizard(app.build_embedded_panel)
         return app.run()
 
     def _refresh_after_change(self) -> None:

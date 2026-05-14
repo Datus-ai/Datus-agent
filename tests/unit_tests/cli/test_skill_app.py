@@ -212,9 +212,9 @@ class TestActions:
     def test_install_emits_selection_with_version(self):
         marketplace = [{"name": "sql-opt", "latest_version": "2.1", "owner": "datus"}]
         app = _build(seed_tab="marketplace", marketplace=marketplace)
-        with patch.object(app._app, "exit") as exit_mock:
+        with patch.object(app, "_finish") as exit_mock:
             app._on_install()
-        sel = exit_mock.call_args.kwargs["result"]
+        sel = exit_mock.call_args.args[0]
         assert isinstance(sel, SkillSelection)
         assert sel.kind == "install"
         assert sel.name == "sql-opt"
@@ -223,22 +223,22 @@ class TestActions:
     def test_install_falls_back_to_latest_when_version_missing(self):
         marketplace = [{"name": "sql-opt", "owner": "datus"}]
         app = _build(seed_tab="marketplace", marketplace=marketplace)
-        with patch.object(app._app, "exit") as exit_mock:
+        with patch.object(app, "_finish") as exit_mock:
             app._on_install()
-        sel = exit_mock.call_args.kwargs["result"]
+        sel = exit_mock.call_args.args[0]
         assert sel.version == "latest"
 
     def test_install_ignores_non_marketplace_row(self):
         app = _build(installed=[_meta("local-a")])
         # Cursor is on INSTALLED tab; _current_row returns SkillMetadata, not dict.
-        with patch.object(app._app, "exit") as exit_mock:
+        with patch.object(app, "_finish") as exit_mock:
             app._on_install()
         exit_mock.assert_not_called()
 
     def test_update_requires_marketplace_source(self):
         installed = [_meta("local-only", source="local")]
         app = _build(installed=installed)
-        with patch.object(app._app, "exit") as exit_mock:
+        with patch.object(app, "_finish") as exit_mock:
             app._on_update()
         exit_mock.assert_not_called()
         assert "not marketplace-sourced" in (app._error_message or "")
@@ -246,39 +246,39 @@ class TestActions:
     def test_update_on_marketplace_source_emits_selection(self):
         installed = [_meta("mkt-a", source="marketplace")]
         app = _build(installed=installed)
-        with patch.object(app._app, "exit") as exit_mock:
+        with patch.object(app, "_finish") as exit_mock:
             app._on_update()
-        sel = exit_mock.call_args.kwargs["result"]
+        sel = exit_mock.call_args.args[0]
         assert sel.kind == "update"
         assert sel.name == "mkt-a"
 
     def test_remove_two_press_confirmation(self):
         installed = [_meta("foo", source="local")]
         app = _build(installed=installed)
-        with patch.object(app._app, "exit") as exit_mock:
+        with patch.object(app, "_finish") as exit_mock:
             app._on_remove()
             assert exit_mock.call_count == 0
             assert app._pending_remove == "foo"
             assert "Press r again" in (app._error_message or "")
             app._on_remove()
             assert exit_mock.call_count == 1
-        sel = exit_mock.call_args.kwargs["result"]
+        sel = exit_mock.call_args.args[0]
         assert sel.kind == "remove"
         assert sel.name == "foo"
         assert app._pending_remove is None
 
     def test_logout_emits_selection(self):
         app = _build()
-        with patch.object(app._app, "exit") as exit_mock:
+        with patch.object(app, "_finish") as exit_mock:
             app._on_logout()
-        sel = exit_mock.call_args.kwargs["result"]
+        sel = exit_mock.call_args.args[0]
         assert sel.kind == "logout"
 
     def test_refresh_emits_selection(self):
         app = _build(seed_tab="marketplace")
-        with patch.object(app._app, "exit") as exit_mock:
+        with patch.object(app, "_finish") as exit_mock:
             app._on_refresh()
-        sel = exit_mock.call_args.kwargs["result"]
+        sel = exit_mock.call_args.args[0]
         assert sel.kind == "refresh"
 
 
@@ -293,7 +293,7 @@ class TestLoginForm:
         app._enter_login_form()
         app._login_email.text = ""
         app._login_password.text = "pw"
-        with patch.object(app._app, "exit") as exit_mock:
+        with patch.object(app, "_finish") as exit_mock:
             app._submit_login_form()
         exit_mock.assert_not_called()
         assert "Email" in (app._error_message or "")
@@ -303,7 +303,7 @@ class TestLoginForm:
         app._enter_login_form()
         app._login_email.text = "me@example.com"
         app._login_password.text = ""
-        with patch.object(app._app, "exit") as exit_mock:
+        with patch.object(app, "_finish") as exit_mock:
             app._submit_login_form()
         exit_mock.assert_not_called()
         assert "Password" in (app._error_message or "")
@@ -314,9 +314,9 @@ class TestLoginForm:
         app._enter_login_form()
         app._login_email.text = "me@example.com"
         app._login_password.text = "secret"
-        with patch.object(app._app, "exit") as exit_mock:
+        with patch.object(app, "_finish") as exit_mock:
             app._submit_login_form()
-        sel = exit_mock.call_args.kwargs["result"]
+        sel = exit_mock.call_args.args[0]
         assert sel.kind == "login"
         assert sel.email == "me@example.com"
         assert sel.password == "secret"
@@ -328,9 +328,9 @@ class TestLoginForm:
         app._login_email.text = "me@example.com"
         app._login_password.text = "secret"
         app._login_url.text = "https://override.example.com/"
-        with patch.object(app._app, "exit") as exit_mock:
+        with patch.object(app, "_finish") as exit_mock:
             app._submit_login_form()
-        sel = exit_mock.call_args.kwargs["result"]
+        sel = exit_mock.call_args.args[0]
         assert sel.marketplace_url == "https://override.example.com/"
 
 

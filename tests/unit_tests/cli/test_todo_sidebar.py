@@ -140,9 +140,10 @@ def test_incomplete_tasks_render_before_completed_stable_order(path_manager):
     ]
 
 
-def test_tasks_are_separated_by_a_blank_line(path_manager):
-    """Visual breathing room — every task should be preceded (after the
-    title row) by a blank line, but no trailing blank after the last."""
+def test_tasks_are_packed_without_blank_separators(path_manager):
+    """Tasks are stacked tightly under the title row — the user
+    explicitly asked for a compact layout, so the inter-task blank
+    line was removed."""
     from datus.cli.todo_sidebar import TodoSidebarProvider
 
     cli, _ = _make_cli("session_blank")
@@ -155,15 +156,12 @@ def test_tasks_are_separated_by_a_blank_line(path_manager):
     rendered = "".join(text for _, text in provider.tokens())
     assert rendered.splitlines() == [
         " Tasks (0/3)",
-        "",
         " \u25cb one",
-        "",
         " \u25cb two",
-        "",
         " \u25cb three",
     ]
-    # 1 title + 3 tasks * 2 (each + 1 separator-or-trailing) = 7 logical rows.
-    assert provider.line_count() == 7
+    # 1 title + 3 tasks = 4 logical rows.
+    assert provider.line_count() == 4
 
 
 def test_long_content_is_not_truncated(path_manager):

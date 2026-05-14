@@ -116,10 +116,18 @@ class EffortCommands:
         return self._run_app(app)
 
     def _run_app(self, app: EffortApp) -> Optional[EffortSelection]:
+        """Route between embedded (TUI mounts the panel) and standalone.
+
+        When a ``DatusApp`` has a live event loop, embed the wizard in
+        its bottom slot via :meth:`DatusApp.run_wizard` — the output
+        pane stays visible above and the status bar / input row is
+        hidden until the wizard resolves. Without a TUI we fall back
+        to the old transient ``Application(full_screen=False)`` path
+        (``app.run()``).
+        """
         tui_app = getattr(self.cli, "tui_app", None)
-        if tui_app is not None:
-            with tui_app.suspend_input():
-                return app.run()
+        if tui_app is not None and getattr(tui_app, "_loop", None) is not None:
+            return tui_app.run_wizard(app.build_embedded_panel)
         return app.run()
 
     def _save_global(self, effort: str) -> None:

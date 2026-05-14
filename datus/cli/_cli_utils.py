@@ -1,6 +1,6 @@
 import shutil
 import unicodedata
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from prompt_toolkit.styles import Style
 from rich.console import Console
@@ -132,6 +132,13 @@ def select_choice(
     Choosing it, or pressing ``/``, opens the standard multiline input prompt so
     paste works reliably.
 
+    Dual mode: when a full-screen :class:`DatusApp` is the current
+    prompt_toolkit Application, the selector mounts as an embedded
+    panel via ``run_wizard`` (status bar / input row replaced, output
+    pane stays visible above). When no DatusApp is running — e.g. the
+    pre-TUI bootstrap paths in ``main.py`` / ``project_init.py`` —
+    it falls back to a transient ``Application(full_screen=False)``.
+
     Args:
         console: Rich Console (used for fallback output on error)
         choices: Ordered dict of {key: display_text}
@@ -146,10 +153,13 @@ def select_choice(
     """
     try:
         from prompt_toolkit import Application
+        from prompt_toolkit.application import get_app_or_none
         from prompt_toolkit.key_binding import KeyBindings
         from prompt_toolkit.layout import Layout
         from prompt_toolkit.layout.containers import Window
         from prompt_toolkit.layout.controls import FormattedTextControl
+
+        from datus.cli.tui.wizard_host import EmbeddedWizard, resolve_with
 
         display_choices = dict(choices)
         if allow_free_text:
@@ -171,6 +181,16 @@ def select_choice(
                 offset[0] = selected[0]
             elif selected[0] >= offset[0] + max_visible:
                 offset[0] = selected[0] - max_visible + 1
+
+        # Shared finish hook — closure-captured by every kb closure, then
+        # bound to either ``app.exit`` (standalone) or
+        # ``resolve_with(done_future, ...)`` (embedded) once the relevant
+        # outer container exists. A 1-element list is the dance Python
+        # needs to mutate a closure target.
+        finish_ref: List[Callable[[Any], None]] = [lambda _r: None]
+
+        def _finish(result):
+            finish_ref[0](result)
 
         kb = KeyBindings()
 
@@ -202,12 +222,11 @@ def select_choice(
 
         @kb.add("enter")
         def _confirm(event):
-            sel = keys[selected[0]]
-            event.app.exit(result=sel)
+            _finish(keys[selected[0]])
 
         @kb.add("c-c")
         def _cancel(event):
-            event.app.exit(result=default)
+            _finish(default)
 
         # Direct shortcut keys (press y/a/n to pick immediately)
         # Only register single-character keys; multi-char keys (e.g. "10") are
@@ -218,13 +237,13 @@ def select_choice(
 
             @kb.add(_key)
             def _select_direct(event, k=_key):
-                event.app.exit(result=k)
+                _finish(k)
 
         if allow_free_text:
 
             @kb.add("/")
             def _free_text_shortcut(event):
-                event.app.exit(result=_FREE_TEXT_SENTINEL)
+                _finish(_FREE_TEXT_SENTINEL)
 
         items = list(display_choices.items())
 
@@ -253,15 +272,38 @@ def select_choice(
                     lines.append(("", f"    {label}\n"))
             return lines
 
-        app = Application(
-            layout=Layout(
-                Window(FormattedTextControl(_get_formatted_text, show_cursor=False), always_hide_cursor=True)
-            ),
-            key_bindings=kb,
-            full_screen=False,
+        parent = get_app_or_none()
+        use_embedded = (
+            parent is not None and getattr(parent, "_loop", None) is not None and hasattr(parent, "run_wizard")
         )
 
-        result = _run_sub_application(app)
+        if use_embedded:
+
+            def _factory(done_future):
+                finish_ref[0] = lambda result: resolve_with(done_future, result)
+                window = Window(
+                    FormattedTextControl(_get_formatted_text, show_cursor=False, key_bindings=kb),
+                    always_hide_cursor=True,
+                )
+                return EmbeddedWizard(
+                    container=window,
+                    key_bindings=kb,
+                    first_focus=window,
+                    done_future=done_future,
+                )
+
+            result = parent.run_wizard(_factory)
+        else:
+            app = Application(
+                layout=Layout(
+                    Window(FormattedTextControl(_get_formatted_text, show_cursor=False), always_hide_cursor=True)
+                ),
+                key_bindings=kb,
+                full_screen=False,
+            )
+            finish_ref[0] = lambda result: app.exit(result=result)
+            result = _run_sub_application(app)
+
         if allow_free_text and result == _FREE_TEXT_SENTINEL:
             console.print()
             console.print("[dim](Paste supported. Enter to submit)[/]")
@@ -303,10 +345,13 @@ def select_multi_choice(
     """
     try:
         from prompt_toolkit import Application
+        from prompt_toolkit.application import get_app_or_none
         from prompt_toolkit.key_binding import KeyBindings
         from prompt_toolkit.layout import Layout
         from prompt_toolkit.layout.containers import Window
         from prompt_toolkit.layout.controls import FormattedTextControl
+
+        from datus.cli.tui.wizard_host import EmbeddedWizard, resolve_with
 
         display_choices = dict(choices)
         if allow_free_text:
@@ -327,6 +372,12 @@ def select_multi_choice(
                 offset[0] = cursor[0]
             elif cursor[0] >= offset[0] + max_visible:
                 offset[0] = cursor[0] - max_visible + 1
+
+        # Dual-mode finish hook — see ``select_choice`` for the pattern.
+        finish_ref: List[Callable[[Any], None]] = [lambda _r: None]
+
+        def _finish(result):
+            finish_ref[0](result)
 
         kb = KeyBindings()
 
@@ -376,17 +427,17 @@ def select_multi_choice(
 
         @kb.add("enter")
         def _confirm(event):
-            event.app.exit(result=[k for k in keys if k in checked])
+            _finish([k for k in keys if k in checked])
 
         @kb.add("c-c")
         def _cancel(event):
-            event.app.exit(result=[])
+            _finish([])
 
         if allow_free_text:
 
             @kb.add("/")
             def _free_text_shortcut(event):
-                event.app.exit(result=[_FREE_TEXT_SENTINEL])
+                _finish([_FREE_TEXT_SENTINEL])
 
         items = list(display_choices.items())
 
@@ -410,16 +461,40 @@ def select_multi_choice(
             lines.append(("ansibrightblack", "  [Space] toggle  [a] all  [Enter] confirm\n"))
             return lines
 
-        app = Application(
-            layout=Layout(
-                Window(FormattedTextControl(_get_formatted_text, show_cursor=False), always_hide_cursor=True)
-            ),
-            key_bindings=kb,
-            full_screen=False,
+        parent = get_app_or_none()
+        use_embedded = (
+            parent is not None and getattr(parent, "_loop", None) is not None and hasattr(parent, "run_wizard")
         )
 
-        result = _run_sub_application(app)
+        if use_embedded:
 
+            def _factory(done_future):
+                finish_ref[0] = lambda result: resolve_with(done_future, result)
+                window = Window(
+                    FormattedTextControl(_get_formatted_text, show_cursor=False, key_bindings=kb),
+                    always_hide_cursor=True,
+                )
+                return EmbeddedWizard(
+                    container=window,
+                    key_bindings=kb,
+                    first_focus=window,
+                    done_future=done_future,
+                )
+
+            result = parent.run_wizard(_factory)
+        else:
+            app = Application(
+                layout=Layout(
+                    Window(FormattedTextControl(_get_formatted_text, show_cursor=False), always_hide_cursor=True)
+                ),
+                key_bindings=kb,
+                full_screen=False,
+            )
+            finish_ref[0] = lambda result: app.exit(result=result)
+            result = _run_sub_application(app)
+
+        if result is None:
+            return []
         if allow_free_text and result == [_FREE_TEXT_SENTINEL]:
             console.print()
             console.print("[dim](Paste supported. Enter to submit)[/]")
@@ -469,10 +544,13 @@ def select_list(
 
     try:
         from prompt_toolkit import Application
+        from prompt_toolkit.application import get_app_or_none
         from prompt_toolkit.key_binding import KeyBindings
         from prompt_toolkit.layout import Layout
         from prompt_toolkit.layout.containers import Window
         from prompt_toolkit.layout.controls import FormattedTextControl
+
+        from datus.cli.tui.wizard_host import EmbeddedWizard, resolve_with
 
         term_size = shutil.get_terminal_size((120, 40))
         term_width = term_size.columns
@@ -504,6 +582,12 @@ def select_list(
                 w += cw
             return text
 
+        # Dual-mode finish hook — see ``select_choice`` for the pattern.
+        finish_ref: List[Callable[[Any], None]] = [lambda _r: None]
+
+        def _finish(result):
+            finish_ref[0](result)
+
         kb = KeyBindings()
 
         @kb.add("up")
@@ -534,15 +618,15 @@ def select_list(
 
         @kb.add("enter")
         def _confirm(event):
-            event.app.exit(result=selected[0])
+            _finish(selected[0])
 
         @kb.add("escape")
         def _escape(event):
-            event.app.exit(result=None)
+            _finish(None)
 
         @kb.add("c-c")
         def _cancel(event):
-            event.app.exit(result=None)
+            _finish(None)
 
         def _get_formatted_text():
             lines = []
@@ -570,6 +654,28 @@ def select_list(
             lines.append(("ansibrightblack", "  [\u2191\u2193] navigate  [Enter] select  [Esc] cancel\n"))
             return lines
 
+        parent = get_app_or_none()
+        use_embedded = (
+            parent is not None and getattr(parent, "_loop", None) is not None and hasattr(parent, "run_wizard")
+        )
+
+        if use_embedded:
+
+            def _factory(done_future):
+                finish_ref[0] = lambda result: resolve_with(done_future, result)
+                window = Window(
+                    FormattedTextControl(_get_formatted_text, show_cursor=False, key_bindings=kb),
+                    always_hide_cursor=True,
+                )
+                return EmbeddedWizard(
+                    container=window,
+                    key_bindings=kb,
+                    first_focus=window,
+                    done_future=done_future,
+                )
+
+            return parent.run_wizard(_factory)
+
         app = Application(
             layout=Layout(
                 Window(FormattedTextControl(_get_formatted_text, show_cursor=False), always_hide_cursor=True)
@@ -577,7 +683,7 @@ def select_list(
             key_bindings=kb,
             full_screen=False,
         )
-
+        finish_ref[0] = lambda result: app.exit(result=result)
         return _run_sub_application(app)
 
     except (KeyboardInterrupt, EOFError):

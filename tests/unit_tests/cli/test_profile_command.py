@@ -231,33 +231,35 @@ def test_run_dangerous_confirm_delegates_to_confirm_app(monkeypatch):
     assert DatusCLI._run_dangerous_confirm(_CLIStub()) is True
 
 
-def test_run_profile_picker_suspends_tui_when_present(monkeypatch):
-    """When a TUI is active, the picker runs inside ``suspend_input()``.
+def test_run_profile_picker_embeds_in_tui_when_loop_active(monkeypatch):
+    """When a TUI has an active loop, the picker mounts as an embedded
+    panel via ``DatusApp.run_wizard`` instead of running standalone.
 
-    Otherwise picker output races the outer Application's rendering and
-    breaks stdin exclusivity.
+    The previous behaviour suspended stdin and ran the picker as a
+    full-screen modal; the dual-mode wizard host now keeps the output
+    pane visible above the embedded panel.
     """
-    from contextlib import contextmanager
-
     from datus.cli.repl import DatusCLI
 
-    suspend_entries = {"n": 0}
-
-    @contextmanager
-    def _fake_suspend():
-        suspend_entries["n"] += 1
-        yield
+    wizard_calls = {"factory": None}
 
     class _FakeTUI:
-        def suspend_input(self):
-            return _fake_suspend()
+        _loop = object()  # truthy → embedded path
+
+        def run_wizard(self, factory):
+            wizard_calls["factory"] = factory
+            return "auto"
 
     class _FakePicker:
         def __init__(self, console, current):
-            pass
+            self.console = console
+            self.current = current
+
+        def build_embedded_panel(self, done_future):
+            return None  # not invoked; ``run_wizard`` is stubbed above
 
         def run(self):
-            return "auto"
+            return "should-not-be-called"
 
     monkeypatch.setattr("datus.cli.profile_picker_app.ProfilePickerApp", _FakePicker)
 
@@ -265,8 +267,10 @@ def test_run_profile_picker_suspends_tui_when_present(monkeypatch):
         console = MagicMock()
         tui_app = _FakeTUI()
 
-    DatusCLI._run_profile_picker(_CLIStub(), "normal")
-    assert suspend_entries["n"] == 1
+    result = DatusCLI._run_profile_picker(_CLIStub(), "normal")
+    assert result == "auto"
+    # ``run_wizard`` was handed the picker's ``build_embedded_panel``.
+    assert wizard_calls["factory"] is not None
 
 
 def test_profile_malformed_rules_fails_closed_to_normal():

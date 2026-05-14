@@ -103,10 +103,19 @@ class TestListSelectorAppInit:
 
 
 class TestTitleBarInLayout:
+    """The wizard is no longer wrapped in an Application at
+    construction time (it's an embedded panel by default). Build the
+    layout via the same path the host uses and inspect it directly."""
+
+    def _build_layout(self, app):
+        kb = app._build_key_bindings()
+        root, _focus = app._build_root_container(kb)
+        return root
+
     def test_title_appears_in_layout(self):
         items = [ListItem(key="a", primary="A")]
         app = ListSelectorApp(title="Pick one", items=items)
-        root = app._app.layout.container
+        root = self._build_layout(app)
         first_child = root.children[0]
         ctrl = first_child.content
         fragments = ctrl.text()
@@ -116,7 +125,7 @@ class TestTitleBarInLayout:
     def test_title_has_dash_prefix(self):
         items = [ListItem(key="a", primary="A")]
         app = ListSelectorApp(title="My list", items=items)
-        root = app._app.layout.container
+        root = self._build_layout(app)
         first_child = root.children[0]
         ctrl = first_child.content
         fragments = ctrl.text()

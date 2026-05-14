@@ -4,10 +4,12 @@
 
 """Self-contained ``/profile`` pickers rendered as prompt_toolkit ``Application``s.
 
-Mirrors the lightweight inline picker pattern of :mod:`datus.cli.agent_picker_app`
-— avoids ``radiolist_dialog`` / ``button_dialog`` which are fullscreen and
-compete with the outer REPL's cursor-position requests, producing sluggish
-key response and visual churn.
+Mirrors the dual-mode pattern of the other migrated wizards
+(:mod:`datus.cli.effort_app` et al): :meth:`run` constructs a transient
+standalone ``Application(full_screen=False)`` for non-TUI callers;
+:meth:`build_embedded_panel` returns an :class:`EmbeddedWizard` that the
+active :class:`~datus.cli.tui.app.DatusApp` mounts in its bottom slot
+(status bar / input row are replaced, output pane stays visible above).
 
 Two apps:
   * ``ProfilePickerApp`` — primary profile selection dialog.
@@ -16,7 +18,8 @@ Two apps:
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+import asyncio
+from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.key_binding import KeyBindings
@@ -28,6 +31,9 @@ from rich.console import Console
 
 from datus.cli.cli_styles import CLR_CURRENT, CLR_CURSOR, SYM_ARROW, print_error, render_tui_title_bar
 from datus.utils.loggings import get_logger
+
+if TYPE_CHECKING:
+    from datus.cli.tui.wizard_host import EmbeddedWizard
 
 logger = get_logger(__name__)
 
@@ -55,9 +61,24 @@ class ProfilePickerApp:
         self._console = console
         self._current = current if current in self._PROFILES else "normal"
         self._idx = self._PROFILES.index(self._current)
-        self._app = self._build_app()
+        # Dual-mode finish hook (see ``EffortApp`` for the rationale).
+        self._on_done: Optional[Callable[[Optional[str]], None]] = None
+        self._app: Optional[Application] = None
+        self._list_window: Optional[Window] = None
+
+    # ── Standalone entry point ────────────────────────────────────
 
     def run(self) -> Optional[str]:
+        kb = self._build_key_bindings()
+        root = self._build_root_container(kb)
+        self._app = Application(
+            layout=Layout(root, focused_element=self._list_window),
+            key_bindings=kb,
+            full_screen=False,
+            mouse_support=False,
+            erase_when_done=True,
+        )
+        self._on_done = lambda result: self._app.exit(result=result)
         try:
             return self._app.run()
         except KeyboardInterrupt:
@@ -66,30 +87,62 @@ class ProfilePickerApp:
             logger.error("ProfilePickerApp crashed: %s", exc)
             print_error(self._console, f"/profile error: {exc}")
             return None
+        finally:
+            self._on_done = None
+            self._app = None
 
-    def _build_app(self) -> Application:
+    def build_embedded_panel(self, done_future: "asyncio.Future") -> "EmbeddedWizard":
+        from datus.cli.tui.wizard_host import EmbeddedWizard, resolve_cancel, resolve_with
+
+        def _done(result):
+            if result is None:
+                resolve_cancel(done_future)
+            else:
+                resolve_with(done_future, result)
+
+        self._on_done = _done
+        kb = self._build_key_bindings()
+        root = self._build_root_container(kb)
+        return EmbeddedWizard(
+            container=root,
+            key_bindings=kb,
+            first_focus=self._list_window,
+            done_future=done_future,
+        )
+
+    # ── Internals ────────────────────────────────────────────────
+
+    def _finish(self, result: Optional[str]) -> None:
+        if self._on_done is None:
+            return
+        self._on_done(result)
+
+    def _build_key_bindings(self) -> KeyBindings:
         kb = KeyBindings()
 
         @kb.add("up")
-        def _up(event):
+        def _up(event):  # noqa: ANN001
             self._idx = max(0, self._idx - 1)
 
         @kb.add("down")
-        def _down(event):
+        def _down(event):  # noqa: ANN001
             self._idx = min(len(self._PROFILES) - 1, self._idx + 1)
 
         @kb.add("enter")
-        def _enter(event):
-            event.app.exit(self._PROFILES[self._idx])
+        def _enter(event):  # noqa: ANN001
+            self._finish(self._PROFILES[self._idx])
 
         @kb.add("escape")
-        def _escape(event):
-            event.app.exit(None)
+        def _escape(event):  # noqa: ANN001
+            self._finish(None)
 
         @kb.add("c-c")
-        def _ctrl_c(event):
-            event.app.exit(None)
+        def _ctrl_c(event):  # noqa: ANN001
+            self._finish(None)
 
+        return kb
+
+    def _build_root_container(self, kb: KeyBindings) -> HSplit:
         title_bar = Window(
             content=FormattedTextControl(lambda: render_tui_title_bar("Permission Profile Selection")),
             height=1,
@@ -98,8 +151,8 @@ class ProfilePickerApp:
             content=FormattedTextControl(self._render_header, focusable=False),
             height=Dimension(min=1, max=2),
         )
-        list_window = Window(
-            content=FormattedTextControl(self._render_list, focusable=True),
+        self._list_window = Window(
+            content=FormattedTextControl(self._render_list, focusable=True, key_bindings=kb),
             always_hide_cursor=True,
             height=Dimension(min=3, max=len(self._PROFILES) + 1),
         )
@@ -108,23 +161,15 @@ class ProfilePickerApp:
             height=1,
         )
 
-        root = HSplit(
+        return HSplit(
             [
                 title_bar,
                 header_window,
                 Window(height=1, char="\u2500"),
-                list_window,
+                self._list_window,
                 Window(height=1, char="\u2500"),
                 hint_window,
             ]
-        )
-
-        return Application(
-            layout=Layout(root, focused_element=list_window),
-            key_bindings=kb,
-            full_screen=False,
-            mouse_support=False,
-            erase_when_done=True,
         )
 
     def _render_header(self) -> List[Tuple[str, str]]:
@@ -168,9 +213,21 @@ class DangerousConfirmApp:
     def __init__(self, console: Console):
         self._console = console
         self._idx = 0  # default: Cancel
-        self._app = self._build_app()
+        self._on_done: Optional[Callable[[Optional[str]], None]] = None
+        self._app: Optional[Application] = None
+        self._list_window: Optional[Window] = None
 
     def run(self) -> bool:
+        kb = self._build_key_bindings()
+        root = self._build_root_container(kb)
+        self._app = Application(
+            layout=Layout(root, focused_element=self._list_window),
+            key_bindings=kb,
+            full_screen=False,
+            mouse_support=False,
+            erase_when_done=True,
+        )
+        self._on_done = lambda result: self._app.exit(result=result)
         try:
             result = self._app.run()
         except KeyboardInterrupt:
@@ -179,31 +236,58 @@ class DangerousConfirmApp:
             logger.error("DangerousConfirmApp crashed: %s", exc)
             print_error(self._console, f"/profile confirm error: {exc}")
             return False
+        finally:
+            self._on_done = None
+            self._app = None
         return result == "enable"
 
-    def _build_app(self) -> Application:
+    def build_embedded_panel(self, done_future: "asyncio.Future") -> "EmbeddedWizard":
+        from datus.cli.tui.wizard_host import EmbeddedWizard, resolve_with
+
+        # The host normalises ``None`` to "cancel" (the safer choice for
+        # Dangerous), so resolve the future with whichever sentinel the
+        # bindings produce.
+        self._on_done = lambda result: resolve_with(done_future, result or "cancel")
+        kb = self._build_key_bindings()
+        root = self._build_root_container(kb)
+        return EmbeddedWizard(
+            container=root,
+            key_bindings=kb,
+            first_focus=self._list_window,
+            done_future=done_future,
+        )
+
+    def _finish(self, result: Optional[str]) -> None:
+        if self._on_done is None:
+            return
+        self._on_done(result)
+
+    def _build_key_bindings(self) -> KeyBindings:
         kb = KeyBindings()
 
         @kb.add("up")
-        def _up(event):
+        def _up(event):  # noqa: ANN001
             self._idx = max(0, self._idx - 1)
 
         @kb.add("down")
-        def _down(event):
+        def _down(event):  # noqa: ANN001
             self._idx = min(len(self._CHOICES) - 1, self._idx + 1)
 
         @kb.add("enter")
-        def _enter(event):
-            event.app.exit(self._CHOICES[self._idx][0])
+        def _enter(event):  # noqa: ANN001
+            self._finish(self._CHOICES[self._idx][0])
 
         @kb.add("escape")
-        def _escape(event):
-            event.app.exit("cancel")
+        def _escape(event):  # noqa: ANN001
+            self._finish("cancel")
 
         @kb.add("c-c")
-        def _ctrl_c(event):
-            event.app.exit("cancel")
+        def _ctrl_c(event):  # noqa: ANN001
+            self._finish("cancel")
 
+        return kb
+
+    def _build_root_container(self, kb: KeyBindings) -> HSplit:
         title_bar = Window(
             content=FormattedTextControl(lambda: render_tui_title_bar("Dangerous Profile Confirmation")),
             height=1,
@@ -212,8 +296,8 @@ class DangerousConfirmApp:
             content=FormattedTextControl(self._render_header, focusable=False),
             height=Dimension(min=8, max=10),
         )
-        list_window = Window(
-            content=FormattedTextControl(self._render_list, focusable=True),
+        self._list_window = Window(
+            content=FormattedTextControl(self._render_list, focusable=True, key_bindings=kb),
             always_hide_cursor=True,
             height=Dimension(min=2, max=2),
         )
@@ -222,23 +306,15 @@ class DangerousConfirmApp:
             height=1,
         )
 
-        root = HSplit(
+        return HSplit(
             [
                 title_bar,
                 header_window,
                 Window(height=1, char="\u2500"),
-                list_window,
+                self._list_window,
                 Window(height=1, char="\u2500"),
                 hint_window,
             ]
-        )
-
-        return Application(
-            layout=Layout(root, focused_element=list_window),
-            key_bindings=kb,
-            full_screen=False,
-            mouse_support=False,
-            erase_when_done=True,
         )
 
     def _render_header(self) -> List[Tuple[str, str]]:

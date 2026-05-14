@@ -723,19 +723,19 @@ class TestRunApp:
         result = cmds._run_app(app)
         assert result.kind == "cancel"
 
-    def test_run_app_suspends_tui(self, commands):
+    def test_run_app_embeds_in_tui_when_loop_active(self, commands):
+        """The TUI path mounts the wizard via ``DatusApp.run_wizard``
+        instead of suspending stdin — the panel renders inline in the
+        bottom slot."""
         cmds, cli = commands
         tui_app = MagicMock()
-        ctx = MagicMock()
-        ctx.__enter__ = MagicMock(return_value=None)
-        ctx.__exit__ = MagicMock(return_value=False)
-        tui_app.suspend_input.return_value = ctx
+        tui_app._loop = MagicMock()  # truthy → embedded path
+        tui_app.run_wizard = MagicMock(return_value=MCPSelection(kind="cancel"))
         cli.tui_app = tui_app
         app = MagicMock()
-        app.run.return_value = MCPSelection(kind="cancel")
         cmds._run_app(app)
-        tui_app.suspend_input.assert_called_once()
-        ctx.__enter__.assert_called_once()
+        tui_app.run_wizard.assert_called_once_with(app.build_embedded_panel)
+        app.run.assert_not_called()
 
 
 # ─────────────────────────────────────────────────────────────────────

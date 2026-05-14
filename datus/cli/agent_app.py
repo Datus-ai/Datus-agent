@@ -29,10 +29,14 @@ with two tabs:
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
+
+if TYPE_CHECKING:
+    from datus.cli.tui.wizard_host import EmbeddedWizard
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.filters import Condition
@@ -160,15 +164,28 @@ class AgentApp:
         term_height = shutil.get_terminal_size((120, 40)).lines
         self._max_visible: int = max(3, min(15, term_height - 8))
 
-        self._app = self._build_application()
+        # Dual-mode finish hook (see ``EffortApp`` for the rationale).
+        self._on_done: Optional[Callable[[Optional[AgentSelection]], None]] = None
+        self._app: Optional[Application] = None
+        self._list_window: Optional[Window] = None
 
     # ─────────────────────────────────────────────────────────────────
     # Public API
     # ─────────────────────────────────────────────────────────────────
 
     def run(self) -> Optional[AgentSelection]:
-        """Run the Application. Returns ``None`` on cancel."""
+        """Run as a transient standalone Application (non-TUI fallback)."""
         self._apply_seed()
+        kb = self._build_key_bindings()
+        root = self._build_root_container(kb)
+        self._app = Application(
+            layout=Layout(root, focused_element=None),
+            key_bindings=kb,
+            full_screen=False,
+            mouse_support=False,
+            erase_when_done=True,
+        )
+        self._on_done = lambda result: self._app.exit(result=result)
         try:
             return self._app.run()
         except KeyboardInterrupt:
@@ -177,6 +194,55 @@ class AgentApp:
             logger.error("AgentApp crashed: %s", exc)
             print_error(self._console, f"/agent error: {exc}")
             return None
+        finally:
+            self._on_done = None
+            self._app = None
+
+    def build_embedded_panel(self, done_future: "asyncio.Future") -> "EmbeddedWizard":
+        from datus.cli.tui.wizard_host import EmbeddedWizard, resolve_cancel, resolve_with
+
+        self._apply_seed()
+
+        def _done(result):
+            if result is None:
+                resolve_cancel(done_future)
+            else:
+                resolve_with(done_future, result)
+
+        self._on_done = _done
+        kb = self._build_key_bindings()
+        root = self._build_root_container(kb)
+        return EmbeddedWizard(
+            container=root,
+            key_bindings=kb,
+            first_focus=self._list_window,
+            done_future=done_future,
+        )
+
+    def _finish(self, result: Optional["AgentSelection"]) -> None:
+        if self._on_done is None:
+            return
+        self._on_done(result)
+
+    def _layout(self) -> Optional[Layout]:
+        app = getattr(self, "_app", None)
+        if app is not None:
+            return app.layout
+        try:
+            from prompt_toolkit.application import get_app
+
+            return get_app().layout
+        except Exception:
+            return None
+
+    def _focus(self, target) -> None:
+        layout = self._layout()
+        if layout is None or target is None:
+            return
+        try:
+            layout.focus(target)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("AgentApp focus(%r) failed: %s", target, exc)
 
     def _apply_seed(self) -> None:
         if self._seed_tab_arg == "custom":
@@ -221,19 +287,20 @@ class AgentApp:
     # Layout construction
     # ─────────────────────────────────────────────────────────────────
 
-    def _build_application(self) -> Application:
+    def _build_root_container(self, kb: KeyBindings) -> HSplit:
         tab_window = Window(
             content=FormattedTextControl(self._render_tab_strip, focusable=False),
             height=1,
             style="class:agent-app.tabs",
         )
 
-        list_window = Window(
-            content=FormattedTextControl(self._render_list, focusable=True),
+        self._list_window = Window(
+            content=FormattedTextControl(self._render_list, focusable=True, key_bindings=kb),
             always_hide_cursor=True,
             style="class:agent-app.list",
             height=Dimension(min=3),
         )
+        list_window = self._list_window
 
         edit_header = Window(
             FormattedTextControl(self._render_edit_header, focusable=False),
@@ -271,7 +338,7 @@ class AgentApp:
             height=1,
         )
 
-        root = HSplit(
+        return HSplit(
             [
                 title_bar,
                 tab_window,
@@ -281,14 +348,6 @@ class AgentApp:
                 Window(height=1, char="\u2500", style="class:agent-app.separator"),
                 hint_window,
             ]
-        )
-
-        return Application(
-            layout=Layout(root, focused_element=None),
-            key_bindings=self._build_key_bindings(),
-            full_screen=False,
-            mouse_support=False,
-            erase_when_done=True,
         )
 
     # ─────────────────────────────────────────────────────────────────
@@ -463,7 +522,7 @@ class AgentApp:
         current_max = self._current_override(name).get("max_turns")
         self._max_turns_input.text = str(current_max) if current_max is not None else ""
         self._view = _View.BUILTIN_EDIT
-        self._app.layout.focus(self._max_turns_input)
+        self._focus(self._max_turns_input)
         self._error_message = None
 
     # ─────────────────────────────────────────────────────────────────
@@ -596,7 +655,7 @@ class AgentApp:
 
     def _exit_with(self, selection: AgentSelection) -> None:
         self._result = selection
-        self._app.exit(result=selection)
+        self._finish(selection)
 
     # ─────────────────────────────────────────────────────────────────
     # Key bindings
@@ -686,7 +745,7 @@ class AgentApp:
         @kb.add("escape", filter=is_list)
         def _(event):
             _clear_pending_delete()
-            event.app.exit(result=None)
+            self._finish(None)
 
         # ── Built-in edit form ──────────────────────────────────────
         # Single-field form: the TextArea owns focus, Enter / Ctrl+S
@@ -708,7 +767,7 @@ class AgentApp:
         # ── Global cancel ───────────────────────────────────────────
         @kb.add("c-c")
         def _(event):
-            event.app.exit(result=None)
+            self._finish(None)
 
         return kb
 

@@ -21,10 +21,14 @@ Mirrors :mod:`datus.cli.skill_app` / :mod:`datus.cli.model_app`:
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from datus.cli.tui.wizard_host import EmbeddedWizard
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.filters import Condition
@@ -155,8 +159,9 @@ class MCPApp:
         # Title(1) + separator(1) + body + error(1) + separator(1) + hint(1) = 5 overhead.
         self._max_visible: int = max(3, min(18, term_height - 6))
 
-        self._app = self._build_application()
-
+        # Seed views must be applied BEFORE focus is touched so the
+        # initial paint shows the requested form/list.
+        self._seed_view = seed_view
         if seed_view == "add_form":
             self._enter_add_form()
         elif seed_view == "tools" and seed_server:
@@ -166,12 +171,27 @@ class MCPApp:
         elif seed_view == "detail" and seed_server:
             self._view = _View.DETAIL
 
+        # Dual-mode finish hook (see EffortApp for the pattern).
+        self._on_done: Optional[Callable[[Optional[MCPSelection]], None]] = None
+        self._app: Optional[Application] = None
+        self._list_window: Optional[Window] = None
+
     # ─────────────────────────────────────────────────────────────────
     # Public API
     # ─────────────────────────────────────────────────────────────────
 
     def run(self) -> Optional[MCPSelection]:
-        """Run the Application. Returns ``None`` on KeyboardInterrupt."""
+        """Run as a transient standalone Application (non-TUI fallback)."""
+        kb = self._build_key_bindings()
+        root = self._build_root_container(kb)
+        self._app = Application(
+            layout=Layout(root, focused_element=None),
+            key_bindings=kb,
+            full_screen=False,
+            mouse_support=False,
+            erase_when_done=True,
+        )
+        self._on_done = lambda result: self._app.exit(result=result)
         try:
             return self._app.run()
         except KeyboardInterrupt:
@@ -180,18 +200,69 @@ class MCPApp:
             logger.error("MCPApp crashed: %s", exc)
             print_error(self._console, f"/mcp error: {exc}")
             return None
+        finally:
+            self._on_done = None
+            self._app = None
+
+    def build_embedded_panel(self, done_future: "asyncio.Future") -> "EmbeddedWizard":
+        from datus.cli.tui.wizard_host import EmbeddedWizard, resolve_cancel, resolve_with
+
+        def _done(result):
+            if result is None:
+                resolve_cancel(done_future)
+            else:
+                resolve_with(done_future, result)
+
+        self._on_done = _done
+        kb = self._build_key_bindings()
+        root = self._build_root_container(kb)
+        return EmbeddedWizard(
+            container=root,
+            key_bindings=kb,
+            first_focus=self._list_window,
+            done_future=done_future,
+        )
+
+    def _finish(self, result: Optional["MCPSelection"]) -> None:
+        if self._on_done is None:
+            return
+        self._on_done(result)
+
+    def _layout(self) -> Optional[Layout]:
+        # ``getattr`` so seed-view dispatch from ``__init__`` (which runs
+        # before ``self._app`` is bound) can call ``_focus`` without
+        # raising — the focus is restored later when the wizard mounts.
+        app = getattr(self, "_app", None)
+        if app is not None:
+            return app.layout
+        try:
+            from prompt_toolkit.application import get_app
+
+            return get_app().layout
+        except Exception:
+            return None
+
+    def _focus(self, target) -> None:
+        layout = self._layout()
+        if layout is None or target is None:
+            return
+        try:
+            layout.focus(target)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("MCPApp focus(%r) failed: %s", target, exc)
 
     # ─────────────────────────────────────────────────────────────────
     # Layout
     # ─────────────────────────────────────────────────────────────────
 
-    def _build_application(self) -> Application:
-        list_window = Window(
-            content=FormattedTextControl(self._render_list, focusable=True),
+    def _build_root_container(self, kb: KeyBindings) -> HSplit:
+        self._list_window = Window(
+            content=FormattedTextControl(self._render_list, focusable=True, key_bindings=kb),
             always_hide_cursor=True,
             style="class:mcp-app.list",
             height=Dimension(min=3),
         )
+        list_window = self._list_window
         detail_window = Window(
             content=FormattedTextControl(self._render_detail, focusable=False),
             always_hide_cursor=True,
@@ -199,7 +270,7 @@ class MCPApp:
             height=Dimension(min=3),
         )
         tools_window = Window(
-            content=FormattedTextControl(self._render_tools_list, focusable=True),
+            content=FormattedTextControl(self._render_tools_list, focusable=True, key_bindings=kb),
             always_hide_cursor=True,
             style="class:mcp-app.tools",
             height=Dimension(min=3),
@@ -280,7 +351,7 @@ class MCPApp:
             height=1,
         )
 
-        root = HSplit(
+        return HSplit(
             [
                 title_bar,
                 Window(height=1, char="\u2500", style="class:mcp-app.separator"),
@@ -289,14 +360,6 @@ class MCPApp:
                 Window(height=1, char="\u2500", style="class:mcp-app.separator"),
                 hint_window,
             ]
-        )
-
-        return Application(
-            layout=Layout(root, focused_element=None),
-            key_bindings=self._build_key_bindings(),
-            full_screen=False,
-            mouse_support=False,
-            erase_when_done=True,
         )
 
     # ─────────────────────────────────────────────────────────────────
@@ -604,7 +667,7 @@ class MCPApp:
         if name not in self._tools_cache:
             # Caller must load tools first; exit with kind="load_tools".
             self._result = MCPSelection(kind="load_tools", name=name)
-            self._app.exit(result=self._result)
+            self._finish(self._result)
             return
         self._view = _View.TOOLS
         self._tools_cursor = 0
@@ -627,7 +690,7 @@ class MCPApp:
         self._pending_remove = None
         self._form_focus_order = [self._add_name] + self._dynamic_add_fields()
         self._form_focus_idx = 0
-        self._app.layout.focus(self._add_name)
+        self._focus(self._add_name)
 
     def _enter_filter_form(self) -> None:
         name = self._focused_server_name()
@@ -649,7 +712,7 @@ class MCPApp:
 
         self._form_focus_order = [self._filter_enabled, self._filter_allowed, self._filter_blocked]
         self._form_focus_idx = 0
-        self._app.layout.focus(self._filter_enabled)
+        self._focus(self._filter_enabled)
 
     def _enter_search_bar(self) -> None:
         self._view = _View.SEARCH_BAR
@@ -658,7 +721,7 @@ class MCPApp:
         self._search_input.text = self._filter_query
         self._form_focus_order = [self._search_input]
         self._form_focus_idx = 0
-        self._app.layout.focus(self._search_input)
+        self._focus(self._search_input)
 
     def _dynamic_add_fields(self) -> List[TextArea]:
         active = _SERVER_TYPES[self._add_type_idx]
@@ -681,7 +744,7 @@ class MCPApp:
         if self._pending_remove == name:
             self._pending_remove = None
             self._result = MCPSelection(kind="remove", name=name)
-            self._app.exit(result=self._result)
+            self._finish(self._result)
             return
         self._pending_remove = name
         self._error_message = f"Delete server `{name}`? Press r again to confirm, any other key to cancel."
@@ -691,11 +754,11 @@ class MCPApp:
         if not name:
             return
         self._result = MCPSelection(kind="check", name=name)
-        self._app.exit(result=self._result)
+        self._finish(self._result)
 
     def _on_refresh(self) -> None:
         self._result = MCPSelection(kind="refresh")
-        self._app.exit(result=self._result)
+        self._finish(self._result)
 
     def _submit_add_form(self) -> None:
         name = self._add_name.text.strip()
@@ -741,7 +804,7 @@ class MCPApp:
                     self._error_message = "Timeout must be a number"
                     return
         self._result = MCPSelection(kind="add", name=name, server_type=stype, config=config)
-        self._app.exit(result=self._result)
+        self._finish(self._result)
 
     def _submit_filter_form(self) -> None:
         name = self._focused_server_name()
@@ -758,7 +821,7 @@ class MCPApp:
             "blocked": blocked or None,
         }
         self._result = MCPSelection(kind="set_filter", name=name, filter_config=filter_config)
-        self._app.exit(result=self._result)
+        self._finish(self._result)
 
     def _drop_filter(self) -> None:
         name = self._focused_server_name()
@@ -766,7 +829,7 @@ class MCPApp:
             self._error_message = "No server selected"
             return
         self._result = MCPSelection(kind="remove_filter", name=name)
-        self._app.exit(result=self._result)
+        self._finish(self._result)
 
     def _apply_search_filter(self) -> None:
         self._filter_query = self._search_input.text.strip()
@@ -873,11 +936,11 @@ class MCPApp:
 
         @kb.add("q", filter=is_list)
         def _(event):
-            event.app.exit(result=MCPSelection(kind="cancel"))
+            self._finish(MCPSelection(kind="cancel"))
 
         @kb.add("escape", filter=is_list)
         def _(event):
-            event.app.exit(result=MCPSelection(kind="cancel"))
+            self._finish(MCPSelection(kind="cancel"))
 
         # ─── DETAIL view ─────────────────────────────────────────────
         @kb.add("escape", filter=is_detail)
@@ -1008,7 +1071,7 @@ class MCPApp:
         # ─── Global cancel ───────────────────────────────────────────
         @kb.add("c-c")
         def _(event):
-            event.app.exit(result=None)
+            self._finish(None)
 
         return kb
 
@@ -1020,7 +1083,7 @@ class MCPApp:
         if not self._form_focus_order:
             return
         self._form_focus_idx = (self._form_focus_idx + delta) % len(self._form_focus_order)
-        self._app.layout.focus(self._form_focus_order[self._form_focus_idx])
+        self._focus(self._form_focus_order[self._form_focus_idx])
 
 
 # ─────────────────────────────────────────────────────────────────────

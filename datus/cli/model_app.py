@@ -21,10 +21,14 @@ Application itself never blocks on I/O.
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from datus.cli.tui.wizard_host import EmbeddedWizard
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.filters import Condition
@@ -204,17 +208,41 @@ class ModelApp:
         term_height = shutil.get_terminal_size((120, 40)).lines
         self._max_visible: int = max(3, min(15, term_height - 7))
 
-        self._app = self._build_application()
+        # ``_on_done`` is the active "finish" callable. Standalone mode
+        # points it at ``Application.exit``; embedded mode points it at
+        # ``done_future.set_result``. Both ``self._app.exit(result=X)``
+        # call sites are now ``self._finish(X)`` so the same closures
+        # work in both modes.
+        self._on_done: Optional[Callable[[Optional[ModelSelection]], None]] = None
+        # Active ``Application`` when running standalone; ``None`` when
+        # embedded (the parent ``DatusApp`` owns the layout instead).
+        self._app: Optional[Application] = None
 
     # ─────────────────────────────────────────────────────────────────
     # Public API
     # ─────────────────────────────────────────────────────────────────
 
     def run(self) -> Optional[ModelSelection]:
-        """Run the Application. Returns ``None`` on cancel."""
+        """Run as a transient ``Application(full_screen=False)``.
+
+        Used for non-TUI fallbacks. The TUI path goes through
+        :meth:`build_embedded_panel` via
+        :meth:`datus.cli.tui.app.DatusApp.run_wizard`.
+        Returns ``None`` on cancel.
+        """
         early = self._apply_seed()
         if early is not None:
             return early
+        kb = self._build_key_bindings()
+        root = self._build_root_container(kb)
+        self._app = Application(
+            layout=Layout(root, focused_element=None),
+            key_bindings=kb,
+            full_screen=False,
+            mouse_support=False,
+            erase_when_done=True,
+        )
+        self._on_done = lambda result: self._app.exit(result=result)
         try:
             return self._app.run()
         except KeyboardInterrupt:
@@ -223,6 +251,78 @@ class ModelApp:
             logger.error("ModelApp crashed: %s", exc)
             print_error(self._console, f"/model error: {exc}")
             return None
+        finally:
+            self._on_done = None
+            self._app = None
+
+    def build_embedded_panel(self, done_future: "asyncio.Future") -> "EmbeddedWizard":
+        """Build the panel for the parent :class:`DatusApp`'s bottom slot.
+
+        The seed-driven early hand-off (``needs_oauth``) needs to
+        resolve immediately so the host doesn't render a useless
+        panel — feed it directly to ``done_future`` and let
+        ``DatusApp.run_wizard`` return.
+        """
+        early = self._apply_seed()
+        if early is not None:
+            from datus.cli.tui.wizard_host import resolve_with
+
+            resolve_with(done_future, early)
+        self._on_done = lambda result: self._finish_via_future(done_future, result)
+        kb = self._build_key_bindings()
+        root = self._build_root_container(kb)
+        # Embedded mode is layout-driven only — focus is set by the
+        # host's ``mount_wizard`` from ``EmbeddedWizard.first_focus``.
+        # We don't know which form is initially active here (depends on
+        # state), so leave focus on the list_window we built; the
+        # state-machine views will retarget via ``self._focus`` on view
+        # transitions exactly as they do in standalone mode.
+        from datus.cli.tui.wizard_host import EmbeddedWizard
+
+        return EmbeddedWizard(
+            container=root,
+            key_bindings=kb,
+            first_focus=self._list_window,
+            done_future=done_future,
+        )
+
+    # ─────────────────────────────────────────────────────────────────
+    # Embedded/standalone shared hooks
+    # ─────────────────────────────────────────────────────────────────
+
+    def _finish(self, result: Optional["ModelSelection"]) -> None:
+        if self._on_done is None:
+            return
+        self._on_done(result)
+
+    @staticmethod
+    def _finish_via_future(done_future: "asyncio.Future", result: Optional["ModelSelection"]) -> None:
+        from datus.cli.tui.wizard_host import resolve_cancel, resolve_with
+
+        if result is None:
+            resolve_cancel(done_future)
+        else:
+            resolve_with(done_future, result)
+
+    def _layout(self) -> Optional[Layout]:
+        """Active layout — wizard's own in standalone, parent's in embedded."""
+        if self._app is not None:
+            return self._app.layout
+        try:
+            from prompt_toolkit.application import get_app
+
+            return get_app().layout
+        except Exception:
+            return None
+
+    def _focus(self, target) -> None:
+        layout = self._layout()
+        if layout is None or target is None:
+            return
+        try:
+            layout.focus(target)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("ModelApp focus(%r) failed: %s", target, exc)
 
     def _apply_seed(self) -> Optional[ModelSelection]:
         """Pre-position the state machine based on seed kwargs.
@@ -309,15 +409,24 @@ class ModelApp:
     # Layout construction
     # ─────────────────────────────────────────────────────────────────
 
-    def _build_application(self) -> Application:
+    def _build_root_container(self, kb: KeyBindings) -> HSplit:
+        """Build the wizard's visible widget tree.
+
+        Returns the root :class:`HSplit`; callers wrap it in an
+        ``Application`` (standalone) or hand it to a parent
+        ``DynamicContainer`` (embedded). The focusable list and form
+        Windows carry ``kb`` so prompt_toolkit auto-scopes the wizard
+        bindings to wizard-focus and the parent TUI keeps its own
+        bindings active when focus is elsewhere.
+        """
         tab_window = Window(
             content=FormattedTextControl(self._render_tab_strip, focusable=False),
             height=1,
             style="class:model-app.tabs",
         )
 
-        list_window = Window(
-            content=FormattedTextControl(self._render_list, focusable=True),
+        self._list_window = Window(
+            content=FormattedTextControl(self._render_list, focusable=True, key_bindings=kb),
             always_hide_cursor=True,
             style="class:model-app.list",
             height=Dimension(min=3),
@@ -365,7 +474,7 @@ class ModelApp:
                 return token_form
             if self._view == _View.ADD_MODEL_FORM:
                 return add_form
-            return list_window
+            return self._list_window
 
         body = DynamicContainer(_body_container)
 
@@ -388,7 +497,7 @@ class ModelApp:
             height=1,
         )
 
-        root = HSplit(
+        return HSplit(
             [
                 title_bar,
                 tab_window,
@@ -398,14 +507,6 @@ class ModelApp:
                 Window(height=1, char="\u2500", style="class:model-app.separator"),
                 hint_window,
             ]
-        )
-
-        return Application(
-            layout=Layout(root, focused_element=None),
-            key_bindings=self._build_key_bindings(),
-            full_screen=False,
-            mouse_support=False,
-            erase_when_done=True,
         )
 
     # ─────────────────────────────────────────────────────────────────
@@ -657,7 +758,7 @@ class ModelApp:
         self._view = _View.PROVIDER_CRED_FORM
         self._form_focus_order = [self._cred_api_key, self._cred_base_url]
         self._form_focus_idx = 0
-        self._app.layout.focus(self._cred_api_key)
+        self._focus(self._cred_api_key)
         self._error_message = None
 
     def _enter_token_form(self, provider: str) -> None:
@@ -666,7 +767,7 @@ class ModelApp:
         self._view = _View.PROVIDER_TOKEN_FORM
         self._form_focus_order = [self._token_input]
         self._form_focus_idx = 0
-        self._app.layout.focus(self._token_input)
+        self._focus(self._token_input)
         self._error_message = None
 
     def _enter_add_model_form(self) -> None:
@@ -681,7 +782,7 @@ class ModelApp:
             self._add_api_key,
         ]
         self._form_focus_idx = 0
-        self._app.layout.focus(self._add_name)
+        self._focus(self._add_name)
         self._error_message = None
 
     def _initial_cursor(self, items: List[str], current: Optional[str]) -> int:
@@ -727,7 +828,7 @@ class ModelApp:
             # with running inside this Application's event loop. Hand off to the
             # caller by exiting with a ``needs_oauth`` result.
             self._result = ModelSelection(kind="needs_oauth", provider=provider)
-            self._app.exit(result=self._result)
+            self._finish(self._result)
         else:
             self._error_message = f"Unknown auth_type `{auth_type}` for provider `{provider}`"
 
@@ -753,7 +854,7 @@ class ModelApp:
             self._enter_token_form(provider)
         elif auth_type == "oauth":
             self._result = ModelSelection(kind="needs_oauth", provider=provider)
-            self._app.exit(result=self._result)
+            self._finish(self._result)
         else:
             self._error_message = f"Unknown auth_type `{auth_type}` for provider `{provider}`"
 
@@ -763,7 +864,7 @@ class ModelApp:
         model = self._provider_models[self._list_cursor]
         provider = self._active_provider or ""
         self._result = ModelSelection(kind="provider_model", provider=provider, model=model)
-        self._app.exit(result=self._result)
+        self._finish(self._result)
 
     def _on_custom_enter(self) -> None:
         total = len(self._custom_names)
@@ -774,7 +875,7 @@ class ModelApp:
         if 0 <= self._list_cursor < total:
             name = self._custom_names[self._list_cursor]
             self._result = ModelSelection(kind="custom", name=name)
-            self._app.exit(result=self._result)
+            self._finish(self._result)
 
     def _on_delete_custom(self) -> None:
         """Delete the highlighted ``agent.models`` entry with a two-press guard.
@@ -796,7 +897,7 @@ class ModelApp:
         if self._pending_delete_custom == name:
             self._pending_delete_custom = None
             self._result = ModelSelection(kind="delete_custom", name=name)
-            self._app.exit(result=self._result)
+            self._finish(self._result)
             return
         self._pending_delete_custom = name
         self._error_message = f"Delete `{name}`? Press d again to confirm, any other key to cancel."
@@ -894,7 +995,7 @@ class ModelApp:
         if api_key:
             payload["api_key"] = api_key
         self._result = ModelSelection(kind="add_custom", name=name, payload=payload)
-        self._app.exit(result=self._result)
+        self._finish(self._result)
 
     # ─────────────────────────────────────────────────────────────────
     # External helpers (synchronous, no stdin access)
@@ -1006,7 +1107,7 @@ class ModelApp:
             if self._view == _View.PROVIDER_MODELS:
                 self._enter_provider_list(self._tab)
             else:
-                event.app.exit(result=None)
+                self._finish(None)
 
         # Form navigation --------------------------------------------------
         @kb.add("tab", filter=is_form)
@@ -1049,7 +1150,7 @@ class ModelApp:
         # Global cancel ----------------------------------------------------
         @kb.add("c-c")
         def _(event):
-            event.app.exit(result=None)
+            self._finish(None)
 
         return kb
 
@@ -1061,7 +1162,7 @@ class ModelApp:
         if not self._form_focus_order:
             return
         self._form_focus_idx = (self._form_focus_idx + delta) % len(self._form_focus_order)
-        self._app.layout.focus(self._form_focus_order[self._form_focus_idx])
+        self._focus(self._form_focus_order[self._form_focus_idx])
 
     def _submit_current_form(self) -> None:
         if self._view == _View.PROVIDER_CRED_FORM:

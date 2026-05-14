@@ -98,9 +98,8 @@ class BootstrapCommands:
         default_ds = getattr(self.agent_config, "current_datasource", "") or ""
         app = BootstrapApp(self.console, datasource_default=str(default_ds))
         tui_app = getattr(self.cli, "tui_app", None) if self.cli else None
-        if tui_app is not None and hasattr(tui_app, "suspend_input"):
-            with tui_app.suspend_input():
-                return app.run()
+        if tui_app is not None and getattr(tui_app, "_loop", None) is not None:
+            return tui_app.run_wizard(app.build_embedded_panel)
         return app.run()
 
     # ── async runner ───────────────────────────────────────────────────

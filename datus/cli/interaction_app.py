@@ -10,6 +10,7 @@ Application following the same visual conventions as :class:`ModelApp`.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import os
 import shlex
@@ -18,9 +19,9 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import Any, Callable, List, Optional, Set, Tuple
 
-from prompt_toolkit.application import Application
+from prompt_toolkit.application import Application, get_app
 from prompt_toolkit.application.run_in_terminal import run_in_terminal
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.filters import Condition
@@ -33,6 +34,7 @@ from rich.console import Console as RichConsole
 from rich.markdown import Markdown as RichMarkdown
 
 from datus.cli.cli_styles import CLR_CURRENT, CLR_CURSOR, CODE_THEME, SYM_CHECK
+from datus.cli.tui.wizard_host import EmbeddedWizard, resolve_with
 from datus.schemas.interaction_event import InteractionEvent
 from datus.utils.loggings import get_logger
 
@@ -81,18 +83,52 @@ class InteractionApp:
 
         self._choices_win: Optional[Window] = None
         self._text_win: Optional[Window] = None
-        self._app = self._build()
+        # Active "finish" callable — see EffortApp for the dual-mode rationale.
+        self._on_done: Optional[Callable[[InteractionResult], None]] = None
+        # Standalone-mode handle to the Application, used by ``_focus_*``
+        # to retarget focus. In embedded mode focus is dispatched
+        # through ``prompt_toolkit.application.get_app()`` so the parent
+        # DatusApp's layout is the one we touch.
+        self._app: Optional[Application] = None
 
     # ── public ──────────────────────────────────────────────────
 
-    def run(self) -> InteractionResult:
-        """Run the app. Always returns a result (ESC fills defaults)."""
-        try:
-            from datus.cli._cli_utils import _run_sub_application
+    def run(self, tui_app: Any = None) -> InteractionResult:
+        """Run the app. Always returns a result (ESC fills defaults).
 
-            result = _run_sub_application(self._app)
-            if isinstance(result, InteractionResult):
-                return result
+        Args:
+            tui_app: The active :class:`DatusApp` if one is running.
+                When provided (and it has a live event loop) the wizard
+                embeds in the parent's bottom slot via ``run_wizard``;
+                otherwise we fall back to a transient standalone
+                ``Application(full_screen=False)``.
+        """
+        try:
+            if tui_app is not None and getattr(tui_app, "_loop", None) is not None:
+                result = tui_app.run_wizard(self.build_embedded_panel)
+                if isinstance(result, InteractionResult):
+                    return result
+                # ``None`` (cancel) maps to the ESC default.
+                return self._esc_result()
+
+            kb = self._kb()
+            root, initial_focus = self._build_root_container(kb)
+            self._app = Application(
+                layout=Layout(root, focused_element=initial_focus),
+                key_bindings=kb,
+                full_screen=False,
+                erase_when_done=True,
+            )
+            self._on_done = lambda result: self._app.exit(result=result)
+            try:
+                from datus.cli._cli_utils import _run_sub_application
+
+                result = _run_sub_application(self._app)
+                if isinstance(result, InteractionResult):
+                    return result
+            finally:
+                self._on_done = None
+                self._app = None
         except (KeyboardInterrupt, EOFError):
             pass
         except Exception as exc:
@@ -100,6 +136,34 @@ class InteractionApp:
         finally:
             self._cleanup_content_files()
         return self._esc_result()
+
+    def build_embedded_panel(self, done_future: "asyncio.Future") -> EmbeddedWizard:
+        """Build an embedded panel for the active DatusApp's bottom slot."""
+        self._on_done = lambda result: resolve_with(done_future, result)
+        kb = self._kb()
+        root, initial_focus = self._build_root_container(kb)
+        return EmbeddedWizard(
+            container=root,
+            key_bindings=kb,
+            first_focus=initial_focus,
+            done_future=done_future,
+        )
+
+    def _finish(self, result: InteractionResult) -> None:
+        """Dispatch the result through whichever ``_on_done`` is active."""
+        if self._on_done is None:
+            return
+        self._on_done(result)
+
+    def _layout(self) -> Optional[Layout]:
+        """Resolve the active layout — wizard's own in standalone, parent
+        DatusApp's in embedded mode."""
+        if self._app is not None:
+            return self._app.layout
+        try:
+            return get_app().layout
+        except Exception:
+            return None
 
     def _cleanup_content_files(self) -> None:
         for path in self._content_file_paths:
@@ -164,14 +228,22 @@ class InteractionApp:
 
     def _focus_choices(self) -> None:
         self._on_text_row = False
-        if self._choices_win:
-            self._app.layout.focus(self._choices_win)
+        layout = self._layout()
+        if self._choices_win and layout is not None:
+            try:
+                layout.focus(self._choices_win)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("focus_choices failed: %s", exc)
 
     def _focus_text(self) -> None:
         self._on_text_row = True
         self._text_buf.text = self._text_values[self._idx]
-        if self._text_win:
-            self._app.layout.focus(self._text_win)
+        layout = self._layout()
+        if self._text_win and layout is not None:
+            try:
+                layout.focus(self._text_win)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("focus_text failed: %s", exc)
 
     def _on_text_changed(self, buf: Buffer) -> None:
         self._text_values[self._idx] = buf.text
@@ -286,7 +358,7 @@ class InteractionApp:
             self._answers[i] = [""]
 
         if self._all_done():
-            self._app.exit(result=InteractionResult(answers=[a for a in self._answers]))
+            self._finish(InteractionResult(answers=[a for a in self._answers]))
             return
 
         nxt = self._next_unanswered()
@@ -295,7 +367,15 @@ class InteractionApp:
 
     # ── layout ──────────────────────────────────────────────────
 
-    def _build(self) -> Application:
+    def _build_root_container(self, kb: KeyBindings) -> Tuple[HSplit, Window]:
+        """Build the visible widget tree and return ``(root, initial_focus)``.
+
+        Same construction used by both :meth:`run` (standalone path
+        wraps it in an Application) and :meth:`build_embedded_panel`
+        (handed off to the parent's DynamicContainer). The list /
+        text-input Windows carry ``kb`` so wizard bindings auto-scope
+        to wizard-focus.
+        """
         tab_win = Window(
             FormattedTextControl(self._render_tabs, focusable=False),
             height=1,
@@ -308,7 +388,7 @@ class InteractionApp:
         )
 
         self._choices_win = Window(
-            FormattedTextControl(self._render_choices, focusable=True),
+            FormattedTextControl(self._render_choices, focusable=True, key_bindings=kb),
             always_hide_cursor=True,
             dont_extend_height=True,
         )
@@ -321,7 +401,7 @@ class InteractionApp:
             return [(CLR_CURSOR, "  Answer: ")]
 
         self._text_win = Window(
-            BufferControl(buffer=self._text_buf),
+            BufferControl(buffer=self._text_buf, key_bindings=kb),
             height=1,
             left_margins=[],
             style=CLR_CURSOR,
@@ -378,12 +458,7 @@ class InteractionApp:
             self._on_text_row = True
             initial_focus = self._text_win
 
-        return Application(
-            layout=Layout(root, focused_element=initial_focus),
-            key_bindings=self._kb(),
-            full_screen=False,
-            erase_when_done=True,
-        )
+        return root, initial_focus
 
     # ── rendering ───────────────────────────────────────────────
 
@@ -615,7 +690,7 @@ class InteractionApp:
             def _shortcut(event, ch=_c):
                 if ch in self._ev.choices:
                     self._answers[self._idx] = [ch]
-                    event.app.exit(result=InteractionResult(answers=[a for a in self._answers]))
+                    self._finish(InteractionResult(answers=[a for a in self._answers]))
 
         @kb.add("escape", filter=on_text)
         def _esc_text(event):
@@ -623,10 +698,10 @@ class InteractionApp:
 
         @kb.add("escape", filter=on_choices)
         def _esc(event):
-            event.app.exit(result=self._esc_result())
+            self._finish(self._esc_result())
 
         @kb.add("c-c")
         def _cc(event):
-            event.app.exit(result=self._esc_result())
+            self._finish(self._esc_result())
 
         return kb

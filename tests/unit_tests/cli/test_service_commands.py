@@ -1021,21 +1021,22 @@ class TestRunConfigMenu:
         # to scheduler because the prior selection.section == "schedulers".
         assert captured_tabs == ["dashboard", "scheduler"]
 
-    def test_run_app_uses_suspend_input_when_tui_active(self):
+    def test_run_app_uses_run_wizard_when_tui_active(self):
+        """When the parent TUI has an active loop, the wizard is
+        embedded via ``DatusApp.run_wizard`` (mounts it in the bottom
+        slot). ``fake_app.run()`` is bypassed entirely."""
         cmd, cli = _make_commands_with_bi_stub()
-        # Simulate an outer TUI App with ``suspend_input`` context manager.
-        ctx = MagicMock()
-        ctx.__enter__ = MagicMock(return_value=None)
-        ctx.__exit__ = MagicMock(return_value=False)
         cli.tui_app = MagicMock()
-        cli.tui_app.suspend_input = MagicMock(return_value=ctx)
+        cli.tui_app._loop = MagicMock()  # truthy → embedded path
+        cli.tui_app.run_wizard = MagicMock(return_value="embedded-result")
 
         fake_app = MagicMock()
-        fake_app.run = MagicMock(return_value="ran-with-suspend")
+        fake_app.build_embedded_panel = MagicMock()
+        fake_app.run = MagicMock(return_value="should-not-be-called")
         result = cmd._run_app(fake_app)
-        assert result == "ran-with-suspend"
-        ctx.__enter__.assert_called_once()
-        ctx.__exit__.assert_called_once()
+        assert result == "embedded-result"
+        cli.tui_app.run_wizard.assert_called_once_with(fake_app.build_embedded_panel)
+        fake_app.run.assert_not_called()
 
     def test_run_app_runs_directly_without_tui(self):
         cmd, cli = _make_commands_with_bi_stub()
