@@ -834,23 +834,30 @@ def _fmt_grep(result: Any) -> str:
 # === Plan / todo tools ===
 
 
+def _fmt_todo_list(result: Any) -> str:
+    if isinstance(result, dict):
+        items = result.get("items")
+        if isinstance(items, list):
+            total = result.get("total", len(items))
+            completed = result.get(
+                "completed", sum(1 for it in items if isinstance(it, dict) and it.get("status") == "completed")
+            )
+            return f"{completed}/{total} todos"
+    return ""
+
+
 def _fmt_todo_read(result: Any) -> str:
     if isinstance(result, dict):
-        lists = result.get("lists") or []
-        if not lists:
-            return "no todos"
-        first = lists[0] if isinstance(lists, list) else {}
-        items = first.get("items", []) if isinstance(first, dict) else []
-        total = len(items) if isinstance(items, list) else 0
-        completed = sum(1 for it in items if isinstance(it, dict) and it.get("status") == "completed")
-        return f"{completed}/{total} todos"
+        title = result.get("title")
+        status = result.get("status")
+        if title and status:
+            return f"{title}: {status}"
     return ""
 
 
 def _fmt_todo_write(result: Any) -> str:
     if isinstance(result, dict):
-        todo_list = result.get("todo_list") or {}
-        items = todo_list.get("items", []) if isinstance(todo_list, dict) else []
+        items = result.get("items")
         if isinstance(items, list):
             return f"{pluralize(len(items), 'todo')}"
     return ""
@@ -861,9 +868,9 @@ def _fmt_todo_update(result: Any) -> str:
         item = result.get("updated_item") or {}
         if isinstance(item, dict):
             status = item.get("status")
-            content = item.get("content")
-            if status and content:
-                return f"{content}: {status}"
+            title = item.get("title")
+            if status and title:
+                return f"{title}: {status}"
             if status:
                 return f"todo: {status}"
     return ""
@@ -1188,6 +1195,7 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "glob": _fmt_glob,
         "grep": _fmt_grep,
         # Plan / todo
+        "todo_list": _fmt_todo_list,
         "todo_read": _fmt_todo_read,
         "todo_write": _fmt_todo_write,
         "todo_update": _fmt_todo_update,

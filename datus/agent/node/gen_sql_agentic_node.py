@@ -338,13 +338,13 @@ class GenSQLAgenticNode(AgenticNode):
     def _setup_plan_tools(self):
         """Setup plan/todo tools so the agent can track multi-step work.
 
-        PlanTool exposes `todo_read`, `todo_write`, and `todo_update`, backed
-        by the agent's conversation session. Unlike plan_mode — which is a
-        full interactive replan workflow — this just makes the todo surface
-        available as regular function tools, so a long-horizon task (e.g.
-        generating a complex marts table with 30+ output columns) can write
-        a plan up front and check off items as it goes, avoiding
-        MaxTurnsExceeded and drift.
+        PlanTool exposes `todo_list`, `todo_read`, `todo_write`, and
+        `todo_update`, backed by the agent's conversation session. Unlike
+        plan_mode — which is a full interactive replan workflow — this just
+        makes the todo surface available as regular function tools, so a
+        long-horizon task (e.g. generating a complex marts table with 30+
+        output columns) can write a plan up front and check off items as it
+        goes, avoiding MaxTurnsExceeded and drift.
         """
         try:
             from datus.tools.func_tool.plan_tools import PlanTool

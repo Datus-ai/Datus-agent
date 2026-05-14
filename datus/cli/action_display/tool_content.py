@@ -1732,8 +1732,8 @@ def _build_get_document(action: ActionHistory, verbose: bool) -> ToolCallContent
     return tc
 
 
-def _build_todo_read(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """todo_read: show todo list count."""
+def _build_todo_list(action: ActionHistory, verbose: bool) -> ToolCallContent:
+    """todo_list: show completed/total counts."""
     tc = make_base_content(action)
     if verbose:
         tc.args_lines = extract_args_markup(action)
@@ -1744,8 +1744,30 @@ def _build_todo_read(action: ActionHistory, verbose: bool) -> ToolCallContent:
         if data:
             result = data.get("result")
             if isinstance(result, dict):
-                total = result.get("total_lists", 0)
-                tc.compact_result = f"{total} todo lists"
+                total = result.get("total", 0)
+                completed = result.get("completed", 0)
+                tc.compact_result = f"{completed}/{total} todos"
+    return tc
+
+
+def _build_todo_read(action: ActionHistory, verbose: bool) -> ToolCallContent:
+    """todo_read: show single item title:status."""
+    tc = make_base_content(action)
+    if verbose:
+        tc.args_lines = extract_args_markup(action)
+        if action.output:
+            tc.output_lines = _format_result_only_markup(action.output)
+    else:
+        data = parse_output_data(action.output)
+        if data:
+            result = data.get("result")
+            if isinstance(result, dict):
+                title = result.get("title", "")
+                status = result.get("status", "")
+                if title and status:
+                    tc.compact_result = f"{title}: {status}"
+                elif title:
+                    tc.compact_result = title
     return tc
 
 
@@ -2091,6 +2113,7 @@ class ToolCallContentBuilder:
         self._registry["web_search_document"] = _build_doc_search_result
 
         # Plan tools
+        self._registry["todo_list"] = _build_todo_list
         self._registry["todo_read"] = _build_todo_read
         self._registry["todo_write"] = _build_todo_write
         self._registry["todo_update"] = _build_todo_update

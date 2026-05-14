@@ -152,7 +152,7 @@ class TodoSidebarProvider:
         last_idx = len(ordered) - 1
         for idx, it in enumerate(ordered):
             symbol, style = self._status_glyph(it.status)
-            out.append((style, f" {symbol} {it.content}"))
+            out.append((style, f" {symbol} {it.title}"))
             if idx != last_idx:
                 out.append(("", "\n"))
         return out
@@ -163,4 +163,6 @@ class TodoSidebarProvider:
             return "\u2713", "class:todo-sidebar.completed"  # ✓
         if status == TodoStatus.FAILED:
             return "\u2717", "class:todo-sidebar.failed"  # ✗
+        if status == TodoStatus.IN_PROGRESS:
+            return "\u25d0", "class:todo-sidebar.in_progress"  # ◐
         return "\u25cb", "class:todo-sidebar.pending"  # ○

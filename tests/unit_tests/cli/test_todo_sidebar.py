@@ -46,7 +46,17 @@ def _make_cli(session_id):
 
 
 def _write_todo_file(path, items):
-    payload = {"items": [{"id": f"id-{i}", "content": c, "status": s} for i, (c, s) in enumerate(items)]}
+    """Persist a TodoList payload. ``items`` is a sequence of ``(title, status)``;
+    ``content`` is auto-populated since the sidebar only renders ``title``."""
+    items = list(items)
+    payload = {
+        "items": [
+            {"id": i + 1, "title": title, "content": f"body for {title}", "status": s}
+            for i, (title, s) in enumerate(items)
+        ],
+        "next_id": len(items) + 1,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
@@ -239,6 +249,26 @@ def test_session_id_change_invalidates_cache(path_manager):
     assert "task B1" in rendered_b
     assert "task B2" in rendered_b
     assert "Tasks (1/2)" in rendered_b
+
+
+def test_in_progress_renders_with_half_circle_glyph(path_manager):
+    """The in_progress status uses ◐ (U+25D0) in its own style class so the
+    user can see at a glance which step is currently being worked on."""
+    from datus.cli.todo_sidebar import TodoSidebarProvider
+
+    cli, _ = _make_cli("session_in_progress")
+    _write_todo_file(
+        path_manager.todo_list_path("session_in_progress"),
+        [("doing now", "in_progress"), ("queued", "pending")],
+    )
+    provider = TodoSidebarProvider(cli)
+
+    tokens = provider.tokens()
+    rendered = "".join(text for _, text in tokens)
+    assert "\u25d0 doing now" in rendered
+    # in_progress + pending are both incomplete → in_progress first (source order).
+    in_progress_token = next(t for t in tokens if "doing now" in t[1])
+    assert in_progress_token[0] == "class:todo-sidebar.in_progress"
 
 
 def test_corrupted_json_keeps_previous_state(path_manager):

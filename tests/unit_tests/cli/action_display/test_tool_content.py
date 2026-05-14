@@ -54,6 +54,7 @@ from datus.cli.action_display.tool_content import (
     _build_search_table,
     _build_simple_action,
     _build_simple_list,
+    _build_todo_list,
     _build_todo_read,
     _build_todo_update,
     _build_todo_write,
@@ -1480,14 +1481,28 @@ class TestBuildGetDocument:
 
 
 @pytest.mark.ci
-class TestBuildTodoRead:
+class TestBuildTodoList:
     def test_compact(self):
         a = _make(
+            input_data={"function_name": "todo_list"},
+            output_data={"raw_output": '{"success": 1, "result": {"items": [], "total": 3, "completed": 1}}'},
+        )
+        tc = _build_todo_list(a, verbose=False)
+        assert tc.compact_result == "1/3 todos"
+
+
+@pytest.mark.ci
+class TestBuildTodoRead:
+    def test_compact_single_item(self):
+        a = _make(
             input_data={"function_name": "todo_read"},
-            output_data={"raw_output": '{"success": 1, "result": {"message": "ok", "lists": [], "total_lists": 3}}'},
+            output_data={
+                "raw_output": '{"success": 1, "result": '
+                '{"id": 2, "title": "Step two", "status": "in_progress", "content": "body"}}'
+            },
         )
         tc = _build_todo_read(a, verbose=False)
-        assert "3 todo lists" in tc.compact_result
+        assert tc.compact_result == "Step two: in_progress"
 
 
 @pytest.mark.ci
@@ -1508,7 +1523,7 @@ class TestBuildTodoUpdate:
             input_data={"function_name": "todo_update"},
             output_data={
                 "raw_output": '{"success": 1, "result": '
-                '{"message": "ok", "updated_item": {"id": "1", "content": "task", "status": "completed"}}}'
+                '{"message": "ok", "updated_item": {"id": 1, "title": "task", "status": "completed"}}}'
             },
         )
         tc = _build_todo_update(a, verbose=False)

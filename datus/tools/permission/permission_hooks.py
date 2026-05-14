@@ -202,7 +202,7 @@ class PermissionHooks(AgentHooks):
     # Plan-mode tooling is always allowed regardless of permission profile:
     # ``confirm_plan`` already runs its own user interaction, and ``todo_*``
     # are local-only state helpers that never touch the filesystem or DB.
-    _PLAN_MODE_BYPASS_TOOLS = frozenset({"confirm_plan", "todo_read", "todo_write", "todo_update"})
+    _PLAN_MODE_BYPASS_TOOLS = frozenset({"confirm_plan", "todo_list", "todo_read", "todo_write", "todo_update"})
 
     async def on_tool_start(self, context, agent, tool) -> None:
         """Intercept ALL tool calls for permission checking.

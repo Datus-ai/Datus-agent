@@ -7,13 +7,13 @@ Simplified plan tools - merged from multiple files into single module
 """
 
 import json
+import re
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, List, Optional, Union
-from uuid import uuid4
 
 from agents import SQLiteSession, Tool
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
@@ -24,39 +24,92 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+TITLE_WORD_LIMIT = 8
+
+
 class TodoStatus(str, Enum):
-    """Status of a todo item"""
+    """Status of a todo item.
+
+    Recommended flow: ``pending`` → ``in_progress`` → ``completed``.
+    ``failed`` is reachable from any state via ``todo_update``; transitions
+    are not enforced because an LLM may need to revert an in_progress item
+    back to pending after a partial rollback.
+    """
 
     PENDING = "pending"
+    IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
     FAILED = "failed"
 
 
 class TodoItem(BaseModel):
-    """Individual todo item"""
+    """Individual todo item.
 
-    id: str = Field(default_factory=lambda: str(uuid4()), description="Unique identifier for the todo item")
-    content: str = Field(..., description="Content/description of the todo item")
+    ``id`` is a per-list incrementing integer assigned by
+    :meth:`TodoList.add_item`. ``title`` is a short headline (≤ 8 words)
+    used by the sidebar and tool summaries; ``content`` carries the full
+    task description and is only fetched by ``todo_read(id)``.
+    """
+
+    id: int = Field(..., description="Per-list auto-incrementing identifier")
+    title: str = Field(..., description="Short headline, at most 8 whitespace-separated words")
+    content: str = Field(..., description="Full task description")
     status: TodoStatus = Field(default=TodoStatus.PENDING, description="Status of the todo item")
+
+    @field_validator("title")
+    @classmethod
+    def _title_word_count(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("title must not be empty")
+        words = [w for w in re.split(r"\s+", stripped) if w]
+        if len(words) > TITLE_WORD_LIMIT:
+            raise ValueError(f"title must be {TITLE_WORD_LIMIT} words or fewer (got {len(words)})")
+        return stripped
+
+    @field_validator("content")
+    @classmethod
+    def _content_not_blank(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("content must not be empty")
+        return value.strip()
 
 
 class TodoList(BaseModel):
-    """Collection of todo items"""
+    """Collection of todo items with a per-list id counter.
+
+    ``next_id`` is the value that :meth:`add_item` will assign to the
+    *next* new item. It is persisted alongside ``items`` so that ids stay
+    monotonic across process restarts (resume). The
+    :func:`_reconcile_next_id` model validator repairs the counter on load
+    when callers persisted ``items`` without ``next_id`` (or with a stale
+    one) — without it, a hand-edited JSON file could collide an existing
+    id, and ``todo_update`` would silently target the wrong row.
+    """
 
     items: List[TodoItem] = Field(default_factory=list, description="List of todo items")
+    next_id: int = Field(default=1, description="Next id to assign on add_item; reconciled on load")
 
-    def add_item(self, content: str) -> TodoItem:
-        """Add a new todo item to the list"""
-        item = TodoItem(content=content)
+    @model_validator(mode="after")
+    def _reconcile_next_id(self) -> "TodoList":
+        max_id = max((it.id for it in self.items), default=0)
+        if self.next_id <= max_id:
+            self.next_id = max_id + 1
+        return self
+
+    def add_item(self, title: str, content: str) -> TodoItem:
+        """Append a new pending todo item and return it."""
+        item = TodoItem(id=self.next_id, title=title, content=content)
+        self.next_id += 1
         self.items.append(item)
         return item
 
-    def get_item(self, item_id: str) -> Optional[TodoItem]:
-        """Get a todo item by ID"""
+    def get_item(self, item_id: int) -> Optional[TodoItem]:
+        """Get a todo item by integer id."""
         return next((item for item in self.items if item.id == item_id), None)
 
-    def update_item_status(self, item_id: str, status: TodoStatus) -> bool:
-        """Update the status of a todo item and optionally save execution result"""
+    def update_item_status(self, item_id: int, status: TodoStatus) -> bool:
+        """Update the status of a todo item."""
         item = self.get_item(item_id)
         if item:
             item.status = status
@@ -156,7 +209,12 @@ class SessionTodoStorage:
             self._current_todo_list = TodoList(**data)
             logger.debug("Loaded todo list from %s with %d items", path, len(self._current_todo_list.items))
         except (OSError, json.JSONDecodeError, ValidationError) as exc:
-            logger.warning("Failed to load todolist from %s: %s", path, exc)
+            # Pre-refactor todo files used uuid string ids and lacked a
+            # ``title`` field; they will fail validation under the new
+            # schema. Todos are session-local and cheap to regenerate, so
+            # we drop the legacy payload instead of attempting a field map.
+            logger.warning("Discarding incompatible todolist at %s: %s", path, exc)
+            self._current_todo_list = None
 
     def save_list(self, todo_list: TodoList) -> bool:
         """Persist the todo list to memory and (if session-bound) to disk."""
@@ -223,8 +281,9 @@ class PlanTool:
         self.storage = SessionTodoStorage(session, session_id=session_id)
 
     def available_tools(self) -> List[Tool]:
-        """Get list of available plan tools"""
+        """Get list of available plan tools."""
         methods_to_convert = [
+            self.todo_list,
             self.todo_read,
             self.todo_write,
             self.todo_update,
@@ -235,26 +294,65 @@ class PlanTool:
             bound_tools.append(trans_to_function_tool(bound_method))
         return bound_tools
 
-    def todo_read(self) -> FuncToolResult:
-        """Read the todo list from storage"""
-        todo_list = self.storage.get_todo_list()
+    @staticmethod
+    def _overview_items(todo_list: TodoList) -> List[dict]:
+        return [{"id": it.id, "title": it.title, "status": it.status.value} for it in todo_list.items]
 
-        if todo_list:
-            return FuncToolResult(
-                result={
-                    "message": "Successfully retrieved todo list",
-                    "lists": [todo_list.model_dump()],
-                    "total_lists": 1,
-                }
-            )
-        else:
+    def todo_list(self) -> FuncToolResult:
+        """Return an overview of all todos in the current session.
+
+        Each entry is ``{id, title, status}`` — ``content`` is NOT included.
+        Use ``todo_read(id)`` to fetch the full description of a single item
+        before you start executing it.
+
+        Returns ``items: []`` (and total/completed = 0) when no list exists,
+        rather than an error: callers can treat "no list yet" as a normal
+        state and decide whether to call ``todo_write``.
+        """
+        todo_list = self.storage.get_todo_list()
+        if not todo_list:
             return FuncToolResult(
                 result={
                     "message": "No todo list found",
-                    "lists": [],
-                    "total_lists": 0,
+                    "items": [],
+                    "total": 0,
+                    "completed": 0,
                 }
             )
+        items = self._overview_items(todo_list)
+        completed = sum(1 for it in todo_list.items if it.status == TodoStatus.COMPLETED)
+        return FuncToolResult(
+            result={
+                "message": "Successfully retrieved todo list",
+                "items": items,
+                "total": len(items),
+                "completed": completed,
+            }
+        )
+
+    def todo_read(self, todo_id: int) -> FuncToolResult:
+        """Read the full detail of a single todo item by id.
+
+        Args:
+            todo_id: Integer id from ``todo_list`` / ``todo_write`` output.
+
+        Returns ``{id, title, status, content}``. Errors if no list exists
+        or the id is unknown.
+        """
+        todo_list = self.storage.get_todo_list()
+        if not todo_list:
+            return FuncToolResult(success=0, error="No todo list found")
+        item = todo_list.get_item(todo_id)
+        if not item:
+            return FuncToolResult(success=0, error=f"Todo item with id {todo_id} not found")
+        return FuncToolResult(
+            result={
+                "id": item.id,
+                "title": item.title,
+                "status": item.status.value,
+                "content": item.content,
+            }
+        )
 
     def todo_write(self, todos_json: str) -> FuncToolResult:
         """Append new todo items to the current list (does NOT overwrite).
@@ -264,97 +362,95 @@ class PlanTool:
         single item's status, or call this again later to add more.
 
         Args:
-            todos_json: JSON string of list of dicts with 'content' and
-                'status' keys. Status can be 'pending' or 'completed'
-                (default 'pending' if omitted).
+            todos_json: JSON string of list of dicts with ``title`` (≤ 8
+                words, used in the sidebar) and ``content`` (full task
+                description). ``status`` is NOT accepted — new items are
+                always created in the ``pending`` state.
 
-                Example: '[{"content": "Query database", "status": "pending"}]'
+                Example: '[{"title": "Query orders table", "content":
+                "Run SELECT COUNT(*) FROM orders WHERE created_at >= ..."}]'
 
-        Behaviour notes:
-            * Empty / whitespace-only ``content`` entries are skipped.
-            * Each new item is assigned a fresh uuid; no content dedupe is
-              performed, so callers are responsible for not re-submitting
-              the same task twice.
+        Behaviour:
+            * The batch is validated as a whole: if any item fails (title
+              empty / > 8 words / content empty / malformed JSON), the
+              **entire call** is rejected and the existing list is not
+              mutated. This avoids partial-write states the LLM has to
+              reason about.
+            * Each new item gets the next incrementing integer id; ids stay
+              monotonic across appends and across resume.
+            * Returns the same overview shape as ``todo_list``: a list of
+              ``{id, title, status}`` for every item now in the list.
         """
         try:
-            import json
-
             todos = json.loads(todos_json)
         except (json.JSONDecodeError, TypeError):
             return FuncToolResult(success=0, error="Invalid JSON format for todos")
 
-        if not todos:
-            return FuncToolResult(success=0, error="Cannot create todo list: no todo items provided")
+        if not isinstance(todos, list) or not todos:
+            return FuncToolResult(success=0, error="Cannot append todo list: expected a non-empty JSON array")
+
+        # Validate up-front so nothing is appended on partial failure.
+        prepared: List[tuple[str, str]] = []
+        for idx, todo_item in enumerate(todos):
+            if not isinstance(todo_item, dict):
+                return FuncToolResult(success=0, error=f"Item {idx} is not an object")
+            title = (todo_item.get("title") or "").strip()
+            content = (todo_item.get("content") or "").strip()
+            if not title:
+                return FuncToolResult(success=0, error=f"Item {idx}: 'title' is required")
+            if not content:
+                return FuncToolResult(success=0, error=f"Item {idx}: 'content' is required")
+            words = [w for w in re.split(r"\s+", title) if w]
+            if len(words) > TITLE_WORD_LIMIT:
+                return FuncToolResult(
+                    success=0,
+                    error=f"Item {idx}: title must be {TITLE_WORD_LIMIT} words or fewer (got {len(words)})",
+                )
+            prepared.append((title, content))
 
         # Start from the existing list (read-modify-write append semantics).
         # ``get_todo_list`` lazily loads from disk if needed, so a fresh
         # PlanTool instance after resume still sees prior items.
         todo_list = self.storage.get_todo_list() or TodoList()
 
-        added = 0
-        added_completed = 0
-        for todo_item in todos:
-            content = todo_item.get("content", "").strip()
-            status = todo_item.get("status", "pending").lower()
+        for title, content in prepared:
+            try:
+                todo_list.add_item(title=title, content=content)
+            except ValidationError as exc:
+                # The pre-flight check above already mirrors the model
+                # validators, but if a constraint diverges we fail loudly
+                # rather than persisting half a batch.
+                return FuncToolResult(success=0, error=f"Validation error while appending: {exc}")
+            logger.info("Appended pending todo: %s", title)
 
-            if not content:
-                continue
+        if not self.storage.save_list(todo_list):
+            return FuncToolResult(success=0, error="Failed to save todo list to storage")
 
-            if status == "completed":
-                new_item = TodoItem(content=content, status=TodoStatus.COMPLETED)
-                todo_list.items.append(new_item)
-                added_completed += 1
-                logger.info(f"Appended completed step: {content}")
-            else:
-                todo_list.add_item(content)
-                added += 1
-                logger.info(f"Appended pending step: {content}")
+        return FuncToolResult(
+            result={
+                "message": f"Appended {len(prepared)} item(s); list now has {len(todo_list.items)} item(s).",
+                "items": self._overview_items(todo_list),
+            }
+        )
 
-        if added == 0 and added_completed == 0:
-            return FuncToolResult(success=0, error="Cannot append todo list: no valid items after filtering")
-
-        if self.storage.save_list(todo_list):
-            return FuncToolResult(
-                result={
-                    "message": (
-                        f"Appended {added + added_completed} item(s) "
-                        f"({added_completed} completed, {added} pending); "
-                        f"list now has {len(todo_list.items)} item(s)."
-                    ),
-                    "todo_list": todo_list.model_dump(),
-                }
-            )
-        return FuncToolResult(success=0, error="Failed to save todo list to storage")
-
-    def todo_update(self, todo_id: str, status: str) -> FuncToolResult:
+    def todo_update(self, todo_id: int, status: str) -> FuncToolResult:
         """Update a todo item's status.
 
-        Execution flow:
-        1. todo_update(todo_id, "pending") - Mark as about to be executed
-        2. [execute task]
-        3. todo_update(todo_id, "completed") - Mark as successfully executed
-           OR todo_update(todo_id, "failed") - Mark as failed
+        Recommended flow: ``pending`` → ``in_progress`` → ``completed``.
+        Call this with ``in_progress`` immediately before starting work on
+        a todo, and again with ``completed`` (or ``failed``) when done, so
+        the sidebar reflects what you are currently doing.
 
         Args:
-            todo_id: The ID of the todo item to update
-            status: New status - must be 'pending', 'completed', or 'failed'
-
-        Returns:
-            FuncToolResult: Success/error status
+            todo_id: Integer id of the todo item to update.
+            status: One of ``pending``, ``in_progress``, ``completed``,
+                ``failed``.
         """
-        return self._update_todo_status(todo_id, status)
-
-    def _update_todo_status(
-        self, todo_id: str, status: str, execution_output: Optional[str] = None, error_message: Optional[str] = None
-    ) -> FuncToolResult:
-        """Internal method to update todo item status and optionally save execution result"""
-        _ = execution_output, error_message  # Mark as used for future extensibility
         try:
             status_enum = TodoStatus(status.lower())
         except ValueError:
-            return FuncToolResult(
-                success=0, error=f"Invalid status '{status}'. Must be 'completed', 'pending', or 'failed'"
-            )
+            valid = ", ".join(s.value for s in TodoStatus)
+            return FuncToolResult(success=0, error=f"Invalid status '{status}'. Must be one of: {valid}")
 
         todo_list = self.storage.get_todo_list()
         if not todo_list:
@@ -362,21 +458,24 @@ class PlanTool:
 
         todo_item = todo_list.get_item(todo_id)
         if not todo_item:
-            return FuncToolResult(success=0, error=f"Todo item with ID '{todo_id}' not found")
+            return FuncToolResult(success=0, error=f"Todo item with id {todo_id} not found")
 
-        if todo_list.update_item_status(todo_id, status_enum):
-            if self.storage.save_list(todo_list):
-                updated_item = todo_list.get_item(todo_id)
-                return FuncToolResult(
-                    result={
-                        "message": f"Successfully updated todo item to '{status}' status",
-                        "updated_item": updated_item.model_dump(),
-                    }
-                )
-            else:
-                return FuncToolResult(success=0, error="Failed to save updated todo list to storage")
-        else:
-            return FuncToolResult(success=0, error="Failed to update todo item status")
+        todo_list.update_item_status(todo_id, status_enum)
+        if not self.storage.save_list(todo_list):
+            return FuncToolResult(success=0, error="Failed to save updated todo list to storage")
+
+        updated_item = todo_list.get_item(todo_id)
+        return FuncToolResult(
+            result={
+                "message": f"Successfully updated todo item to '{status_enum.value}' status",
+                "updated_item": {
+                    "id": updated_item.id,
+                    "title": updated_item.title,
+                    "status": updated_item.status.value,
+                    "content": updated_item.content,
+                },
+            }
+        )
 
 
 class ConfirmPlanTool:
@@ -480,14 +579,17 @@ class ConfirmPlanTool:
                         "**Do NOT end this turn with a natural-language message yet.** "
                         "Your immediate next steps MUST be:\n"
                         f"  1. Read {plan_path} via read_file to recall the plan content.\n"
-                        "  2. Call todo_write to convert the plan's concrete actionable steps "
-                        "into a todo list (one todo per step).\n"
-                        "  3. Execute the first pending todo by calling the relevant tools "
+                        "  2. Call todo_write with [{title, content}] for each concrete actionable "
+                        "step (title ≤ 8 words; content is the detailed instruction).\n"
+                        "  3. Before starting work on a step, call todo_update(id, 'in_progress') "
+                        "so the sidebar reflects what you are doing.\n"
+                        "  4. Execute the step by calling the relevant tools "
                         "(grep / read_file / list_tables / read_query / write_file — whatever "
                         "the step requires).\n"
-                        "  4. After completing each step, call todo_update to mark it completed, "
-                        "then move to the next step.\n"
-                        "  5. Continue executing steps without asking the user for permission, "
+                        "  5. After completing the step, call todo_update(id, 'completed'); "
+                        "use 'failed' instead if it could not be finished. Then move to the "
+                        "next step.\n"
+                        "  6. Continue executing steps without asking the user for permission, "
                         "until either all todos are done or you hit a blocker that genuinely "
                         "requires user input (in which case use ask_user)."
                     ),

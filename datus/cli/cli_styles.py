@@ -125,6 +125,7 @@ STATUS_BAR_STYLE: dict[str, str] = {
     "todo-sidebar": STATUS_BAR_FG_HINT,
     "todo-sidebar.title": "#8be9fd bold",
     "todo-sidebar.pending": STATUS_BAR_FG_HINT,
+    "todo-sidebar.in_progress": "#f1fa8c",
     "todo-sidebar.completed": "#50fa7b",
     "todo-sidebar.failed": "#ff5555",
     # Slash-command autocomplete popup. ``bg:default`` blends into the

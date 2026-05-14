@@ -677,8 +677,11 @@ class AgenticNode(Node):
                 f"You just confirmed the plan at {self.plan_file_path}. Plan mode is "
                 "exited. The user's next message is a continuation cue — do NOT ask "
                 "what to do next; instead read the plan file, materialise its actionable "
-                "steps via todo_write, and start executing them in order. Use ask_user "
-                "only when a step genuinely requires user input that cannot be inferred."
+                "steps via todo_write (one item per step, each with a `title` ≤ 8 words "
+                "and full `content`), then call todo_update(id, 'in_progress') before "
+                "starting each step and todo_update(id, 'completed') when done. Use "
+                "ask_user only when a step genuinely requires user input that cannot "
+                "be inferred."
             )
             self._plan_just_confirmed = False
 

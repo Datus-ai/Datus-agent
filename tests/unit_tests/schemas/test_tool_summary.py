@@ -628,23 +628,50 @@ class TestFilesystemFormatters:
 
 
 class TestPlanFormatters:
-    def test_todo_read_progress(self):
+    def test_todo_list_progress(self):
         out = _summarize(
-            "todo_read",
+            "todo_list",
             {
                 "success": 1,
                 "result": {
-                    "lists": [{"items": [{"status": "completed"}, {"status": "completed"}, {"status": "pending"}]}],
-                    "total_lists": 1,
+                    "items": [
+                        {"id": 1, "title": "a", "status": "completed"},
+                        {"id": 2, "title": "b", "status": "completed"},
+                        {"id": 3, "title": "c", "status": "pending"},
+                    ],
+                    "total": 3,
+                    "completed": 2,
                 },
             },
         )
         assert out == "2/3 todos"
 
+    def test_todo_list_empty(self):
+        out = _summarize(
+            "todo_list",
+            {"success": 1, "result": {"items": [], "total": 0, "completed": 0}},
+        )
+        assert out == "0/0 todos"
+
+    def test_todo_read_single_item(self):
+        out = _summarize(
+            "todo_read",
+            {
+                "success": 1,
+                "result": {
+                    "id": 2,
+                    "title": "Step two",
+                    "status": "pending",
+                    "content": "Body text",
+                },
+            },
+        )
+        assert out == "Step two: pending"
+
     def test_todo_write(self):
         out = _summarize(
             "todo_write",
-            {"success": 1, "result": {"todo_list": {"items": [1, 2, 3]}}},
+            {"success": 1, "result": {"items": [{"id": 1}, {"id": 2}, {"id": 3}]}},
         )
         assert out == "3 todos"
 
@@ -652,7 +679,7 @@ class TestPlanFormatters:
         # `Run report: completed` is 21 chars → clipped at registry exit.
         out = _summarize(
             "todo_update",
-            {"success": 1, "result": {"updated_item": {"content": "Run report", "status": "completed"}}},
+            {"success": 1, "result": {"updated_item": {"title": "Run report", "status": "completed"}}},
         )
         assert out == "Run report: comple…"
         assert len(out) <= SUMMARY_TEXT_MAX_CHARS
@@ -844,7 +871,7 @@ def test_failure_path_uniform(tool: str):
         ("edit_file", "Some other edit msg", "Some other edit msg"),
         ("grep", {"matches": [{"f": "a"}, {"f": "b"}], "truncated": True}, "2 matches (truncated)"),
         # Plan fallbacks
-        ("todo_read", {"lists": [], "total_lists": 0}, "no todos"),
+        ("todo_list", {"items": [], "total": 0, "completed": 0}, "0/0 todos"),
         ("todo_update", {"updated_item": {"status": "pending"}}, "todo: pending"),
         # Skill / ask user fallbacks
         ("validate_skill", {"warnings": 1}, "skill valid (1 war…"),

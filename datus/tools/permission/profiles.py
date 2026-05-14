@@ -75,6 +75,7 @@ _NORMAL_RULES = [
     _rule("filesystem_tools", "glob", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "grep", PermissionLevel.ALLOW),
     # plan read
+    _rule("tools", "todo_list", PermissionLevel.ALLOW),
     _rule("tools", "todo_read", PermissionLevel.ALLOW),
     # ``ask_user`` IS the user-interaction channel — gating "may I ask
     # the user?" behind a permission prompt is absurd. Always ALLOW.

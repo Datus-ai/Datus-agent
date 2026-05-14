@@ -47,6 +47,10 @@ class TestNormalProfile:
         assert _resolve(config, "filesystem_tools", "read_file") == PermissionLevel.ALLOW
         assert _resolve(config, "filesystem_tools", "glob") == PermissionLevel.ALLOW
         assert _resolve(config, "filesystem_tools", "grep") == PermissionLevel.ALLOW
+        # Both plan-read tools are ALLOW in NORMAL — they only inspect the
+        # in-memory todolist and cannot affect external systems.
+        assert _resolve(config, "tools", "todo_list") == PermissionLevel.ALLOW
+        assert _resolve(config, "tools", "todo_read") == PermissionLevel.ALLOW
 
     def test_writes_ask(self):
         """Normal ASKs on all write-ish tools via default_permission."""
