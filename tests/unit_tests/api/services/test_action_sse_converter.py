@@ -301,6 +301,154 @@ class TestBuildSubagentCompleteContent:
         assert contents[0].payload["error"] == "cancelled"
 
 
+class TestBuildArtifactContent:
+    """Tests for _build_artifact_content — visual report/dashboard completion cards."""
+
+    def test_report_create_mode_emits_full_payload(self):
+        """A finished gen_visual_report run carries every field the frontend card needs."""
+        from datus.api.services.action_sse_converter import _build_artifact_content
+
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            action_type="gen_visual_report_response",
+            output={
+                "artifact_kind": "report",
+                "artifact_mode": "new",
+                "report_slug": "q3_revenue",
+                "name": "Q3 Revenue Report",
+                "description": "Quarterly revenue breakdown.",
+                "created_at": "2026-05-16T10:00:00Z",
+                "response": "Generated a five-chart report covering Q3 revenue trends.",
+            },
+        )
+        contents = _build_artifact_content(action)
+        assert contents is not None
+        assert len(contents) == 1
+        assert contents[0].type == "artifact"
+        payload = contents[0].payload
+        assert payload["slug"] == "q3_revenue"
+        assert payload["kind"] == "report"
+        assert payload["mode"] == "new"
+        assert payload["name"] == "Q3 Revenue Report"
+        assert payload["description"] == "Quarterly revenue breakdown."
+        assert payload["created_at"] == "2026-05-16T10:00:00Z"
+        assert payload["preview_summary"] == "Generated a five-chart report covering Q3 revenue trends."
+
+    def test_dashboard_edit_mode_uses_dashboard_slug(self):
+        """gen_visual_dashboard runs surface dashboard_slug as the artifact slug."""
+        from datus.api.services.action_sse_converter import _build_artifact_content
+
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            action_type="gen_visual_dashboard_response",
+            output={
+                "artifact_kind": "dashboard",
+                "artifact_mode": "edit",
+                "dashboard_slug": "sales_overview",
+                "name": "Sales Overview",
+                "description": None,
+                "created_at": "2026-05-10T08:00:00Z",
+                "response": "Updated the sales overview dashboard.",
+            },
+        )
+        contents = _build_artifact_content(action)
+        assert contents is not None
+        payload = contents[0].payload
+        assert payload["slug"] == "sales_overview"
+        assert payload["kind"] == "dashboard"
+        assert payload["mode"] == "edit"
+        assert payload["description"] is None
+
+    def test_missing_slug_returns_none(self):
+        """No slug means the run never bound an artifact — fall back to the regular response path."""
+        from datus.api.services.action_sse_converter import _build_artifact_content
+
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            action_type="gen_visual_report_response",
+            output={"artifact_kind": "report", "report_slug": None, "response": "no-op"},
+        )
+        assert _build_artifact_content(action) is None
+
+    def test_missing_kind_returns_none(self):
+        """A response action without artifact_kind is not a visual-artifact response — caller falls back."""
+        from datus.api.services.action_sse_converter import _build_artifact_content
+
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            action_type="chat_response",
+            output={"report_slug": "x", "response": "..."},
+        )
+        assert _build_artifact_content(action) is None
+
+    def test_unknown_kind_returns_none(self):
+        """Kinds outside {'report','dashboard'} are rejected so the frontend never sees a card it can't open."""
+        from datus.api.services.action_sse_converter import _build_artifact_content
+
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            action_type="gen_visual_report_response",
+            output={"artifact_kind": "notebook", "report_slug": "x", "response": "..."},
+        )
+        assert _build_artifact_content(action) is None
+
+    def test_long_response_truncated_with_ellipsis(self):
+        """Preview summary is capped to keep the card readable."""
+        from datus.api.services.action_sse_converter import _ARTIFACT_PREVIEW_LIMIT, _build_artifact_content
+
+        long_text = "x" * (_ARTIFACT_PREVIEW_LIMIT + 50)
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            action_type="gen_visual_report_response",
+            output={
+                "artifact_kind": "report",
+                "report_slug": "x",
+                "response": long_text,
+            },
+        )
+        contents = _build_artifact_content(action)
+        assert contents is not None
+        preview = contents[0].payload["preview_summary"]
+        assert preview.endswith("…")
+        assert len(preview) <= _ARTIFACT_PREVIEW_LIMIT + 1
+
+    def test_empty_response_makes_preview_none(self):
+        """An empty LLM response should yield ``preview_summary=None`` rather than an empty string."""
+        from datus.api.services.action_sse_converter import _build_artifact_content
+
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            action_type="gen_visual_report_response",
+            output={
+                "artifact_kind": "report",
+                "report_slug": "x",
+                "response": "   ",
+            },
+        )
+        contents = _build_artifact_content(action)
+        assert contents is not None
+        assert contents[0].payload["preview_summary"] is None
+
+    def test_non_dict_output_returns_none(self):
+        """Defensive: action.output may be a string in legacy paths — must not crash."""
+        from datus.api.services.action_sse_converter import _build_artifact_content
+
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            action_type="gen_visual_report_response",
+            output="plain text",
+        )
+        assert _build_artifact_content(action) is None
+
+
 class TestBuildUserContent:
     """Tests for _build_user_content."""
 
@@ -721,6 +869,82 @@ class TestActionToSSEEvent:
         event = _assert_sse_event(event)
         assert event.data.payload.role == "user"
         assert event.data.payload.content[0].type == "markdown"
+
+    def test_visual_report_response_emits_artifact_without_final_response_flag(self):
+        """gen_visual_report completion fires an artifact event even when include_final_response=False.
+
+        The artifact card is not a substitute for the streamed markdown response —
+        the LLM's text has already gone through earlier action events — so the
+        dispatcher must not gate it behind the regular ``include_final_response``
+        toggle.
+        """
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            action_type="gen_visual_report_response",
+            output={
+                "artifact_kind": "report",
+                "artifact_mode": "new",
+                "report_slug": "q3_revenue",
+                "name": "Q3 Revenue",
+                "description": "",
+                "response": "Done.",
+            },
+        )
+        event = action_to_sse_event(action, event_id=200, message_id="msg-200")
+        event = _assert_sse_event(event)
+        assert event.data.type == SSEDataType.CREATE_MESSAGE
+        content = event.data.payload.content[0]
+        assert content.type == "artifact"
+        assert content.payload["slug"] == "q3_revenue"
+        assert content.payload["kind"] == "report"
+        assert content.payload["mode"] == "new"
+
+    def test_visual_dashboard_response_emits_artifact(self):
+        """gen_visual_dashboard completion emits artifact card with kind='dashboard'."""
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            action_type="gen_visual_dashboard_response",
+            output={
+                "artifact_kind": "dashboard",
+                "artifact_mode": "edit",
+                "dashboard_slug": "sales_overview",
+                "name": "Sales Overview",
+                "description": "Quarterly sales view.",
+                "response": "Updated.",
+            },
+        )
+        event = action_to_sse_event(action, event_id=201, message_id="msg-201")
+        event = _assert_sse_event(event)
+        content = event.data.payload.content[0]
+        assert content.type == "artifact"
+        assert content.payload["slug"] == "sales_overview"
+        assert content.payload["kind"] == "dashboard"
+
+    def test_failed_visual_report_response_falls_through_to_error(self):
+        """A FAILED gen_visual_report_response is not an artifact event — must surface as error.
+
+        The base node emits ``_response`` actions with ``status=FAILED`` when
+        validate_render never succeeded; in that case the output still carries
+        ``artifact_kind`` but no usable slug. The dispatcher's FAILED catch-all
+        should win so the frontend renders the failure, not a broken card.
+        """
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.FAILED,
+            action_type="gen_visual_report_response",
+            output={
+                "artifact_kind": "report",
+                "report_slug": None,
+                "error": "validate_render never returned success",
+            },
+        )
+        event = action_to_sse_event(action, event_id=202, message_id="msg-202")
+        event = _assert_sse_event(event)
+        content = event.data.payload.content[0]
+        assert content.type == "error"
+        assert "validate_render" in content.payload["content"]
 
     def test_assistant_response_action_is_skipped(self):
         """ASSISTANT + SUCCESS + _response action_type returns None."""

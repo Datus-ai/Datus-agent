@@ -278,6 +278,14 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
     assert result["html_path"] == expected_html_rel
     assert (report_dir / "index.html").is_file()
 
+    # Artifact card fields surface through the result so the SSE artifact
+    # event can be built without touching disk a second time.
+    assert result["artifact_kind"] == "report"
+    assert result["artifact_mode"] == "edit"  # bind_existing_report path
+    assert result["name"] == "seeded report"
+    assert result["description"] == "Unit-test seeded report."
+    assert result["created_at"] == "2026-05-13T00:00:00Z"
+
 
 class TestReportDistResolution:
     """Verify the CLI flag → node_config priority for offline asset overrides."""
@@ -416,6 +424,14 @@ async def test_execute_stream_without_binding_marks_failure(real_agent_config, m
     error = result.get("error") or ""
     assert "start_new_report" in error
     assert "bind_existing_report" in error
+    # When no binding ever happened, the artifact-card fields stay None —
+    # the SSE dispatcher then skips the artifact event and falls through
+    # to the regular error path.
+    assert result["artifact_kind"] == "report"
+    assert result["artifact_mode"] is None
+    assert result["name"] is None
+    assert result["description"] is None
+    assert result["created_at"] is None
 
 
 @pytest.mark.asyncio
@@ -456,3 +472,10 @@ async def test_execute_stream_bound_but_no_validate_marks_failure(real_agent_con
     assert result["report_slug"] == "halfway"
     assert result["query_count"] == 0
     assert "validate_render never returned success" in (result.get("error") or "")
+    # start_new_report ran so mode=new and the manifest fields are populated;
+    # the slug exists but the run still counts as failed because
+    # validate_render never succeeded.
+    assert result["artifact_mode"] == "new"
+    assert result["name"] == "halfway"
+    assert result["description"] == "Bound but never validated — unit-test fixture."
+    assert result["created_at"]  # ISO timestamp written by start_new_report

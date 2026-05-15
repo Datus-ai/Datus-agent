@@ -1,7 +1,7 @@
 """Pydantic models for CLI Command Type API endpoints."""
 
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -420,6 +420,39 @@ class ICodePayload(IMessageContentPayload):
 
     code_type: str = Field(..., description="Code type (json, xml, sql, etc.)")
     content: str = Field(..., description="Code content")
+
+
+class IArtifactPayload(IMessageContentPayload):
+    """Artifact card content payload.
+
+    Emitted as a single ``IMessageContent(type='artifact')`` after a
+    ``gen_visual_report`` / ``gen_visual_dashboard`` subagent run finishes
+    successfully. The frontend renders a clickable card from this payload
+    that opens the artifact viewer without an extra round-trip — every
+    field that the card needs to render is included here.
+
+    ``mode`` reuses the backend artifact-tools vocabulary (``'new'`` when
+    the LLM called ``start_new_*``, ``'edit'`` when it called
+    ``bind_existing_*``) so there is no mapping layer between the
+    NodeResult and the wire payload.
+    """
+
+    slug: str = Field(..., description="Stable artifact identifier, doubles as the on-disk directory name.")
+    kind: Literal["report", "dashboard"] = Field(..., description="Which artifact viewer to open.")
+    mode: Optional[Literal["new", "edit"]] = Field(
+        default=None,
+        description="Whether this run created a fresh artifact or edited an existing one.",
+    )
+    name: Optional[str] = Field(default=None, description="Display name from manifest.json.")
+    description: Optional[str] = Field(default=None, description="Short description from manifest.json.")
+    created_at: Optional[str] = Field(
+        default=None,
+        description="ISO-8601 UTC timestamp from manifest.json.",
+    )
+    preview_summary: Optional[str] = Field(
+        default=None,
+        description="Truncated LLM final response (~200 chars) for the card subtitle.",
+    )
 
 
 class IMessageContent(BaseModel):

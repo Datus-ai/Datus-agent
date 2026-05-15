@@ -28,6 +28,8 @@ Anything that's *byte-identical* between the two node files lives here.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any, AsyncGenerator, ClassVar, Dict, Generic, List, Literal, Optional, Type, TypeVar
 
 from pydantic import BaseModel
@@ -463,6 +465,30 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             if value:
                 return value
         return None
+
+    def _read_artifact_manifest(self, artifact_slug: Optional[str]) -> Dict[str, Any]:
+        """Return the parsed manifest.json for ``artifact_slug`` or an empty dict.
+
+        Used to surface ``name`` / ``description`` / ``created_at`` in the
+        node result so the SSE artifact card can be rendered without a
+        follow-up call to ``/api/v1/report/detail``. Missing or unreadable
+        manifests are treated as soft-failures because the run may have
+        crashed before binding (mode is then ``None`` too).
+        """
+        if not artifact_slug:
+            return {}
+        project_root = getattr(self.agent_config, "project_root", None) if self.agent_config else None
+        if not project_root:
+            return {}
+        manifest_path = Path(project_root) / self.ARTIFACT_ROOT_DIR_NAME / artifact_slug / "manifest.json"
+        if not manifest_path.is_file():
+            return {}
+        try:
+            data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            logger.debug("Failed to read %s manifest %s: %s", self.ARTIFACT_KIND, manifest_path, exc)
+            return {}
+        return data if isinstance(data, dict) else {}
 
     def _prepare_artifacts(self, user_input: InputT) -> None:
         """Wire artifact tools into ``self.tools`` and reset the active slug.

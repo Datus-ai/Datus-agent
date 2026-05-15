@@ -148,6 +148,26 @@ class GenVisualDashboardNodeResult(BaseResult):
     render_file_count: int = Field(default=0, description="Number of files persisted under dashboards/<slug>/render/")
     template_count: int = Field(default=0, description="Number of templates persisted under queries/")
     tokens_used: int = Field(default=0, description="Total tokens used during this run")
+    artifact_kind: Literal["dashboard"] = Field(
+        default="dashboard",
+        description="Artifact kind, fixed for this node. Carried into the SSE artifact payload so the frontend can pick the right viewer without reading the action_type.",
+    )
+    artifact_mode: Optional[Literal["new", "edit"]] = Field(
+        default=None,
+        description="Whether the LLM chose start_new_dashboard (new) or bind_existing_dashboard (edit). None when the run failed before binding.",
+    )
+    name: Optional[str] = Field(
+        default=None,
+        description="Display name copied from manifest.json so the frontend can render the artifact card without a second round-trip.",
+    )
+    description: Optional[str] = Field(
+        default=None,
+        description="Short description copied from manifest.json.",
+    )
+    created_at: Optional[str] = Field(
+        default=None,
+        description="ISO-8601 UTC timestamp copied from manifest.json; reflects creation time even for 'edit' mode.",
+    )
 
 
 def parse_datus_params_header(sql_template: str) -> List[TemplateParamDecl]:

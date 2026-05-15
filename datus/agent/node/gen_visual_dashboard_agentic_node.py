@@ -113,6 +113,8 @@ class GenVisualDashboardAgenticNode(
         all_actions: List[ActionHistory],
         tool_calls: List[ActionHistory],
     ) -> GenVisualDashboardNodeResult:
+        manifest = self._read_artifact_manifest(artifact_slug)
+        mode = getattr(self.artifact_tools, "mode", None) if self.artifact_tools is not None else None
         return GenVisualDashboardNodeResult(
             success=app_jsx_rel_path is not None,
             response=response_content,
@@ -121,6 +123,10 @@ class GenVisualDashboardAgenticNode(
             render_file_count=render_file_count,
             template_count=len(query_actions),
             tokens_used=tokens_used,
+            artifact_mode=mode,
+            name=manifest.get("name"),
+            description=manifest.get("description"),
+            created_at=manifest.get("created_at"),
             action_history=[a.model_dump() for a in all_actions],
             execution_stats={
                 "total_actions": len(all_actions),
@@ -131,12 +137,18 @@ class GenVisualDashboardAgenticNode(
         )
 
     def _build_error_result(self, exc: BaseException) -> GenVisualDashboardNodeResult:
+        mode = getattr(self.artifact_tools, "mode", None) if self.artifact_tools is not None else None
+        manifest = self._read_artifact_manifest(self._active_artifact_slug)
         return GenVisualDashboardNodeResult(
             success=False,
             error=str(exc),
             response="Sorry, I encountered an error while generating the visual dashboard.",
             dashboard_slug=self._active_artifact_slug,
             tokens_used=0,
+            artifact_mode=mode,
+            name=manifest.get("name"),
+            description=manifest.get("description"),
+            created_at=manifest.get("created_at"),
         )
 
     # No CLI-mode HTML compile for dashboards — they need a live

@@ -308,6 +308,14 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
     # No save_query_template in this run — the seed wrote the template directly.
     assert result["template_count"] == 0
 
+    # Artifact card fields are populated from manifest.json so the SSE
+    # artifact event ships everything the frontend needs in one hop.
+    assert result["artifact_kind"] == "dashboard"
+    assert result["artifact_mode"] == "edit"
+    assert result["name"] == "e2e demo dashboard"
+    assert result["description"] == "End-to-end seeded dashboard."
+    assert result["created_at"] == "2026-05-14T00:00:00Z"
+
 
 @pytest.mark.asyncio
 async def test_execute_stream_fails_when_no_binding(real_agent_config, mock_llm_create):

@@ -121,6 +121,8 @@ class GenVisualReportAgenticNode(BaseVisualArtifactAgenticNode[GenVisualReportNo
         all_actions: List[ActionHistory],
         tool_calls: List[ActionHistory],
     ) -> GenVisualReportNodeResult:
+        manifest = self._read_artifact_manifest(artifact_slug)
+        mode = getattr(self.artifact_tools, "mode", None) if self.artifact_tools is not None else None
         return GenVisualReportNodeResult(
             success=app_jsx_rel_path is not None,
             response=response_content,
@@ -130,6 +132,10 @@ class GenVisualReportAgenticNode(BaseVisualArtifactAgenticNode[GenVisualReportNo
             html_path=None,  # filled in by _post_validate_hook on success
             query_count=len(query_actions),
             tokens_used=tokens_used,
+            artifact_mode=mode,
+            name=manifest.get("name"),
+            description=manifest.get("description"),
+            created_at=manifest.get("created_at"),
             action_history=[a.model_dump() for a in all_actions],
             execution_stats={
                 "total_actions": len(all_actions),
@@ -140,12 +146,18 @@ class GenVisualReportAgenticNode(BaseVisualArtifactAgenticNode[GenVisualReportNo
         )
 
     def _build_error_result(self, exc: BaseException) -> GenVisualReportNodeResult:
+        mode = getattr(self.artifact_tools, "mode", None) if self.artifact_tools is not None else None
+        manifest = self._read_artifact_manifest(self._active_artifact_slug)
         return GenVisualReportNodeResult(
             success=False,
             error=str(exc),
             response="Sorry, I encountered an error while generating the visual report.",
             report_slug=self._active_artifact_slug,
             tokens_used=0,
+            artifact_mode=mode,
+            name=manifest.get("name"),
+            description=manifest.get("description"),
+            created_at=manifest.get("created_at"),
         )
 
     def _post_validate_hook(self, artifact_slug: str, result: GenVisualReportNodeResult) -> None:

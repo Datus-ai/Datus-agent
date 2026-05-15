@@ -98,3 +98,23 @@ class GenVisualReportNodeResult(BaseResult):
     html_path: Optional[str] = Field(None, description="Path to compiled index.html (CLI mode only)")
     query_count: int = Field(default=0, description="Number of queries persisted under queries/")
     tokens_used: int = Field(default=0, description="Total tokens used during this run")
+    artifact_kind: Literal["report"] = Field(
+        default="report",
+        description="Artifact kind, fixed for this node. Carried into the SSE artifact payload so the frontend can pick the right viewer without reading the action_type.",
+    )
+    artifact_mode: Optional[Literal["new", "edit"]] = Field(
+        default=None,
+        description="Whether the LLM chose start_new_report (new) or bind_existing_report (edit). None when the run failed before binding.",
+    )
+    name: Optional[str] = Field(
+        default=None,
+        description="Display name copied from manifest.json so the frontend can render the artifact card without a second round-trip.",
+    )
+    description: Optional[str] = Field(
+        default=None,
+        description="Short description copied from manifest.json.",
+    )
+    created_at: Optional[str] = Field(
+        default=None,
+        description="ISO-8601 UTC timestamp copied from manifest.json; reflects creation time even for 'edit' mode.",
+    )
