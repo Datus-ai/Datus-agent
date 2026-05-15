@@ -374,3 +374,108 @@ class TestDetailMapping:
 
     def test_detail_fields_for_unknown_type_returns_empty(self):
         assert SkillApp._detail_fields("nope") == []
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Dual-mode finish hook + embedded panel + standalone run() with mocked
+# Application.
+# ─────────────────────────────────────────────────────────────────────
+
+
+import asyncio  # noqa: E402
+
+from datus.cli.tui.wizard_host import EmbeddedWizard  # noqa: E402
+
+
+def _make_future():
+    loop = asyncio.new_event_loop()
+    return loop, loop.create_future()
+
+
+class TestEmbeddedPanel:
+    def test_build_embedded_panel_returns_wizard(self):
+        app = _build()
+        loop, fut = _make_future()
+        try:
+            panel = app.build_embedded_panel(fut)
+            assert isinstance(panel, EmbeddedWizard)
+            assert panel.done_future is fut
+            assert app._on_done is not None
+            # Embedded panels seed focus on the list window the layout
+            # builder wires up — pointing focus at None drops the cursor.
+            assert panel.first_focus is app._list_window
+        finally:
+            loop.close()
+
+    def test_embedded_finish_with_selection_resolves(self):
+        app = _build()
+        loop, fut = _make_future()
+        try:
+            app.build_embedded_panel(fut)
+            sel = SkillSelection(kind="refresh")
+            app._finish(sel)
+            assert fut.done() and fut.result() is sel
+        finally:
+            loop.close()
+
+    def test_embedded_finish_with_none_cancels(self):
+        app = _build()
+        loop, fut = _make_future()
+        try:
+            app.build_embedded_panel(fut)
+            app._finish(None)
+            assert fut.done() and fut.result() is None
+        finally:
+            loop.close()
+
+
+class TestFinishAndLayout:
+    def test_finish_without_on_done_is_noop(self):
+        app = _build()
+        assert app._on_done is None
+        app._finish(None)  # No raise.
+
+    def test_layout_returns_app_layout(self):
+        app = _build()
+        fake_layout = MagicMock()
+        app._app = MagicMock(layout=fake_layout)
+        assert app._layout() is fake_layout
+
+    def test_layout_falls_back_to_none_when_get_app_raises(self):
+        app = _build()
+        app._app = None
+        with patch("prompt_toolkit.application.get_app", side_effect=RuntimeError("no app")):
+            assert app._layout() is None
+
+    def test_focus_no_target_noop(self):
+        """``_focus(None)`` returns ``None`` via the early-out guard."""
+        app = _build()
+        app._app = None
+        assert app._focus(None) is None
+
+    def test_focus_dispatches_to_layout(self):
+        app = _build()
+        fake_layout = MagicMock()
+        app._app = MagicMock(layout=fake_layout)
+        sentinel = object()
+        app._focus(sentinel)
+        fake_layout.focus.assert_called_once_with(sentinel)
+
+
+class TestRunStandalone:
+    def test_run_returns_selection(self):
+        app = _build()
+        sel = SkillSelection(kind="refresh")
+        fake_app = MagicMock()
+        fake_app.run.return_value = sel
+        with patch("datus.cli.skill_app.Application", return_value=fake_app):
+            assert app.run() is sel
+        assert app._on_done is None
+        assert app._app is None
+
+    def test_run_keyboard_interrupt_returns_none(self):
+        app = _build()
+        fake_app = MagicMock()
+        fake_app.run.side_effect = KeyboardInterrupt
+        with patch("datus.cli.skill_app.Application", return_value=fake_app):
+            assert app.run() is None

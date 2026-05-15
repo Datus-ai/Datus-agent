@@ -512,3 +512,112 @@ class TestSemanticTab:
         assert "project default" in flat
         assert "delete" in flat
         assert "test" in flat
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Dual-mode finish hook + embedded panel + standalone run() with mocked
+# Application.
+# ─────────────────────────────────────────────────────────────────────
+
+
+import asyncio  # noqa: E402
+
+from datus.cli.tui.wizard_host import EmbeddedWizard  # noqa: E402
+
+
+def _make_future():
+    loop = asyncio.new_event_loop()
+    return loop, loop.create_future()
+
+
+class TestEmbeddedPanel:
+    def test_build_embedded_panel_returns_wizard(self):
+        app = _build_app()
+        loop, fut = _make_future()
+        try:
+            panel = app.build_embedded_panel(fut)
+            assert isinstance(panel, EmbeddedWizard)
+            assert panel.done_future is fut
+            assert app._on_done is not None
+        finally:
+            loop.close()
+
+    def test_finish_resolves_future_with_result(self):
+        app = _build_app()
+        loop, fut = _make_future()
+        try:
+            app.build_embedded_panel(fut)
+            sel = ServiceConfigSelection(action="delete", section="bi_platforms", name="x")
+            app._finish(sel)
+            assert fut.done() and fut.result() is sel
+        finally:
+            loop.close()
+
+    def test_finish_with_none_cancels(self):
+        app = _build_app()
+        loop, fut = _make_future()
+        try:
+            app.build_embedded_panel(fut)
+            app._finish(None)
+            assert fut.done() and fut.result() is None
+        finally:
+            loop.close()
+
+
+class TestFinishAndLayout:
+    def test_finish_without_on_done_is_noop(self):
+        app = _build_app()
+        assert app._on_done is None
+        app._finish(None)
+
+    def test_layout_returns_app_layout(self):
+        app = _build_app()
+        fake_layout = MagicMock()
+        app._app = MagicMock(layout=fake_layout)
+        assert app._layout() is fake_layout
+
+    def test_layout_returns_none_when_get_app_raises(self):
+        app = _build_app()
+        app._app = None
+        with patch("prompt_toolkit.application.get_app", side_effect=RuntimeError("no app")):
+            assert app._layout() is None
+
+    def test_focus_no_target_noop(self):
+        """``_focus(None)`` returns ``None`` via the early-out guard."""
+        app = _build_app()
+        app._app = None
+        assert app._focus(None) is None
+
+    def test_focus_dispatches_to_layout(self):
+        app = _build_app()
+        fake_layout = MagicMock()
+        app._app = MagicMock(layout=fake_layout)
+        target = object()
+        app._focus(target)
+        fake_layout.focus.assert_called_once_with(target)
+
+
+class TestRunStandalone:
+    def test_run_returns_selection(self):
+        app = _build_app()
+        sel = ServiceConfigSelection(action="delete", section="bi_platforms", name="x")
+        fake_app = MagicMock()
+        fake_app.run.return_value = sel
+        with patch("datus.cli.service_config_app.Application", return_value=fake_app):
+            assert app.run() is sel
+        assert app._on_done is None
+        assert app._app is None
+
+    def test_run_keyboard_interrupt_returns_none(self):
+        app = _build_app()
+        fake_app = MagicMock()
+        fake_app.run.side_effect = KeyboardInterrupt
+        with patch("datus.cli.service_config_app.Application", return_value=fake_app):
+            assert app.run() is None
+
+    def test_run_unexpected_exception_returns_none(self):
+        app = _build_app()
+        fake_app = MagicMock()
+        fake_app.run.side_effect = RuntimeError("boom")
+        with patch("datus.cli.service_config_app.Application", return_value=fake_app):
+            assert app.run() is None

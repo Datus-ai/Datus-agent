@@ -736,3 +736,112 @@ class TestRendering:
         joined = " | ".join(labels)
         assert "alibaba coding" in joined
         assert "alibaba_coding" not in joined
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Dual-mode finish hook + embedded panel + standalone run() with
+# mocked Application.
+# ─────────────────────────────────────────────────────────────────────
+
+
+import asyncio  # noqa: E402
+
+from datus.cli.tui.wizard_host import EmbeddedWizard  # noqa: E402
+
+
+def _make_future():
+    loop = asyncio.new_event_loop()
+    return loop, loop.create_future()
+
+
+class TestEmbeddedPanel:
+    def test_build_embedded_panel_returns_wizard(self):
+        app = _build()
+        loop, fut = _make_future()
+        try:
+            panel = app.build_embedded_panel(fut)
+            assert isinstance(panel, EmbeddedWizard)
+            assert panel.done_future is fut
+            assert app._on_done is not None
+        finally:
+            loop.close()
+
+    def test_finish_via_future_with_result(self):
+        """``_finish_via_future`` is the adapter ``build_embedded_panel``
+        wires into ``_on_done``. Verify both branches."""
+        loop, fut = _make_future()
+        try:
+            sel = ModelSelection(kind="provider_model", provider="openai", model="gpt-4.1")
+            ModelApp._finish_via_future(fut, sel)
+            assert fut.done() and fut.result() is sel
+        finally:
+            loop.close()
+
+    def test_finish_via_future_with_none(self):
+        loop, fut = _make_future()
+        try:
+            ModelApp._finish_via_future(fut, None)
+            assert fut.done() and fut.result() is None
+        finally:
+            loop.close()
+
+
+class TestFinishAndLayout:
+    def test_finish_without_on_done_noop(self):
+        app = _build()
+        assert app._on_done is None
+        app._finish(None)
+
+    def test_finish_invokes_on_done(self):
+        app = _build()
+        captured: list = []
+        app._on_done = lambda r: captured.append(r)
+        sel = ModelSelection(kind="provider_model", provider="openai", model="gpt-4.1")
+        app._finish(sel)
+        assert captured == [sel]
+
+    def test_layout_with_app_returns_app_layout(self):
+        app = _build()
+        fake_layout = MagicMock()
+        app._app = MagicMock(layout=fake_layout)
+        assert app._layout() is fake_layout
+
+    def test_layout_returns_none_when_get_app_raises(self):
+        app = _build()
+        app._app = None
+        with patch("prompt_toolkit.application.get_app", side_effect=RuntimeError("no app")):
+            assert app._layout() is None
+
+    def test_focus_no_target_noop(self):
+        """``_focus(None)`` returns ``None`` via the early-out guard
+        and never touches the (absent) layout."""
+        app = _build()
+        app._app = None
+        assert app._focus(None) is None
+
+    def test_focus_dispatches_to_layout(self):
+        app = _build()
+        fake_layout = MagicMock()
+        app._app = MagicMock(layout=fake_layout)
+        target = object()
+        app._focus(target)
+        fake_layout.focus.assert_called_once_with(target)
+
+
+class TestRunStandalone:
+    def test_run_returns_selection(self):
+        app = _build()
+        sel = ModelSelection(kind="provider_model", provider="openai", model="gpt-4.1")
+        fake_app = MagicMock()
+        fake_app.run.return_value = sel
+        with patch("datus.cli.model_app.Application", return_value=fake_app):
+            assert app.run() is sel
+        assert app._on_done is None
+        assert app._app is None
+
+    def test_run_keyboard_interrupt_returns_none(self):
+        app = _build()
+        fake_app = MagicMock()
+        fake_app.run.side_effect = KeyboardInterrupt
+        with patch("datus.cli.model_app.Application", return_value=fake_app):
+            assert app.run() is None
