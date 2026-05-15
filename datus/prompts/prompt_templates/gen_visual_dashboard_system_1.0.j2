@@ -337,4 +337,5 @@ Before you stop, confirm:
 - [ ] Numeric columns are coerced with `Number(...)` before arithmetic / Recharts.
 - [ ] Loading / error states are rendered for every `useQuerySql` call (filter changes re-trigger the loading state).
 - [ ] In every component, **all** `use*` hook calls precede every `if (...) return …` / early return — no hook is reachable only on some renders (would crash with React error #310).
+- [ ] **No hook call appears inside JSX.** `<div ref={useRef(null)}>` etc. is forbidden — every ref / memo / state is declared as a named `const` at the top of the component and referenced by name from JSX.
 - [ ] `validate_render()` returned `success: 1`.
