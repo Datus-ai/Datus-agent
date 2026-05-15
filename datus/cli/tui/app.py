@@ -103,6 +103,42 @@ def tui_enabled() -> bool:
         return False
 
 
+def _is_jediterm(env: Optional[dict] = None) -> bool:
+    """Detect JetBrains' JediTerm host terminal.
+
+    JediTerm advertises SGR mouse support but echoes the escape sequences
+    back as raw input while still driving its native scrollback in
+    parallel, producing the symptoms reported by the user: scroll wheel
+    moves both the app viewport AND the terminal scrollback, the
+    in-app scrollbar pixel-snaps to the wrong cell, and overshoot
+    rubber-bands at the bottom. The cleanest fix is to keep mouse
+    capture off there and let JediTerm's DECSET 1007 behaviour
+    translate the wheel into ↑/↓ keys, which the app handles directly.
+    """
+    src = env if env is not None else os.environ
+    return src.get("TERMINAL_EMULATOR", "").strip().lower() == "jetbrains-jediterm"
+
+
+def _resolve_mouse_support(env: Optional[dict] = None) -> bool:
+    """Resolve whether prompt_toolkit's ``mouse_support`` should be on.
+
+    Order of precedence:
+
+    1. ``DATUS_FORCE_MOUSE_CAPTURE`` truthy → force on (escape hatch for
+       JediTerm users on a build that handles the SGR echo themselves).
+    2. ``DATUS_FORCE_MOUSE_CAPTURE`` falsy (``0``/``false``/``no``/``off``)
+       → force off.
+    3. Otherwise: off under JediTerm, on everywhere else.
+    """
+    src = env if env is not None else os.environ
+    override = src.get("DATUS_FORCE_MOUSE_CAPTURE", "").strip().lower()
+    if override in {"1", "true", "yes", "on"}:
+        return True
+    if override in {"0", "false", "no", "off"}:
+        return False
+    return not _is_jediterm(src)
+
+
 class DatusApp:
     """Wrapper around a persistent prompt_toolkit Application.
 
@@ -412,12 +448,23 @@ class DatusApp:
         # up the scroll wheel for the output pane (and click-to-focus); per
         # plan the user accepted losing terminal-native Shift+drag select
         # inside the rendered area in exchange.
+        #
+        # JetBrains' JediTerm advertises SGR mouse support but leaks the
+        # escape sequences back as raw input AND keeps driving its native
+        # scrollback in parallel — the user sees ghost scrolling, jumpy
+        # scrollbars, and rubber-band bounce at the bottom. We disable
+        # mouse capture there and rely on JediTerm's DECSET 1007 behaviour
+        # (wheel-in-alt-screen → ↑/↓ keys), which the Up/Down handlers
+        # below translate into in-app scroll without any terminal-side
+        # scrollback being touched. Set ``DATUS_FORCE_MOUSE_CAPTURE=1`` to
+        # opt back in.
+        self._mouse_support_enabled = _resolve_mouse_support()
         self._app: Application = Application(
             layout=Layout(root, focused_element=self._input_area),
             key_bindings=merge_key_bindings([self._kb, self._wizard_kb_layer]),
             style=style or Style([]),
             full_screen=True,
-            mouse_support=True,
+            mouse_support=self._mouse_support_enabled,
             erase_when_done=False,
         )
 
@@ -1749,6 +1796,30 @@ class DatusApp:
         @kb.add("pagedown")
         def _page_down(event) -> None:  # noqa: ANN001
             self._scroll_output_down(self._output_page_size())
+            event.app.invalidate()
+
+        # When mouse capture is disabled (e.g. JediTerm — see
+        # ``_resolve_mouse_support``), the host terminal's DECSET 1007
+        # "alternate scroll mode" translates wheel events into ↑/↓ key
+        # sequences. Route those into the output viewport so the wheel
+        # *feels* like in-app scroll. Gated on:
+        #  * mouse capture being off (terminals with real mouse capture
+        #    keep TextArea's default Up=history behaviour);
+        #  * composer being empty (multi-line cursor navigation wins);
+        #  * no autocomplete popup open (Up/Down must keep selecting).
+        wheel_via_keys = Condition(lambda: not self._mouse_support_enabled)
+        composer_empty = Condition(lambda: not self._input_area.buffer.text)
+        no_completion = Condition(lambda: not self._input_area.buffer.complete_state)
+        scroll_keys_active = wheel_via_keys & composer_empty & no_completion
+
+        @kb.add("up", filter=scroll_keys_active)
+        def _scroll_up_arrow(event) -> None:  # noqa: ANN001
+            self._scroll_output_up(self._OUTPUT_WHEEL_STEP)
+            event.app.invalidate()
+
+        @kb.add("down", filter=scroll_keys_active)
+        def _scroll_down_arrow(event) -> None:  # noqa: ANN001
+            self._scroll_output_down(self._OUTPUT_WHEEL_STEP)
             event.app.invalidate()
 
         # Escape clears an active selection. The filter gates this so

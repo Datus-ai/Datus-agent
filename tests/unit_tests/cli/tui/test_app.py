@@ -18,7 +18,13 @@ from unittest import mock
 
 import pytest
 
-from datus.cli.tui.app import EXIT_SENTINEL, DatusApp, tui_enabled
+from datus.cli.tui.app import (
+    EXIT_SENTINEL,
+    DatusApp,
+    _is_jediterm,
+    _resolve_mouse_support,
+    tui_enabled,
+)
 
 
 @pytest.fixture
@@ -753,3 +759,203 @@ class TestPasteCollapse:
         assert first_ph not in buffer.text
         assert first_paste in buffer.text
         assert tui_app._paste_placeholder(15) in buffer.text
+
+
+class TestJediTermDetection:
+    """``_is_jediterm`` reads ``TERMINAL_EMULATOR`` case-insensitively."""
+
+    def test_jediterm_value_detected(self) -> None:
+        assert _is_jediterm({"TERMINAL_EMULATOR": "JetBrains-JediTerm"}) is True
+
+    def test_jediterm_case_insensitive(self) -> None:
+        # JediTerm itself sets the canonical casing but tooling/wrappers
+        # may lowercase or uppercase it; the detection must be robust to
+        # both so users on either don't get inconsistent behaviour.
+        assert _is_jediterm({"TERMINAL_EMULATOR": "jetbrains-jediterm"}) is True
+        assert _is_jediterm({"TERMINAL_EMULATOR": "JETBRAINS-JEDITERM"}) is True
+
+    def test_jediterm_with_surrounding_whitespace(self) -> None:
+        assert _is_jediterm({"TERMINAL_EMULATOR": "  JetBrains-JediTerm  "}) is True
+
+    def test_other_terminal_not_detected(self) -> None:
+        for value in ("iTerm.app", "Apple_Terminal", "vscode", "alacritty", ""):
+            assert _is_jediterm({"TERMINAL_EMULATOR": value}) is False, value
+
+    def test_missing_env_var_not_detected(self) -> None:
+        assert _is_jediterm({}) is False
+
+
+class TestResolveMouseSupport:
+    """``_resolve_mouse_support`` honours overrides before terminal sniff."""
+
+    def test_default_on_for_unknown_terminal(self) -> None:
+        # Empty environment → no JediTerm marker → mouse capture stays on
+        # to preserve in-app wheel/click in iTerm2, Terminal.app, etc.
+        assert _resolve_mouse_support({}) is True
+
+    def test_default_off_for_jediterm(self) -> None:
+        assert _resolve_mouse_support({"TERMINAL_EMULATOR": "JetBrains-JediTerm"}) is False
+
+    @pytest.mark.parametrize("override", ["1", "true", "TRUE", "Yes", "on"])
+    def test_force_on_overrides_jediterm(self, override: str) -> None:
+        # Escape hatch for users on a JediTerm build/version that handles
+        # SGR cleanly — env var wins over auto-detection.
+        env = {
+            "TERMINAL_EMULATOR": "JetBrains-JediTerm",
+            "DATUS_FORCE_MOUSE_CAPTURE": override,
+        }
+        assert _resolve_mouse_support(env) is True
+
+    @pytest.mark.parametrize("override", ["0", "false", "FALSE", "No", "off"])
+    def test_force_off_overrides_default(self, override: str) -> None:
+        # Inverse escape hatch: disable mouse capture even outside
+        # JediTerm (e.g. when running under a screen-multiplexer that
+        # echoes SGR back).
+        env = {"DATUS_FORCE_MOUSE_CAPTURE": override}
+        assert _resolve_mouse_support(env) is False
+
+    def test_unrecognised_override_falls_back_to_autodetect(self) -> None:
+        # Unknown values must not silently flip the default — they
+        # delegate to terminal sniffing so a typo doesn't lock users
+        # into the wrong mode without warning.
+        env = {
+            "TERMINAL_EMULATOR": "JetBrains-JediTerm",
+            "DATUS_FORCE_MOUSE_CAPTURE": "maybe",
+        }
+        assert _resolve_mouse_support(env) is False
+
+        env2 = {"DATUS_FORCE_MOUSE_CAPTURE": "maybe"}
+        assert _resolve_mouse_support(env2) is True
+
+    def test_reads_os_environ_when_no_arg(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The helper is also called with no argument from DatusApp
+        # construction; that path must read ``os.environ`` live so test
+        # monkeypatching is honoured.
+        monkeypatch.setenv("TERMINAL_EMULATOR", "JetBrains-JediTerm")
+        monkeypatch.delenv("DATUS_FORCE_MOUSE_CAPTURE", raising=False)
+        assert _resolve_mouse_support() is False
+
+        monkeypatch.setenv("DATUS_FORCE_MOUSE_CAPTURE", "1")
+        assert _resolve_mouse_support() is True
+
+
+def _bindings_for_key(app: DatusApp, key):
+    """Return *all* handlers bound to ``key`` (multiple may coexist with filters)."""
+    out = []
+    for binding in app.key_bindings.bindings:
+        if key in getattr(binding, "keys", ()):
+            out.append(binding)
+    return out
+
+
+class TestArrowKeyScroll:
+    """Arrow keys must scroll the output pane when mouse capture is off
+    (so JediTerm's DECSET 1007 wheel→arrow translation gives in-app
+    scrolling) but stay out of the way otherwise."""
+
+    def _make_app(self, monkeypatch: pytest.MonkeyPatch, *, jediterm: bool) -> DatusApp:
+        if jediterm:
+            monkeypatch.setenv("TERMINAL_EMULATOR", "JetBrains-JediTerm")
+        else:
+            monkeypatch.delenv("TERMINAL_EMULATOR", raising=False)
+        monkeypatch.delenv("DATUS_FORCE_MOUSE_CAPTURE", raising=False)
+        return DatusApp(
+            status_tokens_fn=lambda: [("", "x")],
+            dispatch_fn=lambda _t: None,
+        )
+
+    def test_mouse_support_off_under_jediterm(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        app = self._make_app(monkeypatch, jediterm=True)
+        assert app._mouse_support_enabled is False
+
+    def test_mouse_support_on_outside_jediterm(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        app = self._make_app(monkeypatch, jediterm=False)
+        assert app._mouse_support_enabled is True
+
+    def test_arrow_bindings_registered_under_jediterm(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The Up/Down → output scroll handlers must be present in the
+        # JediTerm-mode app so wheel events (delivered as ↑/↓ keys)
+        # have somewhere to land.
+        app = self._make_app(monkeypatch, jediterm=True)
+        up_bindings = _bindings_for_key(app, "up")
+        down_bindings = _bindings_for_key(app, "down")
+        assert len(up_bindings) >= 1
+        assert len(down_bindings) >= 1
+
+    def test_arrow_scroll_filter_passes_when_composer_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Filter gates: mouse capture off + empty composer + no
+        # completion menu. All three are true at fresh startup.
+        app = self._make_app(monkeypatch, jediterm=True)
+        up_handlers = _bindings_for_key(app, "up")
+        assert any(b.filter() for b in up_handlers), (
+            "Expected at least one 'up' handler to be active when the composer is empty under JediTerm mode"
+        )
+
+    def test_arrow_scroll_filter_blocked_when_composer_has_text(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Once the user types, Up must give cursor-up / history behaviour
+        # back to the TextArea — our scroll handler bows out.
+        app = self._make_app(monkeypatch, jediterm=True)
+        app._input_area.buffer.text = "hello"
+        up_handlers = _bindings_for_key(app, "up")
+        # Find the binding whose filter we own (the one that becomes False
+        # when text is non-empty). Other Up handlers (if any) keep their
+        # own filter logic.
+        scroll_filter_active = [b.filter() for b in up_handlers]
+        # At least one binding existed; with text present, our scroll
+        # gate must be False — assert by checking it's not unanimously
+        # True (the default TextArea binding has no such gate so it may
+        # remain active, which is the intended fall-through).
+        assert False in scroll_filter_active, "Scroll-up gate should disengage when composer has text"
+
+    def test_arrow_scroll_filter_blocked_outside_jediterm(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # In a normal terminal (mouse capture on), real wheel events are
+        # delivered as SCROLL_UP/SCROLL_DOWN mouse events, not ↑/↓ keys.
+        # Our Up/Down scroll hijack must therefore stay dormant so Up
+        # keeps doing history-backward in the TextArea.
+        app = self._make_app(monkeypatch, jediterm=False)
+        up_handlers = _bindings_for_key(app, "up")
+        # The hijacked Up binding's filter must be False here; if no
+        # such binding exists at all, the test also passes.
+        assert all(not b.filter() for b in up_handlers if _is_jediterm_only_binding(b)), (
+            "Scroll-up hijack must be inactive outside JediTerm mode"
+        )
+
+    def test_up_handler_scrolls_output_when_invoked(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        app = self._make_app(monkeypatch, jediterm=True)
+        up_handlers = _bindings_for_key(app, "up")
+        event = mock.MagicMock()
+        with mock.patch.object(app, "_scroll_output_up") as mock_up:
+            for b in up_handlers:
+                if b.filter():
+                    b.handler(event)
+                    break
+            else:
+                raise AssertionError("no active 'up' handler under JediTerm mode")
+        mock_up.assert_called_once_with(app._OUTPUT_WHEEL_STEP)
+        event.app.invalidate.assert_called_once()
+
+    def test_down_handler_scrolls_output_when_invoked(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        app = self._make_app(monkeypatch, jediterm=True)
+        down_handlers = _bindings_for_key(app, "down")
+        event = mock.MagicMock()
+        with mock.patch.object(app, "_scroll_output_down") as mock_down:
+            for b in down_handlers:
+                if b.filter():
+                    b.handler(event)
+                    break
+            else:
+                raise AssertionError("no active 'down' handler under JediTerm mode")
+        mock_down.assert_called_once_with(app._OUTPUT_WHEEL_STEP)
+        event.app.invalidate.assert_called_once()
+
+
+def _is_jediterm_only_binding(binding) -> bool:
+    """Heuristic: a binding whose filter mentions our mouse-support flag.
+
+    Used by tests to find the Up/Down hijack handlers we added without
+    coupling to prompt_toolkit's filter internals. The handler's
+    qualified name is uniquely ``_scroll_up_arrow`` / ``_scroll_down_arrow``
+    so we match on that for an exact identifier.
+    """
+    name = getattr(binding.handler, "__name__", "")
+    return name in {"_scroll_up_arrow", "_scroll_down_arrow"}
