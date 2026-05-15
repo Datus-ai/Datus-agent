@@ -1619,6 +1619,32 @@ class AgenticNode(Node):
             mapping["skills"] = list(self.skill_func_tool.available_tools())
         return mapping
 
+    def _populate_tool_registry(self) -> None:
+        """Register every tool in :meth:`_tool_category_map` into
+        :attr:`tool_registry`.
+
+        Decoupled from :meth:`_ensure_permission_hooks` so callers that
+        need the category map filled *before* the first LLM turn — most
+        importantly :func:`apply_proxy_tools`, which inspects the
+        registry to honour the ``_FS_DEPENDENT_NODES`` exclusion — can
+        trigger it eagerly. Safe to call multiple times because
+        :meth:`ToolRegistry.register_tools` is overwrite-write.
+
+        Permission gating remains opt-in through
+        :meth:`_ensure_permission_hooks`; this helper does **not** require
+        a ``permission_manager`` and never builds ``PermissionHooks``.
+        """
+        try:
+            for category, tools in self._tool_category_map().items():
+                if tools:
+                    self.tool_registry.register_tools(category, tools)
+        except Exception:
+            logger.debug(
+                "Failed to populate tool_registry for %s; falling back to lazy registration.",
+                self.get_node_name(),
+                exc_info=True,
+            )
+
     def _ensure_permission_hooks(self) -> None:
         """Build ``self.permission_hooks`` once tools are in place.
 
@@ -1633,9 +1659,7 @@ class AgenticNode(Node):
         if not self.permission_manager:
             return
         try:
-            for category, tools in self._tool_category_map().items():
-                if tools:
-                    self.tool_registry.register_tools(category, tools)
+            self._populate_tool_registry()
             from datus.tools.permission.permission_hooks import PermissionHooks
 
             # ``execution_mode="workflow"`` flows have no human in the loop, so

@@ -76,6 +76,15 @@ def apply_proxy_tools(
     """
     node.proxy_tool_patterns = proxy_patterns
     target_channel = channel or node.tool_channel
+    # ``_FS_DEPENDENT_NODES`` exclusion below relies on ``tool_registry`` being
+    # populated. In production that population is normally driven by
+    # ``_ensure_permission_hooks``, which runs lazily on the first LLM turn —
+    # but ``apply_proxy_tools`` is called during node setup, well before any
+    # LLM call. Trigger registry population eagerly so the exclusion can fire.
+    # Guarded with ``hasattr`` so the SimpleNamespace-style mocks in tests
+    # still work without growing a no-op stub.
+    if hasattr(node, "_populate_tool_registry"):
+        node._populate_tool_registry()
     parsed = _parse_patterns(proxy_patterns)
     registry = node.tool_registry.to_dict()
 

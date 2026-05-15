@@ -110,6 +110,28 @@ class TestGenVisualDashboardInit:
         assert "db_tools" in mapping
         assert "semantic_tools" in mapping
 
+    def test_apply_proxy_tools_keeps_filesystem_tools_unwrapped(self, real_agent_config, mock_llm_create):
+        """End-to-end check mirroring the visual report case: web-source
+        ``["write_file", "edit_file"]`` patterns must leave the dashboard
+        node's filesystem tools un-proxied because
+        ``gen_visual_dashboard`` is in ``_FS_DEPENDENT_NODES``.
+
+        Does not pre-fill ``tool_registry``; verifies that
+        ``apply_proxy_tools`` populates it eagerly so the exclusion
+        fires.
+        """
+        from datus.tools.proxy.proxy_tool import apply_proxy_tools
+
+        node = _make_node(real_agent_config)
+        before = {t.name: t.on_invoke_tool for t in node.tools if t.name in {"write_file", "edit_file"}}
+        assert before, "test setup: expected write_file/edit_file in node.tools"
+
+        apply_proxy_tools(node, ["write_file", "edit_file"])
+
+        after = {t.name: t.on_invoke_tool for t in node.tools if t.name in {"write_file", "edit_file"}}
+        for name, original in before.items():
+            assert after[name] is original, f"{name} was proxied despite gen_visual_dashboard fs-dependent exclusion"
+
 
 # --------------------------------------------------------------------------- #
 # Pre-execution artifact wiring                                               #
