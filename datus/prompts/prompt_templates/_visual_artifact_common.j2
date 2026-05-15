@@ -58,6 +58,73 @@ Do **not** import from: `react-dom`, `next/*`, `react-router*`, state-management
 
 Relative paths must stay under `render/` — `../../../escape` is rejected.
 
+### Canonical component shape
+
+Every chart / table / KPI component in `render/` follows the same five-section shape. **Copy this skeleton when you author a new component.** Data flow, hook ordering, ref handling, AnimateOnVisible wiring, and the ChartEntryMore action menu are all here — if your component structurally matches this shape, you cannot trip the most common rendering errors.
+
+```jsx
+import { useMemo, useRef } from 'react';
+import { useDatusArtifact, AnimateOnVisible, ChartEntryMore } from '@datus/web-artifact';
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip } from 'recharts';
+import Card from './shared/card';
+import { N } from './shared/formatters';
+
+function RevenueTrendCard() {
+  // 1. Refs / state — one named ref per `<div ref>` site in the JSX below.
+  //    Never write `<div ref={useRef(null)}>`: a hook called inline from JSX
+  //    is reached only on some renders and crashes with React error #310.
+  const cardRef = useRef(null);
+
+  // 2. Data hooks — every `useQuerySql` at the top, before any early return.
+  const { useQuerySql } = useDatusArtifact();
+  const { isLoading, errorMessage, data } = useQuerySql('queries/revenue_by_month');
+
+  // 3. Derived data — `useMemo` with stable deps; coerce numerics with N().
+  const rows = useMemo(
+    () => (data?.rows ?? []).map(r => ({ ...r, revenue: N(r.revenue) })),
+    [data],
+  );
+
+  // 4. Early returns — only AFTER every hook above. Render loading / error
+  //    placeholders here; never inline a hook into the skeleton below.
+  if (isLoading) return <Skeleton minHeight={300} />;
+  if (errorMessage) return <ErrorBlock msg={errorMessage} />;
+
+  // 5. JSX — wrapper `<div ref={cardRef}>` is the screenshot root for
+  //    ChartEntryMore. `titleRight` hosts the action menu so `<Card>` itself
+  //    doesn't need to forward refs.
+  return (
+    <div ref={cardRef}>
+      <Card
+        title="Revenue trend"
+        titleRight={<ChartEntryMore sqlId="queries/revenue_by_month" cardRef={cardRef} />}
+      >
+        <AnimateOnVisible minHeight={300}>
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={rows}>
+              <XAxis dataKey="month" />
+              <YAxis />
+              <Tooltip />
+              <Line type="monotone" dataKey="revenue" stroke="#6051F5" />
+            </LineChart>
+          </ResponsiveContainer>
+        </AnimateOnVisible>
+      </Card>
+    </div>
+  );
+}
+```
+
+The five sections are not optional ordering — they are the only ordering React permits:
+
+1. **Refs / `useState` / state hooks** — always first.
+2. **Data hooks (`useQuerySql`)** — never inside a conditional.
+3. **Derived data (`useMemo` / `useCallback`)** — also hooks; same constraint.
+4. **Early returns (`if (isLoading) return …`)** — only after every hook.
+5. **JSX** — references refs / state / derived data by name. No hook calls inside JSX.
+
+`AnimateOnVisible`, `FigureCaption`, `<Card>`'s `titleRight` slot, and `<ChartEntryMore>` are normal JSX — they all live in section 5.
+
 ### Data layer — `useDatusArtifact`
 
 All data access goes through one hook:
@@ -100,55 +167,29 @@ Always read rows as `data?.rows ?? []` and columns as `data?.columns ?? []`. Coe
 
   The validator only static-checks **literal** spec strings. Template strings resolve at runtime; the iframe will surface unknown slugs as `errorMessage`.
 
-- Place every `useQuerySql` call at the top of the component body, before conditionals or early returns. One declaration per query.
-- **React Rules of Hooks — non-negotiable.** *All* hooks (`useQuerySql`, `useState`, `useRef`, `useMemo`, `useCallback`, `useEffect`, `useContext`, custom hooks, etc.) must be called unconditionally, in the same order, at the top of the component body — **before** any `if (...) return …`, `if (isLoading) return <Skeleton />`, `if (errorMessage) return <Error />`, or other early return. Violating this surfaces at runtime as `Minified React error #310` ("Rendered more hooks than during the previous render") and crashes the whole artifact. Pattern:
+- One `useQuerySql` declaration per query, in the data-hooks block (section 2 of the Canonical component shape).
+- Render a skeleton placeholder when `isLoading`; an inline error block when `errorMessage`; the chart/table otherwise. Those `return` statements live in section 4 — after the full hook block, never between hooks.
 
-  ```jsx
-  function RevenueTrend() {
-    const { isLoading, errorMessage, data } = useQuerySql('queries/revenue_trend'); // hook
-    const cardRef = useRef(null);                                                   // hook — BEFORE early returns
-    const rows = useMemo(() => data?.rows ?? [], [data]);                           // hook — BEFORE early returns
-    if (isLoading) return <Skeleton />;            // ← early returns AFTER every hook
-    if (errorMessage) return <ErrorBlock msg={errorMessage} />;
-    return <Card ref={cardRef}>…{rows.length}…</Card>;
-  }
-  ```
+#### Hook safety
 
-- Render a skeleton placeholder when `isLoading`; an inline error block when `errorMessage`; the chart/table otherwise. Place those `return` statements after the full hook block, never between hooks.
+All hook-related rules collapse to a single invariant — the React rule that breaks the most artifacts. Read it twice.
 
-- **Never call hooks inline from JSX.** Writing `<div ref={useRef(null)}>` (or `<div style={useMemo(...)}>` etc.) is the *same* Rules-of-Hooks violation as a conditional hook: any early return above the JSX skips the hook call, so two consecutive renders see different hook counts and React crashes with #310. **Every `useRef` / `useMemo` / `useState` / `useCallback` / custom hook is declared as a `const` at the top of the component, before any early return, and then referenced from JSX by name.** Allocate one named ref per `<div ref={...}>` site — do not reuse `cardRef` across multiple wrappers, and do not invent fresh refs at the call site.
+- **Every `use*` hook is called unconditionally, in the same order, at the top of the function body.** That includes `useRef`, `useMemo`, `useState`, `useCallback`, `useEffect`, `useContext`, `useQuerySql`, and every custom hook.
+- **No hook call may appear inside JSX.** `<div ref={useRef(null)}>` is forbidden — declare a named ref above and reference it by name from JSX. Allocate **one named ref per `<div ref>` site**; never reuse `cardRef` across multiple wrappers; never invent a fresh ref at the call site.
+- **No hook call may appear after an early return.** Place `if (isLoading) return …`, `if (errorMessage) return …`, `if (rows.length === 0) return null` *after* every hook — never between two hooks.
 
-  Correct (every hook above every early return; refs named):
+Violating any of these surfaces as `Minified React error #310` ("Rendered more hooks than during the previous render") and crashes the whole artifact. **The Canonical component shape above is the proof shape — if your code structurally matches it, you cannot trip #310.**
 
-  ```jsx
-  function YoYSummary() {
-    const cardRef = useRef(null);                          // hook
-    const summaryRef = useRef(null);                       // hook — one per <div ref> site
-    const { data } = useQuerySql('queries/yoy_summary');   // hook
-    const rows = data?.rows ?? [];
-    if (rows.length === 0) return null;                    // early return AFTER all hooks
+Anti-pattern most often emitted by lower-tier models — hook reached only on the data-non-empty render, crashes the *next* render once data arrives:
 
-    return (
-      <div ref={cardRef}>
-        <Card title="YoY Summary" titleRight={<ChartEntryMore sqlId="queries/yoy_summary" cardRef={cardRef} />}>
-          …
-          <div ref={summaryRef}>…</div>
-        </Card>
-      </div>
-    );
-  }
-  ```
-
-  Anti-pattern (the hook on the JSX `<div>` is reached only when `rows.length !== 0` — crashes the *next* render after the data arrives):
-
-  ```jsx
-  function YoYSummary() {
-    const { data } = useQuerySql('queries/yoy_summary');
-    const rows = data?.rows ?? [];
-    if (rows.length === 0) return null;
-    return <div ref={useRef(null)}>…</div>;  // ✗ #310: hook count differs from the empty-rows render
-  }
-  ```
+```jsx
+function YoYSummary() {
+  const { data } = useQuerySql('queries/yoy_summary');
+  const rows = data?.rows ?? [];
+  if (rows.length === 0) return null;
+  return <div ref={useRef(null)}>…</div>;   // ✗ #310: hook count differs between the two renders
+}
+```
 
 ### Visual design
 
@@ -282,67 +323,34 @@ Rules of thumb when wiring this in:
 
 Animation is part of the visual polish — the same way you'd pick a palette and a card primitive. An artifact whose charts pop in *as the reader reaches them* feels alive; one whose charts have already finished by the time they're seen feels like a screenshot.
 
-### Chart action menu (recommended)
+### Chart action menu — `<ChartEntryMore>`
 
-Every chart card that's backed by a real `useQuerySql(...)` call should expose a small "..." menu in its top-right corner, letting the reader inspect the underlying SQL, export the data, or grab a PNG. `@datus/web-artifact` ships a ready-made `<ChartEntryMore>` component for exactly this — use it; don't roll your own menu.
+Every visualization backed by a `useQuerySql(...)` call gets a `<ChartEntryMore>` action menu in its title strip (View SQL / Export SQL / CSV / JSON / PNG / Copy PNG). The Canonical component shape above shows the standard wiring; this section is the contract.
 
-Usage — **always wrap your card in a plain `<div ref={cardRef}>`**; do not pass `ref` directly to your `<Card>` primitive:
+#### Decision rules (strict priority — top wins)
 
-```jsx
-import { useRef } from 'react';
-import { useDatusArtifact, ChartEntryMore } from '@datus/web-artifact';
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip } from 'recharts';
+1. **Always wrap the card in `<div ref={cardRef}>`.** The wrapper div is the screenshot root for PNG export. Mandatory; don't skip even if your `<Card>` primitive looks like it could host the ref.
+2. **Never pass `ref` directly to `<Card>`.** React 18 strips `ref` from props on function components, so `cardRef.current` stays null and PNG export throws. The wrapper-div pattern in rule 1 sidesteps this entirely.
+3. **Always pass `cardRef` to `<ChartEntryMore>`.** Don't rely on the `cardSelector` fallback below.
+4. **Render `<ChartEntryMore>` in the card's `titleRight` slot** when it exists (every shared `card.jsx` should expose one). Otherwise lay it out inline with `display: 'flex'` + `justifyContent: 'space-between'` in the card header row.
+5. **One `<ChartEntryMore>` per card.** Don't add multiple for different sub-charts inside one card — combine them into one card per query, or pick the most-prominent sqlId.
+6. **Add `<ChartEntryMore>` to every `useQuerySql`-backed visualization** — line / bar / area / pie / scatter / radar charts, KPI cards, KPI sparklines, custom inline SVG visualizations, **and data tables** (trigger in the header strip above `<table>`, not inside `<thead>`). The "View SQL" action is the single best credibility move for an analytical deliverable; don't gate it on whether the chart "looks important enough".
 
-function RevenueTrend() {
-  const cardRef = useRef(null);
-  const { useQuerySql } = useDatusArtifact();
-  const { data } = useQuerySql('queries/revenue_by_month');
-  const rows = data?.rows ?? [];
-
-  return (
-    // The wrapper div is the screenshot root. Do NOT put `ref={cardRef}` on
-    // `<Card>` directly — function components don't forward `ref` as a prop
-    // unless they're built with `React.forwardRef`, and your shared/card.jsx
-    // typically isn't. The wrapper-div pattern sidesteps that entirely.
-    <div ref={cardRef}>
-      <Card
-        title="Revenue trend"
-        titleRight={<ChartEntryMore sqlId="queries/revenue_by_month" cardRef={cardRef} />}
-      >
-        <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={rows}>{/* … */}</LineChart>
-        </ResponsiveContainer>
-      </Card>
-    </div>
-  );
-}
-```
-
-If your `<Card>` already accepts a `titleRight` slot (recommended — every shared `card.jsx` should expose one), put `<ChartEntryMore>` there and it shows up cleanly right of the title. Otherwise lay it out yourself inside the card with `display: 'flex'` + `justifyContent: 'space-between'`.
-
-Props:
+#### Props
 
 | Prop | Required | Notes |
 |---|---|---|
-| `sqlId` | yes | The same literal you passed to `useQuerySql`. The component looks up the cached query result and the raw `.sql` text by this id. |
-| `cardRef` | recommended | Ref attached to the **outer wrapper div** around the card. Used as the screenshot root for "Export PNG" / "Copy PNG", so the export includes title + chart together. Strongly preferred over the `cardSelector` fallback below. |
-| `cardSelector` | no | If `cardRef` is omitted or isn't attached, the component walks up from the trigger button via `triggerEl.closest(cardSelector)`. Default: `'[data-datus-chart-card]'`. If you don't want to manage a ref at all, mark the card root with the attribute: `<div data-datus-chart-card>…</div>`. |
+| `sqlId` | yes | Same literal you passed to `useQuerySql`. The component looks up the cached query result and the raw `.sql` text by this id. |
+| `cardRef` | yes (per rule 3) | Ref on the **outer wrapper div** — the screenshot root for "Export PNG" / "Copy PNG". |
+| `cardSelector` | no (fallback only) | Used when `cardRef` is omitted; do not rely on this. Defaults to `'[data-datus-chart-card]'` — if you skip `cardRef`, mark the card root with that attribute. |
 | `filenameBase` | no | Override the downloaded basename (default: the slug). Extensions are added automatically. |
 
-What the menu does — all entirely client-side, no host round-trip:
+#### What the menu does — all client-side, no host round-trip
 
-- **View SQL** opens an in-iframe modal with the raw SQL rendered through a Prism-highlighted `<code>` block.
-- **Export SQL / CSV / JSON** triggers a Blob download in the reader's browser. CSV follows RFC 4180; JSON is the pretty-printed query result.
-- **Export PNG** screenshots `cardRef.current` via `html-to-image` (2× pixel ratio) and downloads it.
-- **Copy PNG** screenshots the same element and writes it to the system clipboard. On browsers that block clipboard writes from sandboxed iframes (mainly Safari), it falls back to a download and toasts the user.
-
-Rules of thumb:
-
-- **Add `<ChartEntryMore>` to every visualization backed by a `useQuerySql` call**, with no exceptions. That covers line / bar / area / pie / scatter / radar charts, KPI cards, KPI sparklines, custom inline SVG visualizations, and **data tables** — the table header row gets a trigger right of the title too. The "view SQL" action is the single best credibility move you can make for an analytical deliverable; do not gate it on whether the chart "looks important enough".
-- **Trigger placement**: align it to the right side of the visualization's title row in a `flex` container — `<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>` with the H3/title on the left and `<ChartEntryMore>` on the right. Never float it over the chart canvas. For data tables, the trigger lives in the header strip above the `<table>`, not inside `<thead>`. The 26×26 button is sized to slot into the flex row cleanly.
-- **One trigger per card**: don't add multiple `<ChartEntryMore>` for different sub-charts inside one card. Combine them into one card per query, or pick the most-prominent sqlId.
-- **Don't pass `ref` directly to `<Card>`** — React 18 strips `ref` from props on function components, so `cardRef.current` would stay null and PNG export would throw. Always use the `<div ref={cardRef}>` wrapper, or add `data-datus-chart-card` to the card root.
-- **Don't pass any other ref** as `cardRef` — must be the wrapper div around the outer card, otherwise PNG export crops out the title.
+- **View SQL** — opens an in-iframe modal with the raw SQL (Prism-highlighted).
+- **Export SQL / CSV / JSON** — Blob download in the reader's browser. CSV follows RFC 4180; JSON is the pretty-printed query result.
+- **Export PNG** — screenshots `cardRef.current` via `html-to-image` (2× pixel ratio) and downloads it.
+- **Copy PNG** — same screenshot to the system clipboard; falls back to a download on browsers that block sandboxed-iframe clipboard writes (mainly Safari).
 
 ### Formatting helpers
 
