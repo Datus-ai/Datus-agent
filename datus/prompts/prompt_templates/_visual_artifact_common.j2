@@ -66,7 +66,7 @@ Every chart / table / KPI component in `render/` follows the same five-section s
 import { useMemo, useRef } from 'react';
 import { useDatusArtifact, AnimateOnVisible, ChartEntryMore } from '@datus/web-artifact';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip } from 'recharts';
-import Card from './shared/card';
+import Card, { Skeleton, ErrorBlock } from './shared/card';
 import { N } from './shared/formatters';
 
 function RevenueTrendCard() {
