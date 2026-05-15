@@ -545,14 +545,78 @@ class DatusCLI:
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug(f"interrupt_controller.interrupt failed: {exc}")
 
+    def _compute_pane_width(self, sidebar_visible: bool) -> int:
+        """Width in cells available to the left output pane.
+
+        Mirrors ``DatusApp._sidebar_target_width`` so Rich's wrap width
+        matches the column prompt_toolkit will paint into:
+
+        * Sidebar visible: ``cols - max(14, cols // 5) - 1`` (the trailing
+          ``- 1`` is the ``│`` separator), floored at 20 so Rich can still
+          format something on absurdly narrow terminals.
+        * Sidebar hidden: ``cols`` (full screen), floored at 20.
+        """
+        import shutil
+
+        cols = shutil.get_terminal_size(fallback=(120, 30)).columns
+        if sidebar_visible:
+            sidebar_width = max(14, cols // 5)
+            return max(20, cols - sidebar_width - 1)
+        return max(20, cols)
+
+    def _reflow_for_sidebar(self, sidebar_visible: bool) -> None:
+        """Reflow the output pane when the sidebar appears/disappears.
+
+        Rich's ``Console.width`` is locked at construction, but the
+        underlying ``_width`` attribute is what ``size``/``width`` read on
+        every access. We **mutate** it in place rather than rebuild the
+        Console so every consumer that captured the instance earlier
+        (``chat_commands.console`` bound in ``ChatCommands.__init__``, any
+        ``ActionHistoryDisplay`` constructed during a turn) immediately sees
+        the new pane width on its next ``print``. Replacing the instance
+        leaves those captures pointing at the old width and the freshly
+        streamed tokens render past the new pane edge — exactly the
+        "covered by the sidebar" symptom users see.
+
+        Existing scrollback was wrapped at the old width. Clearing the
+        buffer and replaying ``_full_screen_reprint`` lets banner + completed
+        turns redraw cleanly at the new width; ``in_progress_actions``
+        forwards the running turn's incremental actions so they survive
+        the wipe.
+        """
+        new_width = self._compute_pane_width(sidebar_visible=sidebar_visible)
+        current_console = getattr(self, "console", None)
+        if current_console is None:
+            return
+        if getattr(current_console, "width", None) == new_width:
+            return
+        buffer = getattr(self, "_tui_output_buffer", None)
+        if buffer is None:
+            return
+        # In-place width swap — see docstring for why we don't rebuild.
+        current_console._width = new_width
+        chat_commands = getattr(self, "chat_commands", None)
+        if chat_commands is not None:
+            try:
+                verbose = bool(getattr(chat_commands, "_trace_verbose", False))
+                in_progress = getattr(chat_commands, "_current_incremental_actions", None)
+                chat_commands._full_screen_reprint(verbose=verbose, in_progress_actions=in_progress)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug(f"sidebar reflow reprint failed: {exc}")
+        else:
+            # Early boot: no history yet, just drop whatever banner was
+            # already written so the next paint starts clean at the new width.
+            buffer.clear()
+        tui_app = getattr(self, "tui_app", None)
+        if tui_app is not None:
+            tui_app.invalidate()
+
     def _init_tui_app(self) -> None:
         """Create the persistent ``DatusApp`` and register REPL bindings."""
         # The Tab handler matches the legacy PromptSession behavior
         # (trigger completion only, no navigation). Additional bindings —
         # Shift+Tab plan-mode toggle, Ctrl+O trace details, ESC interrupt —
         # are wired in later phases.
-        import shutil
-
         from prompt_toolkit.lexers import PygmentsLexer
 
         from datus.cli.tui.output_buffer import TUIOutputBuffer
@@ -582,12 +646,11 @@ class DatusCLI:
         # Rich must be told the WIDTH OF THE OUTPUT PANE — *not* the full
         # terminal — otherwise Markdown borders, table grids, and Pygments
         # alignment break visibly the moment the sidebar takes its 20%
-        # column. We mirror ``DatusApp._sidebar_target_width`` (``max(14,
-        # cols // 5)``) and subtract a 1-col safety margin so wrapped tail
-        # characters don't butt against the ``│`` separator on resize.
-        cols = shutil.get_terminal_size(fallback=(120, 30)).columns
-        sidebar_width = max(14, cols // 5)
-        pane_width = max(20, cols - sidebar_width - 1)
+        # column. ``_compute_pane_width`` mirrors ``DatusApp._sidebar_target_width``.
+        # Boot with ``sidebar_visible=False`` because no todo items exist at
+        # startup; ``_reflow_for_sidebar`` will rebuild the Console at the
+        # narrower width on the first transition.
+        pane_width = self._compute_pane_width(sidebar_visible=False)
         self.console = Console(
             file=self._tui_output_buffer,
             force_terminal=True,
@@ -633,6 +696,12 @@ class DatusCLI:
         # repaint (via ``loop.call_soon_threadsafe`` — thread-safe by
         # construction, see DatusApp.invalidate).
         self._tui_output_buffer.set_on_change(self.tui_app.invalidate)
+
+        # Sidebar visibility transitions (Ctrl+T toggle, first task appearing,
+        # all tasks cleared, terminal resize crossing the min-cols threshold)
+        # require rebuilding the Console at the new pane width — see
+        # ``_reflow_for_sidebar``.
+        self.tui_app.set_sidebar_visibility_listener(self._reflow_for_sidebar)
 
         @self.tui_app.key_bindings.add("tab")
         def _tab(event):  # noqa: ANN001 - prompt_toolkit signature
@@ -708,6 +777,19 @@ class DatusCLI:
                 chat_commands.display_inline_trace_details(last_actions)
 
             run_in_terminal_sync(_show)
+
+        @self.tui_app.key_bindings.add("c-t")
+        def _c_t(event):  # noqa: ANN001
+            """Ctrl+T: toggle the todo sidebar between visible and hidden.
+
+            Flips ``DatusApp._sidebar_force_hidden``; the next render runs
+            ``_sidebar_visible``, observes the transition against
+            ``_last_sidebar_visible``, and schedules ``_reflow_for_sidebar``
+            on the event loop. ``invalidate`` forces that render to happen
+            on the very next tick instead of waiting for the next input.
+            """
+            self.tui_app.toggle_sidebar_hidden()
+            event.app.invalidate()
 
         @self.tui_app.key_bindings.add("escape")
         def _esc(event):  # noqa: ANN001

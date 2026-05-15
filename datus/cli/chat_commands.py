@@ -120,6 +120,14 @@ class ChatCommands:
         # to route ESC (interrupt) and Ctrl+O (verbose toggle) key bindings
         # to the currently running agent loop. ``None`` when idle.
         self.current_streaming_ctx = None
+        # In-progress turn's ``incremental_actions`` reference, published by
+        # the chat stream so :meth:`_full_screen_reprint` (triggered by
+        # ``DatusCLI._reflow_for_sidebar`` when the todo sidebar appears /
+        # disappears) can replay the running turn after wiping the buffer.
+        # Without this, the buffer clear loses everything the user has
+        # streamed since the last finished turn. ``None`` while idle; reset
+        # when each turn completes so a stale reference never re-renders.
+        self._current_incremental_actions: Optional[List[ActionHistory]] = None
 
     def update_chat_node_tools(self):
         """Update current node tools when datasource changes."""
@@ -355,6 +363,11 @@ class ChatCommands:
             # Initialize action history display
             action_display = ActionHistoryDisplay(self.console, live_state=getattr(self.cli, "live_state", None))
             incremental_actions = []
+            # Publish the live reference so ``_full_screen_reprint`` (driven
+            # by the sidebar reflow listener) can replay the running turn
+            # after wiping the buffer. The list grows by mutation, so the
+            # reference stays current without resync. Cleared in ``finally``.
+            self._current_incremental_actions = incremental_actions
             # Streaming text deltas (thinking_delta, depth=0) are routed to a
             # per-message bucket keyed by ``action.action_id`` (the
             # ``thinking_stream_id`` shared across all deltas + the paired
@@ -655,6 +668,10 @@ class ChatCommands:
             self.console.print(f"[red]Error:[/] {str(e)}")
             if _is_model_config_error(e):
                 self.console.print("[yellow]Hint: Use /model to configure or switch your model.[/]")
+        finally:
+            # Drop the in-progress reference so a later sidebar reflow does
+            # not replay actions from a turn that has already finished.
+            self._current_incremental_actions = None
 
     def _render_final_response(self, final_action: "ActionHistory", skip_markdown_body: bool = False) -> None:
         """Render the final response output (SQL, markdown, etc.) from a node action.
@@ -1165,6 +1182,7 @@ class ChatCommands:
         *,
         mode_label: Optional[str] = None,
         fallback_actions: Optional[List[ActionHistory]] = None,
+        in_progress_actions: Optional[List[ActionHistory]] = None,
     ) -> None:
         """Clear the screen and re-render the full multi-turn history.
 
@@ -1235,6 +1253,11 @@ class ChatCommands:
         elif fallback_actions:
             action_display.render_action_history(fallback_actions, verbose=verbose)
             _render_turn_response(fallback_actions)
+        # Append the running turn's actions (driven by the sidebar reflow
+        # listener) after completed history so the user's in-flight stream
+        # survives the buffer wipe. Skipped when empty.
+        if in_progress_actions:
+            action_display.render_action_history(in_progress_actions, verbose=verbose)
 
     def display_inline_trace_details(self, actions: List[ActionHistory]) -> None:
         """Toggle action history between compact and verbose modes (post-run Ctrl+O)."""

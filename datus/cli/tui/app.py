@@ -137,6 +137,17 @@ class DatusApp:
         self._todo_tokens_fn = todo_tokens_fn
         self._todo_has_items_fn = todo_has_items_fn
         self._todo_line_count_fn = todo_line_count_fn
+        # Sidebar visibility model. ``_sidebar_force_hidden`` is the user-
+        # toggled override (Ctrl+T). ``_last_sidebar_visible`` caches the
+        # last value returned by :meth:`_sidebar_visible` so the filter can
+        # detect transitions and notify ``_on_sidebar_visibility_change``
+        # via the event loop (filter runs on the render path, so reflow
+        # work must be deferred). The listener is wired by ``DatusCLI``
+        # to rebuild the Rich Console at the new pane width and re-render
+        # the scrollback so existing rows wrap to the new width.
+        self._sidebar_force_hidden: bool = False
+        self._last_sidebar_visible: Optional[bool] = None
+        self._on_sidebar_visibility_change: Optional[Callable[[bool], None]] = None
         # Scroll-pane output (full_screen=True). Replaces patch_stdout —
         # all console.print output is captured into an in-memory buffer
         # which feeds ``output_tokens_fn``. ``output_line_count_fn`` is
@@ -428,12 +439,17 @@ class DatusApp:
         has_items_fn = self._todo_has_items_fn or (lambda: False)
 
         def _sidebar_visible() -> bool:
-            if self._terminal_columns() < self._SIDEBAR_MIN_TERMINAL_COLS:
-                return False
-            try:
-                return bool(has_items_fn())
-            except Exception:  # pragma: no cover - defensive
-                return False
+            if self._sidebar_force_hidden:
+                visible = False
+            elif self._terminal_columns() < self._SIDEBAR_MIN_TERMINAL_COLS:
+                visible = False
+            else:
+                try:
+                    visible = bool(has_items_fn())
+                except Exception:  # pragma: no cover - defensive
+                    visible = False
+            self._note_sidebar_visibility(visible)
+            return visible
 
         def _sidebar_width() -> Dimension:
             target = self._sidebar_target_width()
@@ -470,6 +486,60 @@ class DatusApp:
             ),
             filter=Condition(_sidebar_visible),
         )
+
+    def set_sidebar_visibility_listener(self, callback: Optional[Callable[[bool], None]]) -> None:
+        """Register a callback invoked whenever the sidebar's visibility flips.
+
+        The listener is scheduled on the Application's event loop via
+        ``call_soon_threadsafe`` because the filter that detects the
+        transition runs on prompt_toolkit's render path — replacing the
+        Rich Console / clearing the buffer there would either re-enter
+        rendering or race with paint. The current visibility value is
+        passed to the callback.
+        """
+        self._on_sidebar_visibility_change = callback
+
+    def toggle_sidebar_hidden(self) -> bool:
+        """Flip the manual hide override. Returns the new ``force_hidden`` value.
+
+        The actual reflow is driven by the visibility listener: the next
+        ``_sidebar_visible`` evaluation will observe the flipped flag, see
+        a transition against ``_last_sidebar_visible``, and notify the
+        listener. Callers should invalidate the app after toggling so the
+        filter re-runs on the next render tick.
+        """
+        self._sidebar_force_hidden = not self._sidebar_force_hidden
+        return self._sidebar_force_hidden
+
+    def _note_sidebar_visibility(self, visible: bool) -> None:
+        """Detect transitions and schedule the listener on the event loop.
+
+        First call after construction records the value without firing —
+        this avoids a spurious reflow at startup before any history has
+        accumulated. Subsequent transitions schedule the listener via
+        ``call_soon_threadsafe`` when available; if no loop is attached
+        yet (e.g. unit tests inspecting the filter directly) the listener
+        is skipped — the next real transition while running will fire it.
+        """
+        if self._last_sidebar_visible is None:
+            self._last_sidebar_visible = visible
+            return
+        if visible == self._last_sidebar_visible:
+            return
+        self._last_sidebar_visible = visible
+        callback = self._on_sidebar_visibility_change
+        if callback is None:
+            return
+        loop = self._loop
+        if loop is None:
+            app = getattr(self, "_app", None)
+            loop = getattr(app, "loop", None) if app is not None else None
+        if loop is None:
+            return
+        try:
+            loop.call_soon_threadsafe(callback, visible)
+        except RuntimeError:  # pragma: no cover - defensive (loop closed)
+            pass
 
     def _sidebar_target_width(self) -> int:
         """Total cells reserved for the right-side todo column.
