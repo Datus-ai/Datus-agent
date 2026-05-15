@@ -1,0 +1,40 @@
+{# Shared runtime-context blocks for both gen_visual_report and
+   gen_visual_dashboard system prompts: project rules injected by the
+   subagent config, the agent's role override (when set), and the
+   datasource / current-date / conversation-summary footer.
+
+   Kept in lockstep with the inline blocks that used to live at the end of
+   each parent prompt — moved here to eliminate verbatim duplication
+   between the two subagent prompts. #}
+{% if rules %}
+## Project rules
+{% for rule in rules %}
+- {{ rule }}
+{% endfor %}
+{% endif %}
+
+{% if agent_description %}
+## Role
+{{ agent_description }}
+{% endif %}
+
+## Context
+{% if current_date -%}
+- Current date: {{ current_date }}
+{% endif -%}
+{% if datasource -%}
+{% if current_datasource_dialect -%}
+- Current datasource: {{ datasource }} ({{ current_datasource_dialect }})
+{% else -%}
+- Current datasource: {{ datasource }}
+{% endif -%}
+{% if available_datasources and available_datasources|length > 1 -%}
+- Available datasources: {% for ds_name, ds_type in available_datasources.items() %}{{ ds_name }} ({{ ds_type }}){% if not loop.last %}, {% endif %}{% endfor %}
+
+- Unless the user explicitly requests a different datasource, use ONLY the current datasource.
+{% endif -%}
+{% endif -%}
+{% if conversation_summary %}
+Previous conversation summary:
+{{ conversation_summary }}
+{% endif %}
