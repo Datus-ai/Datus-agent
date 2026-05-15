@@ -116,6 +116,40 @@ Always read rows as `data?.rows ?? []` and columns as `data?.columns ?? []`. Coe
 
 - Render a skeleton placeholder when `isLoading`; an inline error block when `errorMessage`; the chart/table otherwise. Place those `return` statements after the full hook block, never between hooks.
 
+- **Never call hooks inline from JSX.** Writing `<div ref={useRef(null)}>` (or `<div style={useMemo(...)}>` etc.) is the *same* Rules-of-Hooks violation as a conditional hook: any early return above the JSX skips the hook call, so two consecutive renders see different hook counts and React crashes with #310. **Every `useRef` / `useMemo` / `useState` / `useCallback` / custom hook is declared as a `const` at the top of the component, before any early return, and then referenced from JSX by name.** Allocate one named ref per `<div ref={...}>` site — do not reuse `cardRef` across multiple wrappers, and do not invent fresh refs at the call site.
+
+  Correct (every hook above every early return; refs named):
+
+  ```jsx
+  function YoYSummary() {
+    const cardRef = useRef(null);                          // hook
+    const summaryRef = useRef(null);                       // hook — one per <div ref> site
+    const { data } = useQuerySql('queries/yoy_summary');   // hook
+    const rows = data?.rows ?? [];
+    if (rows.length === 0) return null;                    // early return AFTER all hooks
+
+    return (
+      <div ref={cardRef}>
+        <Card title="YoY Summary" titleRight={<ChartEntryMore sqlId="queries/yoy_summary" cardRef={cardRef} />}>
+          …
+          <div ref={summaryRef}>…</div>
+        </Card>
+      </div>
+    );
+  }
+  ```
+
+  Anti-pattern (the hook on the JSX `<div>` is reached only when `rows.length !== 0` — crashes the *next* render after the data arrives):
+
+  ```jsx
+  function YoYSummary() {
+    const { data } = useQuerySql('queries/yoy_summary');
+    const rows = data?.rows ?? [];
+    if (rows.length === 0) return null;
+    return <div ref={useRef(null)}>…</div>;  // ✗ #310: hook count differs from the empty-rows render
+  }
+  ```
+
 ### Visual design
 
 Treat each output as a polished deliverable — a small **branded analytics product** for dashboards, a **research-style document** for reports. Quality bar:
