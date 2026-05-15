@@ -13,8 +13,9 @@ tests/integration/tools/test_skill.py (marked nightly).
 import json
 from pathlib import Path
 
+from datus.tools.func_tool.bash_tool import BashTool
 from datus.tools.permission.permission_manager import PermissionManager
-from datus.tools.skill_tools import SkillBashTool, SkillConfig, SkillManager
+from datus.tools.skill_tools import SkillConfig, SkillManager
 
 TESTS_ROOT = Path(__file__).resolve().parents[3]  # tests/
 SKILLS_DIR = TESTS_ROOT / "data" / "skills"
@@ -105,7 +106,7 @@ class TestSkillLoadAndExecute:
     """Test the full load → execute → result pipeline with real scripts."""
 
     def test_workflow_skill_loads_content_no_bash_tool(self, skill_func_tool):
-        """Workflow-only skill returns content but no SkillBashTool."""
+        """Workflow-only skill returns content but no BashTool."""
         result = skill_func_tool.load_skill("sql-analysis")
         assert result.success == 1
         assert "Schema Discovery" in result.result
@@ -120,7 +121,7 @@ class TestSkillLoadAndExecute:
         assert "python scripts/generate_report.py" in result.result
 
         bash_tool = skill_func_tool.get_skill_bash_tool("report-generator")
-        assert isinstance(bash_tool, SkillBashTool)
+        assert isinstance(bash_tool, BashTool)
 
         exec_result = bash_tool.execute_command("python scripts/generate_report.py --format json")
         assert exec_result.success == 1
@@ -139,7 +140,7 @@ class TestSkillLoadAndExecute:
         assert r2.success == 1
 
         bash_tool = skill_func_tool.get_skill_bash_tool("data-profiler")
-        assert isinstance(bash_tool, SkillBashTool)
+        assert isinstance(bash_tool, BashTool)
         exec_result = bash_tool.execute_command("python scripts/profile_data.py --table students")
         assert exec_result.success == 1
         output = json.loads(exec_result.result.strip())
