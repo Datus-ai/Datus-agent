@@ -136,6 +136,29 @@ class TestGenVisualReportInit:
         assert "db_tools" in mapping
         assert "semantic_tools" in mapping
 
+    def test_metric_discovery_tools_exposed_when_metrics_present(self, real_agent_config, mock_llm_create, monkeypatch):
+        """When the project has indexed metrics, the visual report node must
+        expose ``search_metrics`` and ``get_metrics`` to the LLM —
+        otherwise the prompt advertises metric-first discovery while the
+        tools are silently missing, and the model falls back to deriving
+        SQL from raw table DDL. ``ContextSearchTools`` gates these tools
+        on ``has_metrics``; patching ``_show_metrics`` to ``True`` is the
+        minimal way to simulate a metric-rich project in a unit test and
+        also exercises the ``context_search_tools.*`` wildcard expansion
+        end-to-end.
+        """
+        from datus.tools.func_tool.context_search import ContextSearchTools
+
+        monkeypatch.setattr(ContextSearchTools, "_show_metrics", lambda self: True)
+
+        node = _make_node(real_agent_config)
+        assert isinstance(node.context_search_tools, ContextSearchTools)
+        tool_names = {t.name for t in node.tools}
+        # search_metrics + get_metrics prove the metric discovery branch fired.
+        # list_subject_tree is force-included whenever any context_search
+        # branch fires, so it's a canary for the wildcard wiring itself.
+        assert {"search_metrics", "get_metrics", "list_subject_tree"}.issubset(tool_names)
+
     def test_apply_proxy_tools_keeps_filesystem_tools_unwrapped(self, real_agent_config, mock_llm_create):
         """End-to-end check on a real node: ``apply_proxy_tools`` invoked
         with the web-source pattern ``["write_file", "edit_file"]`` must

@@ -259,12 +259,15 @@ def real_agent_config(tmp_path, reset_global_singletons):
             },
             "gen_visual_report": {
                 "system_prompt": "gen_visual_report",
-                "tools": "semantic_tools.*,db_tools.*,context_search_tools.list_subject_tree",
+                # Intentionally omit ``tools`` so the fixture exercises the
+                # ``BaseVisualArtifactAgenticNode.DEFAULT_TOOLS`` fallback —
+                # matches the real-world deployment where users rarely
+                # override the runtime tool list for built-in subagents.
                 "max_turns": 5,
             },
             "gen_visual_dashboard": {
                 "system_prompt": "gen_visual_dashboard",
-                "tools": "semantic_tools.*,db_tools.*,context_search_tools.list_subject_tree",
+                # See the comment above on gen_visual_report.
                 "max_turns": 5,
             },
             "explore": {

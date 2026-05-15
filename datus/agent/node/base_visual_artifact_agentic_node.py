@@ -87,7 +87,14 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
     FALLBACK_TEMPLATE_NAME: ClassVar[str] = ""
 
     #: Default tools when ``agent.yml`` doesn't override ``tools:``.
-    DEFAULT_TOOLS: ClassVar[str] = "semantic_tools.*, db_tools.*, context_search_tools.list_subject_tree"
+    #: ``context_search_tools.*`` expands at setup-time into whichever search
+    #: helpers the active project actually supports — ``list_subject_tree`` is
+    #: always present, while ``search_metrics`` / ``get_metrics`` /
+    #: ``search_reference_sql`` / etc. only surface when the corresponding
+    #: store has indexed content. Without the wildcard, the prompt advertises
+    #: metric-discovery tools the LLM can't actually call, so the model
+    #: silently falls back to deriving SQL from raw table DDL.
+    DEFAULT_TOOLS: ClassVar[str] = "semantic_tools.*, db_tools.*, context_search_tools.*"
 
     # ── Construction ──────────────────────────────────────────────────────
 

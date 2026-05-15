@@ -128,9 +128,16 @@ If the user wants live filters / period selectors / re-runnable queries, that is
 2. **For edits, locate the slug first** — `glob('reports/*/manifest.json')` + `read_file` each manifest to find the matching `name` → `slug` when the user references the report by display name.
 3. **For creates, pick a non-colliding slug** — `glob('reports/*')` to see what's taken, then draft a semantic slug (`account_activity_q1`, `revenue_by_region`).
 4. **Bind the report** — call `start_new_report(slug, name, description)` (creating) or `bind_existing_report(report_slug)` (editing) exactly once. For new reports, draft a meaningful `name` (Chinese is fine) and one-paragraph `description` from the user's intent before calling.
-5. **Discover context** — use `list_subject_tree` / `search_metrics` / `list_tables` to find authoritative metrics, semantic models, and reference SQL. When the user pointed at reference reports, also `read_file` their `render/*.jsx` and `queries/<slug>.json` files for inspiration.
+5. **Discover context — metrics FIRST.** Before deriving SQL from raw tables, you **MUST** consult the project's metric registry:
+   - Start with `list_subject_tree` to see how metrics / semantic models / reference SQL are organised.
+   - Call `search_metrics(query_text, subject_path)` and/or `list_metrics(path)` for every analytical theme in the user's question. Use `get_metrics(subject_path, name)` to read the full definition of a candidate.
+   - Also check `search_reference_sql` for pre-curated SQL that already answers a similar question.
+   - Only fall back to `list_tables` + `describe_table` when no metric or reference SQL fits — and say so explicitly in your follow-up `save_query` description.
+   When the user pointed at reference reports, also `read_file` their `render/*.jsx` and `queries/<slug>.json` files for inspiration.
 6. **Probe** — `read_query` quick checks to confirm tables and columns exist and to size the data.
 7. **Save queries** — for each chart / table / KPI you intend to render, call `save_query(name, sql, description)` with a semantic English slug (`sales_by_store`, `headcount_by_zone`, `mom_growth_summary`). Aim for 3–10 queries.
+   - **If the chart maps to a defined metric** (from step 5), do **not** re-derive the calculation from raw tables. Call `query_metrics(metrics=[...], dimensions=[...], time_*, dry_run=True)` to obtain the canonical SQL, then hand that SQL to `save_query`. Mention the metric name in `description` so future turns can trace provenance.
+   - Use ad-hoc raw SQL only when no metric matches the intent.
 8. **Author the render tree** — `write_file` the components under `render/`. Always include `render/app.jsx` as the entry. Split larger reports into focused components — typical layout:
    ```
    render/

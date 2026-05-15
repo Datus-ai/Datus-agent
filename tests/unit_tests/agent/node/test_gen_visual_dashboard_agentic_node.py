@@ -110,6 +110,22 @@ class TestGenVisualDashboardInit:
         assert "db_tools" in mapping
         assert "semantic_tools" in mapping
 
+    def test_metric_discovery_tools_exposed_when_metrics_present(self, real_agent_config, mock_llm_create, monkeypatch):
+        """Mirrors the report-node contract: with metrics indexed, the
+        dashboard node must expose ``search_metrics`` and ``get_metrics``
+        so the LLM can discover the metric registry instead of
+        re-deriving SQL from raw schema. Also exercises the
+        ``context_search_tools.*`` wildcard end-to-end.
+        """
+        from datus.tools.func_tool.context_search import ContextSearchTools
+
+        monkeypatch.setattr(ContextSearchTools, "_show_metrics", lambda self: True)
+
+        node = _make_node(real_agent_config)
+        assert isinstance(node.context_search_tools, ContextSearchTools)
+        tool_names = {t.name for t in node.tools}
+        assert {"search_metrics", "get_metrics", "list_subject_tree"}.issubset(tool_names)
+
     def test_apply_proxy_tools_keeps_filesystem_tools_unwrapped(self, real_agent_config, mock_llm_create):
         """End-to-end check mirroring the visual report case: web-source
         ``["write_file", "edit_file"]`` patterns must leave the dashboard

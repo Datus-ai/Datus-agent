@@ -127,9 +127,16 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
 2. **For edits, locate the slug first** — `glob('dashboards/*/manifest.json')` + `read_file` each manifest to find the matching `name` → `slug` when the user references the dashboard by display name.
 3. **For creates, pick a non-colliding slug** — `glob('dashboards/*')` to see what's taken, then draft a semantic slug (`revenue_overview`, `merchant_health`).
 4. **Bind the dashboard** — call `start_new_dashboard(slug, name, description)` (creating) or `bind_existing_dashboard(dashboard_slug)` (editing) exactly once. For new dashboards, draft a meaningful `name` (Chinese is fine) and one-paragraph `description` from the user's intent before calling.
-5. **Discover context** — use `list_subject_tree` / `search_metrics` / `list_tables` to find authoritative metrics, semantic models, and reference SQL. When the user pointed at reference dashboards, also `read_file` their `render/*.jsx` and `queries/<slug>.sql.j2` files for inspiration.
+5. **Discover context — metrics FIRST.** Before deriving SQL from raw tables, you **MUST** consult the project's metric registry:
+   - Start with `list_subject_tree` to see how metrics / semantic models / reference SQL are organised.
+   - Call `search_metrics(query_text, subject_path)` and/or `list_metrics(path)` for every KPI / chart in the user's question. Use `get_metrics(subject_path, name)` to read full definitions.
+   - Also check `search_reference_sql` for pre-curated SQL templates that fit.
+   - Only fall back to `list_tables` + `describe_table` when no metric or reference SQL fits — and note it in the template `description`.
+   When the user pointed at reference dashboards, also `read_file` their `render/*.jsx` and `queries/<slug>.sql.j2` files for inspiration.
 6. **Probe** — `read_query` quick checks to confirm tables and columns exist, to size the data at typical filter values, and to discover the enumerations you'll need to populate filter dropdowns.
 7. **Save query templates** — for each chart / table / KPI you intend to render, call `save_query_template(name, sql_template, params, sample_params, description)` with a semantic English slug (`revenue_by_region`, `top_products_by_segment`, `cohort_retention`). Aim for 4–8 templates per dashboard. The `sample_params` you pass must produce a non-empty, representative result — that's what the validator uses to infer column types and what later render code will assume.
+   - **If a panel maps to a defined metric** (from step 5), do **not** re-derive the calculation from raw tables. Call `query_metrics(metrics=[...], dimensions=[...], time_*, dry_run=True)` to obtain the canonical SQL, then parameterise it into a Jinja template and pass that to `save_query_template`. Mention the metric name in `description` so future turns can trace provenance.
+   - Use ad-hoc raw SQL only when no metric matches.
 8. **Author the render tree** — `write_file` the components under `render/`. Always include `render/app.jsx` as the entry. Keep the filter state in `app.jsx` and thread it down via props or `React.createContext`. Typical layout:
    ```
    render/
