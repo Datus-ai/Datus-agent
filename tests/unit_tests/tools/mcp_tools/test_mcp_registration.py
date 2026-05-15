@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from datus.tools.func_tool.base import FuncToolResult
+from datus.utils import mcp_decorators
 from datus.utils.mcp_decorators import (
     MCPToolConfig,
     create_dynamic_tool_wrapper,
@@ -95,7 +96,9 @@ class TestGetMCPTools:
 
 class TestMCPToolClassDecorator:
     def test_registers_class_in_global_registry(self):
-        initial_registry = list(get_tool_registry())
+        # Snapshot the real registry; ``get_tool_registry()`` returns a copy
+        # so we must mutate the underlying module-level list to restore it.
+        initial_registry = list(mcp_decorators._GLOBAL_TOOL_REGISTRY)
 
         try:
 
@@ -122,9 +125,7 @@ class TestMCPToolClassDecorator:
             assert registered[0].tool_class is TestToolXYZ
             assert registered[0].availability_property == "has_test_xyz"
         finally:
-            # Restore the registry to avoid polluting other tests
-            registry = get_tool_registry()
-            registry[:] = initial_registry
+            mcp_decorators._GLOBAL_TOOL_REGISTRY[:] = initial_registry
 
     def test_requires_create_dynamic(self):
         with pytest.raises(TypeError, match="create_dynamic"):

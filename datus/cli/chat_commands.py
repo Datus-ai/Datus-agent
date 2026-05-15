@@ -1626,6 +1626,8 @@ class ChatCommands:
 
             self.current_node = new_node
             self.current_subagent_name = subagent_name
+            if hasattr(self.cli, "plan_mode_active"):
+                self.cli.plan_mode_active = bool(getattr(new_node, "plan_mode_active", False))
 
             # Show the rewound conversation
             from rich.rule import Rule

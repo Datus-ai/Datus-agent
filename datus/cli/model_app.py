@@ -263,11 +263,20 @@ class ModelApp:
         panel — feed it directly to ``done_future`` and let
         ``DatusApp.run_wizard`` return.
         """
+        from datus.cli.tui.wizard_host import EmbeddedWizard, resolve_with
+
         early = self._apply_seed()
         if early is not None:
-            from datus.cli.tui.wizard_host import resolve_with
-
             resolve_with(done_future, early)
+            # Future is already resolved; return a minimal panel so the host
+            # mounts-and-unmounts without firing ``_on_done`` a second time
+            # on the now-done future (which would raise InvalidStateError).
+            return EmbeddedWizard(
+                container=Window(),
+                key_bindings=KeyBindings(),
+                first_focus=None,
+                done_future=done_future,
+            )
         self._on_done = lambda result: self._finish_via_future(done_future, result)
         kb = self._build_key_bindings()
         root = self._build_root_container(kb)
@@ -275,8 +284,6 @@ class ModelApp:
         # drops us straight onto a credentials / token / add-model form,
         # the visible TextArea should receive the first keystroke instead
         # of the hidden provider-list window.
-        from datus.cli.tui.wizard_host import EmbeddedWizard
-
         first_focus = self._list_window
         if (
             self._view

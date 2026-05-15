@@ -1457,7 +1457,7 @@ class TestSubAgentCompleteAction:
         Regression: closed groups previously rendered as
         ``⏺ subagent(<inner messages>)`` after Ctrl+O — the renderer
         picked the inner action as ``first_action``, and
-        :func:`parse_task_tool_input` returned the ``"subagent"`` sentinel
+        :func:`parse_task_tool_input` returned the ``__no_task_anchor__`` sentinel
         because the inner action carried no task ``input["type"]``.
         """
         t0 = datetime(2025, 1, 1, 12, 0, 0)

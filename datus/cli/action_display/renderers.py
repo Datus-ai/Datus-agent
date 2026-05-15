@@ -402,7 +402,7 @@ class ActionContentGenerator(BaseActionContentGenerator):
 # Sentinel returned by :func:`parse_task_tool_input` when neither input layout
 # yields a real subagent_type. :func:`is_task_anchor_input` uses it to tell
 # "no anchor" apart from a legitimate subagent name.
-_TASK_SUBAGENT_FALLBACK = "subagent"
+_TASK_SUBAGENT_FALLBACK = "__no_task_anchor__"
 
 
 def parse_task_tool_input(input_data) -> tuple:
@@ -487,7 +487,7 @@ class ActionRenderer:
         PROCESSING anchor (e.g. truncated history), the inner action is
         used as ``first_action``. In that case fall back to
         ``action.action_type`` so the header still says something
-        meaningful instead of the ``"subagent"`` sentinel.
+        meaningful instead of the ``__no_task_anchor__`` sentinel.
         """
         input_data = action.input if isinstance(action.input, dict) else {}
         if action.action_type == "task":

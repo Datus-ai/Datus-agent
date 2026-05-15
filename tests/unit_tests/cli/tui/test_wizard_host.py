@@ -129,17 +129,13 @@ def test_run_wizard_blocks_until_done_future_resolves():
             captured_future["fut"] = done_future
             return _make_wizard(done_future)
 
-        # Schedule the result to land 50ms later from the loop thread.
-        def deferred_resolve() -> None:
-            loop.call_later(0.05, lambda: captured_future["fut"].set_result({"ok": True}))
-
         # The worker thread calls run_wizard which blocks here:
         worker_result: dict = {}
 
         def worker() -> None:
             worker_result["value"] = app.run_wizard(factory)
 
-        worker_thread = threading.Thread(target=worker)
+        worker_thread = threading.Thread(target=worker, daemon=True)
         worker_thread.start()
 
         # Give the factory a moment to install ``captured_future``.
@@ -149,7 +145,9 @@ def test_run_wizard_blocks_until_done_future_resolves():
             threading.Event().wait(0.01)
         assert "fut" in captured_future, "factory was not invoked"
 
-        deferred_resolve()
+        # Resolve via the loop thread; ``call_later`` is not thread-safe and
+        # would not wake a loop already parked in ``select(timeout=None)``.
+        loop.call_soon_threadsafe(lambda: captured_future["fut"].set_result({"ok": True}))
         worker_thread.join(timeout=2.0)
         assert not worker_thread.is_alive(), "run_wizard did not return"
         assert worker_result["value"] == {"ok": True}
@@ -185,7 +183,7 @@ def test_run_wizard_returns_none_on_cancel():
         def worker() -> None:
             worker_result["value"] = app.run_wizard(factory)
 
-        worker_thread = threading.Thread(target=worker)
+        worker_thread = threading.Thread(target=worker, daemon=True)
         worker_thread.start()
         for _ in range(50):
             if "fut" in captured:

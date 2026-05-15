@@ -113,12 +113,14 @@ def test_jump_to_match_cycles_forward_and_recentres(tui_app: DatusApp):
     assert len(matches) >= 2
 
     initial_scroll = tui_app._output_scroll_offset
+    # Fixture lines "line 10".."line 19" guarantee distinct rows for the
+    # first two matches, so the viewport must shift on +1 unconditionally.
+    assert matches[0].line != matches[1].line
     tui_app._jump_to_match(+1)
     assert tui_app._search_state.current_idx == 1
     expected_top = max(0, matches[1].line - 5)
     assert tui_app._output_scroll_offset == expected_top
-    if matches[0].line != matches[1].line:
-        assert tui_app._output_scroll_offset != initial_scroll
+    assert tui_app._output_scroll_offset != initial_scroll
 
 
 def test_jump_to_match_wraps_around(tui_app: DatusApp):

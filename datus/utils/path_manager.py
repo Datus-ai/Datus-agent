@@ -343,12 +343,28 @@ class DatusPathManager:
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         return self.sessions_dir / f"{session_id}.db"
 
+    @staticmethod
+    def _validate_session_id(session_id: str) -> None:
+        """Reject session_ids that could escape the project data directory."""
+        if (
+            not session_id
+            or not isinstance(session_id, str)
+            or "/" in session_id
+            or "\\" in session_id
+            or session_id.startswith(".")
+        ):
+            raise DatusException(
+                ErrorCode.STORAGE_FAILED,
+                message=f"Invalid session_id format: {session_id!r}",
+            )
+
     def agent_state_path(self, session_id: str) -> Path:
         """Per-session plan-mode state file.
 
         Returns:
             Path: ``{project_data_dir}/state/{session_id}.json``
         """
+        self._validate_session_id(session_id)
         path = self.project_data_dir / "state" / f"{session_id}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
@@ -359,6 +375,7 @@ class DatusPathManager:
         Returns:
             Path: ``{project_data_dir}/todos/{session_id}.json``
         """
+        self._validate_session_id(session_id)
         path = self.project_data_dir / "todos" / f"{session_id}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         return path

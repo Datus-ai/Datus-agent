@@ -106,16 +106,16 @@ class TestParseTaskToolInput:
         assert is_task_anchor_input(data) is True
 
     def test_missing_type_falls_back_to_sentinel(self):
-        assert parse_task_tool_input({}) == ("subagent", "", "")
+        assert parse_task_tool_input({}) == ("__no_task_anchor__", "", "")
         assert is_task_anchor_input({}) is False
 
     def test_wrapped_arguments_with_invalid_json_is_not_anchor(self):
         data = {"function_name": "task", "arguments": "not-json"}
-        assert parse_task_tool_input(data) == ("subagent", "", "")
+        assert parse_task_tool_input(data) == ("__no_task_anchor__", "", "")
         assert is_task_anchor_input(data) is False
 
     def test_non_dict_input_is_not_anchor(self):
-        assert parse_task_tool_input(None) == ("subagent", "", "")
+        assert parse_task_tool_input(None) == ("__no_task_anchor__", "", "")
         assert is_task_anchor_input(None) is False
         assert is_task_anchor_input("string-input") is False
 
@@ -123,7 +123,7 @@ class TestParseTaskToolInput:
         # Edge case: empty-string ``type`` should hit the fallback branch
         # instead of yielding ``("", ...)`` and being treated as an anchor.
         data = {"type": "", "arguments": {"type": ""}}
-        assert parse_task_tool_input(data) == ("subagent", "", "")
+        assert parse_task_tool_input(data) == ("__no_task_anchor__", "", "")
         assert is_task_anchor_input(data) is False
 
 

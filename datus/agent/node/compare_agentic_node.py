@@ -224,10 +224,14 @@ class CompareAgenticNode(AgenticNode):
 
             # The Jinja-rendered ``user_prompt`` already inlines the full
             # comparison context (two SQLs + expectation). Stash it as the
-            # input's user-side text and let the base helper inject DB
-            # context + plan-mode workflow into the enhanced section.
+            # input's user-side text only for the helper call, then restore
+            # so downstream ``action.input_data`` keeps the original request.
+            original_user_message = user_input.user_message
             user_input.user_message = user_prompt
-            user_prompt = self._build_enhanced_message(user_input)
+            try:
+                user_prompt = self._build_enhanced_message(user_input)
+            finally:
+                user_input.user_message = original_user_message
 
             async for stream_action in self.model.generate_with_tools_stream(
                 prompt=user_prompt,

@@ -27,8 +27,19 @@ def build_structured_content(enhanced: str, user_input: str) -> str:
     """Wrap ``enhanced`` and ``user_input`` into the system-reminder envelope.
 
     Callers are responsible for skipping this helper when ``enhanced`` is empty;
-    the helper itself unconditionally emits the tag.
+    the helper itself unconditionally emits the tag. ``enhanced`` must not
+    contain a literal ``SYSTEM_REMINDER_OPEN`` / ``SYSTEM_REMINDER_CLOSE``
+    substring — ``extract_*`` splits on the first occurrence of the close
+    marker, so a nested tag corrupts round-tripping. ``enhanced`` is system-
+    generated today (knowledge bases, schema context, plan-mode workflow), so
+    the warning is diagnostic rather than fatal.
     """
+    if SYSTEM_REMINDER_CLOSE in enhanced or SYSTEM_REMINDER_OPEN in enhanced:
+        logger.warning(
+            "build_structured_content: 'enhanced' contains a system_reminder "
+            "tag; round-tripping via extract_* will truncate at the inner "
+            "occurrence."
+        )
     return f"{SYSTEM_REMINDER_OPEN}{enhanced}{SYSTEM_REMINDER_CLOSE}{user_input}"
 
 
