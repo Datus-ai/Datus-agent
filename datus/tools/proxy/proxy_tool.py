@@ -27,7 +27,18 @@ logger = get_logger(__name__)
 
 # Node types whose GenerationHooks depend on local filesystem tools (write_file, etc.)
 # Their filesystem_tools must NOT be proxied; other tools are still proxied.
-_FS_DEPENDENT_NODES: Set[str] = {"gen_semantic_model", "gen_metrics", "gen_sql_summary", "gen_ext_knowledge"}
+# gen_visual_report / gen_visual_dashboard author their render/*.jsx tree
+# server-side and surface it via ``/api/v1/(report|dashboard)/detail``; proxying
+# write_file / edit_file to the browser would round-trip every chunk for no
+# benefit, so the same exclusion applies to them.
+_FS_DEPENDENT_NODES: Set[str] = {
+    "gen_semantic_model",
+    "gen_metrics",
+    "gen_sql_summary",
+    "gen_ext_knowledge",
+    "gen_visual_report",
+    "gen_visual_dashboard",
+}
 
 
 def create_proxy_tool(original: FunctionTool, channel: ToolResultChannel) -> FunctionTool:

@@ -281,6 +281,38 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         except Exception as exc:
             logger.error("Failed to setup filesystem tools: %s", exc)
 
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Register tool buckets so category-scoped rules and the
+        ``_FS_DEPENDENT_NODES`` exclusion in ``apply_proxy_tools`` apply.
+
+        Without this mapping, every tool falls back to the catch-all
+        ``tools`` category. That breaks two things for the visual artifact
+        nodes:
+
+        * ``filesystem_tools.*`` rules (and the zone-based fs policy in
+          ``PermissionHooks._handle_filesystem_zone``) never match, so the
+          INTERNAL / EXTERNAL gating that every other fs-using node gets
+          would silently skip visual reports/dashboards.
+        * ``apply_proxy_tools`` cannot recognise their filesystem tools as
+          excluded — it looks up the tool's category in the registry — so
+          a parent agent's ``write_file`` / ``edit_file`` proxy patterns
+          end up wrapping the sub-agent's filesystem tools, round-tripping
+          every chunk to the browser instead of writing ``render/*.jsx``
+          server-side.
+        """
+        mapping = super()._tool_category_map()
+        if self.db_func_tool:
+            mapping["db_tools"] = list(self.db_func_tool.available_tools())
+        if self.semantic_tools:
+            mapping["semantic_tools"] = list(self.semantic_tools.available_tools())
+        if self.context_search_tools:
+            mapping["context_search_tools"] = list(self.context_search_tools.available_tools())
+        if self.filesystem_func_tool:
+            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
+        if self.ask_user_tool:
+            mapping.setdefault("tools", []).extend(self.ask_user_tool.available_tools())
+        return mapping
+
     def _setup_specific_tool_method(self, tool_type: str, method_name: str) -> None:
         try:
             if tool_type == "semantic_tools":

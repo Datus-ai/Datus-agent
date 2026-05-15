@@ -121,6 +121,21 @@ class TestGenVisualReportInit:
         assert "save_query" not in tool_names
         assert "validate_render" not in tool_names
 
+    def test_tool_category_map_registers_filesystem_tools(self, real_agent_config, mock_llm_create):
+        """Filesystem tools must be declared in the ``filesystem_tools``
+        category so ``PermissionHooks._handle_filesystem_zone`` engages and
+        ``apply_proxy_tools`` recognises them as excluded via
+        ``_FS_DEPENDENT_NODES``.
+        """
+        node = _make_node(real_agent_config)
+        mapping = node._tool_category_map()
+        assert "filesystem_tools" in mapping
+        fs_tool_names = {t.name for t in mapping["filesystem_tools"]}
+        assert {"read_file", "write_file", "edit_file", "delete_file"}.issubset(fs_tool_names)
+        # db_tools and semantic_tools also surface under their own categories.
+        assert "db_tools" in mapping
+        assert "semantic_tools" in mapping
+
 
 # --------------------------------------------------------------------------- #
 # Pre-execution artifact wiring                                               #
