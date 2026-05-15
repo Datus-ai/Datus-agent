@@ -284,20 +284,11 @@ class ExploreAgenticNode(AgenticNode):
 
         user_input = self.input
 
-        # Dynamic scoped context is carried on ExploreNodeInput, so rebuild
-        # tools after input is set to ensure DBFuncTool receives the per-run
-        # table allowlist instead of only static agent.yml configuration.
-        self.setup_tools()
-
-        # Tool surface changed — reset cached permission hooks and tool
-        # registry so ``_ensure_permission_hooks`` re-registers the new
-        # DB tools under ``db_tools`` before the next LLM turn. Without
-        # this, explore nodes reused across scoped and unscoped runs would
-        # enforce the previous run's tool mapping.
-        from datus.tools.registry.tool_registry import ToolRegistry
-
-        self.permission_hooks = None
-        self.tool_registry = ToolRegistry()
+        # NOTE: per-run setup_tools() rebuild (for ExploreNodeInput.scoped_tables)
+        # is temporarily disabled — no production caller currently supplies
+        # scoped_tables, so the rebuild + permission-hooks reset is dead work.
+        # Re-enable together with the permission-hooks reset when a caller
+        # starts wiring scoped_tables into ExploreNodeInput.
 
         # Create initial action
         action = ActionHistory.create_action(
