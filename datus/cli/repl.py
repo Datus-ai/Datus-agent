@@ -1480,11 +1480,11 @@ class DatusCLI:
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("Failed to refresh in-memory agent config: %s", exc)
 
-    def _run_profile_picker(self, current: str) -> Optional[str]:
+    def _run_profile_picker(self, current: str, notice: Optional[str] = None) -> Optional[str]:
         """Run ProfilePickerApp embedded in TUI when available."""
         from datus.cli.profile_picker_app import ProfilePickerApp
 
-        app = ProfilePickerApp(console=self.console, current=current)
+        app = ProfilePickerApp(console=self.console, current=current, notice=notice)
         tui_app = getattr(self, "tui_app", None)
         if tui_app is not None and getattr(tui_app, "_loop", None) is not None:
             return tui_app.run_wizard(app.build_embedded_panel)
@@ -1933,10 +1933,9 @@ class DatusCLI:
     def _cmd_profile(self, args: str) -> None:
         """Deprecated alias for :meth:`_cmd_permission`."""
 
-        print_warning(self.console, "/profile is deprecated; use /permission instead.")
-        return DatusCLI._cmd_permission(self, args)
+        return DatusCLI._cmd_permission(self, args, notice="/profile is deprecated; use /permission instead.")
 
-    def _cmd_permission(self, args: str) -> None:
+    def _cmd_permission(self, args: str, notice: Optional[str] = None) -> None:
         """Open the permission profile picker and apply the choice.
 
         Delegates to ``_run_profile_picker`` / ``_run_dangerous_confirm``
@@ -1948,7 +1947,7 @@ class DatusCLI:
         from datus.tools.permission.profiles import PROFILE_NAMES, build_effective_config, get_profile
 
         current = getattr(self.agent_config, "active_profile_name", self.active_profile)
-        choice = self._run_profile_picker(current)
+        choice = self._run_profile_picker(current, notice=notice)
 
         if choice is None:
             return

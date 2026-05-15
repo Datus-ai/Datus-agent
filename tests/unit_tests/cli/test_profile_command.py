@@ -32,13 +32,15 @@ class _FakeCLI:
 
         self._profile_responses = list(profile_responses)
         self._confirm_responses = list(confirm_responses or [])
+        self.picker_notices = []
         self.picker_calls = 0
         self.confirm_calls = 0
 
     # Instance-level overrides that the command handler finds via normal
     # attribute lookup before hitting DatusCLI's class methods.
-    def _run_profile_picker(self, current):
+    def _run_profile_picker(self, current, notice=None):
         self.picker_calls += 1
+        self.picker_notices.append(notice)
         return self._profile_responses.pop(0)
 
     def _run_dangerous_confirm(self):
@@ -86,7 +88,7 @@ def test_permission_switch_to_auto():
     assert agent_config.active_profile_name == "auto"
 
 
-def test_profile_alias_warns_then_switches():
+def test_profile_alias_shows_warning_in_picker():
     from datus.cli.repl import DatusCLI
 
     manager = PermissionManager(active_profile="normal")
@@ -97,7 +99,24 @@ def test_profile_alias_warns_then_switches():
 
     assert cli.active_profile == "auto"
     assert manager.active_profile == "auto"
-    assert any("/profile is deprecated" in str(call.args[0]) for call in cli.console.print.call_args_list)
+    assert cli.picker_notices == ["/profile is deprecated; use /permission instead."]
+
+
+def test_profile_alias_passes_warning_before_picker_selection():
+    from datus.cli.repl import DatusCLI
+
+    class _OrderCLI(_FakeCLI):
+        def _run_profile_picker(self, current, notice=None):
+            assert notice == "/profile is deprecated; use /permission instead."
+            return super()._run_profile_picker(current, notice=notice)
+
+    manager = PermissionManager(active_profile="normal")
+    agent_config = _make_agent_config("normal")
+    cli = _OrderCLI(manager, agent_config, profile_responses=["auto"])
+
+    DatusCLI._cmd_profile(cli, "")
+
+    assert cli.picker_notices == ["/profile is deprecated; use /permission instead."]
 
 
 def test_profile_switch_dangerous_requires_confirmation():
@@ -202,6 +221,7 @@ def test_profile_no_current_node_still_works():
             self.chat_commands.current_node = None
             self._profile_responses = ["auto"]
             self._confirm_responses = []
+            self.picker_notices = []
             self.picker_calls = 0
             self.confirm_calls = 0
 
@@ -221,8 +241,9 @@ def test_run_profile_picker_delegates_to_picker_app(monkeypatch):
     calls = {"run": 0}
 
     class _FakePicker:
-        def __init__(self, console, current):
+        def __init__(self, console, current, notice=None):
             assert current == "normal"
+            assert notice is None
 
         def run(self):
             calls["run"] += 1
@@ -279,9 +300,10 @@ def test_run_profile_picker_embeds_in_tui_when_loop_active(monkeypatch):
             return "auto"
 
     class _FakePicker:
-        def __init__(self, console, current):
+        def __init__(self, console, current, notice=None):
             self.console = console
             self.current = current
+            self.notice = notice
 
         def build_embedded_panel(self, done_future):
             return None  # not invoked; ``run_wizard`` is stubbed above

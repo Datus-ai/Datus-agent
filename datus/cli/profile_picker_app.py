@@ -57,10 +57,11 @@ class ProfilePickerApp:
 
     _PROFILES = ("normal", "auto", "dangerous")
 
-    def __init__(self, console: Console, current: str = "normal"):
+    def __init__(self, console: Console, current: str = "normal", notice: Optional[str] = None):
         self._console = console
         self._current = current if current in self._PROFILES else "normal"
         self._idx = self._PROFILES.index(self._current)
+        self._notice = notice
         # Dual-mode finish hook (see ``EffortApp`` for the rationale).
         self._on_done: Optional[Callable[[Optional[str]], None]] = None
         self._app: Optional[Application] = None
@@ -161,9 +162,11 @@ class ProfilePickerApp:
             height=1,
         )
 
-        return HSplit(
+        children = [title_bar]
+        if self._notice:
+            children.append(Window(content=FormattedTextControl(self._render_notice), height=1))
+        children.extend(
             [
-                title_bar,
                 header_window,
                 Window(height=1, char="\u2500"),
                 self._list_window,
@@ -171,12 +174,16 @@ class ProfilePickerApp:
                 hint_window,
             ]
         )
+        return HSplit(children)
 
     def _render_header(self) -> List[Tuple[str, str]]:
         return [
             ("bold", "  Select permission profile"),
             ("", f"  [current: {self._current}]"),
         ]
+
+    def _render_notice(self) -> List[Tuple[str, str]]:
+        return [("ansiyellow", f"  {self._notice}")]
 
     def _render_list(self) -> List[Tuple[str, str]]:
         lines: List[Tuple[str, str]] = []
