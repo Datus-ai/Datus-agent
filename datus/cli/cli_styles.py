@@ -123,6 +123,7 @@ STATUS_BAR_STYLE: dict[str, str] = {
     # datus.cli.todo_sidebar). Only the title may use bold; per CLAUDE.md
     # colours must not be bold.
     "todo-sidebar": STATUS_BAR_FG_HINT,
+    "todo-sidebar.hint": STATUS_BAR_FG_HINT,
     "todo-sidebar.title": "#8be9fd bold",
     "todo-sidebar.pending": STATUS_BAR_FG_HINT,
     "todo-sidebar.in_progress": "#f1fa8c",
@@ -163,6 +164,17 @@ STATUS_BAR_STYLE: dict[str, str] = {
     "scrollbar": "",
     "scrollbar.track": STATUS_BAR_SEP,
     "scrollbar.thumb": STATUS_BAR_FG_HINT,
+    # Ctrl+F find-in-scrollback overlay (see ``datus.cli.tui.search``).
+    # Non-current hits use plain reverse video so they read as
+    # "highlighted" without competing with selection or the brand
+    # palette; the current match adds a yellow foreground on top so the
+    # user can always tell which one Enter / Shift+Enter will navigate
+    # next.
+    "search-prompt": "ansicyan bold",
+    "search-match": "reverse",
+    "search-match.current": "reverse fg:ansiyellow",
+    "search-meta": f"{STATUS_BAR_FG_HINT} italic",
+    "search-meta.no-match": "ansired italic",
 }
 
 # Sub-agent wizard modal dialog (prompt_toolkit full-screen Application).

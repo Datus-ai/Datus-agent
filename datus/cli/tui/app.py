@@ -57,7 +57,7 @@ from prompt_toolkit.layout.containers import (
     VSplit,
     Window,
 )
-from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.menus import CompletionsMenuControl
 from prompt_toolkit.lexers import Lexer
@@ -71,6 +71,7 @@ from datus.cli.tui.clipboard import copy_to_clipboard
 from datus.cli.tui.live_display_state import LiveDisplayState, compute_pinned_max_rows
 from datus.cli.tui.output_buffer import BufferedOutputControl, TUIOutputBuffer, extract_selection_text
 from datus.cli.tui.scrollbar import ScrollbarController, build_scrollbar_window
+from datus.cli.tui.search import SearchState, find_matches
 from datus.cli.tui.selection import (
     SelectionAutoscroll,
     SelectionPoint,
@@ -178,6 +179,17 @@ class DatusApp:
         # ticking loop lives in :meth:`_selection_autoscroll_loop`.
         self._selection_autoscroll = SelectionAutoscroll()
 
+        # Ctrl+F find-in-scrollback. ``_search_state`` is the shared
+        # data structure the renderer (via ``search_provider``) and the
+        # search bar handlers both read/write; ``_search_active``
+        # controls the ``ConditionalContainer`` that materialises the
+        # bottom search row. The state machine lives in :meth:`_open_search`
+        # / :meth:`_close_search` / :meth:`_on_search_text_changed` /
+        # :meth:`_jump_to_match`.
+        self._search_state = SearchState()
+        self._search_active: bool = False
+        self._search_buffer = Buffer(multiline=False, on_text_changed=self._on_search_text_changed)
+
         self._agent_running = threading.Event()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="datus-tui-worker")
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -251,6 +263,8 @@ class DatusApp:
             filter=Condition(lambda: bool(self._ctrl_c_hint)),
         )
 
+        self._search_bar = self._build_search_bar()
+
         # Scrollable output pane (left, weight=4). Replaces the old
         # patch_stdout-driven scrollback. Every byte Rich emits flows into
         # an in-memory ``TUIOutputBuffer``; ``output_tokens_fn`` (wired by
@@ -284,6 +298,12 @@ class DatusApp:
                 show_cursor=False,
                 get_cursor_position=self._output_cursor_position,
                 selection_provider=lambda: self._selection,
+                # Surface the ``SearchState`` only while the search bar is
+                # open *or* still has matches in flight, so the overlay
+                # disappears cleanly when ``_close_search`` runs.
+                search_provider=lambda: (
+                    self._search_state if (self._search_active or self._search_state.matches) else None
+                ),
             )
         else:
             output_control = FormattedTextControl(
@@ -362,6 +382,7 @@ class DatusApp:
                 self._make_separator(),
                 self._input_area,
                 self._completions_menu,
+                self._search_bar,
                 self._make_separator(),
                 self._hint_window,
             ]
@@ -925,6 +946,186 @@ class DatusApp:
             modifiers=event.modifiers,
         )
         self._scrollbar_controller.handle_event(forwarded)
+
+    # ── Find-in-scrollback (Ctrl+F) ────────────────────────────────
+
+    def _build_search_bar(self) -> ConditionalContainer:
+        """1-row search bar shown beneath the input when ``_search_active``.
+
+        Three columns laid out left → right:
+
+        * ``" Find: "`` prompt label (fixed width, ``class:search-prompt``).
+        * The :class:`Buffer`-backed input field (``BufferControl``) where
+          the user types the query.
+        * Status block on the right edge — ``"1/12"`` / ``"No matches"`` /
+          ``"type to search…"`` so the user always sees where they are.
+
+        The container is wrapped in a :class:`ConditionalContainer` keyed
+        on ``_search_active``, so it occupies zero vertical space outside
+        of an active search session and the existing bottom layout stays
+        unchanged for everyone else.
+        """
+        prompt_window = Window(
+            content=FormattedTextControl(text=lambda: [("class:search-prompt", " Find: ")]),
+            height=1,
+            dont_extend_width=True,
+            wrap_lines=False,
+        )
+        input_window = Window(
+            content=BufferControl(
+                buffer=self._search_buffer,
+                focusable=True,
+                key_bindings=self._build_search_kb(),
+            ),
+            height=1,
+            wrap_lines=False,
+            style="class:search-input",
+        )
+        status_window = Window(
+            content=FormattedTextControl(text=self._search_status_tokens),
+            height=1,
+            dont_extend_width=True,
+            wrap_lines=False,
+        )
+        return ConditionalContainer(
+            content=VSplit([prompt_window, input_window, status_window]),
+            filter=Condition(lambda: self._search_active),
+        )
+
+    def _build_search_kb(self) -> KeyBindings:
+        """Search-buffer-local key bindings.
+
+        * ``Enter`` / ``Down`` → next match
+        * ``Shift+Tab`` / ``Up`` → previous match
+        * ``Escape``      → close search, drop highlights
+        * ``Ctrl+C``      → same as Escape
+        * ``Ctrl+G``      → same as Escape (Readline-style cancel)
+        * ``Ctrl+F``      → idempotent reset — clear the query so the
+                            user can retype without first closing.
+
+        Note: ``Shift+Enter`` was the obvious choice for "previous", but
+        most terminals (including the default macOS Terminal) send the
+        same byte sequence for Enter and Shift+Enter, so prompt_toolkit
+        does not expose an ``s-enter`` key. ``Shift+Tab`` and ``Up`` are
+        both well-supported and unambiguous.
+        """
+        kb = KeyBindings()
+
+        @kb.add("enter")
+        def _next(event) -> None:  # noqa: ANN001
+            self._jump_to_match(+1)
+
+        @kb.add("down")
+        def _next_down(event) -> None:  # noqa: ANN001
+            self._jump_to_match(+1)
+
+        @kb.add("s-tab")
+        def _prev(event) -> None:  # noqa: ANN001
+            self._jump_to_match(-1)
+
+        @kb.add("up")
+        def _prev_up(event) -> None:  # noqa: ANN001
+            self._jump_to_match(-1)
+
+        @kb.add("escape", eager=True)
+        def _close_esc(event) -> None:  # noqa: ANN001
+            self._close_search()
+
+        @kb.add("c-c")
+        def _close_c(event) -> None:  # noqa: ANN001
+            self._close_search()
+
+        @kb.add("c-g")
+        def _close_g(event) -> None:  # noqa: ANN001
+            self._close_search()
+
+        @kb.add("c-f")
+        def _retype(event) -> None:  # noqa: ANN001
+            # Already open; reset the query so a second Ctrl+F is a "clear
+            # and retype" gesture rather than dispatching to the global
+            # binding (which would just re-open us).
+            self._search_buffer.text = ""
+
+        return kb
+
+    def _open_search(self) -> None:
+        """Show the search bar, focus its input, and clear any prior state."""
+        # Drop any leftover search results from a previous session so a
+        # fresh Ctrl+F always starts from "type to search…".
+        self._search_state.clear()
+        # Reset the buffer *before* flipping ``_search_active`` so the
+        # ``on_text_changed`` callback (which fires synchronously on
+        # ``text =``) doesn't see a stale active flag.
+        self._search_buffer.text = ""
+        self._search_active = True
+        try:
+            self._app.layout.focus(self._search_buffer)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("_open_search: focus(search buffer) failed: %s", exc)
+        self._app.invalidate()
+
+    def _close_search(self) -> None:
+        """Hide the search bar, clear the overlay, return focus to input."""
+        self._search_active = False
+        self._search_state.clear()
+        self._search_buffer.text = ""
+        try:
+            self._app.layout.focus(self._input_area)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("_close_search: focus(input) failed: %s", exc)
+        self._app.invalidate()
+
+    def _on_search_text_changed(self, buffer: Buffer) -> None:
+        """Re-scan the scrollback on every keystroke and jump to first match."""
+        query = buffer.text
+        if not query:
+            # Empty query: clear results but keep the bar open so the
+            # user can keep typing.
+            self._search_state.update(query="", matches=[], current_idx=-1)
+            self._app.invalidate()
+            return
+        if self._output_buffer is None:
+            self._search_state.update(query=query, matches=[], current_idx=-1)
+            self._app.invalidate()
+            return
+        snap = self._output_buffer.snapshot()
+        matches = find_matches(snap.get_line, snap.total, query)
+        self._search_state.update(query=query, matches=matches, current_idx=0 if matches else -1)
+        if matches:
+            self._center_on_line(matches[0].line)
+        self._app.invalidate()
+
+    def _jump_to_match(self, direction: int) -> None:
+        """Move ``current_idx`` by ``direction`` (wraps) and re-centre."""
+        if not self._search_state.matches:
+            return
+        new_idx = (self._search_state.current_idx + direction) % len(self._search_state.matches)
+        self._search_state.set_current(new_idx)
+        match = self._search_state.current()
+        if match is not None:
+            self._center_on_line(match.line)
+        self._app.invalidate()
+
+    def _center_on_line(self, line_idx: int) -> None:
+        """Scroll the viewport so ``line_idx`` sits roughly in the middle.
+
+        Re-uses :meth:`_set_output_scroll_offset` which already handles
+        sticky-bottom + bounds clamping. ``viewport // 2`` is a coarse
+        centring heuristic — exact centring would need wrapping-aware
+        accounting that the rest of the codebase doesn't bother with.
+        """
+        viewport = max(1, self._output_viewport_rows())
+        target = max(0, line_idx - viewport // 2)
+        self._set_output_scroll_offset(target)
+
+    def _search_status_tokens(self) -> List[Tuple[str, str]]:
+        """Right-aligned status label inside the search bar."""
+        state = self._search_state
+        if not state.query:
+            return [("class:search-meta", " type to search… ")]
+        if not state.matches:
+            return [("class:search-meta.no-match", " No matches ")]
+        return [("class:search-meta", f" {state.current_idx + 1}/{len(state.matches)} ")]
 
     def _terminal_columns(self) -> int:
         """Best-effort current terminal column count.
@@ -1564,5 +1765,14 @@ class DatusApp:
             self._selection.clear()
             self._selection_autoscroll.disarm()
             event.app.invalidate()
+
+        # Ctrl+F opens the find-in-scrollback bar. ``eager=True`` jumps
+        # ahead of prompt_toolkit's built-in BufferControl bindings
+        # (the default ``c-f`` is "cursor forward" inside a TextArea —
+        # which would otherwise swallow the keystroke without our
+        # ever seeing it).
+        @kb.add("c-f", eager=True)
+        def _open_find(event) -> None:  # noqa: ANN001
+            self._open_search()
 
         return kb

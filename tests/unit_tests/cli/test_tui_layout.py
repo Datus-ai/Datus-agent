@@ -69,12 +69,16 @@ class TestCompletionsMenuWired:
         bottom = children[1].get_container()
         assert isinstance(bottom, HSplit), "no wizard active → bottom is the normal HSplit"
         bottom_children = list(bottom.get_children())
-        # Expected order in normal bottom: top_sep, status, mid_sep, input, menu, bottom_sep, hint.
-        assert len(bottom_children) == 7, f"unexpected bottom HSplit child count: {len(bottom_children)}"
+        # Expected order in normal bottom: top_sep, status, mid_sep, input,
+        # menu, search_bar, bottom_sep, hint. The search bar is a
+        # ConditionalContainer that consumes zero rows when ``_search_active``
+        # is False, so it doesn't affect the steady-state layout.
+        assert len(bottom_children) == 8, f"unexpected bottom HSplit child count: {len(bottom_children)}"
         assert bottom_children[1] is app._status_window, "status bar must follow the leading separator"
         # Menu (index 4) sits immediately after the input (index 3; the TextArea
         # is flattened into its wrapping Window by prompt_toolkit).
         assert bottom_children[4] is app._completions_menu
+        assert bottom_children[5] is app._search_bar
 
     def test_app_runs_in_full_screen_with_mouse_support(self):
         """Sidebar can only sit "next to" the output history when the

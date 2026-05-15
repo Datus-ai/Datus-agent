@@ -43,6 +43,7 @@ from prompt_toolkit.layout.controls import UIContent, UIControl
 from prompt_toolkit.mouse_events import MouseEvent
 
 from datus.cli.tui.live_display_state import LiveDisplayLine
+from datus.cli.tui.search import SearchState
 from datus.cli.tui.selection import (
     TranscriptSelection,
     extract_plain_text_between,
@@ -388,6 +389,7 @@ class BufferedOutputControl(UIControl):
         show_cursor: bool = False,
         get_cursor_position: Optional[Callable[[], Optional[Point]]] = None,
         selection_provider: Optional[Callable[[], Optional[TranscriptSelection]]] = None,
+        search_provider: Optional[Callable[[], Optional[SearchState]]] = None,
     ) -> None:
         self._buffer = buffer
         self._focusable = to_filter(focusable)
@@ -398,14 +400,18 @@ class BufferedOutputControl(UIControl):
         # highlight path entirely so the existing fast path stays
         # untouched for tests / non-TUI callers.
         self._selection_provider = selection_provider or (lambda: None)
-        # One-slot ``UIContent`` cache keyed on snapshot identity + cursor
-        # position + selection version. ``create_content`` is called
-        # multiple times per render run (preferred_height, then the
-        # actual paint); returning the same ``UIContent`` lets
-        # prompt_toolkit's per-line height cache stay warm.
-        self._uicontent_key: Optional[
-            Tuple[int, Optional[Tuple[int, int]], int, Optional[Tuple[int, int, int, int]]]
-        ] = None
+        # Parallel hook for the Ctrl+F find-in-scrollback overlay (see
+        # :mod:`datus.cli.tui.search`). Composed under the selection
+        # overlay so user-initiated highlights always win visually.
+        self._search_provider = search_provider or (lambda: None)
+        # One-slot ``UIContent`` cache. The key threads through every
+        # input ``create_content`` consults so a stale ``UIContent`` is
+        # never returned when the selection or search state changes mid-
+        # paint. ``create_content`` is called multiple times per render
+        # run (preferred_height, then the actual paint); returning the
+        # same ``UIContent`` lets prompt_toolkit's per-line height cache
+        # stay warm.
+        self._uicontent_key: Optional[Tuple] = None
         self._uicontent: Optional[UIContent] = None
 
     def is_focusable(self) -> bool:
@@ -433,7 +439,17 @@ class BufferedOutputControl(UIControl):
                 start, end = rng
                 sel_range_key = (start.line, start.column, end.line, end.column)
             sel_version = selection.version
-        key = (id(snap), cursor_key, sel_version, sel_range_key)
+
+        # Search overlay state — same cache discipline as the selection
+        # overlay. Threading both ``version`` *and* ``current_idx`` plus
+        # a truthy "are there matches" flag means a Ctrl+F user typing a
+        # query (matches change) or pressing Enter (current_idx changes)
+        # invalidates the cache deterministically.
+        search = self._search_provider() if self._search_provider else None
+        search_active = search is not None and search.is_active()
+        search_key = (search.version, search.current_idx, len(search.matches)) if search_active else None
+
+        key = (id(snap), cursor_key, sel_version, sel_range_key, search_key)
         if self._uicontent_key == key and self._uicontent is not None:
             return self._uicontent
 
@@ -448,11 +464,15 @@ class BufferedOutputControl(UIControl):
         # single space gives every visible row a clickable cell at col 0
         # without changing the visible output (the cell renders as a
         # space, which a blank row was already showing anyway).
-        base_get_line = _padded_blank_line(snap.get_line)
+        get_line = _padded_blank_line(snap.get_line)
+        # Apply overlays bottom-up: search first, selection on top — a
+        # user dragging across search hits gets the selection styling
+        # (reverse video) on the same characters as the search hit, and
+        # prompt_toolkit's style merger combines them sensibly.
+        if search_active:
+            get_line = _search_aware_get_line(get_line, search)
         if selection is not None and not selection.is_empty():
-            get_line = _selection_aware_get_line(base_get_line, selection)
-        else:
-            get_line = base_get_line
+            get_line = _selection_aware_get_line(get_line, selection)
 
         content = UIContent(
             get_line=get_line,
@@ -520,6 +540,45 @@ def _selection_aware_get_line(
             return line
         start_col, end_col = bounds
         return split_line_for_selection(line, start_col, end_col)
+
+    return get_line
+
+
+def _search_aware_get_line(
+    base_get_line: Callable[[int], List[_StyledToken]],
+    search: SearchState,
+) -> Callable[[int], List[_StyledToken]]:
+    """Wrap ``base_get_line`` so search hits render with the match style.
+
+    Multi-hit rows are processed left-to-right; each region is spliced
+    via :func:`split_line_for_selection`. Because that helper splits on
+    character indices (not visual columns) and only adds new fragments
+    *without* shifting any existing character offsets, applying it
+    repeatedly with non-overlapping target ranges is safe. Overlapping
+    matches on the same row are merged by emitting them in order — the
+    later region's style wins on the overlap, which is exactly the
+    behaviour we want for the "current" match (it's always emitted last
+    when it shares a row with siblings via :meth:`SearchState.matches_on_line`'s
+    start-sorted order, so we make a second pass to paint it after the
+    base hits).
+    """
+
+    def get_line(idx: int) -> List[_StyledToken]:
+        line = base_get_line(idx)
+        regions = search.matches_on_line(idx)
+        if not regions:
+            return line
+        # Paint non-current hits first so the current match's distinctive
+        # style is applied last and wins any overlap.
+        for start, end, is_current in regions:
+            if is_current:
+                continue
+            line = split_line_for_selection(line, start, end, selection_style="class:search-match")
+        for start, end, is_current in regions:
+            if not is_current:
+                continue
+            line = split_line_for_selection(line, start, end, selection_style="class:search-match.current")
+        return line
 
     return get_line
 
