@@ -1949,8 +1949,20 @@ class AgenticNode(Node):
         ``agent_config.project_root`` (which itself defaults to the launch CWD).
 
         Expands ``~`` to the user home directory if present.
+
+        vscode short-circuit: the vscode front-end drives the daemon from a
+        remote IDE that owns its own filesystem, so any concrete server-side
+        path would just leak the daemon CWD. Return the literal ``"."``
+        unexpanded for that source — callers that surface this value to the
+        LLM (e.g. system prompt) stay neutral, and the proxied
+        ``filesystem_tools.*`` route every real path through the client
+        anyway. Web keeps its real root because web sessions still operate
+        against a server-side workspace.
         """
         import os
+
+        if getattr(self.agent_config, "_client_source", None) == "vscode":
+            return "."
 
         node_workspace_root = self.node_config.get("workspace_root")
         if node_workspace_root:

@@ -1388,3 +1388,102 @@ class TestStartChatModelOverride:
         request = StreamChatInput(message="hi", model="custom/nonexistent")
         with pytest.raises(DatusException):
             await manager.start_chat(real_agent_config, request)
+
+
+class TestStartChatRemoteSourceHardening:
+    """Remote front-ends (vscode/web) must not see a server-side BashTool.
+    ``filesystem_strict`` is always on for the API surface;
+    ``bash_tool_enabled`` is additionally forced off when
+    ``effective_source in {vscode, web}``. ``project_root`` is intentionally
+    untouched — web keeps its configured root and the read-only property
+    falls back to CWD when empty.
+    """
+
+    @pytest.mark.asyncio
+    async def test_vscode_source_disables_bash_tool(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+
+        real_agent_config.bash_tool_enabled = True
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["agent_config"] = agent_config
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi", source="vscode", session_id="vscode-hardening")
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+
+        cfg = captured["agent_config"]
+        assert cfg.filesystem_strict is True
+        assert cfg.bash_tool_enabled is False
+        assert cfg._client_source == "vscode"
+        # Source config remains untouched because start_chat deep-copies.
+        assert real_agent_config.bash_tool_enabled is True
+
+    @pytest.mark.asyncio
+    async def test_web_source_disables_bash_tool(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+
+        real_agent_config.bash_tool_enabled = True
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["agent_config"] = agent_config
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi", source="web", session_id="web-hardening")
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+
+        cfg = captured["agent_config"]
+        assert cfg.filesystem_strict is True
+        assert cfg.bash_tool_enabled is False
+        assert cfg._client_source == "web"
+
+    @pytest.mark.asyncio
+    async def test_default_source_vscode_applies_hardening_without_request_source(self, real_agent_config, monkeypatch):
+        """A daemon launched with --source vscode hardens every request that
+        does not override source explicitly."""
+        from datus.api.models.cli_models import StreamChatInput
+
+        real_agent_config.bash_tool_enabled = True
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["agent_config"] = agent_config
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager(default_source="vscode")
+        request = StreamChatInput(message="hi", session_id="default-vscode-hardening")
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+
+        cfg = captured["agent_config"]
+        assert cfg.bash_tool_enabled is False
+
+    @pytest.mark.asyncio
+    async def test_no_source_preserves_bash_settings(self, real_agent_config, monkeypatch):
+        """CLI / no-source requests keep whatever bash_tool_enabled value was
+        in agent.yml. Only filesystem_strict is unconditionally forced on for
+        the API surface."""
+        from datus.api.models.cli_models import StreamChatInput
+
+        real_agent_config.bash_tool_enabled = True
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["agent_config"] = agent_config
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()  # default_source=None
+        request = StreamChatInput(message="hi", session_id="no-source-baseline")
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+
+        cfg = captured["agent_config"]
+        assert cfg.filesystem_strict is True
+        assert cfg.bash_tool_enabled is True
+        assert cfg._client_source is None

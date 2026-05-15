@@ -291,6 +291,20 @@ class ChatTaskManager:
         # access, so force filesystem strict mode — every node constructed
         # below reads this flag via AgenticNode._resolve_filesystem_strict().
         agent_config.filesystem_strict = True
+        # Remote front-ends (vscode/web) own their own shell: the daemon must
+        # not offer a server-side BashTool. ``project_root`` is intentionally
+        # left untouched — web keeps its configured root, and the read-only
+        # ``AgentConfig.project_root`` property already falls back to the
+        # launch CWD when no root was supplied, so an empty project_root
+        # naturally resolves to the current directory.
+        effective_source = request.source or self._default_source
+        if effective_source in ("vscode", "web"):
+            agent_config.bash_tool_enabled = False
+        # Stash the resolved source on the cloned config so downstream nodes
+        # can adapt prompt-side hints to the front-end (e.g. vscode renders
+        # the literal "." for the SQL files root because the IDE owns its own
+        # workspace path).
+        agent_config._client_source = effective_source
         # Per-request response language override. Empty / None keeps the
         # yaml-level ``agent.language`` default intact.
         if request.language:

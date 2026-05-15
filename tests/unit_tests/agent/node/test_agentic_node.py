@@ -202,6 +202,88 @@ class TestResolveWorkspaceRoot:
         result = node._resolve_workspace_root()
         assert result == "/project/root"
 
+    def test_vscode_source_short_circuits_to_dot(self):
+        """vscode owns its own filesystem; the resolver returns the literal "."
+        so the daemon's project_root never leaks to the IDE."""
+        node = _make_node()
+        node.node_config = {"workspace_root": "/should-be-ignored"}
+        cfg = MagicMock(spec=["project_root", "_client_source"])
+        cfg.project_root = "/server/cwd"
+        cfg._client_source = "vscode"
+        node.agent_config = cfg
+        assert node._resolve_workspace_root() == "."
+
+    def test_web_source_keeps_real_project_root(self):
+        node = _make_node()
+        node.node_config = {}
+        cfg = MagicMock(spec=["project_root", "_client_source"])
+        cfg.project_root = "/server/cwd"
+        cfg._client_source = "web"
+        node.agent_config = cfg
+        assert node._resolve_workspace_root() == "/server/cwd"
+
+
+# ---------------------------------------------------------------------------
+# TestGetSystemPromptWorkspaceRoot — vscode source must render "." literally
+# ---------------------------------------------------------------------------
+
+
+class TestGetSystemPromptWorkspaceRoot:
+    """``get_system_prompt`` passes ``workspace_root`` to the Jinja template,
+    which renders the "Current sql files root directory" hint. For
+    ``_client_source == "vscode"`` we render the literal "." so the daemon's
+    project_root never leaks to a remote IDE that owns its own filesystem.
+    Other sources (web, CLI, None) keep the resolved project_root.
+    """
+
+    def _prepare_node(self, monkeypatch, project_root, client_source):
+        captured = {}
+
+        class _FakePromptManager:
+            def render_template(self, **kwargs):
+                captured.update(kwargs)
+                return "rendered"
+
+        monkeypatch.setattr(
+            "datus.agent.node.agentic_node.get_prompt_manager",
+            lambda **_: _FakePromptManager(),
+        )
+
+        node = _make_node()
+        # ``_finalize_system_prompt`` reaches into bash_tool / skill_func_tool /
+        # memory state that the bypassed __init__ never set up. Short-circuit
+        # it: the assertion only cares about what ``render_template`` was
+        # given, not the post-processing.
+        node._finalize_system_prompt = lambda base_prompt, **_: base_prompt  # type: ignore[method-assign]
+
+        spec_attrs = ["project_root", "prompt_version", "current_datasource"]
+        if client_source is not None:
+            spec_attrs.append("_client_source")
+        cfg = MagicMock(spec=spec_attrs)
+        cfg.project_root = project_root
+        cfg.prompt_version = None
+        cfg.current_datasource = None
+        if client_source is not None:
+            cfg._client_source = client_source
+        node.agent_config = cfg
+        return node, captured
+
+    def test_vscode_source_renders_dot(self, monkeypatch):
+        node, captured = self._prepare_node(monkeypatch, project_root="/server/cwd", client_source="vscode")
+        node._get_system_prompt()
+        assert captured["workspace_root"] == "."
+
+    def test_web_source_keeps_real_project_root(self, monkeypatch):
+        node, captured = self._prepare_node(monkeypatch, project_root="/server/cwd", client_source="web")
+        node._get_system_prompt()
+        assert captured["workspace_root"] == "/server/cwd"
+
+    def test_no_client_source_keeps_real_project_root(self, monkeypatch):
+        """CLI / no-source path renders the concrete project_root (existing behavior)."""
+        node, captured = self._prepare_node(monkeypatch, project_root="/local/project", client_source=None)
+        node._get_system_prompt()
+        assert captured["workspace_root"] == "/local/project"
+
 
 # ---------------------------------------------------------------------------
 # TestGetToolCategory
