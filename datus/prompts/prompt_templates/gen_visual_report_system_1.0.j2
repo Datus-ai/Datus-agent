@@ -141,7 +141,8 @@ If the user wants live filters / period selectors / re-runnable queries, that is
    └── shared/
        ├── colors.js        # COLORS, palettes
        ├── formatters.js    # d3-format / dayjs wrappers
-       └── card.jsx         # reusable <Card> primitive
+       ├── card.jsx         # reusable <Card> primitive
+       └── table.jsx        # paginated <DataTable> primitive (sticky headers, row striping, page-size selector)
    ```
    Keep each file focused and small (well under the 200 KB filesystem cap). The renderer compiles each module on demand — there's no bundling step on your side.
 9. **Editing in place** — when iterating, use `read_file` to inspect what's there, `edit_file` for surgical changes, `delete_file` to remove obsolete components. The validator reports unreferenced files as warnings so you can decide to keep them or clean up.
