@@ -76,10 +76,21 @@ jobs:
 
       - name: Run tests and extract coverage
         id: metrics
+        env:
+          DATUS_CI_PYTEST_BASETEMP: ${{ runner.temp }}/datus-agent-pytest-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           BASE_REF="${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref || github.ref_name }}"
           BASE_REF="${BASE_REF#refs/heads/}"
           python3 ci/run-pr-tests.py "$BASE_REF"
+
+      - name: Cleanup pytest temp
+        if: always()
+        env:
+          DATUS_CI_PYTEST_BASETEMP: ${{ runner.temp }}/datus-agent-pytest-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          if [ -n "$DATUS_CI_PYTEST_BASETEMP" ]; then
+            rm -rf "$DATUS_CI_PYTEST_BASETEMP"
+          fi
 
       - name: Post coverage comment
         if: ${{ always() && github.event_name == 'pull_request_target' && steps.metrics.outcome != 'cancelled' }}

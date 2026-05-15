@@ -12,8 +12,11 @@ import argparse
 import importlib.util
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -21,6 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = REPO_ROOT / "ci"
 DEFAULT_REPORT = OUT_DIR / "merge-queue-results.json"
 DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("MERGE_QUEUE_TEST_TIMEOUT", "1800"))
+PYTEST_BASETEMP_ENV = "DATUS_CI_PYTEST_BASETEMP"
 
 ACCEPTANCE_MARK_EXPR = "acceptance"
 DEFAULT_PR_HARNESS_MARK_EXPR = "acceptance or component or llm_harness"
@@ -28,6 +32,79 @@ DEFAULT_PR_HARNESS_MARK_EXPR = "acceptance or component or llm_harness"
 
 def log(message: str) -> None:
     print(f"[merge-queue] {message}", flush=True)
+
+
+def slugify(value: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip(".-")
+    return slug or "default"
+
+
+def default_pytest_basetemp() -> Path:
+    configured = os.environ.get(PYTEST_BASETEMP_ENV)
+    if configured:
+        return Path(configured)
+
+    temp_root = Path(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir())
+    run_id = slugify(os.environ.get("GITHUB_RUN_ID", "local"))
+    run_attempt = slugify(os.environ.get("GITHUB_RUN_ATTEMPT", "0"))
+    return temp_root / f"datus-agent-pytest-{run_id}-{run_attempt}-{os.getpid()}"
+
+
+PYTEST_BASETEMP = default_pytest_basetemp()
+
+
+def suite_pytest_basetemp(suite_name: str) -> Path:
+    return PYTEST_BASETEMP / slugify(suite_name)
+
+
+def path_is_under(path: Path, parent: Path) -> bool:
+    if not str(parent):
+        return False
+
+    path_abs = path.resolve(strict=False)
+    parent_abs = parent.resolve(strict=False)
+    if path_abs == parent_abs:
+        return False
+
+    try:
+        path_abs.relative_to(parent_abs)
+    except ValueError:
+        return False
+    return True
+
+
+def is_safe_pytest_basetemp(path: Path) -> bool:
+    if not str(path):
+        return False
+
+    path_abs = path.resolve(strict=False)
+    unsafe_roots = {
+        Path("/").resolve(strict=False),
+        REPO_ROOT.resolve(strict=False),
+        OUT_DIR.resolve(strict=False),
+        Path.home().resolve(strict=False),
+    }
+    if path_abs in unsafe_roots:
+        return False
+
+    allowed_roots = [
+        Path(os.environ["RUNNER_TEMP"]) if os.environ.get("RUNNER_TEMP") else None,
+        Path(tempfile.gettempdir()),
+        Path("/tmp"),
+    ]
+    return any(root is not None and path_is_under(path_abs, root) for root in allowed_roots)
+
+
+def cleanup_pytest_basetemp() -> None:
+    if not PYTEST_BASETEMP.exists():
+        return
+
+    if not is_safe_pytest_basetemp(PYTEST_BASETEMP):
+        log(f"Refusing to remove unsafe pytest basetemp: {PYTEST_BASETEMP}")
+        return
+
+    shutil.rmtree(PYTEST_BASETEMP, ignore_errors=True)
+    log(f"Cleaned pytest basetemp: {PYTEST_BASETEMP}")
 
 
 def load_pr_harness_config() -> tuple[list[str], str]:
@@ -73,20 +150,29 @@ def build_pytest_command(
     mark_expr: str,
     junit_xml: Path,
     extra_args: Sequence[str] = (),
+    basetemp: Path | None = None,
 ) -> list[str]:
-    return [
+    command = [
         sys.executable,
         "-m",
         "pytest",
         *targets,
-        "-m",
-        mark_expr,
-        "--tb=short",
-        "--showlocals",
-        "--disable-warnings",
-        f"--junitxml={junit_xml}",
-        *extra_args,
     ]
+    if basetemp is not None:
+        command.append(f"--basetemp={basetemp}")
+
+    command.extend(
+        [
+            "-m",
+            mark_expr,
+            "--tb=short",
+            "--showlocals",
+            "--disable-warnings",
+            f"--junitxml={junit_xml}",
+            *extra_args,
+        ]
+    )
+    return command
 
 
 def run_command(command: Sequence[str], *, suite_name: str, timeout: int) -> int:
@@ -128,12 +214,15 @@ def run_suite(name: str, suite: dict[str, Any], *, timeout: int) -> dict[str, An
         log(f"{name} has no existing targets")
         return {"suite": name, "exit_code": 1, "targets": []}
 
+    basetemp = suite_pytest_basetemp(name)
     command = build_pytest_command(
         targets,
         mark_expr=suite["mark_expr"],
         junit_xml=suite["junit_xml"],
         extra_args=suite["extra_args"],
+        basetemp=basetemp,
     )
+    log(f"{name} pytest basetemp: {basetemp}")
     exit_code = run_command(command, suite_name=name, timeout=timeout)
     return {
         "suite": name,
@@ -164,11 +253,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS, help="Per-suite timeout in seconds")
     args = parser.parse_args(argv)
 
-    suites = suite_definitions()
-    selected_names = args.suite or list(suites)
-    results = [run_suite(name, suites[name], timeout=args.timeout) for name in selected_names]
-    write_report(results)
-    return 0 if all(result["exit_code"] == 0 for result in results) else 1
+    try:
+        suites = suite_definitions()
+        selected_names = args.suite or list(suites)
+        results = [run_suite(name, suites[name], timeout=args.timeout) for name in selected_names]
+        write_report(results)
+        return 0 if all(result["exit_code"] == 0 for result in results) else 1
+    finally:
+        cleanup_pytest_basetemp()
 
 
 if __name__ == "__main__":

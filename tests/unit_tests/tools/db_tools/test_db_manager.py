@@ -7,7 +7,7 @@ import pytest
 from datus_db_core import BaseSqlConnector, DatusDbException
 from datus_db_core import ErrorCode as DbErrorCode
 
-from datus.tools.db_tools.config import DuckDBConfig
+from datus.tools.db_tools.config import DuckDBConfig, SQLiteConfig
 from datus.tools.db_tools.db_manager import (
     DBManager,
     _clean_str,
@@ -337,6 +337,16 @@ class TestDBManager:
         assert result.enable_external_access is False
         assert result.memory_limit == "2GB"
         assert result.iceberg == cfg.extra["iceberg"]
+
+    def test_sqlite_config_includes_read_only_extra_option(self):
+        mgr = DBManager({})
+        cfg = _cfg(type="sqlite", uri="sqlite:///test.db", extra={"read_only": "true"})
+
+        result = mgr._db_config_to_connection_config(cfg)
+
+        assert isinstance(result, SQLiteConfig)
+        assert result.db_path == "test.db"
+        assert result.read_only is True
 
     def test_close_closes_nested_multi_db_connections(self):
         mgr = DBManager({})

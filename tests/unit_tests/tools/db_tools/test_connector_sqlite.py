@@ -42,6 +42,31 @@ def test_connection(sqlite_connector: SQLiteConnector, db_path):
     assert sqlite_connector.connection is None
 
 
+def test_read_only_connection_rejects_writes(tmp_path):
+    db_path = tmp_path / "readonly.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
+        conn.execute("INSERT INTO test (name) VALUES ('seed')")
+
+    connector = SQLiteConnector(SQLiteConfig(db_path=str(db_path), read_only=True))
+    try:
+        result = connector.execute({"sql_query": "SELECT * FROM test"}, result_format="list")
+        assert result.success is True
+        assert result.row_count == 1
+
+        write_result = connector.execute_ddl("CREATE TABLE should_fail (id INT)")
+        assert write_result.success is False
+        assert "readonly" in write_result.error.lower() or "read-only" in write_result.error.lower()
+    finally:
+        connector.close()
+
+    with sqlite3.connect(db_path) as conn:
+        table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'should_fail'"
+        ).fetchone()
+    assert table_exists is None
+
+
 def test_test_connection(tmp_path):
     db_path = tmp_path / "test.db"
     config = SQLiteConfig(db_path=str(db_path))

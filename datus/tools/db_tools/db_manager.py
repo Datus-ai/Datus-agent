@@ -306,10 +306,12 @@ class DBManager:
             db_path = db_config.uri or db_config.database
             if db_path.startswith("sqlite:///"):
                 db_path = db_path.replace("sqlite:///", "")
+            extra = db_config.extra or {}
             return SQLiteConfig(
                 db_path=db_path,
                 timeout_seconds=timeout_seconds,
                 database_name=None,  # Let connector extract from file path
+                read_only=_bool_extra(extra.get("read_only"), False),
             )
 
         elif db_type == DBType.DUCKDB:

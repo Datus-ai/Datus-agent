@@ -175,8 +175,7 @@ def _copy_california_schools_db(dest_path: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def real_agent_config(tmp_path, reset_global_singletons):
+def _create_real_agent_config(tmp_path, db_path: str, *, read_only_db: bool) -> AgentConfig:
     """Create a fully real AgentConfig backed by a real SQLite database.
 
     Includes:
@@ -187,11 +186,17 @@ def real_agent_config(tmp_path, reset_global_singletons):
     - agentic_nodes config for chat, gensql, gen_ext_knowledge, compare,
       gen_sql_summary, gen_metrics, gen_semantic_model, gen_report
     """
-    db_path = os.path.join(str(tmp_path), "california_schools.sqlite")
-    _copy_california_schools_db(db_path)
-
     # Create workspace subdirectory for filesystem tools
     os.makedirs(os.path.join(str(tmp_path), "workspace"), exist_ok=True)
+
+    datasource_config = {
+        "type": "sqlite",
+        "uri": db_path,
+        "name": "california_schools",
+        "default": True,
+    }
+    if read_only_db:
+        datasource_config["read_only"] = True
 
     config_kwargs = {
         "home": str(tmp_path),
@@ -206,12 +211,7 @@ def real_agent_config(tmp_path, reset_global_singletons):
         },
         "services": {
             "datasources": {
-                "california_schools": {
-                    "type": "sqlite",
-                    "uri": db_path,
-                    "name": "california_schools",
-                    "default": True,
-                },
+                "california_schools": datasource_config,
             },
             "semantic_layer": {},
             "bi_platforms": {},
@@ -287,11 +287,35 @@ def real_agent_config(tmp_path, reset_global_singletons):
 
     # Set current datasource
     agent_config.current_datasource = "california_schools"
+    return agent_config
+
+
+@pytest.fixture
+def real_agent_config(tmp_path, reset_global_singletons):
+    """Create a fully real AgentConfig backed by a shared read-only SQLite database."""
+    agent_config = _create_real_agent_config(
+        tmp_path,
+        CALIFORNIA_SCHOOLS_DB,
+        read_only_db=True,
+    )
 
     yield agent_config
     # tmp_path is pytest-managed; storage backends here use
     # ``agent_config.path_manager.data_dir`` which is rooted at tmp_path, so no
     # cwd cleanup is needed.
+
+
+@pytest.fixture
+def mutable_real_agent_config(tmp_path, reset_global_singletons):
+    """Create a real AgentConfig with a per-test mutable SQLite database copy."""
+    db_path = os.path.join(str(tmp_path), "california_schools.sqlite")
+    _copy_california_schools_db(db_path)
+
+    yield _create_real_agent_config(
+        tmp_path,
+        db_path,
+        read_only_db=False,
+    )
 
 
 # ---------------------------------------------------------------------------

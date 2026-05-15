@@ -367,6 +367,7 @@ jobs:
         timeout-minutes: 150
         env:
           EXTERNAL_REPOS_ROOT: ${{ github.workspace }}/external
+          NIGHTLY_PYTEST_BASETEMP: ${{ runner.temp }}/datus-agent-nightly-pytest-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           ci/run-nightly-tests.sh
 
@@ -374,6 +375,7 @@ jobs:
         if: always()
         env:
           EXTERNAL_REPOS_ROOT: ${{ github.workspace }}/external
+          NIGHTLY_PYTEST_BASETEMP: ${{ runner.temp }}/datus-agent-nightly-pytest-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           ci/run-nightly-tests.sh --cleanup-only
 

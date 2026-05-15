@@ -3,6 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import sqlite3
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, override
 
 from datus_db_core import BaseSqlConnector
@@ -28,6 +29,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
     def __init__(self, config: SQLiteConfig):
         super().__init__(config, dialect=DBType.SQLITE)
         self.db_path = config.db_path.replace("sqlite:///", "")
+        self.read_only = config.read_only
         self.check_same_thread = config.check_same_thread
         self.connection: Optional[sqlite3.Connection] = None
 
@@ -45,10 +47,20 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
             return
 
         try:
+            connect_path = self.db_path
+            connect_kwargs: Dict[str, Any] = {
+                "timeout": self.timeout_seconds,
+                "check_same_thread": self.check_same_thread,
+            }
+            if self.read_only and self.db_path != ":memory:":
+                if self.db_path.startswith("file:"):
+                    connect_path = self.db_path
+                else:
+                    connect_path = f"{Path(self.db_path).resolve().as_uri()}?mode=ro"
+                connect_kwargs["uri"] = True
             self.connection = sqlite3.connect(
-                self.db_path,
-                timeout=self.timeout_seconds,
-                check_same_thread=self.check_same_thread,
+                connect_path,
+                **connect_kwargs,
             )
             self.connection.row_factory = sqlite3.Row
         except Exception as e:

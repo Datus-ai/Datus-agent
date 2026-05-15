@@ -23,6 +23,7 @@ NIGHTLY_HOME="${DATUS_TEST_HOME:-${REPO_ROOT}/.datus_test_data}"
 NIGHTLY_PROJECT_ROOT="${NIGHTLY_PROJECT_ROOT:-${NIGHTLY_HOME}/workspace}"
 UNIT_TEST_HOME="${NIGHTLY_UNIT_TEST_HOME:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-agent-nightly-unit-${GITHUB_RUN_ID:-$$}}"
 UNIT_TEST_PROJECT_ROOT="${NIGHTLY_UNIT_TEST_PROJECT_ROOT:-${UNIT_TEST_HOME}/workspace}"
+NIGHTLY_PYTEST_BASETEMP="${NIGHTLY_PYTEST_BASETEMP:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-agent-nightly-pytest-${GITHUB_RUN_ID:-$$}-${GITHUB_RUN_ATTEMPT:-0}}"
 AGENT_TEST_CONFIG_BACKUP="${AGENT_TEST_CONFIG_BACKUP:-${TMPDIR:-/tmp}/datus-agent-nightly-config-${GITHUB_RUN_ID:-$$}.bak}"
 
 default_repo_root() {
@@ -148,6 +149,37 @@ validate_unit_test_home() {
   fi
 
   echo "Refusing to remove UNIT_TEST_HOME outside temp directories: $UNIT_TEST_HOME" | tee -a "$LOG_FILE" >&2
+  return 1
+}
+
+validate_pytest_basetemp() {
+  local path="${1%/}"
+  local user_home="${HOME:-}"
+  local tmp_root="${TMPDIR:-/tmp}"
+  tmp_root="${tmp_root%/}"
+  local runner_temp="${RUNNER_TEMP:-}"
+  runner_temp="${runner_temp%/}"
+
+  case "$path" in
+    "" | "." | "/" | "$user_home" | "$REPO_ROOT" | "$WORKSPACE_ROOT" | *"/.."* | *"/../"* | "../"* | *"/."* | *"/./"*)
+      echo "Refusing to remove unsafe NIGHTLY_PYTEST_BASETEMP: $NIGHTLY_PYTEST_BASETEMP" | tee -a "$LOG_FILE" >&2
+      return 1
+      ;;
+  esac
+
+  case "$path" in
+    /*) ;;
+    *)
+      echo "Refusing to remove non-absolute NIGHTLY_PYTEST_BASETEMP: $NIGHTLY_PYTEST_BASETEMP" | tee -a "$LOG_FILE" >&2
+      return 1
+      ;;
+  esac
+
+  if is_under_dir "$path" "$runner_temp" || is_under_dir "$path" "$tmp_root" || is_under_dir "$path" "/tmp"; then
+    return 0
+  fi
+
+  echo "Refusing to remove NIGHTLY_PYTEST_BASETEMP outside temp directories: $NIGHTLY_PYTEST_BASETEMP" | tee -a "$LOG_FILE" >&2
   return 1
 }
 
@@ -430,6 +462,9 @@ cleanup_all() {
   set +e
   restore_agent_test_config
   rm -f "$AGENT_TEST_CONFIG_BACKUP"
+  if validate_pytest_basetemp "$NIGHTLY_PYTEST_BASETEMP"; then
+    rm -rf "$NIGHTLY_PYTEST_BASETEMP"
+  fi
   cleanup_all_compose
 }
 
@@ -1082,6 +1117,7 @@ log "SCHEDULER_ADAPTERS_ROOT=$SCHEDULER_ADAPTERS_ROOT"
 log "NIGHTLY_HOME=$NIGHTLY_HOME"
 log "DATUS_TEST_PROJECT_NAME=$DATUS_TEST_PROJECT_NAME"
 log "UNIT_TEST_HOME=$UNIT_TEST_HOME"
+log "NIGHTLY_PYTEST_BASETEMP=$NIGHTLY_PYTEST_BASETEMP"
 log "NIGHTLY_COMPOSE_PROJECT_PREFIX=$NIGHTLY_COMPOSE_PROJECT_PREFIX"
 log "SUPERSET_URL=$SUPERSET_URL SUPERSET_PORT=$SUPERSET_PORT SUPERSET_POSTGRES_HOST=$SUPERSET_POSTGRES_HOST SUPERSET_POSTGRES_PORT=$SUPERSET_POSTGRES_PORT"
 log "AIRFLOW_URL=$AIRFLOW_URL AIRFLOW_HOST_PORT=$AIRFLOW_HOST_PORT"
@@ -1098,6 +1134,13 @@ if [ -n "$NIGHTLY_GROUP_FILTER" ]; then
 fi
 
 validate_nightly_group_filter || exit 1
+validate_pytest_basetemp "$NIGHTLY_PYTEST_BASETEMP" || exit 1
+rm -rf "$NIGHTLY_PYTEST_BASETEMP"
+if [ -n "${PYTEST_ADDOPTS:-}" ]; then
+  export PYTEST_ADDOPTS="${PYTEST_ADDOPTS} --basetemp=$NIGHTLY_PYTEST_BASETEMP"
+else
+  export PYTEST_ADDOPTS="--basetemp=$NIGHTLY_PYTEST_BASETEMP"
+fi
 require_docker_runtime || exit "$test_exit_code"
 
 run_logged_unfiltered "Flaky Registry Check" uv run python ci/check_flaky_registry.py --registry ci/flaky-registry.yml --strict

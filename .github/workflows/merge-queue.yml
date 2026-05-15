@@ -92,7 +92,18 @@ jobs:
 
       - name: Run deterministic merge queue suites
         if: ${{ github.event_name != 'pull_request_target' }}
+        env:
+          DATUS_CI_PYTEST_BASETEMP: ${{ runner.temp }}/datus-agent-pytest-${{ github.run_id }}-${{ github.run_attempt }}
         run: python3 ci/run-merge-queue-tests.py
+
+      - name: Cleanup pytest temp
+        if: ${{ always() && github.event_name != 'pull_request_target' }}
+        env:
+          DATUS_CI_PYTEST_BASETEMP: ${{ runner.temp }}/datus-agent-pytest-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          if [ -n "$DATUS_CI_PYTEST_BASETEMP" ]; then
+            rm -rf "$DATUS_CI_PYTEST_BASETEMP"
+          fi
 
       - name: Upload merge queue artifacts
         uses: actions/upload-artifact@v4

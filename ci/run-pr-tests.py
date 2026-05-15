@@ -30,10 +30,12 @@ import argparse
 import copy
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import xml.etree.ElementTree as XMLTree
 from typing import Any, TextIO
@@ -46,6 +48,7 @@ DEFAULT_COVERAGE_XML = os.path.join(OUT_DIR, "coverage.xml")
 DEFAULT_COVERAGE_HTML = os.path.join(OUT_DIR, "htmlcov")
 DEFAULT_COVERAGE_DB = os.path.join(OUT_DIR, ".coverage")
 DEFAULT_PYTEST_LOG = os.path.join(OUT_DIR, "pytest-coverage.txt")
+PYTEST_BASETEMP_ENV = "DATUS_CI_PYTEST_BASETEMP"
 PR_HARNESS_MARK_EXPR = "acceptance or component or llm_harness"
 IMPACTED_UNIT_MARK_EXPR = "not acceptance and not component and not llm_harness and not nightly and not quarantine"
 PR_ACCEPTANCE_TARGETS = [
@@ -97,6 +100,25 @@ _COMPARE_BRANCH_CACHE: dict[str, str | None] = {}
 READER_JOIN_TIMEOUT_SECONDS = 5
 
 
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip(".-")
+    return slug or "default"
+
+
+def _default_pytest_basetemp() -> str:
+    configured = os.environ.get(PYTEST_BASETEMP_ENV)
+    if configured:
+        return configured
+
+    temp_root = os.environ.get("RUNNER_TEMP") or tempfile.gettempdir()
+    run_id = _slugify(os.environ.get("GITHUB_RUN_ID", "local"))
+    run_attempt = _slugify(os.environ.get("GITHUB_RUN_ATTEMPT", "0"))
+    return os.path.join(temp_root, f"datus-agent-pytest-{run_id}-{run_attempt}-{os.getpid()}")
+
+
+DEFAULT_PYTEST_BASETEMP = _default_pytest_basetemp()
+
+
 def _run_cmd(
     cmd: list[str],
     timeout: int,
@@ -143,6 +165,55 @@ def _remove_output_path(path: str) -> None:
         os.remove(path)
 
 
+def _is_under_dir(path: str, parent: str) -> bool:
+    if not parent:
+        return False
+
+    path_abs = os.path.abspath(path)
+    parent_abs = os.path.abspath(parent)
+    if path_abs == parent_abs:
+        return False
+
+    try:
+        return os.path.commonpath([path_abs, parent_abs]) == parent_abs
+    except ValueError:
+        return False
+
+
+def _is_safe_pytest_basetemp(path: str) -> bool:
+    if not path:
+        return False
+
+    path_abs = os.path.abspath(path)
+    repo_root = os.path.abspath(os.path.join(OUT_DIR, os.pardir))
+    user_home = os.path.abspath(os.path.expanduser("~"))
+    if path_abs in {os.path.abspath(os.sep), repo_root, OUT_DIR, user_home}:
+        return False
+
+    allowed_roots = [
+        os.environ.get("RUNNER_TEMP", ""),
+        tempfile.gettempdir(),
+        "/tmp",
+    ]
+    return any(_is_under_dir(path_abs, root) for root in allowed_roots)
+
+
+def _cleanup_pytest_basetemp() -> None:
+    if not os.path.exists(DEFAULT_PYTEST_BASETEMP):
+        return
+
+    if not _is_safe_pytest_basetemp(DEFAULT_PYTEST_BASETEMP):
+        log(f"Refusing to remove unsafe pytest basetemp: {DEFAULT_PYTEST_BASETEMP}")
+        return
+
+    shutil.rmtree(DEFAULT_PYTEST_BASETEMP, ignore_errors=True)
+    log(f"Cleaned pytest basetemp: {DEFAULT_PYTEST_BASETEMP}")
+
+
+def _suite_pytest_basetemp(suite_name: str) -> str:
+    return os.path.join(DEFAULT_PYTEST_BASETEMP, _slugify(suite_name))
+
+
 def _reset_report_outputs() -> None:
     for path in [
         DEFAULT_COVERAGE_XML,
@@ -166,6 +237,7 @@ def _build_pytest_command(
     mark_expr: str | None = None,
     append: bool = False,
     emit_reports: bool = True,
+    basetemp: str | None = None,
 ) -> list[str]:
     cmd = [
         sys.executable,
@@ -173,6 +245,9 @@ def _build_pytest_command(
         "pytest",
         *targets,
     ]
+    if basetemp:
+        cmd.append(f"--basetemp={basetemp}")
+
     if mark_expr:
         cmd.extend(["-m", mark_expr])
 
@@ -215,14 +290,17 @@ def _run_pytest_suite(
     emit_reports: bool = True,
 ) -> int:
     """Run one pytest suite and stream logs to stdout and the CI log file."""
+    basetemp = _suite_pytest_basetemp(suite_name)
     cmd = _build_pytest_command(
         targets,
         junit_xml,
         mark_expr=mark_expr,
         append=append,
         emit_reports=emit_reports,
+        basetemp=basetemp,
     )
     log(f"Running {suite_name}: {' '.join(cmd)}")
+    log(f"{suite_name} pytest basetemp: {basetemp}")
 
     env = os.environ.copy()
     env["COVERAGE_FILE"] = DEFAULT_COVERAGE_DB
@@ -504,51 +582,54 @@ def run_tests(base_ref: str = "") -> tuple[int, list[str]]:
     """Run PR acceptance plus impacted unit tests and return the exit code and JUnit XML paths."""
     _reset_report_outputs()
 
-    impacted_targets = resolve_impacted_unit_tests(base_ref)
-    junit_xml_paths: list[str] = []
-    exit_codes: list[int] = []
+    try:
+        impacted_targets = resolve_impacted_unit_tests(base_ref)
+        junit_xml_paths: list[str] = []
+        exit_codes: list[int] = []
 
-    with open(DEFAULT_PYTEST_LOG, "w", encoding="utf-8") as log_file:
-        acceptance_xml = os.path.join(OUT_DIR, "test-results-acceptance.xml")
-        acceptance_rc = _run_pytest_suite(
-            PR_ACCEPTANCE_TARGETS,
-            acceptance_xml,
-            log_file,
-            suite_name="acceptance",
-            mark_expr=PR_HARNESS_MARK_EXPR,
-            emit_reports=not impacted_targets,
-        )
-        exit_codes.append(acceptance_rc)
-        junit_xml_paths.append(acceptance_xml)
-
-        if impacted_targets:
-            impacted_xml = os.path.join(OUT_DIR, "test-results-impacted-unit.xml")
-            impacted_rc = _run_pytest_suite(
-                impacted_targets,
-                impacted_xml,
+        with open(DEFAULT_PYTEST_LOG, "w", encoding="utf-8") as log_file:
+            acceptance_xml = os.path.join(OUT_DIR, "test-results-acceptance.xml")
+            acceptance_rc = _run_pytest_suite(
+                PR_ACCEPTANCE_TARGETS,
+                acceptance_xml,
                 log_file,
-                suite_name="impacted unit tests",
-                mark_expr=IMPACTED_UNIT_MARK_EXPR,
-                append=True,
-                emit_reports=True,
+                suite_name="acceptance",
+                mark_expr=PR_HARNESS_MARK_EXPR,
+                emit_reports=not impacted_targets,
             )
-            exit_codes.append(
-                _normalize_suite_exit_code(
-                    impacted_rc,
+            exit_codes.append(acceptance_rc)
+            junit_xml_paths.append(acceptance_xml)
+
+            if impacted_targets:
+                impacted_xml = os.path.join(OUT_DIR, "test-results-impacted-unit.xml")
+                impacted_rc = _run_pytest_suite(
+                    impacted_targets,
+                    impacted_xml,
+                    log_file,
                     suite_name="impacted unit tests",
-                    allow_empty_collection=True,
+                    mark_expr=IMPACTED_UNIT_MARK_EXPR,
+                    append=True,
+                    emit_reports=True,
                 )
-            )
-            junit_xml_paths.append(impacted_xml)
+                exit_codes.append(
+                    _normalize_suite_exit_code(
+                        impacted_rc,
+                        suite_name="impacted unit tests",
+                        allow_empty_collection=True,
+                    )
+                )
+                junit_xml_paths.append(impacted_xml)
 
-    merge_junit_results(junit_xml_paths)
+        merge_junit_results(junit_xml_paths)
 
-    if os.path.exists(DEFAULT_COVERAGE_DB):
-        os.remove(DEFAULT_COVERAGE_DB)
+        if os.path.exists(DEFAULT_COVERAGE_DB):
+            os.remove(DEFAULT_COVERAGE_DB)
 
-    exit_code = 0 if all(code == 0 for code in exit_codes) else 1
-    log(f"Overall pytest exit code: {exit_code}")
-    return exit_code, junit_xml_paths
+        exit_code = 0 if all(code == 0 for code in exit_codes) else 1
+        log(f"Overall pytest exit code: {exit_code}")
+        return exit_code, junit_xml_paths
+    finally:
+        _cleanup_pytest_basetemp()
 
 
 def merge_junit_results(junit_xml_paths: list[str], output_path: str | None = None) -> str:
