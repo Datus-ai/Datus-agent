@@ -95,21 +95,24 @@ def test_tokens_render_title_and_glyphs(path_manager):
     assert provider.has_items() is True
     tokens = provider.tokens()
 
-    # Title + 3 task fragments + 2 newline separators = 6 fragments.
-    assert len(tokens) == 6
-    title_style, title_text = tokens[0]
+    # Hint + title + 3 task fragments + 2 newline separators = 7 fragments.
+    assert len(tokens) == 7
+    hint_style, hint_text = tokens[0]
+    assert hint_style == "class:todo-sidebar.hint"
+    assert "Ctrl+T" in hint_text
+    title_style, title_text = tokens[1]
     assert title_style == "class:todo-sidebar.title"
     assert "Tasks (1/3)" in title_text
 
-    # Tasks at indices 1, 3, 5. Ordering: pending, failed, completed
+    # Tasks at indices 2, 4, 6. Ordering: pending, failed, completed
     # (incomplete first, stable within group → review PR before ship).
-    task_styles = [tokens[1][0], tokens[3][0], tokens[5][0]]
+    task_styles = [tokens[2][0], tokens[4][0], tokens[6][0]]
     assert task_styles == [
         "class:todo-sidebar.pending",
         "class:todo-sidebar.failed",
         "class:todo-sidebar.completed",
     ]
-    task_texts = [tokens[1][1], tokens[3][1], tokens[5][1]]
+    task_texts = [tokens[2][1], tokens[4][1], tokens[6][1]]
     assert "\u25cb" in task_texts[0] and "review PR" in task_texts[0]  # ○
     assert "\u2717" in task_texts[1] and "ship" in task_texts[1]  # ✗
     assert "\u2713" in task_texts[2] and "write SQL" in task_texts[2]  # ✓
@@ -138,7 +141,11 @@ def test_incomplete_tasks_render_before_completed_stable_order(path_manager):
     provider = TodoSidebarProvider(cli)
 
     rendered = "".join(text for _, text in provider.tokens())
-    task_lines = [line.strip() for line in rendered.splitlines() if line.strip() and not line.startswith(" Tasks")]
+    task_lines = [
+        line.strip()
+        for line in rendered.splitlines()
+        if line.strip() and not line.startswith(" Tasks") and not line.startswith(" Ctrl+T")
+    ]
     # Incomplete first (stable: pending-1, done-new is completed so skipped,
     # failed-1, pending-2), then completed (done-old, done-new).
     assert task_lines == [
@@ -165,13 +172,14 @@ def test_tasks_are_packed_without_blank_separators(path_manager):
 
     rendered = "".join(text for _, text in provider.tokens())
     assert rendered.splitlines() == [
+        " Ctrl+T toggle",
         " Tasks (0/3)",
         " \u25cb one",
         " \u25cb two",
         " \u25cb three",
     ]
-    # 1 title + 3 tasks = 4 logical rows.
-    assert provider.line_count() == 4
+    # 1 hint + 1 title + 3 tasks = 5 logical rows.
+    assert provider.line_count() == 5
 
 
 def test_long_content_is_not_truncated(path_manager):
@@ -269,6 +277,29 @@ def test_in_progress_renders_with_half_circle_glyph(path_manager):
     # in_progress + pending are both incomplete → in_progress first (source order).
     in_progress_token = next(t for t in tokens if "doing now" in t[1])
     assert in_progress_token[0] == "class:todo-sidebar.in_progress"
+
+
+def test_hint_row_is_first_and_only_when_items_exist(path_manager):
+    """Ctrl+T toggle hint is pinned above the title, but suppressed when
+    there are no items (the sidebar itself stays hidden via has_items())."""
+    from datus.cli.todo_sidebar import TodoSidebarProvider
+
+    cli, _ = _make_cli("session_hint")
+
+    # No items → hint is not emitted either (the whole sidebar is hidden).
+    empty_provider = TodoSidebarProvider(cli)
+    assert empty_provider.tokens() == []
+
+    _write_todo_file(
+        path_manager.todo_list_path("session_hint"),
+        [("only", "pending")],
+    )
+    provider = TodoSidebarProvider(cli)
+    tokens = provider.tokens()
+    # Hint precedes the title — never appears below or twice.
+    assert tokens[0] == ("class:todo-sidebar.hint", " Ctrl+T toggle\n")
+    later_hint_indices = [i for i, tok in enumerate(tokens[1:], start=1) if tok[0] == "class:todo-sidebar.hint"]
+    assert later_hint_indices == []
 
 
 def test_corrupted_json_keeps_previous_state(path_manager):

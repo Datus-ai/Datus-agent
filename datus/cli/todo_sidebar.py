@@ -70,14 +70,14 @@ class TodoSidebarProvider:
     def line_count(self) -> int:
         """Logical row count of the rendered sidebar.
 
-        Layout: title row + one row per task. The Window itself wraps
-        long content with ``wrap_lines=True``, so the actual on-screen
+        Layout: hint row + title row + one row per task. The Window itself
+        wraps long content with ``wrap_lines=True``, so the actual on-screen
         row count may be larger — line_count tracks logical rows only.
         """
         items = self._refresh_items()
         if not items:
             return 0
-        return len(items) + 1
+        return len(items) + 2
 
     # ── internal ──────────────────────────────────────────────────
 
@@ -146,7 +146,13 @@ class TodoSidebarProvider:
         total = len(items)
         done = sum(1 for it in items if it.status == TodoStatus.COMPLETED)
         ordered = sorted(items, key=lambda it: it.status == TodoStatus.COMPLETED)
+        # Hint row sits above the title so the user always knows the
+        # Ctrl+T toggle exists. The hosting Window has ``wrap_lines=True``,
+        # so on a 14-cell sidebar (the narrowest the layout allows before
+        # the column is force-hidden) the hint wraps to 2 visual rows
+        # rather than being clipped.
         out: List[Tuple[str, str]] = [
+            ("class:todo-sidebar.hint", " Ctrl+T toggle\n"),
             ("class:todo-sidebar.title", f" Tasks ({done}/{total})\n"),
         ]
         last_idx = len(ordered) - 1
