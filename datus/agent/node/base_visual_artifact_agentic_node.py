@@ -43,7 +43,7 @@ from datus.tools.func_tool._visual_artifact_helpers import (
 )
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.loggings import get_logger
-from datus.utils.message_utils import MessagePart, build_structured_content
+from datus.utils.message_utils import build_structured_content
 
 logger = get_logger(__name__)
 
@@ -394,12 +394,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             parts.append(f"Schema: {db_schema}")
 
         if parts:
-            return build_structured_content(
-                [
-                    MessagePart(type="enhanced", content=chr(10).join(parts)),
-                    MessagePart(type="user", content=user_message),
-                ]
-            )
+            return build_structured_content("\n".join(parts), user_message)
         return user_message
 
     # ── Artifact tools wiring ─────────────────────────────────────────────
