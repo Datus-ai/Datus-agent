@@ -148,6 +148,21 @@ STATUS_BAR_STYLE: dict[str, str] = {
     # Pinned subagent header: plain cyan prefix, default colour goal.
     "subagent-header-live": "ansicyan",
     "subagent-header-goal-live": "",
+    # Output-pane mouse selection (software-painted, see
+    # ``datus.cli.tui.selection.split_line_for_selection``). ``reverse``
+    # flips fg/bg so the highlight tracks the terminal's native palette
+    # rather than picking a hard-coded colour that fights with custom
+    # themes. ``noreverse`` cannot be combined here because the whole
+    # point is to show a selected range; tested on iTerm2 / Terminal.app
+    # / WezTerm with both light and dark schemes.
+    "selection": "reverse",
+    # Output-pane scrollbar gutter (see ``datus.cli.tui.scrollbar``).
+    # Track stays close to the separator hue so the gutter is visible
+    # without screaming; thumb uses the existing brand accent for
+    # consistency with the running-indicator dot.
+    "scrollbar": "",
+    "scrollbar.track": STATUS_BAR_SEP,
+    "scrollbar.thumb": STATUS_BAR_FG_HINT,
 }
 
 # Sub-agent wizard modal dialog (prompt_toolkit full-screen Application).

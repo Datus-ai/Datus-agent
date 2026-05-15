@@ -43,6 +43,12 @@ from prompt_toolkit.layout.controls import UIContent, UIControl
 from prompt_toolkit.mouse_events import MouseEvent
 
 from datus.cli.tui.live_display_state import LiveDisplayLine
+from datus.cli.tui.selection import (
+    TranscriptSelection,
+    extract_plain_text_between,
+    line_char_count,
+    split_line_for_selection,
+)
 
 _StyledToken = Tuple[str, str]
 
@@ -381,16 +387,25 @@ class BufferedOutputControl(UIControl):
         focusable: bool = True,
         show_cursor: bool = False,
         get_cursor_position: Optional[Callable[[], Optional[Point]]] = None,
+        selection_provider: Optional[Callable[[], Optional[TranscriptSelection]]] = None,
     ) -> None:
         self._buffer = buffer
         self._focusable = to_filter(focusable)
         self.show_cursor = show_cursor
         self.get_cursor_position = get_cursor_position
+        # Pulls the live :class:`TranscriptSelection` from the owning app
+        # at every paint; ``None`` (or returning ``None``) disables the
+        # highlight path entirely so the existing fast path stays
+        # untouched for tests / non-TUI callers.
+        self._selection_provider = selection_provider or (lambda: None)
         # One-slot ``UIContent`` cache keyed on snapshot identity + cursor
-        # position. ``create_content`` is called multiple times per render run
-        # (preferred_height, then the actual paint); returning the same
-        # ``UIContent`` lets prompt_toolkit's per-line height cache stay warm.
-        self._uicontent_key: Optional[Tuple[int, Optional[Tuple[int, int]]]] = None
+        # position + selection version. ``create_content`` is called
+        # multiple times per render run (preferred_height, then the
+        # actual paint); returning the same ``UIContent`` lets
+        # prompt_toolkit's per-line height cache stay warm.
+        self._uicontent_key: Optional[
+            Tuple[int, Optional[Tuple[int, int]], int, Optional[Tuple[int, int, int, int]]]
+        ] = None
         self._uicontent: Optional[UIContent] = None
 
     def is_focusable(self) -> bool:
@@ -402,12 +417,45 @@ class BufferedOutputControl(UIControl):
         if self.get_cursor_position is not None:
             cursor_position = self.get_cursor_position()
         cursor_key = (cursor_position.x, cursor_position.y) if cursor_position is not None else None
-        key = (id(snap), cursor_key)
+
+        # Cache key incorporates the selection range so a drag invalidates
+        # the cached ``UIContent`` even though the snapshot identity is
+        # unchanged. ``selection.version`` is bumped on every state
+        # transition; including the range tuple as well guards against a
+        # bug where two distinct ranges share a version counter (shouldn't
+        # happen today but is cheap insurance).
+        selection = self._selection_provider() if self._selection_provider else None
+        sel_range_key: Optional[Tuple[int, int, int, int]] = None
+        sel_version = 0
+        if selection is not None and not selection.is_empty():
+            rng = selection.range()
+            if rng is not None:
+                start, end = rng
+                sel_range_key = (start.line, start.column, end.line, end.column)
+            sel_version = selection.version
+        key = (id(snap), cursor_key, sel_version, sel_range_key)
         if self._uicontent_key == key and self._uicontent is not None:
             return self._uicontent
 
+        # Always wrap with the blank-line padder: prompt_toolkit's
+        # ``Window._copy_body`` only registers ``rowcol_to_yx`` entries
+        # for cells it actually paints. A truly-empty fragment list paints
+        # nothing → no rowcol entries → the outer mouse handler can't
+        # resolve any (y, x) to a line index and falls back to the
+        # sentinel ``Point(0, 0)``. During a selection drag that fallback
+        # snaps the head all the way to the top of the buffer and the
+        # highlight expands to every line above the anchor. Emitting a
+        # single space gives every visible row a clickable cell at col 0
+        # without changing the visible output (the cell renders as a
+        # space, which a blank row was already showing anyway).
+        base_get_line = _padded_blank_line(snap.get_line)
+        if selection is not None and not selection.is_empty():
+            get_line = _selection_aware_get_line(base_get_line, selection)
+        else:
+            get_line = base_get_line
+
         content = UIContent(
-            get_line=snap.get_line,
+            get_line=get_line,
             line_count=snap.total,
             cursor_position=cursor_position or Point(x=0, y=0),
             show_cursor=self.show_cursor,
@@ -420,3 +468,92 @@ class BufferedOutputControl(UIControl):
         # Default: defer to ``Window`` / key bindings. ``DatusApp`` overrides
         # this attribute in place to wire scroll-wheel handling.
         return NotImplemented
+
+
+def _padded_blank_line(
+    base_get_line: Callable[[int], List[_StyledToken]],
+) -> Callable[[int], List[_StyledToken]]:
+    """Wrap ``base_get_line`` so empty fragment lists render with a single space.
+
+    Rationale: ``Window._copy_body`` only writes ``rowcol_to_yx`` entries
+    when the line contains at least one printable character. An empty
+    fragment list paints nothing, so prompt_toolkit's outer mouse handler
+    cannot translate ``(screen_y, screen_x)`` back to a line index for
+    that row — it falls through to ``Point(0, 0)`` which, during a
+    selection drag, snaps the highlight to the very top of the buffer.
+    A single space fragment is invisible (it paints as a blank cell, same
+    visual as the empty row) but guarantees one rowcol entry per visible
+    line. The wrap is applied to the rendered ``get_line`` only —
+    :func:`extract_selection_text` reads the raw snapshot directly so the
+    padding never leaks into clipboard text.
+    """
+
+    def get_line(idx: int) -> List[_StyledToken]:
+        line = base_get_line(idx)
+        if not line:
+            return [("", " ")]
+        # A non-empty fragment list with zero total characters (e.g. a
+        # single ``("style", "")``) hits the same bug.
+        if all(not (len(f) > 1 and f[1]) for f in line):
+            return [("", " ")]
+        return line
+
+    return get_line
+
+
+def _selection_aware_get_line(
+    base_get_line: Callable[[int], List[_StyledToken]],
+    selection: TranscriptSelection,
+) -> Callable[[int], List[_StyledToken]]:
+    """Wrap ``base_get_line`` so selected rows render with a highlight style.
+
+    Only lines that intersect the selection are rewritten; rows outside the
+    range are forwarded untouched (and unchanged identity). The wrapper is
+    rebuilt on every cache miss in :meth:`BufferedOutputControl.create_content`
+    so a stale ``selection`` reference can never paint over a fresh snapshot.
+    """
+
+    def get_line(idx: int) -> List[_StyledToken]:
+        line = base_get_line(idx)
+        bounds = selection.columns_for_line(idx)
+        if bounds is None:
+            return line
+        start_col, end_col = bounds
+        return split_line_for_selection(line, start_col, end_col)
+
+    return get_line
+
+
+def extract_selection_text(
+    buffer: "TUIOutputBuffer",
+    selection: TranscriptSelection,
+) -> str:
+    """Return the plain text covered by ``selection`` as a single string.
+
+    Lines are joined with ``\\n``. Style information (ANSI / Rich classes)
+    is stripped — the clipboard payload is intentionally plain so it
+    pastes cleanly into editors and chat windows. Visual columns at the
+    selection boundary are honoured, so a partial click on a CJK glyph
+    selects the whole glyph (matches :func:`split_line_for_selection`'s
+    snap-past behaviour).
+    """
+    rng = selection.range()
+    if rng is None:
+        return ""
+    snap = buffer.snapshot()
+    out_lines: List[str] = []
+    start, end = rng
+    for line_idx in range(start.line, end.line + 1):
+        if line_idx < 0 or line_idx >= snap.total:
+            continue
+        fragments = snap.get_line(line_idx)
+        if start.line == end.line:
+            from_col, to_col = start.column, end.column
+        elif line_idx == start.line:
+            from_col, to_col = start.column, line_char_count(fragments)
+        elif line_idx == end.line:
+            from_col, to_col = 0, end.column
+        else:
+            from_col, to_col = 0, line_char_count(fragments)
+        out_lines.append(extract_plain_text_between(fragments, from_col, to_col))
+    return "\n".join(out_lines)

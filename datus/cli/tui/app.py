@@ -40,6 +40,7 @@ from prompt_toolkit.application import Application
 from prompt_toolkit.application.run_in_terminal import in_terminal
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer
+from prompt_toolkit.data_structures import Point
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition, has_completions, is_done, to_filter
 from prompt_toolkit.formatted_text import FormattedText
@@ -60,14 +61,21 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.menus import CompletionsMenuControl
 from prompt_toolkit.lexers import Lexer
-from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
+from prompt_toolkit.mouse_events import MouseButton, MouseEvent, MouseEventType
 from prompt_toolkit.styles import Style
 from prompt_toolkit.utils import get_cwidth
 from prompt_toolkit.widgets import TextArea
 
 from datus.cli.cli_styles import PASTE_COLLAPSE_THRESHOLD
+from datus.cli.tui.clipboard import copy_to_clipboard
 from datus.cli.tui.live_display_state import LiveDisplayState, compute_pinned_max_rows
-from datus.cli.tui.output_buffer import BufferedOutputControl, TUIOutputBuffer
+from datus.cli.tui.output_buffer import BufferedOutputControl, TUIOutputBuffer, extract_selection_text
+from datus.cli.tui.scrollbar import ScrollbarController, build_scrollbar_window
+from datus.cli.tui.selection import (
+    SelectionAutoscroll,
+    SelectionPoint,
+    TranscriptSelection,
+)
 from datus.cli.tui.wizard_host import EmbeddedWizard
 from datus.utils.loggings import get_logger
 
@@ -147,6 +155,18 @@ class DatusApp:
         self._output_at_bottom: bool = True
         self._output_scroll_offset: int = 0
 
+        # Software-painted text selection inside the output pane. Mouse
+        # capture (``mouse_support=True``) preempts terminal-native
+        # shift+drag selection, so :class:`TranscriptSelection` tracks
+        # an anchor + head pair updated from MOUSE_DOWN / MOUSE_MOVE /
+        # MOUSE_UP and :class:`BufferedOutputControl` consults it to
+        # paint a reverse-video highlight on the selected rows.
+        self._selection = TranscriptSelection()
+        # Direction-state for "drag past the viewport edge → keep
+        # extending the selection while auto-scrolling". The actual
+        # ticking loop lives in :meth:`_selection_autoscroll_loop`.
+        self._selection_autoscroll = SelectionAutoscroll()
+
         self._agent_running = threading.Event()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="datus-tui-worker")
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -183,6 +203,9 @@ class DatusApp:
             style="class:status-bar",
             wrap_lines=False,
         )
+        # While a selection drag is active, the status bar becomes the
+        # bottom-edge autoscroll trigger. See :meth:`_status_mouse_handler`.
+        self._status_window.content.mouse_handler = self._status_mouse_handler
 
         # In ``full_screen=False`` mode the Application renders only the rows
         # it needs (status bar + input) at the bottom of the terminal. All
@@ -249,6 +272,7 @@ class DatusApp:
                 focusable=True,
                 show_cursor=False,
                 get_cursor_position=self._output_cursor_position,
+                selection_provider=lambda: self._selection,
             )
         else:
             output_control = FormattedTextControl(
@@ -274,16 +298,45 @@ class DatusApp:
         # paint).
         self._output_window.content.mouse_handler = self._output_mouse_handler
 
+        # Custom scrollbar — built as its own Window because prompt_toolkit's
+        # built-in :class:`ScrollbarMargin` never receives mouse events
+        # (Window's mouse-handler range excludes the margin columns).
+        # The widget converts click / drag rows into scroll offsets via
+        # :class:`ScrollbarController` and shares the sticky-bottom model
+        # used by the wheel handler.
+        self._scrollbar_controller = ScrollbarController(
+            # Pass attribute-dispatched lambdas (rather than direct bound
+            # methods) so tests that monkeypatch ``_output_viewport_rows``
+            # are observed by the controller too; otherwise the bound
+            # method captured at construction would freeze the test view
+            # of the layout at fixture-setup time.
+            viewport_rows_fn=lambda: self._output_viewport_rows(),
+            total_rows_fn=lambda: int(self._output_line_count_fn()),
+            get_scroll_fn=lambda: self._get_output_scroll(self._output_window),
+            set_scroll_fn=lambda offset: self._set_output_scroll_offset(offset),
+            invalidate_fn=lambda: self.invalidate(),
+        )
+        self._scrollbar_window = build_scrollbar_window(
+            self._scrollbar_controller,
+            # Always render the gutter — even when content fits the
+            # viewport — so the layout doesn't jitter as scrollback
+            # grows past the first screenful. The track + thumb logic in
+            # ``ScrollbarController.thumb_geometry`` handles the
+            # no-overflow case by filling the column.
+            visible_filter=lambda: True,
+        )
+
         # Right-side todo-list sidebar for the pinned output row. Wired via
         # callbacks so non-TUI callers (and tests that pass no todo hooks)
         # keep an unchanged single-column layout. Hidden when items are empty
         # or the terminal is too narrow to fit a useful 20% column.
         self._todo_sidebar = self._build_todo_sidebar()
 
-        # Top output row: scrollable output (weight=4) + todo sidebar
-        # (weight=1). No fixed height — the row absorbs all remaining
-        # terminal rows above the status bar / input / hint stack.
-        top_row = VSplit([self._output_window, self._todo_sidebar])
+        # Top output row: scrollable output (weight=4) + scrollbar gutter
+        # (1 col) + todo sidebar (weight=1). The scrollbar is wedged
+        # between content and sidebar so it remains visible regardless of
+        # whether the sidebar is filtered out.
+        top_row = VSplit([self._output_window, self._scrollbar_window, self._todo_sidebar])
 
         # Bottom section is dynamic so sub-wizards can replace it. In
         # normal operation we render status bar + input + hint; while
@@ -555,6 +608,25 @@ class DatusApp:
         else:
             self._output_scroll_offset = new_off
 
+    def _set_output_scroll_offset(self, offset: int) -> None:
+        """Absolute-position setter used by the scrollbar drag handler.
+
+        Mirrors the sticky-bottom rules of :meth:`_scroll_output_up` /
+        :meth:`_scroll_output_down`: clamping to ``[0, max_scroll]`` and
+        re-engaging sticky-bottom only when the new offset is at the
+        very bottom — a single mid-track click should not snap back to
+        following live output.
+        """
+        max_off = self._output_max_scroll()
+        offset = max(0, min(int(offset), max_off))
+        self._output_scroll_offset = offset
+        self._output_at_bottom = offset >= max_off and max_off > 0
+        # Special case: when content fits the viewport (max_off == 0) we
+        # stay in sticky-bottom mode by default so new output continues
+        # to land at the bottom row.
+        if max_off == 0:
+            self._output_at_bottom = True
+
     # Fixed step: every wheel event scrolls exactly one row. macOS
     # trackpads emit dense streams of small events so they accumulate
     # into smooth motion; a discrete mouse wheel click moves one row,
@@ -562,22 +634,227 @@ class DatusApp:
     _OUTPUT_WHEEL_STEP = 1
 
     def _output_mouse_handler(self, event: MouseEvent):  # noqa: ANN001
-        """Translate scroll-wheel events on the output pane into scroll motion.
+        """Mouse dispatcher for the scrollback pane.
 
-        FormattedTextControl has no built-in mouse handling, so we wire
-        the wheel directly. Click / drag fall through (return
-        ``NotImplemented``) so prompt_toolkit's default focus-on-click
-        and selection still apply once we add a selectable buffer.
+        Handles four concerns in one entry point so we can share
+        precedence + state-flag housekeeping across them:
+
+        * **Scroll wheel** — sticky-bottom aware up/down ticks.
+        * **MOUSE_DOWN + LEFT** — begin a fresh selection. Anchor lives
+          at the *snapshot row* (``vertical_scroll + position.y``) so a
+          subsequent scroll does not warp the selection.
+        * **MOUSE_MOVE + LEFT** — extend the head while dragging. When
+          the pointer is at or past the viewport edge, arm
+          :class:`SelectionAutoscroll` and let the background task
+          continue advancing the offset on its own.
+        * **MOUSE_UP** — finalise the selection. If non-empty, plain
+          text is copied to the system clipboard (pyperclip → OSC 52).
         """
-        if event.event_type == MouseEventType.SCROLL_UP:
+        et = event.event_type
+        if et == MouseEventType.SCROLL_UP:
             self._scroll_output_up(self._OUTPUT_WHEEL_STEP)
             self._app.invalidate()
             return None
-        if event.event_type == MouseEventType.SCROLL_DOWN:
+        if et == MouseEventType.SCROLL_DOWN:
             self._scroll_output_down(self._OUTPUT_WHEEL_STEP)
             self._app.invalidate()
             return None
+
+        # Forward mouse events to the scrollbar while the user is mid-
+        # drag, even when the pointer wanders off the 1-col gutter. The
+        # scrollbar window only registers handlers within its own 1-col
+        # screen range, so without this forwarding a horizontal pixel of
+        # jitter into the output pane breaks the drag — the scroll
+        # offset freezes and the thumb only catches up when the cursor
+        # snaps back onto the gutter. Translating ``event.position.y``
+        # (a UIContent line index) into a scrollbar-relative row uses
+        # the fact that the scrollbar and the output Window share the
+        # same parent VSplit row, so their viewport heights are equal.
+        if self._scrollbar_controller.dragging:
+            if et in (MouseEventType.MOUSE_MOVE, MouseEventType.MOUSE_UP):
+                self._forward_to_scrollbar(event)
+                return None
+            if et == MouseEventType.MOUSE_DOWN:
+                # A separate MOUSE_DOWN landed on the output pane while
+                # we thought scrollbar was still being dragged — most
+                # likely the OS dropped a release event somewhere. Cancel
+                # the implicit drag so the new click is treated normally.
+                self._scrollbar_controller._dragging = False  # noqa: SLF001
+            return NotImplemented
+
+        if et == MouseEventType.MOUSE_DOWN and event.button == MouseButton.LEFT:
+            point = self._selection_point_from_event(event)
+            if point is not None:
+                self._selection.begin(point)
+                self._selection_autoscroll.disarm()
+                # Disengage sticky-bottom so output growth doesn't yank
+                # the rows out from under the dragging pointer.
+                if self._output_at_bottom:
+                    self._output_scroll_offset = self._output_max_scroll()
+                    self._output_at_bottom = False
+                self._app.invalidate()
+            return None
+
+        if et == MouseEventType.MOUSE_MOVE and event.button == MouseButton.LEFT:
+            if not self._selection.dragging:
+                return NotImplemented
+            point = self._selection_point_from_event(event)
+            if point is not None:
+                self._selection.update_head(point)
+            # Edge-driven autoscroll: only the **top** edge is detectable
+            # via ``position.y`` because the row equals ``vertical_scroll``
+            # only when the mouse is on the topmost visible line. Bottom
+            # edge cannot be inferred from y alone (prompt_toolkit clamps
+            # past-bottom events to the last rendered row, which is
+            # indistinguishable from a legitimate click on that row), so
+            # downward autoscroll is delegated to the status bar's mouse
+            # handler — see :meth:`_status_mouse_handler`.
+            self._maybe_arm_top_edge_autoscroll(event)
+            self._app.invalidate()
+            return None
+
+        if et == MouseEventType.MOUSE_UP:
+            if self._selection.dragging:
+                self._selection.finish()
+                self._selection_autoscroll.disarm()
+                if not self._selection.is_empty() and self._output_buffer is not None:
+                    text = extract_selection_text(self._output_buffer, self._selection)
+                    if text:
+                        copy_to_clipboard(text)
+                self._app.invalidate()
+                return None
+            return NotImplemented
+
         return NotImplemented
+
+    def _selection_point_from_event(self, event: MouseEvent) -> Optional[SelectionPoint]:
+        """Translate a control-relative MouseEvent into a buffer coordinate.
+
+        prompt_toolkit hands the control a ``position`` already rebased
+        into UIContent line/column space, so ``position.y`` *is* the
+        snapshot row index — no scroll-offset addition needed.
+
+        Returns ``None`` for events we cannot trust:
+
+        * ``Point(0, 0)`` when the viewport's top row is *not* line 0
+          (i.e. the user has scrolled). prompt_toolkit's ``Window._mouse_handler``
+          emits exactly this sentinel when its ``rowcol_to_yx`` lookup
+          fails — most commonly for a click on a blank row that paints
+          no characters. Accepting it would snap the selection head all
+          the way to the top of the buffer.
+        * Negative coordinates (defensive).
+        * Empty buffer.
+
+        For a valid event past the last content row, anchor at the last
+        line so a downward drag still highlights something visible.
+        """
+        line = int(event.position.y)
+        column = int(event.position.x)
+        if line < 0:
+            return None
+        total = int(self._output_line_count_fn())
+        if total <= 0:
+            return None
+        # Reject the prompt_toolkit fallback sentinel when the viewport
+        # is scrolled off the top of the buffer. (0, 0) is only a legit
+        # mouse position when line 0 is currently visible.
+        if line == 0 and column == 0:
+            vertical_scroll = self._get_output_scroll(self._output_window)
+            if vertical_scroll > 0:
+                return None
+        if line >= total:
+            line = max(0, total - 1)
+        return SelectionPoint(line=line, column=column)
+
+    def _maybe_arm_top_edge_autoscroll(self, event: MouseEvent) -> None:
+        """Arm scroll-up when a drag pulls the cursor onto the top visible row.
+
+        Only the top edge is detected here — the bottom edge is handled
+        by :meth:`_status_mouse_handler` because prompt_toolkit clamps
+        past-bottom y coordinates to the last rendered row, making
+        equality-based detection ambiguous on that side.
+        """
+        top = self._get_output_scroll(self._output_window)
+        row = int(event.position.y)
+        if row <= top and top > 0:
+            self._selection_autoscroll.arm(-1)
+        else:
+            # Cancel any prior up-arm — covers the case where the user
+            # dragged onto the top edge then back into the body.
+            if self._selection_autoscroll.direction < 0:
+                self._selection_autoscroll.disarm()
+
+    def _status_mouse_handler(self, event: MouseEvent):  # noqa: ANN201
+        """Mouse handler attached to the status bar window.
+
+        Two responsibilities, both gated on whether the user is in the
+        middle of *something* (selection drag or scrollbar drag) —
+        otherwise the status bar is decorative and clicks fall through
+        (``NotImplemented``):
+
+        * **Scrollbar drag forwarding** — when the user is dragging the
+          scrollbar and their pointer crosses below the output pane onto
+          the status bar, forward the event so scroll keeps following
+          the cursor. Releasing on the status bar must also clear the
+          scrollbar drag flag.
+        * **Selection autoscroll** — during a selection drag, motion/
+          press on the status bar arms scroll-down. Release here finalises
+          the selection (and copies to clipboard).
+        """
+        et = event.event_type
+        if self._scrollbar_controller.dragging:
+            if et in (MouseEventType.MOUSE_MOVE, MouseEventType.MOUSE_UP):
+                # The status bar is 1 row tall and sits immediately
+                # below the output / scrollbar row. Forward as the
+                # last scrollbar row so a drag past the bottom snaps
+                # the scroll to its max.
+                self._forward_to_scrollbar(event, row_override="bottom")
+                return None
+            return NotImplemented
+        if not self._selection.dragging:
+            return NotImplemented
+        if et in (MouseEventType.MOUSE_DOWN, MouseEventType.MOUSE_MOVE):
+            self._selection_autoscroll.arm(+1)
+            self._app.invalidate()
+            return None
+        if et == MouseEventType.MOUSE_UP:
+            self._selection.finish()
+            self._selection_autoscroll.disarm()
+            if not self._selection.is_empty() and self._output_buffer is not None:
+                text = extract_selection_text(self._output_buffer, self._selection)
+                if text:
+                    copy_to_clipboard(text)
+            self._app.invalidate()
+            return None
+        return NotImplemented
+
+    def _forward_to_scrollbar(self, event: MouseEvent, *, row_override: Optional[str] = None) -> None:
+        """Send ``event`` to :class:`ScrollbarController` from a non-gutter window.
+
+        ``event.position.y`` arriving via the output pane is the UIContent
+        line index, so subtracting ``vertical_scroll`` recovers the row
+        within the shared viewport — which equals the row index in the
+        scrollbar's own 1-col content. For events from the status bar
+        (always 1 row tall, sitting *below* the gutter) pass
+        ``row_override="bottom"`` so the scrollbar clamps to its last
+        track row. ``row_override="top"`` is also accepted for symmetry
+        when adding more forwarders.
+        """
+        viewport = max(1, self._output_viewport_rows())
+        if row_override == "bottom":
+            row = viewport - 1
+        elif row_override == "top":
+            row = 0
+        else:
+            vertical_scroll = self._get_output_scroll(self._output_window)
+            row = max(0, min(viewport - 1, int(event.position.y) - vertical_scroll))
+        forwarded = MouseEvent(
+            position=Point(x=0, y=row),
+            event_type=event.event_type,
+            button=event.button,
+            modifiers=event.modifiers,
+        )
+        self._scrollbar_controller.handle_event(forwarded)
 
     def _terminal_columns(self) -> int:
         """Best-effort current terminal column count.
@@ -937,16 +1214,19 @@ class DatusApp:
         async def _main() -> None:
             self._loop = asyncio.get_running_loop()
             blink_task = asyncio.create_task(self._blink_invalidate_loop())
+            autoscroll_task = asyncio.create_task(self._selection_autoscroll_loop())
             try:
                 await self._app.run_async()
             finally:
-                blink_task.cancel()
-                try:
-                    await blink_task
-                except asyncio.CancelledError:
-                    pass
-                except Exception as exc:  # pragma: no cover - defensive
-                    logger.debug("blink_invalidate_loop cleanup raised: %s", exc)
+                for task in (blink_task, autoscroll_task):
+                    task.cancel()
+                for task in (blink_task, autoscroll_task):
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logger.debug("background task cleanup raised: %s", exc)
                 self._loop = None
 
         try:
@@ -965,6 +1245,64 @@ class DatusApp:
     # one full glyph cycle takes ~1s. Only fires while the agent is running,
     # so idle REPLs do not redraw the layout.
     _BLINK_INTERVAL_SECONDS = 0.5
+
+    # Polling cadence for the drag-past-the-edge auto-scroll. Matches
+    # the ``SelectionAutoscroll.interval_seconds`` default so a fast
+    # cursor near the viewport edge feels continuous without saturating
+    # the renderer.
+    _AUTOSCROLL_POLL_SECONDS = 0.015
+
+    async def _selection_autoscroll_loop(self) -> None:
+        """Tick :class:`SelectionAutoscroll` while the user is dragging past an edge.
+
+        Only runs when :class:`SelectionAutoscroll.direction` is set and
+        the user is still dragging a selection; otherwise the coroutine
+        just sleeps. Every fired tick advances the viewport by one row
+        and updates the selection head to follow the new bottom/top
+        edge, so the highlight extends as if the cursor stayed pinned
+        to the off-screen mouse position. Auto-disarms once the viewport
+        hits the top (offset=0) or bottom (sticky-bottom re-engaged).
+        """
+        try:
+            while True:
+                await asyncio.sleep(self._AUTOSCROLL_POLL_SECONDS)
+                if not self._selection_autoscroll.is_active():
+                    continue
+                if not self._selection.dragging:
+                    self._selection_autoscroll.disarm()
+                    continue
+                if not self._selection_autoscroll.due():
+                    continue
+                direction = self._selection_autoscroll.direction
+                if direction < 0:
+                    if self._get_output_scroll(self._output_window) <= 0:
+                        # Already at the top — nothing to scroll into view.
+                        self._selection_autoscroll.disarm()
+                        continue
+                    self._scroll_output_up(1)
+                    new_row = self._get_output_scroll(self._output_window)
+                else:
+                    if self._output_at_bottom:
+                        # Sticky-bottom: no further content below.
+                        self._selection_autoscroll.disarm()
+                        continue
+                    self._scroll_output_down(1)
+                    viewport = max(1, self._output_viewport_rows())
+                    new_row = self._get_output_scroll(self._output_window) + viewport - 1
+                total = int(self._output_line_count_fn())
+                if total > 0:
+                    new_row = max(0, min(new_row, total - 1))
+                # Extend the head to the new edge column-anchored on the
+                # head's last x so the highlight grows in a straight
+                # vertical band rather than zig-zagging.
+                head_col = self._selection.head.column if self._selection.head is not None else 0
+                self._selection.update_head(SelectionPoint(line=new_row, column=head_col))
+                try:
+                    self._app.invalidate()
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug("autoscroll invalidate raised: %s", exc)
+        except asyncio.CancelledError:
+            raise
 
     async def _blink_invalidate_loop(self) -> None:
         """Keep the status-bar ``running`` dot pulsing by periodic re-renders.
@@ -1140,6 +1478,21 @@ class DatusApp:
         @kb.add("pagedown")
         def _page_down(event) -> None:  # noqa: ANN001
             self._scroll_output_down(self._output_page_size())
+            event.app.invalidate()
+
+        # Escape clears an active selection. The filter gates this so
+        # we never compete with ``DatusCLI``'s Esc → agent-interrupt
+        # binding (registered later on the same KeyBindings instance);
+        # ``eager=True`` lets prompt_toolkit pick this handler over the
+        # interrupt one when both filters are true, which is the
+        # intuitive precedence — clearing the visible highlight is a
+        # local UI concern that the user explicitly asked for.
+        has_selection = Condition(lambda: not self._selection.is_empty())
+
+        @kb.add("escape", filter=has_selection, eager=True)
+        def _clear_selection(event) -> None:  # noqa: ANN001
+            self._selection.clear()
+            self._selection_autoscroll.disarm()
             event.app.invalidate()
 
         return kb

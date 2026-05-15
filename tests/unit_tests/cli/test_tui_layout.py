@@ -62,7 +62,8 @@ class TestCompletionsMenuWired:
         assert len(children) == 2, f"root should have 2 children (top_row, dynamic); got {len(children)}"
         assert isinstance(children[0], VSplit), "index 0 must be the output + sidebar VSplit"
         top_children = list(children[0].get_children())
-        assert top_children == [app._output_window, app._todo_sidebar]
+        # Top row: scrollable output, 1-col scrollbar gutter, todo sidebar.
+        assert top_children == [app._output_window, app._scrollbar_window, app._todo_sidebar]
 
         assert isinstance(children[1], DynamicContainer), "index 1 must be the dynamic bottom slot"
         bottom = children[1].get_container()
