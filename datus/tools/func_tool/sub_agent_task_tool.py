@@ -50,6 +50,7 @@ NODE_CLASS_MAP = {
     "gen_sql": NodeType.TYPE_GENSQL,
     "chat": NodeType.TYPE_CHAT,
     "gen_report": NodeType.TYPE_GEN_REPORT,
+    "gen_visual_report": NodeType.TYPE_GEN_VISUAL_REPORT,
     "ext_knowledge": NodeType.TYPE_EXT_KNOWLEDGE,
     "semantic": NodeType.TYPE_SEMANTIC,
     "sql_summary": NodeType.TYPE_SQL_SUMMARY,
@@ -93,6 +94,22 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "or analyzing why a metric changed. "
         "Prompt: provide the metric question, include reference SQL or metric name if available. "
         "Returns JSON with {response, report_result, tokens_used}."
+    ),
+    "gen_visual_report": (
+        "Produce a visualizable report artifact under "
+        "<project_root>/reports/<id>/ (render/*.jsx + queries/<slug>.sql/.json). "
+        "The subagent writes a render/ tree of React modules — the entry "
+        "render/app.jsx imports siblings like render/kpi-banner.jsx via relative "
+        "paths and pulls pre-executed query JSON via useQuerySql. "
+        "Use this — instead of writing HTML/Markdown directly — whenever the user asks "
+        "for a *report* with charts/tables, a dashboard, or any answer that benefits "
+        "from persisted SQL + rendered visualisations (the artifact is consumed by "
+        "Datus-CLI HTML export and Datus-SaaS dynamic iframe renderer). "
+        "Prompt: provide the analytical question and any context (time range, scope, "
+        "metrics of interest); the agent will discover data, save queries via save_query, "
+        "write_file the render/*.jsx components, then finalize with validate_render. "
+        "Returns JSON with {response, report_id, app_jsx_path, render_file_count, "
+        "html_path, query_count, tokens_used}."
     ),
     "gen_semantic_model": (
         "Generate MetricFlow semantic model YAML files from database table structures. "
@@ -403,6 +420,20 @@ class SubAgentTaskTool:
                 execution_mode=self._resolve_execution_mode(),
                 is_subagent=True,
             )
+        elif subagent_type == "gen_visual_report":
+            from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
+
+            return GenVisualReportAgenticNode(
+                node_id=f"task_gen_visual_report_{uuid.uuid4().hex[:8]}",
+                description="Visual report generation node for gen_visual_report",
+                node_type="gen_visual_report",
+                input_data=None,
+                agent_config=self.agent_config,
+                tools=None,
+                node_name="gen_visual_report",
+                execution_mode=self._resolve_execution_mode(),
+                is_subagent=True,
+            )
         elif subagent_type == "gen_table":
             from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
 
@@ -478,6 +509,10 @@ class SubAgentTaskTool:
         # Built-in gen_report type
         if subagent_type == "gen_report":
             return NodeType.TYPE_GEN_REPORT, "gen_report"
+
+        # Built-in gen_visual_report type
+        if subagent_type == "gen_visual_report":
+            return NodeType.TYPE_GEN_VISUAL_REPORT, "gen_visual_report"
 
         # Built-in system subagents (SYS_SUB_AGENTS)
         builtin_type_map = {
@@ -879,6 +914,16 @@ class SubAgentTaskTool:
             from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput
 
             return GenReportNodeInput(
+                user_message=prompt,
+                database=self.agent_config.current_datasource,
+            )
+
+        from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
+
+        if isinstance(node, GenVisualReportAgenticNode):
+            from datus.schemas.gen_visual_report_models import GenVisualReportNodeInput
+
+            return GenVisualReportNodeInput(
                 user_message=prompt,
                 database=self.agent_config.current_datasource,
             )

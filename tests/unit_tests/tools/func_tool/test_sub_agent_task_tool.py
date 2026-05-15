@@ -222,6 +222,20 @@ class TestResolveNodeType:
         with pytest.raises(ValueError, match="Unknown subagent type"):
             task_tool._resolve_node_type("nonexistent")
 
+    def test_gen_visual_report_resolves(self, task_tool):
+        """gen_visual_report must be registered alongside other built-in subagents.
+
+        Regression test for the bug where the chat agent enumerated
+        gen_visual_report in available types (via SYS_SUB_AGENTS) but the
+        task tool had no NODE_CLASS_MAP / description / factory entry,
+        causing the LLM to report it as 'unavailable'.
+        """
+        node_type, node_name = task_tool._resolve_node_type("gen_visual_report")
+        assert node_type == NodeType.TYPE_GEN_VISUAL_REPORT
+        assert node_name == "gen_visual_report"
+        assert NODE_CLASS_MAP["gen_visual_report"] == NodeType.TYPE_GEN_VISUAL_REPORT
+        assert "gen_visual_report" in BUILTIN_SUBAGENT_DESCRIPTIONS
+
     def test_resolve_effective_inherits_parent_when_child_empty(self, task_tool):
         parent = MagicMock()
         parent.node_config = {"scoped_context": {"tables": "public.users"}}
@@ -314,6 +328,7 @@ class TestResolveNodeType:
             "gen_sql": NodeType.TYPE_GENSQL,
             "chat": NodeType.TYPE_CHAT,
             "gen_report": NodeType.TYPE_GEN_REPORT,
+            "gen_visual_report": NodeType.TYPE_GEN_VISUAL_REPORT,
             "ext_knowledge": NodeType.TYPE_EXT_KNOWLEDGE,
             "semantic": NodeType.TYPE_SEMANTIC,
             "sql_summary": NodeType.TYPE_SQL_SUMMARY,

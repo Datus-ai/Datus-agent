@@ -17,6 +17,8 @@ from datus.schemas.fix_node_models import FixInput
 from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput
 from datus.schemas.gen_skill_agentic_node_models import SkillCreatorNodeInput
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
+from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeInput
+from datus.schemas.gen_visual_report_models import GenVisualReportNodeInput
 from datus.schemas.node_models import ExecuteSQLInput, GenerateSQLInput, OutputInput, ReflectionInput
 from datus.schemas.parallel_node_models import ParallelInput, SelectionInput
 from datus.schemas.reason_sql_node_models import ReasoningInput
@@ -58,6 +60,8 @@ class NodeType:
     TYPE_SEMANTIC = "semantic"  # For semantic model generation
     TYPE_SQL_SUMMARY = "sql_summary"  # For SQL summary generation
     TYPE_GEN_REPORT = "gen_report"  # For generic report generation
+    TYPE_GEN_VISUAL_REPORT = "gen_visual_report"  # For structured (manifest + queries) report generation
+    TYPE_GEN_VISUAL_DASHBOARD = "gen_visual_dashboard"  # For parameterized dashboard generation
     TYPE_EXT_KNOWLEDGE = "ext_knowledge"  # For external knowledge generation
     TYPE_EXPLORE = "explore"  # For read-only data exploration and context gathering
     TYPE_GEN_TABLE = "gen_table"  # For wide table generation from JOIN SQL
@@ -83,6 +87,8 @@ class NodeType:
         TYPE_SEMANTIC,
         TYPE_SQL_SUMMARY,
         TYPE_GEN_REPORT,
+        TYPE_GEN_VISUAL_REPORT,
+        TYPE_GEN_VISUAL_DASHBOARD,
         TYPE_EXT_KNOWLEDGE,
         TYPE_EXPLORE,
         TYPE_GEN_TABLE,
@@ -115,6 +121,10 @@ class NodeType:
         TYPE_SEMANTIC: "Semantic model generation with conversational AI",
         TYPE_SQL_SUMMARY: "SQL summary generation with conversational AI",
         TYPE_GEN_REPORT: "Generic report generation with semantic and database tools",
+        TYPE_GEN_VISUAL_REPORT: ("Visualizable report generation producing render/*.jsx + queries/* artifacts"),
+        TYPE_GEN_VISUAL_DASHBOARD: (
+            "Parameterized dashboard generation producing render/*.jsx + queries/*.sql.j2 artifacts"
+        ),
         TYPE_EXT_KNOWLEDGE: "External knowledge generation with conversational AI",
         TYPE_EXPLORE: "Read-only data exploration and context gathering",
         TYPE_GEN_TABLE: "Wide table generation from JOIN SQL with CTAS",
@@ -173,6 +183,10 @@ class NodeType:
             input_data_cls = SqlSummaryNodeInput
         elif node_type == NodeType.TYPE_GEN_REPORT:
             input_data_cls = GenReportNodeInput
+        elif node_type == NodeType.TYPE_GEN_VISUAL_REPORT:
+            input_data_cls = GenVisualReportNodeInput
+        elif node_type == NodeType.TYPE_GEN_VISUAL_DASHBOARD:
+            input_data_cls = GenVisualDashboardNodeInput
         elif node_type == NodeType.TYPE_EXT_KNOWLEDGE:
             input_data_cls = ExtKnowledgeNodeInput
         elif node_type == NodeType.TYPE_EXPLORE:

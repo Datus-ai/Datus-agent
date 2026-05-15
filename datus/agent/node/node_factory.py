@@ -93,6 +93,36 @@ def create_interactive_node(
                 execution_mode=execution_mode,
             )
 
+        elif subagent_name == "gen_visual_report" or node_class_type == "gen_visual_report":
+            from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
+
+            return GenVisualReportAgenticNode(
+                node_id=node_id if node_id is not None else f"{subagent_name}{node_id_suffix}",
+                description=f"Visual report generation node for {subagent_name}",
+                node_type="gen_visual_report",
+                input_data=None,
+                agent_config=agent_config,
+                tools=None,
+                node_name=subagent_name,
+                scope=scope,
+                execution_mode=execution_mode,
+            )
+
+        elif subagent_name == "gen_visual_dashboard" or node_class_type == "gen_visual_dashboard":
+            from datus.agent.node.gen_visual_dashboard_agentic_node import GenVisualDashboardAgenticNode
+
+            return GenVisualDashboardAgenticNode(
+                node_id=node_id if node_id is not None else f"{subagent_name}{node_id_suffix}",
+                description=f"Visual dashboard generation node for {subagent_name}",
+                node_type="gen_visual_dashboard",
+                input_data=None,
+                agent_config=agent_config,
+                tools=None,
+                node_name=subagent_name,
+                scope=scope,
+                execution_mode=execution_mode,
+            )
+
         elif subagent_name == "explore" or node_class_type == "explore":
             # Wire the read-only `explore` sub-agent into the interactive
             # path. `ExploreAgenticNode` is a first-class node type (see
@@ -226,6 +256,8 @@ def create_node_input(
     from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
     from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
     from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
+    from datus.agent.node.gen_visual_dashboard_agentic_node import GenVisualDashboardAgenticNode
+    from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
     from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 
     if isinstance(
@@ -273,6 +305,26 @@ def create_node_input(
         from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput
 
         return GenReportNodeInput(
+            user_message=user_message,
+            catalog=catalog,
+            database=database,
+            db_schema=db_schema,
+        )
+
+    elif isinstance(node, GenVisualReportAgenticNode):
+        from datus.schemas.gen_visual_report_models import GenVisualReportNodeInput
+
+        return GenVisualReportNodeInput(
+            user_message=user_message,
+            catalog=catalog,
+            database=database,
+            db_schema=db_schema,
+        )
+
+    elif isinstance(node, GenVisualDashboardAgenticNode):
+        from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeInput
+
+        return GenVisualDashboardNodeInput(
             user_message=user_message,
             catalog=catalog,
             database=database,

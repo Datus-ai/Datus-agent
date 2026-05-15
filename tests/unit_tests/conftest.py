@@ -257,6 +257,16 @@ def real_agent_config(tmp_path, reset_global_singletons):
                 "tools": "db_tools.*,context_search_tools.*",
                 "max_turns": 5,
             },
+            "gen_visual_report": {
+                "system_prompt": "gen_visual_report",
+                "tools": "semantic_tools.*,db_tools.*,context_search_tools.list_subject_tree",
+                "max_turns": 5,
+            },
+            "gen_visual_dashboard": {
+                "system_prompt": "gen_visual_dashboard",
+                "tools": "semantic_tools.*,db_tools.*,context_search_tools.list_subject_tree",
+                "max_turns": 5,
+            },
             "explore": {
                 "system_prompt": "explore",
                 "max_turns": 15,

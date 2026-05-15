@@ -159,6 +159,17 @@ class DatusCLI:
 
         # Load agent config first so path-dependent helpers use the configured home.
         self.agent_config = load_agent_config(create_if_missing=True, **vars(self.args))
+        # Stash the ``--report-dist`` CLI flag as a runtime override on
+        # agent_config so ``gen_visual_report`` can pick it up at HTML compile
+        # time without threading args through every layer (AgentConfig is a
+        # plain class, dynamic attributes are fine — see datus/cli/main.py).
+        report_dist_flag = getattr(self.args, "report_dist", None)
+        if report_dist_flag:
+            self.agent_config.report_dist_cli_override = report_dist_flag
+        # REPL is interactive — auto-open the report HTML in a browser unless
+        # the user opted out via ``--no-open-report``. Stash on agent_config
+        # so the deeply-nested node reads it without arg threading.
+        self.agent_config.report_auto_open = not bool(getattr(self.args, "no_open_report", False))
         self.configuration_manager = configuration_manager()
 
         # Active permission profile name. Initialized from agent_config;

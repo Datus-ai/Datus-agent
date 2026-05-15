@@ -18,9 +18,10 @@ on:
       # title (skipping the audit via the doc guard), then rename it to a
       # non-doc title and merge without the audit ever running.
       - edited
+  merge_group:
 
 concurrency:
-  group: test-audit-${{ github.event.pull_request.number }}
+  group: test-audit-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -29,10 +30,17 @@ permissions:
 
 jobs:
   test-audit:
-    if: ${{ !startsWith(github.event.pull_request.title, '[Doc]') && !startsWith(github.event.pull_request.title, '[doc]') }}
+    if: ${{ github.event_name == 'merge_group' || (github.event_name == 'pull_request_target' && !startsWith(github.event.pull_request.title, '[Doc]') && !startsWith(github.event.pull_request.title, '[doc]')) }}
     runs-on: self-hosted
     steps:
+      - name: Publish merge queue audit context
+        if: ${{ github.event_name == 'merge_group' }}
+        run: |
+          echo "test-audit is enforced on pull_request_target before merge queue entry."
+          echo "merge_group publishes the required context without re-running the static PR diff audit."
+
       - name: Checkout base repo (trusted code — runs the auditor)
+        if: ${{ github.event_name == 'pull_request_target' }}
         uses: actions/checkout@v4
         with:
           # No `ref` → checks out the PR's base commit (the branch the PR targets).
@@ -42,6 +50,7 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout PR head (untrusted data — never executed)
+        if: ${{ github.event_name == 'pull_request_target' }}
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
@@ -49,15 +58,18 @@ jobs:
           fetch-depth: 0
 
       - name: Fetch base ref inside pr/ (needed for git diff)
+        if: ${{ github.event_name == 'pull_request_target' }}
         working-directory: pr
         run: git fetch origin ${{ github.event.pull_request.base.ref }}
 
       - name: Set up Python
+        if: ${{ github.event_name == 'pull_request_target' }}
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Run test audit (trusted auditor against PR data)
+        if: ${{ github.event_name == 'pull_request_target' }}
         id: audit
         working-directory: pr
         run: |
@@ -73,7 +85,7 @@ jobs:
             --github-output
 
       - name: Post audit comment
-        if: always()
+        if: ${{ always() && github.event_name == 'pull_request_target' }}
         uses: actions/github-script@v7
         with:
           script: |
@@ -84,7 +96,7 @@ jobs:
             await script({ github, context, core });
 
       - name: Fail job if audit did not complete or found blocking issues
-        if: always() && (steps.audit.outcome != 'success' || steps.audit.outputs.audit_outcome == 'failure')
+        if: ${{ always() && github.event_name == 'pull_request_target' && (steps.audit.outcome != 'success' || steps.audit.outputs.audit_outcome == 'failure') }}
         run: |
           if [ "${{ steps.audit.outcome }}" != "success" ]; then
             echo "::error::Test audit step did not complete cleanly (outcome=${{ steps.audit.outcome }}). This likely indicates an auditor bug or repository misconfiguration. Investigate before merging."

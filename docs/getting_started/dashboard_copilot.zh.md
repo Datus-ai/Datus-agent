@@ -22,97 +22,30 @@ Bootstrap 过程会自动生成两个专门的子代理：一个**主子代理**
 开始之前，请确保您已具备：
 
 - Docker Desktop 已安装并运行
-- Kubernetes CLI (`kubectl`)
-- Helm 包管理器
 - Python 3.12 并已安装 Datus
 
 ## 步骤 1：部署 Superset + PostgreSQL
 
-首先，安装所需的基础设施工具。
-
-### 安装依赖
-
-=== "macOS"
-
-    ```bash
-    brew install --cask docker
-    brew install helm kubectl minikube
-    ```
-
-=== "Linux"
-
-    ```bash
-    # 安装 Docker
-    curl -fsSL https://get.docker.com | sh
-
-    # 安装 kubectl
-    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-    chmod +x kubectl && sudo mv kubectl /usr/local/bin/
-
-    # 安装 Helm
-    curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-
-    # 安装 minikube
-    curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
-    sudo install minikube-linux-amd64 /usr/local/bin/minikube
-    ```
-
-=== "Windows"
-
-    ```powershell
-    # 使用 Chocolatey 安装
-    choco install docker-desktop
-    choco install kubernetes-helm
-    choco install kubernetes-cli
-    choco install minikube
-    ```
-
-### 启动 Minikube
+可快速启动一个本地 Superset 环境：
 
 ```bash
-minikube start --driver=docker
+mkdir -p /tmp/datus-superset && cd /tmp/datus-superset
+curl -L -o datus-dashboard-copilot-stack-v1.zip https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v1/datus-dashboard-copilot-stack-v1.zip
+unzip -jo datus-dashboard-copilot-stack-v1.zip '*/superset/docker-compose.yml' '*/superset/superset_config.py'
+docker compose up -d
 ```
 
-### 部署 Superset
-
-添加 Superset Helm 仓库并部署：
+待服务就绪后确认：
 
 ```bash
-# 添加 Superset Helm 仓库
-helm repo add superset https://apache.github.io/superset
-helm repo update
-
-# 使用示例配置部署 Superset
-helm upgrade --install superset superset/superset -n default -f ./examples-values.yaml --wait --timeout 30m
-```
-[下载 examples-values.yaml](../assets/examples-values.yaml){ .md-button }
-
-!!! tip "自定义配置"
-    您可以通过修改 `examples-values.yaml` 来自定义部署。有关可用选项，请参阅 [Superset Helm Chart 文档](https://github.com/apache/superset/tree/master/helm/superset)。
-
-### 等待 Pod 就绪
-
-监控部署状态，直到所有 Pod 运行正常：
-
-```bash
-kubectl get pods -n default -w
-```
-
-等待所有 Pod 显示 `Running` 状态后再继续。
-
-### 设置端口转发
-
-将 Superset 和 PostgreSQL 服务暴露到本地：
-
-```bash
-# 转发 Superset UI（端口 8088）
-kubectl port-forward -n default service/superset 8088:8088 > /dev/null 2>&1 &
-
-# 转发 PostgreSQL（端口 15432）
-kubectl port-forward -n default svc/superset-postgresql 15432:5432 > /dev/null 2>&1 &
+docker compose logs -f superset
 ```
 
 现在您可以通过 [http://localhost:8088](http://localhost:8088) 访问 Superset，默认凭据为 `admin/admin`。
+PostgreSQL 暴露在 `127.0.0.1:5433`，默认库为 `superset_examples`，用户名/密码为 `superset`。
+
+!!! note "Helm 方式（可选）"
+    如果您更偏好 Kubernetes，也可以使用仓库中的 Helm 部署流程。
 
 ## 步骤 2：配置 Datus
 
@@ -129,10 +62,11 @@ agent:
       superset:
         type: postgresql
         host: 127.0.0.1
-        port: 15432
+        port: 5433
         username: superset
         password: superset
-        database: examples
+        database: superset_examples
+        schema: public
     semantic_layer:
       metricflow:
         type: metricflow
@@ -142,14 +76,15 @@ agent:
         api_base_url: http://localhost:8088
         username: admin
         password: admin
-        extra:
-          provider: db
+        dataset_db:
+          datasource_ref: superset
+          bi_database_name: examples
 ```
 
 !!! note "配置说明"
     - **services.datasources**：定义用于 SQL 执行的数据源连接
     - **services.semantic_layer**：注册 metric 与 semantic model 工作流使用的语义适配器
-    - **services.bi_platforms**：定义用于仪表盘访问的 BI 平台凭据
+    - **services.bi_platforms**：定义 BI 平台凭据，并将 Superset 中的 `examples` 数据库连接映射到 Datus 的 `superset` datasource
 
 !!! tip
     也可以在 REPL 内通过斜杠命令交互式添加：`/datasource` 添加 SQL 数据源，`/services` 添加 semantic layer、BI platform 与 scheduler。
@@ -279,19 +214,17 @@ filter:
 
 **6. 选择并发数**
 
-后续构建会并行调用 LLM，可根据网络与配额选择线程池大小（默认 1，可加大以加速）。
+后续构建会并行调用 LLM，可根据网络与配额选择线程池大小（默认 3，可加大以加速）。
 
-```text
-─────────────────────────────── Bootstrap BI ───────────────────────────────
-────────────────────────────────────────────────────────────────────────────
-  Pick a thread-pool size for parallel LLM calls:
-  → 1 threads
-    2 threads
-    4 threads
-    8 threads
-────────────────────────────────────────────────────────────────────────────
-  ↑↓ navigate   ↵ select   Esc back
-```
+    ─────────────────────────────── Bootstrap BI ───────────────────────────────
+    ────────────────────────────────────────────────────────────────────────────
+      Pick a thread-pool size for parallel LLM calls:
+        1 threads
+      → 3 threads
+        5 threads
+        10 threads
+    ────────────────────────────────────────────────────────────────────────────
+      ↑↓ navigate   ↵ select   Esc back
 
 ### 自动化构建
 
@@ -304,7 +237,7 @@ filter:
 ```text
 ⏺ 💬 Dashboard: World Bank's Data (id=5)
 
-⏺ 💬 Selected 9/9 chart(s); 1 table(s); pool_size=1
+⏺ 💬 Selected 9/9 chart(s); 1 table(s); pool_size=3
 
 ⏺ 💬 Crawling metadata for 1 table(s)…
 
@@ -325,7 +258,7 @@ filter:
 
 ⏺ 💬 Discovering SQL files under /Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql (mode=incremental)…
 
-⏺ 💬 Processing 9 SQL item(s) with concurrency=1.
+⏺ 💬 Processing 9 SQL item(s) with concurrency=3.
 
 ⏺ gen_sql_summary(/Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql)
   ⎿  Done (2 tool uses · 20.0s)
@@ -427,7 +360,7 @@ Bootstrap 完成后，您将获得可直接使用的子代理：
 
 ## 步骤 4：使用生成的子代理
 
-Bootstrap 一次生成两个子代理：用于自助取数的**主子代理**，以及面向指标分析的**归因子代理**。两者均可作为斜杠命令直接调用，也可在 `/agent` 中切换为当前默认 agent。
+Bootstrap 一次生成两个子代理：用于自助取数的**主子代理**，以及面向指标分析的**归因子代理**。两者均可通过 `@Agent <name>`（例如 `@Agent superset_world_bank_s`）直接调用，也可在 `/agent` 中切换为当前默认 agent。
 
 ### SQL 取数 — 主子代理
 

@@ -38,7 +38,9 @@ class FilesystemConfig:
             ".md",
             ".py",
             ".js",
+            ".jsx",
             ".ts",
+            ".tsx",
             ".json",
             ".yaml",
             ".yml",
@@ -113,6 +115,7 @@ class FilesystemFuncTool(BaseTool):
             self.read_file,
             self.write_file,
             self.edit_file,
+            self.delete_file,
             self.glob,
             self.grep,
         ]
@@ -312,6 +315,64 @@ class FilesystemFuncTool(BaseTool):
 
         except Exception as e:
             logger.error(f"Error writing file {path}: {str(e)}")
+            return FuncToolResult(success=0, error=str(e))
+
+    def delete_file(self, path: str) -> FuncToolResult:
+        """
+        Delete a single regular file.
+
+        Use this to remove a file that's no longer needed (e.g. a previously
+        emitted component that the report no longer references). The path
+        rules mirror ``write_file`` / ``edit_file``: same zone classification,
+        same read-only / external / hidden gating.
+
+        Args:
+            path: Target path. Relative paths are resolved under the project
+                root. Refusing to delete directories is intentional — bulk
+                cleanup is a different operation and we don't surface it.
+
+        Returns:
+            dict: A dictionary with the execution result, containing:
+                  - 'success' (int): 1 for success, 0 for failure.
+                  - 'error' (Optional[str]): Error message on failure.
+                  - 'result' (Optional[str]): Success message on success.
+        """
+        try:
+            resolved = self._classify(path)
+            if resolved.zone == PathZone.HIDDEN:
+                return self._not_found(resolved)
+            if self._strict and resolved.zone == PathZone.EXTERNAL:
+                return self._strict_reject(resolved)
+            if resolved.read_only:
+                return self._read_only_reject(resolved)
+
+            target_path = resolved.resolved
+            if not target_path.exists():
+                return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
+            if target_path.is_dir():
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        f"Path is a directory, not a file: {resolved.display}. "
+                        "delete_file refuses to remove directories — handle them explicitly."
+                    ),
+                )
+            if not target_path.is_file():
+                return FuncToolResult(success=0, error=f"Path is not a regular file: {resolved.display}")
+
+            if not self._is_allowed_file(target_path):
+                return FuncToolResult(success=0, error=f"File type not allowed: {resolved.display}")
+
+            try:
+                target_path.unlink()
+                return FuncToolResult(result=f"File deleted successfully: {resolved.display}")
+            except PermissionError:
+                return FuncToolResult(success=0, error=f"Permission denied: {resolved.display}")
+            except OSError as exc:
+                return FuncToolResult(success=0, error=f"Failed to delete file: {exc}")
+
+        except Exception as e:
+            logger.error(f"Error deleting file {path}: {str(e)}")
             return FuncToolResult(success=0, error=str(e))
 
     def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:

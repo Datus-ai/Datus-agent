@@ -1,7 +1,7 @@
 # Project basic information configuration, required.
 [project]
 name = "datus-agent"
-version = "0.2.6"
+version = "0.3.0"
 description = "AI-powered SQL Agent for data engineering (Compiled Version)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -110,6 +110,7 @@ exclude = ["benchmark*", "docs*"]
     "sample_data/superset/*",
 ]
 "datus.cli.web" = ["templates/*.html"]
+"datus.agent.node" = ["templates/*.html"]
 "datus.prompts" = ["*.txt", "*.md", "*.j2"]
 "datus.prompts.prompt_templates" = ["*.j2"]
 
