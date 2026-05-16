@@ -214,6 +214,10 @@ def _suite_pytest_basetemp(suite_name: str) -> str:
     return os.path.join(DEFAULT_PYTEST_BASETEMP, _slugify(suite_name))
 
 
+def _prepare_suite_pytest_basetemp(basetemp: str) -> None:
+    os.makedirs(os.path.dirname(basetemp), exist_ok=True)
+
+
 def _reset_report_outputs() -> None:
     for path in [
         DEFAULT_COVERAGE_XML,
@@ -291,6 +295,7 @@ def _run_pytest_suite(
 ) -> int:
     """Run one pytest suite and stream logs to stdout and the CI log file."""
     basetemp = _suite_pytest_basetemp(suite_name)
+    _prepare_suite_pytest_basetemp(basetemp)
     cmd = _build_pytest_command(
         targets,
         junit_xml,

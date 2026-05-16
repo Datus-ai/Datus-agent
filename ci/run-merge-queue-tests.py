@@ -57,6 +57,10 @@ def suite_pytest_basetemp(suite_name: str) -> Path:
     return PYTEST_BASETEMP / slugify(suite_name)
 
 
+def prepare_suite_pytest_basetemp(basetemp: Path) -> None:
+    basetemp.parent.mkdir(parents=True, exist_ok=True)
+
+
 def path_is_under(path: Path, parent: Path) -> bool:
     if not str(parent):
         return False
@@ -215,6 +219,7 @@ def run_suite(name: str, suite: dict[str, Any], *, timeout: int) -> dict[str, An
         return {"suite": name, "exit_code": 1, "targets": []}
 
     basetemp = suite_pytest_basetemp(name)
+    prepare_suite_pytest_basetemp(basetemp)
     command = build_pytest_command(
         targets,
         mark_expr=suite["mark_expr"],

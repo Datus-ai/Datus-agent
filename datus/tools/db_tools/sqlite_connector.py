@@ -5,6 +5,7 @@
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, override
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from datus_db_core import BaseSqlConnector
 from pandas import DataFrame
@@ -19,6 +20,25 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+def _read_only_sqlite_uri(db_path: str) -> str:
+    if not db_path.startswith("file:"):
+        return f"{Path(db_path).resolve().as_uri()}?mode=ro"
+
+    parts = urlsplit(db_path)
+    query: list[tuple[str, str]] = []
+    mode_seen = False
+    for key, value in parse_qsl(parts.query, keep_blank_values=True):
+        if key.lower() == "mode":
+            if not mode_seen:
+                query.append((key, "ro"))
+                mode_seen = True
+            continue
+        query.append((key, value))
+    if not mode_seen:
+        query.append(("mode", "ro"))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
 class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
@@ -53,10 +73,7 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
                 "check_same_thread": self.check_same_thread,
             }
             if self.read_only and self.db_path != ":memory:":
-                if self.db_path.startswith("file:"):
-                    connect_path = self.db_path
-                else:
-                    connect_path = f"{Path(self.db_path).resolve().as_uri()}?mode=ro"
+                connect_path = _read_only_sqlite_uri(self.db_path)
                 connect_kwargs["uri"] = True
             self.connection = sqlite3.connect(
                 connect_path,

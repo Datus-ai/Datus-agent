@@ -87,10 +87,24 @@ jobs:
         if: always()
         env:
           DATUS_CI_PYTEST_BASETEMP: ${{ runner.temp }}/datus-agent-pytest-${{ github.run_id }}-${{ github.run_attempt }}
+          RUNNER_TEMP_ROOT: ${{ runner.temp }}
         run: |
-          if [ -n "$DATUS_CI_PYTEST_BASETEMP" ]; then
-            rm -rf "$DATUS_CI_PYTEST_BASETEMP"
+          if [ -z "$DATUS_CI_PYTEST_BASETEMP" ]; then
+            exit 0
           fi
+          target="$(realpath -m "$DATUS_CI_PYTEST_BASETEMP")"
+          runner_temp="$(realpath -m "$RUNNER_TEMP_ROOT")"
+          home_dir="$(realpath -m "$HOME")"
+          workspace="$(realpath -m "$GITHUB_WORKSPACE")"
+          case "$target" in
+            "$runner_temp"/*) ;;
+            *) echo "Refusing to remove unsafe pytest temp: $target"; exit 0 ;;
+          esac
+          if [ "$target" = "/" ] || [ "$target" = "$runner_temp" ] || [ "$target" = "$home_dir" ] || [ "$target" = "$workspace" ]; then
+            echo "Refusing to remove unsafe pytest temp: $target"
+            exit 0
+          fi
+          rm -rf "$target"
 
       - name: Post coverage comment
         if: ${{ always() && github.event_name == 'pull_request_target' && steps.metrics.outcome != 'cancelled' }}

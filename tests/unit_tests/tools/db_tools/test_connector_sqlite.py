@@ -56,7 +56,31 @@ def test_read_only_connection_rejects_writes(tmp_path):
 
         write_result = connector.execute_ddl("CREATE TABLE should_fail (id INT)")
         assert write_result.success is False
-        assert "readonly" in write_result.error.lower() or "read-only" in write_result.error.lower()
+        assert "readonly" in write_result.error.lower().replace("-", "")
+    finally:
+        connector.close()
+
+    with sqlite3.connect(db_path) as conn:
+        table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'should_fail'"
+        ).fetchone()
+    assert table_exists is None
+
+
+@pytest.mark.parametrize("uri_query", ["cache=shared", "mode=rw"])
+def test_read_only_file_uri_connection_rejects_writes(tmp_path, uri_query):
+    db_path = tmp_path / "readonly-uri.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
+
+    connector = SQLiteConnector(SQLiteConfig(db_path=f"{db_path.as_uri()}?{uri_query}", read_only=True))
+    try:
+        result = connector.execute({"sql_query": "SELECT * FROM test"}, result_format="list")
+        assert result.success is True
+
+        write_result = connector.execute_ddl("CREATE TABLE should_fail (id INT)")
+        assert write_result.success is False
+        assert "readonly" in write_result.error.lower().replace("-", "")
     finally:
         connector.close()
 

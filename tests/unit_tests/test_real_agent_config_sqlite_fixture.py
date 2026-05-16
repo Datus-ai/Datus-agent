@@ -25,7 +25,7 @@ def test_real_agent_config_uses_shared_readonly_sample_db(real_agent_config, tmp
 
     write_result = tool.execute_ddl("CREATE TABLE datus_readonly_probe (id INT)")
     assert write_result.success == 0
-    assert "readonly" in write_result.error.lower() or "read-only" in write_result.error.lower()
+    assert "readonly" in write_result.error.lower().replace("-", "")
 
 
 def test_mutable_real_agent_config_gets_isolated_writable_copy(mutable_real_agent_config, tmp_path):
