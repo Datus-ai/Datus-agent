@@ -365,14 +365,7 @@ class DeliverableAgenticNode(AgenticNode):
                     response_content = str(last_successful_output)
 
             if self.execution_mode == "interactive":
-                final_actions = action_history_manager.get_actions()
-                for a in reversed(final_actions):
-                    if a.role == "assistant" and a.output and isinstance(a.output, dict):
-                        usage_info = a.output.get("usage", {})
-                        if isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                            tokens_used = usage_info.get("total_tokens", 0)
-                            if tokens_used > 0:
-                                break
+                tokens_used = self._extract_total_tokens(action_history_manager.get_actions())
 
             # Merge on_end validation report (if any) with the blocking report
             # from a retry-exhausted attempt.

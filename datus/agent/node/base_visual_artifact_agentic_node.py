@@ -711,13 +711,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
 
             all_actions = action_history_manager.get_actions()
             tool_calls = [a for a in all_actions if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS]
-
-            for past in reversed(all_actions):
-                if past.role == ActionRole.ASSISTANT and isinstance(past.output, dict):
-                    usage = past.output.get("usage") or {}
-                    if isinstance(usage, dict) and usage.get("total_tokens"):
-                        tokens_used = int(usage["total_tokens"])
-                        break
+            tokens_used = self._extract_total_tokens(all_actions)
 
             # Find the most recent successful validate_render call. That's
             # the terminal action of this subagent; its result envelope

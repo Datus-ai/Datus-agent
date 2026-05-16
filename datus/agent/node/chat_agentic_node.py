@@ -675,20 +675,7 @@ class ChatAgenticNode(AgenticNode):
 
             logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
 
-            # Extract token usage
-            final_actions = action_history_manager.get_actions()
-            tokens_used = 0
-
-            for action in reversed(final_actions):
-                if action.role == "assistant":
-                    if action.output and isinstance(action.output, dict):
-                        usage_info = action.output.get("usage", {})
-                        if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                            tokens_used = usage_info.get("total_tokens", 0)
-                            if tokens_used > 0:
-                                break
-                            else:
-                                logger.warning(f"no usage token found in this action {action.messages}")
+            tokens_used = self._extract_total_tokens(action_history_manager.get_actions())
 
             # Collect execution stats
             all_actions = action_history_manager.get_actions()

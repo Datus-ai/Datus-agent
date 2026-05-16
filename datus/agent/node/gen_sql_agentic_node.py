@@ -770,27 +770,9 @@ class GenSQLAgenticNode(AgenticNode):
             logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
             logger.debug(f"Final sql_content: {sql_content[:100] if sql_content else 'None'}...")
 
-            # Extract token usage from final actions
-            final_actions = action_history_manager.get_actions()
-            tokens_used = 0
-
-            # Find the final assistant action with token usage
-            for action in reversed(final_actions):
-                if action.role == "assistant":
-                    if action.output and isinstance(action.output, dict):
-                        usage_info = action.output.get("usage", {})
-                        if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                            try:
-                                tokens_used = int(usage_info.get("total_tokens", 0))
-                            except (TypeError, ValueError):
-                                tokens_used = 0
-                            if tokens_used > 0:
-                                break
-                            else:
-                                logger.warning(f"no usage token found in this action {action.messages}")
-
             # Collect action history and calculate execution stats
             all_actions = action_history_manager.get_actions()
+            tokens_used = self._extract_total_tokens(all_actions)
             tool_calls = [
                 action
                 for action in all_actions

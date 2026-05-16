@@ -302,15 +302,7 @@ class FeedbackAgenticNode(AgenticNode):
             # Extract token usage
             tokens_used = 0
             if self.execution_mode == "interactive":
-                final_actions = action_history_manager.get_actions()
-                for act in reversed(final_actions):
-                    if act.role == "assistant":
-                        if act.output and isinstance(act.output, dict):
-                            usage_info = act.output.get("usage", {})
-                            if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                                tokens_used = usage_info.get("total_tokens", 0)
-                                if tokens_used > 0:
-                                    break
+                tokens_used = self._extract_total_tokens(action_history_manager.get_actions())
 
             # Count storage from the current run's actions so reused node
             # instances don't leak counts from previous runs.

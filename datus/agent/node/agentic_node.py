@@ -2166,6 +2166,36 @@ class AgenticNode(Node):
             ) from e
 
     @staticmethod
+    def _extract_total_tokens(actions: List[ActionHistory]) -> int:
+        """Walk recent actions and return the most recent assistant token count.
+
+        Iterates in reverse so the latest assistant action wins. Tolerates
+        ``total_tokens`` being a numeric string (some providers emit
+        ``"1234"`` rather than ``1234``) — anything that fails an ``int``
+        cast contributes ``0`` and the loop continues looking further back.
+        Returns ``0`` when no assistant action carries a usable usage block.
+        """
+        for action in reversed(actions):
+            if action.role != ActionRole.ASSISTANT:
+                continue
+            output = action.output
+            if not isinstance(output, dict):
+                continue
+            usage_info = output.get("usage")
+            if not isinstance(usage_info, dict):
+                continue
+            total = usage_info.get("total_tokens")
+            if not total:
+                continue
+            try:
+                tokens = int(total)
+            except (TypeError, ValueError):
+                continue
+            if tokens > 0:
+                return tokens
+        return 0
+
+    @staticmethod
     def _format_execution_error(exc: BaseException) -> str:
         """Render an exception for error_result / error_action display.
 

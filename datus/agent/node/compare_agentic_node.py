@@ -281,16 +281,7 @@ class CompareAgenticNode(AgenticNode):
                 response_content = last_successful_output.get("raw_output", "")
 
             result_dict = self._parse_comparison_output(response_content)
-            tokens_used = 0
-
-            for action in reversed(action_history_manager.get_actions()):
-                if action.role == ActionRole.ASSISTANT and isinstance(action.output, dict):
-                    usage = action.output.get("usage", {})
-                    if isinstance(usage, dict):
-                        conversation_tokens = usage.get("total_tokens") or usage.get("output_tokens")
-                        if conversation_tokens:
-                            tokens_used = int(conversation_tokens)
-                            break
+            tokens_used = self._extract_total_tokens(action_history_manager.get_actions())
 
             result = CompareResult(
                 success=True,

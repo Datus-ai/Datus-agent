@@ -593,14 +593,7 @@ class GenReportAgenticNode(AgenticNode):
             if report_metadata and not report_result:
                 report_result = report_metadata
 
-            # Extract token usage
-            for action in reversed(all_actions):
-                if action.role == "assistant":
-                    if action.output and isinstance(action.output, dict):
-                        usage_info = action.output.get("usage", {})
-                        if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                            tokens_used = usage_info.get("total_tokens", 0)
-                            break
+            tokens_used = self._extract_total_tokens(all_actions)
 
             # Collect execution stats
             tool_calls = [

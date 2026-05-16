@@ -432,17 +432,7 @@ class SkillCreatorAgenticNode(AgenticNode):
                     or str(last_successful_output)
                 )
 
-            # Extract token usage
-            for act in reversed(action_history_manager.get_actions()):
-                if act.role == "assistant" and act.output and isinstance(act.output, dict):
-                    usage_info = act.output.get("usage", {})
-                    if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                        try:
-                            tokens_used = int(usage_info.get("total_tokens", 0))
-                        except (TypeError, ValueError):
-                            tokens_used = 0
-                        if tokens_used > 0:
-                            break
+            tokens_used = self._extract_total_tokens(action_history_manager.get_actions())
 
             # Extract skill_name and skill_path from the response if available
             skill_name = None
