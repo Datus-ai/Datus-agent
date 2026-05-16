@@ -416,6 +416,13 @@ class DeliverableAgenticNode(AgenticNode):
                 action_history_manager=action_history_manager,
             )
             self.result = error_result
+            # Mark the initial USER action as FAILED so the UI does not show
+            # an indefinitely-PROCESSING entry next to the error action.
+            action_history_manager.update_current_action(
+                status=ActionStatus.FAILED,
+                output=error_result.model_dump(),
+                messages=f"Error: {str(e)}",
+            )
             error_action = ActionHistory.create_action(
                 role=ActionRole.ASSISTANT,
                 action_type="error",
