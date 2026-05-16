@@ -1708,6 +1708,17 @@ class TestInjectResponseLanguage:
         assert "English (en)" in result
         assert result.startswith("BASE")
 
+    def test_apply_to_covers_generated_artifacts(self):
+        """The Response Language directive must cover artifact text — without
+        this clause LLMs treat report/dashboard ``name`` and ``description``
+        (and other artifact-internal prose) as outside the language scope and
+        emit them in the user's prompt language even when the global
+        ``agent.language`` is pinned to a different value.
+        """
+        node = _make_node(agent_config=self._agent_config("en"))
+        result = node._inject_response_language("BASE")
+        assert "generated artifacts" in result
+
     def test_chinese_override_uses_chinese_name(self):
         node = _make_node(agent_config=self._agent_config("zh"))
         result = node._inject_response_language("BASE")
