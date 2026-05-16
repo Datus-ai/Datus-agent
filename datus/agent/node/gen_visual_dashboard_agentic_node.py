@@ -88,10 +88,11 @@ class GenVisualDashboardAgenticNode(
 
     # ────────── Hooks the base class calls ──────────
 
-    def _make_artifact_tools(self) -> DashboardArtifactTools:
+    def _make_artifact_tools(self, user_input: GenVisualDashboardNodeInput) -> DashboardArtifactTools:
         return DashboardArtifactTools(
             agent_config=self.agent_config,
             db_func_tool=self.db_func_tool,
+            user_message=getattr(user_input, "user_message", "") or "",
         )
 
     def _read_artifact_slug_from_tools(self) -> Optional[str]:

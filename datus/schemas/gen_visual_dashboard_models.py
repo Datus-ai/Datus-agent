@@ -168,6 +168,14 @@ class GenVisualDashboardNodeResult(BaseResult):
         default=None,
         description="ISO-8601 UTC timestamp copied from manifest.json; reflects creation time even for 'edit' mode.",
     )
+    finalize_warnings: List[str] = Field(
+        default_factory=list,
+        description="Best-effort warnings from the analysis-finalize stage (see ReportNodeResult for details).",
+    )
+    finalize_error: Optional[str] = Field(
+        default=None,
+        description="Set when finalize LLM call / validation failed; the analysis/ trio is then absent or stale.",
+    )
 
 
 def parse_datus_params_header(sql_template: str) -> List[TemplateParamDecl]:

@@ -118,3 +118,21 @@ class GenVisualReportNodeResult(BaseResult):
         default=None,
         description="ISO-8601 UTC timestamp copied from manifest.json; reflects creation time even for 'edit' mode.",
     )
+    finalize_warnings: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Best-effort warnings from the analysis-finalize stage (e.g. "
+            "dangling reference from insight.evidence_queries to a missing "
+            "query slug). Non-fatal; the artifact bundle still landed on "
+            "disk. Surfaced so SaaS / CI can monitor LLM reference quality."
+        ),
+    )
+    finalize_error: Optional[str] = Field(
+        default=None,
+        description=(
+            "Set when the finalize LLM call or schema validation failed; "
+            "the analysis/ trio is then absent (or stale from the previous "
+            "edit). The render artifact is still valid — finalize is "
+            "supplementary."
+        ),
+    )

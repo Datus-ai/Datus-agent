@@ -44,7 +44,13 @@ from datus.schemas.gen_visual_dashboard_models import (
     parse_datus_params_header,
 )
 from datus.tools.func_tool._artifact_filesystem_base import ArtifactFilesystemFuncTool
-from datus.tools.func_tool._visual_artifact_helpers import utc_now_iso
+from datus.tools.func_tool._visual_artifact_helpers import (
+    append_intent_section,
+    coerce_uses_arg,
+    upsert_manifest_after_save,
+    utc_now_iso,
+    write_reasoning_step,
+)
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.report_artifact_tools import (
     _DEFAULT_EXPORT_RE,
@@ -264,9 +270,12 @@ class DashboardArtifactTools:
         *,
         agent_config,
         db_func_tool,
+        user_message: str = "",
     ) -> None:
         self.agent_config = agent_config
         self._db_func_tool = db_func_tool
+        # See ReportArtifactTools.__init__ for the rationale — mirror logic.
+        self._user_message = user_message or ""
 
         project_root = Path(getattr(agent_config, "project_root", "")).resolve()
         if not project_root or str(project_root) == ".":
@@ -278,6 +287,7 @@ class DashboardArtifactTools:
         self.dashboard_dir: Optional[Path] = None
         self.queries_dir: Optional[Path] = None
         self.render_dir: Optional[Path] = None
+        self.analysis_dir: Optional[Path] = None
         self.mode: Optional[str] = None
 
     # -- public --------------------------------------------------------------
@@ -330,9 +340,12 @@ class DashboardArtifactTools:
                     "dashboard_dir": "dashboards/<slug>",
                     "render_dir": "dashboards/<slug>/render",
                     "queries_dir": "dashboards/<slug>/queries",
+                    "analysis_dir": "dashboards/<slug>/analysis",
                     "manifest_path": "dashboards/<slug>/manifest.json",
                     "mode": "new",
                 }
+
+            ``analysis/intent.md`` is seeded with the user's original prompt.
         """
         if not slug or not DASHBOARD_SLUG_RE.fullmatch(slug):
             return FuncToolResult(
@@ -401,8 +414,12 @@ class DashboardArtifactTools:
                     "dashboard_dir": "dashboards/<slug>",
                     "render_dir": "dashboards/<slug>/render",
                     "queries_dir": "dashboards/<slug>/queries",
+                    "analysis_dir": "dashboards/<slug>/analysis",
                     "mode": "edit",
                 }
+
+            ``analysis/intent.md`` gets a new ``### [timestamp] mode: edit``
+            section appended with the user's latest prompt.
         """
         if not dashboard_slug or not DASHBOARD_SLUG_RE.fullmatch(dashboard_slug):
             return FuncToolResult(
@@ -439,10 +456,12 @@ class DashboardArtifactTools:
         dashboard_dir = self._project_root / "dashboards" / dashboard_slug
         queries_dir = dashboard_dir / "queries"
         render_dir = dashboard_dir / "render"
+        analysis_dir = dashboard_dir / "analysis"
         manifest_path = dashboard_dir / "manifest.json"
         if create_dirs:
             queries_dir.mkdir(parents=True, exist_ok=True)
             render_dir.mkdir(parents=True, exist_ok=True)
+            analysis_dir.mkdir(parents=True, exist_ok=True)
         manifest_rel: Optional[str] = None
         if manifest is not None:
             try:
@@ -457,16 +476,30 @@ class DashboardArtifactTools:
         self.dashboard_dir = dashboard_dir
         self.queries_dir = queries_dir
         self.render_dir = render_dir
+        self.analysis_dir = analysis_dir
         self.mode = mode
+
+        # Mirror of ReportArtifactTools._activate: append the raw user
+        # prompt to analysis/intent.md as a best-effort log.
+        intent_warning = append_intent_section(
+            analysis_dir,
+            user_message=self._user_message,
+            mode=mode,
+            timestamp=utc_now_iso(),
+        )
+
         result: Dict[str, Any] = {
             "dashboard_slug": dashboard_slug,
             "dashboard_dir": f"dashboards/{dashboard_slug}",
             "render_dir": f"dashboards/{dashboard_slug}/render",
             "queries_dir": f"dashboards/{dashboard_slug}/queries",
+            "analysis_dir": f"dashboards/{dashboard_slug}/analysis",
             "mode": mode,
         }
         if manifest_rel:
             result["manifest_path"] = manifest_rel
+        if intent_warning:
+            result["intent_warning"] = intent_warning
         return FuncToolResult(result=result)
 
     def _require_active(self, tool_name: str) -> Optional[FuncToolResult]:
@@ -488,16 +521,21 @@ class DashboardArtifactTools:
         name: str,
         sql_template: str,
         sample_params: Dict[str, Any],
-        description: str = "",
+        goal: str,
+        hypothesis: str,
+        uses: Optional[Dict[str, Any]] = None,
+        caveats: str = "",
         datasource: str = "",
     ) -> FuncToolResult:
         """
-        Persist a parameterized Jinja2 SQL template after a trial render.
+        Persist a parameterized Jinja2 SQL template after a trial render,
+        and the per-query reasoning sidecar.
 
         Args:
             name: Semantic slug for the template (e.g. "revenue_by_region").
                 Matches ``^[a-z0-9_]{1,64}$``. Reused names overwrite the
-                previous files.
+                previous files (``.sql.j2`` / ``.params.json`` /
+                ``.reasoning.json``).
             sql_template: Jinja2 SQL body whose **first non-blank line** is
                 a ``-- @datus-params <name>:<type>[:optional], ...`` header
                 declaring the parameters the body references. Bind values
@@ -507,8 +545,19 @@ class DashboardArtifactTools:
             sample_params: Values used for the trial render. Required params
                 must be present; optional params may be omitted. The
                 inferred columns / preview rows come from this trial.
-            description: Optional one-line semantic note. Persisted in
-                ``params.json`` for future reference.
+            goal: One-line research question this template answers, e.g.
+                "revenue trends sliced by region over selectable window".
+                Becomes the trailing SQL comment so a human reading the
+                ``.sql.j2`` can recover intent. Required.
+            hypothesis: One-sentence concrete prediction the LLM expects
+                this query to validate (e.g. "regional revenue diverges
+                month-over-month, justifying drilldown"). Required and
+                non-empty.
+            uses: Optional ``{"metrics": [...], "reference_sql": [...],
+                "ext_knowledge": [...]}``. Surfaced in
+                ``analysis/subject_refs.json`` for the follow-up subagent.
+            caveats: Empty by default. Fill only when this template makes a
+                non-obvious choice a future reader would otherwise miss.
             datasource: Logical datasource name. Empty string uses the default.
 
         Returns:
@@ -518,6 +567,7 @@ class DashboardArtifactTools:
                     "name": "<slug>",
                     "sql_path": "dashboards/<id>/queries/<slug>.sql.j2",
                     "params_path": "dashboards/<id>/queries/<slug>.params.json",
+                    "reasoning_path": "dashboards/<id>/queries/<slug>.reasoning.json",
                     "data_ref": "queries/<slug>",
                     "params": [{"name": "...", "type": "...", "required": true}, ...],
                     "sample_row_count": <int>,
@@ -545,6 +595,23 @@ class DashboardArtifactTools:
                 success=0,
                 error=f"sample_params must be a JSON object (dict); got {type(sample_params).__name__}.",
             )
+        if not goal or not goal.strip():
+            return FuncToolResult(
+                success=0,
+                error="goal must be a non-empty one-line research question.",
+            )
+        if not hypothesis or not hypothesis.strip():
+            return FuncToolResult(
+                success=0,
+                error=(
+                    "hypothesis must be a non-empty one-sentence concrete prediction this query validates. "
+                    "If you don't have a hypothesis, skip the query."
+                ),
+            )
+        try:
+            uses_obj = coerce_uses_arg(uses)
+        except ValueError as exc:
+            return FuncToolResult(success=0, error=f"uses argument invalid: {exc}")
 
         # 1. Parse the -- @datus-params header
         try:
@@ -641,10 +708,13 @@ class DashboardArtifactTools:
                 error="Trial query returned no columns. Refine the SQL so at least one column is selected.",
             )
 
-        # 5. Persist .sql.j2 + .params.json
+        # 5. Persist .sql.j2 + .params.json + .reasoning.json
+        # Note: the legacy ``description`` slot in params.json maps to the
+        # new ``goal`` arg — same semantics (one-line research question),
+        # but the analysis-artifact contract names it ``goal`` everywhere.
         meta_payload = {
             "slug": name,
-            "description": description.strip() if description else "",
+            "description": goal.strip(),
             "datasource": ds_label,
             "params": [p.model_dump() for p in params_decl],
             "columns": columns_meta,
@@ -670,10 +740,9 @@ class DashboardArtifactTools:
 
         sql_path = self.queries_dir / f"{name}.sql.j2"
         meta_path = self.queries_dir / f"{name}.params.json"
+        reasoning_path = self.queries_dir / f"{name}.reasoning.json"
 
-        header_parts: List[str] = []
-        if description:
-            header_parts.append(f"-- {description.strip()}")
+        header_parts: List[str] = [f"-- {goal.strip()}"]
         header_parts.append(f"-- saved at {meta_payload['saved_at']} for dashboard {self.dashboard_slug}")
         sql_text = sql_template.rstrip() + "\n\n" + "\n".join(header_parts) + "\n"
 
@@ -683,21 +752,43 @@ class DashboardArtifactTools:
         except OSError as exc:
             return FuncToolResult(success=0, error=f"Failed to persist template files: {exc}")
 
+        reasoning_err = write_reasoning_step(
+            self.queries_dir,
+            name=name,
+            goal=goal.strip(),
+            hypothesis=hypothesis.strip(),
+            uses=uses_obj,
+            caveats=caveats.strip() if caveats else "",
+            datasource=ds_label,
+            timestamp=meta_payload["saved_at"],
+        )
+        if reasoning_err:
+            return FuncToolResult(success=0, error=reasoning_err)
+
+        manifest_warning = upsert_manifest_after_save(
+            self.dashboard_dir / "manifest.json",
+            datasource=ds_label,
+            timestamp=meta_payload["saved_at"],
+        )
+
         rel_sql = sql_path.relative_to(self._project_root).as_posix()
         rel_meta = meta_path.relative_to(self._project_root).as_posix()
+        rel_reasoning = reasoning_path.relative_to(self._project_root).as_posix()
 
-        return FuncToolResult(
-            result={
-                "name": name,
-                "sql_path": rel_sql,
-                "params_path": rel_meta,
-                "data_ref": f"queries/{name}",
-                "params": [p.model_dump() for p in params_decl],
-                "sample_row_count": len(rows),
-                "columns": columns_meta,
-                "preview_rows": rows[:3],
-            }
-        )
+        result: Dict[str, Any] = {
+            "name": name,
+            "sql_path": rel_sql,
+            "params_path": rel_meta,
+            "reasoning_path": rel_reasoning,
+            "data_ref": f"queries/{name}",
+            "params": [p.model_dump() for p in params_decl],
+            "sample_row_count": len(rows),
+            "columns": columns_meta,
+            "preview_rows": rows[:3],
+        }
+        if manifest_warning:
+            result["manifest_warning"] = manifest_warning
+        return FuncToolResult(result=result)
 
     # -- validate_render -----------------------------------------------------
 

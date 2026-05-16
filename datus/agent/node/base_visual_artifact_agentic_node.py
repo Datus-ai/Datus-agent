@@ -34,6 +34,7 @@ from typing import Any, AsyncGenerator, ClassVar, Dict, Generic, List, Literal, 
 
 from pydantic import BaseModel
 
+from datus.agent.node._visual_artifact_finalize import run_finalize_analysis
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
 from datus.configuration.agent_config import AgentConfig
@@ -438,9 +439,35 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             return build_structured_content("\n".join(parts), user_message)
         return user_message
 
+    # ── Finalize stage ────────────────────────────────────────────────────
+
+    def _run_finalize(self, artifact_slug: str, actions: List[ActionHistory]) -> Dict[str, Any]:
+        """Run the finalize analysis stage for the just-completed artifact.
+
+        Wraps :func:`run_finalize_analysis` so the orchestrator can stay
+        UI-agnostic (no node-specific paths in the helper module).
+        Failures are logged and returned as a dict; never re-raised.
+        """
+        try:
+            project_root = Path(self.agent_config.project_root).resolve()
+            artifact_dir = project_root / self.ARTIFACT_ROOT_DIR_NAME / artifact_slug
+            queries_dir = artifact_dir / "queries"
+            analysis_dir = artifact_dir / "analysis"
+            return run_finalize_analysis(
+                model=self.model,
+                artifact_kind=self.ARTIFACT_KIND,
+                artifact_dir=artifact_dir,
+                queries_dir=queries_dir,
+                analysis_dir=analysis_dir,
+                actions=actions,
+            )
+        except Exception as exc:
+            logger.warning("Finalize stage crashed for %s/%s: %s", self.ARTIFACT_KIND, artifact_slug, exc)
+            return {"ok": False, "warnings": [], "error": f"finalize crashed: {exc}"}
+
     # ── Artifact tools wiring ─────────────────────────────────────────────
 
-    def _make_artifact_tools(self) -> Any:
+    def _make_artifact_tools(self, user_input: InputT) -> Any:
         """Build the artifact-specific tools instance (subclass implements).
 
         The tools instance must expose ``available_tools()`` returning the
@@ -448,6 +475,11 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         artifact slug (after ``start_new_*`` / ``bind_existing_*``) must
         live on an attribute the subclass knows how to read (it is fetched
         via :meth:`_read_artifact_slug_from_tools`).
+
+        ``user_input`` is passed through so subclasses can forward the
+        raw ``user_message`` to the tools instance — the analysis-artifact
+        layer needs it verbatim to seed ``analysis/intent.md`` on
+        ``start_new_*`` / ``bind_existing_*``.
         """
         raise NotImplementedError
 
@@ -516,7 +548,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             )
 
         self._active_artifact_slug = None
-        self.artifact_tools = self._make_artifact_tools()
+        self.artifact_tools = self._make_artifact_tools(user_input)
         # Repeated ``execute_stream`` calls on the same node instance
         # would otherwise stack stale tool wrappers bound to the previous
         # artifact tools instance, which could resolve calls against an
@@ -711,6 +743,18 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                 if hasattr(result, "error"):
                     result.error = error_msg  # type: ignore[attr-defined]
             elif self._active_artifact_slug:
+                # Finalize stage: produce interpretation / insights /
+                # suggested_questions / subject_refs under analysis/. Runs
+                # before _post_validate_hook so the HTML compile step (CLI
+                # mode) can pick up the freshly-written analysis files if
+                # it ever wants to. Finalize failures are surfaced via
+                # ``result.finalize_warnings`` but never block the main
+                # artifact — the SQL+render bundle is already on disk.
+                finalize_summary = self._run_finalize(self._active_artifact_slug, all_actions)
+                if hasattr(result, "finalize_warnings") and finalize_summary.get("warnings"):
+                    result.finalize_warnings = finalize_summary["warnings"]  # type: ignore[attr-defined]
+                if hasattr(result, "finalize_error") and finalize_summary.get("error"):
+                    result.finalize_error = finalize_summary["error"]  # type: ignore[attr-defined]
                 self._post_validate_hook(self._active_artifact_slug, result)
 
             self.actions.extend(all_actions)

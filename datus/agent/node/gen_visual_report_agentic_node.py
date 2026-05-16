@@ -96,10 +96,11 @@ class GenVisualReportAgenticNode(BaseVisualArtifactAgenticNode[GenVisualReportNo
 
     # ────────── Hooks the base class calls ──────────
 
-    def _make_artifact_tools(self) -> ReportArtifactTools:
+    def _make_artifact_tools(self, user_input: GenVisualReportNodeInput) -> ReportArtifactTools:
         return ReportArtifactTools(
             agent_config=self.agent_config,
             db_func_tool=self.db_func_tool,
+            user_message=getattr(user_input, "user_message", "") or "",
         )
 
     def _read_artifact_slug_from_tools(self) -> Optional[str]:

@@ -21,7 +21,7 @@ just says ``Untitled report``.
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -75,3 +75,21 @@ class ArtifactManifest(BaseModel):
     )
     kind: ArtifactKind = Field(..., description="report | dashboard")
     created_at: str = Field(..., description="ISO-8601 UTC timestamp at second precision.")
+    updated_at: Optional[str] = Field(
+        default=None,
+        description=(
+            "ISO-8601 UTC timestamp refreshed on every save_query / save_query_template / "
+            "bind_existing_* call so list pages can order by recency. ``None`` until the "
+            "first mutation after creation. Older manifests written before this field was "
+            "introduced deserialize cleanly with ``None``."
+        ),
+    )
+    datasources: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Distinct datasource labels referenced by this artifact's queries, populated "
+            "incrementally as ``save_query`` / ``save_query_template`` is called. Used by "
+            "the subagent that gets spawned for follow-up questions to know which "
+            "connectors to bind. Stable order = first-seen order so diffs stay readable."
+        ),
+    )
