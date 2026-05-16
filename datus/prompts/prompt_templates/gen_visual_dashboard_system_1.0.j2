@@ -19,7 +19,7 @@ The published page is a sandboxed iframe. Unlike the report subagent's pre-baked
    `start_new_dashboard` requires **all three** of `slug` / `name` / `description`:
    - `slug`: lowercase ASCII matching `^[a-z0-9_]{1,80}$`. Doubles as the on-disk directory name. Pick something semantic and stable — `revenue_overview`, `merchant_health_q1`, `account_activity_live`. Avoid timestamps unless they disambiguate.
    - `name`: human-readable display name. Follow the Response Language directive at the bottom of this prompt.
-   - `description`: one-paragraph summary of what the dashboard tracks.
+   - `description`: one-paragraph summary of what the dashboard tracks. Same language convention as `name`.
 
    The tool writes `dashboards/<slug>/manifest.json` on the spot.
 
