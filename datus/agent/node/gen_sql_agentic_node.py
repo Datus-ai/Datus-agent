@@ -734,11 +734,13 @@ class GenSQLAgenticNode(AgenticNode):
         yield action
 
         try:
-            # Check for auto-compact before session creation to ensure fresh context
-            await self._auto_compact()
-
-            # Get or create session and any available summary
-            session, conversation_summary = self._get_or_create_session()
+            session = None
+            conversation_summary = None
+            if self.execution_mode == "interactive":
+                # Check for auto-compact before session creation to ensure fresh context
+                await self._auto_compact()
+                # Get or create session and any available summary
+                session, conversation_summary = self._get_or_create_session()
 
             enhanced_message = self._build_enhanced_message(user_input)
 

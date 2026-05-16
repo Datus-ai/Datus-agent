@@ -492,11 +492,13 @@ class GenReportAgenticNode(AgenticNode):
         yield action
 
         try:
-            # Check for auto-compact before session creation
-            await self._auto_compact()
-
-            # Get or create session
-            session, conversation_summary = self._get_or_create_session()
+            session = None
+            conversation_summary = None
+            if self.execution_mode == "interactive":
+                # Check for auto-compact before session creation
+                await self._auto_compact()
+                # Get or create session
+                session, conversation_summary = self._get_or_create_session()
             prompt_version = getattr(user_input, "prompt_version", None) or self.node_config.get("prompt_version")
             system_instruction = self._get_system_prompt(conversation_summary, prompt_version)
 

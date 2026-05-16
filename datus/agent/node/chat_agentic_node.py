@@ -584,9 +584,11 @@ class ChatAgenticNode(AgenticNode):
         yield action
 
         try:
-            await self._auto_compact()
-
-            session, conversation_summary = self._get_or_create_session()
+            session = None
+            conversation_summary = None
+            if self.execution_mode == "interactive":
+                await self._auto_compact()
+                session, conversation_summary = self._get_or_create_session()
 
             # Shared base-class assembly handles DB context + plan-mode
             # workflow injection (plan tools were registered at setup time).

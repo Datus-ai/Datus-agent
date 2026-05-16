@@ -1,6 +1,6 @@
 """CompareAgenticNode shim for backwards compatibility."""
 
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
@@ -29,6 +29,7 @@ class CompareAgenticNode(AgenticNode):
         self,
         node_name: str = "compare",
         agent_config: Optional[AgentConfig] = None,
+        execution_mode: Literal["interactive", "workflow"] = "interactive",
         is_subagent: bool = False,
         session_id: Optional[str] = None,
     ):
@@ -38,9 +39,13 @@ class CompareAgenticNode(AgenticNode):
         Args:
             node_name: Name of the node configuration in agent.yml (default: "compare")
             agent_config: Agent configuration
+            execution_mode: ``"interactive"`` (default) enables session
+                management, auto-compaction, and token accounting;
+                ``"workflow"`` skips those for unattended pipelines.
             is_subagent: When True, skip SubAgentTaskTool setup (2-level depth enforcement)
         """
         self.configured_node_name = node_name
+        self.execution_mode = execution_mode
 
         # Use TYPE_COMPARE as the node type
         from datus.configuration.node_type import NodeType
@@ -221,8 +226,11 @@ class CompareAgenticNode(AgenticNode):
         yield user_action
 
         try:
-            await self._auto_compact()
-            session, conversation_summary = self._get_or_create_session()
+            session = None
+            conversation_summary = None
+            if self.execution_mode == "interactive":
+                await self._auto_compact()
+                session, conversation_summary = self._get_or_create_session()
 
             system_instruction, user_prompt, _ = self._prepare_prompt_components(
                 user_input, agent_config=self.agent_config
