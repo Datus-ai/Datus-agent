@@ -1,0 +1,351 @@
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+# See http://www.apache.org/licenses/LICENSE-2.0 for details.
+
+"""Unit tests for ``datus/tools/func_tool/_visual_artifact_helpers.py``.
+
+Covers the three analysis-directory filesystem helpers plus the
+``coerce_uses_arg`` normalizer that bridges between the LLM tool call
+shape (``dict`` or ``None``) and the strict :class:`SubjectRefIds`
+schema. All filesystem mutations use ``tmp_path`` — these helpers are
+pure I/O so we want deterministic, isolated state for each case.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from datus.schemas.analysis_artifacts import ReasoningStep, SubjectRefIds
+from datus.schemas.artifact_manifest import ArtifactManifest
+from datus.tools.func_tool._visual_artifact_helpers import (
+    append_intent_section,
+    coerce_uses_arg,
+    upsert_manifest_after_save,
+    utc_now_iso,
+    write_reasoning_step,
+)
+
+# --------------------------------------------------------------------------- #
+# append_intent_section                                                       #
+# --------------------------------------------------------------------------- #
+
+
+class TestAppendIntentSection:
+    def test_creates_file_with_first_section(self, tmp_path: Path):
+        analysis_dir = tmp_path / "analysis"
+        err = append_intent_section(
+            analysis_dir,
+            user_message="Please summarise Q1 east-region sales.",
+            mode="new",
+            timestamp="2026-05-14T10:00:00Z",
+        )
+        assert err is None
+        path = analysis_dir / "intent.md"
+        assert path.is_file()
+        text = path.read_text(encoding="utf-8")
+        assert text.startswith("### [2026-05-14T10:00:00Z] mode: new\n")
+        # User message lands as a blockquote line.
+        assert "> Please summarise Q1 east-region sales." in text
+
+    def test_appends_second_section_preserving_first(self, tmp_path: Path):
+        analysis_dir = tmp_path / "analysis"
+        append_intent_section(
+            analysis_dir,
+            user_message="initial prompt",
+            mode="new",
+            timestamp="2026-05-14T10:00:00Z",
+        )
+        append_intent_section(
+            analysis_dir,
+            user_message="follow-up edit",
+            mode="edit",
+            timestamp="2026-05-14T11:30:00Z",
+        )
+        text = (analysis_dir / "intent.md").read_text(encoding="utf-8")
+        # Both sections must be present, original first.
+        assert text.count("###") == 2
+        first_idx = text.find("mode: new")
+        second_idx = text.find("mode: edit")
+        assert 0 <= first_idx < second_idx
+        assert "> initial prompt" in text
+        assert "> follow-up edit" in text
+        # A blank line should separate the sections.
+        assert "\n\n###" in text
+
+    @pytest.mark.parametrize("user_message", ["", "   ", "\n\n\t"])
+    def test_whitespace_only_message_skipped(self, tmp_path: Path, user_message: str):
+        analysis_dir = tmp_path / "analysis"
+        err = append_intent_section(
+            analysis_dir,
+            user_message=user_message,
+            mode="new",
+            timestamp="2026-05-14T10:00:00Z",
+        )
+        assert err is None
+        # Nothing was written.
+        assert not (analysis_dir / "intent.md").exists()
+
+    def test_multiline_message_becomes_continuation_blockquote(self, tmp_path: Path):
+        analysis_dir = tmp_path / "analysis"
+        message = "first line\n\nthird line"
+        append_intent_section(
+            analysis_dir,
+            user_message=message,
+            mode="new",
+            timestamp="2026-05-14T10:00:00Z",
+        )
+        text = (analysis_dir / "intent.md").read_text(encoding="utf-8")
+        lines = text.splitlines()
+        # Header + 3 content lines (the blank middle line becomes ">").
+        assert lines[0] == "### [2026-05-14T10:00:00Z] mode: new"
+        assert lines[1] == "> first line"
+        assert lines[2] == ">"
+        assert lines[3] == "> third line"
+
+    def test_returns_error_string_on_oserror(self, tmp_path: Path, monkeypatch):
+        analysis_dir = tmp_path / "analysis"
+
+        # Force an OSError on the underlying atomic write — we want the
+        # helper to surface it as a string rather than re-raise.
+        from datus.tools.func_tool import _visual_artifact_helpers as helpers
+
+        def _boom(*args, **kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(helpers, "_atomic_write_text", _boom)
+        err = append_intent_section(
+            analysis_dir,
+            user_message="anything",
+            mode="new",
+            timestamp="2026-05-14T10:00:00Z",
+        )
+        assert err is not None
+        assert "Failed to append intent section" in err
+        assert "disk full" in err
+
+
+# --------------------------------------------------------------------------- #
+# upsert_manifest_after_save                                                  #
+# --------------------------------------------------------------------------- #
+
+
+def _seed_manifest(tmp_path: Path, **overrides) -> Path:
+    payload = {
+        "slug": "demo",
+        "name": "demo report",
+        "description": "Demo for the manifest upsert helper unit tests.",
+        "kind": "report",
+        "created_at": "2026-05-14T10:00:00Z",
+    }
+    payload.update(overrides)
+    # Make sure the payload validates so we're testing the helper, not a
+    # broken fixture.
+    ArtifactManifest.model_validate(payload)
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+class TestUpsertManifestAfterSave:
+    def test_adds_new_datasource(self, tmp_path: Path):
+        manifest_path = _seed_manifest(tmp_path)
+        err = upsert_manifest_after_save(manifest_path, datasource="primary_pg", timestamp="2026-05-14T11:00:00Z")
+        assert err is None
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert data["datasources"] == ["primary_pg"]
+        assert data["updated_at"] == "2026-05-14T11:00:00Z"
+
+    def test_duplicate_datasource_idempotent(self, tmp_path: Path):
+        manifest_path = _seed_manifest(tmp_path)
+        upsert_manifest_after_save(manifest_path, datasource="pg", timestamp="2026-05-14T11:00:00Z")
+        upsert_manifest_after_save(manifest_path, datasource="pg", timestamp="2026-05-14T12:00:00Z")
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        # Datasource appears only once even after two upserts.
+        assert data["datasources"] == ["pg"]
+        # updated_at always bumps to the latest timestamp.
+        assert data["updated_at"] == "2026-05-14T12:00:00Z"
+
+    def test_always_bumps_updated_at_even_when_datasource_unchanged(self, tmp_path: Path):
+        manifest_path = _seed_manifest(tmp_path)
+        upsert_manifest_after_save(manifest_path, datasource="pg", timestamp="2026-05-14T11:00:00Z")
+        # Same datasource again, distinct timestamp.
+        upsert_manifest_after_save(manifest_path, datasource="pg", timestamp="2026-05-14T13:00:00Z")
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert data["updated_at"] == "2026-05-14T13:00:00Z"
+
+    def test_missing_manifest_returns_error_string(self, tmp_path: Path):
+        missing = tmp_path / "missing_manifest.json"
+        err = upsert_manifest_after_save(missing, datasource="x", timestamp="t")
+        assert err is not None
+        assert "manifest missing" in err
+
+    def test_corrupt_manifest_returns_error_string(self, tmp_path: Path):
+        corrupt = tmp_path / "manifest.json"
+        corrupt.write_text("{not-json", encoding="utf-8")
+        err = upsert_manifest_after_save(corrupt, datasource="x", timestamp="t")
+        assert err is not None
+        assert "corrupt" in err
+
+    def test_schema_invalid_manifest_returns_error_string(self, tmp_path: Path):
+        invalid = tmp_path / "manifest.json"
+        invalid.write_text('{"slug":"demo"}', encoding="utf-8")  # missing required fields
+        err = upsert_manifest_after_save(invalid, datasource="x", timestamp="t")
+        assert err is not None
+        assert "schema validation failed" in err
+
+    def test_empty_datasource_skipped(self, tmp_path: Path):
+        manifest_path = _seed_manifest(tmp_path)
+        err = upsert_manifest_after_save(manifest_path, datasource="", timestamp="2026-05-14T14:00:00Z")
+        assert err is None
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        # Empty / None datasource is dropped — only updated_at gets bumped.
+        assert data["datasources"] == []
+        assert data["updated_at"] == "2026-05-14T14:00:00Z"
+
+
+# --------------------------------------------------------------------------- #
+# write_reasoning_step                                                        #
+# --------------------------------------------------------------------------- #
+
+
+class TestWriteReasoningStep:
+    def test_writes_file_that_round_trips(self, tmp_path: Path):
+        queries_dir = tmp_path / "queries"
+        queries_dir.mkdir()
+        err = write_reasoning_step(
+            queries_dir,
+            name="sales_by_store",
+            goal="distribution of high-risk signups by month",
+            hypothesis="high-risk signups cluster around promotional campaigns",
+            uses=SubjectRefIds(metrics=["m_signups"]),
+            caveats="Excludes test accounts.",
+            datasource="primary_pg",
+            timestamp="2026-05-14T10:00:00Z",
+        )
+        assert err is None
+        path = queries_dir / "sales_by_store.reasoning.json"
+        assert path.is_file()
+        # Re-validate the file through the schema to prove the round-trip.
+        data = json.loads(path.read_text(encoding="utf-8"))
+        step = ReasoningStep.model_validate(data)
+        assert step.name == "sales_by_store"
+        assert step.uses.metrics == ["m_signups"]
+        assert step.caveats == "Excludes test accounts."
+        assert step.datasource == "primary_pg"
+
+    def test_invalid_slug_returns_error(self, tmp_path: Path):
+        queries_dir = tmp_path / "queries"
+        queries_dir.mkdir()
+        err = write_reasoning_step(
+            queries_dir,
+            name="Has-Hyphen",  # invalid per ANALYSIS_SLUG_PATTERN
+            goal="goal",
+            hypothesis="hypothesis",
+            uses=SubjectRefIds(),
+            caveats="",
+            datasource="ds",
+            timestamp="2026-05-14T10:00:00Z",
+        )
+        assert err is not None
+        assert "schema validation failed" in err
+        # No file gets written when validation fails.
+        assert not (queries_dir / "Has-Hyphen.reasoning.json").exists()
+
+    def test_empty_hypothesis_returns_error(self, tmp_path: Path):
+        queries_dir = tmp_path / "queries"
+        queries_dir.mkdir()
+        err = write_reasoning_step(
+            queries_dir,
+            name="empty_hypothesis",
+            goal="goal",
+            hypothesis="",
+            uses=SubjectRefIds(),
+            caveats="",
+            datasource="ds",
+            timestamp="2026-05-14T10:00:00Z",
+        )
+        assert err is not None
+        assert "schema validation failed" in err
+
+
+# --------------------------------------------------------------------------- #
+# coerce_uses_arg                                                             #
+# --------------------------------------------------------------------------- #
+
+
+class TestCoerceUsesArg:
+    def test_none_returns_empty_buckets(self):
+        refs = coerce_uses_arg(None)
+        assert isinstance(refs, SubjectRefIds)
+        assert refs.metrics == []
+        assert refs.reference_sql == []
+        assert refs.ext_knowledge == []
+
+    def test_full_dict_round_trips(self):
+        payload = {
+            "metrics": ["m_a", "m_b"],
+            "reference_sql": ["rs_a"],
+            "ext_knowledge": ["kb_a", "kb_b", "kb_c"],
+        }
+        refs = coerce_uses_arg(payload)
+        assert refs.metrics == ["m_a", "m_b"]
+        assert refs.reference_sql == ["rs_a"]
+        assert refs.ext_knowledge == ["kb_a", "kb_b", "kb_c"]
+
+    def test_unknown_buckets_silently_dropped(self):
+        refs = coerce_uses_arg({"metrics": ["m_a"], "future_kind": ["x", "y"]})
+        # Unknown bucket dropped, known bucket preserved.
+        assert refs.metrics == ["m_a"]
+        # Schema-level extra=forbid never fires because the helper filters
+        # the keys before constructing the model.
+        assert refs.reference_sql == []
+        assert refs.ext_knowledge == []
+
+    def test_passthrough_for_subject_ref_ids(self):
+        original = SubjectRefIds(metrics=["m_x"])
+        refs = coerce_uses_arg(original)
+        assert refs is original
+
+    def test_non_dict_raises_value_error(self):
+        with pytest.raises(ValueError) as exc:
+            coerce_uses_arg(["m_a"])  # type: ignore[arg-type]
+        assert "uses must be a JSON object" in str(exc.value)
+
+    def test_non_list_bucket_raises_value_error(self):
+        with pytest.raises(ValueError) as exc:
+            coerce_uses_arg({"metrics": "m_a"})  # type: ignore[arg-type]
+        assert "metrics" in str(exc.value)
+        assert "list" in str(exc.value)
+
+    def test_non_string_list_entry_raises_value_error(self):
+        with pytest.raises(ValueError) as exc:
+            coerce_uses_arg({"metrics": ["m_a", 42]})
+        assert "metrics" in str(exc.value)
+        assert "strings" in str(exc.value)
+
+    def test_none_bucket_becomes_empty_list(self):
+        """LLM sometimes emits ``"reference_sql": null`` — accept it gracefully."""
+        refs = coerce_uses_arg({"metrics": ["m_a"], "reference_sql": None})
+        assert refs.metrics == ["m_a"]
+        assert refs.reference_sql == []
+
+
+# --------------------------------------------------------------------------- #
+# utc_now_iso                                                                 #
+# --------------------------------------------------------------------------- #
+
+
+class TestUtcNowIso:
+    """Sanity check the ISO format used as the timestamp for every file."""
+
+    def test_format_is_seconds_precision_zulu(self):
+        ts = utc_now_iso()
+        # YYYY-MM-DDTHH:MM:SSZ — exactly 20 chars.
+        assert len(ts) == 20
+        assert ts[4] == "-" and ts[7] == "-"
+        assert ts[10] == "T"
+        assert ts[13] == ":" and ts[16] == ":"
+        assert ts.endswith("Z")

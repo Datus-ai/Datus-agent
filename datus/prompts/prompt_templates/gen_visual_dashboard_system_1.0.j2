@@ -93,7 +93,7 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
 **Dashboard Artifact Tools:**
 - `start_new_dashboard(slug, name, description)` — creates `dashboards/<slug>/`, writes `manifest.json` (`{slug, name, description, kind: "dashboard", created_at}`), and binds it as the active dashboard. All three args are required (no defaults). Refuses to overwrite an existing directory. Call **once**.
 - `bind_existing_dashboard(dashboard_slug)` — binds an existing dashboard directory for in-place editing. Fails when the directory or its `render/app.jsx` is missing.
-- `save_query_template(name, sql_template, params, sample_params, description?, datasource?)` — renders the Jinja2 template with `sample_params`, runs the resulting SQL through the right connector, persists `<slug>.sql.j2` and `<slug>.params.json`, returns:
+- `save_query_template(name, sql_template, sample_params, goal, hypothesis, uses?, caveats?, datasource?)` — renders the Jinja2 template with `sample_params`, runs the resulting SQL through the right connector, persists `<slug>.sql.j2`, `<slug>.params.json` AND `<slug>.reasoning.json`, returns:
   ```json
   {
     "name": "<slug>",
@@ -105,6 +105,11 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
   }
   ```
   Always capture `columns` from the return value — it's the source of truth for type choices in the render tree.
+  Required reasoning args (same semantics as the report subagent — see `save_query` there):
+  - `goal` — one-line research question this template answers.
+  - `hypothesis` — one-sentence concrete prediction. Skip the template rather than write a placeholder.
+  - `uses` — `{ "metrics": [...], "reference_sql": [...], "ext_knowledge": [...] }` listing subject-library asset ids. Omit empty buckets.
+  - `caveats` — empty unless this template makes a non-obvious choice a future reader would otherwise miss.
 - `validate_render()` — terminal call. Verifies:
     1. `manifest.json` exists and is well-formed.
     2. `render/app.jsx` exists and includes `export default`.
@@ -134,8 +139,9 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
    - Only fall back to `list_tables` + `describe_table` when no metric or reference SQL fits — and note it in the template `description`.
    When the user pointed at reference dashboards, also `read_file` their `render/*.jsx` and `queries/<slug>.sql.j2` files for inspiration.
 6. **Probe** — `read_query` quick checks to confirm tables and columns exist, to size the data at typical filter values, and to discover the enumerations you'll need to populate filter dropdowns.
-7. **Save query templates** — for each chart / table / KPI you intend to render, call `save_query_template(name, sql_template, params, sample_params, description)` with a semantic English slug (`revenue_by_region`, `top_products_by_segment`, `cohort_retention`). Aim for 4–8 templates per dashboard. The `sample_params` you pass must produce a non-empty, representative result — that's what the validator uses to infer column types and what later render code will assume.
-   - **If a panel maps to a defined metric** (from step 5), do **not** re-derive the calculation from raw tables. Call `query_metrics(metrics=[...], dimensions=[...], time_*, dry_run=True)` to obtain the canonical SQL, then parameterise it into a Jinja template and pass that to `save_query_template`. Mention the metric name in `description` so future turns can trace provenance.
+7. **Save query templates** — for each chart / table / KPI you intend to render, call `save_query_template(name, sql_template, sample_params, goal, hypothesis, uses?)` with a semantic English slug (`revenue_by_region`, `top_products_by_segment`, `cohort_retention`). Aim for 4–8 templates per dashboard. The `sample_params` you pass must produce a non-empty, representative result — that's what the validator uses to infer column types and what later render code will assume.
+   - **If a panel maps to a defined metric** (from step 5), do **not** re-derive the calculation from raw tables. Call `query_metrics(metrics=[...], dimensions=[...], time_*, dry_run=True)` to obtain the canonical SQL, then parameterise it into a Jinja template and pass that to `save_query_template`. Include the metric id in `uses.metrics` so the analysis layer can attribute the panel correctly.
+   - Reference-SQL ids you adapted go in `uses.reference_sql`; ext-knowledge entries you consulted go in `uses.ext_knowledge`. Leave `uses` empty for pure ad-hoc templates.
    - Use ad-hoc raw SQL only when no metric matches.
 8. **Author the render tree** — `write_file` the components under `render/`. Always include `render/app.jsx` as the entry. Keep the filter state in `app.jsx` and thread it down via props or `React.createContext`. Typical layout:
    ```

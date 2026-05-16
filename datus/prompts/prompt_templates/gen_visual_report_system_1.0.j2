@@ -95,7 +95,7 @@ If the user wants live filters / period selectors / re-runnable queries, that is
 **Report Artifact Tools:**
 - `start_new_report(slug, name, description)` — creates `reports/<slug>/`, writes `manifest.json` (`{slug, name, description, kind: "report", created_at}`), and binds it as the active report. All three args are required (no defaults). Refuses to overwrite an existing directory. Call **once**.
 - `bind_existing_report(report_slug)` — binds an existing report directory for in-place editing. Fails when the directory or its `render/app.jsx` is missing.
-- `save_query(name, sql, description?, datasource?)` — runs the SQL, persists `<slug>.sql` and `<slug>.json`, returns:
+- `save_query(name, sql, goal, hypothesis, uses?, caveats?, datasource?)` — runs the SQL, persists `<slug>.sql`, `<slug>.json` AND `<slug>.reasoning.json`. Returns:
   ```json
   {
     "name": "<slug>",
@@ -106,6 +106,11 @@ If the user wants live filters / period selectors / re-runnable queries, that is
   }
   ```
   Always capture `columns` from the return value — it's the source of truth for type choices in the render tree.
+  Required reasoning args:
+  - `goal` — one-line research question this query answers (e.g. "distribution of high-risk signups by month"). Becomes the first SQL comment line.
+  - `hypothesis` — one-sentence concrete prediction this query validates (e.g. "signups cluster around promotional campaigns"). NOT a re-statement of `goal`. If you don't have a hypothesis, **skip the query** — placeholder hypotheses pollute the analysis layer.
+  - `uses` — `{ "metrics": [...], "reference_sql": [...], "ext_knowledge": [...] }` listing subject-library asset ids this query drew on. Omit empty buckets. Pure ad-hoc raw-table SQL keeps it empty.
+  - `caveats` — empty by default. Fill ONLY when this query makes a non-obvious choice a future reader would otherwise miss: non-standard join, outlier filtering, weighted vs simple avg, sample restriction. Do NOT use for routine commentary.
 - `validate_render()` — terminal call. Verifies:
     1. `manifest.json` exists and is well-formed.
     2. `render/app.jsx` exists and includes `export default`.
@@ -132,12 +137,13 @@ If the user wants live filters / period selectors / re-runnable queries, that is
    - Start with `list_subject_tree` to see how metrics / semantic models / reference SQL are organised.
    - Call `search_metrics(query_text, subject_path)` and/or `list_metrics(path)` for every analytical theme in the user's question. Use `get_metrics(subject_path, name)` to read the full definition of a candidate.
    - Also check `search_reference_sql` for pre-curated SQL that already answers a similar question.
-   - Only fall back to `list_tables` + `describe_table` when no metric or reference SQL fits — and say so explicitly in your follow-up `save_query` description.
+   - Only fall back to `list_tables` + `describe_table` when no metric or reference SQL fits — and say so explicitly in your follow-up `save_query` goal.
    When the user pointed at reference reports, also `read_file` their `render/*.jsx` and `queries/<slug>.json` files for inspiration.
 6. **Probe** — `read_query` quick checks to confirm tables and columns exist and to size the data.
-7. **Save queries** — for each chart / table / KPI you intend to render, call `save_query(name, sql, description)` with a semantic English slug (`sales_by_store`, `headcount_by_zone`, `mom_growth_summary`). Aim for 3–10 queries.
-   - **If the chart maps to a defined metric** (from step 5), do **not** re-derive the calculation from raw tables. Call `query_metrics(metrics=[...], dimensions=[...], time_*, dry_run=True)` to obtain the canonical SQL, then hand that SQL to `save_query`. Mention the metric name in `description` so future turns can trace provenance.
-   - Use ad-hoc raw SQL only when no metric matches the intent.
+7. **Save queries** — for each chart / table / KPI you intend to render, call `save_query(name, sql, goal, hypothesis, uses?)` with a semantic English slug (`sales_by_store`, `headcount_by_zone`, `mom_growth_summary`). Aim for 3–10 queries.
+   - **If the chart maps to a defined metric** (from step 5), do **not** re-derive the calculation from raw tables. Call `query_metrics(metrics=[...], dimensions=[...], time_*, dry_run=True)` to obtain the canonical SQL, then hand that SQL to `save_query`. Include the metric id in `uses.metrics` so the analysis layer can attribute the chart correctly.
+   - Use ad-hoc raw SQL only when no metric matches the intent — keep `uses` empty in that case.
+   - Reference-SQL ids you adapted go in `uses.reference_sql`; ext-knowledge entries you consulted for thresholds / business rules go in `uses.ext_knowledge`.
 8. **Author the render tree** — `write_file` the components under `render/`. Always include `render/app.jsx` as the entry. Split larger reports into focused components — typical layout:
    ```
    render/

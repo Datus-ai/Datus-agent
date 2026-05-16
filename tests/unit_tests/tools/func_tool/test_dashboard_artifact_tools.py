@@ -318,8 +318,15 @@ class TestBindExistingDashboard:
 
 class TestRequireActive:
     def test_save_query_template_rejects_when_unbound(self, unbound_tools: DashboardArtifactTools):
+        # Required reasoning args supplied to prove the binding check runs
+        # BEFORE arg validation — even a fully-valid call must be rejected
+        # when no dashboard is bound.
         result = unbound_tools.save_query_template(
-            name="q", sql_template="-- @datus-params x:string\nSELECT :x", sample_params={"x": "v"}
+            name="q",
+            sql_template="-- @datus-params x:string\nSELECT :x",
+            sample_params={"x": "v"},
+            goal="trivial sanity template",
+            hypothesis="trivial single-row sanity result",
         )
         assert result.success == 0
         error = (result.error or "").lower()
@@ -354,7 +361,8 @@ class TestSaveQueryTemplate:
             name="revenue_by_region",
             sql_template=_REVENUE_TEMPLATE,
             sample_params={"month_floor": "2026-01", "regions": ["NA", "EU"]},
-            description="Revenue per region with optional filter",
+            goal="Revenue per region with optional filter",
+            hypothesis="Regional revenue diverges enough to justify a region drilldown.",
         )
         assert result.success == 1, result.error
         payload = result.result
@@ -364,33 +372,94 @@ class TestSaveQueryTemplate:
         assert names == ["region", "revenue"]
         # 2 rows are inside NA / EU + month >= 2026-01.
         assert payload["sample_row_count"] == 2
+        # The reasoning sidecar joins the .sql.j2 / .params.json bundle.
+        assert payload["reasoning_path"].endswith("revenue_by_region.reasoning.json")
 
         dash_slug = dashboard_tools.dashboard_slug or ""
         sql_path = project_root / "dashboards" / dash_slug / "queries" / "revenue_by_region.sql.j2"
         params_path = project_root / "dashboards" / dash_slug / "queries" / "revenue_by_region.params.json"
+        reasoning_path = project_root / "dashboards" / dash_slug / "queries" / "revenue_by_region.reasoning.json"
         assert sql_path.exists()
         assert params_path.exists()
+        assert reasoning_path.exists()
         meta = json.loads(params_path.read_text())
         decl_names = [p["name"] for p in meta["params"]]
         assert decl_names == ["month_floor", "regions"]
+        # The legacy ``description`` slot in params.json now mirrors ``goal``.
+        assert meta["description"] == "Revenue per region with optional filter"
 
     def test_invalid_slug_rejected(self, dashboard_tools: DashboardArtifactTools):
         result = dashboard_tools.save_query_template(
-            name="Bad Name!", sql_template="-- @datus-params x:string\nSELECT :x", sample_params={"x": "v"}
+            name="Bad Name!",
+            sql_template="-- @datus-params x:string\nSELECT :x",
+            sample_params={"x": "v"},
+            goal="trivial sanity template",
+            hypothesis="trivial single-row sanity result",
         )
         assert result.success == 0
         assert "match" in (result.error or "")
 
     def test_empty_template_rejected(self, dashboard_tools: DashboardArtifactTools):
-        result = dashboard_tools.save_query_template(name="empty", sql_template="   ", sample_params={})
+        # Empty-template validation runs before goal/hypothesis checks —
+        # omit them deliberately to prove the empty branch is the trigger.
+        result = dashboard_tools.save_query_template(
+            name="empty",
+            sql_template="   ",
+            sample_params={},
+            goal="",
+            hypothesis="",
+        )
         assert result.success == 0
         assert "must not be empty" in (result.error or "")
+
+    def test_empty_goal_rejected(self, dashboard_tools: DashboardArtifactTools):
+        result = dashboard_tools.save_query_template(
+            name="no_goal",
+            sql_template="-- @datus-params x:string\nSELECT :x",
+            sample_params={"x": "v"},
+            goal="  ",
+            hypothesis="trivial single-row sanity result",
+        )
+        assert result.success == 0
+        assert "goal" in (result.error or "").lower()
+
+    def test_empty_hypothesis_rejected(self, dashboard_tools: DashboardArtifactTools):
+        result = dashboard_tools.save_query_template(
+            name="no_hypothesis",
+            sql_template="-- @datus-params x:string\nSELECT :x",
+            sample_params={"x": "v"},
+            goal="trivial sanity template",
+            hypothesis="  ",
+        )
+        assert result.success == 0
+        assert "hypothesis" in (result.error or "").lower()
+
+    def test_uses_recorded_in_reasoning_file(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        result = dashboard_tools.save_query_template(
+            name="revenue_uses",
+            sql_template=_REVENUE_TEMPLATE,
+            sample_params={"month_floor": "2026-01"},
+            goal="Revenue per region with optional filter",
+            hypothesis="Regional revenue diverges enough to justify drilldown.",
+            uses={"metrics": ["m_revenue"], "ext_knowledge": ["kb_business_units"]},
+        )
+        assert result.success == 1, result.error
+        dash_slug = dashboard_tools.dashboard_slug or ""
+        reasoning_file = project_root / "dashboards" / dash_slug / "queries" / "revenue_uses.reasoning.json"
+        data = json.loads(reasoning_file.read_text(encoding="utf-8"))
+        assert data["uses"]["metrics"] == ["m_revenue"]
+        assert data["uses"]["ext_knowledge"] == ["kb_business_units"]
+        assert data["uses"]["reference_sql"] == []
+        # ``datasource`` falls back to the connector's default label.
+        assert data["datasource"]
 
     def test_unknown_sample_param_rejected(self, dashboard_tools: DashboardArtifactTools):
         result = dashboard_tools.save_query_template(
             name="bad_params",
             sql_template=_REVENUE_TEMPLATE,
             sample_params={"month_floor": "2026-01", "rogue": 1},
+            goal="trivial sanity template",
+            hypothesis="trivial single-row sanity result",
         )
         assert result.success == 0
         assert "not declared" in (result.error or "")
@@ -400,12 +469,20 @@ class TestSaveQueryTemplate:
             name="bad_params2",
             sql_template=_REVENUE_TEMPLATE,
             sample_params={},
+            goal="trivial sanity template",
+            hypothesis="trivial single-row sanity result",
         )
         assert result.success == 0
         assert "missing required" in (result.error or "")
 
     def test_missing_header_rejected(self, dashboard_tools: DashboardArtifactTools):
-        result = dashboard_tools.save_query_template(name="no_header", sql_template="SELECT 1 AS a", sample_params={})
+        result = dashboard_tools.save_query_template(
+            name="no_header",
+            sql_template="SELECT 1 AS a",
+            sample_params={},
+            goal="trivial sanity template",
+            hypothesis="trivial single-row sanity result",
+        )
         assert result.success == 0
         assert "@datus-params" in (result.error or "")
 
@@ -414,6 +491,8 @@ class TestSaveQueryTemplate:
             name="bad_write",
             sql_template=("-- @datus-params region:string\nDELETE FROM sales WHERE region = :region"),
             sample_params={"region": "NA"},
+            goal="attempt a write",
+            hypothesis="connector should refuse the mutation",
         )
         assert result.success == 0
         assert "read-only" in (result.error or "").lower()
@@ -423,6 +502,8 @@ class TestSaveQueryTemplate:
             name="bad_args",
             sql_template="-- @datus-params x:string\nSELECT :x",
             sample_params="not a dict",  # type: ignore[arg-type]
+            goal="trivial sanity template",
+            hypothesis="trivial single-row sanity result",
         )
         assert result.success == 0
         assert "JSON object" in (result.error or "")
@@ -439,6 +520,8 @@ def _seed_template(dashboard_tools: DashboardArtifactTools, slug: str = "revenue
         name=slug,
         sql_template=_REVENUE_TEMPLATE,
         sample_params={"month_floor": "2026-01"},
+        goal="Revenue per region with optional filter",
+        hypothesis="Regional revenue diverges enough to justify drilldown.",
     )
     assert result.success == 1, result.error
 

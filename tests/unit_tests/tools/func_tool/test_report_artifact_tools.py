@@ -254,7 +254,15 @@ class TestBindExistingReport:
 
 class TestRequireActive:
     def test_save_query_rejects_when_unbound(self, unbound_tools: ReportArtifactTools):
-        result = unbound_tools.save_query(name="q", sql="SELECT 1 AS a")
+        # Required reasoning args (goal/hypothesis) are present to prove the
+        # binding check runs BEFORE the arg validation — even a fully-valid
+        # call must be rejected when no report is bound.
+        result = unbound_tools.save_query(
+            name="q",
+            sql="SELECT 1 AS a",
+            goal="trivial sanity query",
+            hypothesis="trivial single-row sanity result",
+        )
         assert result.success == 0
         error = (result.error or "").lower()
         assert "no active report" in error
@@ -305,32 +313,97 @@ class TestSaveQuery:
         result = report_tools.save_query(
             name="sales_by_store",
             sql="SELECT store_name, month, sales, growth FROM sales ORDER BY store_name, month",
-            description="Monthly sales by store",
+            goal="Monthly sales by store",
+            hypothesis="Sales vary materially by store within the same month.",
         )
         assert result.success == 1
         payload = result.result
         assert payload["name"] == "sales_by_store"
         assert payload["data_ref"] == "queries/sales_by_store"
         assert payload["row_count"] == 3
+        # The reasoning sidecar lands alongside the .sql / .json files.
+        assert payload["reasoning_path"].endswith("sales_by_store.reasoning.json")
 
         report_slug = report_tools.report_slug or ""
         assert report_slug == "demo_test"
         sql_file = project_root / "reports" / report_slug / "queries" / "sales_by_store.sql"
         json_file = project_root / "reports" / report_slug / "queries" / "sales_by_store.json"
+        reasoning_file = project_root / "reports" / report_slug / "queries" / "sales_by_store.reasoning.json"
         assert sql_file.exists()
         assert json_file.exists()
+        assert reasoning_file.exists()
+        # ``goal`` becomes the first SQL header comment (same slot the
+        # legacy ``description`` populated).
+        first_line = sql_file.read_text(encoding="utf-8").splitlines()[0]
+        assert first_line == "-- Monthly sales by store"
 
     def test_invalid_slug_rejected(self, report_tools: ReportArtifactTools):
-        result = report_tools.save_query(name="Bad Name!", sql="SELECT 1 AS a")
+        result = report_tools.save_query(
+            name="Bad Name!",
+            sql="SELECT 1 AS a",
+            goal="trivial sanity query",
+            hypothesis="trivial single-row sanity result",
+        )
         assert result.success == 0
         assert "match" in (result.error or "")
 
     def test_empty_sql_rejected(self, report_tools: ReportArtifactTools):
-        result = report_tools.save_query(name="empty", sql="   ")
+        # SQL validation runs before goal/hypothesis checks — omit them on
+        # purpose to prove the empty-SQL branch is the trigger.
+        result = report_tools.save_query(name="empty", sql="   ", goal="", hypothesis="")
         assert result.success == 0
+        assert "sql" in (result.error or "").lower()
+
+    def test_empty_goal_rejected(self, report_tools: ReportArtifactTools):
+        result = report_tools.save_query(
+            name="no_goal",
+            sql="SELECT 1 AS a",
+            goal="   ",
+            hypothesis="trivial single-row sanity result",
+        )
+        assert result.success == 0
+        assert "goal" in (result.error or "").lower()
+
+    def test_empty_hypothesis_rejected(self, report_tools: ReportArtifactTools):
+        result = report_tools.save_query(
+            name="no_hypothesis",
+            sql="SELECT 1 AS a",
+            goal="trivial sanity query",
+            hypothesis="   ",
+        )
+        assert result.success == 0
+        assert "hypothesis" in (result.error or "").lower()
+
+    def test_uses_recorded_in_reasoning_file(self, report_tools: ReportArtifactTools, project_root: Path):
+        """``uses`` dict round-trips through coerce_uses_arg into the reasoning sidecar."""
+        result = report_tools.save_query(
+            name="sales_by_store2",
+            sql="SELECT store_name FROM sales",
+            goal="store list",
+            hypothesis="store names are unique within the dataset",
+            uses={"metrics": ["m_sales"], "reference_sql": ["rs_sales_query"]},
+        )
+        assert result.success == 1, result.error
+        reasoning_file = (
+            project_root / "reports" / (report_tools.report_slug or "") / "queries" / "sales_by_store2.reasoning.json"
+        )
+        import json as _json
+
+        data = _json.loads(reasoning_file.read_text(encoding="utf-8"))
+        assert data["uses"]["metrics"] == ["m_sales"]
+        assert data["uses"]["reference_sql"] == ["rs_sales_query"]
+        assert data["uses"]["ext_knowledge"] == []
+        # ``datasource`` falls back to the connector's default label when
+        # the caller omits it.
+        assert data["datasource"]
 
     def test_write_operations_rejected(self, report_tools: ReportArtifactTools):
-        result = report_tools.save_query(name="delete_attempt", sql="DELETE FROM sales WHERE 1=1")
+        result = report_tools.save_query(
+            name="delete_attempt",
+            sql="DELETE FROM sales WHERE 1=1",
+            goal="attempt a write",
+            hypothesis="connector should refuse the mutation",
+        )
         assert result.success == 0
         assert "read-only" in (result.error or "").lower()
 
@@ -374,7 +447,12 @@ export default function KpiBanner({ rows }) {
 
 class TestValidateRender:
     def test_happy_path(self, report_tools: ReportArtifactTools, project_root: Path):
-        report_tools.save_query(name="sales_by_store", sql="SELECT store_name FROM sales")
+        report_tools.save_query(
+            name="sales_by_store",
+            sql="SELECT store_name FROM sales",
+            goal="list store names",
+            hypothesis="store names are stable identifiers within the dataset",
+        )
         _write_render(
             project_root,
             report_tools.report_slug,
@@ -403,7 +481,12 @@ class TestValidateRender:
         assert "no .jsx" in (result.error or "")
 
     def test_rejects_missing_default_export(self, report_tools: ReportArtifactTools, project_root: Path):
-        report_tools.save_query(name="sales_by_store", sql="SELECT store_name FROM sales")
+        report_tools.save_query(
+            name="sales_by_store",
+            sql="SELECT store_name FROM sales",
+            goal="list store names",
+            hypothesis="store names are stable identifiers within the dataset",
+        )
         no_default = "import React from 'react';\nfunction App() { return null; }\n"
         _write_render(project_root, report_tools.report_slug, {"app.jsx": no_default})
         result = report_tools.validate_render()
@@ -422,7 +505,12 @@ class TestValidateRender:
         assert "queries/sales_by_store" in (result.error or "")
 
     def test_rejects_disallowed_bare_import(self, report_tools: ReportArtifactTools, project_root: Path):
-        report_tools.save_query(name="sales_by_store", sql="SELECT store_name FROM sales")
+        report_tools.save_query(
+            name="sales_by_store",
+            sql="SELECT store_name FROM sales",
+            goal="list store names",
+            hypothesis="store names are stable identifiers within the dataset",
+        )
         bad_app = (
             "import React from 'react';\n"
             "import _ from 'lodash';\n"  # not allowed
@@ -439,7 +527,12 @@ class TestValidateRender:
         assert "lodash" in (result.error or "")
 
     def test_rejects_unresolved_relative_import(self, report_tools: ReportArtifactTools, project_root: Path):
-        report_tools.save_query(name="sales_by_store", sql="SELECT store_name FROM sales")
+        report_tools.save_query(
+            name="sales_by_store",
+            sql="SELECT store_name FROM sales",
+            goal="list store names",
+            hypothesis="store names are stable identifiers within the dataset",
+        )
         bad_app = _VALID_APP_JSX  # imports ./kpi-banner but we don't write it
         _write_render(project_root, report_tools.report_slug, {"app.jsx": bad_app})
         result = report_tools.validate_render()
@@ -448,7 +541,12 @@ class TestValidateRender:
         assert "does not resolve" in (result.error or "")
 
     def test_rejects_escape_relative_import(self, report_tools: ReportArtifactTools, project_root: Path):
-        report_tools.save_query(name="sales_by_store", sql="SELECT store_name FROM sales")
+        report_tools.save_query(
+            name="sales_by_store",
+            sql="SELECT store_name FROM sales",
+            goal="list store names",
+            hypothesis="store names are stable identifiers within the dataset",
+        )
         escape = (
             "import React from 'react';\n"
             "import x from '../../../etc/passwd';\n"
@@ -467,7 +565,12 @@ class TestValidateRender:
 
     def test_reports_unreferenced_files_as_warnings(self, report_tools: ReportArtifactTools, project_root: Path):
         """Files not reachable from app.jsx should surface as warnings, not block validation."""
-        report_tools.save_query(name="sales_by_store", sql="SELECT store_name FROM sales")
+        report_tools.save_query(
+            name="sales_by_store",
+            sql="SELECT store_name FROM sales",
+            goal="list store names",
+            hypothesis="store names are stable identifiers within the dataset",
+        )
         minimal_app = (
             "import React from 'react';\n"
             "import { useDatusArtifact } from '@datus/web-artifact';\n"
@@ -490,7 +593,12 @@ class TestValidateRender:
         assert any("legacy.jsx" in w for w in result.result["warnings"])
 
     def test_subdirectory_imports_resolve(self, report_tools: ReportArtifactTools, project_root: Path):
-        report_tools.save_query(name="sales_by_store", sql="SELECT store_name FROM sales")
+        report_tools.save_query(
+            name="sales_by_store",
+            sql="SELECT store_name FROM sales",
+            goal="list store names",
+            hypothesis="store names are stable identifiers within the dataset",
+        )
         app = (
             "import React from 'react';\n"
             "import Trend from './charts/trend';\n"
@@ -526,7 +634,12 @@ class TestValidateRender:
 
     def test_template_string_sqlid_skipped(self, report_tools: ReportArtifactTools, project_root: Path):
         """Template-string sqlIds are runtime-resolved and must not block validation."""
-        report_tools.save_query(name="sales_by_store", sql="SELECT store_name FROM sales")
+        report_tools.save_query(
+            name="sales_by_store",
+            sql="SELECT store_name FROM sales",
+            goal="list store names",
+            hypothesis="store names are stable identifiers within the dataset",
+        )
         app_with_template = (
             "import React, { useState } from 'react';\n"
             "import { useDatusArtifact } from '@datus/web-artifact';\n"
