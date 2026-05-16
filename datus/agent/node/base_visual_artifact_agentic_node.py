@@ -313,8 +313,22 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         mapping = super()._tool_category_map()
         if self.db_func_tool:
             mapping["db_tools"] = list(self.db_func_tool.available_tools())
+        semantic_bucket: List[Any] = []
         if self.semantic_tools:
-            mapping["semantic_tools"] = list(self.semantic_tools.available_tools())
+            semantic_bucket.extend(self.semantic_tools.available_tools())
+        # Artifact-specific helpers (``start_new_*`` / ``bind_existing_*`` /
+        # ``save_query*`` / ``validate_render``) are subagent-internal state
+        # mutations; lump them into the ``semantic_tools`` bucket so the
+        # ``semantic_tools.*`` ALLOW rule (normal profile) covers them.
+        # Without this they fall through to ``tools.<name>`` and the default
+        # ASK gate would block at the broker.
+        if self.artifact_tools and hasattr(self.artifact_tools, "available_tools"):
+            try:
+                semantic_bucket.extend(self.artifact_tools.available_tools())
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("artifact_tools.available_tools() failed: %s", exc)
+        if semantic_bucket:
+            mapping["semantic_tools"] = semantic_bucket
         if self.context_search_tools:
             mapping["context_search_tools"] = list(self.context_search_tools.available_tools())
         if self.filesystem_func_tool:
@@ -674,6 +688,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                 max_turns=self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
+                hooks=self._compose_hooks(),
                 agent_name=self.get_node_name(),
                 interrupt_controller=self.interrupt_controller,
             ):

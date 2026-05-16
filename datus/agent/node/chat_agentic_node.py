@@ -455,18 +455,15 @@ class ChatAgenticNode(AgenticNode):
 
         Plan-mode tools were registered on ``self.tools`` once at setup time
         (see :meth:`AgenticNode._register_plan_mode_tools`), so they are
-        already part of ``self.tools`` here for main agents.
+        already part of ``self.tools`` here for main agents. ``hooks`` is
+        routed through ``_compose_hooks`` so permission hooks are lazily
+        built and attached the same way as the other agentic nodes.
         """
-        config = {
+        return {
             "tools": self.tools,
             "instruction": self._get_system_instruction(original_input),
-            "hooks": None,
+            "hooks": self._compose_hooks(),
         }
-
-        if self.permission_hooks:
-            config["hooks"] = self.permission_hooks
-
-        return config
 
     async def _execute_with_recursive_replan(
         self,

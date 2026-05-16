@@ -1490,10 +1490,18 @@ class TestEndToEndGenerationHooksInteraction:
 
     @pytest.mark.asyncio
     async def test_e2e_generation_hooks_sync_error_logs_without_prompt(
-        self, real_agent_config, mock_llm_create, tmp_path, caplog
+        self, real_agent_config, mock_llm_create, tmp_path
     ):
-        """Full flow: sync errors are logged without falling back to a prompt."""
+        """Full flow: sync errors are logged without falling back to a prompt.
+
+        Patches ``datus.cli.generation_hooks.logger.error`` directly instead
+        of relying on pytest's ``caplog`` fixture: ``caplog`` is provided by
+        pytest's logging plugin, which several callers (CI variants, local
+        ``-p no:logging`` runs) disable for noise reasons. The patched mock
+        gives a stable assertion regardless of plugin state.
+        """
         import os
+        from unittest.mock import MagicMock
 
         from agents import FunctionTool
 
@@ -1558,15 +1566,18 @@ class TestEndToEndGenerationHooksInteraction:
             database="california_schools",
         )
 
-        caplog.set_level("ERROR", logger="datus.cli.generation_hooks")
         ahm = ActionHistoryManager()
         actions = []
-        with patch.object(
-            GenerationHooks,
-            "_sync_to_storage",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("sync failed"),
-        ) as mock_sync_to_storage:
+        recorded_error: MagicMock
+        with (
+            patch.object(
+                GenerationHooks,
+                "_sync_to_storage",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("sync failed"),
+            ) as mock_sync_to_storage,
+            patch("datus.cli.generation_hooks.logger.error") as recorded_error,
+        ):
             async for action in node.execute_stream_with_interactions(ahm):
                 actions.append(action)
 
@@ -1577,7 +1588,13 @@ class TestEndToEndGenerationHooksInteraction:
 
         interaction_actions = [a for a in actions if a.role == ActionRole.INTERACTION]
         assert len(interaction_actions) == 0
-        assert "Error handling end_semantic_model_generation: sync failed" in caplog.text
+        # Find the error log emitted by the end_semantic_model_generation
+        # branch of GenerationHooks. The format string keeps the literal
+        # prefix this test was originally asserting against.
+        logged_messages = [str(call.args[0]) if call.args else "" for call in recorded_error.call_args_list]
+        assert any("Error handling end_semantic_model_generation: sync failed" in msg for msg in logged_messages), (
+            f"expected sync-error log not found; got: {logged_messages}"
+        )
 
     @pytest.mark.asyncio
     async def test_e2e_generation_hooks_no_yaml_no_interaction(self, real_agent_config, mock_llm_create, tmp_path):
@@ -2338,7 +2355,13 @@ class TestGetExecutionConfig:
         assert "confirm_plan" in tool_names
         assert "todo_write" in tool_names
         assert config["instruction"] == "system instruction"
-        assert config["hooks"] is None
+        # ``_compose_hooks`` lazily builds PermissionHooks whenever the
+        # node has a ``permission_manager``; bare ``hooks=None`` would
+        # bypass permission gating.
+        if node.permission_manager:
+            assert config["hooks"] is not None
+        else:
+            assert config["hooks"] is None
 
     def test_subagent_never_gets_plan_tools(self, real_agent_config, mock_llm_create):
         """Sub-agent invocation suppresses plan tools entirely (set at construction)."""
