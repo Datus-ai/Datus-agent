@@ -51,10 +51,12 @@ def test_build_pytest_command_includes_marker_junit_and_extra_args(tmp_path, run
         mark_expr="not nightly",
         junit_xml=junit_xml,
         extra_args=["--timeout=300", "-n", "auto"],
+        basetemp=tmp_path / "pytest-temp" / "unit",
     )
 
     assert command[:4] == [run_merge_queue_tests.sys.executable, "-m", "pytest", "tests/unit_tests/"]
-    assert command[4:6] == ["-m", "not nightly"]
+    assert command[4] == f"--basetemp={tmp_path / 'pytest-temp' / 'unit'}"
+    assert command[5:7] == ["-m", "not nightly"]
     assert f"--junitxml={junit_xml}" in command
     assert ["--timeout=300", "-n", "auto"] == command[-3:]
 
@@ -93,6 +95,7 @@ def test_main_runs_selected_suite_and_writes_report(tmp_path, monkeypatch, run_m
                 mark_expr="acceptance or component or llm_harness",
                 junit_xml=out_dir / "test-results-merge-acceptance-unit.xml",
                 extra_args=["--timeout=300", "--dist=loadscope", "-n", "auto"],
+                basetemp=run_merge_queue_tests.suite_pytest_basetemp("acceptance-unit"),
             ),
             "cwd": repo_root,
             "timeout": 10,

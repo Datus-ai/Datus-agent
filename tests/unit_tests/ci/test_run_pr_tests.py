@@ -46,6 +46,17 @@ def test_select_impacted_unit_tests_includes_changed_unit_tests_and_dedupes():
     ]
 
 
+def test_select_impacted_unit_tests_maps_db_tools_to_db_tools_tests():
+    impacted = run_pr_tests.select_impacted_unit_tests(
+        [
+            "datus/tools/db_tools/sqlite_connector.py",
+            "datus/tools/db_tools/db_manager.py",
+        ]
+    )
+
+    assert impacted == ["tests/unit_tests/tools/db_tools/"]
+
+
 def test_select_impacted_unit_tests_maps_non_python_files_to_parent_directory():
     impacted = run_pr_tests.select_impacted_unit_tests(
         [

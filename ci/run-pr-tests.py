@@ -80,6 +80,7 @@ IMPACTED_TEST_MAPPING = [
     ("datus/configuration/", "tests/unit_tests/configuration/"),
     ("datus/models/", "tests/unit_tests/models/"),
     ("datus/storage/", "tests/unit_tests/storage/"),
+    ("datus/tools/db_tools/", "tests/unit_tests/tools/db_tools/"),
     ("datus/tools/", "tests/unit_tests/tools/"),
     ("datus/utils/", "tests/unit_tests/utils/"),
     ("ci/", "tests/unit_tests/ci/"),
