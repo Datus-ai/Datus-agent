@@ -523,20 +523,29 @@ class GenReportAgenticNode(AgenticNode):
                 agent_name=self.get_node_name(),
                 interrupt_controller=self.interrupt_controller,
             ):
-                # Collect response content from successful actions
-                if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
+                # Collect response content from assistant actions only —
+                # tool results may carry their own ``raw_output`` / ``content``
+                # fields and would otherwise overwrite the model's reply.
+                if (
+                    stream_action.role == ActionRole.ASSISTANT
+                    and stream_action.status == ActionStatus.SUCCESS
+                    and stream_action.output
+                ):
                     if isinstance(stream_action.output, dict):
                         last_successful_output = stream_action.output
-                        response_content = (
+                        candidate = (
                             stream_action.output.get("content", "")
                             or stream_action.output.get("response", "")
                             or stream_action.output.get("raw_output", "")
-                            or response_content
                         )
+                        if isinstance(candidate, str) and candidate:
+                            response_content = candidate
+                        elif candidate and not isinstance(candidate, str):
+                            response_content = str(candidate)
 
                         # Try to extract report from JSON and update action for display
                         # This prevents raw JSON from being displayed in the stream
-                        if stream_action.role == ActionRole.ASSISTANT and response_content:
+                        if response_content:
                             # Check if response looks like JSON (contains {"report": pattern)
                             is_json_response = '{"report"' in response_content or '"report":' in response_content
                             if is_json_response:

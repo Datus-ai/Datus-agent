@@ -328,15 +328,22 @@ class ExploreAgenticNode(AgenticNode):
             ):
                 yield stream_action
 
-                if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
+                if (
+                    stream_action.role == ActionRole.ASSISTANT
+                    and stream_action.status == ActionStatus.SUCCESS
+                    and stream_action.output
+                ):
                     if isinstance(stream_action.output, dict):
                         last_successful_output = stream_action.output
-                        response_content = (
+                        candidate = (
                             stream_action.output.get("content", "")
                             or stream_action.output.get("response", "")
                             or stream_action.output.get("raw_output", "")
-                            or response_content
                         )
+                        if isinstance(candidate, str) and candidate:
+                            response_content = candidate
+                        elif candidate and not isinstance(candidate, str):
+                            response_content = str(candidate)
 
             if not response_content and last_successful_output:
                 response_content = (

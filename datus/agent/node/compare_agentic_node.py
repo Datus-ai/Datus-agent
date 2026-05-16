@@ -260,14 +260,20 @@ class CompareAgenticNode(AgenticNode):
             ):
                 yield stream_action
 
-                if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
+                if (
+                    stream_action.role == ActionRole.ASSISTANT
+                    and stream_action.status == ActionStatus.SUCCESS
+                    and stream_action.output
+                ):
                     output_value = stream_action.output
                     if isinstance(output_value, dict):
                         last_successful_output = output_value
                         raw_output = output_value.get("raw_output")
-                        if raw_output:
+                        if isinstance(raw_output, str) and raw_output:
                             response_content = raw_output
-                    else:
+                        elif raw_output and not isinstance(raw_output, str):
+                            response_content = str(raw_output)
+                    elif isinstance(output_value, str):
                         response_content = output_value
 
             if not response_content and last_successful_output:

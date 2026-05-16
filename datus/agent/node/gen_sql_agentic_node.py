@@ -1027,20 +1027,32 @@ class GenSQLAgenticNode(AgenticNode):
         self,
         action_history_manager: ActionHistoryManager,
     ) -> tuple[str, Optional[str]]:
-        """Collect final response text and SQL from accumulated action history."""
+        """Collect final response text and SQL from accumulated action history.
+
+        Only assistant-role actions are considered when accumulating
+        ``response_content``; tool results may carry their own ``raw_output``
+        / ``content`` fields and would otherwise overwrite the model's reply.
+        """
 
         response_content = ""
         last_successful_output = None
         for stream_action in action_history_manager.get_actions():
-            if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
+            if (
+                stream_action.role == ActionRole.ASSISTANT
+                and stream_action.status == ActionStatus.SUCCESS
+                and stream_action.output
+            ):
                 if isinstance(stream_action.output, dict):
                     last_successful_output = stream_action.output
-                    response_content = (
+                    candidate = (
                         stream_action.output.get("content", "")
                         or stream_action.output.get("response", "")
                         or stream_action.output.get("raw_output", "")
-                        or response_content
                     )
+                    if isinstance(candidate, str) and candidate:
+                        response_content = candidate
+                    elif candidate and not isinstance(candidate, str):
+                        response_content = str(candidate)
 
         if not response_content and last_successful_output:
             logger.debug(f"Trying to extract response from last_successful_output: {last_successful_output}")

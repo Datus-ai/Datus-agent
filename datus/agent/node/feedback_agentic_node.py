@@ -272,7 +272,14 @@ class FeedbackAgenticNode(AgenticNode):
             ):
                 yield stream_action
 
-                if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
+                # Only accumulate from assistant actions; tool results may
+                # carry their own ``raw_output`` dict and would otherwise
+                # overwrite the model's reply.
+                if (
+                    stream_action.role == ActionRole.ASSISTANT
+                    and stream_action.status == ActionStatus.SUCCESS
+                    and stream_action.output
+                ):
                     if isinstance(stream_action.output, dict):
                         last_successful_output = stream_action.output
                         raw_output = stream_action.output.get("raw_output", "")
