@@ -796,18 +796,19 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         except ExecutionInterrupted:
             raise
         except Exception as exc:
-            logger.error("%s execution error: %s", self.get_node_name(), exc, exc_info=True)
+            error_msg = self._format_execution_error(exc)
+            logger.error("%s execution error: %s", self.get_node_name(), error_msg, exc_info=True)
             error_result = self._build_error_result(exc)
             self.result = error_result
             action_history_manager.update_current_action(
                 status=ActionStatus.FAILED,
                 output=error_result.model_dump(),
-                messages=f"Error: {exc}",
+                messages=f"Error: {error_msg}",
             )
             error_action = ActionHistory.create_action(
                 role=ActionRole.ASSISTANT,
                 action_type="error",
-                messages=f"{self.get_node_name()} failed: {exc}",
+                messages=f"{self.get_node_name()} failed: {error_msg}",
                 input_data=user_input.model_dump(),
                 output_data=error_result.model_dump(),
                 status=ActionStatus.FAILED,

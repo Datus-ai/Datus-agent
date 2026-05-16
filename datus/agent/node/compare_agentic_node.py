@@ -317,11 +317,12 @@ class CompareAgenticNode(AgenticNode):
             raise
 
         except Exception as exc:
-            logger.error(f"CompareAgenticNode streaming execution failed: {exc}")
+            error_msg = self._format_execution_error(exc)
+            logger.error(f"CompareAgenticNode streaming execution failed: {error_msg}")
 
             error_result = CompareResult(
                 success=False,
-                error=str(exc),
+                error=error_msg,
                 explanation="Comparison analysis failed",
                 suggest="Please check the input parameters and try again",
             )
@@ -330,13 +331,13 @@ class CompareAgenticNode(AgenticNode):
             action_history_manager.update_current_action(
                 status=ActionStatus.FAILED,
                 output=error_result.model_dump(),
-                messages=f"Comparison failed: {exc}",
+                messages=f"Comparison failed: {error_msg}",
             )
 
             error_action = ActionHistory.create_action(
                 role=ActionRole.ASSISTANT,
                 action_type="compare_sql_error",
-                messages=f"Comparison failed: {exc}",
+                messages=f"Comparison failed: {error_msg}",
                 input_data=user_input.model_dump(),
                 output_data=error_result.model_dump(),
                 status=ActionStatus.FAILED,

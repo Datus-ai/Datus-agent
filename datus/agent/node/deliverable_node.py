@@ -410,9 +410,10 @@ class DeliverableAgenticNode(AgenticNode):
         except ExecutionInterrupted:
             raise
         except Exception as e:
-            logger.error("%s execution error: %s", self.get_node_name(), e)
+            error_msg = self._format_execution_error(e)
+            logger.error("%s execution error: %s", self.get_node_name(), error_msg)
             error_result = self._make_error_result(
-                error=str(e),
+                error=error_msg,
                 action_history_manager=action_history_manager,
             )
             self.result = error_result
@@ -421,12 +422,12 @@ class DeliverableAgenticNode(AgenticNode):
             action_history_manager.update_current_action(
                 status=ActionStatus.FAILED,
                 output=error_result.model_dump(),
-                messages=f"Error: {str(e)}",
+                messages=f"Error: {error_msg}",
             )
             error_action = ActionHistory.create_action(
                 role=ActionRole.ASSISTANT,
                 action_type="error",
-                messages=f"{self.get_node_name()} interaction failed: {str(e)}",
+                messages=f"{self.get_node_name()} interaction failed: {error_msg}",
                 input_data=user_input.model_dump(),
                 output_data=error_result.model_dump(),
                 status=ActionStatus.FAILED,

@@ -401,14 +401,8 @@ class ExploreAgenticNode(AgenticNode):
             raise
 
         except Exception as e:
-            from datus.utils.exceptions import DatusException
-
-            if isinstance(e, DatusException):
-                error_msg = f"[{e.code}] {e}"
-                logger.error(f"{self.get_node_name()} execution error: {error_msg}")
-            else:
-                error_msg = str(e)
-                logger.error(f"{self.get_node_name()} execution error: {error_msg}")
+            error_msg = self._format_execution_error(e)
+            logger.error(f"{self.get_node_name()} execution error: {error_msg}")
 
             error_result = ExploreNodeResult(
                 success=False,

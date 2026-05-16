@@ -645,12 +645,13 @@ class GenReportAgenticNode(AgenticNode):
             raise
 
         except Exception as e:
-            logger.error(f"{self.get_node_name()} execution error: {e}")
+            error_msg = self._format_execution_error(e)
+            logger.error(f"{self.get_node_name()} execution error: {error_msg}")
 
             # Create error result
             error_result = GenReportNodeResult(
                 success=False,
-                error=str(e),
+                error=error_msg,
                 response="Sorry, I encountered an error while generating the report.",
                 tokens_used=0,
             )
@@ -660,14 +661,14 @@ class GenReportAgenticNode(AgenticNode):
             action_history_manager.update_current_action(
                 status=ActionStatus.FAILED,
                 output=error_result.model_dump(),
-                messages=f"Error: {str(e)}",
+                messages=f"Error: {error_msg}",
             )
 
             # Create error action
             error_action = ActionHistory.create_action(
                 role=ActionRole.ASSISTANT,
                 action_type="error",
-                messages=f"{self.get_node_name()} analysis failed: {str(e)}",
+                messages=f"{self.get_node_name()} analysis failed: {error_msg}",
                 input_data=user_input.model_dump(),
                 output_data=error_result.model_dump(),
                 status=ActionStatus.FAILED,

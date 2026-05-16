@@ -756,11 +756,12 @@ class ChatAgenticNode(AgenticNode):
                     status=ActionStatus.SUCCESS,
                 )
             else:
-                logger.error(f"Chat execution error: {e}")
+                error_msg = self._format_execution_error(e)
+                logger.error(f"Chat execution error: {error_msg}")
 
                 result = ChatNodeResult(
                     success=False,
-                    error=str(e),
+                    error=error_msg,
                     response="Sorry, I encountered an error while processing your request.",
                     tokens_used=0,
                 )
@@ -768,13 +769,13 @@ class ChatAgenticNode(AgenticNode):
                 action_history_manager.update_current_action(
                     status=ActionStatus.FAILED,
                     output=result.model_dump(),
-                    messages=f"Error: {str(e)}",
+                    messages=f"Error: {error_msg}",
                 )
 
                 action = ActionHistory.create_action(
                     role=ActionRole.ASSISTANT,
                     action_type="error",
-                    messages=f"Chat interaction failed: {str(e)}",
+                    messages=f"Chat interaction failed: {error_msg}",
                     input_data=user_input.model_dump(),
                     output_data=result.model_dump(),
                     status=ActionStatus.FAILED,

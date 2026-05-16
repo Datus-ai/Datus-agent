@@ -2165,6 +2165,20 @@ class AgenticNode(Node):
                 message_args={"config_error": f"Permission hook setup failed for {self.get_node_name()}: {e}"},
             ) from e
 
+    @staticmethod
+    def _format_execution_error(exc: BaseException) -> str:
+        """Render an exception for error_result / error_action display.
+
+        ``DatusException`` carries a structured error code that is normally
+        lost when callers fall back to ``str(exc)``. Surface it as
+        ``[CODE] <message>`` so logs and SSE error cards remain greppable.
+        """
+        from datus.utils.exceptions import DatusException
+
+        if isinstance(exc, DatusException):
+            return f"[{exc.code}] {exc}"
+        return str(exc)
+
     def _compose_hooks(self, extra: Any = None) -> Any:
         """Combine permission hooks with an optional per-node hook.
 
