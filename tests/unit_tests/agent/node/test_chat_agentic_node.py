@@ -948,9 +948,18 @@ class TestChatAgenticNodeExecuteStreamErrors:
             mock_llm_create.generate_with_tools_stream = original_method
 
     @pytest.mark.asyncio
-    async def test_execute_stream_handles_user_cancellation(self, real_agent_config, mock_llm_create):
-        """User cancellation yields a SUCCESS action with cancellation message."""
+    async def test_execute_stream_user_cancellation_via_execution_interrupted(self, real_agent_config, mock_llm_create):
+        """User cancellations propagate as ``ExecutionInterrupted``.
+
+        Cancellation is the single, typed channel used everywhere else
+        (``execute_stream_with_interactions`` converts it into the
+        ``interrupted`` SUCCESS action). Generic ``Exception("User
+        cancelled ...")`` strings raised by upstream SDK plumbing fall
+        through to the regular error branch — they're real failures, not
+        user-initiated cancels.
+        """
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.cli.execution_state import ExecutionInterrupted
 
         node = ChatAgenticNode(
             node_id="test_cancel",
@@ -962,7 +971,7 @@ class TestChatAgenticNodeExecuteStreamErrors:
         original_method = mock_llm_create.generate_with_tools_stream
 
         async def cancel_stream(*args, **kwargs):
-            raise Exception("User cancelled the operation")
+            raise ExecutionInterrupted("Ctrl+C")
             yield  # noqa: unreachable
 
         mock_llm_create.generate_with_tools_stream = cancel_stream
@@ -971,14 +980,9 @@ class TestChatAgenticNodeExecuteStreamErrors:
         ahm = ActionHistoryManager()
 
         try:
-            actions = []
-            async for action in node.execute_stream(ahm):
-                actions.append(action)
-
-            assert len(actions) >= 2
-            final_action = actions[-1]
-            assert final_action.status == ActionStatus.SUCCESS
-            assert final_action.action_type == "user_cancellation"
+            with pytest.raises(ExecutionInterrupted):
+                async for _ in node.execute_stream(ahm):
+                    pass
         finally:
             mock_llm_create.generate_with_tools_stream = original_method
 

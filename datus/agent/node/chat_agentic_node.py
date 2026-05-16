@@ -719,54 +719,30 @@ class ChatAgenticNode(AgenticNode):
             raise
 
         except Exception as e:
-            if "User cancelled" in str(e) or "UserCancelledException" in str(type(e).__name__):
-                logger.info("User cancelled execution, stopping gracefully...")
+            error_msg = self._format_execution_error(e)
+            logger.error(f"Chat execution error: {error_msg}")
 
-                result = ChatNodeResult(
-                    success=True,
-                    response="Execution cancelled by user.",
-                    tokens_used=0,
-                )
+            result = ChatNodeResult(
+                success=False,
+                error=error_msg,
+                response="Sorry, I encountered an error while processing your request.",
+                tokens_used=0,
+            )
 
-                action_history_manager.update_current_action(
-                    status=ActionStatus.SUCCESS,
-                    output=result.model_dump(),
-                    messages="Execution cancelled by user",
-                )
+            action_history_manager.update_current_action(
+                status=ActionStatus.FAILED,
+                output=result.model_dump(),
+                messages=f"Error: {error_msg}",
+            )
 
-                action = ActionHistory.create_action(
-                    role=ActionRole.ASSISTANT,
-                    action_type="user_cancellation",
-                    messages="Execution cancelled by user",
-                    input_data=user_input.model_dump(),
-                    output_data=result.model_dump(),
-                    status=ActionStatus.SUCCESS,
-                )
-            else:
-                error_msg = self._format_execution_error(e)
-                logger.error(f"Chat execution error: {error_msg}")
-
-                result = ChatNodeResult(
-                    success=False,
-                    error=error_msg,
-                    response="Sorry, I encountered an error while processing your request.",
-                    tokens_used=0,
-                )
-
-                action_history_manager.update_current_action(
-                    status=ActionStatus.FAILED,
-                    output=result.model_dump(),
-                    messages=f"Error: {error_msg}",
-                )
-
-                action = ActionHistory.create_action(
-                    role=ActionRole.ASSISTANT,
-                    action_type="error",
-                    messages=f"Chat interaction failed: {error_msg}",
-                    input_data=user_input.model_dump(),
-                    output_data=result.model_dump(),
-                    status=ActionStatus.FAILED,
-                )
+            action = ActionHistory.create_action(
+                role=ActionRole.ASSISTANT,
+                action_type="error",
+                messages=f"Chat interaction failed: {error_msg}",
+                input_data=user_input.model_dump(),
+                output_data=result.model_dump(),
+                status=ActionStatus.FAILED,
+            )
 
             self.result = result
             action_history_manager.add_action(action)
