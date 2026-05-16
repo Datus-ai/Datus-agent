@@ -465,39 +465,6 @@ class ChatAgenticNode(AgenticNode):
             "hooks": self._compose_hooks(),
         }
 
-    async def _execute_with_recursive_replan(
-        self,
-        prompt: str,
-        execution_mode: str,
-        original_input,
-        action_history_manager: ActionHistoryManager,
-        session,
-    ) -> AsyncGenerator[ActionHistory, None]:
-        """Thin wrapper around :meth:`LLMBaseModel.generate_with_tools_stream`.
-
-        The legacy recursive plan-mode flow was removed when plan mode moved
-        to a file-backed workflow. This wrapper is kept so that existing
-        tests (and any external code patching this method) continue to work.
-        ``execution_mode`` is accepted for backward compatibility but is
-        unused — tool/hook selection now lives entirely in
-        :meth:`_get_execution_config`.
-        """
-        del execution_mode  # legacy positional, no longer drives behavior
-        config = self._get_execution_config(original_input)
-        async for stream_action in self.model.generate_with_tools_stream(
-            prompt=prompt,
-            tools=config["tools"],
-            mcp_servers=self.mcp_servers,
-            instruction=config["instruction"],
-            max_turns=self.max_turns,
-            session=session,
-            action_history_manager=action_history_manager,
-            hooks=config.get("hooks"),
-            agent_name=self.get_node_name(),
-            interrupt_controller=self.interrupt_controller,
-        ):
-            yield stream_action
-
     # ── Workflow Integration ────────────────────────────────────────────
 
     def setup_input(self, workflow: Workflow) -> dict:
@@ -600,12 +567,18 @@ class ChatAgenticNode(AgenticNode):
             last_successful_tool_summary = ""
             tool_result_seen = False
 
-            async for stream_action in self._execute_with_recursive_replan(
+            config = self._get_execution_config(user_input)
+            async for stream_action in self.model.generate_with_tools_stream(
                 prompt=enhanced_message,
-                execution_mode="normal",
-                original_input=user_input,
-                action_history_manager=action_history_manager,
+                tools=config["tools"],
+                mcp_servers=self.mcp_servers,
+                instruction=config["instruction"],
+                max_turns=self.max_turns,
                 session=session,
+                action_history_manager=action_history_manager,
+                hooks=config.get("hooks"),
+                agent_name=self.get_node_name(),
+                interrupt_controller=self.interrupt_controller,
             ):
                 yield stream_action
 

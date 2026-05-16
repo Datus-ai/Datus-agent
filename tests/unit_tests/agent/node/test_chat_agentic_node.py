@@ -1199,7 +1199,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
 
         # Simulate the problematic scenario: the last successful action's output
         # has "response" as a dict (e.g. DB tool result) and no string "content".
-        async def mock_execute(prompt, execution_mode, original_input, action_history_manager, session):
+        async def mock_execute(*args, action_history_manager, **kwargs):
             action = ActionHistory(
                 action_id="msg_dict",
                 role=ActionRole.ASSISTANT,
@@ -1215,7 +1215,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
             action_history_manager.add_action(action)
             yield action
 
-        with patch.object(node, "_execute_with_recursive_replan", mock_execute):
+        with patch.object(mock_llm_create, "generate_with_tools_stream", mock_execute):
             ahm = ActionHistoryManager()
             actions = []
             async for action in node.execute_stream(ahm):
@@ -1245,7 +1245,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
         )
         node.input = ChatNodeInput(user_message="List tables", database="california_schools")
 
-        async def mock_execute(prompt, execution_mode, original_input, action_history_manager, session):
+        async def mock_execute(*args, action_history_manager, **kwargs):
             action = ActionHistory(
                 action_id="complete_tool",
                 role=ActionRole.TOOL,
@@ -1266,7 +1266,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
             action_history_manager.add_action(action)
             yield action
 
-        with patch.object(node, "_execute_with_recursive_replan", mock_execute):
+        with patch.object(mock_llm_create, "generate_with_tools_stream", mock_execute):
             ahm = ActionHistoryManager()
             actions = []
             async for action in node.execute_stream(ahm):
@@ -1292,7 +1292,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
         )
         node.input = ChatNodeInput(user_message="List tables", database="california_schools")
 
-        async def mock_execute(prompt, execution_mode, original_input, action_history_manager, session):
+        async def mock_execute(*args, action_history_manager, **kwargs):
             pre_tool_thinking = ActionHistory(
                 action_id="thinking_before_tool",
                 role=ActionRole.ASSISTANT,
@@ -1329,7 +1329,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
             action_history_manager.add_action(final_thinking)
             yield final_thinking
 
-        with patch.object(node, "_execute_with_recursive_replan", mock_execute):
+        with patch.object(mock_llm_create, "generate_with_tools_stream", mock_execute):
             ahm = ActionHistoryManager()
             actions = []
             async for action in node.execute_stream(ahm):
@@ -1358,7 +1358,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
         )
         node.input = ChatNodeInput(user_message="Hello", database="california_schools")
 
-        async def mock_execute(prompt, execution_mode, original_input, action_history_manager, session):
+        async def mock_execute(*args, action_history_manager, **kwargs):
             action = ActionHistory(
                 action_id="msg_str",
                 role=ActionRole.ASSISTANT,
@@ -1371,7 +1371,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
             action_history_manager.add_action(action)
             yield action
 
-        with patch.object(node, "_execute_with_recursive_replan", mock_execute):
+        with patch.object(mock_llm_create, "generate_with_tools_stream", mock_execute):
             ahm = ActionHistoryManager()
             actions = []
             async for action in node.execute_stream(ahm):
@@ -1402,7 +1402,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
         )
         node.input = ChatNodeInput(user_message="Query", database="california_schools")
 
-        async def mock_execute(prompt, execution_mode, original_input, action_history_manager, session):
+        async def mock_execute(*args, action_history_manager, **kwargs):
             # Action with "text" as dict — stream loop doesn't check "text",
             # so response_content stays empty. Fallback checks "text" and finds the dict.
             action = ActionHistory(
@@ -1422,7 +1422,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
             action_history_manager.add_action(action)
             yield action
 
-        with patch.object(node, "_execute_with_recursive_replan", mock_execute):
+        with patch.object(mock_llm_create, "generate_with_tools_stream", mock_execute):
             ahm = ActionHistoryManager()
             actions = []
             async for action in node.execute_stream(ahm):
@@ -1456,7 +1456,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
         )
         node.input = ChatNodeInput(user_message="Summarize", database="california_schools")
 
-        async def mock_execute(prompt, execution_mode, original_input, action_history_manager, session):
+        async def mock_execute(*args, action_history_manager, **kwargs):
             # Add summary_report directly to action_history_manager (simulates sub-component adding it).
             # Do NOT yield it, so last_successful_output stays None and the summary_report
             # fallback loop is actually reached.
@@ -1486,7 +1486,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
             )
             yield empty_action
 
-        with patch.object(node, "_execute_with_recursive_replan", mock_execute):
+        with patch.object(mock_llm_create, "generate_with_tools_stream", mock_execute):
             ahm = ActionHistoryManager()
             actions = []
             async for action in node.execute_stream(ahm):
