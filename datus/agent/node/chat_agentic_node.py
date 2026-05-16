@@ -713,6 +713,7 @@ class ChatAgenticNode(AgenticNode):
                 action_history=[action.model_dump() for action in all_actions],
                 execution_stats=execution_stats,
             )
+            self.result = result
 
             self.actions.extend(action_history_manager.get_actions())
 
@@ -779,6 +780,7 @@ class ChatAgenticNode(AgenticNode):
                     status=ActionStatus.FAILED,
                 )
 
+            self.result = result
             action_history_manager.add_action(action)
             yield action
 

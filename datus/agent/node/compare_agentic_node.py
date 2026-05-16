@@ -292,6 +292,7 @@ class CompareAgenticNode(AgenticNode):
                 suggest=result_dict.get("suggest", "No suggestions provided"),
                 tokens_used=tokens_used,
             )
+            self.result = result
 
             self.actions.extend(action_history_manager.get_actions())
 
@@ -318,6 +319,7 @@ class CompareAgenticNode(AgenticNode):
                 explanation="Comparison analysis failed",
                 suggest="Please check the input parameters and try again",
             )
+            self.result = error_result
 
             action_history_manager.update_current_action(
                 status=ActionStatus.FAILED,

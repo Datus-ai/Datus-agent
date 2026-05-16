@@ -393,6 +393,7 @@ class DeliverableAgenticNode(AgenticNode):
                 last_successful_output=last_successful_output,
                 blocked=last_validation_report is not None,
             )
+            self.result = result
             self.actions.extend(action_history_manager.get_actions())
 
             final_action = ActionHistory.create_action(
@@ -414,6 +415,7 @@ class DeliverableAgenticNode(AgenticNode):
                 error=str(e),
                 action_history_manager=action_history_manager,
             )
+            self.result = error_result
             error_action = ActionHistory.create_action(
                 role=ActionRole.ASSISTANT,
                 action_type="error",

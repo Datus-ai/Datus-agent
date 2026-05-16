@@ -615,6 +615,7 @@ class GenReportAgenticNode(AgenticNode):
                 action_history=[action.model_dump() for action in all_actions],
                 execution_stats=execution_stats,
             )
+            self.result = result
 
             # Add to internal actions list
             self.actions.extend(all_actions)
@@ -644,6 +645,7 @@ class GenReportAgenticNode(AgenticNode):
                 response="Sorry, I encountered an error while generating the report.",
                 tokens_used=0,
             )
+            self.result = error_result
 
             # Update action with error
             action_history_manager.update_current_action(

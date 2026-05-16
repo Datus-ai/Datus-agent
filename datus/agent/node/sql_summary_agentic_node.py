@@ -498,6 +498,7 @@ class SqlSummaryAgenticNode(AgenticNode):
                 sql_summary_file=sql_summary_file,
                 tokens_used=int(tokens_used),
             )
+            self.result = result
 
             # Add to internal actions list
             self.actions.extend(action_history_manager.get_actions())
@@ -527,6 +528,7 @@ class SqlSummaryAgenticNode(AgenticNode):
                 response="Sorry, I encountered an error while processing your request.",
                 tokens_used=0,
             )
+            self.result = error_result
 
             # Update action with error
             action_history_manager.update_current_action(

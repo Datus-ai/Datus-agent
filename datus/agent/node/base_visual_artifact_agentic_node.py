@@ -772,6 +772,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                     result.finalize_error = finalize_summary["error"]  # type: ignore[attr-defined]
                 self._post_validate_hook(self._active_artifact_slug, result)
 
+            self.result = result
             self.actions.extend(all_actions)
 
             final_action = ActionHistory.create_action(
@@ -790,6 +791,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         except Exception as exc:
             logger.error("%s execution error: %s", self.get_node_name(), exc, exc_info=True)
             error_result = self._build_error_result(exc)
+            self.result = error_result
             action_history_manager.update_current_action(
                 status=ActionStatus.FAILED,
                 output=error_result.model_dump(),
