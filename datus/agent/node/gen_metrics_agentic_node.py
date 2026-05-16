@@ -487,6 +487,12 @@ class GenMetricsAgenticNode(AgenticNode):
             if extracted_output:
                 response_content = extracted_output
 
+            # ``response_content`` may still be a dict if the extractor failed
+            # to recover a markdown ``output`` field; coerce to ``str`` so the
+            # ``SemanticNodeResult.response: str`` field validates cleanly.
+            if not isinstance(response_content, str):
+                response_content = str(response_content) if response_content else ""
+
             self._finalize_metric_generation(
                 semantic_model_file=semantic_model_file,
                 metric_file=metric_file,

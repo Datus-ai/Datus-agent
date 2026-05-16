@@ -304,6 +304,13 @@ class FeedbackAgenticNode(AgenticNode):
             if self.execution_mode == "interactive":
                 tokens_used = self._extract_total_tokens(action_history_manager.get_actions())
 
+            # ``response_content`` may still be a dict if the main collector
+            # captured a structured raw_output and no string candidate was
+            # found later; coerce to ``str`` so ``FeedbackNodeResult.response:
+            # str`` validates cleanly.
+            if not isinstance(response_content, str):
+                response_content = str(response_content) if response_content else ""
+
             # Count storage from the current run's actions so reused node
             # instances don't leak counts from previous runs.
             current_actions = action_history_manager.get_actions()
@@ -312,7 +319,7 @@ class FeedbackAgenticNode(AgenticNode):
 
             result = FeedbackNodeResult(
                 success=True,
-                response=response_content if isinstance(response_content, str) else str(response_content),
+                response=response_content,
                 items_saved=items_saved,
                 storage_summary=storage_summary,
                 tokens_used=int(tokens_used),

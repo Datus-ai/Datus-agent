@@ -474,6 +474,11 @@ class GenSemanticModelAgenticNode(AgenticNode):
             if extracted_output:
                 response_content = extracted_output
 
+            # ``response_content`` may still be a dict if the extractor failed
+            # to recover a markdown ``output`` field; coerce to ``str`` so the
+            # ``SemanticNodeResult.response: str`` field validates cleanly.
+            if not isinstance(response_content, str):
+                response_content = str(response_content) if response_content else ""
             logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
 
             # Extract token usage (only in interactive mode with session)
