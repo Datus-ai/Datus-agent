@@ -323,7 +323,7 @@ class TestBuildArtifactContent:
             },
         )
         contents = _build_artifact_content(action)
-        assert contents is not None
+        assert isinstance(contents, list)
         assert len(contents) == 1
         assert contents[0].type == "artifact"
         payload = contents[0].payload
@@ -354,7 +354,7 @@ class TestBuildArtifactContent:
             },
         )
         contents = _build_artifact_content(action)
-        assert contents is not None
+        assert isinstance(contents, list)
         payload = contents[0].payload
         assert payload["slug"] == "sales_overview"
         assert payload["kind"] == "dashboard"
@@ -413,7 +413,7 @@ class TestBuildArtifactContent:
             },
         )
         contents = _build_artifact_content(action)
-        assert contents is not None
+        assert isinstance(contents, list)
         preview = contents[0].payload["preview_summary"]
         assert preview.endswith("…")
         assert len(preview) <= _ARTIFACT_PREVIEW_LIMIT + 1
@@ -433,7 +433,7 @@ class TestBuildArtifactContent:
             },
         )
         contents = _build_artifact_content(action)
-        assert contents is not None
+        assert isinstance(contents, list)
         assert contents[0].payload["preview_summary"] is None
 
     def test_non_dict_output_returns_none(self):
@@ -921,6 +921,49 @@ class TestActionToSSEEvent:
         assert content.type == "artifact"
         assert content.payload["slug"] == "sales_overview"
         assert content.payload["kind"] == "dashboard"
+
+    def test_artifact_response_with_missing_slug_falls_back_to_markdown_when_requested(self):
+        """Malformed artifact payloads must not suppress the assistant's prose.
+
+        ``artifact_kind`` is set but ``report_slug`` is missing — the artifact
+        builder returns None. Instead of dropping the wrapper event entirely,
+        the converter falls back to the standard ``_response`` markdown
+        handler so history tooling (``include_final_response=True``) still
+        surfaces the LLM's response text.
+        """
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            action_type="gen_visual_report_response",
+            output={
+                "artifact_kind": "report",
+                "report_slug": None,
+                "response": "I got partway but never bound a report.",
+            },
+        )
+        event = action_to_sse_event(action, event_id=203, message_id="msg-203", include_final_response=True)
+        event = _assert_sse_event(event)
+        content = event.data.payload.content[0]
+        assert content.type == "markdown"
+        assert content.payload["content"] == "I got partway but never bound a report."
+
+    def test_artifact_response_with_missing_slug_drops_event_in_streaming_mode(self):
+        """In streaming chat mode (``include_final_response=False``) the
+        malformed-artifact fallback honors the same gating as a normal
+        wrapper response — no markdown bubble is emitted because the LLM's
+        prose was already streamed via earlier response actions."""
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            action_type="gen_visual_report_response",
+            output={
+                "artifact_kind": "report",
+                "report_slug": None,
+                "response": "stream already covered this",
+            },
+        )
+        event = action_to_sse_event(action, event_id=204, message_id="msg-204")
+        assert event is None
 
     def test_failed_visual_report_response_falls_through_to_error(self):
         """A FAILED gen_visual_report_response is not an artifact event — must surface as error.

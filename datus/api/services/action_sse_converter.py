@@ -428,28 +428,29 @@ def action_to_sse_event(
             else:
                 return None
         elif (
-            role == ActionRole.ASSISTANT
-            and status == ActionStatus.SUCCESS
-            and action.action_type.endswith("_response")
-            and isinstance(action.output, dict)
-            and action.output.get("artifact_kind") in ("report", "dashboard")
-        ):
-            # gen_visual_report / gen_visual_dashboard completion — emit an
-            # artifact card the frontend can render directly. Fires
-            # regardless of ``include_final_response`` because the card is
-            # not a substitute for the final markdown response; the LLM's
-            # streamed response is already in the buffer ahead of us.
-            contents = _build_artifact_content(action)
-            if contents is None:
-                return None
-        elif (
             role == ActionRole.ASSISTANT and status == ActionStatus.SUCCESS and action.action_type.endswith("_response")
         ):
-            if not include_final_response:
-                return None  # ignore parsed final response
-            contents = _build_response_content(action)
-            if not contents:
-                return None
+            # gen_visual_report / gen_visual_dashboard completions ship an
+            # ``artifact_kind`` on the output — try to render an artifact
+            # card the frontend can open directly. The card fires
+            # regardless of ``include_final_response`` because it is not a
+            # substitute for the LLM's prose (already streamed earlier as
+            # a separate response action); it is purely additive.
+            contents = None
+            if isinstance(action.output, dict) and action.output.get("artifact_kind") in ("report", "dashboard"):
+                contents = _build_artifact_content(action)
+
+            # Either this is a plain wrapper response (no artifact) or the
+            # artifact payload was malformed (e.g. missing slug). Don't
+            # drop the event silently — fall back to the standard
+            # ``_response`` handling so the assistant's parsed output can
+            # still be surfaced to history tooling when requested.
+            if contents is None:
+                if not include_final_response:
+                    return None  # ignore parsed final response
+                contents = _build_response_content(action)
+                if not contents:
+                    return None
         elif _is_plain_assistant_response(action):
             contents = _build_response_content(action)
             if not contents:
