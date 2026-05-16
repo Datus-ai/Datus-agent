@@ -98,7 +98,6 @@ class TestGenExtKnowledgeAgentic:
                 "Write the knowledge YAML file with appropriate search_text and explanation."
             ),
             question="What is the Eligible Free Rate for California schools?",
-            search_text="Eligible Free Rate",
             gold_sql="SELECT `Free Meal Count (K-12)` * 1.0 / `Enrollment (K-12)` AS eligible_free_rate FROM frpm",
         )
 
@@ -128,9 +127,11 @@ class TestGenExtKnowledgeAgentic:
         )
 
         node.input = ExtKnowledgeNodeInput(
-            user_message="Define external knowledge for: what does 'Eligible Free Rate' mean for California schools?",
+            user_message=(
+                "Define external knowledge for: what does 'Eligible Free Rate' mean for California schools? "
+                "Use 'Eligible Free Rate' as the search_text."
+            ),
             question="What does Eligible Free Rate mean?",
-            search_text="Eligible Free Rate",
         )
 
         action_manager = ActionHistoryManager()
