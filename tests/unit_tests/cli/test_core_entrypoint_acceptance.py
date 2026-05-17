@@ -142,6 +142,8 @@ def test_cli_slash_commands_route_through_shared_repl_dispatch() -> None:
     cli.reset_session.assert_called_once_with()
     cli.chat_commands.update_chat_node_tools.assert_called_once_with()
     save_override.assert_called_once()
+    saved_override = save_override.call_args.args[0]
+    assert saved_override.default_datasource == "warehouse"
     cli.bg_sync.schedule.assert_called_once_with(datasource="warehouse", reason="switch")
 
 
