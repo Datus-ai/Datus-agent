@@ -15,6 +15,9 @@ NIGHTLY_MANIFEST_FINALIZED=0
 NIGHTLY_FAILURE_CLASSIFICATION_FILE="${NIGHTLY_FAILURE_CLASSIFICATION_FILE:-nightly-failure-classification.json}"
 NIGHTLY_FAILURE_CLASSIFICATION_ENABLED="${NIGHTLY_FAILURE_CLASSIFICATION_ENABLED:-1}"
 NIGHTLY_FAILURE_CLASSIFICATION_FINALIZED=0
+PROVIDER_COVERAGE_MANIFEST_FILE="${PROVIDER_COVERAGE_MANIFEST_FILE:-provider-coverage-manifest.json}"
+PROVIDER_COVERAGE_MANIFEST_ENABLED="${PROVIDER_COVERAGE_MANIFEST_ENABLED:-1}"
+PROVIDER_COVERAGE_MANIFEST_FINALIZED=0
 test_exit_code=0
 last_command_exit_code=0
 NIGHTLY_GROUP_FILTER="${NIGHTLY_GROUP_FILTER:-}"
@@ -31,7 +34,7 @@ UNIT_TEST_HOME="${NIGHTLY_UNIT_TEST_HOME:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-
 UNIT_TEST_PROJECT_ROOT="${NIGHTLY_UNIT_TEST_PROJECT_ROOT:-${UNIT_TEST_HOME}/workspace}"
 NIGHTLY_PYTEST_BASETEMP="${NIGHTLY_PYTEST_BASETEMP:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-agent-nightly-pytest-${GITHUB_RUN_ID:-$$}-${GITHUB_RUN_ATTEMPT:-0}}"
 AGENT_TEST_CONFIG_BACKUP="${AGENT_TEST_CONFIG_BACKUP:-${TMPDIR:-/tmp}/datus-agent-nightly-config-${GITHUB_RUN_ID:-$$}.bak}"
-export LOG_FILE NIGHTLY_MANIFEST_FILE NIGHTLY_FAILURE_CLASSIFICATION_FILE NIGHTLY_HOME NIGHTLY_PROJECT_ROOT UNIT_TEST_HOME NIGHTLY_PYTEST_BASETEMP
+export LOG_FILE NIGHTLY_MANIFEST_FILE NIGHTLY_FAILURE_CLASSIFICATION_FILE PROVIDER_COVERAGE_MANIFEST_FILE NIGHTLY_HOME NIGHTLY_PROJECT_ROOT UNIT_TEST_HOME NIGHTLY_PYTEST_BASETEMP
 
 default_repo_root() {
   local explicit_root="$1"
@@ -223,6 +226,44 @@ failure_classification_finalize() {
     NIGHTLY_FAILURE_CLASSIFICATION_FINALIZED=1
   else
     echo "WARNING: nightly failure classification artifact was not written; will retry if cleanup runs again." | tee -a "$LOG_FILE" >&2
+  fi
+  return 0
+}
+
+provider_coverage_update() {
+  if [ "$PROVIDER_COVERAGE_MANIFEST_ENABLED" != "1" ]; then
+    return 0
+  fi
+
+  if [ -x "${REPO_ROOT}/.venv/bin/python" ]; then
+    "${REPO_ROOT}/.venv/bin/python" ci/provider_coverage_manifest.py "$@" 2>>"$LOG_FILE"
+  elif command -v uv >/dev/null 2>&1; then
+    uv run python ci/provider_coverage_manifest.py "$@" 2>>"$LOG_FILE"
+  else
+    python3 ci/provider_coverage_manifest.py "$@" 2>>"$LOG_FILE"
+  fi
+  local status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "WARNING: provider coverage manifest update failed: ci/provider_coverage_manifest.py $*" | tee -a "$LOG_FILE" >&2
+    return "$status"
+  fi
+  return 0
+}
+
+provider_coverage_finalize() {
+  if [ "$PROVIDER_COVERAGE_MANIFEST_FINALIZED" = "1" ]; then
+    return 0
+  fi
+  if provider_coverage_update \
+    --repo-root "$REPO_ROOT" \
+    --provider-catalog conf/providers.yml \
+    --coverage-config ci/provider-coverage.yml \
+    --nightly-manifest "$NIGHTLY_MANIFEST_FILE" \
+    --output "$PROVIDER_COVERAGE_MANIFEST_FILE" &&
+    [ -s "$PROVIDER_COVERAGE_MANIFEST_FILE" ]; then
+    PROVIDER_COVERAGE_MANIFEST_FINALIZED=1
+  else
+    echo "WARNING: provider coverage manifest artifact was not written; will retry if cleanup runs again." | tee -a "$LOG_FILE" >&2
   fi
   return 0
 }
@@ -632,6 +673,7 @@ cleanup_all() {
   set +e
   if [ "${NIGHTLY_SKIP_MANIFEST_FINALIZE:-0}" != "1" ]; then
     manifest_finalize
+    provider_coverage_finalize
     failure_classification_finalize
   fi
   restore_agent_test_config
@@ -1427,12 +1469,14 @@ run_logged_warn_only "Provider Health Tests" run_with_agent_home "$NIGHTLY_HOME"
 run_logged_unfiltered "Flaky Log Classification" uv run python ci/check_flaky_registry.py --registry ci/flaky-registry.yml --log-file "$LOG_FILE" --warn-only
 
 manifest_finalize
+provider_coverage_finalize
 failure_classification_finalize
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   echo "log_file=$LOG_FILE" >> "$GITHUB_OUTPUT"
   echo "manifest_file=$NIGHTLY_MANIFEST_FILE" >> "$GITHUB_OUTPUT"
   echo "failure_classification_file=$NIGHTLY_FAILURE_CLASSIFICATION_FILE" >> "$GITHUB_OUTPUT"
+  echo "provider_coverage_manifest_file=$PROVIDER_COVERAGE_MANIFEST_FILE" >> "$GITHUB_OUTPUT"
   echo "test_exit_code=$test_exit_code" >> "$GITHUB_OUTPUT"
 fi
 

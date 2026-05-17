@@ -61,6 +61,19 @@ function readFailureClassification(workspace = '.') {
   }
 }
 
+function readProviderCoverageManifest(workspace = '.') {
+  const manifestPath = path.join(workspace, 'provider-coverage-manifest.json');
+  if (!fs.existsSync(manifestPath)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
 function pushUnique(items, item) {
   const value = String(item || '').trim();
   if (value && !items.includes(value)) {
@@ -243,6 +256,25 @@ function summarizeClassification(classification, options = {}) {
   };
 }
 
+function summarizeProviderCoverage(providerCoverage) {
+  if (!providerCoverage || !providerCoverage.summary) {
+    return null;
+  }
+
+  const summary = providerCoverage.summary;
+  const providersTotal = summary.providers_total || 0;
+  const deterministicCovered = summary.deterministic_covered || 0;
+  const liveDeclared = summary.live_provider_health_declared || 0;
+  const liveCollected = summary.live_provider_health_collected || 0;
+  const liveMissing = Array.isArray(summary.live_provider_health_missing)
+    ? summary.live_provider_health_missing.length
+    : 0;
+  const errorCount = summary.coverage_error_count || 0;
+  const errorText = errorCount > 0 ? `, coverage errors: ${errorCount}` : '';
+
+  return `${providersTotal} providers, ${deterministicCovered} deterministic covered, ${liveDeclared} live smoke declared, ${liveCollected} live smoke collected, ${liveMissing} live smoke not tested${errorText}`;
+}
+
 function buildNightlyFeishuMessage({
   status,
   runNumber,
@@ -255,7 +287,9 @@ function buildNightlyFeishuMessage({
   const report = summarizeNightlyLog(content);
   const manifest = readNightlyManifest(workspace);
   const classification = readFailureClassification(workspace);
+  const providerCoverage = readProviderCoverageManifest(workspace);
   const classificationSummary = summarizeClassification(classification);
+  const providerCoverageSummary = summarizeProviderCoverage(providerCoverage);
   const normalizedStatus = status || 'UNKNOWN';
   const isPassed = normalizedStatus === 'PASSED';
 
@@ -288,6 +322,10 @@ function buildNightlyFeishuMessage({
     if (classificationSummary.diagnosticText) {
       lines.push(`**Diagnostics:** ${classificationSummary.diagnosticText}.`);
     }
+  }
+
+  if (providerCoverageSummary) {
+    lines.push(`**Provider Coverage:** ${providerCoverageSummary}.`);
   }
 
   if (classificationSummary && classificationSummary.blockingFindings.length > 0) {
@@ -344,7 +382,9 @@ module.exports = {
   findLatestNightlyLog,
   readFailureClassification,
   readLatestNightlyLog,
+  readProviderCoverageManifest,
   summarizeClassification,
+  summarizeProviderCoverage,
   stripAnsi,
   summarizeNightlyLog,
 };

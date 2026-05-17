@@ -1,0 +1,177 @@
+version: 1
+
+providers:
+  openai:
+    required_env:
+      - OPENAI_API_KEY
+    deterministic:
+      nodeids:
+        - tests/unit_tests/models/test_openai_model.py::TestOpenAIModel
+        - tests/unit_tests/models/test_openai_compatible.py::TestOpenAICompatibleModelInit
+        - tests/unit_tests/models/test_base.py::TestCreateModelCache
+        - tests/unit_tests/configuration/test_agent_config.py::TestProviderConfigurationDispatch
+    live_provider_health:
+      mode: warn-only
+      nodeids:
+        - tests/integration/models/test_other_models.py::TestOpenAIModel
+
+  deepseek:
+    required_env:
+      - DEEPSEEK_API_KEY
+    deterministic:
+      nodeids:
+        - tests/unit_tests/models/test_sdk_patches.py::TestDeepSeekHistorySanitization
+    live_provider_health:
+      mode: warn-only
+      nodeids:
+        - tests/integration/models/test_deepseek_model.py::TestDeepSeekModel
+
+  claude:
+    required_env:
+      - ANTHROPIC_API_KEY
+    deterministic:
+      nodeids:
+        - tests/unit_tests/models/test_claude_model.py::TestClaudeModelInit
+        - tests/unit_tests/models/test_claude_model.py::TestClaudeModelGenerate
+        - tests/unit_tests/models/test_claude_model.py::TestClaudeModelGenerateWithTools
+    live_provider_health:
+      mode: warn-only
+      nodeids:
+        - tests/integration/models/test_claude_model.py::TestClaudeModel
+
+  kimi:
+    required_env:
+      - KIMI_API_KEY
+    deterministic:
+      nodeids:
+        - tests/unit_tests/models/test_openai_model.py::TestKimiModel
+    live_provider_health:
+      mode: warn-only
+      nodeids:
+        - tests/integration/models/test_other_models.py::TestKimiModel
+
+  qwen:
+    required_env:
+      - DASHSCOPE_API_KEY
+      - QWEN_API_KEY
+    deterministic:
+      nodeids:
+        - tests/unit_tests/models/test_openai_model.py::TestQwenModel
+    live_provider_health:
+      mode: warn-only
+      nodeids:
+        - tests/integration/models/test_qwen_model.py::TestQwenModel
+
+  gemini:
+    required_env:
+      - GEMINI_API_KEY
+      - GOOGLE_API_KEY
+    deterministic:
+      nodeids:
+        - tests/unit_tests/models/test_openai_model.py::TestGeminiModel
+    live_provider_health:
+      mode: warn-only
+      nodeids:
+        - tests/integration/models/test_other_models.py::TestGeminiModel
+
+  minimax:
+    required_env:
+      - MINIMAX_API_KEY
+    deterministic:
+      nodeids:
+        - tests/unit_tests/models/test_openai_model.py::TestMiniMaxModel
+    live_provider_health:
+      mode: not-tested
+      nodeids: []
+
+  glm:
+    required_env:
+      - GLM_API_KEY
+    deterministic:
+      nodeids:
+        - tests/unit_tests/models/test_openai_model.py::TestGLMModel
+    live_provider_health:
+      mode: not-tested
+      nodeids: []
+
+  alibaba_coding:
+    required_env:
+      - DASHSCOPE_API_KEY
+    deterministic:
+      inherits_from: claude
+      nodeids:
+        - tests/unit_tests/models/test_claude_model.py::TestClaudeModelInit
+        - tests/unit_tests/configuration/test_agent_config.py::TestProviderConfigurationDispatch
+    live_provider_health:
+      mode: not-tested
+      nodeids: []
+
+  bigmodel_coding:
+    required_env:
+      - GLM_API_KEY
+    deterministic:
+      inherits_from: claude
+      nodeids:
+        - tests/unit_tests/models/test_claude_model.py::TestClaudeModelInit
+    live_provider_health:
+      mode: not-tested
+      nodeids: []
+
+  zai_coding:
+    required_env:
+      - GLM_API_KEY
+    deterministic:
+      inherits_from: claude
+      nodeids:
+        - tests/unit_tests/models/test_claude_model.py::TestClaudeModelInit
+    live_provider_health:
+      mode: not-tested
+      nodeids: []
+
+  minimax_coding:
+    required_env:
+      - MINIMAX_API_KEY
+    deterministic:
+      inherits_from: claude
+      nodeids:
+        - tests/unit_tests/models/test_claude_model.py::TestClaudeModelInit
+    live_provider_health:
+      mode: not-tested
+      nodeids: []
+
+  kimi_coding:
+    required_env:
+      - KIMI_API_KEY
+    deterministic:
+      inherits_from: claude
+      nodeids:
+        - tests/unit_tests/models/test_claude_model.py::TestClaudeModelInit
+    live_provider_health:
+      mode: not-tested
+      nodeids: []
+
+  claude_subscription:
+    required_env:
+      - CLAUDE_CODE_OAUTH_TOKEN
+    deterministic:
+      nodeids:
+        - tests/unit_tests/models/test_claude_model.py::TestClaudeModelSubscriptionAuth
+        - tests/unit_tests/models/test_claude_model.py::TestClaudeModelOAuthHeaders
+    live_provider_health:
+      mode: warn-only
+      nodeids:
+        - tests/integration/models/test_claude_subscription.py::TestClaudeSubscriptionModel
+        - tests/integration/models/test_claude_subscription.py::TestClaudeSubscriptionMultiModel
+
+  codex:
+    required_env:
+      - CODEX_OAUTH_TOKEN
+    deterministic:
+      nodeids:
+        - tests/unit_tests/models/test_codex_model.py::TestCodexModelInit
+        - tests/unit_tests/models/test_codex_model.py::TestCodexModelGenerate
+        - tests/unit_tests/models/test_codex_model.py::TestCodexModelGenerateWithTools
+    live_provider_health:
+      mode: warn-only
+      nodeids:
+        - tests/integration/models/test_codex_model.py::TestCodexModel

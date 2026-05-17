@@ -388,6 +388,7 @@ jobs:
             test_output_nightly_*.log
             nightly-manifest.json
             nightly-failure-classification.json
+            provider-coverage-manifest.json
           retention-days: 7
 
       - name: Send Feishu notification
