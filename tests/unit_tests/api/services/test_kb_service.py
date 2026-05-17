@@ -469,6 +469,7 @@ async def test_kb_bootstrap_acceptance_orchestrates_components_in_order(real_age
     assert events[-1].payload["components"]["reference_sql"]["message"] == "reference_sql checked"
     assert [call[0] for call in calls] == ["metadata", "reference_sql", "ext_knowledge"]
     assert all(call[1] == ["Education", "Schools"] for call in calls)
+    assert all(call[2] == str(real_agent_config.home) for call in calls)
 
 
 class TestKbServiceMergeDocOverrides:

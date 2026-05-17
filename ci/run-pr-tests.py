@@ -229,7 +229,7 @@ def _suite_pytest_basetemp(suite_name: str) -> str:
 
 
 def _prepare_suite_pytest_basetemp(basetemp: str) -> None:
-    os.makedirs(os.path.dirname(basetemp), exist_ok=True)
+    os.makedirs(basetemp, exist_ok=True)
 
 
 def _reset_report_outputs() -> None:

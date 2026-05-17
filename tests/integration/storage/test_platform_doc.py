@@ -1205,7 +1205,6 @@ def _run_e2e_workflow(platform, cfg, search_keywords):
 class TestEndToEndIntegration:
     """End-to-end integration test covering the complete workflow."""
 
-    @pytest.mark.acceptance
     def test_complete_workflow(self, local_docs_dir, temp_dir, agent_config):
         """Test complete workflow: init → search → get_document."""
         cfg = DocumentConfig(
