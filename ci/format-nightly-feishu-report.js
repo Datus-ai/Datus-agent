@@ -48,6 +48,19 @@ function readNightlyManifest(workspace = '.') {
   }
 }
 
+function readFailureClassification(workspace = '.') {
+  const classificationPath = path.join(workspace, 'nightly-failure-classification.json');
+  if (!fs.existsSync(classificationPath)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(classificationPath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
 function pushUnique(items, item) {
   const value = String(item || '').trim();
   if (value && !items.includes(value)) {
@@ -180,6 +193,45 @@ function fencedList(items, emptyText) {
   return ['```text', ...items, '```'].join('\n');
 }
 
+function formatCounts(counts = {}) {
+  return Object.entries(counts)
+    .filter(([, value]) => Number(value) > 0)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(', ');
+}
+
+function summarizeClassification(classification, options = {}) {
+  const maxFindings = options.maxFindings || 8;
+  if (!classification || !classification.summary) {
+    return null;
+  }
+
+  const blockingCounts = classification.summary.blocking_category_counts || {};
+  const categoryCounts = classification.summary.category_counts || {};
+  const blockingText = formatCounts(blockingCounts);
+  const allText = formatCounts(categoryCounts);
+  const findings = Array.isArray(classification.findings) ? classification.findings : [];
+  const blockingFindings = findings.filter((finding) => finding && finding.blocking);
+  const warningFindings = findings.filter((finding) => finding && !finding.blocking);
+  const selectedFindings = [...blockingFindings, ...warningFindings].slice(0, maxFindings).map((finding) => {
+    const category = finding.category || 'unknown_failure';
+    const title = finding.title || 'Unclassified finding';
+    const details = finding.details || {};
+    const suite = details.suite ? ` suite=${details.suite}` : '';
+    const exitCode = details.exit_code != null ? ` exit_code=${details.exit_code}` : '';
+    const nodeid = details.nodeid ? ` nodeid=${details.nodeid}` : '';
+    const entryId = details.entry_id ? ` entry=${details.entry_id}` : '';
+    return `[${category}] ${title}${suite}${exitCode}${nodeid}${entryId}`;
+  });
+
+  return {
+    blockingText,
+    allText,
+    findings: selectedFindings,
+    omitted: Math.max(0, findings.length - selectedFindings.length),
+  };
+}
+
 function buildNightlyFeishuMessage({
   status,
   runNumber,
@@ -191,6 +243,8 @@ function buildNightlyFeishuMessage({
   const content = logContent == null ? readLatestNightlyLog(workspace).logContent : logContent;
   const report = summarizeNightlyLog(content);
   const manifest = readNightlyManifest(workspace);
+  const classification = readFailureClassification(workspace);
+  const classificationSummary = summarizeClassification(classification);
   const normalizedStatus = status || 'UNKNOWN';
   const isPassed = normalizedStatus === 'PASSED';
 
@@ -210,9 +264,7 @@ function buildNightlyFeishuMessage({
 
   if (manifest && manifest.summary) {
     const counts = manifest.summary.status_counts || {};
-    const countText = Object.entries(counts)
-      .map(([key, value]) => `${key}: ${value}`)
-      .join(', ');
+    const countText = formatCounts(counts);
     lines.push(
       `**Manifest:** ${manifest.summary.suite_count || 0} suites, ${
         manifest.summary.collected_nodeid_count || 0
@@ -220,7 +272,22 @@ function buildNightlyFeishuMessage({
     );
   }
 
-  if (report.failures.length > 0) {
+  if (classificationSummary) {
+    lines.push(
+      `**Classification:** ${
+        classificationSummary.blockingText || 'no blocking classified failures'
+      }${classificationSummary.allText ? ` (all findings: ${classificationSummary.allText})` : ''}.`,
+    );
+  }
+
+  if (classificationSummary && classificationSummary.findings.length > 0) {
+    lines.push('', '### Failure Classification', fencedList(classificationSummary.findings, 'No classified findings.'));
+    if (classificationSummary.omitted > 0) {
+      lines.push(`_... ${classificationSummary.omitted} more classified finding(s) omitted._`);
+    }
+  }
+
+  if (report.failures.length > 0 && (!classificationSummary || classificationSummary.findings.length === 0)) {
     lines.push('', '### Failures / Errors', fencedList(report.failures, 'No failures detected.'));
     if (report.truncatedFailures > 0) {
       lines.push(`_... ${report.truncatedFailures} more failure/error lines omitted._`);
@@ -247,7 +314,9 @@ function buildNightlyFeishuMessage({
 module.exports = {
   buildNightlyFeishuMessage,
   findLatestNightlyLog,
+  readFailureClassification,
   readLatestNightlyLog,
+  summarizeClassification,
   stripAnsi,
   summarizeNightlyLog,
 };

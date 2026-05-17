@@ -12,6 +12,9 @@ LOG_FILE="${NIGHTLY_LOG_FILE:-test_output_nightly_$(date +%Y%m%d_%H%M%S).log}"
 NIGHTLY_MANIFEST_FILE="${NIGHTLY_MANIFEST_FILE:-nightly-manifest.json}"
 NIGHTLY_MANIFEST_ENABLED="${NIGHTLY_MANIFEST_ENABLED:-1}"
 NIGHTLY_MANIFEST_FINALIZED=0
+NIGHTLY_FAILURE_CLASSIFICATION_FILE="${NIGHTLY_FAILURE_CLASSIFICATION_FILE:-nightly-failure-classification.json}"
+NIGHTLY_FAILURE_CLASSIFICATION_ENABLED="${NIGHTLY_FAILURE_CLASSIFICATION_ENABLED:-1}"
+NIGHTLY_FAILURE_CLASSIFICATION_FINALIZED=0
 test_exit_code=0
 last_command_exit_code=0
 NIGHTLY_GROUP_FILTER="${NIGHTLY_GROUP_FILTER:-}"
@@ -28,7 +31,7 @@ UNIT_TEST_HOME="${NIGHTLY_UNIT_TEST_HOME:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-
 UNIT_TEST_PROJECT_ROOT="${NIGHTLY_UNIT_TEST_PROJECT_ROOT:-${UNIT_TEST_HOME}/workspace}"
 NIGHTLY_PYTEST_BASETEMP="${NIGHTLY_PYTEST_BASETEMP:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-agent-nightly-pytest-${GITHUB_RUN_ID:-$$}-${GITHUB_RUN_ATTEMPT:-0}}"
 AGENT_TEST_CONFIG_BACKUP="${AGENT_TEST_CONFIG_BACKUP:-${TMPDIR:-/tmp}/datus-agent-nightly-config-${GITHUB_RUN_ID:-$$}.bak}"
-export LOG_FILE NIGHTLY_MANIFEST_FILE NIGHTLY_HOME NIGHTLY_PROJECT_ROOT UNIT_TEST_HOME NIGHTLY_PYTEST_BASETEMP
+export LOG_FILE NIGHTLY_MANIFEST_FILE NIGHTLY_FAILURE_CLASSIFICATION_FILE NIGHTLY_HOME NIGHTLY_PROJECT_ROOT UNIT_TEST_HOME NIGHTLY_PYTEST_BASETEMP
 
 default_repo_root() {
   local explicit_root="$1"
@@ -184,6 +187,44 @@ manifest_finalize() {
   fi
   NIGHTLY_MANIFEST_FINALIZED=1
   manifest_update finalize --output "$NIGHTLY_MANIFEST_FILE" --exit-code "$test_exit_code"
+}
+
+failure_classification_update() {
+  if [ "$NIGHTLY_FAILURE_CLASSIFICATION_ENABLED" != "1" ]; then
+    return 0
+  fi
+
+  if [ -x "${REPO_ROOT}/.venv/bin/python" ]; then
+    "${REPO_ROOT}/.venv/bin/python" ci/classify_nightly_failures.py "$@" 2>>"$LOG_FILE"
+  elif command -v uv >/dev/null 2>&1; then
+    uv run python ci/classify_nightly_failures.py "$@" 2>>"$LOG_FILE"
+  else
+    python3 ci/classify_nightly_failures.py "$@" 2>>"$LOG_FILE"
+  fi
+  local status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "WARNING: nightly failure classification update failed: ci/classify_nightly_failures.py $*" | tee -a "$LOG_FILE" >&2
+    return "$status"
+  fi
+  return 0
+}
+
+failure_classification_finalize() {
+  if [ "$NIGHTLY_FAILURE_CLASSIFICATION_FINALIZED" = "1" ]; then
+    return 0
+  fi
+  if failure_classification_update \
+    --manifest "$NIGHTLY_MANIFEST_FILE" \
+    --log-file "$LOG_FILE" \
+    --registry ci/flaky-registry.yml \
+    --output "$NIGHTLY_FAILURE_CLASSIFICATION_FILE" \
+    --exit-code "$test_exit_code" &&
+    [ -s "$NIGHTLY_FAILURE_CLASSIFICATION_FILE" ]; then
+    NIGHTLY_FAILURE_CLASSIFICATION_FINALIZED=1
+  else
+    echo "WARNING: nightly failure classification artifact was not written; will retry if cleanup runs again." | tee -a "$LOG_FILE" >&2
+  fi
+  return 0
 }
 
 command_contains_pytest() {
@@ -591,6 +632,7 @@ cleanup_all() {
   set +e
   if [ "${NIGHTLY_SKIP_MANIFEST_FINALIZE:-0}" != "1" ]; then
     manifest_finalize
+    failure_classification_finalize
   fi
   restore_agent_test_config
   rm -f "$AGENT_TEST_CONFIG_BACKUP"
@@ -1291,6 +1333,7 @@ manifest_init
 
 log "Nightly log: $LOG_FILE"
 log "Nightly manifest: $NIGHTLY_MANIFEST_FILE"
+log "Nightly failure classification: $NIGHTLY_FAILURE_CLASSIFICATION_FILE"
 log "DB_ADAPTERS_ROOT=$DB_ADAPTERS_ROOT"
 log "BI_ADAPTERS_ROOT=$BI_ADAPTERS_ROOT"
 log "SCHEDULER_ADAPTERS_ROOT=$SCHEDULER_ADAPTERS_ROOT"
@@ -1384,10 +1427,12 @@ run_logged_warn_only "Provider Health Tests" run_with_agent_home "$NIGHTLY_HOME"
 run_logged_unfiltered "Flaky Log Classification" uv run python ci/check_flaky_registry.py --registry ci/flaky-registry.yml --log-file "$LOG_FILE" --warn-only
 
 manifest_finalize
+failure_classification_finalize
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   echo "log_file=$LOG_FILE" >> "$GITHUB_OUTPUT"
   echo "manifest_file=$NIGHTLY_MANIFEST_FILE" >> "$GITHUB_OUTPUT"
+  echo "failure_classification_file=$NIGHTLY_FAILURE_CLASSIFICATION_FILE" >> "$GITHUB_OUTPUT"
   echo "test_exit_code=$test_exit_code" >> "$GITHUB_OUTPUT"
 fi
 

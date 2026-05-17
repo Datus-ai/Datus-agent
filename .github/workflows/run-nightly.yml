@@ -387,6 +387,7 @@ jobs:
           path: |
             test_output_nightly_*.log
             nightly-manifest.json
+            nightly-failure-classification.json
           retention-days: 7
 
       - name: Send Feishu notification
