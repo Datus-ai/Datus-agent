@@ -68,6 +68,7 @@ PR_ACCEPTANCE_TARGETS = [
     "tests/unit_tests/api/routes/test_chat_routes.py",
     "tests/unit_tests/api/services/test_kb_service.py",
     "tests/unit_tests/api/test_service.py",
+    "tests/unit_tests/cli/test_core_entrypoint_acceptance.py",
     "tests/unit_tests/cli/test_interactive_init.py",
     "tests/integration/api/test_api.py",
     "tests/integration/cli/test_cli_commands.py",
