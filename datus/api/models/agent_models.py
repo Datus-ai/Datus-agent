@@ -31,7 +31,18 @@ class CreateAgentInput(BaseModel):
 
     name: str = Field(..., min_length=1, description="Agent name (unique within workspace)")
     datasource_id: str = Field(default="", description="Datasource ID this agent is bound to")
-    type: str = Field(default="gen_sql", description="Node class: gen_sql or gen_report")
+    type: str = Field(
+        default="gen_sql", description="Node class: gen_sql / gen_report / ask_report / ask_dashboard / ..."
+    )
+    artifact_slug: Optional[str] = Field(
+        default=None,
+        description=(
+            "Slug of the visual report / dashboard this agent is bound to. "
+            "Required when ``type`` is ``ask_report`` or ``ask_dashboard``; ignored "
+            "for other types. Must match ``^[a-z0-9_]{1,80}$``. The matching "
+            "``reports/<slug>`` or ``dashboards/<slug>`` directory must already exist."
+        ),
+    )
     description: Optional[str] = Field(default=None, description="Agent description")
     prompt_template: Optional[str] = Field(default=None, description="System prompt content")
     prompt_version: Optional[str] = Field(default="1.0", description="Prompt version (None = latest)")

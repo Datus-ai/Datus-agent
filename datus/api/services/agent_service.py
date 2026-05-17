@@ -15,6 +15,7 @@ from datus.api.models.agent_models import CreateAgentInput, EditAgentInput
 from datus.api.models.base_models import Result
 from datus.configuration.agent_config import AgentConfig
 from datus.prompts.prompt_manager import PromptManager
+from datus.schemas.artifact_manifest import ARTIFACT_SLUG_RE
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.func_tool.platform_doc_search import PlatformDocSearchTool
@@ -93,6 +94,44 @@ SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
         "default_tools": [
             "semantic_tools.*",
             "context_search_tools.list_subject_tree",
+        ],
+        "tool_types": _ALL_TOOL_TYPES,
+    },
+    # ask_report / ask_dashboard: read-only follow-up consultant for a single
+    # visual artifact. Default tools cover data exploration (db_tools read
+    # methods, semantic / context_search / reference_template) plus the
+    # read-side of filesystem so the LLM can ``glob`` / ``grep`` / ``read_file``
+    # the artifact's ``analysis/`` and ``queries/`` directories. Writes are
+    # excluded by omission — these agents must never mutate the artifact.
+    "ask_report": {
+        "default_tools": [
+            "db_tools.execute_sql",
+            "db_tools.list_tables",
+            "db_tools.describe_table",
+            "db_tools.read_query",
+            "db_tools.get_table_ddl",
+            "semantic_tools.*",
+            "context_search_tools.*",
+            "reference_template_tools.*",
+            "filesystem_tools.read_file",
+            "filesystem_tools.glob",
+            "filesystem_tools.grep",
+        ],
+        "tool_types": _ALL_TOOL_TYPES,
+    },
+    "ask_dashboard": {
+        "default_tools": [
+            "db_tools.execute_sql",
+            "db_tools.list_tables",
+            "db_tools.describe_table",
+            "db_tools.read_query",
+            "db_tools.get_table_ddl",
+            "semantic_tools.*",
+            "context_search_tools.*",
+            "reference_template_tools.*",
+            "filesystem_tools.read_file",
+            "filesystem_tools.glob",
+            "filesystem_tools.grep",
         ],
         "tool_types": _ALL_TOOL_TYPES,
     },
@@ -431,6 +470,78 @@ def _validate_tools(tools: list[str]) -> list[str]:
     return invalid
 
 
+def _validate_ask_artifact_binding(
+    request: CreateAgentInput,
+    agent_config: AgentConfig,
+    agentic_nodes: dict,
+) -> Optional[Result]:
+    """Validate an ``ask_report`` / ``ask_dashboard`` create request.
+
+    Returns a failure :class:`Result` when the binding is invalid, ``None``
+    when it's good to proceed. Checks, in order:
+
+    1. ``artifact_slug`` is set and matches the slug pattern.
+    2. Computed ``reports/<slug>`` / ``dashboards/<slug>`` directory exists
+       under ``agent_config.project_root``.
+    3. No other ``ask_*`` agent already binds the same (type, slug) — same-
+       artifact uniqueness is enforced here (not at the DB layer) so the
+       CLI path has the same guarantee the SaaS DB will have via partial
+       unique index.
+    """
+    slug = (request.artifact_slug or "").strip()
+    if not slug:
+        return Result(
+            success=False,
+            errorCode="ARTIFACT_SLUG_REQUIRED",
+            errorMessage=(
+                f"artifact_slug is required when type is {request.type!r} "
+                f"(the agent is bound to a specific visual artifact)."
+            ),
+        )
+    if not ARTIFACT_SLUG_RE.fullmatch(slug):
+        return Result(
+            success=False,
+            errorCode="INVALID_ARTIFACT_SLUG",
+            errorMessage=f"artifact_slug must match {ARTIFACT_SLUG_RE.pattern}; got {slug!r}",
+        )
+
+    project_root = Path(getattr(agent_config, "project_root", "") or ".").resolve()
+    kind_dir = "reports" if request.type == "ask_report" else "dashboards"
+    artifact_dir = (project_root / kind_dir / slug).resolve()
+    # Path-traversal defence: even though ARTIFACT_SLUG_RE blocks ``..``,
+    # symlinks inside the project root could still redirect us out.
+    if not str(artifact_dir).startswith(str(project_root) + os.sep) and artifact_dir != project_root:
+        return Result(
+            success=False,
+            errorCode="INVALID_ARTIFACT_SLUG",
+            errorMessage=f"artifact path resolved outside project root: {artifact_dir}",
+        )
+    if not artifact_dir.is_dir():
+        return Result(
+            success=False,
+            errorCode="ARTIFACT_NOT_FOUND",
+            errorMessage=f"{kind_dir}/{slug} does not exist under project root",
+        )
+
+    # Same-artifact uniqueness — only one ask_* agent per (type, slug).
+    for existing_name, existing_entry in (agentic_nodes or {}).items():
+        if not isinstance(existing_entry, dict):
+            continue
+        if existing_entry.get("type") != request.type:
+            continue
+        if existing_entry.get("artifact_slug") == slug:
+            return Result(
+                success=False,
+                errorCode="ARTIFACT_ALREADY_BOUND",
+                errorMessage=(
+                    f"An {request.type} agent for artifact {slug!r} already exists "
+                    f"(name: {existing_name!r}). Delete the existing one before "
+                    "creating a new binding."
+                ),
+            )
+    return None
+
+
 def _save_agentic_nodes(agent_config: AgentConfig, nodes: dict) -> None:
     """Persist agentic_nodes back to the loaded ``agent.yml``.
 
@@ -573,6 +684,8 @@ class AgentService:
     _TYPE_TO_TEMPLATE = {
         "gen_sql": "gen_sql_system",
         "gen_report": "gen_report_system",
+        "ask_report": "ask_report_system",
+        "ask_dashboard": "ask_dashboard_system",
         "chat": "chat_system",
     }
 
@@ -603,6 +716,17 @@ class AgentService:
                 errorCode="AGENT_ALREADY_EXISTS",
                 errorMessage=f"Agent '{request.name}' already exists",
             )
+
+        # ask_report / ask_dashboard agents are bound to exactly one visual
+        # artifact (a report or dashboard) — validate the binding before any
+        # filesystem writes. The matching ``reports/<slug>`` or
+        # ``dashboards/<slug>`` directory MUST already exist; absent slug or
+        # missing artifact is a hard error so we never end up with a subagent
+        # entry pointing at nothing.
+        if request.type in {"ask_report", "ask_dashboard"}:
+            ask_check = _validate_ask_artifact_binding(request, agent_config, agentic_nodes)
+            if ask_check is not None:
+                return ask_check
 
         # Create new agent entry (dict keyed by name, which acts as the id).
         # API field ``description`` is persisted as ``agent_description`` to
@@ -645,6 +769,14 @@ class AgentService:
             agent_entry["prompt_template"] = request.prompt_template
         if request.prompt_version:
             agent_entry["prompt_version"] = request.prompt_version
+        # ask_* agents carry their bound artifact's slug directly on the
+        # agentic_nodes entry — the node reads it via ``self.node_config``
+        # without any wrapper. The SaaS backend stores the same value under
+        # ``subagents.extra.artifact.slug`` and flattens it back to this
+        # key in ``config_loader._build_agentic_nodes_dict`` so the two
+        # backends are fully interchangeable from the runtime's view.
+        if request.type in {"ask_report", "ask_dashboard"} and request.artifact_slug:
+            agent_entry["artifact_slug"] = request.artifact_slug
 
         # Save to agent.yml
         agentic_nodes[request.name] = agent_entry

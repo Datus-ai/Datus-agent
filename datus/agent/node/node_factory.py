@@ -217,6 +217,45 @@ def create_interactive_node(
                 session_id=session_id,
             )
 
+        elif subagent_name == "ask_report" or node_class_type == "ask_report":
+            from datus.agent.node.ask_report_agentic_node import AskReportAgenticNode
+            from datus.configuration.node_type import NodeType
+
+            # ask_* subagents are conversational (ChatAgenticNode subclass),
+            # so they reuse ``NodeType.TYPE_CHAT`` rather than minting a new
+            # action type. The behavioural difference (artifact binding,
+            # constrained filesystem root, prompt prefix) lives entirely on
+            # the class; the node-level type just signals "chat-flavored".
+            return AskReportAgenticNode(
+                node_id=node_id if node_id is not None else f"{subagent_name}{node_id_suffix}",
+                description=f"Ask-report follow-up node for {subagent_name}",
+                node_type=NodeType.TYPE_CHAT,
+                input_data=None,
+                agent_config=agent_config,
+                tools=None,
+                node_name=subagent_name,
+                scope=scope,
+                execution_mode=execution_mode,
+                session_id=session_id,
+            )
+
+        elif subagent_name == "ask_dashboard" or node_class_type == "ask_dashboard":
+            from datus.agent.node.ask_dashboard_agentic_node import AskDashboardAgenticNode
+            from datus.configuration.node_type import NodeType
+
+            return AskDashboardAgenticNode(
+                node_id=node_id if node_id is not None else f"{subagent_name}{node_id_suffix}",
+                description=f"Ask-dashboard follow-up node for {subagent_name}",
+                node_type=NodeType.TYPE_CHAT,
+                input_data=None,
+                agent_config=agent_config,
+                tools=None,
+                node_name=subagent_name,
+                scope=scope,
+                execution_mode=execution_mode,
+                session_id=session_id,
+            )
+
         else:
             from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 

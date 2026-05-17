@@ -1201,6 +1201,9 @@ class AgenticNode(Node):
             "bi_platform",
             "scheduler_service",
             "subagents",
+            # Read by ask_report / ask_dashboard nodes to resolve the
+            # bound artifact directory at startup.
+            "artifact_slug",
         ]
         for attr in direct_attributes:
             # Handle both dict and object access patterns
