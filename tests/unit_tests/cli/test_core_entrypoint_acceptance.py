@@ -294,3 +294,62 @@ async def test_bootstrap_bi_extracts_context_and_hands_it_to_save_stream() -> No
     assert any(action.action_type == "gen_semantic_model" for action in actions)
     assert any(action.action_type == "gen_metrics" for action in actions)
     assert any(action.action_type == "save_subagents" for action in actions)
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_bi_missing_table_context_fails_before_subagent_save() -> None:
+    agent_config = SimpleNamespace(
+        current_datasource="local",
+        db_type="duckdb",
+        agentic_nodes={},
+        path_manager=SimpleNamespace(),
+        resolve_semantic_adapter=lambda value: value,
+        current_db_config=lambda *_a, **_k: SimpleNamespace(catalog="cat", database="db", schema="public"),
+    )
+    plan = BootstrapBiPlan(
+        options=DashboardCliOptions(
+            platform="superset",
+            dashboard_url="http://bi.example/d/1",
+            api_base_url="http://bi.example",
+            auth_params=None,
+            dialect="duckdb",
+        ),
+        adapter=MagicMock(),
+        dashboard=SimpleNamespace(id=1, name="Broken Dashboard", description="missing table metadata"),
+        dashboard_id=1,
+        chart_selections_ref=[MagicMock()],
+        chart_selections_metrics=[],
+        assembled=SimpleNamespace(tables=[], reference_sqls=[], metric_sqls=[]),
+        pool_size=2,
+    )
+    cmd = BootstrapBiCommands(agent_config, _console())
+    save_calls: list[object] = []
+
+    async def metadata_stream(*_args, table_names, **_kwargs):
+        assert table_names == []
+        yield _action(
+            "No tables in scope; skipping metadata crawl.",
+            action_type="missing_table_metadata",
+            status=ActionStatus.FAILED,
+        )
+
+    async def save_stream(*_args, **_kwargs):
+        save_calls.append(True)
+        yield _action("unexpected save", action_type="save_subagents")
+
+    actions: list[ActionHistory] = []
+    with (
+        patch("datus.cli.bootstrap_bi_commands.stream_bi_metadata", side_effect=metadata_stream),
+        patch("datus.cli.bootstrap_bi_commands.stream_bi_save_subagents", side_effect=save_stream),
+        patch("datus.cli.bootstrap_bi_commands.qualify_table_names", return_value=[]),
+        patch("datus.cli.bootstrap_bi_commands.SubAgentManager"),
+        patch("datus.cli.bootstrap_bi_commands.configuration_manager"),
+    ):
+        await cmd._run_plan(plan, actions)
+
+    assert save_calls == []
+    assert any(
+        action.action_type == "missing_table_metadata" and action.status == ActionStatus.FAILED.value
+        for action in actions
+    )
+    assert any("No scoped context derived" in action.messages for action in actions)
