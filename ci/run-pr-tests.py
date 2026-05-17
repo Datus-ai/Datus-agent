@@ -228,6 +228,10 @@ def _suite_pytest_basetemp(suite_name: str) -> str:
     return os.path.join(DEFAULT_PYTEST_BASETEMP, _slugify(suite_name))
 
 
+def _nested_runner_pytest_basetemp(basetemp: str) -> str:
+    return os.path.join(basetemp, "_nested-runners")
+
+
 def _prepare_suite_pytest_basetemp(basetemp: str) -> None:
     os.makedirs(basetemp, exist_ok=True)
 
@@ -323,6 +327,7 @@ def _run_pytest_suite(
 
     env = os.environ.copy()
     env["COVERAGE_FILE"] = DEFAULT_COVERAGE_DB
+    env[PYTEST_BASETEMP_ENV] = _nested_runner_pytest_basetemp(basetemp)
 
     banner = f"\n=== {suite_name.upper()} ===\n"
     sys.stdout.write(banner)

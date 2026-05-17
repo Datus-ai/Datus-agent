@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 from pathlib import Path
 
 import defusedxml.ElementTree as ET
@@ -87,6 +88,41 @@ def test_filter_existing_paths_drops_missing_files(tmp_path):
     )
 
     assert filtered == [str(real_dir) + "/", str(real_file)]
+
+
+def test_run_pytest_suite_isolates_nested_runner_basetemp(tmp_path, monkeypatch):
+    calls = []
+
+    class FakeProcess:
+        pid = 12345
+        stdout = io.StringIO("")
+
+        def wait(self, timeout):
+            return 0
+
+    def fake_popen(command, **kwargs):
+        calls.append({"command": command, "env": kwargs["env"]})
+        return FakeProcess()
+
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_PYTEST_BASETEMP", str(tmp_path / "pytest-root"))
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_COVERAGE_DB", str(tmp_path / ".coverage"))
+    monkeypatch.setattr(run_pr_tests.subprocess, "Popen", fake_popen)
+
+    log_file = io.StringIO()
+    assert (
+        run_pr_tests._run_pytest_suite(
+            ["tests/unit_tests/ci/"],
+            str(tmp_path / "results.xml"),
+            log_file,
+            suite_name="impacted unit tests",
+        )
+        == 0
+    )
+
+    suite_basetemp = tmp_path / "pytest-root" / "impacted-unit-tests"
+    assert calls[0]["command"][:3] == [run_pr_tests.sys.executable, "-m", "pytest"]
+    assert f"--basetemp={suite_basetemp}" in calls[0]["command"]
+    assert calls[0]["env"][run_pr_tests.PYTEST_BASETEMP_ENV] == str(suite_basetemp / "_nested-runners")
 
 
 def test_merge_and_parse_junit_results_across_multiple_suites(tmp_path):
