@@ -135,3 +135,12 @@ class EditAgentInput(BaseModel):
     adapter_type: Optional[str] = None
     sql_file_threshold: Optional[int] = None
     sql_preview_lines: Optional[int] = None
+    artifact_slug: Optional[str] = Field(
+        default=None,
+        description=(
+            "Echoed by the SaaS UI when re-saving an ask_report / ask_dashboard "
+            "agent. The backend treats this field as IMMUTABLE — if it differs "
+            "from the persisted binding the request is rejected with "
+            "``IMMUTABLE_FIELD``. Identical / omitted values are silently dropped."
+        ),
+    )
