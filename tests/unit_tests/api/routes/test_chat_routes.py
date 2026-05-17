@@ -10,7 +10,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
-from datus.api.models.cli_models import StreamChatInput, UserInteractionInput
+from datus.api.models.cli_models import SSEEndData, SSEEvent, SSESessionData, StreamChatInput, UserInteractionInput
 from datus.api.routes.chat_routes import (
     _is_valid_subagent_id,
     stream_chat,
@@ -195,6 +195,50 @@ class TestStreamChat404Gate:
         assert isinstance(response, StreamingResponse)
         assert response.status_code == 200
         assert response.media_type == "text/event-stream"
+
+
+@pytest.mark.acceptance
+class TestChatRouteAcceptance:
+    """Deterministic Chat API entrance coverage for built-in subagent routing."""
+
+    @pytest.mark.asyncio
+    async def test_stream_chat_routes_gen_sql_to_service_sse(self):
+        async def fake_chat_stream(*args, **kwargs):
+            yield SSEEvent(id=1, event="session", data=SSESessionData(session_id="gen_sql_acceptance"))
+            yield SSEEvent(
+                id=2,
+                event="end",
+                data=SSEEndData(
+                    session_id="gen_sql_acceptance",
+                    total_events=2,
+                    action_count=1,
+                    duration=0.01,
+                ),
+            )
+
+        svc = _mock_svc_with_nodes()
+        svc.chat.stream_chat = MagicMock(return_value=fake_chat_stream())
+        ctx = MagicMock(user_id="user-1")
+        request = StreamChatInput(
+            message="Generate SQL for school count",
+            session_id="gen_sql_acceptance",
+            subagent_id="gen_sql",
+        )
+
+        response = await stream_chat(request, svc, ctx, MagicMock())
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+
+        body = "".join(chunks)
+        assert response.media_type == "text/event-stream"
+        assert "event: session" in body
+        assert "event: end" in body
+        svc.chat.stream_chat.assert_called_once()
+        call_args = svc.chat.stream_chat.call_args
+        assert call_args.args[0] is request
+        assert call_args.kwargs["sub_agent_id"] == "gen_sql"
+        assert call_args.kwargs["user_id"] == "user-1"
 
     @pytest.mark.asyncio
     async def test_valid_builtin_passes_gate(self):

@@ -7,6 +7,8 @@
 import logging
 from unittest.mock import patch
 
+import pytest
+
 from datus.utils.memory_loader import (
     MEMORY_BASE_DIR,
     MEMORY_BYTE_LIMIT,
@@ -225,6 +227,28 @@ class TestLoadMemoryContext:
             r for r in caplog.records if "longer than 50 lines" in r.message or "over 200 chars" in r.message
         ]
         assert structural_warnings == []
+
+    @pytest.mark.acceptance
+    def test_workspace_subagent_isolation_and_update(self, tmp_path):
+        """Memory is loaded from the requested workspace/subagent and reflects file updates."""
+        chat_dir = tmp_path / MEMORY_BASE_DIR / "chat"
+        custom_dir = tmp_path / MEMORY_BASE_DIR / "finance_agent"
+        chat_dir.mkdir(parents=True)
+        custom_dir.mkdir(parents=True)
+
+        chat_memory = chat_dir / MEMORY_FILENAME
+        custom_memory = custom_dir / MEMORY_FILENAME
+        chat_memory.write_text("# Memory\n\n- [sql style](sql.md) - prefer explicit joins\n", encoding="utf-8")
+        custom_memory.write_text("# Memory\n\n- [metric](metric.md) - revenue uses net_amount\n", encoding="utf-8")
+
+        assert "explicit joins" in load_memory_context(str(tmp_path), "chat")
+        assert "net_amount" not in load_memory_context(str(tmp_path), "chat")
+        assert "net_amount" in load_memory_context(str(tmp_path), "finance_agent")
+
+        chat_memory.write_text("# Memory\n\n- [sql style](sql.md) - prefer CTEs for multi-step SQL\n", encoding="utf-8")
+        updated = load_memory_context(str(tmp_path), "chat")
+        assert "prefer CTEs" in updated
+        assert "explicit joins" not in updated
 
 
 class TestGetMemoryDir:

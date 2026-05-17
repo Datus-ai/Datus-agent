@@ -89,6 +89,59 @@ class TestSearchReferenceTemplate:
         assert "DB error" in result.error
 
 
+@pytest.mark.acceptance
+class TestReferenceTemplateAcceptance:
+    """Deterministic tool-chain coverage for search/get/render over local fixture data."""
+
+    def test_search_get_render_and_missing_params(self, mock_agent_config):
+        template = {
+            "name": "school_lookup",
+            "subject_path": ["California", "Schools"],
+            "template": (
+                "SELECT School, City FROM frpm "
+                "WHERE County = '{{county}}' AND `Charter School (Y/N)` = '{{charter_flag}}'"
+            ),
+            "parameters": json.dumps([{"name": "county"}, {"name": "charter_flag"}]),
+            "summary": "Find schools by county and charter flag",
+            "tags": ["school", "charter"],
+        }
+        fake_rag = MagicMock()
+        fake_rag.get_reference_template_size.return_value = 1
+        fake_rag.search_reference_templates.return_value = [template]
+        fake_rag.get_reference_template_detail.return_value = [template]
+
+        with patch(
+            "datus.tools.func_tool.reference_template_tools.ReferenceTemplateRAG",
+            return_value=fake_rag,
+        ):
+            tpl_tools = ReferenceTemplateTools(mock_agent_config)
+
+        search_result = tpl_tools.search_reference_template("charter schools", subject_path=["California"])
+        assert search_result.success == 1
+        assert search_result.result[0]["name"] == "school_lookup"
+
+        get_result = tpl_tools.get_reference_template(["California", "Schools"], "school_lookup")
+        assert get_result.success == 1
+        assert get_result.result["template"] == template["template"]
+
+        render_result = tpl_tools.render_reference_template(
+            ["California", "Schools"],
+            "school_lookup",
+            json.dumps({"county": "Alameda", "charter_flag": "Y"}),
+        )
+        assert render_result.success == 1
+        assert "Alameda" in render_result.result["rendered_sql"]
+        assert "{{" not in render_result.result["rendered_sql"]
+
+        missing_result = tpl_tools.render_reference_template(
+            ["California", "Schools"],
+            "school_lookup",
+            json.dumps({"county": "Alameda"}),
+        )
+        assert missing_result.success == 0
+        assert "charter_flag" in missing_result.error
+
+
 class TestGetReferenceTemplate:
     def test_get_success(self, tools, mock_rag):
         mock_rag.get_reference_template_detail.return_value = [

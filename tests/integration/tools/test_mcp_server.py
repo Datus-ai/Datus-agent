@@ -600,6 +600,7 @@ class TestMCPClient:
 # =============================================================================
 
 
+@pytest.mark.acceptance
 @pytest.mark.nightly
 class TestMCPToolRegistration:
     """Test MCP tool registration with real server."""
@@ -630,6 +631,7 @@ class TestMCPToolRegistration:
         assert "list_subject_tree" in tool_names
 
 
+@pytest.mark.acceptance
 @pytest.mark.nightly
 class TestMCPToolExecution:
     """Test MCP tool execution with real server."""

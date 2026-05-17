@@ -652,6 +652,46 @@ class TestBIFuncToolWriteOps:
         assert "connection failed" in result.error
 
 
+@pytest.mark.acceptance
+class TestBIFuncToolAcceptance:
+    """Fake adapter contract coverage for BI read/write paths without external services."""
+
+    def test_fake_adapter_read_write_contract(self):
+        with patch.dict(sys.modules, {"datus_bi_core": _bi_core_mock, "datus_bi_core.models": _bi_core_mock.models}):
+            tool = _build_tool(adapter=FullMockAdapter(), bi_service="superset")
+
+            tool_names = {item.name for item in tool.available_tools()}
+            assert {"list_dashboards", "get_dashboard", "list_charts", "get_chart", "get_chart_data"}.issubset(
+                tool_names
+            )
+            assert {"create_dashboard", "create_dataset", "create_chart", "add_chart_to_dashboard"}.issubset(tool_names)
+
+            dashboards = tool.list_dashboards(search="Test")
+            assert dashboards.success == 1
+            assert dashboards.result["items"][0]["name"] == "Test Dashboard"
+
+            dataset = tool.create_dataset(name="orders_view", database_id="1", sql="SELECT * FROM orders")
+            assert dataset.success == 1
+            assert dataset.result["name"] == "orders_view"
+
+            chart = tool.create_chart(
+                chart_type="bar",
+                title="Orders by Category",
+                dataset_id="3",
+                metrics="value",
+                dimensions="category",
+                dashboard_id="10",
+            )
+            assert chart.success == 1
+            assert chart.result["name"] == "Orders by Category"
+            assert chart.result["deliverable_target"]["platform"] == "superset"
+
+            chart_data = tool.get_chart_data("5", dashboard_id="10", limit=1)
+            assert chart_data.success == 1
+            assert chart_data.result["columns"] == ["category", "value"]
+            assert chart_data.result["rows"] == [{"category": "A", "value": 10}]
+
+
 class TestBIFuncToolResolveGrafanaDatasource:
     """``_resolve_grafana_datasource_uid`` looks up a pre-registered Grafana
     datasource and returns its UID. Used by Grafana adapter when building

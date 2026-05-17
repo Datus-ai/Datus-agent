@@ -491,6 +491,58 @@ class TestConvertToFuncResult:
         assert result.result["response"] == "Some content"
 
 
+@pytest.mark.acceptance
+class TestSubAgentTaskAcceptance:
+    """Deterministic custom subagent discovery and delegation contract."""
+
+    @pytest.mark.asyncio
+    async def test_custom_subagent_discovery_scope_and_delegation(self, task_tool):
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        parent = MagicMock()
+        parent.node_config = {"scoped_context": {"tables": "public.orders"}}
+        parent.get_node_name.return_value = "chat"
+        parent.proxy_tool_patterns = []
+        parent.tool_channel = None
+        task_tool._parent_node = parent
+
+        assert "sales_analyst" in task_tool._get_available_types()
+        node_type, node_name = task_tool._resolve_node_type("sales_analyst")
+        assert node_type == NodeType.TYPE_GENSQL
+        assert node_name == "sales_analyst"
+
+        effective = task_tool._resolve_effective_sub_agent_config("sales_analyst")
+        assert effective.scoped_context.tables == "public.orders"
+
+        mock_action = Mock(spec=ActionHistory)
+        mock_action.status = ActionStatus.SUCCESS
+        mock_action.role = ActionRole.ASSISTANT
+        mock_action.output = {
+            "response": "Sales report is ready",
+            "sql": "SELECT SUM(amount) FROM sales",
+            "tokens_used": 42,
+            "success": True,
+        }
+        mock_node = Mock(spec=GenSQLAgenticNode)
+        mock_node.type = NodeType.TYPE_GENSQL
+        mock_node.session_id = "sales_session_1"
+
+        async def mock_stream(ahm):
+            yield mock_action
+
+        mock_node.execute_stream_with_interactions = mock_stream
+
+        with patch.object(task_tool, "_create_node", return_value=mock_node) as create_node:
+            result = await task_tool.task(type="sales_analyst", prompt="Summarize sales")
+
+        assert result.success == 1
+        assert result.result["response"] == "Sales report is ready"
+        assert result.result["sql"] == "SELECT SUM(amount) FROM sales"
+        create_node.assert_called_once_with("sales_analyst", session_id=None)
+        assert mock_node.input.user_message == "Summarize sales"
+        assert mock_node.input.database == "test_db"
+
+
 # ── task execution ─────────────────────────────────────────────────
 
 

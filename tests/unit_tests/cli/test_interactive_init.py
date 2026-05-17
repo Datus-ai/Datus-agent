@@ -3,6 +3,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 import yaml
 from rich.console import Console
 
@@ -95,6 +96,7 @@ class TestInit:
             assert success is False
             assert "pending" in error_msg.lower()
 
+    @pytest.mark.acceptance
     def test_config_file_generation(self, monkeypatch):
         """N4-03: agent.yml + project-level .datus/config.yml round-trip."""
         with tempfile.TemporaryDirectory() as tmpdir:

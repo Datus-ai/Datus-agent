@@ -10,6 +10,7 @@ CI-level: zero external dependencies. All Agent, TaskStore, and LLM calls mocked
 
 import argparse
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
@@ -356,6 +357,70 @@ class TestRunWorkflow:
 
         assert len(response.result) == 2
         assert response.result[0]["name"] == "Alice"
+
+
+@pytest.mark.acceptance
+class TestDatusAPIServiceAcceptance:
+    """Deterministic API service coverage for fake GenSQL execution and feedback read-back."""
+
+    @pytest.mark.asyncio
+    async def test_fake_gen_sql_workflow_records_task_and_feedback(self, real_agent_config):
+        from datus.storage.task.store import TaskStore
+
+        service = _make_service()
+        service.agent_config = real_agent_config
+        service.task_store = TaskStore(project=real_agent_config.project_name)
+
+        task_id = f"acceptance-api-{uuid4().hex}"
+        mock_agent = MagicMock()
+        mock_agent.global_config.output_dir = str(real_agent_config.output_dir)
+        mock_runner = MagicMock()
+        mock_context = MagicMock()
+        mock_context.sql_query = "SELECT COUNT(*) AS school_count FROM schools"
+        mock_context.sql_return = "school_count\n42"
+        mock_runner.workflow.get_last_sqlcontext.return_value = mock_context
+        captured_sql_tasks = []
+
+        def _run(sql_task):
+            captured_sql_tasks.append(sql_task)
+            return {"status": "completed", "node": "gen_sql"}
+
+        mock_runner.run.side_effect = _run
+        mock_agent.create_workflow_runner.return_value = mock_runner
+        service.agents["bird_school"] = mock_agent
+
+        request = RunWorkflowRequest(
+            workflow="nl2sql",
+            datasource="bird_school",
+            task="How many schools are there?",
+            task_id=task_id,
+            catalog_name="main",
+            database_name="california_schools",
+            schema_name="public",
+            subject_path=["Education", "Schools"],
+            ext_knowledge="Count active schools only.",
+        )
+
+        try:
+            response = await service.run_workflow(request, client_id="api-client")
+
+            assert response.status == "completed"
+            assert response.sql == "SELECT COUNT(*) AS school_count FROM schools"
+            assert response.result == [{"school_count": "42"}]
+            assert response.metadata == {"status": "completed", "node": "gen_sql"}
+            assert captured_sql_tasks[0].subject_path == ["Education", "Schools"]
+            assert captured_sql_tasks[0].external_knowledge == "Count active schools only."
+
+            stored_task = service.task_store.get_task(task_id)
+            assert stored_task["status"] == "completed"
+            assert stored_task["sql_query"] == "SELECT COUNT(*) AS school_count FROM schools"
+
+            feedback = await service.record_feedback(FeedbackRequest(task_id=task_id, status=FeedbackStatus.SUCCESS))
+            assert feedback.acknowledged is True
+            read_back = service.task_store.get_feedback(task_id)
+            assert read_back["user_feedback"] == "success"
+        finally:
+            service.task_store.delete_task(task_id)
 
 
 # ---------------------------------------------------------------------------

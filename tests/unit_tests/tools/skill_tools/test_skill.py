@@ -13,6 +13,8 @@ tests/integration/tools/test_skill.py (marked nightly).
 import json
 from pathlib import Path
 
+import pytest
+
 from datus.tools.func_tool.bash_tool import BashTool
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools import SkillConfig, SkillManager
@@ -255,6 +257,48 @@ class TestPermissionEnforcement:
         assert "hidden-skill" not in names
 
         assert manager.get_skill("hidden-skill").name == "hidden-skill"
+
+
+@pytest.mark.acceptance
+class TestSkillsAcceptance:
+    """Deterministic skill discovery, permission filtering, and safe load coverage."""
+
+    def test_discovery_permission_filter_and_safe_load(self, skill_config, perm_deny_admin):
+        perm_manager = PermissionManager(global_config=perm_deny_admin)
+        manager = SkillManager(config=skill_config, permission_manager=perm_manager)
+
+        available = manager.get_available_skills("chat")
+        names = {skill.name for skill in available}
+        assert "sql-analysis" in names
+        assert "report-generator" in names
+        assert "admin-tools" not in names
+
+        success, message, content = manager.load_skill("sql-analysis", "chat")
+        assert success is True
+        assert "Schema Discovery" in content
+        assert message
+
+        denied, deny_message, deny_content = manager.load_skill("admin-tools", "chat")
+        assert denied is False
+        assert "denied" in deny_message.lower()
+        assert deny_content is None
+
+    def test_skill_execute_command_safe_path_and_denied_command(self, skill_func_tool):
+        loaded = skill_func_tool.load_skill("report-generator")
+        assert loaded.success == 1
+
+        executed = skill_func_tool.skill_execute_command(
+            "report-generator",
+            "python scripts/generate_report.py --format json",
+        )
+        assert executed.success == 1
+        output = json.loads(executed.result.strip())
+        assert output["status"] == "success"
+        assert output["format"] == "json"
+
+        denied = skill_func_tool.skill_execute_command("report-generator", "rm -rf /")
+        assert denied.success == 0
+        assert "not allowed" in denied.error.lower()
 
 
 # ============================================================================

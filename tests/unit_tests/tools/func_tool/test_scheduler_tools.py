@@ -111,6 +111,8 @@ def _make_job_run(run_id="manual__2025-01-01"):
     run.run_id = run_id
     run.job_id = "spark_pi_test"
     run.status.value = "running"
+    run.started_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    run.ended_at = None
     return run
 
 
@@ -229,6 +231,72 @@ class TestAvailableTools:
         tool_names = {t.name for t in result}
         for expected in ["submit_sql_job", "submit_sparksql_job", "trigger_scheduler_job", "get_scheduler_job"]:
             assert expected in tool_names
+
+
+@pytest.mark.acceptance
+class TestSchedulerToolsAcceptance:
+    """Deterministic scheduler write/read path against a fake adapter."""
+
+    def test_submit_trigger_poll_and_read_back_sql_job(self, tmp_path):
+        sql_file = tmp_path / "daily_sales.sql"
+        sql_file.write_text("SELECT order_date, SUM(amount) AS revenue FROM sales GROUP BY order_date")
+
+        submitted_job = _make_scheduled_job("daily_sales")
+        submitted_job.job_name = "Daily Sales"
+        submitted_job.status.value = "active"
+        triggered_run = _make_job_run("manual__2025-01-01")
+        triggered_run.job_id = "daily_sales"
+        triggered_run.status.value = "success"
+
+        fake_adapter = MagicMock()
+        fake_adapter.submit_job.return_value = submitted_job
+        fake_adapter.trigger_job.return_value = triggered_run
+        fake_adapter.list_job_runs.return_value = _SchedulerPage(items=[triggered_run], total=1)
+        fake_adapter.get_run_log.return_value = "Query finished successfully"
+
+        cfg = _make_agent_config(
+            scheduler_config={
+                "name": "fake_scheduler",
+                "type": "fake",
+                "connections": {
+                    "warehouse": {
+                        "description": "Warehouse connection",
+                        "type": "duckdb",
+                        "default": True,
+                        "capabilities": ["sql"],
+                    }
+                },
+            },
+            project_root=str(tmp_path),
+        )
+        tools = SchedulerTools(cfg)
+
+        with patch.object(tools, "_get_adapter", return_value=fake_adapter):
+            submit = tools.submit_sql_job("Daily Sales", str(sql_file), schedule="0 8 * * *")
+            trigger = tools.trigger_scheduler_job("daily_sales")
+            runs = tools.list_job_runs("daily_sales")
+            run_log = tools.get_run_log("daily_sales", "manual__2025-01-01")
+
+        assert submit.success == 1
+        assert submit.result["job_id"] == "daily_sales"
+        assert submit.result["conn_id"] == "warehouse"
+        submitted_payload = fake_adapter.submit_job.call_args[0][0]
+        assert submitted_payload.sql.startswith("SELECT order_date")
+        assert submitted_payload.db_connection == {"conn_id": "warehouse"}
+        assert submitted_payload.schedule == "0 8 * * *"
+
+        assert trigger.success == 1
+        assert trigger.result == {
+            "run_id": "manual__2025-01-01",
+            "job_id": "daily_sales",
+            "status": "success",
+        }
+        assert runs.success == 1
+        assert runs.result["items"][0]["run_id"] == "manual__2025-01-01"
+        assert runs.result["items"][0]["status"] == "success"
+        assert runs.result["total"] == 1
+        assert run_log.success == 1
+        assert run_log.result["log"] == "Query finished successfully"
 
 
 # ── adapter.close() error handling ─────────────────────────────────────────

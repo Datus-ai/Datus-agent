@@ -1,6 +1,7 @@
 """Tests for datus.api.services.kb_service — knowledge base bootstrap."""
 
 from datetime import datetime
+from unittest.mock import patch
 
 import pytest
 
@@ -432,6 +433,42 @@ class TestKbServiceRunComponent:
         result = svc._run_component(request, "metadata", queue, loop, cancel_event, str(real_agent_config.home))
         assert result["status"] == "success"
         loop.close()
+
+
+@pytest.mark.acceptance
+@pytest.mark.asyncio
+async def test_kb_bootstrap_acceptance_orchestrates_components_in_order(real_agent_config):
+    """KB bootstrap streams deterministic per-component completions and final summary."""
+    import asyncio
+
+    svc = KbService(agent_config=real_agent_config)
+    cancel_event = asyncio.Event()
+    request = BootstrapKbInput(
+        components=["metadata", "reference_sql", "ext_knowledge"],
+        strategy="check",
+        subject_tree=["Education", "Schools"],
+    )
+    calls = []
+
+    def fake_run_component(request, component, queue, loop, cancel_event, project_root):
+        calls.append((component, request.subject_tree, project_root))
+        return {
+            "status": "success",
+            "message": f"{component} checked",
+            "component": component,
+        }
+
+    with patch.object(svc, "_run_component", side_effect=fake_run_component):
+        events = []
+        async for event in svc.bootstrap_stream(request, "kb-acceptance", cancel_event, str(real_agent_config.home)):
+            events.append(event)
+
+    completed = [event for event in events if event.stage == BatchStage.TASK_COMPLETED.value]
+    assert [event.component for event in completed[:3]] == ["metadata", "reference_sql", "ext_knowledge"]
+    assert events[-1].component == "all"
+    assert events[-1].payload["components"]["reference_sql"]["message"] == "reference_sql checked"
+    assert [call[0] for call in calls] == ["metadata", "reference_sql", "ext_knowledge"]
+    assert all(call[1] == ["Education", "Schools"] for call in calls)
 
 
 class TestKbServiceMergeDocOverrides:
