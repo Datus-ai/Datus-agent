@@ -384,7 +384,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nightly-test-results-${{ github.run_number }}
-          path: test_output_nightly_*.log
+          path: |
+            test_output_nightly_*.log
+            nightly-manifest.json
           retention-days: 7
 
       - name: Send Feishu notification

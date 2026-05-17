@@ -35,6 +35,19 @@ function readLatestNightlyLog(workspace = '.') {
   }
 }
 
+function readNightlyManifest(workspace = '.') {
+  const manifestPath = path.join(workspace, 'nightly-manifest.json');
+  if (!fs.existsSync(manifestPath)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
 function pushUnique(items, item) {
   const value = String(item || '').trim();
   if (value && !items.includes(value)) {
@@ -177,6 +190,7 @@ function buildNightlyFeishuMessage({
 } = {}) {
   const content = logContent == null ? readLatestNightlyLog(workspace).logContent : logContent;
   const report = summarizeNightlyLog(content);
+  const manifest = readNightlyManifest(workspace);
   const normalizedStatus = status || 'UNKNOWN';
   const isPassed = normalizedStatus === 'PASSED';
 
@@ -192,6 +206,18 @@ function buildNightlyFeishuMessage({
     lines.push('**Result:** No blocking failures detected. Passing case logs are omitted.');
   } else if (report.failures.length === 0) {
     lines.push('**Result:** Nightly did not complete successfully. No pytest failure nodeids were found in the log summary.');
+  }
+
+  if (manifest && manifest.summary) {
+    const counts = manifest.summary.status_counts || {};
+    const countText = Object.entries(counts)
+      .map(([key, value]) => `${key}: ${value}`)
+      .join(', ');
+    lines.push(
+      `**Manifest:** ${manifest.summary.suite_count || 0} suites, ${
+        manifest.summary.collected_nodeid_count || 0
+      } collected nodeids${countText ? ` (${countText})` : ''}.`,
+    );
   }
 
   if (report.failures.length > 0) {

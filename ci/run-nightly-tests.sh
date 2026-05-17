@@ -9,6 +9,9 @@ cd "$REPO_ROOT" || {
 }
 
 LOG_FILE="${NIGHTLY_LOG_FILE:-test_output_nightly_$(date +%Y%m%d_%H%M%S).log}"
+NIGHTLY_MANIFEST_FILE="${NIGHTLY_MANIFEST_FILE:-nightly-manifest.json}"
+NIGHTLY_MANIFEST_ENABLED="${NIGHTLY_MANIFEST_ENABLED:-1}"
+NIGHTLY_MANIFEST_FINALIZED=0
 test_exit_code=0
 last_command_exit_code=0
 NIGHTLY_GROUP_FILTER="${NIGHTLY_GROUP_FILTER:-}"
@@ -25,6 +28,7 @@ UNIT_TEST_HOME="${NIGHTLY_UNIT_TEST_HOME:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-
 UNIT_TEST_PROJECT_ROOT="${NIGHTLY_UNIT_TEST_PROJECT_ROOT:-${UNIT_TEST_HOME}/workspace}"
 NIGHTLY_PYTEST_BASETEMP="${NIGHTLY_PYTEST_BASETEMP:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-agent-nightly-pytest-${GITHUB_RUN_ID:-$$}-${GITHUB_RUN_ATTEMPT:-0}}"
 AGENT_TEST_CONFIG_BACKUP="${AGENT_TEST_CONFIG_BACKUP:-${TMPDIR:-/tmp}/datus-agent-nightly-config-${GITHUB_RUN_ID:-$$}.bak}"
+export LOG_FILE NIGHTLY_MANIFEST_FILE NIGHTLY_HOME NIGHTLY_PROJECT_ROOT UNIT_TEST_HOME NIGHTLY_PYTEST_BASETEMP
 
 default_repo_root() {
   local explicit_root="$1"
@@ -84,6 +88,131 @@ COMPOSE_GROUPS=(
 
 log() {
   echo "$@" | tee -a "$LOG_FILE"
+}
+
+utc_now() {
+  date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+manifest_command_json() {
+  python3 -c 'import json, sys; print(json.dumps(sys.argv[1:]))' "$@"
+}
+
+manifest_update() {
+  if [ "$NIGHTLY_MANIFEST_ENABLED" != "1" ]; then
+    return 0
+  fi
+
+  if [ -x "${REPO_ROOT}/.venv/bin/python" ]; then
+    "${REPO_ROOT}/.venv/bin/python" ci/nightly_manifest.py "$@" 2>>"$LOG_FILE"
+  elif command -v uv >/dev/null 2>&1; then
+    uv run python ci/nightly_manifest.py "$@" 2>>"$LOG_FILE"
+  else
+    python3 ci/nightly_manifest.py "$@" 2>>"$LOG_FILE"
+  fi
+  local status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "WARNING: nightly manifest update failed: ci/nightly_manifest.py $*" | tee -a "$LOG_FILE" >&2
+    return 0
+  fi
+}
+
+manifest_init() {
+  manifest_update init \
+    --output "$NIGHTLY_MANIFEST_FILE" \
+    --repo-root "$REPO_ROOT" \
+    --external-repos-root "$EXTERNAL_REPOS_ROOT"
+}
+
+manifest_record_suite() {
+  local group_name="$1"
+  local mode="$2"
+  local kind="$3"
+  local status="$4"
+  local exit_code="$5"
+  local started_at="$6"
+  local ended_at="$7"
+  shift 7
+
+  local command_json
+  command_json="$(manifest_command_json "$@")"
+
+  manifest_update record-suite \
+    --output "$NIGHTLY_MANIFEST_FILE" \
+    --name "$group_name" \
+    --mode "$mode" \
+    --kind "$kind" \
+    --status "$status" \
+    --exit-code "$exit_code" \
+    --started-at "$started_at" \
+    --ended-at "$ended_at" \
+    --command-json "$command_json" \
+    --compose-file "${NIGHTLY_CURRENT_COMPOSE_FILE:-}" \
+    --compose-project "${NIGHTLY_CURRENT_COMPOSE_PROJECT:-}" \
+    --host-ports "${NIGHTLY_CURRENT_HOST_PORTS:-}"
+}
+
+manifest_record_collection() {
+  local group_name="$1"
+  local exit_code="$2"
+  local output_file="$3"
+
+  manifest_update record-collection \
+    --output "$NIGHTLY_MANIFEST_FILE" \
+    --name "$group_name" \
+    --exit-code "$exit_code" \
+    --collection-output "$output_file"
+}
+
+manifest_record_compose_project() {
+  local group_name="$1"
+  local project_name="$2"
+  local compose_file="$3"
+  local host_ports="$4"
+
+  manifest_update record-compose-project \
+    --output "$NIGHTLY_MANIFEST_FILE" \
+    --group "$group_name" \
+    --project "$project_name" \
+    --compose-file "$compose_file" \
+    --host-ports "$host_ports"
+}
+
+manifest_finalize() {
+  if [ "$NIGHTLY_MANIFEST_FINALIZED" = "1" ]; then
+    return 0
+  fi
+  NIGHTLY_MANIFEST_FINALIZED=1
+  manifest_update finalize --output "$NIGHTLY_MANIFEST_FILE" --exit-code "$test_exit_code"
+}
+
+command_contains_pytest() {
+  local arg
+  for arg in "$@"; do
+    if [ "$arg" = "pytest" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+collect_pytest_suite() {
+  local group_name="$1"
+  shift
+
+  if ! command_contains_pytest "$@"; then
+    return 0
+  fi
+
+  local output_file="${NIGHTLY_PYTEST_BASETEMP}/manifest-collect-${group_name//[^A-Za-z0-9_-]/_}.log"
+  mkdir -p "$NIGHTLY_PYTEST_BASETEMP"
+  PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:$PYTHONPATH}" "$@" -p ci.pytest_manifest_plugin --collect-only >"$output_file" 2>&1
+  local collect_status=$?
+  manifest_record_collection "$group_name" "$collect_status" "$output_file"
+  if [ "$collect_status" -ne 0 ]; then
+    log "WARNING: collection failed for ${group_name}; continuing and preserving failure in manifest."
+  fi
+  return 0
 }
 
 should_run_group() {
@@ -460,6 +589,9 @@ ensure_nightly_kb_data() {
 
 cleanup_all() {
   set +e
+  if [ "${NIGHTLY_SKIP_MANIFEST_FINALIZE:-0}" != "1" ]; then
+    manifest_finalize
+  fi
   restore_agent_test_config
   rm -f "$AGENT_TEST_CONFIG_BACKUP"
   if validate_pytest_basetemp "$NIGHTLY_PYTEST_BASETEMP"; then
@@ -469,6 +601,7 @@ cleanup_all() {
 }
 
 if [ "${1:-}" = "--cleanup-only" ]; then
+  NIGHTLY_SKIP_MANIFEST_FINALIZE=1
   cleanup_all
   exit 0
 fi
@@ -576,12 +709,22 @@ run_logged_unfiltered() {
 
   log ""
   log "=== ${group_name} ==="
+  local started_at
+  started_at="$(utc_now)"
+  collect_pytest_suite "$group_name" "$@"
   "$@" 2>&1 | tee -a "$LOG_FILE"
   local cmd_status=${PIPESTATUS[0]}
+  local ended_at
+  ended_at="$(utc_now)"
   last_command_exit_code="$cmd_status"
   if [ "$cmd_status" -ne 0 ]; then
     test_exit_code="$cmd_status"
   fi
+  local status="passed"
+  if [ "$cmd_status" -ne 0 ]; then
+    status="failed"
+  fi
+  manifest_record_suite "$group_name" "blocking" "command" "$status" "$cmd_status" "$started_at" "$ended_at" "$@"
   return 0
 }
 
@@ -592,6 +735,9 @@ run_logged() {
     log ""
     log "=== Skipping ${group_name} (NIGHTLY_GROUP_FILTER=${NIGHTLY_GROUP_FILTER}) ==="
     last_command_exit_code=0
+    local now
+    now="$(utc_now)"
+    manifest_record_suite "$group_name" "blocking" "command" "skipped" 0 "$now" "$now" "$@"
     return 0
   fi
 
@@ -604,12 +750,22 @@ run_logged_warn_only_unfiltered() {
 
   log ""
   log "=== ${group_name} (warn-only) ==="
+  local started_at
+  started_at="$(utc_now)"
+  collect_pytest_suite "$group_name" "$@"
   "$@" 2>&1 | tee -a "$LOG_FILE"
   local cmd_status=${PIPESTATUS[0]}
+  local ended_at
+  ended_at="$(utc_now)"
   last_command_exit_code="$cmd_status"
   if [ "$cmd_status" -ne 0 ]; then
     log "WARNING: ${group_name} failed with exit code ${cmd_status}; continuing because this group is non-blocking."
   fi
+  local status="passed"
+  if [ "$cmd_status" -ne 0 ]; then
+    status="failed"
+  fi
+  manifest_record_suite "$group_name" "warn-only" "command" "$status" "$cmd_status" "$started_at" "$ended_at" "$@"
   return 0
 }
 
@@ -620,6 +776,9 @@ run_logged_warn_only() {
     log ""
     log "=== Skipping ${group_name} (NIGHTLY_GROUP_FILTER=${NIGHTLY_GROUP_FILTER}) ==="
     last_command_exit_code=0
+    local now
+    now="$(utc_now)"
+    manifest_record_suite "$group_name" "warn-only" "command" "skipped" 0 "$now" "$now" "$@"
     return 0
   fi
 
@@ -1047,6 +1206,8 @@ run_compose_suite() {
   shift 2
   local service_specs=()
   local project_name
+  local started_at
+  started_at="$(utc_now)"
 
   while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
     service_specs+=("$1")
@@ -1062,24 +1223,32 @@ run_compose_suite() {
   if ! should_run_group "$group_name"; then
     log ""
     log "=== Skipping ${group_name} (NIGHTLY_GROUP_FILTER=${NIGHTLY_GROUP_FILTER}) ==="
+    local now
+    now="$(utc_now)"
+    manifest_record_suite "$group_name" "blocking" "compose" "skipped" 0 "$now" "$now" "$@"
     return 0
   fi
 
   project_name="$(compose_project_name "$group_name")"
+  local host_ports
+  host_ports="$(compose_host_port_specs "$group_name")"
+  manifest_record_compose_project "$group_name" "$project_name" "$compose_file" "$host_ports"
   log ""
   log "=== Starting ${group_name} Services (project=${project_name}) ==="
   log "Compose file: ${compose_file}"
   log "Host ports:"
-  compose_host_port_specs "$group_name" | sed 's/^/  /' | tee -a "$LOG_FILE"
+  printf '%s\n' "$host_ports" | sed 's/^/  /' | tee -a "$LOG_FILE"
 
   compose_down "$compose_file" "$project_name"
   if ! check_compose_host_ports_available "$group_name"; then
     log "Skipping ${group_name} startup because required host ports are unavailable"
+    manifest_record_suite "$group_name" "blocking" "compose" "failed" "$test_exit_code" "$started_at" "$(utc_now)" "$@"
     return 0
   fi
 
   if ! compose_up "$project_name" "$compose_file"; then
     compose_down "$compose_file" "$project_name"
+    manifest_record_suite "$group_name" "blocking" "compose" "failed" "$test_exit_code" "$started_at" "$(utc_now)" "$@"
     return 0
   fi
 
@@ -1089,6 +1258,7 @@ run_compose_suite() {
     local timeout_seconds="${spec##*:}"
     if ! wait_for_service_health "$project_name" "$compose_file" "$service_name" "$timeout_seconds"; then
       compose_down "$compose_file" "$project_name"
+      manifest_record_suite "$group_name" "blocking" "compose" "failed" "$test_exit_code" "$started_at" "$(utc_now)" "$@"
       return 0
     fi
   done
@@ -1096,10 +1266,17 @@ run_compose_suite() {
   if ! wait_for_compose_client_readiness "$group_name"; then
     dump_compose_diagnostics "$project_name" "$compose_file" "$group_name"
     compose_down "$compose_file" "$project_name"
+    manifest_record_suite "$group_name" "blocking" "compose" "failed" "$test_exit_code" "$started_at" "$(utc_now)" "$@"
     return 0
   fi
 
+  NIGHTLY_CURRENT_COMPOSE_FILE="$compose_file"
+  NIGHTLY_CURRENT_COMPOSE_PROJECT="$project_name"
+  NIGHTLY_CURRENT_HOST_PORTS="$host_ports"
   run_logged "$group_name" "$@"
+  NIGHTLY_CURRENT_COMPOSE_FILE=""
+  NIGHTLY_CURRENT_COMPOSE_PROJECT=""
+  NIGHTLY_CURRENT_HOST_PORTS=""
   if [ "$last_command_exit_code" -ne 0 ]; then
     dump_compose_diagnostics "$project_name" "$compose_file" "$group_name"
   fi
@@ -1110,7 +1287,10 @@ run_compose_suite() {
   return 0
 }
 
+manifest_init
+
 log "Nightly log: $LOG_FILE"
+log "Nightly manifest: $NIGHTLY_MANIFEST_FILE"
 log "DB_ADAPTERS_ROOT=$DB_ADAPTERS_ROOT"
 log "BI_ADAPTERS_ROOT=$BI_ADAPTERS_ROOT"
 log "SCHEDULER_ADAPTERS_ROOT=$SCHEDULER_ADAPTERS_ROOT"
@@ -1203,8 +1383,11 @@ run_logged_warn_only "Provider Health Tests" run_with_agent_home "$NIGHTLY_HOME"
 
 run_logged_unfiltered "Flaky Log Classification" uv run python ci/check_flaky_registry.py --registry ci/flaky-registry.yml --log-file "$LOG_FILE" --warn-only
 
+manifest_finalize
+
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   echo "log_file=$LOG_FILE" >> "$GITHUB_OUTPUT"
+  echo "manifest_file=$NIGHTLY_MANIFEST_FILE" >> "$GITHUB_OUTPUT"
   echo "test_exit_code=$test_exit_code" >> "$GITHUB_OUTPUT"
 fi
 
