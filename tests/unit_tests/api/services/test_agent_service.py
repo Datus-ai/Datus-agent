@@ -174,6 +174,30 @@ class TestValidateToolsForAgentType:
         assert "edit_file" not in fs_methods
         assert {"read_file", "glob", "grep"}.issubset(fs_methods)
 
+    @pytest.mark.parametrize("agent_type", ["ask_report", "ask_dashboard"])
+    def test_ask_default_tools_all_resolve(self, agent_type):
+        """Every entry in ``default_tools`` for ask_* must be recognised by
+        ``_validate_tools``.
+
+        Anchors the regression where ``db_tools.execute_sql`` was kept in
+        the curated preselect list after the underlying method had been
+        renamed to ``read_query``. ``_validate_tools`` rejected it, which
+        in turn broke saas-side ``create_agent`` calls that fed the
+        preselect through unchanged.
+        """
+        defaults = SUBAGENT_TOOL_REFERENCE[agent_type]["default_tools"]
+        invalid = _validate_tools(defaults)
+        assert invalid == [], f"{agent_type} default_tools has unrecognised entries: {invalid}"
+
+    @pytest.mark.parametrize("agent_type", ["ask_report", "ask_dashboard"])
+    def test_ask_default_tools_pass_agent_type_gate(self, agent_type):
+        """``default_tools`` must also satisfy the per-agent-type allowlist
+        — preselected tools should never include anything the saas editor
+        would later reject (e.g. ``filesystem_tools.write_file``)."""
+        defaults = SUBAGENT_TOOL_REFERENCE[agent_type]["default_tools"]
+        rejected = _validate_tools_for_agent_type(defaults, agent_type)
+        assert rejected == [], f"{agent_type} default_tools rejected by ask gate: {rejected}"
+
 
 class TestConstants:
     """Tests for module-level constants."""

@@ -123,7 +123,6 @@ SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
     # excluded by omission — these agents must never mutate the artifact.
     "ask_report": {
         "default_tools": [
-            "db_tools.execute_sql",
             "db_tools.list_tables",
             "db_tools.describe_table",
             "db_tools.read_query",
@@ -139,7 +138,6 @@ SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
     },
     "ask_dashboard": {
         "default_tools": [
-            "db_tools.execute_sql",
             "db_tools.list_tables",
             "db_tools.describe_table",
             "db_tools.read_query",
