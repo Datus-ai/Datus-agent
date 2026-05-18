@@ -22,6 +22,7 @@ from datus.api.services.agent_service import (
     _strip_leading_slashes,
     _utc_now_iso,
     _validate_tools,
+    _validate_tools_for_agent_type,
     sanitize_agentic_node_name,
 )
 from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
@@ -101,6 +102,76 @@ class TestValidateTools:
     def test_empty_list_returns_empty(self):
         """Empty input list returns empty list."""
         assert _validate_tools([]) == []
+
+
+class TestValidateToolsForAgentType:
+    """Per-agent-type allowlist gate.
+
+    ``ask_report`` / ``ask_dashboard`` are documented as read-only
+    consultants ("must never mutate the artifact"); the gate prevents
+    a caller from re-enabling write tools or wildcards that would
+    expand reach beyond the documented allowlist.
+    """
+
+    def test_non_ask_agents_unrestricted(self):
+        """Other agent types fall back to the syntactic _validate_tools
+        check only — this helper returns empty for them."""
+        for agent_type in ("chat", "gen_sql", "gen_report"):
+            assert _validate_tools_for_agent_type(["filesystem_tools.write_file"], agent_type) == []
+            assert _validate_tools_for_agent_type(["filesystem_tools.*"], agent_type) == []
+
+    def test_ask_report_accepts_read_only_filesystem(self):
+        """The three read-side filesystem methods are the load-bearing
+        contract — an ask_* agent without them can't even read the
+        artifact it's bound to."""
+        for tool in ("filesystem_tools.read_file", "filesystem_tools.glob", "filesystem_tools.grep"):
+            assert _validate_tools_for_agent_type([tool], "ask_report") == []
+            assert _validate_tools_for_agent_type([tool], "ask_dashboard") == []
+
+    def test_ask_report_accepts_full_category_wildcards_for_non_filesystem(self):
+        """Wildcards on categories whose full method set is already in the
+        allowlist (semantic / context_search / reference_template) must
+        pass — those categories have no write methods to suppress."""
+        for category in ("semantic_tools", "context_search_tools", "reference_template_tools"):
+            assert _validate_tools_for_agent_type([f"{category}.*"], "ask_report") == []
+            assert _validate_tools_for_agent_type([f"{category}.*"], "ask_dashboard") == []
+
+    @pytest.mark.parametrize(
+        "forbidden",
+        [
+            "filesystem_tools.write_file",
+            "filesystem_tools.edit_file",
+            # Wildcard that would include write_file / edit_file in its expansion.
+            "filesystem_tools.*",
+            # Bare category — same wildcard concern.
+            "filesystem_tools",
+        ],
+    )
+    def test_ask_report_rejects_filesystem_write_tools(self, forbidden):
+        rejected = _validate_tools_for_agent_type([forbidden], "ask_report")
+        assert forbidden in rejected
+
+    @pytest.mark.parametrize(
+        "forbidden",
+        [
+            "filesystem_tools.write_file",
+            "filesystem_tools.edit_file",
+            "filesystem_tools.*",
+            "filesystem_tools",
+        ],
+    )
+    def test_ask_dashboard_rejects_filesystem_write_tools(self, forbidden):
+        rejected = _validate_tools_for_agent_type([forbidden], "ask_dashboard")
+        assert forbidden in rejected
+
+    def test_ask_report_catalog_excludes_filesystem_writes(self):
+        """The ``tool_types`` block returned by ``get_use_tools`` for
+        ask_* must not expose write_file / edit_file — the editor picker
+        should never surface them as available options."""
+        fs_methods = set(SUBAGENT_TOOL_REFERENCE["ask_report"]["tool_types"]["filesystem_tools"]["tools"])
+        assert "write_file" not in fs_methods
+        assert "edit_file" not in fs_methods
+        assert {"read_file", "glob", "grep"}.issubset(fs_methods)
 
 
 class TestConstants:

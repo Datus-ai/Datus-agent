@@ -67,6 +67,24 @@ _ALL_TOOL_TYPES: dict[str, dict[str, list[str]]] = {
     category: {"tools": sorted(VALID_TOOL_METHODS[category])} for category in _USER_FACING_TOOL_CATEGORIES
 }
 
+# Filesystem methods an ``ask_*`` agent may use. Mirrors the read-only intent
+# documented in the ``ask_report`` / ``ask_dashboard`` entries of
+# :data:`SUBAGENT_TOOL_REFERENCE`: the consultant reads ``analysis/`` and
+# ``queries/`` to answer follow-ups but must never mutate the artifact.
+_ASK_AGENT_FILESYSTEM_READ_ONLY: tuple[str, ...] = ("glob", "grep", "read_file")
+
+# Read-only catalog returned by ``GET /agent/use_tools`` for ``ask_*`` agents.
+# Replaces the full ``_ALL_TOOL_TYPES`` so the editor never surfaces
+# ``filesystem_tools.write_file`` / ``edit_file`` as available options.
+_ASK_AGENT_TOOL_TYPES: dict[str, dict[str, list[str]]] = {
+    **{
+        category: _ALL_TOOL_TYPES[category]
+        for category in _USER_FACING_TOOL_CATEGORIES
+        if category != "filesystem_tools"
+    },
+    "filesystem_tools": {"tools": list(_ASK_AGENT_FILESYSTEM_READ_ONLY)},
+}
+
 # Per-agent-type tool reference. Mirrors the saas Datus-backend contract:
 # ``default_tools`` are wildcard / specific patterns preselected for the type,
 # ``tool_types`` is the full catalog of allowed categories with their methods.
@@ -117,7 +135,7 @@ SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
             "filesystem_tools.glob",
             "filesystem_tools.grep",
         ],
-        "tool_types": _ALL_TOOL_TYPES,
+        "tool_types": _ASK_AGENT_TOOL_TYPES,
     },
     "ask_dashboard": {
         "default_tools": [
@@ -133,7 +151,7 @@ SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
             "filesystem_tools.glob",
             "filesystem_tools.grep",
         ],
-        "tool_types": _ALL_TOOL_TYPES,
+        "tool_types": _ASK_AGENT_TOOL_TYPES,
     },
 }
 
@@ -470,6 +488,47 @@ def _validate_tools(tools: list[str]) -> list[str]:
     return invalid
 
 
+def _validate_tools_for_agent_type(tools: list[str], agent_type: str) -> list[str]:
+    """For ``ask_*`` agents, reject any tool pattern outside the read-only
+    catalog. Returns the offending patterns; an empty list means OK.
+
+    The general :func:`_validate_tools` only confirms patterns are
+    syntactically valid (category / method exists). ``ask_*`` agents have
+    an additional contract — they must never mutate the artifact they're
+    bound to — so we enforce a per-type allowlist matching the
+    ``tool_types`` catalog returned by ``GET /agent/use_tools``. This
+    blocks ``filesystem_tools.write_file`` / ``edit_file`` and any wildcard
+    that would expand reach beyond the documented read-only set.
+    """
+    if agent_type not in {"ask_report", "ask_dashboard"}:
+        return []
+    catalog = SUBAGENT_TOOL_REFERENCE[agent_type]["tool_types"]
+    rejected: list[str] = []
+    for raw in tools:
+        pattern = raw.strip()
+        if not pattern:
+            continue
+        # ``"db_tools"`` and ``"db_tools.*"`` both mean "everything in
+        # this category" — only OK if the agent's allowlist already
+        # contains every method in that category (i.e. read-only by
+        # construction).
+        if "." not in pattern:
+            category, method = pattern, "*"
+        else:
+            category, method = pattern.split(".", 1)
+        if category not in catalog:
+            rejected.append(pattern)
+            continue
+        allowed_methods = set(catalog[category]["tools"])
+        if method == "*":
+            if allowed_methods != VALID_TOOL_METHODS.get(category, set()):
+                rejected.append(pattern)
+            continue
+        if method not in allowed_methods:
+            rejected.append(pattern)
+    return rejected
+
+
 def _validate_ask_artifact_binding(
     request: CreateAgentInput,
     agent_config: AgentConfig,
@@ -712,6 +771,18 @@ class AgentService:
                     errorCode="INVALID_TOOLS",
                     errorMessage=f"Invalid tool(s): {', '.join(invalid)}. Valid categories: {', '.join(sorted(VALID_TOOL_CATEGORIES))}",
                 )
+            forbidden = _validate_tools_for_agent_type(request.tools, request.type or "")
+            if forbidden:
+                return Result(
+                    success=False,
+                    errorCode="TOOL_NOT_ALLOWED_FOR_AGENT_TYPE",
+                    errorMessage=(
+                        f"Tool(s) not allowed for agent type {request.type!r}: "
+                        f"{', '.join(forbidden)}. ask_* agents are read-only consultants and "
+                        "must not include filesystem write tools or wildcards that expand "
+                        "beyond the read-only allowlist."
+                    ),
+                )
 
         # Check name not taken
         agentic_nodes = agent_config.agentic_nodes or {}
@@ -864,7 +935,7 @@ class AgentService:
     ) -> Result[dict]:
         """Edit an existing custom sub-agent."""
 
-        # Validate tools
+        # Validate tool syntax up-front (doesn't need the agent record).
         if request.tools:
             invalid = _validate_tools(request.tools)
             if invalid:
@@ -884,6 +955,23 @@ class AgentService:
             )
 
         agent = agentic_nodes[request.id]
+
+        # Per-agent-type allowlist runs after the lookup so we know the
+        # bound type. ask_* must stay read-only — reject any tool that
+        # would expand reach beyond the documented read-only set.
+        if request.tools:
+            forbidden = _validate_tools_for_agent_type(request.tools, agent.get("type") or "")
+            if forbidden:
+                return Result(
+                    success=False,
+                    errorCode="TOOL_NOT_ALLOWED_FOR_AGENT_TYPE",
+                    errorMessage=(
+                        f"Tool(s) not allowed for agent type {agent.get('type')!r}: "
+                        f"{', '.join(forbidden)}. ask_* agents are read-only consultants and "
+                        "must not include filesystem write tools or wildcards that expand "
+                        "beyond the read-only allowlist."
+                    ),
+                )
 
         # If prompt_template content is provided, save to template file
         prompt_content = request.prompt_template
