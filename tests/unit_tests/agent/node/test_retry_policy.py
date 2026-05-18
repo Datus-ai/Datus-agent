@@ -31,7 +31,6 @@ from datus.agent.node.retry_policy import NoRetryPolicy, RetryPolicy
 from datus.agent.node.stream_run_context import StreamRunContext
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 
-
 # ---------------------------------------------------------------------------
 # Minimal fakes
 # ---------------------------------------------------------------------------
@@ -192,15 +191,16 @@ class TestValidationHookRetryPolicy:
         hook = _FakeValidationHook([failing])
         policy = ValidationHookRetryPolicy(hook=hook)
         assert policy.should_retry(_make_ctx()) is True
-        # Internal report captured so finalise can surface it.
-        assert policy._blocking_report is not None
+        # Internal report captured (as a serialised dict) so finalise can
+        # surface the same content to ``ctx.extras["validation_report"]``.
+        assert policy._blocking_report == {"checks": [{"name": "bad", "passed": False, "error": "boom"}]}
 
     def test_reset_clears_blocking_report_and_session(self):
         failing = _FakeReport(checks=[_FakeCheck("bad", passed=False, error="boom")])
         hook = _FakeValidationHook([failing])
         policy = ValidationHookRetryPolicy(hook=hook)
         policy.should_retry(_make_ctx())
-        assert policy._blocking_report is not None
+        assert policy._blocking_report == {"checks": [{"name": "bad", "passed": False, "error": "boom"}]}
         policy.reset(_make_ctx())
         assert policy._blocking_report is None
         # ``reset`` must also clear hook state so the next attempt starts fresh.
