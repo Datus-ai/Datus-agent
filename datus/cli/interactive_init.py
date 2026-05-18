@@ -115,7 +115,8 @@ class InteractiveInit:
 
         # Suppress console handlers completely, keep file handlers at INFO level or above
         for handler in original_handlers:
-            if hasattr(handler, "stream") and handler.stream.name in ["<stdout>", "<stderr>"]:
+            stream_name = getattr(getattr(handler, "stream", None), "name", "")
+            if stream_name in ["<stdout>", "<stderr>"]:
                 # Console handlers: disable completely
                 console_handlers.append(handler)
                 original_handler_levels[handler] = handler.level

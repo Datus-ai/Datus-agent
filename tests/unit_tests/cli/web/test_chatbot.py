@@ -268,6 +268,81 @@ class TestCreateWebApp:
             assert [r.path for r in root_routes] == ["/"]
 
 
+@pytest.mark.acceptance
+def test_web_chatbot_entrypoint_wires_api_root_assets_and_config_without_server(tmp_path):
+    from fastapi import FastAPI
+    from fastapi.responses import JSONResponse
+    from fastapi.testclient import TestClient
+
+    from datus.cli.web.chatbot import create_web_app
+    from datus.cli.web.config_manager import create_cli_args, get_available_datasources
+
+    config_path = tmp_path / "agent.yml"
+    config_path.write_text(
+        """
+agent:
+  home: .datus
+  services:
+    datasources:
+      local_sqlite:
+        type: sqlite
+        uri: sqlite:///local.db
+""",
+        encoding="utf-8",
+    )
+    dist_dir = tmp_path / "dist"
+    dist_dir.mkdir()
+    (dist_dir / "datus-chatbot.css").write_text("/* chatbot css */", encoding="utf-8")
+    (dist_dir / "datus-chatbot.umd.js").write_text("// chatbot js", encoding="utf-8")
+
+    args = argparse.Namespace(
+        datasource="local_sqlite",
+        config=str(config_path),
+        host="127.0.0.1",
+        port=18501,
+        debug=False,
+        subagent="",
+        chatbot_dist=str(dist_dir),
+        session_scope=None,
+        user_name='Ada "Data"',
+    )
+    backend_app = FastAPI()
+
+    @backend_app.get("/")
+    async def default_root():
+        return JSONResponse({"status": "api-root"})
+
+    with patch("datus.cli.web.chatbot.create_app", return_value=backend_app) as create_app:
+        app = create_web_app(args)
+
+    create_app.assert_called_once()
+    agent_args = create_app.call_args.args[0]
+    assert agent_args.datasource == "local_sqlite"
+    assert agent_args.config == str(config_path)
+    assert agent_args.workflow == "chat_agentic"
+    assert agent_args.source is None
+
+    assert get_available_datasources(str(config_path)) == ["local_sqlite"]
+    cli_args = create_cli_args(str(config_path), datasource="local_sqlite")
+    assert cli_args.config == config_path.resolve()
+    assert cli_args.datasource == "local_sqlite"
+    assert cli_args.non_interactive is True
+
+    route_paths = [route.path for route in app.routes if hasattr(route, "path")]
+    assert "/" in route_paths
+    assert "/chatbot-assets" in route_paths
+
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "chatbot-root" in response.text
+    assert "/chatbot-assets/datus-chatbot.css" in response.text
+    assert "/chatbot-assets/datus-chatbot.umd.js" in response.text
+    assert "api-root" not in response.text
+    assert "http://testserver" in response.text
+    assert 'Ada \\"Data\\"' in response.text
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 4. run_web_interface
 # ═══════════════════════════════════════════════════════════════════════════

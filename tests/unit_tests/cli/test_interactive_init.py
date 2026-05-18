@@ -146,6 +146,85 @@ class TestInit:
                 project_cfg = yaml.safe_load(f)
             assert project_cfg["target"] == {"provider": "deepseek", "model": "deepseek-chat"}
 
+    @pytest.mark.acceptance
+    def test_scripted_init_flow_creates_config_that_can_be_loaded(self, monkeypatch):
+        """Scripted init from an empty workspace should produce a usable project config."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir) / "workspace"
+            db_path = workspace / "init.sqlite"
+            monkeypatch.chdir(tmpdir)
+            from datus.utils.path_manager import reset_path_manager, set_current_path_manager
+
+            token = set_current_path_manager(Path(tmpdir) / ".datus")
+            init = InteractiveInit(user_home=Path(tmpdir))
+
+            def configure_llm():
+                init.config["agent"]["providers"]["deepseek"] = {
+                    "api_key": "test-key",
+                    "base_url": "https://api.deepseek.com",
+                    "auth_type": "api_key",
+                }
+                from datus.configuration.project_config import ProjectTarget
+
+                init._pending_target = ProjectTarget(provider="deepseek", model="deepseek-chat")
+                return True
+
+            def configure_datasource():
+                workspace.mkdir(parents=True, exist_ok=True)
+                db_path.touch()
+                init.datasource_name = "init_db"
+                init.config["agent"]["services"]["datasources"]["init_db"] = {
+                    "type": "sqlite",
+                    "name": "init_db",
+                    "uri": f"sqlite:///{db_path}",
+                }
+                return True
+
+            def configure_workspace():
+                init.workspace_path = str(workspace)
+                init.config["agent"]["storage"]["workspace_root"] = str(workspace)
+                init.config["agent"]["storage"]["base_path"] = str(Path(tmpdir) / ".datus" / "data")
+                return True
+
+            try:
+                with (
+                    patch.object(init, "_configure_llm", side_effect=configure_llm),
+                    patch.object(init, "_configure_datasource", side_effect=configure_datasource),
+                    patch.object(init, "_configure_workspace", side_effect=configure_workspace),
+                    patch.object(init, "_optional_setup") as optional_setup,
+                ):
+                    assert init.run() == 0
+            finally:
+                reset_path_manager(token)
+
+            optional_setup.assert_called_once()
+            config_path = Path(tmpdir) / ".datus" / "conf" / "agent.yml"
+            project_cfg_path = Path(tmpdir) / ".datus" / "config.yml"
+            assert config_path.exists()
+            assert project_cfg_path.exists()
+
+            from datus.cli.web.config_manager import get_available_datasources
+            from datus.configuration.agent_config_loader import load_agent_config
+            from datus.configuration.project_config import ProjectOverride, ProjectTarget, load_project_override
+
+            loaded = load_agent_config(
+                config=str(config_path),
+                datasource="init_db",
+                home=tmpdir,
+                reload=True,
+                force=True,
+                yes=True,
+            )
+            assert loaded.current_datasource == "init_db"
+            assert "init_db" in loaded.datasource_configs
+            assert get_available_datasources(str(config_path)) == ["init_db"]
+
+            override = load_project_override(cwd=tmpdir)
+            assert isinstance(override, ProjectOverride)
+            assert isinstance(override.target, ProjectTarget)
+            assert override.target.provider == "deepseek"
+            assert override.target.model == "deepseek-chat"
+
     def test_optional_component_init(self):
         """N4-04: Optional component initialization (metadata and reference SQL)."""
         with tempfile.TemporaryDirectory() as tmpdir:
