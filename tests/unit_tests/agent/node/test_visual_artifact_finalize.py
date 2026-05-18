@@ -595,10 +595,10 @@ class TestUpdateManifestKeyTables:
 
 _CURATED_BODY = (
     "### [2026-05-18T03:10:06Z] mode: new\n"
-    "> 生成银行业务用户账户增长分析报告\n"
+    "> Generate a banking user account growth analysis report\n"
     "\n"
     "### [2026-05-18T03:32:30Z] mode: edit\n"
-    "> 聚焦风控分析\n"
+    "> Focus on risk control analysis\n"
 )
 
 
@@ -607,14 +607,14 @@ class TestSanitizeCuratedIntentMd:
         """Already-clean output passes through verbatim (modulo strip)."""
         out = _sanitize_curated_intent_md(_CURATED_BODY)
         assert out.startswith("### ")
-        assert "聚焦风控分析" in out
+        assert "Focus on risk control" in out
 
     def test_strips_outer_triple_backtick_fence(self):
         wrapped = f"```\n{_CURATED_BODY}\n```"
         out = _sanitize_curated_intent_md(wrapped)
         assert out.startswith("### ")
         assert "```" not in out
-        assert "聚焦风控分析" in out
+        assert "Focus on risk control" in out
 
     def test_strips_language_tagged_fence(self):
         """``` ```markdown``` ` and ``` ```md``` ` are common (DeepSeek / GPT)."""
@@ -664,13 +664,13 @@ class TestSanitizeCuratedIntentMd:
 
 _ORIGINAL_INTENT = (
     "### [2026-05-18T03:10:06Z] mode: new\n"
-    "> 生成银行业务用户账户增长分析报告\n"
+    "> Generate a banking user account growth analysis report\n"
     "\n"
     "### [2026-05-18T03:31:42Z] mode: edit\n"
-    "> 继续吧\n"
+    "> continue\n"
     "\n"
     "### [2026-05-18T03:32:30Z] mode: edit\n"
-    "> 聚焦风控分析\n"
+    "> Focus on risk control analysis\n"
 )
 
 
@@ -707,9 +707,9 @@ class TestRunIntentCuration:
         result = run_intent_curation(_curation_model(returns=_CURATED_BODY), path)
         assert result is None
         rewritten = path.read_text(encoding="utf-8")
-        assert "继续吧" not in rewritten  # dropped
-        assert "生成银行业务" in rewritten  # kept
-        assert "聚焦风控分析" in rewritten  # kept
+        assert "> continue" not in rewritten  # dropped
+        assert "Generate a banking" in rewritten  # kept
+        assert "Focus on risk control" in rewritten  # kept
         # Trailing newline normalised.
         assert rewritten.endswith("\n")
 
@@ -855,9 +855,9 @@ class TestRunFinalizeAnalysis:
         assert model.generate.call_count == 1
         # intent.md was curated: placeholder dropped, real intents kept.
         curated = (analysis_dir / "intent.md").read_text(encoding="utf-8")
-        assert "继续吧" not in curated
-        assert "生成银行业务" in curated
-        assert "聚焦风控分析" in curated
+        assert "> continue" not in curated
+        assert "Generate a banking" in curated
+        assert "Focus on risk control" in curated
 
     def test_end_to_end_curation_failure_does_not_block_finalize(self, tmp_path: Path):
         """If the curation LLM call fails (or returns garbage), the

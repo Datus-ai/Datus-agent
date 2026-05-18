@@ -116,27 +116,25 @@ class TestAppendIntentSection:
         "passthrough",
         [
             # Used to be hard-killed by the phrase set; now passes through
-            # so the finalize-stage LLM curator can make a semantic call
-            # (see ``FinalizeAnalysisOutput.intent_entries_to_keep``).
-            "继续",
-            "继续吧",
-            "请继续完成",
-            "下一步",
-            "好的",
-            "嗯",
+            # so the finalize-stage LLM curator can make a semantic call.
             "continue",
+            "keep going",
+            "please continue",
+            "next",
+            "ok",
+            "sure",
             "proceed",
             "go ahead",
             # Real-but-short intent that exact-match heuristics historically
             # almost false-killed; it must pass through.
-            "聚焦风控",
+            "focus on risk",
         ],
     )
     def test_short_prompts_pass_append_filter(self, tmp_path: Path, passthrough: str):
         """Append-time filter only blocks mechanical noise (traceback /
         Error:). Semantic 'placeholder vs real direction' judgment runs
         later in the finalize LLM call, which has multi-prompt context
-        to tell ``下一步`` (placeholder) apart from ``聚焦风控`` (real
+        to tell ``next`` (placeholder) apart from ``focus on risk`` (real
         direction shift) reliably."""
         analysis_dir = tmp_path / "analysis"
         err = append_intent_section(
