@@ -134,7 +134,99 @@ jobs:
       - merge-queue-gate
     if: ${{ always() && needs.merge-queue-gate.result == 'failure' }}
     runs-on: self-hosted
+    permissions:
+      actions: read
+      contents: read
+      issues: write
     steps:
+      - name: Checkout notification helper
+        if: ${{ github.event_name == 'merge_group' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Download merge queue artifacts
+        if: ${{ github.event_name == 'merge_group' }}
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: merge-queue-results
+          path: ci/merge-queue-artifacts
+
+      - name: Build PR failure comment
+        if: ${{ github.event_name == 'merge_group' }}
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+        run: |
+          python3 ci/build_merge_queue_failure_comment.py \
+            --artifacts-dir ci/merge-queue-artifacts \
+            --output ci/merge-queue-failure-comment.md \
+            --repository "${{ github.repository }}" \
+            --workflow "${{ github.workflow }}" \
+            --event "${{ github.event_name }}" \
+            --ref "${{ github.ref }}" \
+            --sha "${{ github.sha }}" \
+            --run-number "${{ github.run_number }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Comment on PR with merge queue failure
+        if: ${{ github.event_name == 'merge_group' }}
+        uses: actions/github-script@v7
+        env:
+          COMMENT_PATH: ci/merge-queue-failure-comment.md
+        with:
+          script: |
+            const fs = require('fs');
+            const commentPath = process.env.COMMENT_PATH;
+            if (!fs.existsSync(commentPath)) {
+              core.warning(`Merge queue failure comment was not generated: ${commentPath}`);
+              return;
+            }
+
+            const body = fs.readFileSync(commentPath, 'utf8');
+            const marker = '<!-- datus-merge-queue-failure-comment -->';
+            const sources = [
+              context.ref,
+              context.payload?.merge_group?.head_ref,
+              context.payload?.merge_group?.base_ref,
+            ].filter(Boolean).join('\n');
+            const prNumbers = [
+              ...new Set([...sources.matchAll(/(?:^|[/-])pr-(\d+)(?=[/-]|$)/g)].map((match) => Number(match[1]))),
+            ];
+
+            if (prNumbers.length === 0) {
+              core.warning(`Unable to determine PR number from merge queue ref: ${context.ref}`);
+              return;
+            }
+
+            for (const issue_number of prNumbers) {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number,
+                per_page: 100,
+              });
+              const existing = comments.find(
+                (comment) => comment.user?.type === 'Bot' && comment.body?.includes(marker),
+              );
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: existing.id,
+                  body,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number,
+                  body,
+                });
+              }
+            }
+
       - name: Send Feishu failure notification
         uses: actions/github-script@v7
         env:
