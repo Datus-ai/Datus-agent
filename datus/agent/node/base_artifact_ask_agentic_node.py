@@ -28,7 +28,7 @@ permissions, etc.) and add three things:
    at the artifact root. Relative paths in prompts (``analysis/intent.md``,
    ``queries/<name>.json``) just work, and the LLM cannot accidentally
    peek into a sibling artifact or the global subject library through
-   filesystem traversal. The blob source uses :class:`MemoryFs` (no disk
+   filesystem traversal. The blob source uses :class:`MemoryFilesystemFuncTool` (no disk
    touched); the disk source uses :class:`FilesystemFuncTool`.
 3. **Artifact context injection** — load ``manifest.json`` plus
    ``analysis/intent.md`` once at node startup, and surface them to
@@ -125,7 +125,7 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         self._artifact_intent_md: str = ""
         # Populated only when the agentic_nodes entry carries an
         # ``artifact_blob``. When set, the filesystem tool is wired through
-        # :class:`MemoryFs` instead of the disk-backed
+        # :class:`MemoryFilesystemFuncTool` instead of the disk-backed
         # :class:`FilesystemFuncTool` and ``_artifact_root`` stays None.
         self._artifact_files: Optional[Dict[str, str]] = None
         self._resolve_artifact_binding_early(agent_config)
@@ -179,7 +179,7 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
 
         1. If ``entry["artifact_blob"]`` is present, bind to the in-memory
            bundle (``{manifest, files}``). The filesystem tool then runs
-           against :class:`MemoryFs` and ``_artifact_root`` stays None.
+           against :class:`MemoryFilesystemFuncTool` and ``_artifact_root`` stays None.
         2. Otherwise, if ``BLOB_REQUIRED`` is True, fail — the caller is
            contractually supposed to provide a blob for this kind.
         3. Otherwise, fall back to resolving the on-disk
@@ -263,10 +263,19 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         """Bind to an in-memory ``{manifest, files}`` snapshot.
 
         Flattens the ``files: [{path, content}, ...]`` list into a dict
-        keyed by slug-relative path so :class:`MemoryFs` can serve it
+        keyed by slug-relative path so :class:`MemoryFilesystemFuncTool` can serve it
         directly. Non-dict / malformed entries are skipped silently — the
         wire format is owned by the backend and any drift should surface
         as missing files at read time rather than a hard init error.
+
+        ``manifest.json`` is intentionally omitted from the backend's
+        ``files[]`` (it's already carried structured at ``blob["manifest"]``
+        to avoid duplication on the wire), but the LLM-facing tool surface
+        advertises it as a readable file — the prompt preamble even prints
+        ``manifest.json`` in the directory tree. To keep blob mode
+        feature-parity with the disk-backed tool (and avoid an LLM-visible
+        "File not found" the moment it follows the prompt), synthesize the
+        entry back from the structured form.
         """
         manifest = blob.get("manifest")
         if isinstance(manifest, dict):
@@ -282,6 +291,17 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
                 content = entry.get("content")
                 if isinstance(path, str) and path and isinstance(content, str):
                     files[path] = content
+
+        if "manifest.json" not in files and isinstance(manifest, dict):
+            try:
+                files["manifest.json"] = json.dumps(manifest, ensure_ascii=False, indent=2)
+            except TypeError:
+                # Manifest carries something json can't encode (shouldn't
+                # happen with the current Pydantic-derived shape, but stay
+                # defensive). Init still succeeds; the LLM gets a clearly
+                # empty placeholder rather than a "File not found".
+                files["manifest.json"] = "{}"
+
         self._artifact_files = files
 
     def _bind_artifact_from_disk(self, agent_config: AgentConfig, slug: str) -> None:
@@ -329,7 +349,7 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         Two modes:
 
         * **Blob mode** (``self._artifact_files is not None``): return a
-          :class:`MemoryFs` reading from the in-memory bundle. The disk is
+          :class:`MemoryFilesystemFuncTool` reading from the in-memory bundle. The disk is
           never touched, so concurrent writes to the on-disk source tree
           can't drift the answer mid-conversation, and the backend can
           serve ``ask_report`` even when it has no access to the IDE's
@@ -340,9 +360,9 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
           behaviour for CLI runs and kinds without a publish path.
         """
         if self._artifact_files is not None:
-            from datus.tools.func_tool import MemoryFs
+            from datus.tools.func_tool import MemoryFilesystemFuncTool
 
-            return MemoryFs(self._artifact_files, root_label=f"in-memory:{self._artifact_slug}")
+            return MemoryFilesystemFuncTool(self._artifact_files, root_label=f"in-memory:{self._artifact_slug}")
 
         # ``root_path`` is what gates the LLM's ``read_file`` / ``glob`` /
         # ``grep`` reach; passing it via kwargs ensures the policy layer

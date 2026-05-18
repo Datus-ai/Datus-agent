@@ -10,7 +10,7 @@ Pins the node-level invariants we depend on at runtime:
   symlink redirection, blob required but absent) raise ``DatusException``
   at init.
 * The filesystem tool is anchored correctly per source:
-  - blob source ⇒ :class:`MemoryFs` (no disk),
+  - blob source ⇒ :class:`MemoryFilesystemFuncTool` (no disk),
   - disk source ⇒ :class:`FilesystemFuncTool` rooted at the artifact dir.
 * The artifact-context preamble rendered into the system prompt includes
   the manifest name, the intent.md body, the expected directory tree
@@ -35,7 +35,7 @@ import pytest
 
 from datus.agent.node.ask_dashboard_agentic_node import AskDashboardAgenticNode
 from datus.agent.node.ask_report_agentic_node import AskReportAgenticNode
-from datus.tools.func_tool.memory_filesystem_tools import MemoryFs
+from datus.tools.func_tool.memory_filesystem_tools import MemoryFilesystemFuncTool
 from datus.utils.exceptions import DatusException
 
 pytestmark = pytest.mark.asyncio
@@ -115,19 +115,36 @@ def _register_ask_agent(
 def _blob_from_disk(project_root: str, kind: str, slug: str) -> dict:
     """Build a ``{manifest, files}`` blob from a previously-seeded disk tree.
 
-    Lets blob-mode tests reuse the same seeding helper so they're checking
-    the path branching, not subtly-different fixture data.
+    Mirrors the production wire shape produced by
+    ``datus_backend.services.report_service.publish``:
+
+    * ``manifest`` carries the parsed ``manifest.json`` contents (structured
+      dict, not a string).
+    * ``files`` is a flat list of ``{path, content}`` entries under
+      ``render/`` / ``queries/`` / ``analysis/`` **only** —
+      ``manifest.json`` is intentionally NOT duplicated here.
+
+    AskNode bridges this asymmetry by synthesizing ``manifest.json`` back
+    into the in-memory file map at init time so ``read_file("manifest.json")``
+    keeps working from the LLM's perspective.
     """
     kind_dir = "reports" if kind == "report" else "dashboards"
     root = Path(project_root) / kind_dir / slug
     manifest_path = root / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
     files: list[dict] = []
-    for f in sorted(root.rglob("*")):
-        if not f.is_file():
+    # Production's ``_iter_artifact_files`` walks only the three known
+    # subdirs and drops files outside them. Match that here so blob-mode
+    # tests are exercising the same shape AskReport sees in SaaS.
+    for sub in ("render", "queries", "analysis"):
+        sub_root = root / sub
+        if not sub_root.is_dir():
             continue
-        rel = f.relative_to(root).as_posix()
-        files.append({"path": rel, "content": f.read_text(encoding="utf-8")})
+        for f in sorted(sub_root.rglob("*")):
+            if not f.is_file():
+                continue
+            rel = f.relative_to(root).as_posix()
+            files.append({"path": rel, "content": f.read_text(encoding="utf-8")})
     return {"manifest": manifest, "files": files}
 
 
@@ -234,6 +251,76 @@ class TestArtifactBinding:
         # Manifest came through the structured blob path, not a JSON re-decode.
         assert node._artifact_manifest["slug"] == "demo_report"
 
+    def test_blob_synthesizes_manifest_json_from_structured_form(self, real_agent_config):
+        """Production blob carries ``manifest`` structured and omits
+        ``manifest.json`` from ``files[]`` (no on-wire duplication). But
+        the LLM-facing tool surface advertises ``manifest.json`` as a
+        readable file — the prompt preamble even prints it in the
+        directory tree — so blob mode must synthesize it back from
+        ``manifest`` to keep ``read_file("manifest.json")`` working.
+
+        Regression test for the bug where in-memory ask sessions saw
+        "File not found" on ``manifest.json`` while disk sessions could
+        read it normally.
+        """
+        # Blob shape mirrors production: manifest as a dict, files[]
+        # WITHOUT manifest.json.
+        manifest_dict = {
+            "slug": "no_root_file",
+            "name": "Synth Test",
+            "description": "d",
+            "kind": "report",
+            "created_at": "2026-05-17T00:00:00Z",
+        }
+        blob = {
+            "manifest": manifest_dict,
+            "files": [{"path": "analysis/intent.md", "content": "## intent\n"}],
+        }
+        _register_ask_agent(real_agent_config, name="ask_synth", kind="report", slug="no_root_file", blob=blob)
+        node = AskReportAgenticNode(
+            node_id="x",
+            description="d",
+            node_type="chat",
+            agent_config=real_agent_config,
+            node_name="ask_synth",
+        )
+        # MemoryFilesystemFuncTool serves manifest.json as JSON of the structured form,
+        # round-trippable back to the original dict so the LLM sees the
+        # same field structure regardless of source path.
+        assert "manifest.json" in node._artifact_files
+        round_trip = json.loads(node._artifact_files["manifest.json"])
+        assert round_trip == manifest_dict
+        # Also verify the LLM-facing surface: read_file("manifest.json")
+        # round-trips the same way (catches a regression where the file
+        # is in the dict but the tool path filters it out).
+        res = node.filesystem_func_tool.read_file("manifest.json")
+        assert res.success == 1
+        assert json.loads(res.result) == manifest_dict
+
+    def test_blob_does_not_overwrite_explicit_manifest_json_entry(self, real_agent_config):
+        """If a future backend explicitly includes ``manifest.json`` in
+        ``files[]`` (e.g. wire-format drift), don't shadow it with a
+        re-serialized copy — the on-wire content wins. Guards against
+        a subtle drift where the LLM would see formatting differences
+        between the structured manifest and the file body."""
+        explicit_body = '{"hand": "crafted", "slug": "explicit"}'
+        blob = {
+            "manifest": {"slug": "explicit", "name": "Explicit"},
+            "files": [
+                {"path": "manifest.json", "content": explicit_body},
+                {"path": "analysis/intent.md", "content": "x"},
+            ],
+        }
+        _register_ask_agent(real_agent_config, name="ask_explicit", kind="report", slug="explicit", blob=blob)
+        node = AskReportAgenticNode(
+            node_id="x",
+            description="d",
+            node_type="chat",
+            agent_config=real_agent_config,
+            node_name="ask_explicit",
+        )
+        assert node._artifact_files["manifest.json"] == explicit_body
+
     def test_blob_malformed_entries_skipped(self, real_agent_config):
         """The blob wire-format is owned by the backend. Garbage entries
         (non-dict, missing path/content, non-string content) are skipped
@@ -257,7 +344,12 @@ class TestArtifactBinding:
             agent_config=real_agent_config,
             node_name="ask_noisy",
         )
-        assert node._artifact_files == {"ok.md": "real file"}
+        # ``manifest.json`` is synthesized from the structured manifest
+        # (covered by its own test); here we just verify that everything
+        # else in the malformed ``files[]`` is dropped — i.e. only the
+        # one valid entry survives alongside the synthesized manifest.
+        assert set(node._artifact_files.keys()) == {"ok.md", "manifest.json"}
+        assert node._artifact_files["ok.md"] == "real file"
 
     # --- Disk-fallback path lives on dashboard until publish lands ---
 
@@ -339,11 +431,11 @@ class TestArtifactBinding:
 
 class TestFilesystemAnchoring:
     def test_report_filesystem_tool_is_memory_fs(self, real_agent_config):
-        """Report runs against MemoryFs so the LLM can never reach the
+        """Report runs against MemoryFilesystemFuncTool so the LLM can never reach the
         underlying disk — even if a stale report directory happens to
         live next to the running backend."""
         node = _make_ask_report_node(real_agent_config)
-        assert isinstance(node.filesystem_func_tool, MemoryFs)
+        assert isinstance(node.filesystem_func_tool, MemoryFilesystemFuncTool)
         # ``root_path`` is the human-readable label (read by a debug log
         # in ChatAgenticNode), not a real filesystem path.
         assert node.filesystem_func_tool.root_path == "in-memory:demo_report"
@@ -361,7 +453,7 @@ class TestFilesystemAnchoring:
         flow lands. ``filesystem_func_tool.root_path`` is what gates
         ``read_file`` / ``glob`` reach there."""
         node = _make_ask_dashboard_node(real_agent_config)
-        assert not isinstance(node.filesystem_func_tool, MemoryFs)
+        assert not isinstance(node.filesystem_func_tool, MemoryFilesystemFuncTool)
         assert Path(node.filesystem_func_tool.root_path).resolve() == node._artifact_root.resolve()
 
 

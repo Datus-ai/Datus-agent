@@ -36,7 +36,7 @@ _MAX_GLOB_RESULTS = 200
 _MAX_GREP_MATCHES = 100
 
 
-class MemoryFs(BaseTool):
+class MemoryFilesystemFuncTool(BaseTool):
     """Read-only filesystem tool over an in-memory ``{path: content}`` bundle.
 
     Paths in ``files`` are slug-relative POSIX strings (e.g. ``"manifest.json"``,
@@ -144,7 +144,7 @@ class MemoryFs(BaseTool):
                 )
             return FuncToolResult(result=content)
         except Exception as exc:
-            logger.error(f"MemoryFs.read_file failed for {path}: {exc}")
+            logger.error(f"MemoryFilesystemFuncTool.read_file failed for {path}: {exc}")
             return FuncToolResult(success=0, error=str(exc))
 
     def glob(self, pattern: str, path: str = ".") -> FuncToolResult:
@@ -187,7 +187,7 @@ class MemoryFs(BaseTool):
                 )
             return FuncToolResult(result=result)
         except Exception as exc:
-            logger.exception(f"MemoryFs.glob failed for {pattern} in {path}")
+            logger.exception(f"MemoryFilesystemFuncTool.glob failed for {pattern} in {path}")
             return FuncToolResult(success=0, error=str(exc))
 
     def grep(
@@ -245,7 +245,7 @@ class MemoryFs(BaseTool):
 
             return FuncToolResult(result={"matches": matches, "truncated": len(matches) >= _MAX_GREP_MATCHES})
         except Exception as exc:
-            logger.exception(f"MemoryFs.grep failed for {pattern} in {path}")
+            logger.exception(f"MemoryFilesystemFuncTool.grep failed for {pattern} in {path}")
             return FuncToolResult(success=0, error=str(exc))
 
     # ------------------------------------------------------------- helpers
