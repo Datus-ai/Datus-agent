@@ -71,23 +71,6 @@ def update_project_version(pyproject_path: Path, version: Version) -> bool:
     return changed
 
 
-def update_init_version(init_path: Path, version: Version) -> bool:
-    content = init_path.read_text(encoding="utf-8")
-    updated, count = re.subn(
-        r'^__version__ = "[^"]+"$',
-        f'__version__ = "{version}"',
-        content,
-        count=1,
-        flags=re.MULTILINE,
-    )
-    if count != 1:
-        raise ValueError(f"Unable to update __version__ in {init_path}")
-    if updated != content:
-        init_path.write_text(updated, encoding="utf-8")
-        return True
-    return False
-
-
 def update_dependency_lower_bounds(path: Path, bounds: dict[str, Version], *, quoted: bool) -> bool:
     content = path.read_text(encoding="utf-8")
     updated = content
@@ -126,13 +109,10 @@ def prepare_release(
     changed: list[Path] = []
 
     pyproject_path = repo_root / "pyproject.toml"
-    init_path = repo_root / "datus" / "__init__.py"
     requirements_path = repo_root / "requirements.txt"
 
     if update_project_version(pyproject_path, version):
         changed.append(pyproject_path)
-    if update_init_version(init_path, version):
-        changed.append(init_path)
 
     if update_adapter_bounds:
         bounds = latest_adapter_bounds(timeout=pypi_timeout, allow_prerelease=allow_prerelease)

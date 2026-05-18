@@ -24,11 +24,11 @@ def check_release_readiness(monkeypatch):
     return module
 
 
-def _write_release_repo(tmp_path: Path, *, version: str = "0.2.6", init_version: str | None = None) -> Path:
+def _write_release_repo(tmp_path: Path, *, version: str = "0.2.6") -> Path:
     repo_root = tmp_path
     (repo_root / "datus").mkdir()
     (repo_root / "datus" / "__init__.py").write_text(
-        f'__version__ = "{init_version or version}"\n',
+        'raise RuntimeError("release readiness should not import datus")\n',
         encoding="utf-8",
     )
     (repo_root / "pyproject.toml").write_text(
@@ -69,14 +69,13 @@ def test_source_version_consistency_accepts_matching_versions(tmp_path, check_re
     assert errors == []
 
 
-def test_source_version_consistency_rejects_mismatched_init_version(tmp_path, check_release_readiness):
-    repo_root = _write_release_repo(tmp_path, version="0.2.6", init_version="0.2.5")
+def test_source_version_consistency_uses_pyproject_as_source_of_truth(tmp_path, check_release_readiness):
+    repo_root = _write_release_repo(tmp_path, version="0.2.6")
+    (repo_root / "datus" / "__init__.py").write_text('__version__ = "0.2.5"\n', encoding="utf-8")
 
     errors = check_release_readiness.check_source_version_consistency(repo_root)
 
-    assert "Version mismatch" in errors[0]
-    assert "0.2.6" in errors[0]
-    assert "0.2.5" in errors[0]
+    assert errors == []
 
 
 def test_source_version_consistency_rejects_unexpected_release_version(tmp_path, check_release_readiness):

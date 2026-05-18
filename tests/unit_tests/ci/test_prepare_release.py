@@ -32,7 +32,12 @@ def _write_release_repo(tmp_path: Path) -> Path:
             '''
             """Datus"""
 
-            __version__ = "0.2.6"
+            from importlib import metadata as importlib_metadata
+
+            try:
+                __version__ = importlib_metadata.version("datus-agent")
+            except importlib_metadata.PackageNotFoundError:
+                __version__ = "0+unknown"
             '''
         ).lstrip(),
         encoding="utf-8",
@@ -109,12 +114,11 @@ def test_prepare_release_updates_version_and_adapter_bounds(tmp_path, monkeypatc
     )
 
     assert {path.relative_to(repo_root).as_posix() for path in changed} == {
-        "datus/__init__.py",
         "pyproject.toml",
         "requirements.txt",
     }
     assert 'version = "0.2.7"' in (repo_root / "pyproject.toml").read_text(encoding="utf-8")
-    assert '__version__ = "0.2.7"' in (repo_root / "datus" / "__init__.py").read_text(encoding="utf-8")
+    assert 'version("datus-agent")' in (repo_root / "datus" / "__init__.py").read_text(encoding="utf-8")
     assert '"datus-db-core>=0.1.4"' in (repo_root / "pyproject.toml").read_text(encoding="utf-8")
     assert "datus-semantic-core>=0.2.1" in (repo_root / "requirements.txt").read_text(encoding="utf-8")
 
@@ -138,7 +142,6 @@ def test_prepare_release_can_leave_adapter_bounds_unchanged(tmp_path, monkeypatc
     )
 
     assert {path.relative_to(repo_root).as_posix() for path in changed} == {
-        "datus/__init__.py",
         "pyproject.toml",
     }
     assert '"datus-db-core>=0.1.3"' in (repo_root / "pyproject.toml").read_text(encoding="utf-8")

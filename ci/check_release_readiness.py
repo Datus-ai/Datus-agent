@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import argparse
-import ast
 import importlib.metadata as metadata
 import json
 import subprocess
@@ -52,19 +51,6 @@ def read_pyproject_version(repo_root: Path) -> Version:
     return Version(version)
 
 
-def read_package_init_version(repo_root: Path) -> Version:
-    init_path = repo_root / "datus" / "__init__.py"
-    module = ast.parse(init_path.read_text(encoding="utf-8"), filename=str(init_path))
-    for node in module.body:
-        if not isinstance(node, ast.Assign):
-            continue
-        if not any(isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets):
-            continue
-        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-            return Version(node.value.value)
-    raise ValueError(f"Unable to find string __version__ assignment in {init_path}")
-
-
 def parse_dependency_list(requirement_lines: Iterable[str]) -> dict[str, Requirement]:
     requirements: dict[str, Requirement] = {}
     for raw_line in requirement_lines:
@@ -101,12 +87,6 @@ def lower_bound(requirement: Requirement) -> Version | None:
 def check_source_version_consistency(repo_root: Path, expected_version: str | None = None) -> list[str]:
     errors: list[str] = []
     pyproject_version = read_pyproject_version(repo_root)
-    init_version = read_package_init_version(repo_root)
-
-    if pyproject_version != init_version:
-        errors.append(
-            f"Version mismatch: pyproject.toml project.version={pyproject_version}, datus.__version__={init_version}"
-        )
 
     if expected_version is not None and pyproject_version != Version(expected_version):
         errors.append(f"Expected release version {expected_version}, but pyproject.toml has {pyproject_version}")
