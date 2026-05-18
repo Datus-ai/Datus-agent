@@ -802,25 +802,6 @@ class GenSQLAgenticNode(AgenticNode):
             mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
         return mapping
 
-    def _get_execution_config(self, original_input: GenSQLNodeInput) -> dict:
-        """Build execution config — tools, system instruction, hooks.
-
-        Plan-mode tools were registered on ``self.tools`` once at setup time
-        via :meth:`AgenticNode._register_plan_mode_tools`. ``hooks`` is
-        routed through ``_compose_hooks`` so permission gating is wired up
-        consistently with the other agentic nodes.
-        """
-        return {
-            "tools": self.tools,
-            "instruction": self._get_system_instruction(original_input),
-            "hooks": self._compose_hooks(),
-        }
-
-    def _get_system_instruction(self, original_input: GenSQLNodeInput) -> str:
-        """Get system instruction for normal mode."""
-        _, conversation_summary = self._get_or_create_session()
-        return self._get_system_prompt(conversation_summary, original_input.prompt_version)
-
     def _extract_sql_and_output_from_response(self, output: dict) -> tuple[Optional[str], Optional[str]]:
         """
         Extract SQL content and formatted output from model response.

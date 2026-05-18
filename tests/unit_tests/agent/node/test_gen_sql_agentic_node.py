@@ -1465,7 +1465,6 @@ class TestEndToEndGenerationHooksInteraction:
         node.tools.append(end_gen_tool)
 
         # Attach GenerationHooks via the permission_hooks slot
-        # ChatAgenticNode._get_execution_config will pass this as hooks to the model
         broker = node._get_or_create_broker()
         generation_hooks = GenerationHooks(broker=broker, agent_config=real_agent_config)
         node.permission_hooks = generation_hooks
@@ -2341,78 +2340,6 @@ class TestUpdateContextGenSQL:
 
         result = node.update_context(wf)
         assert result["success"] is False
-
-
-# ---------------------------------------------------------------------------
-# TestGetExecutionConfig
-# ---------------------------------------------------------------------------
-
-
-class TestGetExecutionConfig:
-    def test_main_agent_always_exposes_plan_tools(self, real_agent_config, mock_llm_create):
-        """Main agent: plan tools are registered on ``self.tools`` at setup time."""
-        node = _make_node_extra2(real_agent_config, mock_llm_create)
-        user_input = GenSQLNodeInput(user_message="query")
-
-        with patch.object(node, "_get_system_instruction", return_value="system instruction"):
-            config = node._get_execution_config(user_input)
-
-        tool_names = {getattr(t, "name", "") for t in config["tools"]}
-        assert "confirm_plan" in tool_names
-        assert "todo_write" in tool_names
-        assert config["instruction"] == "system instruction"
-        # ``_compose_hooks`` lazily builds PermissionHooks whenever the
-        # node has a ``permission_manager``; bare ``hooks=None`` would
-        # bypass permission gating.
-        if node.permission_manager:
-            assert config["hooks"] is not None
-        else:
-            assert config["hooks"] is None
-
-    def test_subagent_never_gets_plan_tools(self, real_agent_config, mock_llm_create):
-        """Sub-agent invocation suppresses plan tools entirely (set at construction)."""
-        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
-
-        node = GenSQLAgenticNode(
-            node_id="test_subagent_no_plan",
-            description="subagent",
-            node_type=NodeType.TYPE_GENSQL,
-            agent_config=real_agent_config,
-            node_name="gensql",
-            is_subagent=True,
-        )
-        user_input = GenSQLNodeInput(user_message="query")
-
-        with patch.object(node, "_get_system_instruction", return_value="system instruction"):
-            config = node._get_execution_config(user_input)
-
-        tool_names = {getattr(t, "name", "") for t in config["tools"]}
-        assert "confirm_plan" not in tool_names
-        assert "todo_write" not in tool_names
-
-    def test_plan_mode_activation_does_not_change_tool_list(self, real_agent_config, mock_llm_create, tmp_path):
-        """Activating plan mode does not change the tool list — already registered at setup."""
-        import os
-
-        node = _make_node_extra2(real_agent_config, mock_llm_create)
-        user_input = GenSQLNodeInput(user_message="query", plan_mode=True)
-
-        cwd = os.getcwd()
-        os.chdir(tmp_path)
-        try:
-            with patch.object(node, "_get_system_instruction", return_value="base instruction"):
-                tools_before = list(node._get_execution_config(user_input)["tools"])
-            node.activate_plan_mode()
-            with patch.object(node, "_get_system_instruction", return_value="base instruction"):
-                tools_after = list(node._get_execution_config(user_input)["tools"])
-        finally:
-            node.deactivate_plan_mode()
-            os.chdir(cwd)
-
-        assert tools_before == tools_after
-        names = {getattr(t, "name", "") for t in tools_after}
-        assert "confirm_plan" in names
-        assert "todo_write" in names
 
 
 # ---------------------------------------------------------------------------

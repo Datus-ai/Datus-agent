@@ -1731,26 +1731,22 @@ class AgenticNode(Node):
             if final_action and final_action.output:
                 output_data = final_action.output
                 if isinstance(output_data, dict):
-                    # Try to determine the result class from the subclass
-                    result_class = self._get_result_class()
+                    result_class = getattr(self, "result_class", None)
                     if result_class:
                         try:
                             self.result = result_class.model_validate(output_data)
                         except Exception as e:
                             logger.warning(f"Failed to validate result as {result_class.__name__}: {e}")
-                            # Fallback: create a generic BaseResult
                             self.result = BaseResult(
                                 success=output_data.get("success", True),
                                 error=output_data.get("error"),
                             )
                     else:
-                        # No specific result class, create generic BaseResult
                         self.result = BaseResult(
                             success=output_data.get("success", True),
                             error=output_data.get("error"),
                         )
                 else:
-                    # Output is already a BaseResult instance
                     self.result = output_data
 
             if not self.result:
@@ -1762,55 +1758,6 @@ class AgenticNode(Node):
             logger.error(f"Agentic node execution error: {e}")
             self.result = BaseResult(success=False, error=str(e))
             return self.result
-
-    def _get_result_class(self):
-        """
-        Get the result class for this node type.
-
-        Subclasses can override this to return their specific result class.
-        Default implementation tries to infer from common naming patterns.
-
-        Returns:
-            Result class or None if cannot determine
-        """
-        # Try to import and return the appropriate result class
-        class_name = self.__class__.__name__
-
-        # Map node class names to result class names
-        result_class_map = {
-            "ChatAgenticNode": "ChatNodeResult",
-            "GenSQLAgenticNode": "GenSQLNodeResult",
-            "CompareAgenticNode": "CompareResult",
-            "ExploreAgenticNode": "ExploreNodeResult",
-        }
-
-        result_class_name = result_class_map.get(class_name)
-        if not result_class_name:
-            return None
-
-        try:
-            # Try to import the result class from corresponding schema module
-            if class_name == "ChatAgenticNode":
-                from datus.schemas.chat_agentic_node_models import ChatNodeResult
-
-                return ChatNodeResult
-            elif class_name == "GenSQLAgenticNode":
-                from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeResult
-
-                return GenSQLNodeResult
-            elif class_name == "CompareAgenticNode":
-                from datus.schemas.compare_node_models import CompareResult
-
-                return CompareResult
-            elif class_name == "ExploreAgenticNode":
-                from datus.schemas.explore_agentic_node_models import ExploreNodeResult
-
-                return ExploreNodeResult
-        except ImportError as e:
-            logger.debug(f"Could not import result class {result_class_name}: {e}")
-            return None
-
-        return None
 
     # ── execute_stream template method ──────────────────────────────────
     #

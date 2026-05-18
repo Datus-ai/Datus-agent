@@ -547,35 +547,6 @@ class TestGetAvailableSkillsContext:
 
 
 # ---------------------------------------------------------------------------
-# TestGetResultClass
-# ---------------------------------------------------------------------------
-
-
-class TestGetResultClass:
-    def test_returns_none_for_unknown_class(self):
-        node = _make_node()
-        result = node._get_result_class()
-        # _ConcreteAgenticNode is not in the result_class_map
-        assert result is None
-
-    def test_returns_compare_result_for_compare_node(self):
-        from datus.agent.node.compare_agentic_node import CompareAgenticNode
-
-        with patch.object(AgenticNode, "__init__", lambda self, *a, **kw: None):
-            node = CompareAgenticNode.__new__(CompareAgenticNode)
-        node.__class__ = type("CompareAgenticNode", (AgenticNode,), {})
-        # Use a simple mock to check the lookup
-        # We just test that a known node class returns expected result class
-        # by directly checking the map
-        result_class_map = {
-            "ChatAgenticNode": "ChatNodeResult",
-            "GenSQLAgenticNode": "GenSQLNodeResult",
-            "CompareAgenticNode": "CompareResult",
-        }
-        assert result_class_map.get("CompareAgenticNode") == "CompareResult"
-
-
-# ---------------------------------------------------------------------------
 # TestAutoCompact
 # ---------------------------------------------------------------------------
 

@@ -444,28 +444,6 @@ class ChatAgenticNode(AgenticNode):
                 message_args={"config_error": f"Template loading failed for '{template_name}': {str(e)}"},
             ) from e
 
-    def _get_system_instruction(self, original_input: ChatNodeInput) -> str:
-        """Get system instruction for normal mode."""
-        _, conversation_summary = self._get_or_create_session()
-        return self._get_system_prompt(conversation_summary, original_input.prompt_version)
-
-    # ── Execution ───────────────────────────────────────────────────────
-
-    def _get_execution_config(self, original_input) -> dict:
-        """Build execution config — tools, system instruction, hooks.
-
-        Plan-mode tools were registered on ``self.tools`` once at setup time
-        (see :meth:`AgenticNode._register_plan_mode_tools`), so they are
-        already part of ``self.tools`` here for main agents. ``hooks`` is
-        routed through ``_compose_hooks`` so permission hooks are lazily
-        built and attached the same way as the other agentic nodes.
-        """
-        return {
-            "tools": self.tools,
-            "instruction": self._get_system_instruction(original_input),
-            "hooks": self._compose_hooks(),
-        }
-
     # ── Workflow Integration ────────────────────────────────────────────
 
     def setup_input(self, workflow: Workflow) -> dict:
