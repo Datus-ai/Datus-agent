@@ -3,7 +3,13 @@ name: Run Nightly Tests
 on:
   schedule:
     - cron: '0 20 * * *' # 20:00 UTC daily (offset from integration at 18:00 UTC)
-  workflow_dispatch: # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      nightly_group_filter:
+        description: "Optional regex for NIGHTLY_GROUP_FILTER. Leave empty to run the full nightly suite."
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   # Keep nightly runs serialized because the workflow intentionally uses the
@@ -15,6 +21,8 @@ concurrency:
 jobs:
   run-nightly:
     runs-on: self-hosted
+    env:
+      NIGHTLY_GROUP_FILTER: ${{ github.event.inputs.nightly_group_filter || '' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

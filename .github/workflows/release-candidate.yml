@@ -12,6 +12,11 @@ on:
         required: false
         default: true
         type: boolean
+      require_release_nightly:
+        description: "Require a successful Run Nightly Tests run for this branch and commit"
+        required: false
+        default: false
+        type: boolean
       benchmark_task_ids:
         description: "Optional space-separated task IDs. Overrides the stable case group when set."
         required: false
@@ -31,6 +36,10 @@ on:
         required: false
         default: true
         type: boolean
+      require_release_nightly:
+        required: false
+        default: false
+        type: boolean
       benchmark_task_ids:
         required: false
         default: ""
@@ -42,6 +51,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: release-candidate-${{ github.ref }}-${{ inputs.expected_version }}
@@ -74,6 +84,55 @@ jobs:
             --expected-version "${{ inputs.expected_version }}" \
             --check-tag-available \
             --check-adapter-latest
+
+      - name: Require successful release branch nightly
+        if: ${{ inputs.require_release_nightly }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_BRANCH: ${{ github.ref_name }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          runs_json="$(gh run list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --workflow run-nightly.yml \
+            --branch "${EXPECTED_BRANCH}" \
+            --json databaseId,headSha,status,conclusion,event,url,createdAt \
+            --limit 50)"
+
+          RUNS_JSON="$runs_json" python - <<'PY'
+          import json
+          import os
+          import sys
+
+          expected_sha = os.environ["EXPECTED_SHA"]
+          runs = json.loads(os.environ.get("RUNS_JSON") or "[]")
+          matching_runs = [
+              run
+              for run in runs
+              if run.get("headSha") == expected_sha
+              and run.get("status") == "completed"
+              and run.get("conclusion") == "success"
+          ]
+          if not matching_runs:
+              print(
+                  "No successful Run Nightly Tests workflow run was found for "
+                  f"branch {os.environ['EXPECTED_BRANCH']} at {expected_sha}.",
+                  file=sys.stderr,
+              )
+              print("Run the nightly workflow manually from this release branch, then rerun RC validation.", file=sys.stderr)
+              sys.exit(1)
+
+          latest = matching_runs[0]
+          print(f"Found successful release branch nightly: {latest.get('url')}")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("### Release Branch Nightly\n\n")
+              summary.write(f"- Branch: `{os.environ['EXPECTED_BRANCH']}`\n")
+              summary.write(f"- SHA: `{expected_sha}`\n")
+              summary.write(f"- Run: {latest.get('url')}\n")
+          PY
 
       - name: Build release candidate wheel
         run: python -m build --wheel --outdir dist-release-candidate
