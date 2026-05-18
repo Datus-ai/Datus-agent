@@ -47,6 +47,19 @@ def normalize_list(value: Any) -> list[str]:
     raise ValueError(f"expected list[str], got {value!r}")
 
 
+def append_error(errors: list[str], message: str) -> None:
+    if message not in errors:
+        errors.append(message)
+
+
+def normalize_list_or_error(value: Any, errors: list[str], field_name: str) -> list[str]:
+    try:
+        return normalize_list(value)
+    except ValueError as exc:
+        append_error(errors, f"{field_name}: {exc}")
+        return []
+
+
 def split_nodeid(nodeid: str) -> tuple[Path, str]:
     if "::" not in nodeid:
         return Path(nodeid), ""
@@ -66,7 +79,7 @@ def class_or_function_exists(repo_root: Path, nodeid: str) -> bool:
         return True
     text = full_path.read_text(encoding="utf-8", errors="replace")
     escaped = re.escape(first)
-    return bool(re.search(rf"^\s*(class|def)\s+{escaped}\b", text, flags=re.MULTILINE))
+    return bool(re.search(rf"^\s*(class|(?:async\s+)?def)\s+{escaped}\b", text, flags=re.MULTILINE))
 
 
 def validate_coverage_config(repo_root: Path, catalog: dict[str, Any], coverage: dict[str, Any]) -> list[str]:
@@ -92,10 +105,16 @@ def validate_coverage_config(repo_root: Path, catalog: dict[str, Any], coverage:
             if not isinstance(section, dict):
                 errors.append(f"{provider_id}.{section_name}: must be a mapping")
                 continue
-            for nodeid in normalize_list(section.get("nodeids")):
+            nodeids = normalize_list_or_error(
+                section.get("nodeids"),
+                errors,
+                f"{provider_id}.{section_name}.nodeids",
+            )
+            for nodeid in nodeids:
                 if not class_or_function_exists(repo_root, nodeid):
                     errors.append(f"{provider_id}.{section_name}: nodeid target does not exist: {nodeid}")
-        for env_name in normalize_list(declaration.get("required_env")):
+        required_env = normalize_list_or_error(declaration.get("required_env"), errors, f"{provider_id}.required_env")
+        for env_name in required_env:
             if not re.fullmatch(r"[A-Z][A-Z0-9_]*", env_name):
                 errors.append(f"{provider_id}.required_env: invalid env var name: {env_name}")
 
@@ -111,11 +130,13 @@ def provider_health_suite(manifest: dict[str, Any] | None) -> dict[str, Any] | N
     return None
 
 
-def collected_nodeids_for(suite: dict[str, Any] | None) -> list[str]:
+def collected_nodeids_for(suite: dict[str, Any] | None, errors: list[str] | None = None) -> list[str]:
     if not suite:
         return []
     collection = suite.get("collection") or {}
-    return normalize_list(collection.get("nodeids"))
+    if errors is None:
+        return normalize_list(collection.get("nodeids"))
+    return normalize_list_or_error(collection.get("nodeids"), errors, "nightly.provider_health.collection.nodeids")
 
 
 def match_declared_nodeids(declared: list[str], collected: list[str]) -> list[str]:
@@ -126,12 +147,19 @@ def match_declared_nodeids(declared: list[str], collected: list[str]) -> list[st
     return matched
 
 
-def provider_required_env(provider_catalog: dict[str, Any], declaration: dict[str, Any]) -> list[str]:
+def provider_required_env(
+    provider_catalog: dict[str, Any],
+    declaration: dict[str, Any],
+    coverage_errors: list[str],
+    provider_id: str,
+) -> list[str]:
     env_names = []
     catalog_env = provider_catalog.get("api_key_env")
     if isinstance(catalog_env, str) and catalog_env:
         env_names.append(catalog_env)
-    env_names.extend(normalize_list(declaration.get("required_env")))
+    env_names.extend(
+        normalize_list_or_error(declaration.get("required_env"), coverage_errors, f"{provider_id}.required_env")
+    )
     return sorted(set(env_names))
 
 
@@ -149,11 +177,20 @@ def build_provider_entry(
     declaration: dict[str, Any],
     provider_suite: dict[str, Any] | None,
     collected_provider_nodeids: list[str],
+    coverage_errors: list[str],
 ) -> dict[str, Any]:
     deterministic = declaration.get("deterministic") or {}
     live = declaration.get("live_provider_health") or {}
-    deterministic_nodeids = normalize_list(deterministic.get("nodeids"))
-    live_nodeids = normalize_list(live.get("nodeids"))
+    deterministic_nodeids = normalize_list_or_error(
+        deterministic.get("nodeids"),
+        coverage_errors,
+        f"{provider_id}.deterministic.nodeids",
+    )
+    live_nodeids = normalize_list_or_error(
+        live.get("nodeids"),
+        coverage_errors,
+        f"{provider_id}.live_provider_health.nodeids",
+    )
     matched_live_nodeids = match_declared_nodeids(live_nodeids, collected_provider_nodeids)
     live_mode = str(live.get("mode") or ("warn-only" if live_nodeids else "not-tested"))
 
@@ -171,9 +208,9 @@ def build_provider_entry(
         "auth_type": provider_catalog.get("auth_type", "api_key"),
         "base_url": provider_catalog.get("base_url", ""),
         "default_model": provider_catalog.get("default_model", ""),
-        "models": normalize_list(provider_catalog.get("models")),
+        "models": normalize_list_or_error(provider_catalog.get("models"), coverage_errors, f"{provider_id}.models"),
         "models_from": provider_catalog.get("models_from", ""),
-        "required_env": provider_required_env(provider_catalog, declaration),
+        "required_env": provider_required_env(provider_catalog, declaration, coverage_errors, provider_id),
         "coverage": {
             "deterministic": {
                 "status": coverage_status(deterministic_nodeids, str(deterministic.get("inherits_from") or "")),
@@ -239,7 +276,7 @@ def build_manifest(args: argparse.Namespace) -> dict[str, Any]:
     catalog_providers = catalog.get("providers") or {}
     declarations = coverage.get("providers") or {}
     suite = provider_health_suite(nightly_manifest)
-    collected_provider_nodeids = collected_nodeids_for(suite)
+    collected_provider_nodeids = collected_nodeids_for(suite, coverage_errors)
 
     providers = []
     for provider_id in sorted(catalog_providers):
@@ -252,6 +289,7 @@ def build_manifest(args: argparse.Namespace) -> dict[str, Any]:
                 declaration,
                 suite,
                 collected_provider_nodeids,
+                coverage_errors,
             )
         )
 

@@ -272,7 +272,7 @@ function summarizeProviderCoverage(providerCoverage) {
   const errorCount = summary.coverage_error_count || 0;
   const errorText = errorCount > 0 ? `, coverage errors: ${errorCount}` : '';
 
-  return `${providersTotal} providers, ${deterministicCovered} deterministic covered, ${liveDeclared} live smoke declared, ${liveCollected} live smoke collected, ${liveMissing} live smoke not tested${errorText}`;
+  return `${providersTotal} providers, ${deterministicCovered} deterministic covered, ${liveDeclared} live smoke declared, ${liveCollected} live smoke collected, ${liveMissing} live smoke missing/undeclared${errorText}`;
 }
 
 function buildNightlyFeishuMessage({
