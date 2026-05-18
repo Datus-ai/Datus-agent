@@ -113,6 +113,7 @@ jobs:
             ./external/datus-db-adapters/datus-spark \
             ./external/datus-bi-adapters/datus-bi-core \
             ./external/datus-bi-adapters/datus-bi-superset \
+            ./external/datus-bi-adapters/datus-bi-grafana \
             ./external/datus-scheduler-adapters/datus-scheduler-core \
             ./external/datus-scheduler-adapters/datus-scheduler-airflow
           uv run playwright install --with-deps chromium
@@ -243,6 +244,9 @@ jobs:
           echo "SUPERSET_PORT=18088" >> $GITHUB_ENV
           echo "SUPERSET_POSTGRES_PORT=15433" >> $GITHUB_ENV
           echo "SUPERSET_URL=http://127.0.0.1:18088" >> $GITHUB_ENV
+          echo "GRAFANA_PORT=13000" >> $GITHUB_ENV
+          echo "GRAFANA_POSTGRES_PORT=15435" >> $GITHUB_ENV
+          echo "GRAFANA_URL=http://127.0.0.1:13000" >> $GITHUB_ENV
           echo "AIRFLOW_HOST_PORT=18080" >> $GITHUB_ENV
           echo "AIRFLOW_URL=http://127.0.0.1:18080/api/v1" >> $GITHUB_ENV
           echo "POSTGRESQL_HOST_PORT=25432" >> $GITHUB_ENV

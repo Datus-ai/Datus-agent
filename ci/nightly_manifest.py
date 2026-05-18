@@ -38,6 +38,7 @@ PACKAGE_NAMES = (
     "datus-spark",
     "datus-bi-core",
     "datus-bi-superset",
+    "datus-bi-grafana",
     "datus-scheduler-core",
     "datus-scheduler-airflow",
     "datus-semantic-core",

@@ -64,6 +64,7 @@ GREENPLUM_COMPOSE="${GREENPLUM_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-greenplum/dock
 HIVE_COMPOSE="${HIVE_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-hive/docker-compose.yml}"
 SPARK_COMPOSE="${SPARK_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-spark/docker-compose.yml}"
 SUPERSET_COMPOSE="${SUPERSET_COMPOSE:-${BI_ADAPTERS_ROOT}/datus-bi-superset/tests/integration/docker-compose.yml}"
+GRAFANA_COMPOSE="${GRAFANA_COMPOSE:-${BI_ADAPTERS_ROOT}/datus-bi-grafana/tests/integration/docker-compose.yml}"
 AIRFLOW_COMPOSE="${AIRFLOW_COMPOSE:-${SCHEDULER_ADAPTERS_ROOT}/datus-scheduler-airflow/tests/integration/docker-compose.yml}"
 
 COMPOSE_FILES=(
@@ -76,11 +77,13 @@ COMPOSE_FILES=(
   "$HIVE_COMPOSE"
   "$SPARK_COMPOSE"
   "$SUPERSET_COMPOSE"
+  "$GRAFANA_COMPOSE"
   "$AIRFLOW_COMPOSE"
 )
 
 COMPOSE_GROUPS=(
   "Superset Nightly Tests"
+  "Grafana Nightly Tests"
   "Airflow Nightly Tests"
   "PostgreSQL Adapter Tests"
   "MySQL Adapter Tests"
@@ -448,6 +451,7 @@ compose_project_slug() {
 
   case "$group_name" in
     "Superset Nightly Tests") echo "superset" ;;
+    "Grafana Nightly Tests") echo "grafana" ;;
     "Airflow Nightly Tests") echo "airflow" ;;
     "PostgreSQL Adapter Tests") echo "postgresql" ;;
     "MySQL Adapter Tests") echo "mysql" ;;
@@ -502,6 +506,7 @@ cleanup_all_compose() {
   for group_name in "${COMPOSE_GROUPS[@]}"; do
     case "$group_name" in
       "Superset Nightly Tests") compose_file="$SUPERSET_COMPOSE" ;;
+      "Grafana Nightly Tests") compose_file="$GRAFANA_COMPOSE" ;;
       "Airflow Nightly Tests") compose_file="$AIRFLOW_COMPOSE" ;;
       "PostgreSQL Adapter Tests") compose_file="$POSTGRES_COMPOSE" ;;
       "MySQL Adapter Tests") compose_file="$MYSQL_COMPOSE" ;;
@@ -714,6 +719,12 @@ export SUPERSET_POSTGRES_PORT="${SUPERSET_POSTGRES_PORT:-15433}"
 export SUPERSET_URL="${SUPERSET_URL:-http://127.0.0.1:${SUPERSET_PORT}}"
 export SUPERSET_USER="${SUPERSET_USER:-admin}"
 export SUPERSET_PASS="${SUPERSET_PASS:-admin}"
+export GRAFANA_PORT="${GRAFANA_PORT:-13000}"
+export GRAFANA_POSTGRES_HOST="${GRAFANA_POSTGRES_HOST:-127.0.0.1}"
+export GRAFANA_POSTGRES_PORT="${GRAFANA_POSTGRES_PORT:-15435}"
+export GRAFANA_URL="${GRAFANA_URL:-http://127.0.0.1:${GRAFANA_PORT}}"
+export GRAFANA_USER="${GRAFANA_USER:-admin}"
+export GRAFANA_PASS="${GRAFANA_PASS:-admin123}"
 export AIRFLOW_HOST_PORT="${AIRFLOW_HOST_PORT:-18080}"
 export AIRFLOW_URL="${AIRFLOW_URL:-http://127.0.0.1:${AIRFLOW_HOST_PORT}/api/v1}"
 export AIRFLOW_USER="${AIRFLOW_USER:-admin}"
@@ -974,6 +985,9 @@ compose_host_port_specs() {
   case "$group_name" in
     "Superset Nightly Tests")
       printf 'Superset web:%s\nSuperset PostgreSQL:%s\n' "${SUPERSET_PORT:-18088}" "${SUPERSET_POSTGRES_PORT:-15433}"
+      ;;
+    "Grafana Nightly Tests")
+      printf 'Grafana web:%s\nGrafana PostgreSQL:%s\n' "${GRAFANA_PORT:-13000}" "${GRAFANA_POSTGRES_PORT:-15435}"
       ;;
     "Airflow Nightly Tests")
       printf 'Airflow web:%s\n' "${AIRFLOW_HOST_PORT:-18080}"
@@ -1252,6 +1266,9 @@ wait_for_compose_client_readiness() {
     "Superset Nightly Tests")
       wait_for_http_readiness "Superset" "${SUPERSET_URL%/}/health" 300
       ;;
+    "Grafana Nightly Tests")
+      wait_for_http_readiness "Grafana" "${GRAFANA_URL%/}/api/health" 300
+      ;;
     "Airflow Nightly Tests")
       airflow_base="${AIRFLOW_URL%/}"
       airflow_base="${airflow_base%/api/v1}"
@@ -1385,6 +1402,7 @@ log "UNIT_TEST_HOME=$UNIT_TEST_HOME"
 log "NIGHTLY_PYTEST_BASETEMP=$NIGHTLY_PYTEST_BASETEMP"
 log "NIGHTLY_COMPOSE_PROJECT_PREFIX=$NIGHTLY_COMPOSE_PROJECT_PREFIX"
 log "SUPERSET_URL=$SUPERSET_URL SUPERSET_PORT=$SUPERSET_PORT SUPERSET_POSTGRES_HOST=$SUPERSET_POSTGRES_HOST SUPERSET_POSTGRES_PORT=$SUPERSET_POSTGRES_PORT"
+log "GRAFANA_URL=$GRAFANA_URL GRAFANA_PORT=$GRAFANA_PORT GRAFANA_POSTGRES_HOST=$GRAFANA_POSTGRES_HOST GRAFANA_POSTGRES_PORT=$GRAFANA_POSTGRES_PORT"
 log "AIRFLOW_URL=$AIRFLOW_URL AIRFLOW_HOST_PORT=$AIRFLOW_HOST_PORT"
 log "POSTGRESQL_HOST=${POSTGRESQL_HOST:-} POSTGRESQL_PORT=${POSTGRESQL_PORT:-} POSTGRESQL_HOST_PORT=${POSTGRESQL_HOST_PORT:-}"
 log "MYSQL_HOST=${MYSQL_HOST:-} MYSQL_PORT=${MYSQL_PORT:-} MYSQL_HOST_PORT=${MYSQL_HOST_PORT:-}"
@@ -1435,6 +1453,7 @@ NIGHTLY_DEDICATED_SUITE_DESELECTS=(
   --deselect tests/integration/agent/test_gen_dashboard_agentic.py
   --deselect tests/integration/agent/test_scheduler_agentic.py
   --deselect tests/integration/tools/test_bi_dashboard.py
+  --deselect tests/integration/tools/test_bi_grafana.py
   --deselect tests/integration/tools/test_reference_template.py
   --deselect tests/integration/adapters/test_postgresql.py
   --deselect tests/integration/adapters/test_mysql.py
@@ -1452,6 +1471,8 @@ run_logged "Main Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PR
 run_logged "Product E2E Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m "nightly and product_e2e and not provider_health" tests/ "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
 
 run_compose_suite "Superset Nightly Tests" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
+
+run_compose_suite "Grafana Nightly Tests" "$GRAFANA_COMPOSE" "postgres:300" "grafana:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/tools/test_bi_grafana.py --tb=short --verbose --timeout=300 --reruns 1 --reruns-delay 5
 
 run_compose_suite "Airflow Nightly Tests" "$AIRFLOW_COMPOSE" "airflow:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" uv run pytest -m nightly tests/integration/agent/test_scheduler_agentic.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
 
