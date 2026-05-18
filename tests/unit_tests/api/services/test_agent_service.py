@@ -1694,3 +1694,40 @@ class TestDeleteAgent:
         assert not seeded.exists()
         assert not extra.exists()
         assert unrelated.exists()
+
+    async def test_delete_agent_template_cleanup_does_not_expand_globs(
+        self, real_agent_config, agent_yml_with_singleton
+    ):
+        """Regression: agent names with glob metacharacters must not be
+        passed through to ``Path.glob`` during template cleanup.
+
+        ``_sanitize_path_component`` only strips path separators, so a name
+        like ``victim*`` would survive sanitization and — if cleanup used
+        ``glob(f"{safe_name}_system_*.j2")`` — sweep every file whose stem
+        starts with ``victim``. The literal-match cleanup must compare
+        ``startswith(f"{safe_name}_system_")`` so only files that literally
+        contain the asterisk in their name are removed.
+        """
+        agentic_nodes = real_agent_config.agentic_nodes or {}
+        agentic_nodes["victim*"] = {"type": "gen_sql"}
+        real_agent_config.agentic_nodes = agentic_nodes
+
+        template_dir = real_agent_config.path_manager.datus_home / "template"
+        template_dir.mkdir(parents=True, exist_ok=True)
+
+        # Sibling owned by a different agent — its name happens to start with
+        # the literal prefix the attacker's glob would have expanded to.
+        innocent = template_dir / "victim_system_1.0.j2"
+        innocent.write_text("innocent", encoding="utf-8")
+
+        # File whose literal on-disk name matches the attacker's sanitized
+        # agent name — the only file that should ever be removed.
+        owned = template_dir / "victim*_system_1.0.j2"
+        owned.write_text("owned", encoding="utf-8")
+
+        svc = AgentService()
+        result = await svc.delete_agent("victim*", real_agent_config)
+
+        assert result.success is True
+        assert not owned.exists()
+        assert innocent.exists()

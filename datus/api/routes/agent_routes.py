@@ -5,7 +5,7 @@ API routes for Agent endpoints.
 - /agent/list: returns all sub-agents (builtin + custom from agent.yml)
 - /agent/create: create a new custom sub-agent
 - /agent/edit: update an existing custom sub-agent
-- /agent/delete: delete an existing custom sub-agent
+- DELETE /agent: delete an existing custom sub-agent
 - /agent/use_tools: get available tools for a given agent type
 - /agent/tools: list all valid tool categories
 """

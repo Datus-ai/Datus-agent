@@ -895,15 +895,23 @@ class AgentService:
         Mirrors the create path's template-copy behavior: ``create_agent``
         seeds one template per agent under the project's ``template`` dir,
         so delete sweeps every version that shares the sanitized agent name
-        prefix. The ``glob`` is anchored inside the resolved template dir
-        and each match is re-checked to be relative to it, so a maliciously
-        crafted ``agent_name`` cannot reach files outside the directory.
+        prefix. ``_sanitize_path_component`` only strips path separators —
+        glob metacharacters (``*``, ``?``, ``[]``) survive — so we iterate
+        ``iterdir()`` and match literally with ``startswith`` / ``endswith``
+        instead of feeding ``safe_name`` into ``Path.glob``. Each match is
+        re-checked to be relative to the resolved template dir, so a
+        maliciously crafted ``agent_name`` cannot reach files outside it.
         """
         safe_name = self._sanitize_path_component(agent_name)
         template_dir = (agent_config.path_manager.datus_home / "template").resolve()
         if not template_dir.is_dir():
             return
-        for path in template_dir.glob(f"{safe_name}_system_*.j2"):
+        prefix = f"{safe_name}_system_"
+        for path in template_dir.iterdir():
+            if not path.is_file():
+                continue
+            if not (path.name.startswith(prefix) and path.name.endswith(".j2")):
+                continue
             try:
                 if not path.resolve().is_relative_to(template_dir):
                     continue
