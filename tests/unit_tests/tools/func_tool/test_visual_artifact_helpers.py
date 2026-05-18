@@ -6,7 +6,7 @@
 
 Covers the three analysis-directory filesystem helpers plus the
 ``coerce_uses_arg`` normalizer that bridges between the LLM tool call
-shape (``dict`` or ``None``) and the strict :class:`SubjectRefIds`
+shape (``dict`` or ``None``) and the strict :class:`SubjectRefs`
 schema. All filesystem mutations use ``tmp_path`` — these helpers are
 pure I/O so we want deterministic, isolated state for each case.
 """
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from datus.schemas.analysis_artifacts import QueryBrief, SubjectRefIds
+from datus.schemas.analysis_artifacts import QueryBrief, SubjectAssetRef, SubjectRefs
 from datus.schemas.artifact_manifest import ArtifactManifest
 from datus.tools.func_tool._visual_artifact_helpers import (
     append_intent_section,
@@ -278,7 +278,7 @@ class TestWriteQueryBrief:
             queries_dir,
             name="sales_by_store",
             hypothesis="high-risk signups cluster around promotional campaigns",
-            uses=SubjectRefIds(metrics=["m_signups"]),
+            uses=SubjectRefs(metrics=[SubjectAssetRef(path=["Signups", "Risk"], name="high_risk_signups")]),
             caveats="Excludes test accounts.",
         )
         assert err is None
@@ -288,7 +288,8 @@ class TestWriteQueryBrief:
         data = json.loads(path.read_text(encoding="utf-8"))
         brief = QueryBrief.model_validate(data)
         assert brief.name == "sales_by_store"
-        assert brief.uses.metrics == ["m_signups"]
+        assert brief.uses.metrics[0].path == ["Signups", "Risk"]
+        assert brief.uses.metrics[0].name == "high_risk_signups"
         assert brief.caveats == "Excludes test accounts."
 
     def test_invalid_slug_returns_error(self, tmp_path: Path):
@@ -298,7 +299,7 @@ class TestWriteQueryBrief:
             queries_dir,
             name="Has-Hyphen",  # invalid per ANALYSIS_SLUG_PATTERN
             hypothesis="hypothesis",
-            uses=SubjectRefIds(),
+            uses=SubjectRefs(),
             caveats="",
         )
         assert err is not None
@@ -313,7 +314,7 @@ class TestWriteQueryBrief:
             queries_dir,
             name="empty_hypothesis",
             hypothesis="",
-            uses=SubjectRefIds(),
+            uses=SubjectRefs(),
             caveats="",
         )
         assert err is not None
@@ -328,58 +329,71 @@ class TestWriteQueryBrief:
 class TestCoerceUsesArg:
     def test_none_returns_empty_buckets(self):
         refs = coerce_uses_arg(None)
-        assert isinstance(refs, SubjectRefIds)
+        assert isinstance(refs, SubjectRefs)
         assert refs.metrics == []
         assert refs.reference_sql == []
         assert refs.ext_knowledge == []
 
     def test_full_dict_round_trips(self):
         payload = {
-            "metrics": ["m_a", "m_b"],
-            "reference_sql": ["rs_a"],
-            "ext_knowledge": ["kb_a", "kb_b", "kb_c"],
+            "metrics": [
+                {"path": ["Commerce", "Orders"], "name": "aov"},
+                {"path": ["Commerce", "Orders"], "name": "order_count"},
+            ],
+            "reference_sql": [{"path": ["Templates"], "name": "top_q"}],
+            "ext_knowledge": [
+                {"path": ["Policies"], "name": "pii"},
+                {"path": ["Policies"], "name": "retention"},
+                {"path": ["Glossary"], "name": "tenant"},
+            ],
         }
         refs = coerce_uses_arg(payload)
-        assert refs.metrics == ["m_a", "m_b"]
-        assert refs.reference_sql == ["rs_a"]
-        assert refs.ext_knowledge == ["kb_a", "kb_b", "kb_c"]
+        assert [(m.path, m.name) for m in refs.metrics] == [
+            (["Commerce", "Orders"], "aov"),
+            (["Commerce", "Orders"], "order_count"),
+        ]
+        assert refs.reference_sql[0].name == "top_q"
+        assert len(refs.ext_knowledge) == 3
 
-    def test_unknown_buckets_silently_dropped(self):
-        refs = coerce_uses_arg({"metrics": ["m_a"], "future_kind": ["x", "y"]})
-        # Unknown bucket dropped, known bucket preserved.
-        assert refs.metrics == ["m_a"]
-        # Schema-level extra=forbid never fires because the helper filters
-        # the keys before constructing the model.
-        assert refs.reference_sql == []
-        assert refs.ext_knowledge == []
-
-    def test_passthrough_for_subject_ref_ids(self):
-        original = SubjectRefIds(metrics=["m_x"])
+    def test_passthrough_for_subject_refs(self):
+        original = SubjectRefs(metrics=[SubjectAssetRef(path=["A"], name="x")])
         refs = coerce_uses_arg(original)
         assert refs is original
 
     def test_non_dict_raises_value_error(self):
         with pytest.raises(ValueError) as exc:
-            coerce_uses_arg(["m_a"])  # type: ignore[arg-type]
+            coerce_uses_arg([{"path": ["A"], "name": "x"}])  # type: ignore[arg-type]
         assert "uses must be a JSON object" in str(exc.value)
 
-    def test_non_list_bucket_raises_value_error(self):
+    def test_legacy_string_id_form_rejected(self):
+        """The old ``["metric:Sales/Revenue.gross"]`` LLM-drift shape must
+        now hard-fail at the write boundary so a malformed brief never
+        lands on disk to poison ``subject_refs.json``."""
         with pytest.raises(ValueError) as exc:
-            coerce_uses_arg({"metrics": "m_a"})  # type: ignore[arg-type]
-        assert "metrics" in str(exc.value)
-        assert "list" in str(exc.value)
+            coerce_uses_arg({"metrics": ["metric:Sales/Revenue.gross"]})
+        assert "schema validation failed" in str(exc.value)
 
-    def test_non_string_list_entry_raises_value_error(self):
+    def test_unknown_bucket_rejected(self):
+        """``SubjectRefs`` uses ``extra=forbid``; an LLM hallucination
+        of a brand-new bucket name surfaces immediately."""
         with pytest.raises(ValueError) as exc:
-            coerce_uses_arg({"metrics": ["m_a", 42]})
-        assert "metrics" in str(exc.value)
-        assert "strings" in str(exc.value)
+            coerce_uses_arg({"metrics": [], "future_kind": []})
+        assert "schema validation failed" in str(exc.value)
 
-    def test_none_bucket_becomes_empty_list(self):
-        """LLM sometimes emits ``"reference_sql": null`` — accept it gracefully."""
-        refs = coerce_uses_arg({"metrics": ["m_a"], "reference_sql": None})
-        assert refs.metrics == ["m_a"]
-        assert refs.reference_sql == []
+    @pytest.mark.parametrize(
+        "bad_entry",
+        [
+            {"name": "x"},  # missing path
+            {"path": ["A"]},  # missing name
+            {"path": [], "name": "x"},  # empty path
+            {"path": ["A"], "name": ""},  # empty name
+            {"path": "A.B", "name": "x"},  # path is a string, not a list
+        ],
+    )
+    def test_malformed_entries_rejected(self, bad_entry: dict):
+        with pytest.raises(ValueError) as exc:
+            coerce_uses_arg({"metrics": [bad_entry]})
+        assert "schema validation failed" in str(exc.value)
 
 
 # --------------------------------------------------------------------------- #

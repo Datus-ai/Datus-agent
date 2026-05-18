@@ -51,43 +51,80 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 # Same character set as ``REPORT_SLUG_RE`` / ``QUERY_SLUG_RE`` so insight
-# ids and subject-asset ids stay filesystem-friendly and easy to ``grep``
-# from compiled HTML output. Length cap matches QUERY_SLUG_RE; insight
-# slugs are LLM-chosen identifiers, not paths.
+# ids stay filesystem-friendly and easy to ``grep`` from compiled HTML
+# output. Length cap matches QUERY_SLUG_RE; insight slugs are LLM-chosen
+# identifiers, not paths.
 ANALYSIS_SLUG_PATTERN = r"^[a-z0-9_]{1,64}$"
 ANALYSIS_SLUG_RE = re.compile(ANALYSIS_SLUG_PATTERN)
 
 SubjectAssetKind = Literal["metric", "reference_sql", "ext_knowledge"]
 
 
-class SubjectRefIds(BaseModel):
-    """Per-query declaration of which subject-library assets a query draws on.
+class SubjectAssetRef(BaseModel):
+    """One subject-library reference identified by its natural key.
 
-    Stored inline on :class:`QueryBrief`. Three buckets matching the
-    three asset kinds Datus' subject library exposes today; future kinds
-    can be added without breaking older reasoning files because each
-    bucket defaults to an empty list.
+    A subject-library asset (metric / reference_sql / ext_knowledge) is
+    uniquely addressed by the subject-tree ``path`` plus the leaf
+    ``name`` — the same two values every discovery tool
+    (``list_metrics``, ``search_metrics``, ``list_subject_tree``)
+    surfaces back to the LLM, and the same two values the ``ask_*``
+    consultant needs to call ``get_metrics(path, name)`` /
+    ``get_reference_sql(path, name)`` for the full definition.
 
-    The LLM is the only producer — it fills these arrays at
-    ``save_query`` time when it knows exactly which metric / reference
-    SQL / ext-knowledge entry informed the query it's about to persist.
-    Empty arrays are valid and common (many queries are pure ad-hoc
-    SELECTs against the base tables).
+    Opaque storage-layer ids (``metric:Foo/Bar.baz``) are deliberately
+    NOT part of this wire contract — they leak storage concerns into
+    the LLM workflow and historically drove LLMs to invent malformed
+    strings (see PR follow-up notes). Dedup happens on
+    ``(tuple(path), name)``.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    metrics: List[str] = Field(
-        default_factory=list,
-        description="Metric ids (semantic-model entries) that informed this query's design.",
+    path: List[str] = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Subject-tree path to the asset, e.g. ``['Commerce', 'Orders', "
+            "'Average_Order_Value']``. Each element must be non-empty. The "
+            "path is the same list every discovery tool already returns; "
+            "copy it verbatim instead of joining into a string."
+        ),
     )
-    reference_sql: List[str] = Field(
-        default_factory=list,
-        description="Reference-SQL ids the query borrows shape / patterns from.",
+    name: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Leaf name of the asset, e.g. ``'average_gross_order_value'``. "
+            "Combined with ``path``, this is the natural key the "
+            "subject-library uses for retrieval."
+        ),
     )
-    ext_knowledge: List[str] = Field(
+
+
+class SubjectRefs(BaseModel):
+    """Subject-library attribution payload — shared shape for both
+    ``QueryBrief.uses`` (the per-query declaration written by the LLM
+    at ``save_query`` time) and ``analysis/subject_refs.json`` (the
+    code-aggregated, deduped index written at finalize time).
+
+    Three buckets matching the three asset kinds Datus' subject library
+    exposes today; future kinds can be added without breaking older
+    reasoning files because each bucket defaults to an empty list.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    metrics: List[SubjectAssetRef] = Field(
         default_factory=list,
-        description="Ext-knowledge entry ids consulted for definitions, thresholds, business rules.",
+        description="Metrics (semantic-model entries) that informed this query's design.",
+    )
+    reference_sql: List[SubjectAssetRef] = Field(
+        default_factory=list,
+        description="Reference-SQL entries the query borrows shape / patterns from.",
+    )
+    ext_knowledge: List[SubjectAssetRef] = Field(
+        default_factory=list,
+        description="Ext-knowledge entries consulted for definitions, thresholds, business rules.",
     )
 
 
@@ -144,8 +181,8 @@ class QueryBrief(BaseModel):
             "LLM to skip the query rather than write filler here."
         ),
     )
-    uses: SubjectRefIds = Field(
-        default_factory=SubjectRefIds,
+    uses: SubjectRefs = Field(
+        default_factory=SubjectRefs,
         description="Subject-library assets this query draws on (three buckets).",
     )
     caveats: str = Field(
@@ -235,70 +272,6 @@ class SuggestedQuestion(BaseModel):
         le=1.0,
         description="LLM-assigned priority in [0,1]; frontend uses it for display order when more than one suggestion competes for the same slot.",
     )
-
-
-class SubjectAssetRef(BaseModel):
-    """One entry inside :class:`SubjectRefs` — the snapshot of a single
-    subject-library asset referenced anywhere in this artifact.
-
-    These snapshots are the fallback when the global subject library has
-    moved on (asset renamed or deleted): the subagent can still answer
-    "what is metric X" by reading ``definition_or_summary`` straight from
-    the snapshot. We deliberately do not store version hashes — see
-    docs §3.7.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: str = Field(..., description="Stable id within the subject library (metric id / reference_sql id / kb id).")
-    name: str = Field(
-        ...,
-        description=(
-            "Human-readable name copied from the subject library at finalize time. "
-            "For ext_knowledge entries this is the document title."
-        ),
-    )
-    definition_or_summary: str = Field(
-        default="",
-        description=(
-            "Snapshot of the asset body: SQL expression for metrics, query text for "
-            "reference_sql, a short summary for ext_knowledge. Empty when the "
-            "subject library lookup failed (id was made up or has since been "
-            "removed) — the aggregation step logs a warning but keeps the entry "
-            "so the subagent still sees that this id was referenced."
-        ),
-    )
-    source: str = Field(
-        default="",
-        description=(
-            "Path inside ``subject/`` where this asset lives, when known. Empty "
-            "string when not resolvable (same fallback semantics as "
-            "``definition_or_summary``)."
-        ),
-    )
-
-
-class SubjectRefs(BaseModel):
-    """Schema for ``analysis/subject_refs.json`` — the leaf node of the
-    reference graph (nothing references *it* by id; it's the index the
-    subagent reads to render asset cards).
-
-    Generated by code, not the LLM: ``finalize`` enumerates every
-    ``queries/*.brief.json``, collects each ``uses`` bucket, dedupes
-    by id, looks each id up in the subject library to snapshot
-    ``name`` / ``definition_or_summary`` / ``source``, and writes this
-    file last. **Present-iff-non-empty**: when all three buckets would
-    be empty the file is not written at all — an absent file is
-    semantically "no subject-library attribution", a present file with
-    empty arrays would falsely suggest "we looked and found none". See
-    docs §3.7.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    metrics: List[SubjectAssetRef] = Field(default_factory=list)
-    reference_sql: List[SubjectAssetRef] = Field(default_factory=list)
-    ext_knowledge: List[SubjectAssetRef] = Field(default_factory=list)
 
 
 class FinalizeAnalysisOutput(BaseModel):

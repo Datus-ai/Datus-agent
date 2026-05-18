@@ -555,9 +555,16 @@ class DashboardArtifactTools:
                 this query to validate (e.g. "regional revenue diverges
                 month-over-month, justifying drilldown"). Required and
                 non-empty.
-            uses: Optional ``{"metrics": [...], "reference_sql": [...],
-                "ext_knowledge": [...]}``. Surfaced in
-                ``analysis/subject_refs.json`` for the follow-up subagent.
+            uses: Optional ``{"metrics": [{"path": [...], "name": "..."}],
+                "reference_sql": [...], "ext_knowledge": [...]}``. Each
+                bucket lists subject-library assets this template draws on,
+                identified by their ``path`` + ``name`` pair (the same two
+                fields ``list_metrics`` / ``search_metrics`` /
+                ``list_subject_tree`` return). Surfaced verbatim in
+                ``analysis/subject_refs.json`` for the follow-up subagent,
+                deduped on ``(path, name)``. Malformed entries (missing
+                ``path`` or ``name``, legacy string-id form) are rejected
+                immediately.
             caveats: Before deciding this field is empty, check the
                 template against the same five-gotcha checklist the report
                 subagent uses (JOIN type / hardcoded value lists / implicit

@@ -194,45 +194,82 @@ class TestCollectQueryPreviews:
 # --------------------------------------------------------------------------- #
 
 
+def _m(path: list[str], name: str) -> dict:
+    """Helper to build a ``uses`` entry in the new ``{path, name}`` shape."""
+    return {"path": path, "name": name}
+
+
 class TestAggregateSubjectRefs:
     def test_empty_dir_returns_empty_buckets(self, tmp_path: Path):
         refs = aggregate_subject_refs(tmp_path / "queries")
         assert refs == SubjectRefs()
 
-    def test_dedupes_ids_across_files(self, tmp_path: Path):
+    def test_dedupes_by_path_and_name_across_files(self, tmp_path: Path):
+        """``(path, name)`` is the natural key — same pair across two
+        files dedupes to one entry; different paths with the same leaf
+        name survive as separate entries."""
         queries_dir = tmp_path / "queries"
-        _write_brief(queries_dir, "alpha", uses={"metrics": ["m1", "m2"], "reference_sql": ["rs1"]})
-        _write_brief(queries_dir, "bravo", uses={"metrics": ["m1", "m3"], "ext_knowledge": ["kb1"]})
+        _write_brief(
+            queries_dir,
+            "alpha",
+            uses={
+                "metrics": [_m(["Commerce", "Orders"], "aov"), _m(["Commerce", "Orders"], "order_count")],
+                "reference_sql": [_m(["Templates"], "top_q")],
+            },
+        )
+        _write_brief(
+            queries_dir,
+            "bravo",
+            uses={
+                # Repeats ``(["Commerce", "Orders"], "aov")`` — should dedupe.
+                # Adds a new entry that shares only the leaf name ``aov`` but
+                # under a different path — must NOT dedupe.
+                "metrics": [_m(["Commerce", "Orders"], "aov"), _m(["Marketing", "Spend"], "aov")],
+                "ext_knowledge": [_m(["Policies"], "pii")],
+            },
+        )
         refs = aggregate_subject_refs(queries_dir)
-        # m1 appears in two files but only once in the aggregate.
-        assert [r.id for r in refs.metrics] == ["m1", "m2", "m3"]
-        assert [r.id for r in refs.reference_sql] == ["rs1"]
-        assert [r.id for r in refs.ext_knowledge] == ["kb1"]
+        metric_keys = [(m.path, m.name) for m in refs.metrics]
+        assert metric_keys == [
+            (["Commerce", "Orders"], "aov"),
+            (["Commerce", "Orders"], "order_count"),
+            (["Marketing", "Spend"], "aov"),
+        ]
+        assert [(r.path, r.name) for r in refs.reference_sql] == [(["Templates"], "top_q")]
+        assert [(r.path, r.name) for r in refs.ext_knowledge] == [(["Policies"], "pii")]
 
     def test_preserves_first_seen_order(self, tmp_path: Path):
         """First-seen order within each bucket matters for subagent rendering."""
         queries_dir = tmp_path / "queries"
         # alpha sorts before zulu; insertion order within alpha is preserved.
-        _write_brief(queries_dir, "alpha", uses={"metrics": ["m_first", "m_second"]})
-        _write_brief(queries_dir, "zulu", uses={"metrics": ["m_third"]})
+        _write_brief(
+            queries_dir,
+            "alpha",
+            uses={"metrics": [_m(["X"], "m_first"), _m(["X"], "m_second")]},
+        )
+        _write_brief(queries_dir, "zulu", uses={"metrics": [_m(["X"], "m_third")]})
         refs = aggregate_subject_refs(queries_dir)
-        assert [r.id for r in refs.metrics] == ["m_first", "m_second", "m_third"]
+        assert [m.name for m in refs.metrics] == ["m_first", "m_second", "m_third"]
 
-    def test_ignores_invalid_uses_field(self, tmp_path: Path):
-        """A brief file with a non-dict ``uses`` shouldn't crash the aggregator."""
+    def test_skips_brief_with_invalid_uses(self, tmp_path: Path):
+        """A brief whose ``uses`` block fails schema validation (legacy
+        string-id form, missing fields, etc.) is skipped with a warning
+        — one malformed brief must not strand the whole aggregate."""
         queries_dir = tmp_path / "queries"
         queries_dir.mkdir()
-        # Hand-build a file where ``uses`` is not the schema shape but the
-        # rest is parseable JSON — the aggregator skips it gracefully.
+        # Legacy string-id form — the LLM-drift shape we used to tolerate
+        # before the path/name redesign. Now rejected at the schema layer.
         broken = {
             "name": "broken",
             "hypothesis": "h",
-            "uses": "not-a-dict",
+            "uses": {"metrics": ["metric:Sales/Revenue.gross_revenue"]},
             "caveats": "",
         }
         (queries_dir / "broken.brief.json").write_text(json.dumps(broken), encoding="utf-8")
+        # A second brief with a well-formed entry — must still land.
+        _write_brief(queries_dir, "good", uses={"metrics": [_m(["A"], "x")]})
         refs = aggregate_subject_refs(queries_dir)
-        assert refs == SubjectRefs()
+        assert [(m.path, m.name) for m in refs.metrics] == [(["A"], "x")]
 
 
 # --------------------------------------------------------------------------- #
@@ -361,7 +398,7 @@ def _make_artifact_layout(
     tmp_path: Path,
     *,
     with_brief: bool = True,
-    brief_uses: Dict[str, List[str]] | None = None,
+    brief_uses: Dict[str, Any] | None = None,
     sql_body: str = "SELECT 1",
 ) -> tuple[Path, Path, Path]:
     """Build the on-disk paths run_finalize_analysis expects.
@@ -380,7 +417,7 @@ def _make_artifact_layout(
     _seed_manifest(artifact_dir)
     if with_brief:
         if brief_uses is None:
-            brief_uses = {"metrics": ["m_revenue"]}
+            brief_uses = {"metrics": [{"path": ["Revenue"], "name": "revenue_by_region"}]}
         _write_brief(queries_dir, "rev_by_region", uses=brief_uses)
         (queries_dir / "rev_by_region.sql").write_text(sql_body, encoding="utf-8")
         (queries_dir / "rev_by_region.json").write_text(
@@ -821,7 +858,7 @@ class TestRunFinalizeAnalysis:
         # subject_refs.json is present because the brief declared a metric.
         assert (analysis_dir / "subject_refs.json").is_file()
         refs = json.loads((analysis_dir / "subject_refs.json").read_text(encoding="utf-8"))
-        assert any(m["id"] == "m_revenue" for m in refs["metrics"])
+        assert any(m["path"] == ["Revenue"] and m["name"] == "revenue_by_region" for m in refs["metrics"])
         assert result["subject_refs_count"]["metrics"] == 1
 
     def test_end_to_end_curates_intent_md_when_present(self, tmp_path: Path):
@@ -979,7 +1016,13 @@ class TestRunFinalizeAnalysis:
         )
         stale_path = analysis_dir / "subject_refs.json"
         stale_path.write_text(
-            json.dumps({"metrics": [{"id": "old"}], "reference_sql": [], "ext_knowledge": []}),
+            json.dumps(
+                {
+                    "metrics": [{"path": ["Stale"], "name": "old"}],
+                    "reference_sql": [],
+                    "ext_knowledge": [],
+                }
+            ),
             encoding="utf-8",
         )
 
@@ -1101,7 +1144,7 @@ class TestRunFinalizeAnalysis:
         """
         artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(
             tmp_path,
-            brief_uses={"metrics": ["metric:Sales/Revenue.gross_revenue"]},
+            brief_uses={"metrics": [{"path": ["Sales", "Revenue"], "name": "gross_revenue"}]},
             sql_body="SELECT * FROM finbench.main.Account",
         )
 
@@ -1124,7 +1167,7 @@ class TestRunFinalizeAnalysis:
         refs_path = analysis_dir / "subject_refs.json"
         assert refs_path.is_file(), "subject_refs.json must be written even when the LLM fails"
         refs = json.loads(refs_path.read_text(encoding="utf-8"))
-        assert [r["id"] for r in refs["metrics"]] == ["metric:Sales/Revenue.gross_revenue"]
+        assert [(r["path"], r["name"]) for r in refs["metrics"]] == [(["Sales", "Revenue"], "gross_revenue")]
 
         # manifest.key_tables was aggregated by sqlglot and persisted.
         manifest = json.loads((artifact_dir / "manifest.json").read_text(encoding="utf-8"))
@@ -1141,7 +1184,7 @@ class TestRunFinalizeAnalysis:
         through the same orchestrator branch."""
         artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(
             tmp_path,
-            brief_uses={"metrics": ["metric:Sales/Revenue.gross_revenue"]},
+            brief_uses={"metrics": [{"path": ["Sales", "Revenue"], "name": "gross_revenue"}]},
             sql_body="SELECT * FROM finbench.main.Account",
         )
 
@@ -1164,7 +1207,7 @@ class TestRunFinalizeAnalysis:
         refs_path = analysis_dir / "subject_refs.json"
         assert refs_path.is_file()
         refs = json.loads(refs_path.read_text(encoding="utf-8"))
-        assert [r["id"] for r in refs["metrics"]] == ["metric:Sales/Revenue.gross_revenue"]
+        assert [(r["path"], r["name"]) for r in refs["metrics"]] == [(["Sales", "Revenue"], "gross_revenue")]
 
         manifest = json.loads((artifact_dir / "manifest.json").read_text(encoding="utf-8"))
         assert manifest["key_tables"] == ["finbench.main.Account"]

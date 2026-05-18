@@ -590,11 +590,17 @@ class ReportArtifactTools:
                 around promotional campaigns"). Required and non-empty. If
                 you don't have a hypothesis, skip the query — placeholder
                 hypotheses pollute the analysis layer.
-            uses: Optional ``{"metrics": [...], "reference_sql": [...],
-                "ext_knowledge": [...]}``. Each bucket lists subject-library
-                asset ids this query draws on; empty / omitted is fine for
-                pure ad-hoc queries. Surfaced in
-                ``analysis/subject_refs.json`` for the follow-up subagent.
+            uses: Optional ``{"metrics": [{"path": [...], "name": "..."}],
+                "reference_sql": [...], "ext_knowledge": [...]}``. Each
+                bucket lists subject-library assets this query draws on,
+                identified by their ``path`` + ``name`` pair (the same two
+                fields ``list_metrics`` / ``search_metrics`` /
+                ``list_subject_tree`` return). Empty / omitted is fine
+                for pure ad-hoc queries. Surfaced verbatim in
+                ``analysis/subject_refs.json`` for the follow-up
+                subagent, deduped on ``(path, name)``. Malformed entries
+                (missing ``path`` or ``name``, legacy string-id form)
+                are rejected immediately.
             caveats: Before deciding this field is empty, check the SQL
                 against these five gotchas a follow-up reader would otherwise
                 miss: (1) JOIN type changing the denominator (LEFT vs INNER);
