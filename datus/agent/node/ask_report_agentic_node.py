@@ -19,3 +19,8 @@ class AskReportAgenticNode(BaseArtifactAskAgenticNode):
     NODE_NAME = "ask_report"
     ARTIFACT_KIND = "report"
     ARTIFACT_ROOT_DIR_NAME = "reports"
+    # The SaaS path always seeds an ``artifact_blob`` (latest published
+    # version) into the agentic_nodes entry, so missing blob == unpublished
+    # report (half-bound state). Fail loud rather than silently dropping to
+    # a disk path the backend may not even have access to.
+    BLOB_REQUIRED = True
