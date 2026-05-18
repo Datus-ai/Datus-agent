@@ -45,18 +45,6 @@ logger = get_logger(__name__)
 # intent: renderer / compiler error reports forwarded into the prompt
 # loop. These are structural — pure pattern matching catches them
 # precisely with no risk of dropping real intent.
-#
-# "Looks-like-placeholder" prompts (``继续``, ``continue``, ``下一步``,
-# ``好的`` etc.) used to live in a frozen set here. That approach was
-# rule-bound and brittle ("继续吧" / "请继续完成" / "嗯" all leaked
-# through; short real intents like "聚焦风控" almost got false-killed
-# by analogous length-based heuristics). Curation is now delegated to
-# the finalize-stage LLM call (see ``FinalizeAnalysisOutput.
-# intent_entries_to_keep``), which has full multi-prompt context and
-# the language-understanding to tell ``下一步`` (placeholder) apart
-# from ``聚焦风控`` (real direction shift) reliably. The follow-up ask
-# agent only ever sees the post-finalize intent.md, so any
-# intermediate noise from append-time is invisible to it.
 _INTENT_NOISE_PATTERNS = (
     re.compile(r"^\s*Error:\s", re.IGNORECASE),
     re.compile(r"\bTraceback\b", re.IGNORECASE),
