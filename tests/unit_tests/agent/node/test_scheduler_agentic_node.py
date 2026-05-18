@@ -60,6 +60,73 @@ def _make_mock_scheduler_tools():
     return mock_tools
 
 
+class _ExecutableSchedulerTools:
+    """Small in-memory SchedulerTools substitute for deterministic node acceptance."""
+
+    def __init__(self):
+        self.jobs = {}
+        self.runs = {}
+
+    def available_tools(self):
+        from datus.tools.func_tool.base import trans_to_function_tool
+
+        return [
+            trans_to_function_tool(self.submit_sql_job),
+            trans_to_function_tool(self.trigger_scheduler_job),
+            trans_to_function_tool(self.get_scheduler_job),
+            trans_to_function_tool(self.list_job_runs),
+            trans_to_function_tool(self.get_run_log),
+        ]
+
+    def submit_sql_job(self, job_name: str, sql_file_path: str, conn_id=None, schedule=None, description=None):
+        from datus.tools.func_tool import FuncToolResult
+
+        job_id = job_name.lower().replace(" ", "_")
+        self.jobs[job_id] = {
+            "job_id": job_id,
+            "job_name": job_name,
+            "sql_file_path": sql_file_path,
+            "conn_id": conn_id or "default_sql",
+            "schedule": schedule,
+            "description": description,
+            "status": "active",
+        }
+        return FuncToolResult(
+            result={
+                **self.jobs[job_id],
+                "scheduler": "fake",
+                "platform": "fake",
+            }
+        )
+
+    def trigger_scheduler_job(self, job_id: str):
+        from datus.tools.func_tool import FuncToolResult
+
+        run = {"run_id": "manual__001", "job_id": job_id, "status": "success"}
+        self.runs.setdefault(job_id, []).append(run)
+        return FuncToolResult(result=run)
+
+    def get_scheduler_job(self, job_id: str):
+        from datus.tools.func_tool import FuncToolResult
+
+        job = self.jobs.get(job_id)
+        if job is None:
+            return FuncToolResult(result={"found": False, "job_id": job_id})
+        return FuncToolResult(result={"found": True, **job})
+
+    def list_job_runs(self, job_id: str, limit: int = 10, offset: int = 0):
+        from datus.tools.func_tool import FuncToolResult
+        from datus.tools.func_tool.base import FuncToolListResult
+
+        rows = self.runs.get(job_id, [])[offset : offset + limit]
+        return FuncToolResult(result=FuncToolListResult(items=rows, total=len(self.runs.get(job_id, []))).model_dump())
+
+    def get_run_log(self, job_id: str, run_id: str):
+        from datus.tools.func_tool import FuncToolResult
+
+        return FuncToolResult(result={"job_id": job_id, "run_id": run_id, "log": "finished successfully"})
+
+
 def _scheduler_service_config():
     return {
         "name": "airflow_local",
@@ -493,6 +560,74 @@ class TestSchedulerExecuteStream:
                 with pytest.raises(ExecutionInterrupted):
                     async for _ in node.execute_stream():
                         pass
+
+
+@pytest.mark.acceptance
+@pytest.mark.llm_harness
+class TestSchedulerProductFlowAcceptance:
+    """Deterministic coverage for scheduler submit/trigger/read-back workflow."""
+
+    @pytest.mark.asyncio
+    async def test_scheduler_submits_triggers_polls_and_reads_log(self, real_agent_config, mock_llm_create):
+        from datus.schemas.action_history import ActionHistoryManager, ActionStatus
+        from datus.schemas.scheduler_agentic_node_models import SchedulerNodeInput
+        from tests.unit_tests.mock_llm_model import MockToolCall, build_tool_then_response
+
+        scheduler_tools = _ExecutableSchedulerTools()
+        _add_scheduler_config(real_agent_config)
+        with patch(_SCHEDULER_TOOLS_PATCH, return_value=scheduler_tools):
+            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
+
+            node = SchedulerAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+            node.input = SchedulerNodeInput(
+                user_message="Submit a daily SAT summary job and verify the first run.",
+                database="california_schools",
+            )
+            mock_llm_create.reset(
+                responses=[
+                    build_tool_then_response(
+                        tool_calls=[
+                            MockToolCall(
+                                "submit_sql_job",
+                                {
+                                    "job_name": "daily_sat_summary",
+                                    "sql_file_path": "jobs/daily_sat_summary.sql",
+                                    "schedule": "0 8 * * *",
+                                    "description": "Daily SAT summary",
+                                },
+                            ),
+                            MockToolCall("trigger_scheduler_job", {"job_id": "daily_sat_summary"}),
+                            MockToolCall("get_scheduler_job", {"job_id": "daily_sat_summary"}),
+                            MockToolCall("list_job_runs", {"job_id": "daily_sat_summary", "limit": 5}),
+                            MockToolCall(
+                                "get_run_log",
+                                {"job_id": "daily_sat_summary", "run_id": "manual__001"},
+                            ),
+                        ],
+                        content="Submitted and verified the daily SAT summary scheduler job.",
+                    )
+                ]
+            )
+
+            ahm = ActionHistoryManager()
+            actions = []
+            async for action in node.execute_stream(ahm):
+                actions.append(action)
+
+        executed_tools = [item["tool"] for item in mock_llm_create.tool_results if item["executed"]]
+        assert executed_tools == [
+            "submit_sql_job",
+            "trigger_scheduler_job",
+            "get_scheduler_job",
+            "list_job_runs",
+            "get_run_log",
+        ]
+        assert scheduler_tools.jobs["daily_sat_summary"]["status"] == "active"
+        assert scheduler_tools.runs["daily_sat_summary"][0]["run_id"] == "manual__001"
+        assert "finished successfully" in str(mock_llm_create.tool_results[-1]["output"])
+        assert actions[-1].status == ActionStatus.SUCCESS
+        assert actions[-1].output["success"] is True
+        assert "daily SAT summary scheduler job" in actions[-1].output["response"]
 
 
 # ---------------------------------------------------------------------------

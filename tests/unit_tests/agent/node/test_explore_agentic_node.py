@@ -356,6 +356,57 @@ class TestExploreAgenticNodeExecution:
                 pass
 
 
+@pytest.mark.acceptance
+@pytest.mark.llm_harness
+class TestExploreProductFlowAcceptance:
+    """Deterministic coverage for read-only data exploration."""
+
+    @pytest.mark.asyncio
+    async def test_explore_lists_describes_and_samples_real_database(self, real_agent_config, mock_llm_create):
+        """Explore should traverse the real read-only DB tools without write access."""
+        from datus.agent.node.explore_agentic_node import ExploreAgenticNode
+
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall(name="list_tables", arguments={}),
+                        MockToolCall(name="describe_table", arguments={"table_name": "satscores"}),
+                        MockToolCall(
+                            name="read_query",
+                            arguments={"sql": "SELECT cds, AvgScrRead FROM satscores LIMIT 2"},
+                        ),
+                    ],
+                    content="The satscores table includes school identifiers and SAT score columns.",
+                ),
+            ]
+        )
+
+        node = ExploreAgenticNode(
+            node_id="test_explore_acceptance",
+            description="Explore acceptance",
+            node_type=NodeType.TYPE_EXPLORE,
+            agent_config=real_agent_config,
+            node_name="explore",
+        )
+        node.input = ExploreNodeInput(
+            user_message="Explore SAT score fields and provide a small sample.",
+            database="california_schools",
+        )
+
+        ahm = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(ahm):
+            actions.append(action)
+
+        executed_tools = {item["tool"] for item in mock_llm_create.tool_results if item["executed"]}
+        assert {"list_tables", "describe_table", "read_query"} <= executed_tools
+        assert "AvgScrRead" in str(mock_llm_create.tool_results)
+        assert actions[-1].status == ActionStatus.SUCCESS
+        assert node.result.success is True
+        assert "satscores" in node.result.response
+
+
 class TestExploreNodeTypeRegistration:
     """Tests for ExploreAgenticNode type registration."""
 

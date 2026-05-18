@@ -668,6 +668,63 @@ class TestExecuteStreamGenReportError:
         assert last.action_type == "error"
 
 
+@pytest.mark.acceptance
+@pytest.mark.llm_harness
+class TestGenReportProductFlowAcceptance:
+    """Deterministic coverage for report generation over real DB tools."""
+
+    @pytest.mark.asyncio
+    async def test_report_uses_schema_and_query_results_to_build_report(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
+
+        report_json = json.dumps(
+            {
+                "report": "## SAT Reading Summary\n\nThe report uses satscores and average reading scores.",
+                "data_sources": ["satscores"],
+                "key_findings": ["AvgScrRead is available for SAT reading analysis."],
+            }
+        )
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall("describe_table", {"table_name": "satscores"}),
+                        MockToolCall(
+                            "read_query",
+                            {"sql": "SELECT AVG(AvgScrRead) AS avg_read_score FROM satscores"},
+                        ),
+                    ],
+                    content=report_json,
+                )
+            ]
+        )
+
+        node = GenReportAgenticNode(
+            node_id="report_acceptance",
+            description="Report acceptance",
+            node_type=NodeType.TYPE_GEN_REPORT,
+            agent_config=real_agent_config,
+            node_name="gen_report",
+            execution_mode="workflow",
+        )
+        node.input = GenReportNodeInput(
+            user_message="Create a short SAT reading score summary.",
+            database="california_schools",
+        )
+
+        action_manager = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(action_manager):
+            actions.append(action)
+
+        executed_tools = {item["tool"] for item in mock_llm_create.tool_results if item["executed"]}
+        assert {"describe_table", "read_query"} <= executed_tools
+        assert "avg_read_score" in str(mock_llm_create.tool_results)
+        assert actions[-1].status == ActionStatus.SUCCESS
+        assert actions[-1].output["success"] is True
+        assert "SAT Reading Summary" in actions[-1].output["response"]
+
+
 class TestGenReportSystemPromptCurrentDate:
     """Verify current_date is injected into the system prompt."""
 

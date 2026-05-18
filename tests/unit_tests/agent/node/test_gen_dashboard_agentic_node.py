@@ -821,6 +821,79 @@ class TestGenDashboardExecuteStream:
                         pass
 
 
+@pytest.mark.acceptance
+@pytest.mark.llm_harness
+class TestGenDashboardProductFlowAcceptance:
+    """Deterministic coverage for BI dashboard write workflow wiring."""
+
+    @pytest.mark.asyncio
+    async def test_dashboard_creates_dashboard_dataset_and_chart(self, real_agent_config, mock_llm_create):
+        from datus.schemas.action_history import ActionHistoryManager, ActionStatus
+        from datus.schemas.gen_dashboard_agentic_node_models import GenDashboardNodeInput
+        from tests.unit_tests.mock_llm_model import MockToolCall, build_tool_then_response
+
+        _add_dashboard_config(real_agent_config)
+        _bi_core_mock.adapter_registry.get.return_value = lambda **kwargs: FullMockAdapter()
+        with patch.dict(sys.modules, _BI_MODULES_PATCH):
+            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+            node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+            node.input = GenDashboardNodeInput(
+                user_message="Create a SAT score dashboard with one reading score chart.",
+                database="california_schools",
+            )
+            mock_llm_create.reset(
+                responses=[
+                    build_tool_then_response(
+                        tool_calls=[
+                            MockToolCall(
+                                "create_dashboard",
+                                {
+                                    "title": "SAT Score Dashboard",
+                                    "description": "School SAT score summary",
+                                },
+                            ),
+                            MockToolCall(
+                                "create_dataset",
+                                {
+                                    "name": "satscores_dataset",
+                                    "database_id": "1",
+                                    "sql": "SELECT cds, AvgScrRead FROM satscores",
+                                },
+                            ),
+                            MockToolCall(
+                                "create_chart",
+                                {
+                                    "chart_type": "bar",
+                                    "title": "Average Reading Score",
+                                    "dataset_id": "3",
+                                    "metrics": "AVG(AvgScrRead)",
+                                    "dimensions": "cds",
+                                    "dashboard_id": "10",
+                                },
+                            ),
+                        ],
+                        content="Created the SAT score dashboard with a reading score chart.",
+                    )
+                ]
+            )
+
+            ahm = ActionHistoryManager()
+            actions = []
+            async for action in node.execute_stream(ahm):
+                actions.append(action)
+
+        executed_tools = [item["tool"] for item in mock_llm_create.tool_results if item["executed"]]
+        assert executed_tools == ["create_dashboard", "create_dataset", "create_chart"]
+        result_by_tool = {item["tool"]: item["output"]["result"] for item in mock_llm_create.tool_results}
+        assert result_by_tool["create_dashboard"]["id"] == 10
+        assert result_by_tool["create_dataset"]["id"] == 3
+        assert result_by_tool["create_chart"]["id"] == 5
+        assert actions[-1].status == ActionStatus.SUCCESS
+        assert actions[-1].output["success"] is True
+        assert "reading score chart" in actions[-1].output["response"]
+
+
 # ---------------------------------------------------------------------------
 # Template Context Tests
 # ---------------------------------------------------------------------------

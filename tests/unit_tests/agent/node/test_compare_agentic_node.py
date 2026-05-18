@@ -210,6 +210,50 @@ class TestCompareAgenticNodeExecution:
                 pass
 
 
+@pytest.mark.acceptance
+@pytest.mark.llm_harness
+class TestCompareProductFlowAcceptance:
+    """Deterministic coverage for compare's SQL verification path."""
+
+    @pytest.mark.asyncio
+    async def test_compare_verifies_sql_with_real_read_query_tool(self, real_agent_config, mock_llm_create):
+        node = _create_compare_node(real_agent_config)
+
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall(
+                            name="read_query",
+                            arguments={"sql": "SELECT COUNT(*) AS row_count FROM satscores"},
+                        ),
+                    ],
+                    content=json.dumps(
+                        {
+                            "explanation": "The SQL can be verified against satscores and answers the request.",
+                            "suggest": "Keep the aggregate query unchanged.",
+                            "output": "verified",
+                        }
+                    ),
+                )
+            ]
+        )
+        node.model = mock_llm_create
+        node.input = _create_compare_input()
+
+        actions = []
+        async for action in node.execute_stream():
+            actions.append(action)
+
+        read_query_results = [item for item in mock_llm_create.tool_results if item["tool"] == "read_query"]
+        assert len(read_query_results) == 1
+        assert read_query_results[0]["executed"] is True
+        assert "row_count" in str(read_query_results[0]["output"])
+        assert actions[-1].status == ActionStatus.SUCCESS
+        assert actions[-1].output["success"] is True
+        assert "aggregate query" in actions[-1].output["suggest"]
+
+
 # ===========================================================================
 # Test Static/Utility Methods
 # ===========================================================================

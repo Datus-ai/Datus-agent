@@ -23,8 +23,12 @@ Design principle: NO mock except LLM.
 - The ONLY mock: LLMBaseModel.create_model -> MockLLMModel (via `mock_llm_create`)
 """
 
+import json
+
 import pytest
 
+from datus.schemas.action_history import ActionHistoryManager, ActionStatus
+from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 from tests.unit_tests.agent.node._builtin_node_test_helpers import (
     check_dynamic_db_func_tool,
     check_execute_stream_basic_workflow,
@@ -42,6 +46,7 @@ from tests.unit_tests.agent.node._builtin_node_test_helpers import (
     check_standard_db_tools,
     check_tools_include,
 )
+from tests.unit_tests.mock_llm_model import MockToolCall, build_tool_then_response
 
 # ---------------------------------------------------------------------------
 # Initialization Tests
@@ -165,6 +170,58 @@ class TestGenJobExecution:
             mock_llm_create,
             "Build ETL job",
         )
+
+
+@pytest.mark.acceptance
+@pytest.mark.llm_harness
+class TestGenJobWritePathAcceptance:
+    """Deterministic coverage for the gen_job DDL + DML path."""
+
+    @pytest.mark.asyncio
+    async def test_gen_job_creates_table_inserts_rows_and_reads_back(self, mutable_real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
+
+        create_sql = "CREATE TABLE job_school_summary (school_count INTEGER)"
+        insert_sql = "INSERT INTO job_school_summary (school_count) SELECT COUNT(*) FROM schools"
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall("execute_ddl", {"sql": create_sql}),
+                        MockToolCall(
+                            "execute_write",
+                            {
+                                "sql": insert_sql,
+                                "min_rows": 1,
+                                "max_rows": 1,
+                            },
+                        ),
+                    ],
+                    content=json.dumps(
+                        {
+                            "status": "created",
+                            "target_table": "job_school_summary",
+                        }
+                    ),
+                )
+            ]
+        )
+
+        node = GenJobAgenticNode(agent_config=mutable_real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="Create a summary job table with the number of schools.")
+
+        action_manager = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(action_manager):
+            actions.append(action)
+
+        executed_tools = [item["tool"] for item in mock_llm_create.tool_results if item["executed"]]
+        assert executed_tools == ["execute_ddl", "execute_write"]
+        query_result = node.db_func_tool.read_query("SELECT school_count FROM job_school_summary")
+        assert query_result.success == 1
+        assert "school_count" in str(query_result.result)
+        assert actions[-1].status == ActionStatus.SUCCESS
+        assert "job_school_summary" in str(actions[-1].output)
 
 
 # ---------------------------------------------------------------------------
