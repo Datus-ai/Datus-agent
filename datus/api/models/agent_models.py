@@ -2,7 +2,7 @@
 
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # ========== Agent List ==========
 
@@ -65,6 +65,20 @@ class CreateAgentInput(BaseModel):
     adapter_type: Optional[str] = Field(default=None, description="Adapter type")
     sql_file_threshold: Optional[int] = Field(default=None, description="SQL file threshold")
     sql_preview_lines: Optional[int] = Field(default=None, description="SQL preview lines")
+
+    @field_validator("artifact_slug", mode="before")
+    @classmethod
+    def _strip_artifact_slug(cls, value):
+        """Trim incidental whitespace before validation / persistence.
+
+        Done at the model layer so every downstream reader (the ask-binding
+        validator, the agentic_nodes persistence write, the SaaS-side
+        uniqueness check) sees the same normalised value — avoids
+        whitespace-in-stored-slug mismatches with the regex-validated form.
+        """
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
 
 
 class CreateAgentData(BaseModel):

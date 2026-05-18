@@ -183,8 +183,7 @@ def build_finalize_prompt(
         "  - Every `evidence_queries` / `related_queries` entry MUST be a "
         "query name that appears in the reasoning steps above.\n"
         "  - Every `related_insight` MUST reference an `id` you declare in "
-        "this same response (or be null).\n"
-        "  - `last_updated` MUST be a current ISO-8601 UTC timestamp."
+        "this same response (or be null)."
     )
 
     return "\n\n".join(sections)

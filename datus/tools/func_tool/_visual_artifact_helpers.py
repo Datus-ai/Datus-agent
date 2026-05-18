@@ -208,7 +208,10 @@ def append_intent_section(
         new_text = existing + ("\n" if existing else "") + section
         _atomic_write_text(path, new_text)
         return None
-    except OSError as exc:
+    except Exception as exc:
+        # Honour the "best-effort: never raise" contract documented above.
+        # Broad catch covers OSError plus UnicodeDecodeError from a corrupt
+        # existing intent.md and any other surprise the formatter raises.
         logger.warning("Failed to append to %s: %s", analysis_dir / "intent.md", exc)
         return f"Failed to append intent section: {exc}"
 
@@ -273,7 +276,8 @@ def upsert_manifest_after_save(
                 json.dumps(manifest.model_dump(), ensure_ascii=False, indent=2) + "\n",
             )
         return None
-    except OSError as exc:
+    except Exception as exc:
+        # Honour the "best-effort: never raise" contract documented above.
         logger.warning("Failed to upsert %s: %s", manifest_path, exc)
         return f"Failed to upsert manifest: {exc}"
 
@@ -310,7 +314,8 @@ def write_query_brief(
             json.dumps(brief.model_dump(), ensure_ascii=False, indent=2) + "\n",
         )
         return None
-    except OSError as exc:
+    except Exception as exc:
+        # Honour the "best-effort: never raise" contract documented above.
         logger.warning("Failed to write %s: %s", queries_dir / f"{name}.brief.json", exc)
         return f"Failed to write query brief: {exc}"
 
@@ -338,7 +343,7 @@ def coerce_uses_arg(uses: Any) -> SubjectRefIds:
     cleaned: dict[str, List[str]] = {}
     for kind, ids in uses.items():
         if kind not in known_kinds:
-            logger.debug("Dropping unknown uses kind %r", kind)
+            logger.warning("Dropping unknown uses kind %r (not in %s)", kind, sorted(known_kinds))
             continue
         if ids is None:
             cleaned[kind] = []

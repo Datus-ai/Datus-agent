@@ -507,14 +507,19 @@ def _validate_ask_artifact_binding(
 
     project_root = Path(getattr(agent_config, "project_root", "") or ".").resolve()
     kind_dir = "reports" if request.type == "ask_report" else "dashboards"
-    artifact_dir = (project_root / kind_dir / slug).resolve()
+    expected_dir = project_root / kind_dir / slug
+    artifact_dir = expected_dir.resolve()
     # Path-traversal defence: even though ARTIFACT_SLUG_RE blocks ``..``,
-    # symlinks inside the project root could still redirect us out.
-    if not str(artifact_dir).startswith(str(project_root) + os.sep) and artifact_dir != project_root:
+    # a symlink at ``<kind_dir>/<slug>`` could still redirect us elsewhere
+    # (outside project_root, or to a sibling directory inside it the ask
+    # agent should not be reading — including project_root itself).
+    # Require the resolved path to match the unresolved expected location
+    # verbatim — any symlink redirection produces a mismatch.
+    if artifact_dir != expected_dir:
         return Result(
             success=False,
             errorCode="INVALID_ARTIFACT_SLUG",
-            errorMessage=f"artifact path resolved outside project root: {artifact_dir}",
+            errorMessage=f"artifact path resolved outside expected location: {artifact_dir}",
         )
     if not artifact_dir.is_dir():
         return Result(

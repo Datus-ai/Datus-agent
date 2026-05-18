@@ -175,6 +175,33 @@ class TestArtifactBinding:
         assert node._artifact_root.name == "demo_dash"
         assert node._artifact_root.parent.name == "dashboards"
 
+    def test_symlink_redirect_within_project_root_rejected(self, real_agent_config):
+        """Defence-in-depth: a symlink at ``reports/<slug>`` redirecting to
+        a sibling directory inside ``project_root`` still lives "inside"
+        the project, so the old startswith check passed it through. The
+        tightened check compares the resolved path against the unresolved
+        expected location, catching any redirection — including inside the
+        project root."""
+        project_root = Path(real_agent_config.project_root)
+        # A real sibling directory the symlink will point to.
+        other_dir = project_root / "reports" / "actual_target"
+        other_dir.mkdir(parents=True, exist_ok=True)
+        # The slug we register points to a symlink redirected to that sibling.
+        slug = "redirect_slug"
+        symlink_path = project_root / "reports" / slug
+        symlink_path.parent.mkdir(parents=True, exist_ok=True)
+        symlink_path.symlink_to(other_dir, target_is_directory=True)
+        _register_ask_agent(real_agent_config, name="ask_redirect", kind="report", slug=slug)
+
+        with pytest.raises(DatusException):
+            AskReportAgenticNode(
+                node_id="x",
+                description="d",
+                node_type="chat",
+                agent_config=real_agent_config,
+                node_name="ask_redirect",
+            )
+
 
 # --------------------------------------------------------------------------- #
 # Filesystem tool anchoring                                                   #

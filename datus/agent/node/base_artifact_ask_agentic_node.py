@@ -40,7 +40,6 @@ Per-kind specialization (``ARTIFACT_KIND`` / template name / whether
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Literal, Optional
 
@@ -201,14 +200,19 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
                 message_args={"config_error": f"{self.NODE_NAME} requires agent_config.project_root"},
             )
         project_root = Path(project_root_raw).resolve()
-        artifact_dir = (project_root / self.ARTIFACT_ROOT_DIR_NAME / slug).resolve()
+        expected_dir = project_root / self.ARTIFACT_ROOT_DIR_NAME / slug
+        artifact_dir = expected_dir.resolve()
 
         # Path traversal defence — slug regex already blocks ``..`` literals,
-        # but symlinks inside the workspace could still redirect us out.
-        if not str(artifact_dir).startswith(str(project_root) + os.sep) and artifact_dir != project_root:
+        # but a symlink at ``<kind>/<slug>`` could still redirect us elsewhere
+        # (outside project_root entirely, or to a sibling directory inside it
+        # the ask agent should not be reading). Require the resolved path to
+        # match the unresolved expected location verbatim — any symlink
+        # redirection produces a mismatch.
+        if artifact_dir != expected_dir:
             raise DatusException(
                 code=ErrorCode.COMMON_CONFIG_ERROR,
-                message_args={"config_error": (f"artifact path resolved outside project root: {artifact_dir}")},
+                message_args={"config_error": (f"artifact path resolved outside expected location: {artifact_dir}")},
             )
         if not artifact_dir.is_dir():
             raise DatusException(

@@ -55,8 +55,12 @@ class ArtifactManifest(BaseModel):
       the field self-describing means a single backend route can serve
       both shapes by inspecting one file.
     * ``created_at`` is the UTC timestamp at which the manifest was
-      first written. We deliberately do NOT track an ``updated_at``
-      here — the file is write-once for now (no update-manifest tool).
+      first written.
+    * ``updated_at`` is a persisted ISO-8601 UTC timestamp refreshed on
+      every ``save_query`` / ``save_query_template`` / ``bind_existing_*``
+      call so list pages can order by recency. ``None`` until the first
+      mutation after creation; older manifests written before this field
+      was introduced deserialize cleanly with ``None``.
     """
 
     model_config = ConfigDict(extra="forbid")
