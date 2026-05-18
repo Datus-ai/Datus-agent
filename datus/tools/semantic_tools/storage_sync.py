@@ -16,7 +16,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.metric.store import MetricStorage
+from datus.storage.metric.store import MetricStorage, build_metric_id
 from datus.storage.semantic_model.store import SemanticModelStorage
 from datus.storage.subject_tree.store import SubjectTreeStore
 from datus.tools.semantic_tools.models import SemanticModelInfo
@@ -289,11 +289,9 @@ class SemanticStorageManager:
         if not subject_path:
             subject_path = ["Uncategorized"]
 
-        # Include subject_path in ID to avoid collision for metrics with same name
-        subject_path_str = "/".join(subject_path)
         metric_obj = {
             "subject_path": subject_path,
-            "id": f"metric:{subject_path_str}.{metric_data['name']}",
+            "id": build_metric_id(subject_path, metric_data["name"]),
             "name": metric_data["name"],
             "description": metric_data.get("description", ""),
             "semantic_model_name": metric_data.get("semantic_model_name", ""),

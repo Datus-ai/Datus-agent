@@ -17,6 +17,12 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
+def build_metric_id(subject_path: List[str], name: str) -> str:
+    """Build the stable business key for a metric."""
+    subject_path_str = "/".join(subject_path)
+    return f"metric:{subject_path_str}.{name}"
+
+
 class MetricStorage(BaseSubjectEmbeddingStore):
     # Only fields editable through the CLI panel (MetricsPanel) are synced to YAML.
     # Other metric fields (metric_type, type_params, etc.) are not exposed for UI edits.
@@ -32,7 +38,7 @@ class MetricStorage(BaseSubjectEmbeddingStore):
                 base_schema_columns()  # Provides: name, subject_id, created_at
                 + [
                     # -- Identity & Basic Info --
-                    pa.field("id", pa.string()),  # Unique ID: "metric:dau"
+                    pa.field("id", pa.string()),  # Unique ID: "metric:Metrics/orders.dau"
                     pa.field("semantic_model_name", pa.string()),  # Source semantic model
                     # -- Retrieval Fields --
                     pa.field("description", pa.string()),  # For LLM reading (RAG) and vector search
@@ -102,7 +108,7 @@ class MetricStorage(BaseSubjectEmbeddingStore):
         Args:
             metrics: List of dictionaries containing metric data with required fields:
                 - subject_path: List[str] - Subject hierarchy path for each metric
-                - id: str - Unique identifier for the metric (e.g., "metric:dau")
+                - id: str - Unique identifier for the metric (e.g., "metric:Metrics/orders.dau")
                 - Other fields same as batch_store_metrics
         """
         if not metrics:

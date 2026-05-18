@@ -17,7 +17,7 @@ from datus_storage_base.conditions import And, eq
 
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.metric.store import MetricRAG
+from datus.storage.metric.store import MetricRAG, build_metric_id
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.db_tools import connector_registry
@@ -1270,7 +1270,7 @@ class GenerationHooks(AgentHooks):
                         "name": m_name,
                         "subject_path": subject_path,
                         "semantic_model_name": metric_table_name,
-                        "id": f"metric:{m_name}",
+                        "id": build_metric_id(subject_path, m_name),
                         "description": m_desc,
                         "metric_type": m_type,
                         "measure_expr": measure_expr,

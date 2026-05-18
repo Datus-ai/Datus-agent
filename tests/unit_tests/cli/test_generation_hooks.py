@@ -1372,6 +1372,57 @@ class TestSyncSemanticToDbBooleanCoercion:
 
 
 class TestSyncSemanticToDbMetricReferenceNormalization:
+    def test_metric_id_includes_subject_path_to_avoid_same_name_collision(self, agent_config, tmp_path):
+        yaml_file = tmp_path / "metrics.yml"
+        yaml_file.write_text(
+            """
+metric:
+  name: average_gross_order_value
+  description: "Commerce AOV"
+  type: simple
+  locked_metadata:
+    tags:
+      - "subject_tree: Commerce/Orders/Average_Order_Value"
+---
+metric:
+  name: average_gross_order_value
+  description: "Finance AOV"
+  type: simple
+  locked_metadata:
+    tags:
+      - "subject_tree: Finance/Orders/Average_Order_Value"
+""",
+            encoding="utf-8",
+        )
+
+        captured_metric = []
+        mock_semantic_rag = MagicMock()
+        mock_semantic_rag.upsert_batch = MagicMock()
+        mock_metric_rag = MagicMock()
+        mock_metric_rag.upsert_batch = lambda objects: captured_metric.extend(objects)
+        db_config = MagicMock()
+        db_config.catalog = ""
+        db_config.database = "test_db"
+        db_config.schema = ""
+        agent_config.current_db_config.return_value = db_config
+
+        with (
+            patch("datus.cli.generation_hooks.SemanticModelRAG", return_value=mock_semantic_rag),
+            patch("datus.cli.generation_hooks.MetricRAG", return_value=mock_metric_rag),
+        ):
+            result = GenerationHooks._sync_semantic_to_db(
+                file_path=str(yaml_file),
+                agent_config=agent_config,
+                include_semantic_objects=False,
+                include_metrics=True,
+            )
+
+        assert result["success"], f"Sync failed: {result.get('error')}"
+        assert len(captured_metric) == 2
+        assert captured_metric[0]["id"] == "metric:Commerce/Orders/Average_Order_Value.average_gross_order_value"
+        assert captured_metric[1]["id"] == "metric:Finance/Orders/Average_Order_Value.average_gross_order_value"
+        assert captured_metric[0]["id"] != captured_metric[1]["id"]
+
     def test_measure_proxy_nested_measure_is_stored_as_string(self, agent_config, tmp_path):
         yaml_file = tmp_path / "metrics.yml"
         yaml_file.write_text(
