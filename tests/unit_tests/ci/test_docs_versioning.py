@@ -41,6 +41,34 @@ def test_tag_patch_release_does_not_promote_latest_when_newer_minor_exists():
     assert metadata.set_default == ""
 
 
+def test_published_versions_malformed_json_fails_closed():
+    try:
+        docs_versioning.resolve_docs_metadata(
+            event_name="push",
+            github_ref_type="tag",
+            github_ref_name="v0.3.8",
+            published_versions_json="{not-json",
+        )
+    except ValueError as exc:
+        assert "Invalid published versions JSON" in str(exc)
+    else:
+        raise AssertionError("Expected malformed published versions JSON to fail")
+
+
+def test_published_versions_non_list_json_fails_closed():
+    try:
+        docs_versioning.resolve_docs_metadata(
+            event_name="push",
+            github_ref_type="tag",
+            github_ref_name="v0.3.8",
+            published_versions_json=json.dumps({"version": "0.3"}),
+        )
+    except ValueError as exc:
+        assert "expected a list" in str(exc)
+    else:
+        raise AssertionError("Expected non-list published versions JSON to fail")
+
+
 def test_prerelease_tag_is_skipped():
     metadata = docs_versioning.resolve_docs_metadata(
         event_name="push",
@@ -124,3 +152,12 @@ def test_docs_version_visibility_hides_patch_and_old_minor_versions():
     assert docs_versioning.should_hide_docs_version("0.3.7", min_visible_minor) is True
     assert docs_versioning.should_hide_docs_version("0.4.0rc1", min_visible_minor) is True
     assert docs_versioning.should_hide_docs_version("latest", min_visible_minor) is False
+
+
+def test_hide_legacy_cli_reports_invalid_minor(capsys):
+    result = docs_versioning.main(["hide-legacy", "--min-visible-minor", "0.2.6"])
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert "::error::Invalid --min-visible-minor" in captured.err
+    assert "Invalid minor docs version: 0.2.6" in captured.err

@@ -82,10 +82,10 @@ def resolve_source_tag(version: Version, tag_exists: Callable[[str], bool]) -> s
 def parse_published_versions(raw_json: str) -> list[Version]:
     try:
         items = json.loads(raw_json or "[]")
-    except json.JSONDecodeError:
-        return []
+    except json.JSONDecodeError as exc:
+        raise ValueError("Invalid published versions JSON") from exc
     if not isinstance(items, list):
-        return []
+        raise ValueError("Invalid published versions JSON: expected a list")
 
     versions: list[Version] = []
     for item in items:
@@ -242,7 +242,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "hide-legacy":
-        min_visible_minor = parse_minor(args.min_visible_minor)
+        try:
+            min_visible_minor = parse_minor(args.min_visible_minor)
+        except ValueError as exc:
+            print(f"::error::Invalid --min-visible-minor: {exc}", file=sys.stderr)
+            return 1
         changed = hide_legacy_docs_versions(min_visible_minor)
         if not changed:
             print("No docs version visibility changes needed.")
