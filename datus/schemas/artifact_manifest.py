@@ -93,3 +93,16 @@ class ArtifactManifest(BaseModel):
             "connectors to bind. Stable order = first-seen order so diffs stay readable."
         ),
     )
+    key_tables: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Distinct table names this artifact's queries reference (bare names, no "
+            "schema / catalog qualifier). Code-generated at finalize time by parsing "
+            "every ``queries/*.sql`` and ``queries/*.sql.j2`` with sqlglot and stripping "
+            "CTE aliases — the LLM never writes this field. The follow-up ask agent "
+            "reads it to skip a ``list_tables`` / ``describe_table`` round-trip when "
+            "answering schema-shape questions or when planning a new SQL on related "
+            "tables. Empty when finalize hasn't run yet or when SQL parsing failed "
+            "across the board (rare). Sorted alphabetically for diff stability."
+        ),
+    )

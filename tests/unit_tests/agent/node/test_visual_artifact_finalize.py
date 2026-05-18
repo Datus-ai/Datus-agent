@@ -26,12 +26,14 @@ from unittest.mock import Mock
 import pytest
 
 from datus.agent.node._visual_artifact_finalize import (
+    aggregate_referenced_tables,
     aggregate_subject_refs,
     collect_query_briefs,
     collect_query_previews,
     consistency_check,
     parse_finalize_output,
     run_finalize_analysis,
+    update_manifest_key_tables,
 )
 from datus.schemas.analysis_artifacts import (
     FinalizeAnalysisOutput,
@@ -338,25 +340,47 @@ class TestConsistencyCheck:
 # --------------------------------------------------------------------------- #
 
 
-def _make_artifact_layout(
-    tmp_path: Path, *, with_brief: bool = True, brief_uses: Dict[str, List[str]] | None = None
-) -> tuple[Path, Path, Path]:
-    """Build the three on-disk paths run_finalize_analysis expects.
+def _seed_manifest(artifact_dir: Path, *, slug: str = "demo_report") -> Path:
+    """Write a minimal valid manifest so finalize's key_tables update
+    has something to patch in place."""
+    payload = {
+        "slug": slug,
+        "name": "Demo report",
+        "description": "Smoke-test artifact used by the finalize unit tests.",
+        "kind": "report",
+        "created_at": "2026-05-14T10:00:00Z",
+    }
+    path = artifact_dir / "manifest.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
 
-    By default seeds one brief with a ``metrics`` ref so the
-    ``subject_refs.json`` writer triggers; pass ``brief_uses={}`` to
-    exercise the empty-uses path that skips the file.
+
+def _make_artifact_layout(
+    tmp_path: Path,
+    *,
+    with_brief: bool = True,
+    brief_uses: Dict[str, List[str]] | None = None,
+    sql_body: str = "SELECT 1",
+) -> tuple[Path, Path, Path]:
+    """Build the on-disk paths run_finalize_analysis expects.
+
+    Always seeds ``manifest.json`` (so the key_tables updater has a
+    target). Optionally seeds one brief + matching SQL/result file; the
+    SQL body is parameterised so individual tests can exercise the
+    table-extraction path with realistic FROM/JOIN clauses while the
+    default keeps prior tests' contract (``SELECT 1`` → no tables).
     """
     artifact_dir = tmp_path / "artifact"
     queries_dir = artifact_dir / "queries"
     analysis_dir = artifact_dir / "analysis"
     queries_dir.mkdir(parents=True)
     analysis_dir.mkdir(parents=True)
+    _seed_manifest(artifact_dir)
     if with_brief:
         if brief_uses is None:
             brief_uses = {"metrics": ["m_revenue"]}
         _write_brief(queries_dir, "rev_by_region", uses=brief_uses)
-        (queries_dir / "rev_by_region.sql").write_text("SELECT 1", encoding="utf-8")
+        (queries_dir / "rev_by_region.sql").write_text(sql_body, encoding="utf-8")
         (queries_dir / "rev_by_region.json").write_text(
             json.dumps(
                 {
@@ -370,6 +394,155 @@ def _make_artifact_layout(
             encoding="utf-8",
         )
     return artifact_dir, queries_dir, analysis_dir
+
+
+# --------------------------------------------------------------------------- #
+# aggregate_referenced_tables                                                 #
+# --------------------------------------------------------------------------- #
+
+
+class TestAggregateReferencedTables:
+    def test_missing_dir_returns_empty(self, tmp_path: Path):
+        assert aggregate_referenced_tables(tmp_path / "nope") == []
+
+    def test_empty_dir_returns_empty(self, tmp_path: Path):
+        queries_dir = tmp_path / "queries"
+        queries_dir.mkdir()
+        assert aggregate_referenced_tables(queries_dir) == []
+
+    def test_simple_select_picks_up_one_table(self, tmp_path: Path):
+        queries_dir = tmp_path / "queries"
+        queries_dir.mkdir()
+        (queries_dir / "alpha.sql").write_text("SELECT * FROM Account", encoding="utf-8")
+        assert aggregate_referenced_tables(queries_dir) == ["Account"]
+
+    def test_join_picks_up_all_sides(self, tmp_path: Path):
+        queries_dir = tmp_path / "queries"
+        queries_dir.mkdir()
+        (queries_dir / "join.sql").write_text(
+            "SELECT * FROM Account a LEFT JOIN PersonOwnAccount poa ON a.id = poa.id",
+            encoding="utf-8",
+        )
+        assert aggregate_referenced_tables(queries_dir) == ["Account", "PersonOwnAccount"]
+
+    def test_cte_aliases_are_filtered(self, tmp_path: Path):
+        """A WITH-clause alias must not leak into key_tables — the LLM /
+        UI would otherwise see ``monthly`` as if it were a real table."""
+        queries_dir = tmp_path / "queries"
+        queries_dir.mkdir()
+        (queries_dir / "cte.sql").write_text(
+            "WITH monthly AS (SELECT * FROM Account) SELECT * FROM monthly",
+            encoding="utf-8",
+        )
+        # Only the real underlying table survives.
+        assert aggregate_referenced_tables(queries_dir) == ["Account"]
+
+    def test_dedup_across_multiple_files(self, tmp_path: Path):
+        queries_dir = tmp_path / "queries"
+        queries_dir.mkdir()
+        (queries_dir / "a.sql").write_text("SELECT * FROM Account", encoding="utf-8")
+        (queries_dir / "b.sql").write_text("SELECT * FROM Account WHERE x=1", encoding="utf-8")
+        (queries_dir / "c.sql").write_text("SELECT * FROM Person", encoding="utf-8")
+        # Sorted alphabetically; Account appears once despite two refs.
+        assert aggregate_referenced_tables(queries_dir) == ["Account", "Person"]
+
+    def test_dashboard_template_jinja_blocks_stripped_before_parse(self, tmp_path: Path):
+        """Dashboard ``.sql.j2`` files mix Jinja2 control flow into the SQL.
+        The extractor must strip ``{% %}`` / ``{{ }}`` tokens before
+        handing the body to sqlglot or the parse will fail and we'd
+        silently lose table refs."""
+        queries_dir = tmp_path / "queries"
+        queries_dir.mkdir()
+        (queries_dir / "filtered.sql.j2").write_text(
+            (
+                "-- @datus-params region:string\n"
+                "SELECT * FROM Account a\n"
+                "{% if region %}WHERE a.region = {{ region }}{% endif %}\n"
+                "JOIN Person p ON a.person_id = p.id"
+            ),
+            encoding="utf-8",
+        )
+        assert aggregate_referenced_tables(queries_dir) == ["Account", "Person"]
+
+    def test_broken_file_does_not_crash_aggregate(self, tmp_path: Path):
+        """sqlglot runs in ``error_level=IGNORE`` mode — broken SQL won't
+        raise, and any identifiers sqlglot can still salvage are kept
+        (better partial recovery than dropping the file on the floor).
+        The pin here is purely "doesn't crash; siblings still contribute"."""
+        queries_dir = tmp_path / "queries"
+        queries_dir.mkdir()
+        (queries_dir / "good.sql").write_text("SELECT * FROM Account", encoding="utf-8")
+        (queries_dir / "bad.sql").write_text("SELECT * FROM ((( unclosed", encoding="utf-8")
+        result = aggregate_referenced_tables(queries_dir)
+        # The good file always contributes.
+        assert "Account" in result
+        # And it's a sorted list of strings — no exception, no None entries.
+        assert result == sorted(result)
+        assert all(isinstance(t, str) and t for t in result)
+
+
+# --------------------------------------------------------------------------- #
+# update_manifest_key_tables                                                  #
+# --------------------------------------------------------------------------- #
+
+
+class TestUpdateManifestKeyTables:
+    def test_writes_key_tables_to_existing_manifest(self, tmp_path: Path):
+        manifest_path = _seed_manifest(tmp_path)
+        err = update_manifest_key_tables(manifest_path, ["Account", "Person"])
+        assert err is None
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert data["key_tables"] == ["Account", "Person"]
+        # Other fields stay intact.
+        assert data["slug"] == "demo_report"
+        assert data["name"] == "Demo report"
+
+    def test_overwrites_instead_of_unioning(self, tmp_path: Path):
+        """Edit-mode rerun where a query (and its table) was removed:
+        ``key_tables`` is code-generated and authoritative each run,
+        so the stale entry must NOT survive."""
+        manifest_path = _seed_manifest(tmp_path)
+        update_manifest_key_tables(manifest_path, ["Account", "Person", "OldTable"])
+        update_manifest_key_tables(manifest_path, ["Account", "Person"])
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert data["key_tables"] == ["Account", "Person"]
+
+    def test_no_op_when_identical(self, tmp_path: Path, monkeypatch):
+        """If the value didn't change, skip the disk write (don't bump mtime
+        needlessly). We probe by patching the underlying writer."""
+        manifest_path = _seed_manifest(tmp_path)
+        update_manifest_key_tables(manifest_path, ["Account"])  # establish baseline
+
+        from datus.agent.node import _visual_artifact_finalize as finalize_mod
+
+        write_calls: list[Path] = []
+        original = finalize_mod._atomic_write_text
+
+        def _spy(path, content):
+            write_calls.append(path)
+            original(path, content)
+
+        monkeypatch.setattr(finalize_mod, "_atomic_write_text", _spy)
+        err = update_manifest_key_tables(manifest_path, ["Account"])
+        assert err is None
+        assert write_calls == []  # no second write because content was identical
+
+    def test_missing_manifest_returns_error_string(self, tmp_path: Path):
+        err = update_manifest_key_tables(tmp_path / "nope.json", ["Account"])
+        assert err is not None
+        assert "manifest missing" in err
+
+    def test_corrupt_manifest_returns_error_string(self, tmp_path: Path):
+        path = tmp_path / "manifest.json"
+        path.write_text("{not-json", encoding="utf-8")
+        err = update_manifest_key_tables(path, ["Account"])
+        assert err is not None
+        assert "unreadable" in err
+
+
+# --------------------------------------------------------------------------- #
+# run_finalize_analysis                                                       #
+# --------------------------------------------------------------------------- #
 
 
 class TestRunFinalizeAnalysis:
@@ -399,6 +572,32 @@ class TestRunFinalizeAnalysis:
         refs = json.loads((analysis_dir / "subject_refs.json").read_text(encoding="utf-8"))
         assert any(m["id"] == "m_revenue" for m in refs["metrics"])
         assert result["subject_refs_count"]["metrics"] == 1
+
+    def test_end_to_end_populates_manifest_key_tables(self, tmp_path: Path):
+        """Finalize writes the code-aggregated table list back to
+        ``manifest.key_tables`` (the ask agent's preamble surfaces this
+        to skip schema-discovery round-trips)."""
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(
+            tmp_path,
+            sql_body="SELECT a.id FROM Account a JOIN PersonOwnAccount poa ON a.id = poa.id",
+        )
+
+        model = Mock(spec=["generate_with_json_output"])
+        model.generate_with_json_output.return_value = _full_finalize_response()
+
+        result = run_finalize_analysis(
+            model=model,
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+        )
+
+        assert result["ok"] is True
+        assert result["key_tables"] == ["Account", "PersonOwnAccount"]
+        manifest = json.loads((artifact_dir / "manifest.json").read_text(encoding="utf-8"))
+        assert manifest["key_tables"] == ["Account", "PersonOwnAccount"]
 
     def test_subject_refs_skipped_when_no_uses_declared(self, tmp_path: Path):
         """Present-iff-non-empty: a brief without any subject-library

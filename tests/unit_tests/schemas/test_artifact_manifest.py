@@ -84,3 +84,18 @@ class TestArtifactManifest:
     def test_invalid_slug_rejected(self, bad_slug):
         with pytest.raises(ValidationError):
             ArtifactManifest.model_validate(_base_payload(slug=bad_slug))
+
+    def test_key_tables_defaults_to_empty(self):
+        """``key_tables`` is code-generated at finalize time. Manifests
+        written before finalize ran (or before this field landed) must
+        still deserialize cleanly with an empty list."""
+        manifest = ArtifactManifest.model_validate(_base_payload())
+        assert manifest.key_tables == []
+
+    def test_key_tables_round_trip(self):
+        payload = _base_payload(key_tables=["Account", "Person"])
+        manifest = ArtifactManifest.model_validate(payload)
+        assert manifest.key_tables == ["Account", "Person"]
+        # Round-trips through model_dump unchanged.
+        restored = ArtifactManifest.model_validate(manifest.model_dump())
+        assert restored.key_tables == manifest.key_tables

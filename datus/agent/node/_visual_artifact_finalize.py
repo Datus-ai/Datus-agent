@@ -43,8 +43,12 @@ Implementation choices worth remembering:
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+
+import sqlglot
+from sqlglot.expressions import CTE, Table
 
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.analysis_artifacts import (
@@ -52,10 +56,19 @@ from datus.schemas.analysis_artifacts import (
     SubjectAssetRef,
     SubjectRefs,
 )
+from datus.schemas.artifact_manifest import ArtifactManifest
 from datus.tools.func_tool._visual_artifact_helpers import _atomic_write_text
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+# Jinja2 control structures + comments we strip before handing dashboard
+# templates to sqlglot. Variable interpolations ``{{ ... }}`` inside SQL
+# bodies (``WHERE x = {{ region }}``) would otherwise break the parser
+# even though we only care about identifiers in FROM / JOIN clauses.
+_JINJA_BLOCK_RE = re.compile(r"\{%-?.*?-?%\}", re.DOTALL)
+_JINJA_COMMENT_RE = re.compile(r"\{#.*?#\}", re.DOTALL)
+_JINJA_INTERP_RE = re.compile(r"\{\{.*?\}\}", re.DOTALL)
 
 
 # Subject-library-aware tool names whose action history we surface as
@@ -406,6 +419,132 @@ def aggregate_subject_refs(queries_dir: Path) -> SubjectRefs:
     )
 
 
+def _extract_tables_from_one_sql(sql_text: str) -> set[str]:
+    """Return the set of bare (unqualified) table names referenced by a
+    single SQL statement, with CTE aliases filtered out.
+
+    Returns an empty set when sqlglot can't parse the input — finalize
+    treats table aggregation as best-effort and never raises.
+    """
+    if not sql_text or not sql_text.strip():
+        return set()
+    try:
+        # ``dialect=None`` lets sqlglot pick its generic parser. The
+        # finalize-stage manifest doesn't carry a stable dialect label
+        # (``datasources`` holds logical labels like ``finbench``, not
+        # ``postgres`` / ``duckdb``), and the generic parser handles
+        # SELECT / WITH / JOIN syntax across every dialect this codebase
+        # supports.
+        parsed = sqlglot.parse_one(sql_text, dialect=None, error_level=sqlglot.ErrorLevel.IGNORE)
+    except Exception as exc:  # sqlglot raises a bag of subclasses; broad catch is intentional
+        logger.debug("sqlglot parse failed during key_tables extraction: %s", exc)
+        return set()
+    if parsed is None:
+        return set()
+
+    cte_names = set()
+    for cte in parsed.find_all(CTE):
+        alias = getattr(cte, "alias", None)
+        if alias:
+            cte_names.add(alias.lower())
+
+    tables: set[str] = set()
+    for tbl in parsed.find_all(Table):
+        name = tbl.name
+        if not name:
+            continue
+        if name.lower() in cte_names:
+            continue
+        tables.add(name)
+    return tables
+
+
+def _strip_jinja(template_text: str) -> str:
+    """Remove Jinja2 control / comment / interpolation tokens so sqlglot
+    can parse the underlying SQL skeleton. We only need the FROM / JOIN
+    identifiers for key_tables, so over-stripping the parameter slots is
+    fine — it can't accidentally invent table references."""
+    without_blocks = _JINJA_BLOCK_RE.sub(" ", template_text)
+    without_comments = _JINJA_COMMENT_RE.sub(" ", without_blocks)
+    return _JINJA_INTERP_RE.sub(" ", without_comments)
+
+
+def aggregate_referenced_tables(queries_dir: Path) -> List[str]:
+    """Walk ``queries/*.sql`` + ``queries/*.sql.j2`` and return every
+    distinct bare table name referenced across them, sorted alphabetically.
+
+    Used to populate ``manifest.key_tables`` at finalize time so the
+    follow-up ask agent doesn't need to grep every SQL file (or call
+    ``list_tables`` / ``describe_table``) to discover which tables the
+    artifact actually touches. CTEs are filtered out; aliases preserve
+    case as the LLM wrote them (most likely PascalCase matching the
+    underlying database).
+
+    Best-effort: a file that fails to parse contributes nothing to the
+    aggregate. An empty list is a legitimate result (no queries on
+    disk, or every parse failed) and the manifest writer treats it as
+    "no key tables to record" rather than an error.
+    """
+    tables: set[str] = set()
+    if not queries_dir.is_dir():
+        return []
+    for sql_path in sorted(queries_dir.glob("*.sql")):
+        try:
+            text = sql_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Failed to read %s for key_tables aggregation: %s", sql_path, exc)
+            continue
+        tables.update(_extract_tables_from_one_sql(text))
+    for tpl_path in sorted(queries_dir.glob("*.sql.j2")):
+        try:
+            text = _strip_jinja(tpl_path.read_text(encoding="utf-8"))
+        except OSError as exc:
+            logger.warning("Failed to read %s for key_tables aggregation: %s", tpl_path, exc)
+            continue
+        tables.update(_extract_tables_from_one_sql(text))
+    return sorted(tables)
+
+
+def update_manifest_key_tables(manifest_path: Path, key_tables: List[str]) -> Optional[str]:
+    """Refresh ``manifest.key_tables`` in place.
+
+    Read-validate-replace cycle (similar to ``upsert_manifest_after_save``)
+    so any other manifest mutation that happened mid-run survives. We
+    always overwrite ``key_tables`` rather than union-add: the field is
+    code-generated and each finalize run reflects the current SQL set
+    authoritatively, including queries that were deleted in an
+    edit-mode rerun.
+
+    Returns an error string on failure, ``None`` on success. Missing /
+    corrupt manifest is non-fatal — finalize is the *last* step, the
+    artifact's primary contract is already on disk by the time this
+    runs.
+    """
+    if not manifest_path.is_file():
+        return "manifest missing — cannot update key_tables"
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return f"manifest unreadable while updating key_tables: {exc}"
+    try:
+        manifest = ArtifactManifest.model_validate(raw)
+    except Exception as exc:
+        return f"manifest schema validation failed during key_tables update: {exc}"
+    if manifest.key_tables == key_tables:
+        # No-op: skip the disk write so we don't bump mtime needlessly.
+        return None
+    manifest.key_tables = key_tables
+    try:
+        _atomic_write_text(
+            manifest_path,
+            json.dumps(manifest.model_dump(), ensure_ascii=False, indent=2) + "\n",
+        )
+        return None
+    except OSError as exc:
+        logger.warning("Failed to write key_tables back to %s: %s", manifest_path, exc)
+        return f"failed to write key_tables: {exc}"
+
+
 def write_subject_refs(analysis_dir: Path, refs: SubjectRefs) -> Optional[str]:
     """Write ``subject_refs.json`` iff any bucket is non-empty.
 
@@ -492,6 +631,7 @@ def run_finalize_analysis(
             "ok": True,
             "warnings": [...],
             "subject_refs_count": {"metrics": n, "reference_sql": n, "ext_knowledge": n},
+            "key_tables": [...],
         }
 
     Or, on hard failure (LLM call exception or schema validation
@@ -540,11 +680,20 @@ def run_finalize_analysis(
     if write_err:
         warnings.append(write_err)
 
+    # Refresh manifest.key_tables — code-aggregated, LLM-free hint the
+    # follow-up ask agent reads to skip schema discovery round-trips.
+    # Soft-fail: warnings surface in the result, never block the artifact.
+    key_tables = aggregate_referenced_tables(queries_dir)
+    kt_err = update_manifest_key_tables(artifact_dir / "manifest.json", key_tables)
+    if kt_err:
+        warnings.append(kt_err)
+
     warnings.extend(consistency_check(queries_dir=queries_dir, output=output))
 
     return {
         "ok": True,
         "warnings": warnings,
+        "key_tables": key_tables,
         "subject_refs_count": {
             "metrics": len(refs.metrics),
             "reference_sql": len(refs.reference_sql),

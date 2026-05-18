@@ -66,6 +66,7 @@ def _seed_artifact(project_root: str, kind: str, slug: str, *, with_analysis: bo
         "kind": kind,
         "created_at": "2026-05-17T00:00:00Z",
         "datasources": ["test_ds"],
+        "key_tables": ["Account", "Person"],
     }
     (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
@@ -241,6 +242,17 @@ class TestArtifactContextBlock:
         # Behavioral rules are present and number 7.
         assert "Ground in existing analysis first" in block
         assert "No artifact mutations" in block
+
+    def test_report_block_includes_key_tables(self, real_agent_config):
+        """``manifest.key_tables`` (code-aggregated by finalize) must be
+        surfaced in the preamble so the LLM skips ``list_tables`` /
+        ``describe_table`` round-trips when answering schema-shape
+        questions or planning a new SQL on related tables."""
+        node = _make_ask_report_node(real_agent_config)
+        block = node._render_artifact_context_block()
+        assert "Tables referenced" in block
+        assert "Account" in block
+        assert "Person" in block
 
     def test_report_block_excludes_interpretation_and_suggested(self, real_agent_config):
         """interpretation.json was removed; suggested_questions.json is
