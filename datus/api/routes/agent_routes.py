@@ -5,6 +5,7 @@ API routes for Agent endpoints.
 - /agent/list: returns all sub-agents (builtin + custom from agent.yml)
 - /agent/create: create a new custom sub-agent
 - /agent/edit: update an existing custom sub-agent
+- /agent/delete: delete an existing custom sub-agent
 - /agent/use_tools: get available tools for a given agent type
 - /agent/tools: list all valid tool categories
 """
@@ -111,6 +112,27 @@ async def edit_agent(
     agent_service = AgentService()
     return await agent_service.edit_agent(
         request=request,
+        agent_config=svc.agent_config,
+    )
+
+
+# ========== Agent Delete ==========
+
+
+@router.delete(
+    "/agent",
+    response_model=Result[dict],
+    summary="Delete Agent",
+    description="Delete an existing custom sub-agent from agent.yml",
+)
+async def delete_agent(
+    svc: ServiceDep,
+    agent_id: str = Query(..., description="Agent id to delete"),
+) -> Result[dict]:
+    """Delete a custom sub-agent."""
+    agent_service = AgentService()
+    return await agent_service.delete_agent(
+        agent_id=agent_id,
         agent_config=svc.agent_config,
     )
 

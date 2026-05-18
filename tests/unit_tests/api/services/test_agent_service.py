@@ -1614,3 +1614,83 @@ class TestSubagentScopedContextRoundTrip:
         assert scoped["metrics"] == "Sales.unknown"
         # Saved datasource binding survives the edit.
         assert scoped["datasource"] == "finance"
+
+
+@pytest.mark.asyncio
+class TestDeleteAgent:
+    """Tests for delete_agent — agent removal from agent.yml."""
+
+    async def test_delete_agent_removes_entry_and_persists(self, real_agent_config, agent_yml_with_singleton):
+        """delete_agent removes the agentic_nodes entry and writes the yaml back."""
+        import yaml
+
+        from datus.api.models.agent_models import CreateAgentInput
+
+        svc = AgentService()
+        await svc.create_agent(
+            CreateAgentInput(name="to_delete", type="gen_sql", description="goodbye"),
+            real_agent_config,
+        )
+
+        # Sanity: entry is present before delete.
+        with open(agent_yml_with_singleton) as f:
+            before = yaml.safe_load(f)
+        assert "to_delete" in before["agent"]["agentic_nodes"]
+
+        result = await svc.delete_agent("to_delete", real_agent_config)
+        assert result.success is True
+        assert result.data == {"id": "to_delete", "name": "to_delete"}
+
+        # In-memory map is updated and the rewritten yaml no longer has the entry.
+        assert "to_delete" not in (real_agent_config.agentic_nodes or {})
+        with open(agent_yml_with_singleton) as f:
+            after = yaml.safe_load(f)
+        assert "to_delete" not in (after["agent"].get("agentic_nodes") or {})
+
+        # Subsequent get returns AGENT_NOT_FOUND.
+        get_result = await svc.get_agent("to_delete", real_agent_config)
+        assert get_result.success is False
+        assert get_result.errorCode == "AGENT_NOT_FOUND"
+
+    async def test_delete_agent_not_found(self, real_agent_config, agent_yml_with_singleton):
+        """delete_agent returns AGENT_NOT_FOUND for unknown ids."""
+        svc = AgentService()
+        result = await svc.delete_agent("never_existed", real_agent_config)
+        assert result.success is False
+        assert result.errorCode == "AGENT_NOT_FOUND"
+
+    async def test_delete_agent_rejects_builtin(self, real_agent_config, agent_yml_with_singleton):
+        """Builtin sub-agents cannot be deleted via this API."""
+        svc = AgentService()
+        builtin_name = next(iter(BUILTIN_SUBAGENTS))
+        result = await svc.delete_agent(builtin_name, real_agent_config)
+        assert result.success is False
+        assert result.errorCode == "BUILTIN_AGENT_IMMUTABLE"
+
+    async def test_delete_agent_cleans_prompt_templates(self, real_agent_config, agent_yml_with_singleton):
+        """delete_agent best-effort removes ``<name>_system_*.j2`` files."""
+        from datus.api.models.agent_models import CreateAgentInput
+
+        svc = AgentService()
+        await svc.create_agent(
+            CreateAgentInput(name="template_owner", type="gen_sql", prompt_version="1.0"),
+            real_agent_config,
+        )
+
+        template_dir = real_agent_config.path_manager.datus_home / "template"
+        seeded = template_dir / "template_owner_system_1.0.j2"
+        assert seeded.exists(), "create_agent should have seeded a template file"
+
+        # Drop in a second version to prove the glob clears all versions.
+        extra = template_dir / "template_owner_system_2.0.j2"
+        extra.write_text("v2 content", encoding="utf-8")
+
+        # And a template owned by a different agent must NOT be touched.
+        unrelated = template_dir / "other_owner_system_1.0.j2"
+        unrelated.write_text("unrelated", encoding="utf-8")
+
+        result = await svc.delete_agent("template_owner", real_agent_config)
+        assert result.success is True
+        assert not seeded.exists()
+        assert not extra.exists()
+        assert unrelated.exists()
