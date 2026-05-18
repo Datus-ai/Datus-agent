@@ -1929,6 +1929,11 @@ class AgenticNode(Node):
                 status=ActionStatus.FAILED,
             )
             ahm.add_action(error_action)
+            # Mirror the success path: persist this turn's actions onto the
+            # node so cross-turn helpers (``_count_session_tokens``,
+            # ``get_last_turn_usage``) don't keep reading stale state after
+            # a failed attempt.
+            self.actions.extend(ahm.get_actions())
             yield error_action
 
     async def _stream_once(self, ctx: "StreamRunContext") -> AsyncGenerator[ActionHistory, None]:
@@ -2437,16 +2442,21 @@ class AgenticNode(Node):
 
     @staticmethod
     def _extract_total_tokens(actions: List[ActionHistory]) -> int:
-        """Walk recent actions and return the most recent assistant token count.
+        """Walk the current root turn and return its assistant token count.
 
-        Iterates in reverse so the latest assistant action wins. Tolerates
+        Iterates in reverse from the most recent action, stopping at the
+        last root-level user message so child/tool usage from sub-agents
+        does not leak into the parent's per-turn total — same scoping as
+        ``_count_session_tokens`` / ``get_last_turn_usage``. Tolerates
         ``total_tokens`` being a numeric string (some providers emit
         ``"1234"`` rather than ``1234``) — anything that fails an ``int``
         cast contributes ``0`` and the loop continues looking further back.
         Returns ``0`` when no assistant action carries a usable usage block.
         """
         for action in reversed(actions):
-            if action.role != ActionRole.ASSISTANT:
+            if action.role == ActionRole.USER and action.depth == 0:
+                break
+            if action.role != ActionRole.ASSISTANT or action.depth != 0:
                 continue
             output = action.output
             if not isinstance(output, dict):

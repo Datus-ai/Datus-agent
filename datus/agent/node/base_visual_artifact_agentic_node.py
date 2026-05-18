@@ -736,4 +736,10 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
     def _build_error_result(self, exc: BaseException, ctx: "StreamRunContext") -> ResultT:
         # Visual-artifact subclasses pre-existed the unified base error helper
         # and own a richer error shape (manifest snapshot, artifact mode).
+        # Refresh the bound artifact slug from the tools so manifest/artifact
+        # metadata is not lost when the LLM bound an artifact before the
+        # run failed (success path does the same refresh in _build_success_result).
+        picked = self._read_artifact_slug_from_tools()
+        if picked:
+            self._active_artifact_slug = picked
         return self._finalize_artifact_error(exc)

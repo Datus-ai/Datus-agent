@@ -387,12 +387,12 @@ class SqlSummaryAgenticNode(AgenticNode):
             tokens_used = self._extract_total_tokens(ctx.action_history_manager.get_actions())
 
         # Workflow mode auto-saves discovered sql_summary files to the DB.
+        # Persistence is the only durability path in workflow mode, so let
+        # the exception propagate to the template's error handler instead
+        # of silently returning success when the DB write failed.
         if self.execution_mode == "workflow" and sql_summary_file:
-            try:
-                self._save_to_db(sql_summary_file)
-                logger.info(f"Auto-saved to database: {sql_summary_file}")
-            except Exception as e:
-                logger.error(f"Failed to auto-save to database: {e}")
+            self._save_to_db(sql_summary_file)
+            logger.info(f"Auto-saved to database: {sql_summary_file}")
 
         return SqlSummaryNodeResult(
             success=True,
