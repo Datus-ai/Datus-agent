@@ -123,6 +123,39 @@ def test_render_report_html_walks_nested_render_dirs(tmp_path: Path):
     assert "render/charts/trend.jsx" in file_paths
 
 
+def test_render_report_html_rejects_symlink_escaping_report_root(tmp_path: Path):
+    """A symlink under ``render/`` that resolves outside the report dir is dropped.
+
+    The LLM controls everything under ``reports/<slug>/``; without the
+    resolve-and-check guard, ``ln -s /etc/passwd render/foo.jsx`` would
+    end up inlined into the standalone HTML payload. Locks the contract
+    that the walker only emits content that physically lives inside the
+    report directory.
+    """
+    _seed_report(tmp_path, report_slug="escape_001")
+    report_dir = tmp_path / "reports" / "escape_001"
+
+    # Drop a file outside the report tree, then symlink to it from under
+    # ``render/``. The symlink's name is a normal allowed suffix so the
+    # only thing keeping it out is the resolve-and-relative_to check.
+    outside_secret = tmp_path / "outside_secret.jsx"
+    outside_secret.write_text("export default 'SECRET';\n", encoding="utf-8")
+    (report_dir / "render" / "leak.jsx").symlink_to(outside_secret)
+
+    out_path = render_report_html(project_root=tmp_path, report_slug="escape_001")
+    body = out_path.read_text(encoding="utf-8")
+    start = body.index('id="datus-report-data">') + len('id="datus-report-data">')
+    end = body.index("</script>", start)
+    data = json.loads(body[start:end].replace("<\\/", "</"))
+
+    file_paths = {f["path"] for f in data["files"]}
+    assert "render/leak.jsx" not in file_paths
+    # The seeded files are still present — the guard didn't blow up the walker.
+    assert "render/app.jsx" in file_paths
+    # The secret content must not appear anywhere in the rendered HTML.
+    assert "SECRET" not in body
+
+
 def test_render_report_html_missing_app_jsx_raises(tmp_path: Path):
     (tmp_path / "reports" / "missing" / "queries").mkdir(parents=True)
     (tmp_path / "reports" / "missing" / "render").mkdir()

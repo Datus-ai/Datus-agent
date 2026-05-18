@@ -111,7 +111,14 @@ def _read_artifact_files(report_dir: Path) -> List[Dict[str, str]]:
     ``render/app.jsx``, ``queries/q.sql``). Only directories listed in
     ``_ARTIFACT_DIRS`` are walked, and each entry's suffix is checked against
     the allowlist so a stray scratch file doesn't bloat the inline payload.
+
+    Each candidate path is resolved before reading so that a symlink under
+    ``render/`` / ``queries/`` cannot exfiltrate a file from outside the
+    report directory into the inline HTML payload — the LLM controls these
+    paths and a stray ``ln -s /etc/passwd render/foo.jsx`` would otherwise
+    end up in the bundle.
     """
+    report_dir_resolved = report_dir.resolve()
     entries: List[Dict[str, str]] = []
     for sub, (allowed_suffixes, recursive) in _ARTIFACT_DIRS.items():
         root = report_dir / sub
@@ -121,8 +128,14 @@ def _read_artifact_files(report_dir: Path) -> List[Dict[str, str]]:
         for path in iterator:
             if not path.is_file() or path.suffix.lower() not in allowed_suffixes:
                 continue
-            rel = path.relative_to(report_dir).as_posix()
-            entries.append({"path": rel, "content": path.read_text(encoding="utf-8")})
+            resolved = path.resolve()
+            try:
+                rel = resolved.relative_to(report_dir_resolved).as_posix()
+            except ValueError:
+                # Symlink (or other indirection) escapes the report root —
+                # drop silently rather than leak content from outside.
+                continue
+            entries.append({"path": rel, "content": resolved.read_text(encoding="utf-8")})
     entries.sort(key=lambda entry: entry["path"])
     return entries
 
