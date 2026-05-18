@@ -58,31 +58,77 @@ _USER_FACING_TOOL_CATEGORIES: tuple[str, ...] = (
     "filesystem_tools",
 )
 
-_ALL_TOOL_TYPES: dict[str, dict[str, list[str]]] = {
-    category: {"tools": sorted(VALID_TOOL_METHODS[category])} for category in _USER_FACING_TOOL_CATEGORIES
-}
-
 # Filesystem methods an ``ask_*`` agent may use. Mirrors the read-only intent
 # documented in the ``ask_report`` / ``ask_dashboard`` entries of
 # :data:`SUBAGENT_TOOL_REFERENCE`: the consultant reads ``analysis/`` and
 # ``queries/`` to answer follow-ups but must never mutate the artifact.
 _ASK_AGENT_FILESYSTEM_READ_ONLY: tuple[str, ...] = ("glob", "grep", "read_file")
 
-# Read-only catalog returned by ``GET /agent/use_tools`` for ``ask_*`` agents.
-# Replaces the full ``_ALL_TOOL_TYPES`` so the editor never surfaces
-# ``filesystem_tools.write_file`` / ``edit_file`` as available options.
-_ASK_AGENT_TOOL_TYPES: dict[str, dict[str, list[str]]] = {
-    **{
-        category: _ALL_TOOL_TYPES[category]
-        for category in _USER_FACING_TOOL_CATEGORIES
-        if category != "filesystem_tools"
-    },
-    "filesystem_tools": {"tools": list(_ASK_AGENT_FILESYSTEM_READ_ONLY)},
+# Per-agent-type editor whitelist. Previously the saas frontend
+# (``tool-tree.ts`` ``enableToolGroup``) decided which categories the picker
+# would render — only ``gen_sql`` and the catch-all else branch (effectively
+# ``gen_report``) were handled explicitly, which hid filesystem_tools from
+# ask_* even though those agents preselect ``filesystem_tools.read_file`` /
+# ``glob`` / ``grep`` in their defaults. The API is now the single source of
+# truth: each agent type returns exactly the categories the editor should
+# surface, and the frontend can render whatever it receives.
+_TOOL_CATEGORIES_BY_AGENT_TYPE: dict[str, tuple[str, ...]] = {
+    "chat": _USER_FACING_TOOL_CATEGORIES,
+    "gen_sql": (
+        "db_tools",
+        "semantic_tools",
+        "context_search_tools",
+    ),
+    "gen_report": (
+        "db_tools",
+        "semantic_tools",
+        "context_search_tools",
+        "date_parsing_tools",
+        "reference_template_tools",
+    ),
+    "ask_report": (
+        "db_tools",
+        "semantic_tools",
+        "context_search_tools",
+        "reference_template_tools",
+        "date_parsing_tools",
+        "filesystem_tools",
+    ),
+    "ask_dashboard": (
+        "db_tools",
+        "semantic_tools",
+        "context_search_tools",
+        "reference_template_tools",
+        "date_parsing_tools",
+        "filesystem_tools",
+    ),
 }
+
+
+def _build_tool_types(agent_type: str) -> dict[str, dict[str, list[str]]]:
+    """Compose the ``tool_types`` block returned by ``GET /agent/use_tools``
+    for ``agent_type``. Categories are restricted to the per-type whitelist
+    in :data:`_TOOL_CATEGORIES_BY_AGENT_TYPE`; for ``ask_*`` agents,
+    ``filesystem_tools`` is further restricted to the read-only subset so
+    the editor picker never surfaces ``write_file`` / ``edit_file`` as
+    selectable options. ``_validate_tools_for_agent_type`` reads back from
+    the same block, so the per-type catalog stays the single allowlist for
+    both the picker and the write-path validator.
+    """
+    is_ask_agent = agent_type in {"ask_report", "ask_dashboard"}
+    tool_types: dict[str, dict[str, list[str]]] = {}
+    for category in _TOOL_CATEGORIES_BY_AGENT_TYPE[agent_type]:
+        if is_ask_agent and category == "filesystem_tools":
+            tool_types[category] = {"tools": list(_ASK_AGENT_FILESYSTEM_READ_ONLY)}
+        else:
+            tool_types[category] = {"tools": sorted(VALID_TOOL_METHODS[category])}
+    return tool_types
+
 
 # Per-agent-type tool reference. Mirrors the saas Datus-backend contract:
 # ``default_tools`` are wildcard / specific patterns preselected for the type,
-# ``tool_types`` is the full catalog of allowed categories with their methods.
+# ``tool_types`` is the curated catalog of categories the editor should
+# surface for that type (built via :func:`_build_tool_types`).
 SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
     "chat": {
         "default_tools": [
@@ -93,7 +139,7 @@ SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
             "filesystem_tools.*",
             "platform_doc_tools.*",
         ],
-        "tool_types": _ALL_TOOL_TYPES,
+        "tool_types": _build_tool_types("chat"),
     },
     "gen_sql": {
         "default_tools": [
@@ -101,14 +147,14 @@ SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
             "semantic_tools.*",
             "context_search_tools.*",
         ],
-        "tool_types": _ALL_TOOL_TYPES,
+        "tool_types": _build_tool_types("gen_sql"),
     },
     "gen_report": {
         "default_tools": [
             "semantic_tools.*",
             "context_search_tools.list_subject_tree",
         ],
-        "tool_types": _ALL_TOOL_TYPES,
+        "tool_types": _build_tool_types("gen_report"),
     },
     # ask_report / ask_dashboard: read-only follow-up consultant for a single
     # visual artifact. Default tools cover data exploration (db_tools read
@@ -133,7 +179,7 @@ SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
             "filesystem_tools.glob",
             "filesystem_tools.grep",
         ],
-        "tool_types": _ASK_AGENT_TOOL_TYPES,
+        "tool_types": _build_tool_types("ask_report"),
     },
     "ask_dashboard": {
         "default_tools": [
@@ -152,7 +198,7 @@ SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
             "filesystem_tools.glob",
             "filesystem_tools.grep",
         ],
-        "tool_types": _ASK_AGENT_TOOL_TYPES,
+        "tool_types": _build_tool_types("ask_dashboard"),
     },
 }
 

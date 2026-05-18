@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from datus.api.services.agent_service import (
+    _ASK_AGENT_FILESYSTEM_READ_ONLY,
+    _TOOL_CATEGORIES_BY_AGENT_TYPE,
     _USER_FACING_TOOL_CATEGORIES,
     BUILTIN_SUBAGENTS,
     SUBAGENT_TOOL_REFERENCE,
@@ -14,6 +16,7 @@ from datus.api.services.agent_service import (
     VALID_TOOL_METHODS,
     AgentService,
     _build_scoped_context,
+    _build_tool_types,
     _classify_subject_paths,
     _format_csv,
     _merge_subjects_from_scoped_context,
@@ -218,8 +221,15 @@ class TestConstants:
         """gen_sql tool reference has the saas {default_tools, tool_types} shape."""
         entry = SUBAGENT_TOOL_REFERENCE["gen_sql"]
         assert set(entry.keys()) == {"default_tools", "tool_types"}
-        # tool_types is the user-facing curated subset, not every VALID_TOOL_METHODS key
-        assert set(entry["tool_types"].keys()) == set(_USER_FACING_TOOL_CATEGORIES)
+        # gen_sql surfaces only the 3 categories the saas editor renders for
+        # the type — db / semantic / context_search. Other categories
+        # (filesystem / date_parsing / reference_template) are intentionally
+        # hidden so the picker matches the actual default_tools surface.
+        assert set(entry["tool_types"].keys()) == {
+            "db_tools",
+            "semantic_tools",
+            "context_search_tools",
+        }
         for category, payload in entry["tool_types"].items():
             assert payload == {"tools": sorted(VALID_TOOL_METHODS[category])}
         # gen_sql defaults to db / semantic / context_search wildcards (matches saas)
@@ -276,6 +286,16 @@ class TestConstants:
             "semantic_tools.*",
             "context_search_tools.list_subject_tree",
         ]
+        # gen_report exposes db / semantic / context_search plus date_parsing
+        # and reference_template — the 5-category surface the saas editor's
+        # else-branch rendered before the per-type whitelist moved server-side.
+        assert set(entry["tool_types"].keys()) == {
+            "db_tools",
+            "semantic_tools",
+            "context_search_tools",
+            "date_parsing_tools",
+            "reference_template_tools",
+        }
 
     def test_tool_reference_chat_has_full_default_set(self):
         """chat default_tools enumerates every non-semantic category as wildcard."""
@@ -288,6 +308,12 @@ class TestConstants:
             "filesystem_tools.*",
             "platform_doc_tools.*",
         ]
+        # chat is the most permissive agent type — the picker surfaces every
+        # user-facing category. ``platform_doc_tools`` stays in default_tools
+        # but not in tool_types (matches the documented "valid tool, hidden
+        # from picker" precedent for platform_doc_tools).
+        assert set(entry["tool_types"].keys()) == set(_USER_FACING_TOOL_CATEGORIES)
+        assert "platform_doc_tools" not in entry["tool_types"]
 
     def test_reference_template_tools_registered(self):
         """reference_template_tools category exposes the 4 expected methods."""
@@ -337,8 +363,13 @@ class TestGetUseTools:
             "semantic_tools.*",
             "context_search_tools.*",
         ]
-        # tool_types covers exactly the user-facing curated categories, each as {"tools": [...]}
-        assert set(result.data["tool_types"].keys()) == set(_USER_FACING_TOOL_CATEGORIES)
+        # gen_sql surfaces only 3 categories — the per-type whitelist matches
+        # the saas editor's ``gen_sql`` branch in tool-tree.ts.
+        assert set(result.data["tool_types"].keys()) == {
+            "db_tools",
+            "semantic_tools",
+            "context_search_tools",
+        }
         for category, payload in result.data["tool_types"].items():
             assert list(payload.keys()) == ["tools"]
             assert payload["tools"] == sorted(VALID_TOOL_METHODS[category])
@@ -351,7 +382,16 @@ class TestGetUseTools:
             "semantic_tools.*",
             "context_search_tools.list_subject_tree",
         ]
-        assert set(result.data["tool_types"].keys()) == set(_USER_FACING_TOOL_CATEGORIES)
+        # gen_report's 5-category surface mirrors the saas editor's else
+        # branch — no filesystem_tools because the type has no filesystem
+        # defaults and the picker historically excluded it.
+        assert set(result.data["tool_types"].keys()) == {
+            "db_tools",
+            "semantic_tools",
+            "context_search_tools",
+            "date_parsing_tools",
+            "reference_template_tools",
+        }
 
     def test_chat_includes_reference_template_tools_in_default(self):
         """chat default_tools wires up reference_template_tools.* (saas parity)."""
@@ -359,6 +399,76 @@ class TestGetUseTools:
         assert result.success is True
         assert "reference_template_tools.*" in result.data["default_tools"]
         assert "reference_template_tools" in result.data["tool_types"]
+        # chat is the most permissive agent type; its tool_types covers every
+        # user-facing category so the editor can surface them all.
+        assert set(result.data["tool_types"].keys()) == set(_USER_FACING_TOOL_CATEGORIES)
+
+    @pytest.mark.parametrize("agent_type", ["ask_report", "ask_dashboard"])
+    def test_ask_agent_tool_types_includes_filesystem_read_only(self, agent_type):
+        """ask_* exposes filesystem_tools as a read-only subset (glob / grep
+        / read_file) — the editor picker needs to render the category so
+        operators can see (and tweak) the read-side default_tools."""
+        result = AgentService.get_use_tools(agent_type)
+        assert result.success is True
+        tool_types = result.data["tool_types"]
+        # ask_* surfaces 6 categories — the 5 from gen_report's else-branch
+        # plus filesystem_tools restricted to the read-only methods.
+        assert set(tool_types.keys()) == {
+            "db_tools",
+            "semantic_tools",
+            "context_search_tools",
+            "reference_template_tools",
+            "date_parsing_tools",
+            "filesystem_tools",
+        }
+        assert set(tool_types["filesystem_tools"]["tools"]) == set(_ASK_AGENT_FILESYSTEM_READ_ONLY)
+
+
+class TestPerAgentTypeCategoryWhitelist:
+    """Tests for the per-agent-type editor whitelist that previously lived
+    only in the saas frontend (tool-tree.ts).
+
+    The whitelist is now the API's single source of truth: the editor
+    renders whatever ``tool_types`` it receives, and the same block gates
+    the write-path validation for ``ask_*`` agents via
+    :func:`_validate_tools_for_agent_type`.
+    """
+
+    def test_every_subagent_type_has_a_whitelist(self):
+        """Every entry in :data:`SUBAGENT_TOOL_REFERENCE` must have a
+        corresponding category whitelist — otherwise ``_build_tool_types``
+        would KeyError at import time."""
+        for agent_type in SUBAGENT_TOOL_REFERENCE:
+            assert agent_type in _TOOL_CATEGORIES_BY_AGENT_TYPE, (
+                f"{agent_type!r} is missing from _TOOL_CATEGORIES_BY_AGENT_TYPE"
+            )
+
+    def test_whitelist_only_references_known_categories(self):
+        """Every category mentioned in the whitelist must also be a real
+        VALID_TOOL_METHODS entry — otherwise ``_build_tool_types`` would
+        KeyError when composing ``tool_types``."""
+        for agent_type, categories in _TOOL_CATEGORIES_BY_AGENT_TYPE.items():
+            for category in categories:
+                assert category in VALID_TOOL_METHODS, (
+                    f"{agent_type!r} whitelist references unknown category {category!r}"
+                )
+
+    def test_build_tool_types_returns_per_type_categories(self):
+        """``_build_tool_types(agent_type)`` returns exactly the whitelisted
+        categories, in the order declared, with the full method set per
+        category."""
+        for agent_type, categories in _TOOL_CATEGORIES_BY_AGENT_TYPE.items():
+            tool_types = _build_tool_types(agent_type)
+            assert list(tool_types.keys()) == list(categories)
+            for category in categories:
+                payload = tool_types[category]
+                assert set(payload.keys()) == {"tools"}
+                if agent_type in {"ask_report", "ask_dashboard"} and category == "filesystem_tools":
+                    # ask_* filesystem is the read-only subset — write tools
+                    # must be absent and the read trio must be present.
+                    assert set(payload["tools"]) == set(_ASK_AGENT_FILESYSTEM_READ_ONLY)
+                else:
+                    assert payload["tools"] == sorted(VALID_TOOL_METHODS[category])
 
     def test_payload_no_longer_wraps_in_tools_key(self):
         """Old shape {"tools": [...]} is gone — data is now {default_tools, tool_types}."""
