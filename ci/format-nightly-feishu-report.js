@@ -208,12 +208,19 @@ function summarizeClassification(classification, options = {}) {
 
   const blockingCounts = classification.summary.blocking_category_counts || {};
   const categoryCounts = classification.summary.category_counts || {};
+  const diagnosticCounts = {};
+  for (const [category, count] of Object.entries(categoryCounts)) {
+    const diagnosticCount = Number(count) - Number(blockingCounts[category] || 0);
+    if (diagnosticCount > 0) {
+      diagnosticCounts[category] = diagnosticCount;
+    }
+  }
   const blockingText = formatCounts(blockingCounts);
-  const allText = formatCounts(categoryCounts);
+  const diagnosticText = formatCounts(diagnosticCounts);
   const findings = Array.isArray(classification.findings) ? classification.findings : [];
   const blockingFindings = findings.filter((finding) => finding && finding.blocking);
   const warningFindings = findings.filter((finding) => finding && !finding.blocking);
-  const selectedFindings = [...blockingFindings, ...warningFindings].slice(0, maxFindings).map((finding) => {
+  const formatFinding = (finding) => {
     const category = finding.category || 'unknown_failure';
     const title = finding.title || 'Unclassified finding';
     const details = finding.details || {};
@@ -222,13 +229,17 @@ function summarizeClassification(classification, options = {}) {
     const nodeid = details.nodeid ? ` nodeid=${details.nodeid}` : '';
     const entryId = details.entry_id ? ` entry=${details.entry_id}` : '';
     return `[${category}] ${title}${suite}${exitCode}${nodeid}${entryId}`;
-  });
+  };
+  const selectedBlockingFindings = blockingFindings.slice(0, maxFindings).map(formatFinding);
+  const selectedDiagnosticFindings = warningFindings.slice(0, maxFindings).map(formatFinding);
 
   return {
     blockingText,
-    allText,
-    findings: selectedFindings,
-    omitted: Math.max(0, findings.length - selectedFindings.length),
+    diagnosticText,
+    blockingFindings: selectedBlockingFindings,
+    diagnosticFindings: selectedDiagnosticFindings,
+    omittedBlocking: Math.max(0, blockingFindings.length - selectedBlockingFindings.length),
+    omittedDiagnostics: Math.max(0, warningFindings.length - selectedDiagnosticFindings.length),
   };
 }
 
@@ -273,21 +284,38 @@ function buildNightlyFeishuMessage({
   }
 
   if (classificationSummary) {
-    lines.push(
-      `**Classification:** ${
-        classificationSummary.blockingText || 'no blocking classified failures'
-      }${classificationSummary.allText ? ` (all findings: ${classificationSummary.allText})` : ''}.`,
-    );
-  }
-
-  if (classificationSummary && classificationSummary.findings.length > 0) {
-    lines.push('', '### Failure Classification', fencedList(classificationSummary.findings, 'No classified findings.'));
-    if (classificationSummary.omitted > 0) {
-      lines.push(`_... ${classificationSummary.omitted} more classified finding(s) omitted._`);
+    lines.push(`**Blocking:** ${classificationSummary.blockingText || 'no blocking classified failures'}.`);
+    if (classificationSummary.diagnosticText) {
+      lines.push(`**Diagnostics:** ${classificationSummary.diagnosticText}.`);
     }
   }
 
-  if (report.failures.length > 0 && (!classificationSummary || classificationSummary.findings.length === 0)) {
+  if (classificationSummary && classificationSummary.blockingFindings.length > 0) {
+    lines.push(
+      '',
+      '### Blocking Failures',
+      fencedList(classificationSummary.blockingFindings, 'No blocking classified failures.'),
+    );
+    if (classificationSummary.omittedBlocking > 0) {
+      lines.push(`_... ${classificationSummary.omittedBlocking} more blocking finding(s) omitted._`);
+    }
+  }
+
+  if (classificationSummary && classificationSummary.diagnosticFindings.length > 0) {
+    lines.push(
+      '',
+      '### Diagnostic Signals',
+      fencedList(classificationSummary.diagnosticFindings, 'No diagnostic signals.'),
+    );
+    if (classificationSummary.omittedDiagnostics > 0) {
+      lines.push(`_... ${classificationSummary.omittedDiagnostics} more diagnostic signal(s) omitted._`);
+    }
+  }
+
+  if (
+    report.failures.length > 0 &&
+    (!classificationSummary || classificationSummary.blockingFindings.length === 0)
+  ) {
     lines.push('', '### Failures / Errors', fencedList(report.failures, 'No failures detected.'));
     if (report.truncatedFailures > 0) {
       lines.push(`_... ${report.truncatedFailures} more failure/error lines omitted._`);
