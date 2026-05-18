@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import sys
 from pathlib import Path
 
 MODULE_PATH = Path(__file__).resolve().parents[3] / "ci" / "docs_versioning.py"
@@ -10,7 +9,6 @@ MODULE_SPEC = importlib.util.spec_from_file_location("docs_versioning", MODULE_P
 if MODULE_SPEC is None or MODULE_SPEC.loader is None:
     raise RuntimeError(f"Unable to load docs_versioning module from {MODULE_PATH}")
 docs_versioning = importlib.util.module_from_spec(MODULE_SPEC)
-sys.modules[MODULE_SPEC.name] = docs_versioning
 MODULE_SPEC.loader.exec_module(docs_versioning)
 
 

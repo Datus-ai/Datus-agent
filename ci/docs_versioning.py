@@ -9,9 +9,8 @@ import os
 import re
 import subprocess
 import sys
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, NamedTuple
 
 from packaging.version import InvalidVersion, Version
 
@@ -20,8 +19,7 @@ STABLE_PATCH_RE = re.compile(r"^\d+\.\d+\.\d+$")
 MINOR_RE = re.compile(r"^\d+\.\d+$")
 
 
-@dataclass(frozen=True)
-class DocsVersionMetadata:
+class DocsVersionMetadata(NamedTuple):
     skip_deploy: bool
     build_config: str = "mkdocs.yml"
     source_ref: str = ""
