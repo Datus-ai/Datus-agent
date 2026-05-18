@@ -11,16 +11,16 @@ generation tools, and hooks.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, Iterable, List, Literal, Optional
 
 import pandas as pd
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.compare_agentic_node import CompareAgenticNode
-from datus.agent.node.policies.verify_sql_policy import VerifySqlRetryPolicy
 from datus.agent.node.stream_run_context import StreamRunContext
 from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
+from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput, ExtKnowledgeNodeResult
 from datus.schemas.node_models import SQLContext, SqlTask
@@ -45,6 +45,66 @@ class VerifyResult:
     user_df: Optional[pd.DataFrame] = None
     gold_df: Optional[pd.DataFrame] = None
     outcome: Optional[ComparisonOutcome] = None
+
+
+class VerifySqlRetryPolicy:
+    """:class:`~datus.agent.node.retry_policy.RetryPolicy` driven by ``verify_sql``.
+
+    Used exclusively by :class:`GenExtKnowledgeAgenticNode`. The node owns
+    the ``_verification_passed`` flag and the ``_get_retry_prompt`` helper;
+    this policy is a thin adapter that lets the template's generic retry
+    loop consume them. When gold_sql is absent (``node._gold_sql`` falsy)
+    verification is considered passed and the loop exits after the first
+    attempt.
+
+    Lives in this module — not in a shared ``policies/`` package — because
+    it closes over a GenExtKnowledgeAgenticNode instance and would not be
+    reused by any other node.
+    """
+
+    def __init__(self, node: "GenExtKnowledgeAgenticNode"):
+        self.node = node
+        # ``max_verification_retries`` is the number of *retries*; the
+        # total attempt count is one larger (initial + retries).
+        self.max_attempts = max(1, node.max_verification_retries + 1)
+
+    def reset(self, ctx: StreamRunContext) -> None:
+        # Verification state is owned by the node so the ``verify_sql`` tool's
+        # ``on_end`` hook can keep updating it during the stream.
+        self.node._reset_verification_state()
+
+    def should_retry(self, ctx: StreamRunContext) -> bool:
+        if self.node._verification_passed:
+            return False
+        # No gold_sql means there is nothing to verify against — treat as passed.
+        if not getattr(self.node, "_gold_sql", None):
+            return False
+        logger.info(
+            "Verification failed for %s (attempt %d/%d), scheduling retry",
+            self.node.get_node_name(),
+            ctx.attempt,
+            self.max_attempts,
+        )
+        return True
+
+    def next_prompt(self, ctx: StreamRunContext) -> Optional[str]:
+        # ``ctx.attempt`` is the iteration we just finished; the next attempt
+        # uses it as the retry index (1-based for the user-facing
+        # "(N/max)" suffix the node's prompt builder embeds).
+        return self.node._get_retry_prompt(ctx.attempt)
+
+    def on_retry_actions(self, ctx: StreamRunContext) -> Iterable[ActionHistory]:
+        action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="verification_retry",
+            messages=(f"Verification failed, retrying ({ctx.attempt}/{self.node.max_verification_retries})..."),
+            input_data={"attempt": ctx.attempt},
+            status=ActionStatus.PROCESSING,
+        )
+        return (action,)
+
+    def finalise(self, ctx: StreamRunContext) -> None:
+        return None
 
 
 class GenExtKnowledgeAgenticNode(AgenticNode):

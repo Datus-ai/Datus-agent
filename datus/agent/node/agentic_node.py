@@ -2097,8 +2097,11 @@ class AgenticNode(Node):
         """Hook: return a :class:`RetryPolicy` to drive validate/retry.
 
         Default returns :class:`NoRetryPolicy` (single execution). Override
-        to return :class:`ValidationHookRetryPolicy` / :class:`VerifySqlRetryPolicy`
-        when the node needs re-prompting on validation failure.
+        to return :class:`ValidationHookRetryPolicy` (deliverable_node.py) /
+        :class:`VerifySqlRetryPolicy` (gen_ext_knowledge_agentic_node.py) when
+        the node needs re-prompting on validation failure. Concrete policies
+        live in their owning node's module — there is no shared ``policies/``
+        package since each policy is bound to a specific node's internals.
         """
         from datus.agent.node.retry_policy import NoRetryPolicy
 

@@ -17,22 +17,83 @@ hook method :meth:`_setup_domain_tools` — everything else is inherited.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Literal, Optional
+from typing import Any, ClassVar, Iterable, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
-from datus.agent.node.policies.validation_hook_policy import ValidationHookRetryPolicy
-from datus.agent.node.retry_policy import NoRetryPolicy
 from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistoryManager
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.semantic_agentic_node_models import SemanticNodeResult
 from datus.tools.func_tool import DBFuncTool, FilesystemFuncTool
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import build_structured_content
 from datus.validation import ValidationHook
+from datus.validation.report import build_retry_prompt
 
 logger = get_logger(__name__)
+
+
+class ValidationHookRetryPolicy:
+    """:class:`~datus.agent.node.retry_policy.RetryPolicy` driven by ``ValidationHook``.
+
+    Used exclusively by :class:`DeliverableAgenticNode` and its subclasses
+    (gen_dashboard, scheduler, gen_table, gen_job). After each stream
+    completes, the policy inspects ``hook.final_report`` and reschedules
+    with a context-aware retry prompt when a blocking failure is recorded.
+
+    Lives in this module — not in a shared ``policies/`` package — because
+    it is tied to ``ValidationHook``'s state machine and would not be reused
+    by any other node.
+    """
+
+    def __init__(self, hook: ValidationHook, max_attempts: int = 3, node_name: str = "deliverable"):
+        self.hook = hook
+        self.max_attempts = max(1, max_attempts)
+        self.node_name = node_name
+        self._blocking_report: Optional[dict] = None
+
+    def reset(self, ctx: StreamRunContext) -> None:
+        # Drop the prior attempt's blocking report so a recovered retry does
+        # not inherit a stale ``success=False`` decision.
+        self._blocking_report = None
+        self.hook.reset_session()
+
+    def should_retry(self, ctx: StreamRunContext) -> bool:
+        report = self.hook.final_report
+        if report is None or not report.has_blocking_failure():
+            return False
+        self._blocking_report = report.model_dump(by_alias=True, exclude_none=True)
+        logger.info(
+            "Validation blocked attempt %d/%d for %s: %s",
+            ctx.attempt,
+            self.max_attempts,
+            self.node_name,
+            [c.name for c in report.checks if not c.passed],
+        )
+        return True
+
+    def next_prompt(self, ctx: StreamRunContext) -> Optional[str]:
+        report = self.hook.final_report
+        if report is None:
+            return None
+        return build_retry_prompt(report, list(self.hook.session_targets))
+
+    def on_retry_actions(self, ctx: StreamRunContext) -> Iterable[ActionHistory]:
+        # Pre-refactor Deliverable did not surface a user-visible action
+        # between retry attempts — keep that behaviour.
+        return ()
+
+    def finalise(self, ctx: StreamRunContext) -> None:
+        # Blocking failure (when retries exhausted) takes precedence over
+        # the vanilla on_end report. Stash both decisions for the success
+        # builder to translate into ``NodeResult.success`` + ``validation_report``.
+        report = self.hook.final_report
+        on_end_report: Optional[dict] = None
+        if report is not None:
+            on_end_report = report.model_dump(by_alias=True, exclude_none=True)
+        ctx.extras["validation_report"] = self._blocking_report if self._blocking_report is not None else on_end_report
+        ctx.extras["blocked"] = self._blocking_report is not None
 
 
 class DeliverableAgenticNode(AgenticNode):
@@ -261,21 +322,16 @@ class DeliverableAgenticNode(AgenticNode):
         # (and the retry policy that consumes their report) actually fire.
         return self._compose_hooks(self._validation_hook)
 
-    async def _before_stream(self, ctx: StreamRunContext) -> None:
-        # Reset per-run state on the validation hook so a recovered retry
-        # is not poisoned by the previous attempt's report. The session
-        # context is wired in ``_after_session_setup`` once it exists.
-        if self._validation_hook is not None:
-            self._validation_hook.reset_session()
-
     def _get_retry_policy(self):
         if self._validation_hook is None:
+            from datus.agent.node.retry_policy import NoRetryPolicy
+
             return NoRetryPolicy()
         validation_cfg = getattr(self.agent_config, "validation_config", None)
         max_retries = int(getattr(validation_cfg, "max_retries", 3)) if validation_cfg else 3
         return ValidationHookRetryPolicy(
             hook=self._validation_hook,
-            max_attempts=max(1, max_retries),
+            max_attempts=max_retries,
             node_name=self.get_node_name(),
         )
 
@@ -292,7 +348,7 @@ class DeliverableAgenticNode(AgenticNode):
         if self.execution_mode == "interactive":
             tokens_used = self._extract_total_tokens(ctx.action_history_manager.get_actions())
 
-        # ``ctx.extras`` populated by ``ValidationHookRetryPolicy.finalise``.
+        # ``ctx.extras`` populated by ``_run_stream_loop`` above.
         validation_report = ctx.extras.get("validation_report")
         blocked = bool(ctx.extras.get("blocked"))
         success = not blocked
