@@ -76,7 +76,7 @@ _ARTIFACT_DIRS: Dict[str, Tuple[Tuple[str, ...], bool]] = {
 
 # CDN URLs used when no offline dist is supplied. Keep the pinned version in
 # lockstep with ``packages/web-report/package.json``.
-_CDN_REPORT_VERSION = "0.1.0"
+_CDN_REPORT_VERSION = "~0.1.0"
 _CDN_REPORT_CSS = f"https://unpkg.com/@datus/web-report@{_CDN_REPORT_VERSION}/dist/index.css"
 _CDN_REPORT_JS = f"https://unpkg.com/@datus/web-report@{_CDN_REPORT_VERSION}/dist/index.umd.js"
 
