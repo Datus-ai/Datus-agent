@@ -336,6 +336,70 @@ class TestGenerate:
         call_kwargs = mock_lit.call_args[1]
         assert "top_p" not in call_kwargs
 
+    # ------------------------------------------------------------------
+    # Provider-gated top_p suppression — Anthropic rejects requests with
+    # BOTH ``temperature`` and ``top_p`` set, so the suppression has to
+    # ride on the **routed** provider (``litellm_adapter.provider``), not
+    # on the model class. These tests run against a vanilla
+    # ``OpenAICompatibleModel`` (NOT ``ClaudeModel``) with the adapter's
+    # provider forced to ``"claude"`` — i.e. the dev configuration that
+    # broke prod: ``model_config.type='openai'`` plus a Claude model
+    # name auto-routed to Anthropic. The fix must trigger here too.
+    # ------------------------------------------------------------------
+
+    def test_top_p_suppressed_when_litellm_provider_is_claude_default_path(self):
+        """No kwargs, no model_config — the non-reasoning default would
+        normally set ``top_p=1.0``. Provider routing to Claude must
+        veto that and leave ``top_p`` absent from the payload."""
+        model = _make_model()
+        model.litellm_adapter.provider = "claude"
+        mock_resp = self._mock_litellm_response("ok")
+        with patch("datus.models.openai_compatible.litellm.completion", return_value=mock_resp) as mock_lit:
+            model.generate("prompt")
+        call_kwargs = mock_lit.call_args[1]
+        assert "top_p" not in call_kwargs
+        # ``temperature`` is fine alone — Anthropic only complains when both are set.
+        assert call_kwargs.get("temperature") == 0.7
+
+    def test_top_p_suppressed_when_provider_is_claude_kwargs_value(self):
+        """An explicit non-None ``top_p`` in kwargs still loses to the
+        provider-level suppression — callers shouldn't be able to
+        accidentally re-enable a parameter Anthropic will 400 on."""
+        model = _make_model()
+        model.litellm_adapter.provider = "claude"
+        mock_resp = self._mock_litellm_response("ok")
+        with patch("datus.models.openai_compatible.litellm.completion", return_value=mock_resp) as mock_lit:
+            model.generate("prompt", top_p=0.9)
+        call_kwargs = mock_lit.call_args[1]
+        assert "top_p" not in call_kwargs
+
+    def test_top_p_suppressed_when_provider_is_claude_config_value(self):
+        """A ``model_config.top_p`` value (e.g. inherited from a provider
+        preset) likewise loses to the suppression — the runtime contract
+        is "never send top_p to Anthropic", full stop."""
+        cfg = _make_model_config(top_p=0.95)
+        model = _make_model(cfg)
+        model.litellm_adapter.provider = "claude"
+        mock_resp = self._mock_litellm_response("ok")
+        with patch("datus.models.openai_compatible.litellm.completion", return_value=mock_resp) as mock_lit:
+            model.generate("prompt")
+        call_kwargs = mock_lit.call_args[1]
+        assert "top_p" not in call_kwargs
+
+    def test_top_p_preserved_when_litellm_provider_is_not_claude(self):
+        """Suppression must NOT bleed into other providers. OpenAI,
+        DeepSeek, Kimi, etc. retain the historical default
+        ``top_p=1.0`` for non-reasoning paths."""
+        model = _make_model()
+        # Default provider in the fixture is already "openai", but pin it
+        # explicitly so the test reads unambiguously.
+        model.litellm_adapter.provider = "openai"
+        mock_resp = self._mock_litellm_response("ok")
+        with patch("datus.models.openai_compatible.litellm.completion", return_value=mock_resp) as mock_lit:
+            model.generate("prompt")
+        call_kwargs = mock_lit.call_args[1]
+        assert call_kwargs.get("top_p") == 1.0
+
     def test_max_tokens_passed_through(self):
         model = _make_model()
         mock_resp = self._mock_litellm_response("ok")

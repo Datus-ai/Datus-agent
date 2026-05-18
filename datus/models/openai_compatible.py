@@ -31,6 +31,7 @@ from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.tool_summary import TOOL_SUMMARY_REGISTRY, looks_like_failure
+from datus.utils.constants import LLMProvider
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
@@ -485,14 +486,24 @@ class OpenAICompatibleModel(LLMBaseModel):
             if self.default_headers:
                 params["extra_headers"] = self.default_headers
 
+            # Anthropic rejects requests carrying BOTH ``temperature`` and
+            # ``top_p`` with HTTP 400 / ``invalid_request_error`` (the
+            # claude-sonnet-4.x family enforces this strictly). The gate is
+            # the **routed** provider (``litellm_adapter.provider``), not the
+            # model class — operators may configure ``type=openai`` but a
+            # Claude model name, in which case ``LiteLLMAdapter`` auto-routes
+            # to Anthropic; the suppression must still apply or the request
+            # 400s. ``temperature`` wins (mirrors the historical
+            # ``ClaudeModel.generate`` contract); ``top_p`` is dropped
+            # unconditionally for Claude regardless of kwargs / model_config
+            # / non-reasoning default.
+            routed_provider = getattr(self.litellm_adapter, "provider", "")
+            suppress_top_p = routed_provider == LLMProvider.CLAUDE
+
             # Add temperature: priority is kwargs > model_config > default (0.7).
             # An explicit ``None`` in kwargs is the caller's "drop this param"
-            # signal — used by providers like Anthropic that reject some pairs
-            # (the claude-sonnet-4.x family rejects requests carrying BOTH
-            # ``temperature`` and ``top_p`` with HTTP 400 / invalid_request_error).
-            # Skip the param entirely; don't fall through to model_config /
-            # default — those branches would silently re-enable what the
-            # caller just asked us to drop.
+            # signal — kept for symmetry with the top_p path even though
+            # Anthropic accepts ``temperature`` alone.
             if "temperature" in kwargs:
                 if kwargs["temperature"] is not None:
                     params["temperature"] = kwargs["temperature"]
@@ -503,8 +514,11 @@ class OpenAICompatibleModel(LLMBaseModel):
                 # Add default temperature only for non-reasoning models
                 params["temperature"] = 0.7
 
-            # Add top_p: same priority + same explicit-None contract as temperature above.
-            if "top_p" in kwargs:
+            # Add top_p: same priority + same explicit-None contract as
+            # temperature above, EXCEPT for Anthropic where we never send it.
+            if suppress_top_p:
+                pass
+            elif "top_p" in kwargs:
                 if kwargs["top_p"] is not None:
                     params["top_p"] = kwargs["top_p"]
             elif self.model_config.top_p is not None:

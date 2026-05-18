@@ -308,16 +308,13 @@ class ClaudeModel(OpenAICompatibleModel):
             Generated text response
         """
         if not self.use_native_api:
-            # Anthropic rejects requests carrying BOTH ``temperature`` and
-            # ``top_p`` with HTTP 400 / ``invalid_request_error`` (the
-            # claude-sonnet-4.x family enforces this strictly). Setting
-            # ``top_p=None`` here is the agreed contract with the parent
-            # ``OpenAICompatibleModel._generate_operation``: an explicit
-            # ``None`` in kwargs tells it to omit the parameter from the
-            # final litellm payload entirely (rather than letting the
-            # non-reasoning default of ``top_p=1.0`` fall through). See
-            # the temperature / top_p block in ``openai_compatible.py``.
-            kwargs["top_p"] = None
+            # ``top_p`` suppression for Anthropic now lives in the parent
+            # ``OpenAICompatibleModel._generate_operation`` and is gated on
+            # ``litellm_adapter.provider == LLMProvider.CLAUDE`` — that gate
+            # fires for every ClaudeModel instance regardless of how the
+            # config's ``type`` field is wired, so the previous
+            # ``kwargs["top_p"] = None`` ceremony here is now redundant.
+            # OAuth header injection stays Claude-specific.
             self._inject_oauth_headers(kwargs)
             try:
                 return super().generate(prompt, enable_thinking=enable_thinking, **kwargs)
