@@ -1064,8 +1064,10 @@ class TestRunFinalizeAnalysis:
 
         assert result["ok"] is False
         assert "LLM is down" in result["error"]
-        # No analysis files were written when the LLM call failed up-front.
+        # Narrative outputs (insights / suggested_questions) are LLM-gated and
+        # therefore absent.
         assert not (analysis_dir / "insights.json").exists()
+        assert not (analysis_dir / "suggested_questions.json").exists()
 
     def test_schema_validation_failure_surfaces_as_error(self, tmp_path: Path):
         artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
@@ -1086,3 +1088,110 @@ class TestRunFinalizeAnalysis:
         assert result["ok"] is False
         assert "finalize output invalid" in result["error"]
         assert not (analysis_dir / "insights.json").exists()
+        assert not (analysis_dir / "suggested_questions.json").exists()
+
+    def test_subject_refs_and_key_tables_land_when_llm_exception(self, tmp_path: Path):
+        """Deterministic outputs are decoupled from the LLM call.
+
+        ``subject_refs.json`` is aggregated by walking ``queries/*.brief.json``
+        and ``manifest.key_tables`` is aggregated by parsing ``queries/*.sql``
+        with sqlglot — neither needs the model. The follow-up ``ask_*``
+        consultant depends on both to function, so a failed finalize LLM
+        must not strand them.
+        """
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(
+            tmp_path,
+            brief_uses={"metrics": ["metric:Sales/Revenue.gross_revenue"]},
+            sql_body="SELECT * FROM finbench.main.Account",
+        )
+
+        model = Mock(spec=["generate_with_json_output"])
+        model.generate_with_json_output.side_effect = RuntimeError("LLM is down")
+
+        result = run_finalize_analysis(
+            model=model,
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+        )
+
+        assert result["ok"] is False
+        assert "LLM is down" in result["error"]
+
+        # subject_refs.json was aggregated from the brief and persisted.
+        refs_path = analysis_dir / "subject_refs.json"
+        assert refs_path.is_file(), "subject_refs.json must be written even when the LLM fails"
+        refs = json.loads(refs_path.read_text(encoding="utf-8"))
+        assert [r["id"] for r in refs["metrics"]] == ["metric:Sales/Revenue.gross_revenue"]
+
+        # manifest.key_tables was aggregated by sqlglot and persisted.
+        manifest = json.loads((artifact_dir / "manifest.json").read_text(encoding="utf-8"))
+        assert manifest["key_tables"] == ["finbench.main.Account"]
+
+        # The result dict surfaces the deterministic counts so callers can
+        # see what landed alongside the error.
+        assert result["key_tables"] == ["finbench.main.Account"]
+        assert result["subject_refs_count"] == {"metrics": 1, "reference_sql": 0, "ext_knowledge": 0}
+
+    def test_subject_refs_and_key_tables_land_when_schema_validation_fails(self, tmp_path: Path):
+        """Same decoupling guarantee, but exercised on the schema-validation
+        failure path (LLM returned JSON the model rejected). Both fall back
+        through the same orchestrator branch."""
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(
+            tmp_path,
+            brief_uses={"metrics": ["metric:Sales/Revenue.gross_revenue"]},
+            sql_body="SELECT * FROM finbench.main.Account",
+        )
+
+        model = Mock(spec=["generate_with_json_output"])
+        # Missing suggested_questions — schema fails.
+        model.generate_with_json_output.return_value = {"insights": []}
+
+        result = run_finalize_analysis(
+            model=model,
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+        )
+
+        assert result["ok"] is False
+        assert "finalize output invalid" in result["error"]
+
+        refs_path = analysis_dir / "subject_refs.json"
+        assert refs_path.is_file()
+        refs = json.loads(refs_path.read_text(encoding="utf-8"))
+        assert [r["id"] for r in refs["metrics"]] == ["metric:Sales/Revenue.gross_revenue"]
+
+        manifest = json.loads((artifact_dir / "manifest.json").read_text(encoding="utf-8"))
+        assert manifest["key_tables"] == ["finbench.main.Account"]
+
+    def test_intent_curation_skipped_when_main_llm_fails(self, tmp_path: Path):
+        """Intent curation is itself an LLM call; skipping it when the
+        primary finalize call has already failed avoids burning a second
+        request on a model that just returned us nothing usable."""
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+        (analysis_dir / "intent.md").write_text(
+            "### [2026-05-14T10:00:00Z] mode: new\n> real intent\n",
+            encoding="utf-8",
+        )
+
+        model = Mock(spec=["generate_with_json_output", "generate"])
+        model.generate_with_json_output.side_effect = RuntimeError("LLM is down")
+
+        result = run_finalize_analysis(
+            model=model,
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+        )
+
+        assert result["ok"] is False
+        # ``model.generate`` is the intent curation entry point — it must
+        # not have been called when the primary finalize LLM blew up.
+        assert model.generate.call_count == 0

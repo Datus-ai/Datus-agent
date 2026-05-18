@@ -949,25 +949,38 @@ def run_finalize_analysis(
             "key_tables": [...],
         }
 
-    Or, on hard failure (LLM call exception or schema validation
-    failure)::
+    Or, on LLM failure (exception or schema validation failure)::
 
         {
             "ok": False,
             "warnings": [...],
             "error": "...",
+            "key_tables": [...],
+            "subject_refs_count": {"metrics": n, "reference_sql": n, "ext_knowledge": n},
         }
+
+    The deterministic, code-only outputs (``subject_refs.json`` and
+    ``manifest.key_tables``) are produced whether or not the finalize
+    LLM call succeeded — both are aggregated from on-disk artifacts
+    (``queries/*.brief.json`` / ``queries/*.sql``) and have no LLM
+    dependency. The follow-up ``ask_*`` consultant depends on
+    ``subject_refs.json`` for subject-library attribution and on
+    ``key_tables`` to skip schema-discovery round-trips, so we keep
+    those usable even when the analytical narrative
+    (``insights.json`` / ``suggested_questions.json``) is unavailable.
 
     Side effects on disk (all best-effort, surfaced via ``warnings``):
 
-    * ``analysis/insights.json`` (report only)
-    * ``analysis/suggested_questions.json``
+    * ``analysis/insights.json`` (report only, LLM-gated)
+    * ``analysis/suggested_questions.json`` (LLM-gated)
     * ``analysis/intent.md`` — curated in place by a separate, dedicated
       LLM call (:func:`run_intent_curation`) that returns a fresh
       markdown body via ``model.generate``; safety checks reject the
       rewrite on empty / fence-only / dramatically-shrunk output.
-    * ``analysis/subject_refs.json`` — present iff non-empty.
-    * ``manifest.json`` — ``key_tables`` field refreshed.
+      Gated on the main finalize LLM succeeding so we don't burn a
+      second LLM call when the first one is already broken.
+    * ``analysis/subject_refs.json`` — present iff non-empty. LLM-free.
+    * ``manifest.json`` — ``key_tables`` field refreshed. LLM-free.
     """
     warnings: List[str] = []
 
@@ -987,28 +1000,40 @@ def run_finalize_analysis(
         existing_suggested_questions=existing_sq,
     )
 
+    output: Optional[FinalizeAnalysisOutput] = None
+    llm_error: Optional[str] = None
+
     try:
         raw = model.generate_with_json_output(prompt)
     except Exception as exc:
         logger.warning("Finalize LLM call failed: %s", exc)
-        return {"ok": False, "warnings": warnings, "error": f"finalize llm call failed: {exc}"}
+        llm_error = f"finalize llm call failed: {exc}"
 
-    try:
-        output = parse_finalize_output(raw, artifact_kind=artifact_kind)
-    except Exception as exc:
-        logger.warning("Finalize output validation failed: %s", exc)
-        return {"ok": False, "warnings": warnings, "error": f"finalize output invalid: {exc}"}
+    if llm_error is None:
+        try:
+            output = parse_finalize_output(raw, artifact_kind=artifact_kind)
+        except Exception as exc:
+            logger.warning("Finalize output validation failed: %s", exc)
+            llm_error = f"finalize output invalid: {exc}"
 
-    warnings.extend(write_finalize_output(analysis_dir, output=output, artifact_kind=artifact_kind))
+    if output is not None:
+        warnings.extend(write_finalize_output(analysis_dir, output=output, artifact_kind=artifact_kind))
 
-    # Independent LLM call: curate intent.md by stripping operational
-    # nudges + pure render adjustments. Failures degrade to "leave the
-    # original file unchanged + record a warning" — never blocks the
-    # main artifact (which is already on disk by now).
-    curation_warning = run_intent_curation(model, analysis_dir / "intent.md")
-    if curation_warning:
-        warnings.append(curation_warning)
+        # Independent LLM call: curate intent.md by stripping operational
+        # nudges + pure render adjustments. Failures degrade to "leave the
+        # original file unchanged + record a warning" — never blocks the
+        # main artifact (which is already on disk by now). Gated on the
+        # main finalize LLM succeeding so we don't keep hammering the
+        # model when it's already returned us nothing usable.
+        curation_warning = run_intent_curation(model, analysis_dir / "intent.md")
+        if curation_warning:
+            warnings.append(curation_warning)
 
+    # Deterministic aggregations below — these only read files on disk
+    # and never call the LLM, so they run regardless of LLM success.
+    # That way an ask_* consultant always has its subject-library
+    # attribution index and key_tables hint to work with, even when the
+    # narrative-side outputs are missing.
     refs = aggregate_subject_refs(queries_dir)
     write_err = write_subject_refs(analysis_dir, refs)
     if write_err:
@@ -1022,15 +1047,31 @@ def run_finalize_analysis(
     if kt_err:
         warnings.append(kt_err)
 
+    subject_refs_count = {
+        "metrics": len(refs.metrics),
+        "reference_sql": len(refs.reference_sql),
+        "ext_knowledge": len(refs.ext_knowledge),
+    }
+
+    if llm_error is not None:
+        # LLM failed but the deterministic outputs are already on disk.
+        # Surface both signals: ``ok=False`` (narrative outputs missing,
+        # consumers should treat insights / suggested_questions as
+        # absent) AND the counts (so callers can see we DID land
+        # subject_refs / key_tables).
+        return {
+            "ok": False,
+            "warnings": warnings,
+            "error": llm_error,
+            "key_tables": key_tables,
+            "subject_refs_count": subject_refs_count,
+        }
+
     warnings.extend(consistency_check(queries_dir=queries_dir, output=output))
 
     return {
         "ok": True,
         "warnings": warnings,
         "key_tables": key_tables,
-        "subject_refs_count": {
-            "metrics": len(refs.metrics),
-            "reference_sql": len(refs.reference_sql),
-            "ext_knowledge": len(refs.ext_knowledge),
-        },
+        "subject_refs_count": subject_refs_count,
     }
