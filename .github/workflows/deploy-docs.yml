@@ -9,13 +9,13 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to deploy (e.g. v0.2.6). Uses the tag ref if empty.'
+        description: 'Release tag to deploy into its minor docs line, e.g. v0.3.7 -> 0.3. Uses dev if empty.'
         required: false
         default: ''
 permissions:
   contents: write
 env:
-  DOCS_MIN_VISIBLE_VERSION: "0.2.6"
+  DOCS_MIN_VISIBLE_MINOR: "0.2"
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -52,72 +52,15 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
           EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF_TYPE_VALUE: ${{ github.ref_type }}
+          GITHUB_REF_NAME_VALUE: ${{ github.ref_name }}
         run: |
-          echo "DOCS_SKIP_DEPLOY=false" >> "${GITHUB_ENV}"
-          echo "DOCS_BUILD_CONFIG=mkdocs.yml" >> "${GITHUB_ENV}"
-          echo "DOCS_SOURCE_REF=" >> "${GITHUB_ENV}"
-          # workflow_dispatch with explicit version input
-          if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${INPUT_VERSION}" ]]; then
-            VERSION="${INPUT_VERSION}"
-            VERSION="${VERSION#v}"
-            if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.+-]+)?$ ]]; then
-              echo "::error::Invalid version format: ${VERSION}"
-              exit 1
-            fi
-            # Build docs from the tagged content while keeping the current
-            # workflow and main-branch docs configuration.
-            if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
-              CHECKED_OUT_REF="v${VERSION}"
-            elif git rev-parse -q --verify "refs/tags/${VERSION}" >/dev/null; then
-              CHECKED_OUT_REF="${VERSION}"
-            else
-              echo "::error::Tag v${VERSION} or ${VERSION} not found"
-              exit 1
-            fi
-            echo "DOCS_SOURCE_REF=${CHECKED_OUT_REF}" >> "${GITHUB_ENV}"
-            echo "DOCS_EDIT_URI=edit/${CHECKED_OUT_REF}/docs/" >> "${GITHUB_ENV}"
-            echo "DOCS_VERSION=${VERSION}" >> "${GITHUB_ENV}"
-            echo "DOCS_ALIASES=" >> "${GITHUB_ENV}"
-            echo "DOCS_SET_DEFAULT=" >> "${GITHUB_ENV}"
-            if [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              SHOULD_PROMOTE_LATEST="$(
-                VERSION="${VERSION}" python -c 'import json, os, re, subprocess; from packaging.version import Version; current = Version(os.environ["VERSION"]); raw = subprocess.check_output(["mike", "list", "-j"], text=True) if True else "[]"; stable = [Version(str(item.get("version", ""))) for item in json.loads(raw or "[]") if re.fullmatch(r"\d+\.\d+\.\d+", str(item.get("version", "")))]; print("true" if not stable or current >= max(stable) else "false")' 2>/dev/null || echo "true"
-              )"
-              if [[ "${SHOULD_PROMOTE_LATEST}" == "true" ]]; then
-                echo "DOCS_ALIASES=latest" >> "${GITHUB_ENV}"
-                echo "DOCS_SET_DEFAULT=latest" >> "${GITHUB_ENV}"
-              fi
-            fi
-          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-            if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.+-]+)?$ ]]; then
-              echo "DOCS_SKIP_DEPLOY=true" >> "${GITHUB_ENV}"
-              echo "DOCS_VERSION=" >> "${GITHUB_ENV}"
-              echo "DOCS_ALIASES=" >> "${GITHUB_ENV}"
-              echo "DOCS_SET_DEFAULT=" >> "${GITHUB_ENV}"
-              echo "DOCS_EDIT_URI=edit/${GITHUB_REF_NAME}/docs/" >> "${GITHUB_ENV}"
-              exit 0
-            fi
-            echo "DOCS_SOURCE_REF=${GITHUB_REF_NAME}" >> "${GITHUB_ENV}"
-            echo "DOCS_EDIT_URI=edit/${GITHUB_REF_NAME}/docs/" >> "${GITHUB_ENV}"
-            echo "DOCS_VERSION=${VERSION}" >> "${GITHUB_ENV}"
-            echo "DOCS_ALIASES=" >> "${GITHUB_ENV}"
-            echo "DOCS_SET_DEFAULT=" >> "${GITHUB_ENV}"
-            if [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              SHOULD_PROMOTE_LATEST="$(
-                VERSION="${VERSION}" python -c 'import json, os, re, subprocess; from packaging.version import Version; current = Version(os.environ["VERSION"]); raw = subprocess.check_output(["mike", "list", "-j"], text=True) if True else "[]"; stable = [Version(str(item.get("version", ""))) for item in json.loads(raw or "[]") if re.fullmatch(r"\d+\.\d+\.\d+", str(item.get("version", "")))]; print("true" if not stable or current >= max(stable) else "false")' 2>/dev/null || echo "true"
-              )"
-              if [[ "${SHOULD_PROMOTE_LATEST}" == "true" ]]; then
-                echo "DOCS_ALIASES=latest" >> "${GITHUB_ENV}"
-                echo "DOCS_SET_DEFAULT=latest" >> "${GITHUB_ENV}"
-              fi
-            fi
-          else
-            echo "DOCS_VERSION=dev" >> "${GITHUB_ENV}"
-            echo "DOCS_ALIASES=" >> "${GITHUB_ENV}"
-            echo "DOCS_SET_DEFAULT=" >> "${GITHUB_ENV}"
-            echo "DOCS_EDIT_URI=edit/main/docs/" >> "${GITHUB_ENV}"
-          fi
+          versions_json="$(mike list -j 2>/dev/null || echo '[]')"
+          PUBLISHED_DOCS_JSON="${versions_json}" python ci/docs_versioning.py resolve \
+            --input-version "${INPUT_VERSION}" \
+            --event-name "${EVENT_NAME}" \
+            --github-ref-type "${GITHUB_REF_TYPE_VALUE}" \
+            --github-ref-name "${GITHUB_REF_NAME_VALUE}" >> "${GITHUB_ENV}"
       - name: Prepare docs build context
         if: env.DOCS_SKIP_DEPLOY != 'true' && env.DOCS_SOURCE_REF != ''
         run: |
@@ -149,49 +92,4 @@ jobs:
       - name: Hide legacy docs versions
         if: env.DOCS_SKIP_DEPLOY != 'true'
         run: |
-          python - <<'PY'
-          import json
-          import os
-          import re
-          import subprocess
-          import sys
-          from packaging.version import Version
-
-          threshold = Version(os.environ["DOCS_MIN_VISIBLE_VERSION"])
-          raw = subprocess.check_output(["mike", "list", "-j"], text=True)
-          versions = json.loads(raw or "[]")
-
-          changed = False
-          for item in versions:
-              version = str(item.get("version", ""))
-              props = item.get("properties") or {}
-              hidden = bool(props.get("hidden", False))
-
-              if version == "dev":
-                  target_hidden = False
-              elif re.fullmatch(r"\d+\.\d+\.\d+([.-][0-9A-Za-z.+-]+)?", version):
-                  target_hidden = Version(version) < threshold
-              else:
-                  target_hidden = False
-
-              if hidden == target_hidden:
-                  continue
-
-              subprocess.run(
-                  [
-                      "mike",
-                      "props",
-                      version,
-                      "--set",
-                      f"hidden={'true' if target_hidden else 'false'}",
-                      "--allow-empty",
-                  ],
-                  check=True,
-              )
-              changed = True
-
-          if changed:
-              subprocess.run(["git", "push", "--", "origin", "gh-pages"], check=True)
-          else:
-              print("No legacy version visibility changes needed.")
-          PY
+          python ci/docs_versioning.py hide-legacy --min-visible-minor "${DOCS_MIN_VISIBLE_MINOR}"
