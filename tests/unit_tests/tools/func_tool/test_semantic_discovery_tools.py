@@ -556,6 +556,21 @@ class TestAnalyzeMetricCandidatesFromHistory:
         assert candidates[0]["name"] == "revenue"
         assert candidates[0]["source_count"] == 2
 
+    def test_same_alias_with_different_formulas_are_not_merged(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=[
+                "SELECT SUM(amount) AS revenue FROM orders",
+                "SELECT COUNT(*) AS revenue FROM orders",
+            ]
+        )
+
+        candidates = sorted(result.result["metric_candidates"], key=lambda item: item["expression"])
+        assert len(candidates) == 2
+        assert {candidate["expression"] for candidate in candidates} == {"COUNT(*)", "SUM(amount)"}
+        assert all(candidate["name"] == "revenue" for candidate in candidates)
+        assert all(candidate["source_count"] == 1 for candidate in candidates)
+
     def test_repeated_blocked_candidates_do_not_reappear_as_direct_candidates(self):
         tools = _make_tools()
         ranked_sql = """
@@ -668,6 +683,37 @@ class TestAnalyzeMetricCandidatesFromHistory:
             }
         ]
 
+    def test_inline_ranked_subquery_blocks_direct_metric_and_recommends_datasource(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=[
+                """
+                SELECT store_id, COUNT(*) AS time_count
+                FROM (
+                    SELECT
+                        store_id,
+                        amount,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY store_id
+                            ORDER BY amount DESC
+                        ) AS rn
+                    FROM orders
+                ) ranked
+                WHERE rn = 1
+                GROUP BY store_id
+                """
+            ]
+        )
+
+        assert result.result["query_classification"] == "metric_plus_derived_datasource"
+        assert result.result["direct_metric_candidates"] == []
+        assert result.result["blocked_direct_metric_candidates"][0]["name"] == "time_count"
+        recommendation = result.result["derived_datasource_recommendations"][0]
+        assert recommendation["source_cte"] == "ranked"
+        assert recommendation["rank_alias"] == "rn"
+        assert recommendation["window"]["function"] == "ROW_NUMBER"
+        assert recommendation["rank_filters"] == ["rn = 1"]
+
     def test_row_number_main_entity_distribution_recommends_datasource(self):
         tools = _make_tools()
         result = tools.analyze_metric_candidates_from_history(
@@ -759,5 +805,34 @@ class TestAnalyzeMetricCandidatesFromHistory:
             item["expression"] in {"CAST(create_time AS DATE)", "DATE(create_time)"}
             and item["evidence_type"] == "date_filter"
             and ("CURRENT_DATE" in item["predicate"] or "CURDATE()" in item["predicate"])
+            for item in time_evidence
+        )
+
+    def test_date_trunc_time_grain_uses_projection_unit(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=[
+                """
+                SELECT
+                    DATE_TRUNC('month', created_at) AS month_dt,
+                    SUM(amount) AS revenue
+                FROM orders
+                WHERE DATE_TRUNC('week', created_at) = DATE_TRUNC('week', CURRENT_DATE)
+                GROUP BY DATE_TRUNC('month', created_at)
+                """
+            ]
+        )
+
+        time_evidence = result.result["time_grain_evidence"]
+        assert any(
+            item["alias"] == "month_dt"
+            and item["evidence_type"] == "projected_time_dimension"
+            and item["grain"] == "MONTH"
+            for item in time_evidence
+        )
+        assert any(
+            item["evidence_type"] == "date_filter"
+            and item["grain"] == "WEEK"
+            and "DATE_TRUNC('WEEK'" in item["expression"]
             for item in time_evidence
         )

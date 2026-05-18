@@ -648,6 +648,16 @@ class SemanticDiscoveryTools:
                         cte_projection_map=cte_projection_map,
                     )
                 )
+            for subquery_name, select in self._iter_inline_subquery_selects(parsed):
+                recommendations.extend(
+                    self._ranked_datasource_recommendations(
+                        source_name=source_name,
+                        cte_name=subquery_name,
+                        select=select,
+                        parsed=parsed,
+                        cte_projection_map=cte_projection_map,
+                    )
+                )
 
         reason = ""
         if recommendations:
@@ -740,7 +750,8 @@ class SemanticDiscoveryTools:
         if not alias:
             return None
 
-        reason = self._time_expression_reason(expr, alias)
+        grain = self._time_grain_for_expr(expr)
+        reason = self._time_expression_reason(expr, alias, grain)
         if not reason:
             return None
 
@@ -749,7 +760,7 @@ class SemanticDiscoveryTools:
             "alias": alias,
             "expression": expr.sql(),
             "evidence_type": "projected_time_dimension",
-            "grain": "DAY",
+            "grain": grain or self._time_grain_from_alias(alias),
             "reason": reason,
         }
 
@@ -758,28 +769,88 @@ class SemanticDiscoveryTools:
         evidence = []
         predicate_sql = predicate.sql()
         for expr in self._date_grain_expressions(predicate):
+            grain = self._time_grain_for_expr(expr) or "DAY"
             evidence.append(
                 {
                     "source_sql_name": source_name,
                     "expression": expr.sql(),
                     "predicate": predicate_sql,
                     "evidence_type": "date_filter",
-                    "grain": "DAY",
-                    "reason": "filter normalizes or constrains data at day grain",
+                    "grain": grain,
+                    "reason": f"filter normalizes or constrains data at {grain.lower()} grain",
                 }
             )
         return evidence
 
-    def _time_expression_reason(self, expr: Any, alias: str) -> str:
+    def _time_expression_reason(self, expr: Any, alias: str, grain: Optional[str] = None) -> str:
         """Return a reason when an expression should be preserved as time grain."""
         normalized_alias = self._normalize_identifier(alias)
         if self._contains_current_date(expr):
             return "projection uses current date as the output time grain"
         if self._contains_date_cast(expr):
-            return "projection truncates or casts a timestamp to day grain"
+            if grain:
+                return f"projection truncates or casts a timestamp to {grain.lower()} grain"
+            return "projection truncates or casts a timestamp to a time grain"
         if normalized_alias in {"dt", "ds", "date", "part_dt", "metric_time", "create_date", "created_date"}:
             return "projection alias is commonly used as an output time dimension"
         return ""
+
+    def _time_grain_from_alias(self, alias: str) -> Optional[str]:
+        """Infer a conservative grain from common date-like output aliases."""
+        normalized_alias = self._normalize_identifier(alias)
+        if normalized_alias in {"dt", "ds", "date", "part_dt", "metric_time", "create_date", "created_date"}:
+            return "DAY"
+        return None
+
+    def _time_grain_for_expr(self, expr: Any) -> Optional[str]:
+        """Infer the canonical time grain represented by a date expression."""
+        from sqlglot import expressions as exp
+
+        for node in expr.walk():
+            if isinstance(node, exp.DateTrunc):
+                grain = self._date_trunc_grain(node)
+                if grain:
+                    return grain
+            if isinstance(node, (exp.CurrentDate, exp.TsOrDsToDate, exp.Date)) or self._is_current_date_function(node):
+                return "DAY"
+        return None
+
+    def _date_trunc_grain(self, expr: Any) -> Optional[str]:
+        """Extract a MetricFlow-style grain from a DATE_TRUNC expression."""
+        unit = expr.args.get("unit")
+        unit_text = ""
+        if unit is not None:
+            unit_text = getattr(unit, "this", "") or unit.sql()
+        normalized_unit = self._normalize_identifier(str(unit_text))
+        return {
+            "s": "SECOND",
+            "sec": "SECOND",
+            "second": "SECOND",
+            "mi": "MINUTE",
+            "min": "MINUTE",
+            "minute": "MINUTE",
+            "h": "HOUR",
+            "hh": "HOUR",
+            "hour": "HOUR",
+            "d": "DAY",
+            "dd": "DAY",
+            "day": "DAY",
+            "date": "DAY",
+            "w": "WEEK",
+            "wk": "WEEK",
+            "week": "WEEK",
+            "m": "MONTH",
+            "mm": "MONTH",
+            "mon": "MONTH",
+            "month": "MONTH",
+            "q": "QUARTER",
+            "qtr": "QUARTER",
+            "quarter": "QUARTER",
+            "y": "YEAR",
+            "yy": "YEAR",
+            "yyyy": "YEAR",
+            "year": "YEAR",
+        }.get(normalized_unit)
 
     def _date_grain_expressions(self, expr: Any) -> List[Any]:
         """Find date-grain expressions inside a predicate."""
@@ -819,6 +890,18 @@ class SemanticDiscoveryTools:
             if isinstance(cte.this, exp.Select):
                 cte_selects.append((cte_name, cte.this))
         return cte_selects
+
+    def _iter_inline_subquery_selects(self, parsed: Any) -> List[tuple]:
+        """Return inline derived-table aliases and SELECT bodies."""
+        from sqlglot import expressions as exp
+
+        subquery_selects = []
+        for subquery in parsed.find_all(exp.Subquery):
+            if not isinstance(subquery.this, exp.Select):
+                continue
+            subquery_name = self._safe_name(subquery.alias_or_name or "derived_datasource")
+            subquery_selects.append((subquery_name, subquery.this))
+        return subquery_selects
 
     def _cte_projection_map(self, parsed: Any) -> Dict[str, Dict[str, str]]:
         """Map CTE output aliases to their SQL expressions."""
@@ -1249,8 +1332,8 @@ class SemanticDiscoveryTools:
         }
 
     def _merge_metric_candidate(self, candidates: Dict[str, Dict[str, Any]], candidate: Dict[str, Any]) -> None:
-        """Merge metric candidates with the same normalized name and type."""
-        key = f"{candidate['name']}::{candidate['metric_type']}"
+        """Merge metric candidates with the same normalized name, type, and formula."""
+        key = self._metric_candidate_merge_key(candidate)
         existing = candidates.get(key)
         if not existing:
             candidates[key] = candidate
@@ -1264,6 +1347,23 @@ class SemanticDiscoveryTools:
             existing[field] = sorted(set(existing.get(field, []) + candidate.get(field, [])))
         for measure in candidate.get("base_measures", []):
             self._append_unique(existing["base_measures"], measure, ["name", "agg", "expr", "filter"])
+
+    def _metric_candidate_merge_key(self, candidate: Dict[str, Any]) -> str:
+        """Build a stable candidate identity without collapsing distinct formulas."""
+        return "::".join(
+            [
+                candidate.get("name", ""),
+                candidate.get("metric_type", ""),
+                self._metric_candidate_formula_signature(candidate),
+            ]
+        )
+
+    def _metric_candidate_formula_signature(self, candidate: Dict[str, Any]) -> str:
+        """Return a deterministic signature for a metric expression and its measures."""
+        measure_parts = []
+        for measure in candidate.get("base_measures", []):
+            measure_parts.append("|".join(str(measure.get(field, "")) for field in ("name", "agg", "expr", "filter")))
+        return "||".join([candidate.get("expression", ""), *sorted(measure_parts)])
 
     def _merge_base_measure(self, measures: Dict[str, Dict[str, Any]], measure: Dict[str, Any]) -> None:
         """Merge repeated base measure evidence."""
@@ -1445,6 +1545,8 @@ class SemanticDiscoveryTools:
             if blocked.get("name") != candidate.get("name") or blocked.get("metric_type") != candidate.get(
                 "metric_type"
             ):
+                continue
+            if self._metric_candidate_formula_signature(blocked) != self._metric_candidate_formula_signature(candidate):
                 continue
             blocked_sources = self._source_sql_name_set(blocked.get("source_sql_name", ""))
             if candidate_sources & blocked_sources:
