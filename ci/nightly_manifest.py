@@ -136,6 +136,7 @@ def init_manifest(args: argparse.Namespace) -> None:
             "ref": env_value("GITHUB_REF"),
             "sha": env_value("GITHUB_SHA") or git_output(repo_root, "rev-parse", "HEAD"),
             "event_name": env_value("GITHUB_EVENT_NAME"),
+            "datus_agent_ref": env_value("DATUS_AGENT_REF"),
             "nightly_group_filter": env_value("NIGHTLY_GROUP_FILTER"),
         },
         "environment": {

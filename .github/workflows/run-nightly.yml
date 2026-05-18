@@ -5,6 +5,11 @@ on:
     - cron: '0 20 * * *' # 20:00 UTC daily (offset from integration at 18:00 UTC)
   workflow_dispatch:
     inputs:
+      datus_agent_ref:
+        description: "Optional Datus-agent branch, tag, or SHA to test. Defaults to the workflow branch."
+        required: false
+        default: ""
+        type: string
       nightly_group_filter:
         description: "Optional regex for NIGHTLY_GROUP_FILTER. Leave empty to run the full nightly suite."
         required: false
@@ -22,10 +27,19 @@ jobs:
   run-nightly:
     runs-on: self-hosted
     env:
+      DATUS_AGENT_REF: ${{ github.event.inputs.datus_agent_ref || github.ref_name }}
       NIGHTLY_GROUP_FILTER: ${{ github.event.inputs.nightly_group_filter || '' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DATUS_AGENT_REF }}
+
+      - name: Record Datus-agent checkout
+        run: |
+          echo "Requested Datus-agent ref: ${DATUS_AGENT_REF}"
+          echo "Checked out branch: $(git rev-parse --abbrev-ref HEAD)"
+          echo "Checked out commit: $(git rev-parse HEAD)"
 
       - name: Checkout datus-db-adapters main
         uses: actions/checkout@v4
