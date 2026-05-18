@@ -18,7 +18,6 @@ permissions:
 
 jobs:
   format-check:
-    if: ${{ github.event_name == 'merge_group' || (github.event_name == 'pull_request_target' && !startsWith(github.event.pull_request.title, '[Doc]') && !startsWith(github.event.pull_request.title, '[doc]')) }}
     uses: ./.github/workflows/python-format-check.yml
 
   run-coverage:
