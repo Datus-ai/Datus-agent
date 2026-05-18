@@ -8,13 +8,16 @@ Compile a Datus report artifact into a single self-contained ``index.html``.
 Used only by the Datus-CLI path. SaaS deployments render dynamically through
 the backend ``/api/v1/report/detail`` endpoint and do not call this function.
 
-The generated HTML inlines two payloads next to ``@datus/web-report``:
+The generated HTML inlines a single payload next to ``@datus/web-report``:
 
-* The agent's ``render/`` tree as ``render_files: [{name, content}, ...]``
-  inside a single ``<script type="application/json">`` block. ``name`` is
-  the path relative to ``render/`` (e.g. ``app.jsx``, ``kpi-banner.jsx``,
-  ``charts/trend.jsx``).
-* ``queries/<slug>.sql`` + ``.json`` as ``queries: [{name, content}, ...]``.
+* ``files: [{path, content}, ...]`` inside one ``<script type="application/json">``
+  block. ``path`` is **slug-relative** and includes the top-level directory
+  prefix (e.g. ``render/app.jsx``, ``render/charts/trend.jsx``,
+  ``queries/sales_by_zone.sql``). Allowed prefixes: ``render/`` (.jsx / .js /
+  .css / .json, recursive — JSON allowed for sidecars an LLM may park next
+  to its modules) and ``queries/`` (.sql / .json, one level). This matches
+  the ``IPublishedReportArtifact`` / ``IReportDetail`` shape that
+  ``@datus/web-report`` consumes via ``splitArtifactFiles(detail.files)``.
 
 ``@datus/web-report`` boots the standalone viewer, which spins up the
 sandboxed iframe runtime; the runtime Babel-compiles each module on demand
@@ -39,7 +42,7 @@ import json
 import re
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from datus.utils.loggings import get_logger
 
@@ -56,7 +59,20 @@ _JS_URL_PLACEHOLDER = "__DATUS_REPORT_JS_URL__"
 # runtime falls back to the report id when this isn't present.
 _TITLE_ANNOTATION_RE = re.compile(r"@datus-title\s+([^\n*/]+?)(?:\s*\*/|\s*\n|$)")
 
-_RENDER_ALLOWED_SUFFIXES = {".jsx", ".js", ".css"}
+# Per-prefix allowlist driving the flat artifact walker. Each entry maps a
+# slug-relative top-level directory to ``(allowed_suffixes, recursive)``:
+#
+#   * ``render/``  — recursive (.jsx subdirs like charts/, shared/)
+#   * ``queries/`` — one level (LLM writes flat <slug>.sql/.json pairs)
+#
+# Mirrors ``_ARTIFACT_DIRS`` in
+# ``Datus-backend/datus_backend/services/report_service.py`` so the
+# CLI-emitted HTML payload and the saas-emitted ``IPublishedReportArtifact``
+# share one shape.
+_ARTIFACT_DIRS: Dict[str, Tuple[Tuple[str, ...], bool]] = {
+    "render": ((".jsx", ".js", ".css", ".json"), True),
+    "queries": ((".sql", ".json"), False),
+}
 
 # CDN URLs used when no offline dist is supplied. Keep the pinned version in
 # lockstep with ``packages/web-report/package.json``.
@@ -88,30 +104,26 @@ def _extract_title(app_jsx: str, fallback: str) -> str:
     return fallback
 
 
-def _read_queries(queries_dir: Path) -> List[Dict[str, str]]:
-    """Return file entries in deterministic order (alphabetical by name)."""
-    if not queries_dir.is_dir():
-        return []
-    entries: List[Dict[str, str]] = []
-    for path in sorted(queries_dir.iterdir(), key=lambda p: p.name):
-        if path.suffix not in {".sql", ".json"} or not path.is_file():
-            continue
-        entries.append({"name": path.name, "content": path.read_text(encoding="utf-8")})
-    return entries
+def _read_artifact_files(report_dir: Path) -> List[Dict[str, str]]:
+    """Return artifact files as ``[{path, content}, ...]``, deterministically sorted.
 
-
-def _read_render_files(render_dir: Path) -> List[Dict[str, str]]:
-    """Return render/ files keyed by path relative to render/, deterministically sorted.
-
-    ``name`` mirrors the iframe's module key convention (path-with-extension,
-    e.g. ``app.jsx``, ``charts/trend.jsx``); ``content`` is the raw source.
+    ``path`` is **slug-relative**, including the top-level directory (e.g.
+    ``render/app.jsx``, ``queries/q.sql``). Only directories listed in
+    ``_ARTIFACT_DIRS`` are walked, and each entry's suffix is checked against
+    the allowlist so a stray scratch file doesn't bloat the inline payload.
     """
     entries: List[Dict[str, str]] = []
-    for path in sorted(render_dir.rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in _RENDER_ALLOWED_SUFFIXES:
+    for sub, (allowed_suffixes, recursive) in _ARTIFACT_DIRS.items():
+        root = report_dir / sub
+        if not root.is_dir():
             continue
-        rel = path.relative_to(render_dir).as_posix()
-        entries.append({"name": rel, "content": path.read_text(encoding="utf-8")})
+        iterator = root.rglob("*") if recursive else root.iterdir()
+        for path in iterator:
+            if not path.is_file() or path.suffix.lower() not in allowed_suffixes:
+                continue
+            rel = path.relative_to(report_dir).as_posix()
+            entries.append({"path": rel, "content": path.read_text(encoding="utf-8")})
+    entries.sort(key=lambda entry: entry["path"])
     return entries
 
 
@@ -201,8 +213,7 @@ def render_report_html(
         raise FileNotFoundError(f"render/app.jsx not found under {report_dir}")
 
     app_jsx = app_jsx_path.read_text(encoding="utf-8")
-    render_files = _read_render_files(render_dir)
-    queries = _read_queries(report_dir / "queries")
+    files = _read_artifact_files(report_dir)
 
     dist_dir = _resolve_dist(report_dist)
     if dist_dir is not None:
@@ -220,8 +231,7 @@ def render_report_html(
         "slug": report_slug,
         "title": title,
         "created_at": created_at,
-        "render_files": render_files,
-        "queries": queries,
+        "files": files,
     }
     payload_json = _escape_for_script_tag(json.dumps(payload, ensure_ascii=False))
     rendered = (

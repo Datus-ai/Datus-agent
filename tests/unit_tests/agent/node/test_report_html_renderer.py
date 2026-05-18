@@ -71,7 +71,13 @@ def test_render_report_html_writes_index_file(tmp_path: Path):
     assert out_path.is_file()
 
 
-def test_render_report_html_includes_render_files_and_queries(tmp_path: Path):
+def test_render_report_html_includes_flat_files(tmp_path: Path):
+    """Payload is a single ``files`` list with slug-relative paths.
+
+    Matches the ``IPublishedReportArtifact`` / ``IReportDetail`` shape that
+    ``@datus/web-report`` consumes via ``splitArtifactFiles(detail.files)``;
+    ``render_files`` / ``queries`` are no longer separate top-level keys.
+    """
     _seed_report(tmp_path, report_slug="demo_003")
     out_path = render_report_html(project_root=tmp_path, report_slug="demo_003")
     body = out_path.read_text(encoding="utf-8")
@@ -83,12 +89,20 @@ def test_render_report_html_includes_render_files_and_queries(tmp_path: Path):
     data = json.loads(payload_unescaped)
 
     assert data["slug"] == "demo_003"
-    render_names = {f["name"] for f in data["render_files"]}
-    assert render_names == {"app.jsx", "kpi-banner.jsx"}
-    app_entry = next(f for f in data["render_files"] if f["name"] == "app.jsx")
+    assert "render_files" not in data
+    assert "queries" not in data
+    file_paths = {f["path"] for f in data["files"]}
+    assert file_paths == {
+        "render/app.jsx",
+        "render/kpi-banner.jsx",
+        "queries/q.sql",
+        "queries/q.json",
+    }
+    app_entry = next(f for f in data["files"] if f["path"] == "render/app.jsx")
     assert "useDatusArtifact" in app_entry["content"]
-    query_names = {q["name"] for q in data["queries"]}
-    assert query_names == {"q.sql", "q.json"}
+    # The list is sorted by path for deterministic embedding into the
+    # inline JSON block (regressions here would surface as flaky diffs).
+    assert [f["path"] for f in data["files"]] == sorted(file_paths)
     assert "T" in data["created_at"] and data["created_at"].endswith("Z")
 
 
@@ -105,8 +119,8 @@ def test_render_report_html_walks_nested_render_dirs(tmp_path: Path):
     start = body.index('id="datus-report-data">') + len('id="datus-report-data">')
     end = body.index("</script>", start)
     data = json.loads(body[start:end].replace("<\\/", "</"))
-    render_names = {f["name"] for f in data["render_files"]}
-    assert "charts/trend.jsx" in render_names
+    file_paths = {f["path"] for f in data["files"]}
+    assert "render/charts/trend.jsx" in file_paths
 
 
 def test_render_report_html_missing_app_jsx_raises(tmp_path: Path):
