@@ -11,12 +11,16 @@ against a real LanceDB-backed store with auto-constructed test data.
 
 from typing import List
 
+import numpy as np
 import pytest
+from lancedb.embeddings.base import TextEmbeddingFunction
+from lancedb.embeddings.registry import register
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.storage.document.schemas import PlatformDocChunk
 from datus.storage.document.store import document_store
+from datus.storage.embedding_models import EMBEDDING_MODELS, EmbeddingModel
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -27,6 +31,39 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 TEST_PLATFORM = "test_search_tool"
+
+
+@register("datus_test_deterministic")
+class _DeterministicDocEmbedding(TextEmbeddingFunction):
+    """Small deterministic LanceDB embedding for merge-queue-safe doc search tests."""
+
+    dim: int = 8
+
+    def ndims(self):
+        return self.dim
+
+    def generate_embeddings(self, texts, *args, **kwargs):
+        vectors = []
+        for text in list(texts):
+            value = str(text or "")
+            buckets = [0.0] * self.dim
+            for index, char in enumerate(value):
+                buckets[index % self.dim] += (ord(char) % 53) / 53.0
+            norm = float(np.linalg.norm(buckets)) or 1.0
+            vectors.append([bucket / norm for bucket in buckets])
+        return vectors
+
+
+@pytest.fixture(autouse=True)
+def deterministic_document_embedding(monkeypatch):
+    """Keep document-search acceptance off real fastembed/model cache state."""
+    document_store.cache_clear()
+    model = EmbeddingModel(model_name="datus-test-deterministic", dim_size=8)
+    model._model = _DeterministicDocEmbedding()
+    model.model_initialization_attempted = True
+    monkeypatch.setitem(EMBEDDING_MODELS, "document", model)
+    yield
+    document_store.cache_clear()
 
 
 def _make_chunk(
@@ -175,26 +212,27 @@ class TestSearchTool:
     def test_list_document_nav_returns_tree(self):
         """list_document_nav should return a hierarchical navigation tree."""
         result = self.tool.list_document_nav(platform=TEST_PLATFORM, version="v1")
-        assert result.success, f"list_document_nav failed: {result.error}"
+        assert result.success is True, f"list_document_nav failed: {result.error}"
         assert result.platform == TEST_PLATFORM
-        assert result.total_docs > 0, "Should have at least 1 unique doc"
-        assert len(result.nav_tree) > 0, "Nav tree should not be empty"
+        assert result.total_docs == 4
+        assert result.nav_tree != []
 
         # Each top-level item should be a pure tree node with name and children
         for item in result.nav_tree:
-            assert "name" in item or "version" in item, "Tree node should have 'name' or 'version'"
             if "name" in item:
                 assert "children" in item, "Tree node should have 'children'"
                 assert isinstance(item["children"], list), "children should be a list"
                 assert item["name"], "name should not be empty"
-            else:
+            elif "version" in item:
                 assert "tree" in item, "Multi versions should have 'tree'"
+            else:
+                raise AssertionError(f"Tree node should have 'name' or 'version': {item}")
 
     def test_list_document_nav_empty_platform(self):
         """list_document_nav for a non-existent platform returns empty tree."""
         result = self.tool.list_document_nav(platform="nonexistent_platform_xyz")
 
-        assert result.success
+        assert result.success is True
         assert result.total_docs == 0
         assert result.nav_tree == []
 
@@ -202,7 +240,8 @@ class TestSearchTool:
         """get_document should retrieve chunks when given a title from the nav tree."""
         # First get the nav tree to find a real title
         nav_result = self.tool.list_document_nav(platform=TEST_PLATFORM, version="v1")
-        assert nav_result.success and len(nav_result.nav_tree) > 0
+        assert nav_result.success is True
+        assert nav_result.nav_tree != []
 
         # Find a leaf node (node with empty children) from the pure tree
         def _find_first_doc(nodes):
@@ -225,7 +264,7 @@ class TestSearchTool:
         # Use the title to get document chunks
         result = self.tool.get_document(platform=TEST_PLATFORM, titles=[title], version="v1")
 
-        assert result.success, f"get_document failed: {result.error}"
+        assert result.success is True, f"get_document failed: {result.error}"
         assert result.platform == TEST_PLATFORM
         assert result.chunk_count > 0, f"Should find chunks for title '{title}'"
         assert len(result.chunks) == result.chunk_count
@@ -242,7 +281,7 @@ class TestSearchTool:
             titles=["ZZZZZ_NONEXISTENT_TITLE_ZZZZZ"],
         )
 
-        assert result.success
+        assert result.success is True
         assert result.chunk_count == 0
         assert result.chunks == []
 
@@ -257,11 +296,11 @@ class TestSearchTool:
             top_n=3,
         )
 
-        assert result.success, f"search_document failed: {result.error}"
-        assert result.doc_count > 0, "Should find at least one result for keyword DATE_TRUNC"
+        assert result.success is True, f"search_document failed: {result.error}"
+        assert result.doc_count == 3
 
         assert "DATE_TRUNC" in result.docs, "Keyword 'DATE_TRUNC' missing from result.docs"
-        assert len(result.docs["DATE_TRUNC"]) > 0, "No results for keyword 'DATE_TRUNC'"
+        assert len(result.docs["DATE_TRUNC"]) == 3
 
         # Verify chunk fields from the first result
         first_chunk = result.docs["DATE_TRUNC"][0]
@@ -279,10 +318,11 @@ class TestSearchTool:
             top_n=3,
         )
 
-        assert result.success, f"search_document failed: {result.error}"
+        assert result.success is True, f"search_document failed: {result.error}"
         # Each keyword should have its own entry in the docs dict
         for keyword in ["DATE_TRUNC", "CURRENT_DATE"]:
             assert keyword in result.docs, f"Keyword '{keyword}' missing from result.docs"
+            assert len(result.docs[keyword]) == 3
 
     def test_search_document_wrong_platform(self):
         """search_document on a non-existent platform returns empty results."""
@@ -292,7 +332,7 @@ class TestSearchTool:
             top_n=3,
         )
 
-        assert result.success
+        assert result.success is True
         assert result.doc_count == 0
 
     # ----- delete_docs -----

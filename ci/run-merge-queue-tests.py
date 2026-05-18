@@ -23,7 +23,7 @@ from typing import Any, Sequence
 REPO_ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = REPO_ROOT / "ci"
 DEFAULT_REPORT = OUT_DIR / "merge-queue-results.json"
-DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("MERGE_QUEUE_TEST_TIMEOUT", "1800"))
+DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("MERGE_QUEUE_TEST_TIMEOUT", "600"))
 PYTEST_BASETEMP_ENV = "DATUS_CI_PYTEST_BASETEMP"
 
 ACCEPTANCE_MARK_EXPR = "acceptance"
@@ -200,14 +200,14 @@ def suite_definitions() -> dict[str, dict[str, Any]]:
             "targets": unit_targets,
             "mark_expr": pr_harness_mark_expr,
             "junit_xml": OUT_DIR / "test-results-merge-acceptance-unit.xml",
-            "extra_args": ["--timeout=300", "--dist=loadscope", "-n", "auto"],
+            "extra_args": ["--timeout=120", "--dist=loadscope", "-n", "auto"],
         },
         "acceptance-integration": {
             "description": "Deterministic acceptance integration coverage reused from the PR harness.",
             "targets": integration_targets,
             "mark_expr": ACCEPTANCE_MARK_EXPR,
             "junit_xml": OUT_DIR / "test-results-merge-acceptance.xml",
-            "extra_args": ["--timeout=300"],
+            "extra_args": ["--timeout=120"],
         },
     }
 
