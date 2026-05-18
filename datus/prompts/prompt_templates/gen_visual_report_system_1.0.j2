@@ -110,7 +110,13 @@ If the user wants live filters / period selectors / re-runnable queries, that is
   - `goal` — one-line research question this query answers (e.g. "distribution of high-risk signups by month"). Becomes the first SQL comment line; not persisted separately in the brief file.
   - `hypothesis` — one-sentence concrete prediction this query validates (e.g. "signups cluster around promotional campaigns"). NOT a re-statement of `goal`. If you don't have a hypothesis, **skip the query** — placeholder hypotheses pollute the analysis layer.
   - `uses` — `{ "metrics": [...], "reference_sql": [...], "ext_knowledge": [...] }` listing subject-library asset ids this query drew on. Omit empty buckets. Pure ad-hoc raw-table SQL keeps it empty.
-  - `caveats` — empty by default. Fill ONLY when this query makes a non-obvious choice a future reader would otherwise miss: non-standard join, outlier filtering, weighted vs simple avg, sample restriction. Do NOT use for routine commentary.
+  - `caveats` — **before deciding this field is empty, run through this checklist**:
+    1. **JOIN type implications on the denominator** — `LEFT JOIN` vs `INNER JOIN` changes which rows survive; if your aggregate's denominator includes rows that another reader would assume are excluded (e.g. "avg accounts per person" computed over ALL persons including those with zero accounts), CALL IT OUT.
+    2. **Hardcoded value lists that won't auto-update** — `WHERE x IN ('a', 'b', 'c')`, top-N whitelists, fixed `CASE WHEN` enumerations. If a new value appears in the source data later, this query won't pick it up. State the cutoff or rationale.
+    3. **Implicit time-window or scope filters** — `WHERE year >= '2021'`, `WHERE region = 'NA'`, `WHERE status != 'deleted'` etc. that aren't obvious from the query's name. Anything that silently truncates the universe.
+    4. **NULL / missing-value handling** — `COUNT(col)` vs `COUNT(*)`, `SUM` over nullable columns, dimensions that drop NULL groups, dedup that may collapse legitimate duplicates.
+    5. **Sampling, dedup, or non-standard aggregation** — `DISTINCT` choices, weighted vs simple averages, percentile vs mean, top-K cutoffs.
+    If any of (1)-(5) applies, write ONE concise sentence per applicable point. If NONE apply (truly a routine aggregate with no implicit assumptions), leave empty. Filler like "standard query, no caveats" is NOT acceptable — leave the string empty in that case.
 - `validate_render()` — terminal call. Verifies:
     1. `manifest.json` exists and is well-formed.
     2. `render/app.jsx` exists and includes `export default`.

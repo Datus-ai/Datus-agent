@@ -109,7 +109,14 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
   - `goal` — one-line research question this template answers. Becomes a trailing SQL comment; not persisted separately in the brief file.
   - `hypothesis` — one-sentence concrete prediction. Skip the template rather than write a placeholder.
   - `uses` — `{ "metrics": [...], "reference_sql": [...], "ext_knowledge": [...] }` listing subject-library asset ids. Omit empty buckets.
-  - `caveats` — empty unless this template makes a non-obvious choice a future reader would otherwise miss.
+  - `caveats` — **before deciding this field is empty, run through this checklist**:
+    1. **JOIN type implications on the denominator** — `LEFT JOIN` vs `INNER JOIN` choices that change what survives in aggregates.
+    2. **Hardcoded value lists** — `WHERE x IN ('a', 'b', 'c')` enumerations that won't auto-include new source values.
+    3. **Implicit time-window / scope filters** — fixed year cutoffs, region whitelists, status exclusions not obvious from the template name.
+    4. **NULL / missing-value handling** — `COUNT(col)` vs `COUNT(*)`, `SUM` over nullables, dimensions that drop NULL groups.
+    5. **Sampling, dedup, or non-standard aggregation** — `DISTINCT` choices, weighted vs simple averages, percentiles, top-K cutoffs.
+    6. **Param-dependent shape changes** — if a particular `sample_params` value silently picks a different code path (e.g. an empty array disables a filter), say so.
+    If any apply, write ONE concise sentence per applicable point. If none apply, leave empty. Filler like "no caveats" is NOT acceptable — leave the string empty in that case.
 - `validate_render()` — terminal call. Verifies:
     1. `manifest.json` exists and is well-formed.
     2. `render/app.jsx` exists and includes `export default`.

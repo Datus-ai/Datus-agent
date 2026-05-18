@@ -595,10 +595,18 @@ class ReportArtifactTools:
                 asset ids this query draws on; empty / omitted is fine for
                 pure ad-hoc queries. Surfaced in
                 ``analysis/subject_refs.json`` for the follow-up subagent.
-            caveats: Empty by default. Fill only when this query makes a
-                non-obvious choice a future reader would otherwise miss:
-                non-standard join, outlier filtering, weighted vs simple
-                avg, sample restriction. Do NOT use for routine commentary.
+            caveats: Before deciding this field is empty, check the SQL
+                against these five gotchas a follow-up reader would otherwise
+                miss: (1) JOIN type changing the denominator (LEFT vs INNER);
+                (2) hardcoded value lists that won't auto-include new source
+                values; (3) implicit time-window / scope filters not obvious
+                from the query name; (4) NULL handling (COUNT(col) vs *, SUM
+                over nullables, dimensions dropping NULL groups); (5)
+                sampling, dedup, or non-standard aggregation (DISTINCT,
+                weighted vs simple avg, top-K cutoffs). Write one concise
+                sentence per applicable point. Truly routine aggregates with
+                no implicit assumptions get an empty string — filler like
+                "no caveats" is NOT acceptable.
             datasource: Logical datasource name. Empty string uses the default.
 
         Returns:

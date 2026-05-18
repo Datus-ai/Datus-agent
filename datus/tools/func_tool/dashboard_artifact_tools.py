@@ -558,8 +558,16 @@ class DashboardArtifactTools:
             uses: Optional ``{"metrics": [...], "reference_sql": [...],
                 "ext_knowledge": [...]}``. Surfaced in
                 ``analysis/subject_refs.json`` for the follow-up subagent.
-            caveats: Empty by default. Fill only when this template makes a
-                non-obvious choice a future reader would otherwise miss.
+            caveats: Before deciding this field is empty, check the
+                template against the same five-gotcha checklist the report
+                subagent uses (JOIN type / hardcoded value lists / implicit
+                filters / NULL handling / non-standard aggregation), plus
+                one dashboard-specific extra: if a particular sample_params
+                value silently picks a different code path (e.g. an empty
+                array disables a filter), say so. Write one concise
+                sentence per applicable point. Truly routine templates get
+                an empty string — filler like "no caveats" is NOT
+                acceptable.
             datasource: Logical datasource name. Empty string uses the default.
 
         Returns:

@@ -152,11 +152,13 @@ class QueryBrief(BaseModel):
         default="",
         max_length=500,
         description=(
-            "Empty by default. Filled only when this query makes a "
-            "non-obvious choice a future reader would otherwise miss: "
-            "non-standard join, outlier filtering, weighted vs simple avg, "
-            "etc. The system prompt explicitly tells the LLM NOT to use "
-            "this for routine commentary."
+            "Non-obvious choices a follow-up reader would otherwise miss. "
+            "The system prompt sends the LLM through a five-point "
+            "checklist (JOIN-type implications / hardcoded value lists / "
+            "implicit filters / NULL handling / non-standard aggregation) "
+            "before deciding this field is empty. Filler text like 'no "
+            "caveats' is rejected at the prompt level; truly routine "
+            "aggregates get an empty string."
         ),
     )
 
