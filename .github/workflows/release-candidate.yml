@@ -367,6 +367,26 @@ jobs:
             --runner-os "${RUNNER_OS:-}" \
             --runner-arch "${RUNNER_ARCH:-}"
 
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          report_path = Path(os.environ["BENCHMARK_RUN_DIR"]) / "weekly_benchmark_report.json"
+          status = "failed"
+          classification = "unknown"
+          try:
+              report = json.loads(report_path.read_text(encoding="utf-8"))
+              status = str(report.get("status") or status)
+              classification = str(report.get("classification") or classification)
+          except Exception as exc:
+              print(f"Failed to read stable benchmark report outputs: {exc}", file=sys.stderr)
+
+          print(f"status={status}")
+          print(f"classification={classification}")
+          PY
+
           cat "${BENCHMARK_RUN_DIR}/weekly_benchmark_report.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload stable benchmark artifacts
