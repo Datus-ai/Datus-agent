@@ -317,7 +317,12 @@ class FinalizeAnalysisOutput(BaseModel):
     duplicated ``manifest.description`` (artifact-level framing) and was
     fully covered by ``insights[].evidence_queries`` (per-finding
     references). The follow-up consultant reads the manifest and the
-    insights directly instead.
+    insights directly instead. ``intent.md`` curation is handled by a
+    separate, dedicated LLM call (``run_intent_curation`` in
+    ``_visual_artifact_finalize``) that returns a fresh markdown body
+    via ``LLMBaseModel.generate`` — keeping it out of this schema
+    avoids mixing transient curation signals with the persisted
+    finalize products.
     """
 
     model_config = ConfigDict(extra="forbid")

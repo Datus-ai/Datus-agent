@@ -627,6 +627,252 @@ def write_subject_refs(analysis_dir: Path, refs: SubjectRefs) -> Optional[str]:
 
 
 # --------------------------------------------------------------------------- #
+# Intent.md curation (independent LLM call)                                   #
+# --------------------------------------------------------------------------- #
+#
+# A second, dedicated LLM call cleans ``analysis/intent.md`` after the
+# main finalize call writes insights / suggested_questions. We use a
+# plain ``model.generate(prompt) -> str`` pass-through (per the project
+# rule "no hardcoded LLM calls in nodes — go through LLMBaseModel") and
+# accept a full markdown body back; the index-based alternative was
+# considered and rejected — see commit history for the design trail.
+#
+# Three guard rails keep this safe:
+#
+# 1. **Prompt contract** — the LLM is told the response must START with
+#    ``#`` and contain ONLY the curated markdown (no fence, no preface,
+#    no commentary). It's also told to make a *binary* keep/delete
+#    decision per section: never rewrite a user's words.
+# 2. **Sanitize** — Python strips outer ```...``` fences (with or
+#    without language tag) and any preface text before the first
+#    ``### `` heading. Trailing chatter is left alone — easy to
+#    misjudge (a legitimate blockquote can extend past the last
+#    heading) and far less destructive than leading fence noise.
+# 3. **Safety checks** — empty body, no ``### `` heading, or shrinking
+#    below 30% of original length all abort the rewrite. The original
+#    file survives unchanged; a warning surfaces in the finalize
+#    result for monitoring.
+
+# Match an entire-body code fence with optional language tag, e.g.
+# ``` or ```markdown or ```md. ``DOTALL`` lets ``.*?`` cross newlines.
+_CURATED_OUTER_FENCE_RE = re.compile(
+    r"^```(?:[a-zA-Z0-9_+-]+)?\s*\n(.*?)\n```\s*$",
+    re.DOTALL,
+)
+
+# Minimum size of curated output as a fraction of the original. Below
+# this threshold we assume the LLM misinterpreted the task as
+# "summarise" (or refused) and refuse to overwrite.
+_CURATED_MIN_LENGTH_RATIO = 0.30
+
+# Absolute floor — even tiny intent.md files shouldn't be allowed to
+# shrink past this many characters. Prevents the ratio check from
+# greenlighting "30% of 50 chars = 15 chars" obvious nonsense.
+_CURATED_MIN_LENGTH_ABSOLUTE = 50
+
+
+def _build_intent_curation_prompt(intent_md: str) -> str:
+    """Compose the standalone curation prompt.
+
+    Long and declarative: the LLM has one shot to emit a valid markdown
+    body, and we want every constraint visible in one place. Examples
+    bias the model toward the "binary keep/delete" decision and away
+    from the tempting "let me rephrase this" behavior.
+    """
+    return (
+        "You are curating an analysis-artifact `intent.md` file for a visual "
+        "report or dashboard. The file records raw user prompts as timestamped "
+        "sections — your job is to REMOVE sections that carry no real direction "
+        "and KEEP sections that express genuine intent, in their original wording.\n"
+        "\n"
+        "## DELETE these section types\n"
+        "\n"
+        "**Operational nudges** — agreement / continuation prompts the user sent\n"
+        "just to keep the agent loop going:\n"
+        "  - `继续` / `继续吧` / `请继续完成` / `继续执行` / `下一步`\n"
+        "  - `好的` / `嗯` / `对` / `没问题`\n"
+        "  - `continue` / `proceed` / `go ahead` / `ok` / `keep going` / `next`\n"
+        "\n"
+        "**Pure render / styling adjustments** — visual tweaks the follow-up\n"
+        "ask agent (a read-only data consultant) cannot act on and gets no\n"
+        "value from:\n"
+        "  - Color / background / font size / spacing / margin / padding\n"
+        "  - Layout reflow (`改成 2 列` / `居中对齐` / `网格布局`)\n"
+        "  - Component cosmetics (`圆角` / `阴影` / `动画` / `字体粗细`)\n"
+        "  - Examples to delete: `把 Overview 背景色改成红色` / "
+        "`改成 2 列布局` / `字号调大一点` / `加点圆角`\n"
+        "\n"
+        "## KEEP everything else\n"
+        "\n"
+        "Anything that carries a data, analysis, scope, metric, or analytical-view\n"
+        "signal — even if the section also mentions a render tweak alongside it:\n"
+        "  - New data dimensions / metrics / analysis angles\n"
+        "    (`新增用户增长活跃柱状图` / `加一个 LTV 分析` / `按行业拆分`)\n"
+        "  - Scope shifts (time window, geography, segment, filter)\n"
+        "  - Tone / audience direction (`写得更面向高管` / `加一句结论`)\n"
+        "  - **Mixed prompts** containing ANY data/analysis signal alongside\n"
+        "    render adjustments — keep the WHOLE section. Example:\n"
+        "    `把 Overview 背景色改成红色，新增一个用户增长活跃柱状图` → KEEP\n"
+        "    (the 'new chart' part is real data intent)\n"
+        "  - Chart-type changes that imply a different analytical view\n"
+        "    (`柱图改成饼图`, `按月改成按季度`) — these encode comparison\n"
+        "    semantics, not pure styling\n"
+        "\n"
+        "**When in doubt: KEEP.** Losing a section the user genuinely cared\n"
+        "about is far worse than keeping one noisy section.\n"
+        "\n"
+        "## ABSOLUTE RULES\n"
+        "\n"
+        "1. **Preserve verbatim.** Do NOT rewrite, translate, summarise, or\n"
+        "   reformat user prose. A section either survives UNCHANGED, character\n"
+        "   for character, or is deleted entirely. Never edit inside a section.\n"
+        "2. **Preserve section structure.** Each surviving section keeps its\n"
+        "   `### [timestamp] mode: ...` heading line and its `> ...` blockquote\n"
+        "   body exactly as written, separated by one blank line from the next.\n"
+        "3. **Order preserved.** Surviving sections appear in the original order.\n"
+        "4. **No additions.** Do not insert notes, commentary, or new sections.\n"
+        "5. **Binary decision per section.** Keep the whole section or delete\n"
+        "   the whole section. Never `keep half` / `merge two` / `extract part`.\n"
+        "\n"
+        "## CRITICAL OUTPUT FORMAT\n"
+        "\n"
+        "- Output ONLY the curated markdown body.\n"
+        "- Do NOT wrap the output in code fences (no ```, no ```markdown).\n"
+        "- Do NOT add a preface (`Here is the cleaned version:` / "
+        "`好的，已为你清理：`).\n"
+        "- Do NOT add a closing remark (`Hope this helps` / "
+        "`希望对你有帮助`).\n"
+        "- The FIRST character of your response must be `#` (the start of\n"
+        "  the first `### ` heading).\n"
+        "- If after applying the rules every section should be deleted,\n"
+        "  return the original file unchanged — never produce empty output.\n"
+        "\n"
+        "## CURRENT intent.md (curate this)\n"
+        "\n"
+        f"{intent_md.rstrip()}\n"
+    )
+
+
+def _sanitize_curated_intent_md(text: str) -> str:
+    """Strip common LLM-output wrappers around the cleaned body.
+
+    Three passes, narrow on purpose:
+
+      1. **Whole-body fence**: ``` ... ``` or ```markdown ... ``` —
+         the fence wraps the entire response.
+      2. **Leading preface**: ``Here is the cleaned version:\\n\\n###...``
+         — everything before the first ``### `` heading is dropped.
+      3. **Trailing fence + chatter**: when preface stripping leaves a
+         stray closing ``` on its own line *after* the last ``### ``
+         section, trim from that line to end. This only triggers for
+         the specific "preface + fence + trailing chatter" composite
+         where the whole-body fence regex (pass 1) couldn't match.
+
+    Regular trailing commentary (without a stray ```) is intentionally
+    NOT stripped — telling a legitimate multi-line blockquote apart
+    from LLM chatter is genuinely ambiguous. The downstream safety
+    checks ("must contain ``###``", minimum length) plus the human-
+    readable structure of intent.md make residual chatter tolerable.
+    """
+    s = text.strip()
+
+    fence_match = _CURATED_OUTER_FENCE_RE.match(s)
+    if fence_match:
+        s = fence_match.group(1).strip()
+
+    if not s.startswith("### "):
+        first_heading = s.find("\n### ")
+        if first_heading != -1:
+            s = s[first_heading + 1 :].lstrip()
+
+    # Pass 3 — narrow, only post-preface stripping: a stray closing
+    # ``` on its own line after the last ``### `` heading is by
+    # construction LLM artifact, not user content. intent.md
+    # blockquotes always lead with ``> ``, so ``\\n```\\s*`` lines never
+    # appear inside legitimate sections.
+    last_heading = s.rfind("### ")
+    if last_heading >= 0:
+        trailing_fence = re.search(r"\n```[^\n]*(?:\n|$)", s[last_heading:])
+        if trailing_fence:
+            s = s[: last_heading + trailing_fence.start()].rstrip()
+
+    return s.strip()
+
+
+def run_intent_curation(model: Any, intent_md_path: Path) -> Optional[str]:
+    """Read ``intent.md``, ask the LLM to curate it, sanitize, and write back.
+
+    This is an INDEPENDENT LLM call — separate from the main finalize
+    call that produces insights / suggested_questions. We keep it
+    independent for two reasons:
+
+    1. Schema separation: ``FinalizeAnalysisOutput`` is the contract
+       for *persisted* outputs; intent curation is a transient action
+       that doesn't deserve a slot there.
+    2. Failure isolation: a curation hiccup must never block the
+       finalize products from landing on disk.
+
+    Returns a warning string when the curation degraded gracefully
+    (LLM error / empty output / sanity-check fail) and the original
+    file was preserved. Returns ``None`` on a clean rewrite or a clean
+    no-op (LLM returned identical content / file missing).
+    """
+    if not intent_md_path.is_file():
+        # Programmatic test runs may create no intent.md; nothing to curate.
+        return None
+    try:
+        original = intent_md_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return f"intent curation: failed to read intent.md ({exc})"
+
+    if not original.strip():
+        # Empty file — leave it alone, nothing to curate.
+        return None
+
+    prompt = _build_intent_curation_prompt(original)
+    try:
+        raw = model.generate(prompt)
+    except Exception as exc:
+        # LLMBaseModel.generate raises a bag of subclasses depending on
+        # the provider; broad catch is intentional so finalize main
+        # path is never blocked by curation failures.
+        return f"intent curation: LLM call failed ({exc}); intent.md left unchanged"
+
+    if not isinstance(raw, str) or not raw.strip():
+        return "intent curation: LLM returned empty body; intent.md left unchanged"
+
+    curated = _sanitize_curated_intent_md(raw)
+
+    # Safety check 1: must contain at least one section heading. If the
+    # LLM returned only a preface / fence / refusal, sanitize won't
+    # have rescued a usable body.
+    if "### " not in curated:
+        return "intent curation: LLM output contained no '### ' heading after sanitize; intent.md left unchanged"
+
+    # Safety check 2: minimum length floor. Below this we assume the LLM
+    # misread the task as "summarise" or refused. Both ratio and
+    # absolute floors apply.
+    min_len = max(_CURATED_MIN_LENGTH_ABSOLUTE, int(len(original.strip()) * _CURATED_MIN_LENGTH_RATIO))
+    if len(curated) < min_len:
+        return f"intent curation: output too short ({len(curated)} chars vs floor {min_len}); intent.md left unchanged"
+
+    # Normalise trailing newline so the file looks like every other one
+    # the agent writes.
+    new_body = curated.rstrip("\n") + "\n"
+
+    if new_body == original:
+        # No-op: LLM judged everything as real intent. Skip the write so
+        # mtime stays stable across no-op finalize reruns.
+        return None
+
+    try:
+        _atomic_write_text(intent_md_path, new_body)
+    except OSError as exc:
+        return f"intent curation: failed to rewrite intent.md ({exc})"
+    return None
+
+
+# --------------------------------------------------------------------------- #
 # Self-check                                                                  #
 # --------------------------------------------------------------------------- #
 
@@ -693,6 +939,17 @@ def run_finalize_analysis(
             "warnings": [...],
             "error": "...",
         }
+
+    Side effects on disk (all best-effort, surfaced via ``warnings``):
+
+    * ``analysis/insights.json`` (report only)
+    * ``analysis/suggested_questions.json``
+    * ``analysis/intent.md`` — curated in place by a separate, dedicated
+      LLM call (:func:`run_intent_curation`) that returns a fresh
+      markdown body via ``model.generate``; safety checks reject the
+      rewrite on empty / fence-only / dramatically-shrunk output.
+    * ``analysis/subject_refs.json`` — present iff non-empty.
+    * ``manifest.json`` — ``key_tables`` field refreshed.
     """
     warnings: List[str] = []
 
@@ -725,6 +982,14 @@ def run_finalize_analysis(
         return {"ok": False, "warnings": warnings, "error": f"finalize output invalid: {exc}"}
 
     warnings.extend(write_finalize_output(analysis_dir, output=output, artifact_kind=artifact_kind))
+
+    # Independent LLM call: curate intent.md by stripping operational
+    # nudges + pure render adjustments. Failures degrade to "leave the
+    # original file unchanged + record a warning" — never blocks the
+    # main artifact (which is already on disk by now).
+    curation_warning = run_intent_curation(model, analysis_dir / "intent.md")
+    if curation_warning:
+        warnings.append(curation_warning)
 
     refs = aggregate_subject_refs(queries_dir)
     write_err = write_subject_refs(analysis_dir, refs)

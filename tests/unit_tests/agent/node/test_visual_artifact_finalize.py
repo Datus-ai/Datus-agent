@@ -26,6 +26,7 @@ from unittest.mock import Mock
 import pytest
 
 from datus.agent.node._visual_artifact_finalize import (
+    _sanitize_curated_intent_md,
     aggregate_referenced_tables,
     aggregate_subject_refs,
     collect_query_briefs,
@@ -33,6 +34,7 @@ from datus.agent.node._visual_artifact_finalize import (
     consistency_check,
     parse_finalize_output,
     run_finalize_analysis,
+    run_intent_curation,
     update_manifest_key_tables,
 )
 from datus.schemas.analysis_artifacts import (
@@ -587,6 +589,209 @@ class TestUpdateManifestKeyTables:
 
 
 # --------------------------------------------------------------------------- #
+# _sanitize_curated_intent_md                                                 #
+# --------------------------------------------------------------------------- #
+
+
+_CURATED_BODY = (
+    "### [2026-05-18T03:10:06Z] mode: new\n"
+    "> 生成银行业务用户账户增长分析报告\n"
+    "\n"
+    "### [2026-05-18T03:32:30Z] mode: edit\n"
+    "> 聚焦风控分析\n"
+)
+
+
+class TestSanitizeCuratedIntentMd:
+    def test_plain_body_unchanged(self):
+        """Already-clean output passes through verbatim (modulo strip)."""
+        out = _sanitize_curated_intent_md(_CURATED_BODY)
+        assert out.startswith("### ")
+        assert "聚焦风控分析" in out
+
+    def test_strips_outer_triple_backtick_fence(self):
+        wrapped = f"```\n{_CURATED_BODY}\n```"
+        out = _sanitize_curated_intent_md(wrapped)
+        assert out.startswith("### ")
+        assert "```" not in out
+        assert "聚焦风控分析" in out
+
+    def test_strips_language_tagged_fence(self):
+        """``` ```markdown``` ` and ``` ```md``` ` are common (DeepSeek / GPT)."""
+        for tag in ("markdown", "md"):
+            wrapped = f"```{tag}\n{_CURATED_BODY}\n```"
+            out = _sanitize_curated_intent_md(wrapped)
+            assert out.startswith("### "), f"failed for tag={tag!r}"
+            assert "```" not in out
+
+    def test_strips_leading_preface(self):
+        """GPT-style 'Here is the cleaned version:' preface gone."""
+        with_preface = f"Here is the cleaned version:\n\n{_CURATED_BODY}"
+        out = _sanitize_curated_intent_md(with_preface)
+        assert out.startswith("### ")
+        assert "Here is the cleaned version" not in out
+
+    def test_strips_preface_and_fence_combined(self):
+        """Worst case: preface + fence + trailing chatter all at once."""
+        composite = (
+            "Sure! Here is the curated intent.md:\n"
+            "\n"
+            f"```markdown\n{_CURATED_BODY}\n```\n"
+            "\n"
+            "Let me know if you'd like further edits."
+        )
+        out = _sanitize_curated_intent_md(composite)
+        assert out.startswith("### ")
+        assert "Sure!" not in out
+        assert "```" not in out
+        # Trailing chatter is intentionally NOT stripped — telling where
+        # a legitimate blockquote ends from where LLM chatter begins is
+        # a tough call. Downstream safety checks pick up the slack.
+
+    def test_body_with_no_heading_returned_as_is(self):
+        """If sanitize can't find a ``### `` heading the input is
+        returned (stripped). The caller's safety check then fails the
+        write — we don't try to 'fix' un-fixable input here."""
+        ill_formed = "I cannot perform this task."
+        out = _sanitize_curated_intent_md(ill_formed)
+        assert out == "I cannot perform this task."
+
+
+# --------------------------------------------------------------------------- #
+# run_intent_curation                                                         #
+# --------------------------------------------------------------------------- #
+
+
+_ORIGINAL_INTENT = (
+    "### [2026-05-18T03:10:06Z] mode: new\n"
+    "> 生成银行业务用户账户增长分析报告\n"
+    "\n"
+    "### [2026-05-18T03:31:42Z] mode: edit\n"
+    "> 继续吧\n"
+    "\n"
+    "### [2026-05-18T03:32:30Z] mode: edit\n"
+    "> 聚焦风控分析\n"
+)
+
+
+def _curation_model(*, returns):
+    """Build a Mock that implements ``LLMBaseModel.generate(prompt) -> str``."""
+    m = Mock(spec=["generate"])
+    if isinstance(returns, Exception):
+        m.generate.side_effect = returns
+    else:
+        m.generate.return_value = returns
+    return m
+
+
+class TestRunIntentCuration:
+    def test_missing_file_is_silent_noop(self, tmp_path: Path):
+        """Programmatic test setups may skip creating intent.md
+        entirely; the curator must noop without warning."""
+        result = run_intent_curation(_curation_model(returns="unused"), tmp_path / "absent.md")
+        assert result is None
+
+    def test_empty_file_is_silent_noop(self, tmp_path: Path):
+        path = tmp_path / "intent.md"
+        path.write_text("   \n\n", encoding="utf-8")
+        result = run_intent_curation(_curation_model(returns="unused"), path)
+        assert result is None
+        # File untouched.
+        assert path.read_text(encoding="utf-8") == "   \n\n"
+
+    def test_happy_path_rewrites_file(self, tmp_path: Path):
+        """LLM returns a clean curated body — sanitize passes through,
+        safety checks pass, file rewritten."""
+        path = tmp_path / "intent.md"
+        path.write_text(_ORIGINAL_INTENT, encoding="utf-8")
+        result = run_intent_curation(_curation_model(returns=_CURATED_BODY), path)
+        assert result is None
+        rewritten = path.read_text(encoding="utf-8")
+        assert "继续吧" not in rewritten  # dropped
+        assert "生成银行业务" in rewritten  # kept
+        assert "聚焦风控分析" in rewritten  # kept
+        # Trailing newline normalised.
+        assert rewritten.endswith("\n")
+
+    def test_fence_wrapped_output_sanitized_then_written(self, tmp_path: Path):
+        """LLM wraps output in ```markdown — sanitize strips before
+        the safety checks see it; write proceeds."""
+        path = tmp_path / "intent.md"
+        path.write_text(_ORIGINAL_INTENT, encoding="utf-8")
+        wrapped = f"```markdown\n{_CURATED_BODY}\n```"
+        result = run_intent_curation(_curation_model(returns=wrapped), path)
+        assert result is None
+        rewritten = path.read_text(encoding="utf-8")
+        assert "```" not in rewritten
+        assert rewritten.startswith("### ")
+
+    def test_identical_output_skips_write(self, tmp_path: Path, monkeypatch):
+        """When the LLM returns the original content unchanged we skip
+        the atomic_write so mtime stays stable across no-op finalize
+        reruns. Probe via the atomic writer."""
+        path = tmp_path / "intent.md"
+        path.write_text(_ORIGINAL_INTENT, encoding="utf-8")
+
+        from datus.agent.node import _visual_artifact_finalize as finalize_mod
+
+        writes: list = []
+        original = finalize_mod._atomic_write_text
+        monkeypatch.setattr(
+            finalize_mod,
+            "_atomic_write_text",
+            lambda p, c: writes.append(p) or original(p, c),
+        )
+        result = run_intent_curation(_curation_model(returns=_ORIGINAL_INTENT), path)
+        assert result is None
+        assert writes == []
+
+    def test_llm_exception_yields_warning_keeps_original(self, tmp_path: Path):
+        """LLM call raises (network blip / provider 500) — curator
+        records a warning and leaves intent.md untouched."""
+        path = tmp_path / "intent.md"
+        path.write_text(_ORIGINAL_INTENT, encoding="utf-8")
+        result = run_intent_curation(
+            _curation_model(returns=RuntimeError("provider 500")),
+            path,
+        )
+        assert result is not None
+        assert "LLM call failed" in result
+        assert path.read_text(encoding="utf-8") == _ORIGINAL_INTENT
+
+    def test_empty_llm_output_yields_warning_keeps_original(self, tmp_path: Path):
+        path = tmp_path / "intent.md"
+        path.write_text(_ORIGINAL_INTENT, encoding="utf-8")
+        result = run_intent_curation(_curation_model(returns="   \n  "), path)
+        assert result is not None
+        assert "empty body" in result
+        assert path.read_text(encoding="utf-8") == _ORIGINAL_INTENT
+
+    def test_output_without_heading_yields_warning_keeps_original(self, tmp_path: Path):
+        """LLM refused / returned prose — sanitize couldn't recover a
+        usable body; safety check trips."""
+        path = tmp_path / "intent.md"
+        path.write_text(_ORIGINAL_INTENT, encoding="utf-8")
+        result = run_intent_curation(
+            _curation_model(returns="I'm sorry, I cannot perform this task."),
+            path,
+        )
+        assert result is not None
+        assert "no '### ' heading" in result
+        assert path.read_text(encoding="utf-8") == _ORIGINAL_INTENT
+
+    def test_too_short_output_yields_warning_keeps_original(self, tmp_path: Path):
+        """LLM misinterpreted as 'summarise' and returned 1 tiny
+        section. Below the 30% length floor → reject."""
+        path = tmp_path / "intent.md"
+        path.write_text(_ORIGINAL_INTENT, encoding="utf-8")
+        tiny = "### [x] mode: y\n> z\n"
+        result = run_intent_curation(_curation_model(returns=tiny), path)
+        assert result is not None
+        assert "too short" in result
+        assert path.read_text(encoding="utf-8") == _ORIGINAL_INTENT
+
+
+# --------------------------------------------------------------------------- #
 # run_finalize_analysis                                                       #
 # --------------------------------------------------------------------------- #
 
@@ -618,6 +823,70 @@ class TestRunFinalizeAnalysis:
         refs = json.loads((analysis_dir / "subject_refs.json").read_text(encoding="utf-8"))
         assert any(m["id"] == "m_revenue" for m in refs["metrics"])
         assert result["subject_refs_count"]["metrics"] == 1
+
+    def test_end_to_end_curates_intent_md_when_present(self, tmp_path: Path):
+        """When intent.md exists, finalize triggers run_intent_curation
+        which calls ``model.generate`` and rewrites the file with the
+        cleaned body. The main ``model.generate_with_json_output``
+        call still produces insights / suggested_questions in the
+        same orchestration."""
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+        (analysis_dir / "intent.md").write_text(_ORIGINAL_INTENT, encoding="utf-8")
+
+        # This model mock implements BOTH the structured-output call
+        # (insights / suggested_questions) AND the plain text call
+        # used by intent curation.
+        model = Mock(spec=["generate_with_json_output", "generate"])
+        model.generate_with_json_output.return_value = _full_finalize_response()
+        model.generate.return_value = _CURATED_BODY
+
+        result = run_finalize_analysis(
+            model=model,
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+        )
+
+        assert result["ok"] is True
+        # Both LLM calls fired exactly once.
+        assert model.generate_with_json_output.call_count == 1
+        assert model.generate.call_count == 1
+        # intent.md was curated: placeholder dropped, real intents kept.
+        curated = (analysis_dir / "intent.md").read_text(encoding="utf-8")
+        assert "继续吧" not in curated
+        assert "生成银行业务" in curated
+        assert "聚焦风控分析" in curated
+
+    def test_end_to_end_curation_failure_does_not_block_finalize(self, tmp_path: Path):
+        """If the curation LLM call fails (or returns garbage), the
+        main finalize products still land on disk and the warning
+        surfaces in the result. Intent.md is preserved unchanged."""
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+        (analysis_dir / "intent.md").write_text(_ORIGINAL_INTENT, encoding="utf-8")
+
+        model = Mock(spec=["generate_with_json_output", "generate"])
+        model.generate_with_json_output.return_value = _full_finalize_response()
+        model.generate.side_effect = RuntimeError("curation provider 500")
+
+        result = run_finalize_analysis(
+            model=model,
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+        )
+
+        assert result["ok"] is True
+        # Main products survived the curation failure.
+        assert (analysis_dir / "insights.json").is_file()
+        assert (analysis_dir / "suggested_questions.json").is_file()
+        # Intent.md untouched.
+        assert (analysis_dir / "intent.md").read_text(encoding="utf-8") == _ORIGINAL_INTENT
+        # Warning surfaced for monitoring.
+        assert any("LLM call failed" in w for w in result["warnings"])
 
     def test_end_to_end_populates_manifest_key_tables(self, tmp_path: Path):
         """Finalize writes the code-aggregated table list back to

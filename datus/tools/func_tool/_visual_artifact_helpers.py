@@ -40,16 +40,24 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-# Heuristics for ``intent.md`` recording. The goal is to keep the file
-# focused on prompts that express *what the user wants the artifact to
-# cover or change* and skip prompts that are operational ("继续 / continue")
-# or system-forwarded error reports from the renderer. A polluted
-# intent.md is worse than a thin one because the follow-up ask agent
-# reads it as the canonical "user voice" and gets anchored on noise
-# (e.g. a JSX traceback containing the words "五、风控阻断分析" would
-# falsely suggest the user asked for a risk focus).
+# Append-time noise filter for ``intent.md``. We only block patterns
+# that are mechanically obvious and have ZERO chance of being real user
+# intent: renderer / compiler error reports forwarded into the prompt
+# loop. These are structural — pure pattern matching catches them
+# precisely with no risk of dropping real intent.
+#
+# "Looks-like-placeholder" prompts (``继续``, ``continue``, ``下一步``,
+# ``好的`` etc.) used to live in a frozen set here. That approach was
+# rule-bound and brittle ("继续吧" / "请继续完成" / "嗯" all leaked
+# through; short real intents like "聚焦风控" almost got false-killed
+# by analogous length-based heuristics). Curation is now delegated to
+# the finalize-stage LLM call (see ``FinalizeAnalysisOutput.
+# intent_entries_to_keep``), which has full multi-prompt context and
+# the language-understanding to tell ``下一步`` (placeholder) apart
+# from ``聚焦风控`` (real direction shift) reliably. The follow-up ask
+# agent only ever sees the post-finalize intent.md, so any
+# intermediate noise from append-time is invisible to it.
 _INTENT_NOISE_PATTERNS = (
-    # Renderer / compiler error reports forwarded into the prompt loop.
     re.compile(r"^\s*Error:\s", re.IGNORECASE),
     re.compile(r"\bTraceback\b", re.IGNORECASE),
     re.compile(r"\bReferenceError\b"),
@@ -59,34 +67,14 @@ _INTENT_NOISE_PATTERNS = (
     re.compile(r"^\s*at [A-Za-z_$][\w$.]*\s*\(.*\)", re.MULTILINE),
 )
 
-# Pure placeholder prompts that carry no new intent — operational
-# nudges issued to make the agent loop continue. Comparison is done on
-# the lowercased + punctuation-stripped form.
-_INTENT_PLACEHOLDER_PHRASES = frozenset(
-    {
-        "继续",
-        "继续完成",
-        "继续完成任务",
-        "继续执行",
-        "继续下去",
-        "继续干",
-        "continue",
-        "go on",
-        "next",
-        "proceed",
-        "keep going",
-        "ok",
-        "done",
-    }
-)
-
 
 def _is_meaningful_intent(message: str) -> bool:
     """Decide whether a prompt should be recorded in ``analysis/intent.md``.
 
-    Returns ``False`` for empty / whitespace-only prompts, renderer
-    error reports, and pure continuation placeholders; ``True`` for
-    everything else.
+    Returns ``False`` for empty / whitespace-only prompts and renderer
+    error reports (mechanically obvious noise); ``True`` for everything
+    else. Semantic "placeholder vs real intent" judgment runs later, in
+    the finalize-stage LLM call.
     """
     text = (message or "").strip()
     if not text:
@@ -94,11 +82,6 @@ def _is_meaningful_intent(message: str) -> bool:
     for pattern in _INTENT_NOISE_PATTERNS:
         if pattern.search(text):
             return False
-    # Normalise short prompts to compare against the placeholder set —
-    # tolerant of trailing punctuation in either language.
-    normalized = text.lower().strip().rstrip("。.!！?？:：,，;；…\"'`")
-    if normalized in _INTENT_PLACEHOLDER_PHRASES:
-        return False
     return True
 
 
@@ -207,12 +190,15 @@ def append_intent_section(
     Returns an error string on failure (so the caller can include it in
     the FuncToolResult), ``None`` on success.
 
-    Prompts that don't carry user intent are silently skipped (see
-    :func:`_is_meaningful_intent` for the rules): renderer error
-    reports forwarded into the loop and "continue / proceed"
-    placeholders. The follow-up consultant reads intent.md as the
-    canonical user voice, so polluting it with system noise is worse
-    than dropping the prompt entirely.
+    Mechanically obvious noise is dropped at append time
+    (:func:`_is_meaningful_intent` — renderer / compiler error reports
+    forwarded into the loop). Semantic "placeholder vs real intent"
+    curation runs later, in the finalize-stage LLM call, which has
+    the multi-prompt context needed to tell short directives like
+    ``聚焦风控`` apart from operational nudges like ``继续吧`` /
+    ``下一步``. The follow-up consultant only reads the
+    post-finalize intent.md, so any append-time pass-through that the
+    finalize curator later drops is invisible to it.
     """
     if not _is_meaningful_intent(user_message):
         if user_message and user_message.strip():

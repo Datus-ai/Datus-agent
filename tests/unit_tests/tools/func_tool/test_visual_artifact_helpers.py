@@ -113,46 +113,41 @@ class TestAppendIntentSection:
         assert not (analysis_dir / "intent.md").exists()
 
     @pytest.mark.parametrize(
-        "placeholder",
+        "passthrough",
         [
+            # Used to be hard-killed by the phrase set; now passes through
+            # so the finalize-stage LLM curator can make a semantic call
+            # (see ``FinalizeAnalysisOutput.intent_entries_to_keep``).
             "继续",
-            "继续完成任务",
-            "继续完成任务。",
-            "继续执行",
+            "继续吧",
+            "请继续完成",
+            "下一步",
+            "好的",
+            "嗯",
             "continue",
-            "Continue.",
-            "go on",
-            "next",
             "proceed",
-            "OK",
+            "go ahead",
+            # Real-but-short intent that exact-match heuristics historically
+            # almost false-killed; it must pass through.
+            "聚焦风控",
         ],
     )
-    def test_placeholder_prompts_dropped(self, tmp_path: Path, placeholder: str):
-        """Pure continuation prompts carry no intent — recording them
-        anchors the ask agent on noise during multi-turn workflows."""
+    def test_short_prompts_pass_append_filter(self, tmp_path: Path, passthrough: str):
+        """Append-time filter only blocks mechanical noise (traceback /
+        Error:). Semantic 'placeholder vs real direction' judgment runs
+        later in the finalize LLM call, which has multi-prompt context
+        to tell ``下一步`` (placeholder) apart from ``聚焦风控`` (real
+        direction shift) reliably."""
         analysis_dir = tmp_path / "analysis"
         err = append_intent_section(
             analysis_dir,
-            user_message=placeholder,
-            mode="edit",
-            timestamp="2026-05-14T10:00:00Z",
-        )
-        assert err is None
-        assert not (analysis_dir / "intent.md").exists()
-
-    def test_substantive_prompt_with_continue_word_kept(self, tmp_path: Path):
-        """The placeholder filter is exact-match — a prompt that *contains*
-        the word "continue" alongside real intent must still be recorded."""
-        analysis_dir = tmp_path / "analysis"
-        err = append_intent_section(
-            analysis_dir,
-            user_message="please continue but switch the focus to APAC revenue",
+            user_message=passthrough,
             mode="edit",
             timestamp="2026-05-14T10:00:00Z",
         )
         assert err is None
         text = (analysis_dir / "intent.md").read_text(encoding="utf-8")
-        assert "APAC revenue" in text
+        assert passthrough in text
 
     def test_multiline_message_becomes_continuation_blockquote(self, tmp_path: Path):
         analysis_dir = tmp_path / "analysis"
