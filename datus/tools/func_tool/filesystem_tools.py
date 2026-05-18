@@ -124,6 +124,29 @@ class FilesystemFuncTool(BaseTool):
             bound_tools.append(trans_to_function_tool(bound_method))
         return bound_tools
 
+    # ``BaseTool`` framework methods that aren't tools themselves — must be
+    # filtered out of the introspection result so the saas tool catalog only
+    # carries actual filesystem operations.
+    _BASE_TOOL_FRAMEWORK_METHODS: frozenset = frozenset({"call_action", "get_actions", "set_tool_context"})
+
+    @staticmethod
+    def all_tools_name() -> List[str]:
+        """Return every public tool method on this class.
+
+        Mirrors ``DBFuncTool.all_tools_name()`` so ``VALID_TOOL_METHODS``
+        in ``datus.api.services.agent_service`` can derive the
+        ``filesystem_tools`` set by introspection instead of hand-curating
+        it — the latter has drifted from the runtime in the past
+        (``delete_file`` was missing for a while).
+        """
+        from datus.utils.class_utils import get_public_instance_methods
+
+        return [
+            name
+            for name in get_public_instance_methods(FilesystemFuncTool).keys()
+            if name != "available_tools" and name not in FilesystemFuncTool._BASE_TOOL_FRAMEWORK_METHODS
+        ]
+
     # ------------------------------------------------------------------ zones
 
     def _classify(self, path: str) -> ResolvedPath:

@@ -18,6 +18,7 @@ from datus.prompts.prompt_manager import PromptManager
 from datus.schemas.artifact_manifest import ARTIFACT_SLUG_RE
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.func_tool.database import DBFuncTool
+from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.platform_doc_search import PlatformDocSearchTool
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 from datus.tools.func_tool.semantic_tools import SemanticTools
@@ -36,13 +37,7 @@ VALID_TOOL_METHODS: dict[str, set[str]] = {
     "semantic_tools": set(SemanticTools.all_tools_name()),
     "reference_template_tools": set(ReferenceTemplateTools.all_tools_name()),
     "date_parsing_tools": {"parse_temporal_expressions"},
-    "filesystem_tools": {
-        "read_file",
-        "write_file",
-        "edit_file",
-        "glob",
-        "grep",
-    },
+    "filesystem_tools": set(FilesystemFuncTool.all_tools_name()),
     "platform_doc_tools": set(PlatformDocSearchTool.all_tools_name()),
 }
 
