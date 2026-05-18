@@ -11,6 +11,7 @@ execute_stream flow, and system prompt rendering.
 NO MOCK EXCEPT LLM: The only mock is LLMBaseModel.create_model -> MockLLMModel.
 """
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,7 +22,7 @@ from datus.schemas.action_history import ActionHistoryManager, ActionRole, Actio
 from datus.schemas.gen_skill_agentic_node_models import SkillCreatorNodeInput, SkillCreatorNodeResult
 from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
-from tests.unit_tests.mock_llm_model import MockLLMModel, build_simple_response
+from tests.unit_tests.mock_llm_model import MockLLMModel, MockToolCall, build_simple_response, build_tool_then_response
 
 
 class TestSkillCreatorAgenticNodeInit:
@@ -475,6 +476,164 @@ class TestSkillCreatorExecution:
         assert actions[-1].status == ActionStatus.FAILED
         assert isinstance(node.result, SkillCreatorNodeResult)
         assert node.result.success is False
+
+
+@pytest.mark.acceptance
+@pytest.mark.llm_harness
+class TestSkillCreatorLifecycleAcceptance:
+    """Deterministic create/optimize skill lifecycle coverage with real tools."""
+
+    @pytest.mark.asyncio
+    async def test_create_skill_writes_validates_and_discovers_skill(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
+        from datus.tools.skill_tools import SkillConfig, SkillManager
+
+        skill_name = "school-quality-skill"
+        skill_path = Path(real_agent_config.project_root) / ".datus" / "skills" / skill_name / "SKILL.md"
+        skill_content = """---
+name: school-quality-skill
+description: Analyze school quality indicators from education datasets.
+allowed_agents:
+  - chat
+  - gen_skill
+---
+# School Quality Skill
+
+Use this skill when the user asks for school quality analysis.
+"""
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall("load_skill", {"skill_name": "create-skill"}),
+                        MockToolCall(
+                            "write_file",
+                            {
+                                "path": f".datus/skills/{skill_name}/SKILL.md",
+                                "content": skill_content,
+                            },
+                        ),
+                        MockToolCall("validate_skill", {"skill_path": str(skill_path)}),
+                    ],
+                    content=f"Created and validated {skill_name}.",
+                )
+            ]
+        )
+
+        node = SkillCreatorAgenticNode(
+            node_id="skill_creator_create_acceptance",
+            description="Create skill acceptance",
+            node_type=NodeType.TYPE_GEN_SKILL,
+            agent_config=real_agent_config,
+            node_name="gen_skill",
+            execution_mode="workflow",
+        )
+        node.input = SkillCreatorNodeInput(user_message=f"Create a {skill_name} skill.")
+
+        action_manager = ActionHistoryManager()
+        async for _ in node.execute_stream(action_manager):
+            pass
+
+        assert skill_path.read_text(encoding="utf-8") == skill_content
+        tool_results = {item["tool"]: item for item in mock_llm_create.tool_results}
+        assert tool_results["load_skill"]["executed"] is True
+        assert tool_results["write_file"]["executed"] is True
+        assert tool_results["validate_skill"]["executed"] is True
+        assert "PASS" in str(tool_results["validate_skill"]["output"])
+
+        manager = SkillManager(config=SkillConfig(directories=[str(skill_path.parent)]))
+        discovered = manager.get_skill(skill_name)
+        assert discovered.name == skill_name
+        ok, message, loaded_content = manager.load_skill(skill_name, "chat")
+        assert ok is True
+        assert message == f"Skill '{skill_name}' loaded successfully"
+        assert "School Quality Skill" in loaded_content
+        assert isinstance(node.result, SkillCreatorNodeResult)
+        assert node.result.success is True
+
+    @pytest.mark.asyncio
+    async def test_optimize_skill_reads_updates_validates_and_reloads_skill(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
+        from datus.tools.skill_tools import SkillConfig, SkillManager
+
+        skill_name = "district-profile-skill"
+        skill_dir = Path(real_agent_config.project_root) / ".datus" / "skills" / skill_name
+        skill_path = skill_dir / "SKILL.md"
+        original_content = """---
+name: district-profile-skill
+description: Build concise district profile summaries from education datasets.
+allowed_agents:
+  - chat
+  - gen_skill
+---
+# District Profile Skill
+
+Summarize district-level facts.
+"""
+        updated_content = """---
+name: district-profile-skill
+description: Build district profile summaries with enrollment and performance checks.
+allowed_agents:
+  - chat
+  - gen_skill
+---
+# District Profile Skill
+
+Summarize district-level facts and verify enrollment and performance metrics.
+"""
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        skill_path.write_text(original_content, encoding="utf-8")
+
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall("load_skill", {"skill_name": "optimize-skill"}),
+                        MockToolCall("read_file", {"path": f".datus/skills/{skill_name}/SKILL.md"}),
+                        MockToolCall(
+                            "write_file",
+                            {
+                                "path": f".datus/skills/{skill_name}/SKILL.md",
+                                "content": updated_content,
+                            },
+                        ),
+                        MockToolCall("validate_skill", {"skill_path": str(skill_path)}),
+                    ],
+                    content=f"Optimized and validated {skill_name}.",
+                )
+            ]
+        )
+
+        node = SkillCreatorAgenticNode(
+            node_id="skill_creator_optimize_acceptance",
+            description="Optimize skill acceptance",
+            node_type=NodeType.TYPE_GEN_SKILL,
+            agent_config=real_agent_config,
+            node_name="gen_skill",
+            execution_mode="workflow",
+        )
+        node.input = SkillCreatorNodeInput(user_message=f"Optimize {skill_name}.")
+
+        action_manager = ActionHistoryManager()
+        async for _ in node.execute_stream(action_manager):
+            pass
+
+        assert skill_path.read_text(encoding="utf-8") == updated_content
+        tool_results = {item["tool"]: item for item in mock_llm_create.tool_results}
+        assert tool_results["load_skill"]["executed"] is True
+        assert tool_results["read_file"]["executed"] is True
+        assert "Summarize district-level facts." in str(tool_results["read_file"]["output"])
+        assert tool_results["write_file"]["executed"] is True
+        assert tool_results["validate_skill"]["executed"] is True
+        assert "PASS" in str(tool_results["validate_skill"]["output"])
+
+        manager = SkillManager(config=SkillConfig(directories=[str(skill_dir)]))
+        ok, message, loaded_content = manager.load_skill(skill_name, "chat")
+        assert ok is True
+        assert message == f"Skill '{skill_name}' loaded successfully"
+        assert "verify enrollment and performance metrics" in loaded_content
+        assert isinstance(node.result, SkillCreatorNodeResult)
+        assert node.result.success is True
 
 
 class TestSkillCreatorConfigOverrides:

@@ -284,6 +284,47 @@ class TestGenTableAgenticNodeExecution:
         assert "california_schools" in prompt
 
 
+@pytest.mark.acceptance
+@pytest.mark.llm_harness
+class TestGenTableWritePathAcceptance:
+    """Deterministic product-flow coverage for the gen_table DDL path."""
+
+    @pytest.mark.asyncio
+    async def test_gen_table_executes_ctas_and_result_is_queryable(self, mutable_real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
+
+        ctas_sql = "CREATE TABLE school_count_summary AS SELECT COUNT(*) AS school_count FROM schools"
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall("execute_ddl", {"sql": ctas_sql}),
+                    ],
+                    content="Created school_count_summary.",
+                )
+            ]
+        )
+
+        node = GenTableAgenticNode(agent_config=mutable_real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="Create a table with the total number of schools.")
+
+        action_manager = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(action_manager):
+            actions.append(action)
+
+        tool_results = [item for item in mock_llm_create.tool_results if item["tool"] == "execute_ddl"]
+        assert len(tool_results) == 1
+        assert tool_results[0]["executed"] is True
+        assert "school_count_summary" in str(tool_results[0]["output"])
+
+        query_result = node.db_func_tool.read_query("SELECT school_count FROM school_count_summary")
+        assert query_result.success == 1
+        assert "school_count" in str(query_result.result)
+        assert actions[-1].status == ActionStatus.SUCCESS
+        assert "school_count_summary" in str(actions[-1].output)
+
+
 # ---------------------------------------------------------------------------
 # Template Context Tests
 # ---------------------------------------------------------------------------
