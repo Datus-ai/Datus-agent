@@ -21,7 +21,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  RELEASE_CANDIDATE_WHEEL_ARTIFACT: datus-agent-release-candidate-wheel-${{ github.run_id }}
+  RELEASE_CANDIDATE_WHEEL_ARTIFACT: datus-agent-release-candidate-wheel-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
   package-smoke:
