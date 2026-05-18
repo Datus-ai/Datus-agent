@@ -134,7 +134,7 @@ class TestSqlSummaryAgenticNodeExecution:
         roles = [a.role for a in actions]
         assert ActionRole.USER in roles
         assert actions[-1].status == ActionStatus.SUCCESS
-        assert actions[-1].action_type == "sql_summary_response"
+        assert actions[-1].action_type == "gen_sql_summary_response"
 
     @pytest.mark.asyncio
     async def test_sql_summary_with_tool_calls(self, real_agent_config, mock_llm_create):
@@ -207,7 +207,7 @@ class TestSqlSummaryAgenticNodeExecution:
 
         assert len(actions) >= 2
         assert actions[-1].status == ActionStatus.SUCCESS
-        assert actions[-1].action_type == "sql_summary_response"
+        assert actions[-1].action_type == "gen_sql_summary_response"
 
     @pytest.mark.asyncio
     async def test_sql_summary_input_not_set_raises(self, real_agent_config, mock_llm_create):
@@ -215,7 +215,9 @@ class TestSqlSummaryAgenticNodeExecution:
         node = _create_node(real_agent_config)
         node.input = None
 
-        with pytest.raises(ValueError, match="SQL summary input not set"):
+        from datus.utils.exceptions import DatusException
+
+        with pytest.raises(DatusException, match="Missing required field"):
             async for _ in node.execute_stream():
                 pass
 

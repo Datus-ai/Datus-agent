@@ -472,7 +472,9 @@ class TestChatAgenticNodeExecuteStream:
         node.input = None
 
         ahm = ActionHistoryManager()
-        with pytest.raises(ValueError, match="Chat input not set"):
+        from datus.utils.exceptions import DatusException
+
+        with pytest.raises(DatusException, match="Missing required field"):
             async for _ in node.execute_stream(ahm):
                 pass
 
@@ -1277,8 +1279,16 @@ class TestChatAgenticNodeExecuteStreamWithTools:
         assert final_action.output["response"] == "1 table: orders"
 
     @pytest.mark.asyncio
-    async def test_execute_stream_keeps_final_thinking_text_after_tool(self, real_agent_config, mock_llm_create):
-        """Provider-marked thinking text after a tool result can be the final visible answer."""
+    async def test_execute_stream_filters_all_thinking_text(self, real_agent_config, mock_llm_create):
+        """Provider-marked thinking text never lands in the final response.
+
+        Behavior change (template refactor): the unified ``_stream_once``
+        helper drops any assistant chunk with ``is_thinking=True`` regardless
+        of whether a tool result already arrived. Pre-refactor ChatNode had a
+        ``tool_result_seen`` gate that promoted post-tool thinking to the
+        final response — this distinction is gone now. The tool's summary
+        becomes the response fallback (see ``last_tool_summary`` path).
+        """
         from unittest.mock import patch
 
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
@@ -1337,7 +1347,8 @@ class TestChatAgenticNodeExecuteStreamWithTools:
 
         final_action = actions[-1]
         assert final_action.action_type == "chat_response"
-        assert final_action.output["response"] == "The database has one table: orders."
+        # Both thinking chunks are filtered; tool summary fills the response.
+        assert final_action.output["response"] == "1 table: orders"
 
     @pytest.mark.asyncio
     async def test_execute_stream_extracts_string_content_from_action(self, real_agent_config, mock_llm_create):

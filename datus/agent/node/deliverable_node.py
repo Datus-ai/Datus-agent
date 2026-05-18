@@ -17,19 +17,20 @@ hook method :meth:`_setup_domain_tools` — everything else is inherited.
 
 from __future__ import annotations
 
-from typing import Any, AsyncGenerator, ClassVar, Literal, Optional
+from typing import Any, ClassVar, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
-from datus.cli.execution_state import ExecutionInterrupted
+from datus.agent.node.policies.validation_hook_policy import ValidationHookRetryPolicy
+from datus.agent.node.retry_policy import NoRetryPolicy
+from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.action_history import ActionHistoryManager
 from datus.schemas.semantic_agentic_node_models import SemanticNodeResult
 from datus.tools.func_tool import DBFuncTool, FilesystemFuncTool
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import build_structured_content
 from datus.validation import ValidationHook
-from datus.validation.report import build_retry_prompt
 
 logger = get_logger(__name__)
 
@@ -66,6 +67,10 @@ class DeliverableAgenticNode(AgenticNode):
 
     #: Default max_turns cap; subclasses override when the flow is deeper.
     DEFAULT_MAX_TURNS: ClassVar[int] = 20
+
+    # Default ``result_class`` — gen_table / gen_job use SemanticNodeResult;
+    # gen_dashboard / scheduler override with their specialised models.
+    result_class = SemanticNodeResult
 
     # ── constructor ───────────────────────────────────────────────────
 
@@ -240,193 +245,74 @@ class DeliverableAgenticNode(AgenticNode):
                 message_args={"config_error": f"Template loading failed for '{template_name}': {str(e)}"},
             ) from e
 
-    # ── main execution with validation retry ──────────────────────────
+    # ── template hooks ───────────────────────────────────────────────
 
-    async def execute_stream(
-        self,
-        action_history_manager: Optional[ActionHistoryManager] = None,
-    ) -> AsyncGenerator[ActionHistory, None]:
-        if not action_history_manager:
-            action_history_manager = ActionHistoryManager()
-        if self.input is None:
-            raise DatusException(ErrorCode.COMMON_FIELD_REQUIRED, message_args={"field_name": "input"})
+    def _build_template_context(self, ctx: StreamRunContext) -> Optional[dict]:
+        # ``_build_template_context`` runs after session setup, so the parent
+        # session is available — wire it into the validation hook here so
+        # Layer-B validators can fork its tool-event history.
+        if self._validation_hook is not None:
+            self._validation_hook.set_parent_session(ctx.session)
+        return self._prepare_template_context(ctx.user_input)
 
-        user_input = self.input
+    def _compose_run_hooks(self, ctx: StreamRunContext) -> Any:
+        # Pre-refactor every Deliverable run wired its ``_validation_hook``
+        # into the model's hooks list — keep that behaviour so validators
+        # (and the retry policy that consumes their report) actually fire.
+        return self._compose_hooks(self._validation_hook)
 
-        action = ActionHistory.create_action(
-            role=ActionRole.USER,
-            action_type=self.get_node_name(),
-            messages=f"User: {user_input.user_message}",
-            input_data=user_input.model_dump(),
-            status=ActionStatus.PROCESSING,
+    async def _before_stream(self, ctx: StreamRunContext) -> None:
+        # Reset per-run state on the validation hook so a recovered retry
+        # is not poisoned by the previous attempt's report. The session
+        # context is wired in ``_after_session_setup`` once it exists.
+        if self._validation_hook is not None:
+            self._validation_hook.reset_session()
+
+    def _get_retry_policy(self):
+        if self._validation_hook is None:
+            return NoRetryPolicy()
+        validation_cfg = getattr(self.agent_config, "validation_config", None)
+        max_retries = int(getattr(validation_cfg, "max_retries", 3)) if validation_cfg else 3
+        return ValidationHookRetryPolicy(
+            hook=self._validation_hook,
+            max_attempts=max(1, max_retries),
+            node_name=self.get_node_name(),
         )
-        action_history_manager.add_action(action)
-        yield action
 
-        try:
-            session = None
-            conversation_summary = None
-            if self.execution_mode == "interactive":
-                await self._auto_compact()
-                session, conversation_summary = self._get_or_create_session()
+    def _build_success_result(self, ctx: StreamRunContext) -> Any:
+        response_content = ctx.response_content
+        if not response_content and ctx.last_successful_output:
+            raw_output = ctx.last_successful_output.get("raw_output", "")
+            if isinstance(raw_output, dict) or raw_output:
+                response_content = raw_output
+            else:
+                response_content = str(ctx.last_successful_output)
 
-            template_context = self._prepare_template_context(user_input)
-            system_instruction = self._get_system_prompt(
-                conversation_summary,
-                template_context,
-                prompt_version=getattr(user_input, "prompt_version", None),
-            )
+        tokens_used = 0
+        if self.execution_mode == "interactive":
+            tokens_used = self._extract_total_tokens(ctx.action_history_manager.get_actions())
 
-            enhanced_message = self._build_enhanced_message(user_input)
+        # ``ctx.extras`` populated by ``ValidationHookRetryPolicy.finalise``.
+        validation_report = ctx.extras.get("validation_report")
+        blocked = bool(ctx.extras.get("blocked"))
+        success = not blocked
 
-            # Retry loop driven by on_end's blocking ValidationReport. Capped at
-            # ``agent.validation.max_retries`` (default 3). See design doc §5.7.
-            validation_cfg = getattr(self.agent_config, "validation_config", None)
-            max_retries = int(getattr(validation_cfg, "max_retries", 3)) if validation_cfg else 3
-            if max_retries < 1:
-                max_retries = 1
-            if self._validation_hook is not None:
-                self._validation_hook.reset_session()
-                # Expose the parent session so Layer B validators can fork its
-                # tool-event history (drop user/assistant text, keep tool calls
-                # and results). See :func:`run_llm_validator`'s
-                # ``parent_session`` parameter.
-                self._validation_hook.set_parent_session(session)
+        return self._make_success_result(
+            success=success,
+            response_content=response_content,
+            tokens_used=int(tokens_used),
+            validation_report=validation_report,
+            last_successful_output=ctx.last_successful_output,
+            blocked=blocked,
+        )
 
-            current_prompt = enhanced_message
-            response_content = ""
-            last_successful_output = None
-            completed = False
-            tokens_used = 0
-            last_validation_report: Optional[dict] = None
-
-            for attempt in range(1, max_retries + 1):
-                # Reset per-attempt so only the final attempt's outcome sticks.
-                # Without this a blocked attempt 1 would poison a recovered
-                # attempt 2's NodeResult.success.
-                last_validation_report = None
-                async for stream_action in self.model.generate_with_tools_stream(
-                    prompt=current_prompt,
-                    tools=self.tools,
-                    mcp_servers=self.mcp_servers,
-                    instruction=system_instruction,
-                    max_turns=getattr(user_input, "max_turns", None) or self.max_turns,
-                    session=session,
-                    action_history_manager=action_history_manager,
-                    hooks=self._compose_hooks(self._validation_hook),
-                    agent_name=self.get_node_name(),
-                    interrupt_controller=self.interrupt_controller,
-                ):
-                    yield stream_action
-                    if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
-                        if isinstance(stream_action.output, dict):
-                            last_successful_output = stream_action.output
-                            raw_output = stream_action.output.get("raw_output", "")
-                            if isinstance(raw_output, dict):
-                                response_content = raw_output
-                            elif raw_output:
-                                response_content = raw_output
-
-                # Stream ended normally. Drive retry from on_end's accumulated
-                # report if it recorded a blocking failure — on_end records
-                # to final_report instead of raising (raising there would
-                # skip downstream hook chain for the completed run).
-                hook = self._validation_hook
-                if hook is not None and hook.final_report is not None and hook.final_report.has_blocking_failure():
-                    last_validation_report = hook.final_report.model_dump(by_alias=True, exclude_none=True)
-                    if attempt >= max_retries:
-                        logger.warning(
-                            "on_end validation blocked after %d attempts for %s: %s",
-                            attempt,
-                            self.get_node_name(),
-                            [c.name for c in hook.final_report.checks if not c.passed],
-                        )
-                        break
-                    current_prompt = build_retry_prompt(hook.final_report, list(hook.session_targets))
-                    hook.reset_session()
-                    logger.info(
-                        "on_end validation blocked attempt %d/%d for %s, retrying with failure context",
-                        attempt,
-                        max_retries,
-                        self.get_node_name(),
-                    )
-                    continue
-
-                completed = True
-                break
-
-            if not response_content and last_successful_output:
-                raw_output = last_successful_output.get("raw_output", "")
-                if isinstance(raw_output, dict):
-                    response_content = raw_output
-                elif raw_output:
-                    response_content = raw_output
-                else:
-                    response_content = str(last_successful_output)
-
-            if self.execution_mode == "interactive":
-                tokens_used = self._extract_total_tokens(action_history_manager.get_actions())
-
-            # Merge on_end validation report (if any) with the blocking report
-            # from a retry-exhausted attempt.
-            final_validation: Optional[dict] = None
-            if self._validation_hook is not None and self._validation_hook.final_report is not None:
-                final_validation = self._validation_hook.final_report.model_dump(by_alias=True, exclude_none=True)
-            if last_validation_report is not None:
-                # Blocking failure takes precedence — surface that instead
-                # of (or alongside) the on_end report.
-                final_validation = last_validation_report
-
-            success = completed and last_validation_report is None
-            result = self._make_success_result(
-                success=success,
-                response_content=response_content,
-                tokens_used=int(tokens_used),
-                validation_report=final_validation,
-                last_successful_output=last_successful_output,
-                blocked=last_validation_report is not None,
-            )
-            self.result = result
-            self.actions.extend(action_history_manager.get_actions())
-
-            final_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type=self.ACTION_TYPE or f"{self.NODE_NAME}_response",
-                messages=f"{self.get_node_name()} interaction completed {'successfully' if success else 'with validation failures'}",
-                input_data=user_input.model_dump(),
-                output_data=result.model_dump(),
-                status=ActionStatus.SUCCESS if success else ActionStatus.FAILED,
-            )
-            action_history_manager.add_action(final_action)
-            yield final_action
-
-        except ExecutionInterrupted:
-            raise
-        except Exception as e:
-            error_msg = self._format_execution_error(e)
-            logger.error("%s execution error: %s", self.get_node_name(), error_msg)
-            error_result = self._make_error_result(
-                error=error_msg,
-                action_history_manager=action_history_manager,
-            )
-            self.result = error_result
-            # Mark the initial USER action as FAILED so the UI does not show
-            # an indefinitely-PROCESSING entry next to the error action.
-            action_history_manager.update_current_action(
-                status=ActionStatus.FAILED,
-                output=error_result.model_dump(),
-                messages=f"Error: {error_msg}",
-            )
-            error_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type="error",
-                messages=f"{self.get_node_name()} interaction failed: {error_msg}",
-                input_data=user_input.model_dump(),
-                output_data=error_result.model_dump(),
-                status=ActionStatus.FAILED,
-            )
-            action_history_manager.add_action(error_action)
-            yield error_action
+    def _build_error_result(self, exc: BaseException, ctx: StreamRunContext) -> Any:
+        # Deliverable subclasses (gen_dashboard / scheduler) override
+        # ``_make_error_result`` to return their typed NodeResult.
+        return self._make_error_result(
+            error=self._format_execution_error(exc),
+            action_history_manager=ctx.action_history_manager,
+        )
 
     # ── result construction hooks ─────────────────────────────────────
     #

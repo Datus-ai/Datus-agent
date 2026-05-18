@@ -500,7 +500,9 @@ class TestGenSQLAgenticNodeExecution:
         node.input = None
 
         ahm = ActionHistoryManager()
-        with pytest.raises(ValueError, match="GenSQL input not set"):
+        from datus.utils.exceptions import DatusException
+
+        with pytest.raises(DatusException, match="Missing required field"):
             async for _ in node.execute_stream(ahm):
                 pass
 
@@ -732,7 +734,9 @@ class TestChatAgenticNodeExecution:
         node.input = None
 
         ahm = ActionHistoryManager()
-        with pytest.raises(ValueError, match="Chat input not set"):
+        from datus.utils.exceptions import DatusException
+
+        with pytest.raises(DatusException, match="Missing required field"):
             async for _ in node.execute_stream(ahm):
                 pass
 
@@ -2083,7 +2087,9 @@ class TestExecuteStreamGenSQLExtra:
         node = _make_node(real_agent_config, mock_llm_create)
         node.input = None
 
-        with pytest.raises(ValueError, match="GenSQL input not set"):
+        from datus.utils.exceptions import DatusException
+
+        with pytest.raises(DatusException, match="Missing required field"):
             async for _ in node.execute_stream():
                 pass
 

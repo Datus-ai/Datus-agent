@@ -30,6 +30,7 @@ class SchedulerAgenticNode(DeliverableAgenticNode):
     NODE_NAME: ClassVar[str] = "scheduler"
     NODE_TYPE: ClassVar[str] = NodeType.TYPE_SCHEDULER
     ACTION_TYPE: ClassVar[str] = "scheduler_response"
+    result_class = SchedulerNodeResult
     PROMPT_TEMPLATE: ClassVar[str] = "scheduler_system"
     DEFAULT_MAX_TURNS: ClassVar[int] = 30
     # Scheduler workflow + validation skills are injected dynamically based

@@ -59,6 +59,7 @@ class GenVisualDashboardAgenticNode(
     """
 
     NODE_NAME = "gen_visual_dashboard"
+    result_class = GenVisualDashboardNodeResult
     ARTIFACT_KIND = "dashboard"
     ARTIFACT_ROOT_DIR_NAME = "dashboards"
     FILESYSTEM_TOOL_CLS = DashboardFilesystemFuncTool
@@ -101,7 +102,7 @@ class GenVisualDashboardAgenticNode(
             return None
         return getattr(tools, "dashboard_slug", None)
 
-    def _build_success_result(
+    def _finalize_artifact_success(
         self,
         *,
         user_input: GenVisualDashboardNodeInput,
@@ -137,7 +138,7 @@ class GenVisualDashboardAgenticNode(
             },
         )
 
-    def _build_error_result(self, exc: BaseException) -> GenVisualDashboardNodeResult:
+    def _finalize_artifact_error(self, exc: BaseException) -> GenVisualDashboardNodeResult:
         mode = getattr(self.artifact_tools, "mode", None) if self.artifact_tools is not None else None
         manifest = self._read_artifact_manifest(self._active_artifact_slug)
         return GenVisualDashboardNodeResult(

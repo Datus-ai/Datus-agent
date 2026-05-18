@@ -36,6 +36,7 @@ class GenDashboardAgenticNode(DeliverableAgenticNode):
     NODE_NAME: ClassVar[str] = "gen_dashboard"
     NODE_TYPE: ClassVar[str] = NodeType.TYPE_GEN_DASHBOARD
     ACTION_TYPE: ClassVar[str] = "gen_dashboard_response"
+    result_class = GenDashboardNodeResult
     PROMPT_TEMPLATE: ClassVar[str] = "gen_dashboard_system"
     DEFAULT_MAX_TURNS: ClassVar[int] = 30
     # Dashboard skills are injected dynamically by ``_setup_dashboard_skills``

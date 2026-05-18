@@ -262,7 +262,9 @@ class TestGenMetricsAgenticNodeExecution:
         node.input = None
 
         action_manager = ActionHistoryManager()
-        with pytest.raises(ValueError, match="Metrics input not set"):
+        from datus.utils.exceptions import DatusException
+
+        with pytest.raises(DatusException, match="Missing required field"):
             async for _ in node.execute_stream(action_manager):
                 pass
 
@@ -840,7 +842,7 @@ class TestExecuteStreamGenMetricsError:
             actions.append(action)
 
         assert actions[-1].status == ActionStatus.SUCCESS
-        assert actions[-1].action_type == "metrics_response"
+        assert actions[-1].action_type == "gen_metrics_response"
         node.semantic_tools.validate_semantic.assert_called_once()
         node.semantic_tools.query_metrics.assert_called_once_with(metrics=["orders_total"], dry_run=True)
         node.generation_tools.end_metric_generation.assert_called_once_with(
@@ -947,7 +949,7 @@ class TestExecuteStreamGenMetricsError:
             actions.append(action)
 
         assert actions[-1].status == ActionStatus.SUCCESS
-        assert actions[-1].action_type == "metrics_response"
+        assert actions[-1].action_type == "gen_metrics_response"
 
     @pytest.mark.asyncio
     async def test_skipped_status_with_metric_file_fails_closed(self, real_agent_config, mock_llm_create):
