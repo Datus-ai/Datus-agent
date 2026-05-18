@@ -21,12 +21,13 @@ Design principle: NO mock except LLM.
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.feedback_agentic_node_models import FeedbackNodeInput, FeedbackNodeResult
-from tests.unit_tests.mock_llm_model import build_simple_response
+from tests.unit_tests.mock_llm_model import MockToolCall, build_simple_response, build_tool_then_response
 
 # ---------------------------------------------------------------------------
 # Schema Model Tests
@@ -281,6 +282,56 @@ class TestFeedbackAgenticNodeExecution:
         assert isinstance(node.result, FeedbackNodeResult)
         assert node.result.success is False
         assert "boom" in node.result.error
+
+
+@pytest.mark.acceptance
+@pytest.mark.llm_harness
+class TestFeedbackMemoryFlowAcceptance:
+    """Deterministic feedback flow coverage for updating caller memory."""
+
+    @pytest.mark.asyncio
+    async def test_feedback_writes_caller_memory_with_real_filesystem_tool(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+        from datus.utils.memory_loader import load_memory_context
+
+        memory_text = "# Memory\n\n## SQL feedback\n- Charter-school detail queries should filter active campuses.\n"
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall(
+                            name="write_file",
+                            arguments={
+                                "path": ".datus/memory/chat/MEMORY.md",
+                                "content": memory_text,
+                            },
+                        )
+                    ],
+                    content="Archived the feedback into chat memory.",
+                )
+            ]
+        )
+
+        node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.caller_node_name = "chat"
+        node.input = FeedbackNodeInput(
+            user_message="Remember that charter-school detail queries should filter active campuses."
+        )
+
+        action_manager = ActionHistoryManager()
+        async for _ in node.execute_stream(action_manager):
+            pass
+
+        memory_file = Path(real_agent_config.project_root) / ".datus" / "memory" / "chat" / "MEMORY.md"
+        assert memory_file.read_text(encoding="utf-8") == memory_text
+        assert "filter active campuses" in load_memory_context(real_agent_config.project_root, "chat")
+
+        tool_calls = [item for item in mock_llm_create.tool_results if item["tool"] == "write_file"]
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["executed"] is True
+        assert isinstance(node.result, FeedbackNodeResult)
+        assert node.result.success is True
+        assert node.result.response == "Archived the feedback into chat memory."
 
 
 # ---------------------------------------------------------------------------

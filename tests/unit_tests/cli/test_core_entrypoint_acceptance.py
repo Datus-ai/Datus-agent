@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import io
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -145,6 +146,33 @@ def test_cli_slash_commands_route_through_shared_repl_dispatch() -> None:
     saved_override = save_override.call_args.args[0]
     assert saved_override.default_datasource == "warehouse"
     cli.bg_sync.schedule.assert_called_once_with(datasource="warehouse", reason="switch")
+
+
+def test_quickstart_documented_repl_entrypoints_stay_routable() -> None:
+    """Quickstart REPL commands should remain valid slash/SQL/chat entrypoints."""
+    repo_root = Path(__file__).resolve().parents[3]
+    quickstart = (repo_root / "docs" / "getting_started" / "Quickstart.md").read_text(encoding="utf-8")
+    documented_slash_commands = ("/datasource", "/model", "/init", "/tables")
+
+    for command in documented_slash_commands:
+        assert command in quickstart
+        spec = lookup(command.removeprefix("/"))
+        if spec is None:
+            raise AssertionError(f"Quickstart command {command} is missing from slash registry")
+        assert spec.name == command.removeprefix("/")
+
+    cli = _build_core_cli()
+
+    parsed = [DatusCLI._parse_command(cli, command) for command in documented_slash_commands]
+    assert parsed == [
+        (CommandType.SLASH, "/datasource", ""),
+        (CommandType.SLASH, "/model", ""),
+        (CommandType.SLASH, "/init", ""),
+        (CommandType.SLASH, "/tables", ""),
+    ]
+
+    assert DatusCLI._parse_command(cli, "desc gold_vs_bitcoin")[0] == CommandType.SQL
+    assert DatusCLI._parse_command(cli, "Detailed analysis of gold-Bitcoin correlation.")[0] == CommandType.CHAT
 
 
 @pytest.mark.asyncio

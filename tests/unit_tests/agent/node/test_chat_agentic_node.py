@@ -22,6 +22,7 @@ Tests verify:
 NO MOCK EXCEPT LLM: The only mock is LLMBaseModel.create_model -> MockLLMModel.
 """
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -263,7 +264,6 @@ class TestChatAgenticNodeToolSetup:
             agent_config=real_agent_config,
         )
 
-        assert node.bash_tool is not None
         assert isinstance(node.bash_tool, BashTool)
 
         # ``["*"]`` pattern: tool is exposed; per-call gating is handled by
@@ -321,6 +321,72 @@ class TestChatAgenticNodeToolSetup:
 
         assert node.execution_mode == "interactive"
         assert [t.name for t in node.ask_user_tool.available_tools()] == ["ask_user"]
+
+
+@pytest.mark.acceptance
+@pytest.mark.llm_harness
+class TestChatMemoryFlowAcceptance:
+    """Deterministic chain-level coverage for chat memory write and later use."""
+
+    @pytest.mark.asyncio
+    async def test_chat_turn_writes_memory_and_later_turn_receives_it(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        memory_text = "# Memory\n\n## Revenue conventions\n- Net revenue excludes refunds.\n"
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[
+                        MockToolCall(
+                            name="write_file",
+                            arguments={
+                                "path": ".datus/memory/chat/MEMORY.md",
+                                "content": memory_text,
+                            },
+                        )
+                    ],
+                    content="Saved the revenue convention to memory.",
+                ),
+                build_simple_response("I will apply the saved net revenue convention."),
+            ]
+        )
+
+        first_turn = ChatAgenticNode(
+            node_id="chat_memory_writer",
+            description="Write chat memory",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+        first_turn.input = ChatNodeInput(user_message="Remember that net revenue excludes refunds.")
+
+        action_manager = ActionHistoryManager()
+        async for _ in first_turn.execute_stream(action_manager):
+            pass
+
+        memory_file = Path(real_agent_config.project_root) / ".datus" / "memory" / "chat" / "MEMORY.md"
+        assert memory_file.read_text(encoding="utf-8") == memory_text
+
+        second_turn = ChatAgenticNode(
+            node_id="chat_memory_reader",
+            description="Read chat memory",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+        second_turn.input = ChatNodeInput(user_message="How should I define net revenue?")
+
+        action_manager = ActionHistoryManager()
+        async for _ in second_turn.execute_stream(action_manager):
+            pass
+
+        tool_calls = [item for item in mock_llm_create.tool_results if item["tool"] == "write_file"]
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["executed"] is True
+
+        second_model_call = mock_llm_create.call_history[-1]
+        assert second_model_call["method"] == "generate_with_tools_stream"
+        assert "Net revenue excludes refunds" in second_model_call["instruction"]
 
 
 # ===========================================================================
