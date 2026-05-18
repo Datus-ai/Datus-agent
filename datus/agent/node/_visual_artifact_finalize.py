@@ -1059,6 +1059,22 @@ def run_finalize_analysis(
         # consumers should treat insights / suggested_questions as
         # absent) AND the counts (so callers can see we DID land
         # subject_refs / key_tables).
+        #
+        # Proactively delete any stale narrative files from a prior
+        # successful run so the "absent" signal stays accurate after an
+        # edit-mode rerun whose finalize LLM call fails. Mirrors the
+        # same stale-cleanup contract :func:`write_subject_refs` already
+        # enforces for ``subject_refs.json`` (present-iff-non-empty).
+        # Best-effort: a failed unlink degrades to a warning so finalize
+        # never raises on cleanup.
+        for stale_name in ("insights.json", "suggested_questions.json"):
+            stale_path = analysis_dir / stale_name
+            if stale_path.is_file():
+                try:
+                    stale_path.unlink()
+                except OSError as exc:
+                    logger.warning("Failed to remove stale %s: %s", stale_name, exc)
+                    warnings.append(f"failed to remove stale {stale_name}: {exc}")
         return {
             "ok": False,
             "warnings": warnings,

@@ -181,8 +181,9 @@ class TestRetryErrorLoggingIncludesUpstream:
         async def always_fails():
             raise _make_api_error(upstream)
 
-        with patch("asyncio.sleep", new_callable=AsyncMock), caplog.at_level(
-            logging.ERROR, logger="datus.models.openai_compatible"
+        with (
+            patch("asyncio.sleep", new_callable=AsyncMock),
+            caplog.at_level(logging.ERROR, logger="datus.models.openai_compatible"),
         ):
             with pytest.raises(DatusException):
                 await mock_model._with_retry_async(always_fails, operation_name="text generation", max_retries=0)

@@ -1169,6 +1169,40 @@ class TestRunFinalizeAnalysis:
         manifest = json.loads((artifact_dir / "manifest.json").read_text(encoding="utf-8"))
         assert manifest["key_tables"] == ["finbench.main.Account"]
 
+    def test_stale_narrative_files_removed_on_llm_failure(self, tmp_path: Path):
+        """An edit-mode rerun whose finalize LLM call fails must leave the
+        ``analysis/`` directory in a state consistent with the failure
+        return contract (insights / suggested_questions absent).
+
+        Mirrors the present-iff-non-empty cleanup ``write_subject_refs``
+        already enforces for ``subject_refs.json`` — without this, a
+        consumer reading ``analysis/insights.json`` after a failed
+        rerun would see stale narrative from the previous successful
+        run that doesn't match the current queries on disk.
+        """
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+        # Pretend a previous run produced narrative files on disk.
+        stale_insights = analysis_dir / "insights.json"
+        stale_sq = analysis_dir / "suggested_questions.json"
+        stale_insights.write_text(json.dumps({"insights": []}), encoding="utf-8")
+        stale_sq.write_text(json.dumps({"suggested_questions": []}), encoding="utf-8")
+
+        model = Mock(spec=["generate_with_json_output"])
+        model.generate_with_json_output.side_effect = RuntimeError("LLM is down")
+
+        result = run_finalize_analysis(
+            model=model,
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+        )
+
+        assert result["ok"] is False
+        assert not stale_insights.exists(), "stale insights.json must be removed when finalize LLM fails"
+        assert not stale_sq.exists(), "stale suggested_questions.json must be removed when finalize LLM fails"
+
     def test_intent_curation_skipped_when_main_llm_fails(self, tmp_path: Path):
         """Intent curation is itself an LLM call; skipping it when the
         primary finalize call has already failed avoids burning a second

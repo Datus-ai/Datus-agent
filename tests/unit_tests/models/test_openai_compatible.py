@@ -295,8 +295,7 @@ class TestGenerate:
             model.generate("prompt", top_p=None)
         call_kwargs = mock_lit.call_args[1]
         assert "top_p" not in call_kwargs, (
-            "Explicit None in kwargs must suppress top_p; observed in call_kwargs "
-            f"as {call_kwargs.get('top_p')!r}."
+            f"Explicit None in kwargs must suppress top_p; observed in call_kwargs as {call_kwargs.get('top_p')!r}."
         )
 
     def test_temperature_explicit_none_drops_from_litellm_call(self):
