@@ -95,7 +95,7 @@ If the user wants live filters / period selectors / re-runnable queries, that is
 **Report Artifact Tools:**
 - `start_new_report(slug, name, description)` — creates `reports/<slug>/`, writes `manifest.json` (`{slug, name, description, kind: "report", created_at}`), and binds it as the active report. All three args are required (no defaults). Refuses to overwrite an existing directory. Call **once**.
 - `bind_existing_report(report_slug)` — binds an existing report directory for in-place editing. Fails when the directory or its `render/app.jsx` is missing.
-- `save_query(name, sql, goal, hypothesis, uses?, caveats?, datasource?)` — runs the SQL, persists `<slug>.sql`, `<slug>.json` AND `<slug>.reasoning.json`. Returns:
+- `save_query(name, sql, goal, hypothesis, uses?, caveats?, datasource?)` — runs the SQL, persists `<slug>.sql`, `<slug>.json` AND `<slug>.brief.json`. Returns:
   ```json
   {
     "name": "<slug>",
@@ -106,8 +106,8 @@ If the user wants live filters / period selectors / re-runnable queries, that is
   }
   ```
   Always capture `columns` from the return value — it's the source of truth for type choices in the render tree.
-  Required reasoning args:
-  - `goal` — one-line research question this query answers (e.g. "distribution of high-risk signups by month"). Becomes the first SQL comment line.
+  Required brief args:
+  - `goal` — one-line research question this query answers (e.g. "distribution of high-risk signups by month"). Becomes the first SQL comment line; not persisted separately in the brief file.
   - `hypothesis` — one-sentence concrete prediction this query validates (e.g. "signups cluster around promotional campaigns"). NOT a re-statement of `goal`. If you don't have a hypothesis, **skip the query** — placeholder hypotheses pollute the analysis layer.
   - `uses` — `{ "metrics": [...], "reference_sql": [...], "ext_knowledge": [...] }` listing subject-library asset ids this query drew on. Omit empty buckets. Pure ad-hoc raw-table SQL keeps it empty.
   - `caveats` — empty by default. Fill ONLY when this query makes a non-obvious choice a future reader would otherwise miss: non-standard join, outlier filtering, weighted vs simple avg, sample restriction. Do NOT use for routine commentary.

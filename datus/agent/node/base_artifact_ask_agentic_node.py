@@ -20,11 +20,18 @@ permissions, etc.) and add three things:
    ``queries/<name>.json``) just work, and the LLM cannot accidentally
    peek into a sibling artifact or the global subject library through
    filesystem traversal.
-3. **Artifact context injection** — load ``manifest.json`` plus the
-   ``analysis/intent.md`` + ``analysis/interpretation.json`` "anchor"
-   fields once at node startup, and surface them to the prompt template
-   so the LLM has a baseline grounding without paying ``read_file``
-   tool calls every turn.
+3. **Artifact context injection** — load ``manifest.json`` plus
+   ``analysis/intent.md`` once at node startup, and surface them to
+   the prompt template so the LLM has a baseline grounding without
+   paying ``read_file`` tool calls every turn.
+
+The earlier ``interpretation.json`` preload was removed along with the
+file itself — ``manifest.description`` covers framing and
+``analysis/insights.json`` (read on demand by the LLM) covers the
+substantive findings. Likewise, ``suggested_questions.json`` is **not**
+preloaded into the prompt: it's surfaced via the detail API as UI
+chips, but injecting it here would anchor the LLM toward a fixed
+question set whenever the user types an open-ended follow-up.
 
 Per-kind specialization (``ARTIFACT_KIND`` / template name / whether
 ``insights.json`` is expected) lives in the two concrete subclasses.
@@ -96,7 +103,6 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         self._artifact_root: Optional[Path] = None
         self._artifact_manifest: Dict[str, Any] = {}
         self._artifact_intent_md: str = ""
-        self._artifact_interpretation: Dict[str, Any] = {}
         self._resolve_artifact_root_early(agent_config)
         self._load_artifact_anchor_files()
 
@@ -236,16 +242,18 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             kwargs["root_path"] = str(self._artifact_root)
         return super()._make_filesystem_tool(**kwargs)
 
-    # ── Anchor-file load (intent.md + interpretation.json) ──────────────
+    # ── Anchor-file load (manifest + intent.md) ─────────────────────────
 
     def _load_artifact_anchor_files(self) -> None:
-        """Load ``manifest.json`` + the two ``analysis/`` anchor files.
+        """Load ``manifest.json`` + ``analysis/intent.md``.
 
         These are small (typically < 4KB total) and read once at node
         startup so the prompt template can render them directly. Other
         analysis files (insights, suggested_questions, subject_refs) are
-        intentionally NOT preloaded — the LLM fetches them on demand with
-        ``read_file`` to keep the per-turn system prompt small.
+        intentionally NOT preloaded — the LLM fetches them on demand
+        with ``read_file`` to keep the per-turn system prompt small,
+        and ``suggested_questions`` would also bias the LLM toward a
+        fixed question set if it lived in the header.
 
         Missing / corrupt files degrade silently to empty values; the
         prompt template branches on emptiness. We log a warning so
@@ -268,13 +276,6 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             except OSError as exc:
                 logger.warning("Failed to read %s: %s", intent_path, exc)
 
-        interp_path = self._artifact_root / "analysis" / "interpretation.json"
-        if interp_path.is_file():
-            try:
-                self._artifact_interpretation = json.loads(interp_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
-                logger.warning("Failed to read %s: %s", interp_path, exc)
-
     # ── Prompt context injection ────────────────────────────────────────
 
     def _get_system_prompt(
@@ -286,10 +287,11 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
 
         Delegates to ``ChatAgenticNode._get_system_prompt`` for the
         heavy lifting (template lookup, skill XML injection, memory,
-        language directive) but monkey-patches the template context
-        through a thread-safe instance attribute first so the j2
-        template can see ``artifact_kind`` / ``artifact_name`` /
-        ``artifact_root`` / ``intent_md`` / ``interpretation`` / etc.
+        language directive) and then prepends a markdown header block
+        with the artifact's manifest fields and raw intent.md so the
+        chat template's general copy ("You are the follow-up
+        consultant…") already knows what it's talking about by the
+        time the user's first message arrives.
         """
         # We can't simply override the template context dict the base
         # builds — ``prepare_template_context`` returns a fresh dict per
@@ -322,7 +324,6 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         manifest = self._artifact_manifest or {}
         artifact_name = manifest.get("name") or self._artifact_slug
         artifact_description = manifest.get("description") or ""
-        interp = self._artifact_interpretation or {}
 
         lines: list[str] = []
         lines.append(f"## Bound Artifact — {self.ARTIFACT_KIND.title()}: {artifact_name}")
@@ -341,25 +342,15 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             lines.append(self._artifact_intent_md.strip())
             lines.append("")
 
-        if interp:
-            lines.append("### Interpretation (`analysis/interpretation.json`)")
-            lines.append("")
-            audience = interp.get("audience") or []
-            if audience:
-                lines.append(f"- **Audience**: {', '.join(audience)}")
-            goal = interp.get("goal") or ""
-            if goal:
-                lines.append(f"- **Goal**: {goal}")
-            focus = interp.get("focus_questions") or []
-            if focus:
-                lines.append("- **Focus questions**:")
-                for q in focus:
-                    lines.append(f"    - {q}")
-            lines.append("")
-
         # File-system layout & usage hints — kept brief because the chat
         # template already documents the available tools; we just point
-        # the LLM at what's under the bound artifact.
+        # the LLM at what's under the bound artifact. We deliberately
+        # do NOT list ``analysis/suggested_questions.json`` here — it
+        # exists as UI chip data and including it would anchor the LLM
+        # toward a fixed question set when the user asks something open.
+        # ``analysis/subject_refs.json`` is also omitted from the static
+        # tree because it's present-iff-non-empty; the LLM can ``glob``
+        # for it if it cares.
         lines.append("### Artifact Filesystem Layout")
         lines.append("")
         lines.append(
@@ -372,11 +363,8 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         lines.append("├── manifest.json")
         lines.append("├── analysis/")
         lines.append("│   ├── intent.md                 # raw user prompts (append-only)")
-        lines.append("│   ├── interpretation.json       # audience / goal / focus_questions")
         if self.ARTIFACT_KIND == "report":
-            lines.append("│   ├── insights.json             # confirmed findings (report only)")
-        lines.append("│   ├── suggested_questions.json  # earlier follow-up suggestions")
-        lines.append("│   └── subject_refs.json         # subject-library asset ids")
+            lines.append("│   └── insights.json             # confirmed findings (report only)")
         lines.append("├── queries/")
         if self.ARTIFACT_KIND == "report":
             lines.append("│   ├── <name>.sql                # SQL text")
@@ -384,7 +372,7 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         else:
             lines.append("│   ├── <name>.sql.j2             # Jinja2 SQL template (params header)")
             lines.append("│   └── <name>.params.json        # declared params + sample columns")
-        lines.append("│   └── <name>.reasoning.json     # goal / hypothesis / uses / caveats")
+        lines.append("│   └── <name>.brief.json         # hypothesis / uses / caveats")
         lines.append("└── render/                       # presentation tier — DO NOT READ")
         lines.append("```")
         lines.append("")
@@ -413,14 +401,17 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             "highlight / jump to them."
         )
         lines.append(
-            "4. **Stay anchored to the original intent**. Re-read the focus "
-            "questions above before answering complex follow-ups; flag when "
-            "the user's new question genuinely shifts scope."
+            "4. **Stay anchored to the original intent**. Re-read the user "
+            "prompts in `analysis/intent.md` before answering complex "
+            "follow-ups; flag when the user's new question genuinely "
+            "shifts scope from the original artifact's coverage."
         )
         lines.append(
-            "5. **Respect the data scope**. `subject_refs.json` lists what the "
-            "artifact originally drew on. Exploring outside that scope is OK "
-            "if the user explicitly asks, but call it out in your answer."
+            "5. **Respect the data scope**. If `analysis/subject_refs.json` "
+            "exists (it's present iff at least one query declared a "
+            "subject-library asset), it lists what the artifact originally "
+            "drew on. Exploring outside that scope is OK if the user "
+            "explicitly asks, but call it out in your answer."
         )
         if self.ARTIFACT_KIND == "dashboard":
             lines.append(

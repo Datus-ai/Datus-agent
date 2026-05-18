@@ -27,16 +27,79 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any, List, Optional
 
 from datus.schemas.action_history import ActionHistory
-from datus.schemas.analysis_artifacts import ReasoningStep, SubjectRefIds
+from datus.schemas.analysis_artifacts import QueryBrief, SubjectRefIds
 from datus.schemas.artifact_manifest import ArtifactManifest
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+# Heuristics for ``intent.md`` recording. The goal is to keep the file
+# focused on prompts that express *what the user wants the artifact to
+# cover or change* and skip prompts that are operational ("继续 / continue")
+# or system-forwarded error reports from the renderer. A polluted
+# intent.md is worse than a thin one because the follow-up ask agent
+# reads it as the canonical "user voice" and gets anchored on noise
+# (e.g. a JSX traceback containing the words "五、风控阻断分析" would
+# falsely suggest the user asked for a risk focus).
+_INTENT_NOISE_PATTERNS = (
+    # Renderer / compiler error reports forwarded into the prompt loop.
+    re.compile(r"^\s*Error:\s", re.IGNORECASE),
+    re.compile(r"\bTraceback\b", re.IGNORECASE),
+    re.compile(r"\bReferenceError\b"),
+    re.compile(r"\bSyntaxError\b"),
+    re.compile(r"\bTypeError\b"),
+    # JS-style stack frame: ``    at functionName (file:line)``.
+    re.compile(r"^\s*at [A-Za-z_$][\w$.]*\s*\(.*\)", re.MULTILINE),
+)
+
+# Pure placeholder prompts that carry no new intent — operational
+# nudges issued to make the agent loop continue. Comparison is done on
+# the lowercased + punctuation-stripped form.
+_INTENT_PLACEHOLDER_PHRASES = frozenset(
+    {
+        "继续",
+        "继续完成",
+        "继续完成任务",
+        "继续执行",
+        "继续下去",
+        "继续干",
+        "continue",
+        "go on",
+        "next",
+        "proceed",
+        "keep going",
+        "ok",
+        "done",
+    }
+)
+
+
+def _is_meaningful_intent(message: str) -> bool:
+    """Decide whether a prompt should be recorded in ``analysis/intent.md``.
+
+    Returns ``False`` for empty / whitespace-only prompts, renderer
+    error reports, and pure continuation placeholders; ``True`` for
+    everything else.
+    """
+    text = (message or "").strip()
+    if not text:
+        return False
+    for pattern in _INTENT_NOISE_PATTERNS:
+        if pattern.search(text):
+            return False
+    # Normalise short prompts to compare against the placeholder set —
+    # tolerant of trailing punctuation in either language.
+    normalized = text.lower().strip().rstrip("。.!！?？:：,，;；…\"'`")
+    if normalized in _INTENT_PLACEHOLDER_PHRASES:
+        return False
+    return True
 
 
 def utc_now_iso() -> str:
@@ -95,15 +158,17 @@ def extract_artifact_result_field(action: ActionHistory, field: str) -> Optional
 # These wrap the three filesystem mutations the report / dashboard artifact
 # tools both need to perform once we landed the analysis/ directory:
 #
-#   * ``append_intent_section`` — append-only writes to ``intent.md``.
+#   * ``append_intent_section`` — append-only writes to ``intent.md``,
+#     filtered through ``_is_meaningful_intent`` so renderer error reports
+#     and "continue" placeholders never reach the file.
 #   * ``upsert_manifest_after_save`` — bump ``manifest.updated_at`` and add a
 #     datasource to ``manifest.datasources`` if it isn't already there.
-#   * ``write_reasoning_step`` — write ``queries/<name>.reasoning.json``.
+#   * ``write_query_brief`` — write ``queries/<name>.brief.json``.
 #
 # Each helper is best-effort: failures are logged and surfaced as a string
 # error message but never raise, so the caller can decide whether to bubble
 # the issue up as a hard FuncToolResult error (e.g. for save_query, where
-# missing reasoning metadata makes the artifact incomplete) or treat it as
+# missing brief metadata makes the artifact incomplete) or treat it as
 # a soft warning (e.g. for intent.md, where the SQL is the load-bearing
 # artifact and the prompt log is bonus).
 
@@ -142,12 +207,20 @@ def append_intent_section(
     Returns an error string on failure (so the caller can include it in
     the FuncToolResult), ``None`` on success.
 
-    Empty / whitespace-only ``user_message`` is silently skipped — the
-    LLM is allowed to bind an artifact from a session that didn't
-    originate from a user message (rare but legal in some test setups),
-    and we shouldn't pollute the file with empty sections.
+    Prompts that don't carry user intent are silently skipped (see
+    :func:`_is_meaningful_intent` for the rules): renderer error
+    reports forwarded into the loop and "continue / proceed"
+    placeholders. The follow-up consultant reads intent.md as the
+    canonical user voice, so polluting it with system noise is worse
+    than dropping the prompt entirely.
     """
-    if not user_message or not user_message.strip():
+    if not _is_meaningful_intent(user_message):
+        if user_message and user_message.strip():
+            logger.debug(
+                "Skipping non-intent prompt for %s/intent.md: %r",
+                analysis_dir,
+                user_message.strip()[:80],
+            )
         return None
     try:
         analysis_dir.mkdir(parents=True, exist_ok=True)
@@ -231,18 +304,15 @@ def upsert_manifest_after_save(
         return f"Failed to upsert manifest: {exc}"
 
 
-def write_reasoning_step(
+def write_query_brief(
     queries_dir: Path,
     *,
     name: str,
-    goal: str,
     hypothesis: str,
     uses: SubjectRefIds,
     caveats: str,
-    datasource: str,
-    timestamp: str,
 ) -> Optional[str]:
-    """Write the per-query reasoning sidecar ``queries/<name>.reasoning.json``.
+    """Write the per-query brief sidecar ``queries/<name>.brief.json``.
 
     Sibling to ``<name>.sql`` (report) / ``<name>.sql.j2`` (dashboard).
     Write-once-overwrite — rerunning a same-named query replaces this
@@ -251,27 +321,24 @@ def write_reasoning_step(
     Returns an error string on failure, ``None`` on success.
     """
     try:
-        step = ReasoningStep(
+        brief = QueryBrief(
             name=name,
-            goal=goal,
             hypothesis=hypothesis,
             uses=uses,
             caveats=caveats,
-            datasource=datasource,
-            created_at=timestamp,
         )
     except Exception as exc:
-        return f"reasoning step schema validation failed: {exc}"
+        return f"query brief schema validation failed: {exc}"
     try:
-        path = queries_dir / f"{name}.reasoning.json"
+        path = queries_dir / f"{name}.brief.json"
         _atomic_write_text(
             path,
-            json.dumps(step.model_dump(), ensure_ascii=False, indent=2) + "\n",
+            json.dumps(brief.model_dump(), ensure_ascii=False, indent=2) + "\n",
         )
         return None
     except OSError as exc:
-        logger.warning("Failed to write %s: %s", queries_dir / f"{name}.reasoning.json", exc)
-        return f"Failed to write reasoning step: {exc}"
+        logger.warning("Failed to write %s: %s", queries_dir / f"{name}.brief.json", exc)
+        return f"Failed to write query brief: {exc}"
 
 
 def coerce_uses_arg(uses: Any) -> SubjectRefIds:

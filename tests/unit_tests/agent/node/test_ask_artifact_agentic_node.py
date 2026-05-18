@@ -10,9 +10,12 @@ Pins the node-level invariants we depend on at runtime:
 * The filesystem tool override anchors at the artifact root, so the LLM's
   ``read_file`` / ``glob`` / ``grep`` reach is constrained to one artifact.
 * The artifact-context preamble rendered into the system prompt includes
-  the manifest name, the intent.md body, the interpretation goal, the
-  expected directory tree (with kind-specific branches: ``insights.json``
-  only for reports), and the seven load-bearing behavioral rules.
+  the manifest name, the intent.md body, the expected directory tree
+  (with kind-specific branches: ``insights.json`` only for reports),
+  and the seven load-bearing behavioral rules. ``interpretation.json``
+  and ``suggested_questions.json`` are intentionally NOT loaded into
+  the preamble (the first was removed; the second is reserved for UI
+  chips to avoid anchoring the LLM on a fixed question set).
 
 We instantiate the nodes directly (bypassing ``node_factory``) so the test
 focuses on the binding / context-injection layer without dragging in the
@@ -43,10 +46,12 @@ def _seed_artifact(project_root: str, kind: str, slug: str, *, with_analysis: bo
     """Materialize a minimal ``reports/<slug>/`` (or dashboard) on disk.
 
     Includes a manifest with ``name`` / ``description`` / ``datasources``
-    plus, when ``with_analysis=True``, the two anchor files the node
-    preloads. Other analysis files (insights, suggested_questions,
-    subject_refs) are intentionally omitted — the node fetches those on
-    demand via ``read_file``, so their absence at startup is normal.
+    plus, when ``with_analysis=True``, ``analysis/intent.md`` — the
+    single anchor file the node preloads. Other analysis files
+    (insights, suggested_questions, subject_refs) are intentionally
+    omitted: the node fetches insights on demand via ``read_file``,
+    suggested_questions belong to the UI chip layer (not the LLM
+    context), and subject_refs is present-iff-non-empty.
     """
     kind_dir = "reports" if kind == "report" else "dashboards"
     root = Path(project_root) / kind_dir / slug
@@ -67,17 +72,6 @@ def _seed_artifact(project_root: str, kind: str, slug: str, *, with_analysis: bo
     if with_analysis:
         (root / "analysis" / "intent.md").write_text(
             "### [2026-05-17T00:00:00Z] mode: new\n> investigate Q3 anomalies\n",
-            encoding="utf-8",
-        )
-        (root / "analysis" / "interpretation.json").write_text(
-            json.dumps(
-                {
-                    "audience": ["Ops analysts"],
-                    "goal": "Understand Q3 anomalies in signups",
-                    "focus_questions": ["What drives the Q3 spike?", "Which channels matter?"],
-                    "last_updated": "2026-05-17T00:00:00Z",
-                }
-            ),
             encoding="utf-8",
         )
     return root
@@ -199,15 +193,20 @@ class TestFilesystemAnchoring:
 
 
 class TestAnchorFilePreload:
-    def test_intent_and_interpretation_loaded(self, real_agent_config):
+    def test_intent_loaded(self, real_agent_config):
         node = _make_ask_report_node(real_agent_config)
         assert "Q3 anomalies" in node._artifact_intent_md
-        assert node._artifact_interpretation["goal"].startswith("Understand")
-        assert node._artifact_interpretation["audience"] == ["Ops analysts"]
 
-    def test_missing_anchor_files_degrade_silently(self, real_agent_config):
-        """When intent.md / interpretation.json are absent, init still succeeds
-        and the cached values stay empty (prompt template branches on emptiness)."""
+    def test_interpretation_not_attribute(self, real_agent_config):
+        """``_artifact_interpretation`` was removed along with the
+        interpretation.json file; the attribute should no longer exist
+        on the node so accidental readers fail loud."""
+        node = _make_ask_report_node(real_agent_config)
+        assert not hasattr(node, "_artifact_interpretation")
+
+    def test_missing_intent_degrades_silently(self, real_agent_config):
+        """When intent.md is absent, init still succeeds and the cached
+        value stays empty (prompt template branches on emptiness)."""
         _seed_artifact(real_agent_config.project_root, "report", "no_anchors", with_analysis=False)
         _register_ask_agent(real_agent_config, name="ask_no_anchor", kind="report", slug="no_anchors")
         node = AskReportAgenticNode(
@@ -218,7 +217,6 @@ class TestAnchorFilePreload:
             node_name="ask_no_anchor",
         )
         assert node._artifact_intent_md == ""
-        assert node._artifact_interpretation == {}
         # Manifest still loaded — it's not in analysis/.
         assert node._artifact_manifest["slug"] == "no_anchors"
 
@@ -235,12 +233,23 @@ class TestArtifactContextBlock:
         assert "Demo Report" in block  # manifest name
         assert "demo_report" in block  # slug
         assert "Q3 anomalies" in block  # intent.md
-        assert "Understand Q3 anomalies" in block  # interpretation.goal
         # Directory tree branches on artifact_kind — report shows insights.
         assert "insights.json" in block
+        # Brief sidecar replaced reasoning sidecar in the tree.
+        assert "brief.json" in block
+        assert "reasoning.json" not in block
         # Behavioral rules are present and number 7.
         assert "Ground in existing analysis first" in block
         assert "No artifact mutations" in block
+
+    def test_report_block_excludes_interpretation_and_suggested(self, real_agent_config):
+        """interpretation.json was removed; suggested_questions.json is
+        UI-chip data and must not leak into the system prompt where it
+        would anchor the LLM toward a fixed question set."""
+        node = _make_ask_report_node(real_agent_config)
+        block = node._render_artifact_context_block()
+        assert "interpretation.json" not in block
+        assert "suggested_questions.json" not in block
 
     def test_dashboard_block_excludes_insights(self, real_agent_config):
         node = _make_ask_dashboard_node(real_agent_config)

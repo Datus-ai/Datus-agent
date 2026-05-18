@@ -93,7 +93,7 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
 **Dashboard Artifact Tools:**
 - `start_new_dashboard(slug, name, description)` — creates `dashboards/<slug>/`, writes `manifest.json` (`{slug, name, description, kind: "dashboard", created_at}`), and binds it as the active dashboard. All three args are required (no defaults). Refuses to overwrite an existing directory. Call **once**.
 - `bind_existing_dashboard(dashboard_slug)` — binds an existing dashboard directory for in-place editing. Fails when the directory or its `render/app.jsx` is missing.
-- `save_query_template(name, sql_template, sample_params, goal, hypothesis, uses?, caveats?, datasource?)` — renders the Jinja2 template with `sample_params`, runs the resulting SQL through the right connector, persists `<slug>.sql.j2`, `<slug>.params.json` AND `<slug>.reasoning.json`, returns:
+- `save_query_template(name, sql_template, sample_params, goal, hypothesis, uses?, caveats?, datasource?)` — renders the Jinja2 template with `sample_params`, runs the resulting SQL through the right connector, persists `<slug>.sql.j2`, `<slug>.params.json` AND `<slug>.brief.json`, returns:
   ```json
   {
     "name": "<slug>",
@@ -105,8 +105,8 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
   }
   ```
   Always capture `columns` from the return value — it's the source of truth for type choices in the render tree.
-  Required reasoning args (same semantics as the report subagent — see `save_query` there):
-  - `goal` — one-line research question this template answers.
+  Required brief args (same semantics as the report subagent — see `save_query` there):
+  - `goal` — one-line research question this template answers. Becomes a trailing SQL comment; not persisted separately in the brief file.
   - `hypothesis` — one-sentence concrete prediction. Skip the template rather than write a placeholder.
   - `uses` — `{ "metrics": [...], "reference_sql": [...], "ext_knowledge": [...] }` listing subject-library asset ids. Omit empty buckets.
   - `caveats` — empty unless this template makes a non-obvious choice a future reader would otherwise miss.

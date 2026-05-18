@@ -49,7 +49,7 @@ from datus.tools.func_tool._visual_artifact_helpers import (
     coerce_uses_arg,
     upsert_manifest_after_save,
     utc_now_iso,
-    write_reasoning_step,
+    write_query_brief,
 )
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.report_artifact_tools import (
@@ -529,13 +529,13 @@ class DashboardArtifactTools:
     ) -> FuncToolResult:
         """
         Persist a parameterized Jinja2 SQL template after a trial render,
-        and the per-query reasoning sidecar.
+        and the per-query brief sidecar.
 
         Args:
             name: Semantic slug for the template (e.g. "revenue_by_region").
                 Matches ``^[a-z0-9_]{1,64}$``. Reused names overwrite the
                 previous files (``.sql.j2`` / ``.params.json`` /
-                ``.reasoning.json``).
+                ``.brief.json``).
             sql_template: Jinja2 SQL body whose **first non-blank line** is
                 a ``-- @datus-params <name>:<type>[:optional], ...`` header
                 declaring the parameters the body references. Bind values
@@ -548,7 +548,9 @@ class DashboardArtifactTools:
             goal: One-line research question this template answers, e.g.
                 "revenue trends sliced by region over selectable window".
                 Becomes the trailing SQL comment so a human reading the
-                ``.sql.j2`` can recover intent. Required.
+                ``.sql.j2`` can recover intent. Required. Not persisted
+                separately — the brief file holds only hypothesis / uses
+                / caveats.
             hypothesis: One-sentence concrete prediction the LLM expects
                 this query to validate (e.g. "regional revenue diverges
                 month-over-month, justifying drilldown"). Required and
@@ -567,7 +569,7 @@ class DashboardArtifactTools:
                     "name": "<slug>",
                     "sql_path": "dashboards/<id>/queries/<slug>.sql.j2",
                     "params_path": "dashboards/<id>/queries/<slug>.params.json",
-                    "reasoning_path": "dashboards/<id>/queries/<slug>.reasoning.json",
+                    "brief_path": "dashboards/<id>/queries/<slug>.brief.json",
                     "data_ref": "queries/<slug>",
                     "params": [{"name": "...", "type": "...", "required": true}, ...],
                     "sample_row_count": <int>,
@@ -708,7 +710,7 @@ class DashboardArtifactTools:
                 error="Trial query returned no columns. Refine the SQL so at least one column is selected.",
             )
 
-        # 5. Persist .sql.j2 + .params.json + .reasoning.json
+        # 5. Persist .sql.j2 + .params.json + .brief.json
         # Note: the legacy ``description`` slot in params.json maps to the
         # new ``goal`` arg — same semantics (one-line research question),
         # but the analysis-artifact contract names it ``goal`` everywhere.
@@ -740,7 +742,7 @@ class DashboardArtifactTools:
 
         sql_path = self.queries_dir / f"{name}.sql.j2"
         meta_path = self.queries_dir / f"{name}.params.json"
-        reasoning_path = self.queries_dir / f"{name}.reasoning.json"
+        brief_path = self.queries_dir / f"{name}.brief.json"
 
         header_parts: List[str] = [f"-- {goal.strip()}"]
         header_parts.append(f"-- saved at {meta_payload['saved_at']} for dashboard {self.dashboard_slug}")
@@ -752,18 +754,15 @@ class DashboardArtifactTools:
         except OSError as exc:
             return FuncToolResult(success=0, error=f"Failed to persist template files: {exc}")
 
-        reasoning_err = write_reasoning_step(
+        brief_err = write_query_brief(
             self.queries_dir,
             name=name,
-            goal=goal.strip(),
             hypothesis=hypothesis.strip(),
             uses=uses_obj,
             caveats=caveats.strip() if caveats else "",
-            datasource=ds_label,
-            timestamp=meta_payload["saved_at"],
         )
-        if reasoning_err:
-            return FuncToolResult(success=0, error=reasoning_err)
+        if brief_err:
+            return FuncToolResult(success=0, error=brief_err)
 
         manifest_warning = upsert_manifest_after_save(
             self.dashboard_dir / "manifest.json",
@@ -773,13 +772,13 @@ class DashboardArtifactTools:
 
         rel_sql = sql_path.relative_to(self._project_root).as_posix()
         rel_meta = meta_path.relative_to(self._project_root).as_posix()
-        rel_reasoning = reasoning_path.relative_to(self._project_root).as_posix()
+        rel_brief = brief_path.relative_to(self._project_root).as_posix()
 
         result: Dict[str, Any] = {
             "name": name,
             "sql_path": rel_sql,
             "params_path": rel_meta,
-            "reasoning_path": rel_reasoning,
+            "brief_path": rel_brief,
             "data_ref": f"queries/{name}",
             "params": [p.model_dump() for p in params_decl],
             "sample_row_count": len(rows),

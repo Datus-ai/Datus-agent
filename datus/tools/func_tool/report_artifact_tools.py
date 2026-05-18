@@ -49,7 +49,7 @@ from datus.tools.func_tool._visual_artifact_helpers import (
     coerce_uses_arg,
     upsert_manifest_after_save,
     utc_now_iso,
-    write_reasoning_step,
+    write_query_brief,
 )
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
@@ -307,10 +307,11 @@ class ReportArtifactTools:
         # Raw user prompt that drove this node invocation — appended to
         # analysis/intent.md verbatim when the artifact is created / bound,
         # so the file becomes the authoritative log of what the user asked
-        # for (LLM-rewritten descriptions live separately in interpretation.json).
-        # Empty string is a tolerated edge case (programmatic invocations
-        # / test harnesses); ``append_intent_section`` silently skips
-        # whitespace-only messages.
+        # for. Empty string is a tolerated edge case (programmatic
+        # invocations / test harnesses); ``append_intent_section``
+        # silently drops whitespace-only messages, renderer error
+        # reports, and "continue / proceed" placeholders so the file
+        # stays focused on real intent.
         self._user_message = user_message or ""
 
         project_root = Path(getattr(agent_config, "project_root", "")).resolve()
@@ -569,18 +570,21 @@ class ReportArtifactTools:
         datasource: str = "",
     ) -> FuncToolResult:
         """
-        Run a read-only SQL, persist the SQL text, the result, AND the per-query reasoning sidecar.
+        Run a read-only SQL, persist the SQL text, the result, AND the per-query brief sidecar.
 
         Args:
             name: Semantic slug for the query (e.g. "sales_by_store"). Matches
                 ``^[a-z0-9_]{1,64}$``. Reused names overwrite the previous files
-                (all three sidecars: ``.sql`` / ``.json`` / ``.reasoning.json``).
+                (all three sidecars: ``.sql`` / ``.json`` / ``.brief.json``).
             sql: SELECT / WITH / SHOW / DESCRIBE / EXPLAIN. Multi-statement
                 input is rejected. Comments inside the SQL are kept.
             goal: One-line research question this query answers, e.g.
                 "distribution of high-risk signups across months". Becomes the
                 first SQL comment line so a human reading ``.sql`` can recover
-                intent without opening the reasoning sidecar. Required.
+                intent. Required. Not persisted separately — the SQL header
+                comment is the canonical store; the brief file holds only
+                the fields a follow-up consultant would otherwise have to
+                infer (hypothesis / uses / caveats).
             hypothesis: One-sentence concrete prediction the LLM expects this
                 query to validate or refute (e.g. "high-risk signups cluster
                 around promotional campaigns"). Required and non-empty. If
@@ -604,7 +608,7 @@ class ReportArtifactTools:
                     "name": "sales_by_store",
                     "sql_path": "reports/<id>/queries/sales_by_store.sql",
                     "json_path": "reports/<id>/queries/sales_by_store.json",
-                    "reasoning_path": "reports/<id>/queries/sales_by_store.reasoning.json",
+                    "brief_path": "reports/<id>/queries/sales_by_store.brief.json",
                     "data_ref": "queries/sales_by_store",
                     "row_count": 42,
                     "columns": [{"name": "...", "type": "..."}, ...],
@@ -725,7 +729,7 @@ class ReportArtifactTools:
 
         sql_path = self.queries_dir / f"{name}.sql"
         json_path = self.queries_dir / f"{name}.json"
-        reasoning_path = self.queries_dir / f"{name}.reasoning.json"
+        brief_path = self.queries_dir / f"{name}.brief.json"
 
         header_parts: List[str] = [f"-- {goal.strip()}"]
         header_parts.append(f"-- generated at {payload['executed_at']} for report {self.report_slug}")
@@ -737,27 +741,24 @@ class ReportArtifactTools:
         except OSError as exc:
             return FuncToolResult(success=0, error=f"Failed to persist query files: {exc}")
 
-        # Reasoning sidecar — write next, so the three-file bundle stays
+        # Brief sidecar — write next, so the three-file bundle stays
         # in sync. If this fails, the SQL+JSON pair already exists on
         # disk; we surface the error so the LLM can retry without losing
         # the query result.
-        reasoning_err = write_reasoning_step(
+        brief_err = write_query_brief(
             self.queries_dir,
             name=name,
-            goal=goal.strip(),
             hypothesis=hypothesis.strip(),
             uses=uses_obj,
             caveats=caveats.strip() if caveats else "",
-            datasource=ds_label,
-            timestamp=payload["executed_at"],
         )
-        if reasoning_err:
-            return FuncToolResult(success=0, error=reasoning_err)
+        if brief_err:
+            return FuncToolResult(success=0, error=brief_err)
 
         # Manifest upsert (datasources union-add + updated_at bump). Soft
         # failure — log warning, expose in result, but don't fail the
         # whole tool call: the artifact's primary contract (SQL+data+
-        # reasoning) is already on disk.
+        # brief) is already on disk.
         manifest_warning = upsert_manifest_after_save(
             self.report_dir / "manifest.json",
             datasource=ds_label,
@@ -766,13 +767,13 @@ class ReportArtifactTools:
 
         rel_sql = sql_path.relative_to(self._project_root).as_posix()
         rel_json = json_path.relative_to(self._project_root).as_posix()
-        rel_reasoning = reasoning_path.relative_to(self._project_root).as_posix()
+        rel_brief = brief_path.relative_to(self._project_root).as_posix()
 
         result: Dict[str, Any] = {
             "name": name,
             "sql_path": rel_sql,
             "json_path": rel_json,
-            "reasoning_path": rel_reasoning,
+            "brief_path": rel_brief,
             "data_ref": f"queries/{name}",
             "row_count": len(rows),
             "columns": columns_meta,

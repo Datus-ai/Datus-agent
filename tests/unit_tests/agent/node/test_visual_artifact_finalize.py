@@ -5,7 +5,7 @@
 """Unit tests for ``datus/agent/node/_visual_artifact_finalize.py``.
 
 Covers the four module-level "helper" functions
-(``collect_reasoning_steps``, ``collect_query_previews``,
+(``collect_query_briefs``, ``collect_query_previews``,
 ``aggregate_subject_refs``, ``parse_finalize_output``,
 ``consistency_check``) plus the end-to-end ``run_finalize_analysis``
 orchestrator with a mocked ``model`` instance.
@@ -27,8 +27,8 @@ import pytest
 
 from datus.agent.node._visual_artifact_finalize import (
     aggregate_subject_refs,
+    collect_query_briefs,
     collect_query_previews,
-    collect_reasoning_steps,
     consistency_check,
     parse_finalize_output,
     run_finalize_analysis,
@@ -36,7 +36,6 @@ from datus.agent.node._visual_artifact_finalize import (
 from datus.schemas.analysis_artifacts import (
     FinalizeAnalysisOutput,
     Insight,
-    Interpretation,
     SubjectRefs,
     SuggestedQuestion,
 )
@@ -46,30 +45,21 @@ from datus.schemas.analysis_artifacts import (
 # --------------------------------------------------------------------------- #
 
 
-def _write_reasoning(queries_dir: Path, name: str, *, uses: Dict[str, List[str]] | None = None) -> None:
-    """Persist a minimal valid reasoning sidecar at ``queries/<name>.reasoning.json``."""
+def _write_brief(queries_dir: Path, name: str, *, uses: Dict[str, List[str]] | None = None) -> None:
+    """Persist a minimal valid brief sidecar at ``queries/<name>.brief.json``."""
     queries_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "name": name,
-        "goal": f"goal for {name}",
         "hypothesis": f"hypothesis for {name}",
         "uses": uses if uses is not None else {"metrics": [], "reference_sql": [], "ext_knowledge": []},
         "caveats": "",
-        "datasource": "primary_pg",
-        "created_at": "2026-05-14T10:00:00Z",
     }
-    (queries_dir / f"{name}.reasoning.json").write_text(json.dumps(payload), encoding="utf-8")
+    (queries_dir / f"{name}.brief.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
 def _full_finalize_response(*, insights: list | None = None, suggested_questions: list | None = None) -> Dict[str, Any]:
     """Build a ``FinalizeAnalysisOutput``-compatible dict the LLM mock will return."""
     return {
-        "interpretation": {
-            "audience": ["Ops managers"],
-            "goal": "Understand regional revenue movement.",
-            "focus_questions": ["Where did revenue grow?"],
-            "last_updated": "2026-05-14T10:00:00Z",
-        },
         "insights": insights
         if insights is not None
         else [
@@ -96,33 +86,33 @@ def _full_finalize_response(*, insights: list | None = None, suggested_questions
 
 
 # --------------------------------------------------------------------------- #
-# collect_reasoning_steps                                                     #
+# collect_query_briefs                                                        #
 # --------------------------------------------------------------------------- #
 
 
-class TestCollectReasoningSteps:
+class TestCollectQueryBriefs:
     def test_missing_dir_returns_empty(self, tmp_path: Path):
-        assert collect_reasoning_steps(tmp_path / "does_not_exist") == []
+        assert collect_query_briefs(tmp_path / "does_not_exist") == []
 
     def test_empty_dir_returns_empty(self, tmp_path: Path):
         queries_dir = tmp_path / "queries"
         queries_dir.mkdir()
-        assert collect_reasoning_steps(queries_dir) == []
+        assert collect_query_briefs(queries_dir) == []
 
     def test_reads_multiple_files_sorted(self, tmp_path: Path):
         queries_dir = tmp_path / "queries"
-        _write_reasoning(queries_dir, "alpha")
-        _write_reasoning(queries_dir, "bravo")
-        _write_reasoning(queries_dir, "charlie")
-        steps = collect_reasoning_steps(queries_dir)
-        assert [s["name"] for s in steps] == ["alpha", "bravo", "charlie"]
+        _write_brief(queries_dir, "alpha")
+        _write_brief(queries_dir, "bravo")
+        _write_brief(queries_dir, "charlie")
+        briefs = collect_query_briefs(queries_dir)
+        assert [b["name"] for b in briefs] == ["alpha", "bravo", "charlie"]
 
     def test_skips_unparseable_file(self, tmp_path: Path):
         queries_dir = tmp_path / "queries"
-        _write_reasoning(queries_dir, "good")
-        (queries_dir / "bad.reasoning.json").write_text("{not-json", encoding="utf-8")
-        steps = collect_reasoning_steps(queries_dir)
-        assert [s["name"] for s in steps] == ["good"]
+        _write_brief(queries_dir, "good")
+        (queries_dir / "bad.brief.json").write_text("{not-json", encoding="utf-8")
+        briefs = collect_query_briefs(queries_dir)
+        assert [b["name"] for b in briefs] == ["good"]
 
 
 # --------------------------------------------------------------------------- #
@@ -207,8 +197,8 @@ class TestAggregateSubjectRefs:
 
     def test_dedupes_ids_across_files(self, tmp_path: Path):
         queries_dir = tmp_path / "queries"
-        _write_reasoning(queries_dir, "alpha", uses={"metrics": ["m1", "m2"], "reference_sql": ["rs1"]})
-        _write_reasoning(queries_dir, "bravo", uses={"metrics": ["m1", "m3"], "ext_knowledge": ["kb1"]})
+        _write_brief(queries_dir, "alpha", uses={"metrics": ["m1", "m2"], "reference_sql": ["rs1"]})
+        _write_brief(queries_dir, "bravo", uses={"metrics": ["m1", "m3"], "ext_knowledge": ["kb1"]})
         refs = aggregate_subject_refs(queries_dir)
         # m1 appears in two files but only once in the aggregate.
         assert [r.id for r in refs.metrics] == ["m1", "m2", "m3"]
@@ -219,27 +209,24 @@ class TestAggregateSubjectRefs:
         """First-seen order within each bucket matters for subagent rendering."""
         queries_dir = tmp_path / "queries"
         # alpha sorts before zulu; insertion order within alpha is preserved.
-        _write_reasoning(queries_dir, "alpha", uses={"metrics": ["m_first", "m_second"]})
-        _write_reasoning(queries_dir, "zulu", uses={"metrics": ["m_third"]})
+        _write_brief(queries_dir, "alpha", uses={"metrics": ["m_first", "m_second"]})
+        _write_brief(queries_dir, "zulu", uses={"metrics": ["m_third"]})
         refs = aggregate_subject_refs(queries_dir)
         assert [r.id for r in refs.metrics] == ["m_first", "m_second", "m_third"]
 
     def test_ignores_invalid_uses_field(self, tmp_path: Path):
-        """A reasoning file with a non-dict ``uses`` shouldn't crash the aggregator."""
+        """A brief file with a non-dict ``uses`` shouldn't crash the aggregator."""
         queries_dir = tmp_path / "queries"
         queries_dir.mkdir()
         # Hand-build a file where ``uses`` is not the schema shape but the
         # rest is parseable JSON — the aggregator skips it gracefully.
         broken = {
             "name": "broken",
-            "goal": "g",
             "hypothesis": "h",
             "uses": "not-a-dict",
             "caveats": "",
-            "datasource": "ds",
-            "created_at": "2026-05-14T10:00:00Z",
         }
-        (queries_dir / "broken.reasoning.json").write_text(json.dumps(broken), encoding="utf-8")
+        (queries_dir / "broken.brief.json").write_text(json.dumps(broken), encoding="utf-8")
         refs = aggregate_subject_refs(queries_dir)
         assert refs == SubjectRefs()
 
@@ -269,12 +256,15 @@ class TestParseFinalizeOutput:
         output = parse_finalize_output(raw, artifact_kind="dashboard")
         assert output.insights == []
 
-    def test_missing_last_updated_filled_in(self):
+    def test_legacy_interpretation_key_silently_dropped(self):
+        """Stale producers may still echo a top-level ``interpretation``
+        field; the parser must strip it before schema validation so the
+        finalize pipeline keeps working through the migration window
+        (the schema itself stays strict — see schema tests)."""
         raw = _full_finalize_response()
-        raw["interpretation"].pop("last_updated", None)
+        raw["interpretation"] = {"audience": ["x"], "goal": "y", "focus_questions": ["q"]}
         output = parse_finalize_output(raw, artifact_kind="report")
-        assert output.interpretation.last_updated  # not empty
-        assert output.interpretation.last_updated.endswith("Z")
+        assert len(output.insights) == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -284,12 +274,6 @@ class TestParseFinalizeOutput:
 
 def _make_output(*, insights=None, suggested_questions=None) -> FinalizeAnalysisOutput:
     return FinalizeAnalysisOutput(
-        interpretation=Interpretation(
-            audience=["Ops"],
-            goal="g",
-            focus_questions=["fq"],
-            last_updated="2026-05-14T10:00:00Z",
-        ),
         insights=insights or [],
         suggested_questions=suggested_questions
         or [SuggestedQuestion(question="q?", related_queries=[], related_insight=None, priority=0.5)],
@@ -354,15 +338,24 @@ class TestConsistencyCheck:
 # --------------------------------------------------------------------------- #
 
 
-def _make_artifact_layout(tmp_path: Path, *, with_reasoning: bool = True) -> tuple[Path, Path, Path]:
-    """Build the three on-disk paths run_finalize_analysis expects."""
+def _make_artifact_layout(
+    tmp_path: Path, *, with_brief: bool = True, brief_uses: Dict[str, List[str]] | None = None
+) -> tuple[Path, Path, Path]:
+    """Build the three on-disk paths run_finalize_analysis expects.
+
+    By default seeds one brief with a ``metrics`` ref so the
+    ``subject_refs.json`` writer triggers; pass ``brief_uses={}`` to
+    exercise the empty-uses path that skips the file.
+    """
     artifact_dir = tmp_path / "artifact"
     queries_dir = artifact_dir / "queries"
     analysis_dir = artifact_dir / "analysis"
     queries_dir.mkdir(parents=True)
     analysis_dir.mkdir(parents=True)
-    if with_reasoning:
-        _write_reasoning(queries_dir, "rev_by_region", uses={"metrics": ["m_revenue"]})
+    if with_brief:
+        if brief_uses is None:
+            brief_uses = {"metrics": ["m_revenue"]}
+        _write_brief(queries_dir, "rev_by_region", uses=brief_uses)
         (queries_dir / "rev_by_region.sql").write_text("SELECT 1", encoding="utf-8")
         (queries_dir / "rev_by_region.json").write_text(
             json.dumps(
@@ -380,7 +373,7 @@ def _make_artifact_layout(tmp_path: Path, *, with_reasoning: bool = True) -> tup
 
 
 class TestRunFinalizeAnalysis:
-    def test_end_to_end_writes_all_four_files(self, tmp_path: Path):
+    def test_end_to_end_writes_expected_files(self, tmp_path: Path):
         artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
 
         model = Mock(spec=["generate_with_json_output"])
@@ -396,17 +389,66 @@ class TestRunFinalizeAnalysis:
         )
 
         assert result["ok"] is True
-        assert (analysis_dir / "interpretation.json").is_file()
+        # interpretation.json was removed in the brief.json refactor —
+        # it must not be written even if a stale LLM produced one.
+        assert not (analysis_dir / "interpretation.json").exists()
         assert (analysis_dir / "insights.json").is_file()
         assert (analysis_dir / "suggested_questions.json").is_file()
+        # subject_refs.json is present because the brief declared a metric.
         assert (analysis_dir / "subject_refs.json").is_file()
-        # The subject_refs file picked up the metric id declared in the
-        # reasoning sidecar.
         refs = json.loads((analysis_dir / "subject_refs.json").read_text(encoding="utf-8"))
         assert any(m["id"] == "m_revenue" for m in refs["metrics"])
-        # Subject ref counts surface in the result so callers can monitor
-        # finalize quality.
         assert result["subject_refs_count"]["metrics"] == 1
+
+    def test_subject_refs_skipped_when_no_uses_declared(self, tmp_path: Path):
+        """Present-iff-non-empty: a brief without any subject-library
+        ids must NOT produce a ``subject_refs.json`` file — an absent
+        file is the honest "no attribution" signal."""
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(
+            tmp_path, brief_uses={"metrics": [], "reference_sql": [], "ext_knowledge": []}
+        )
+
+        model = Mock(spec=["generate_with_json_output"])
+        model.generate_with_json_output.return_value = _full_finalize_response()
+
+        result = run_finalize_analysis(
+            model=model,
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+        )
+
+        assert result["ok"] is True
+        assert not (analysis_dir / "subject_refs.json").exists()
+        assert result["subject_refs_count"] == {"metrics": 0, "reference_sql": 0, "ext_knowledge": 0}
+
+    def test_subject_refs_stale_file_removed_when_now_empty(self, tmp_path: Path):
+        """Edit-mode rerun where all ``uses`` were dropped: a stale
+        ``subject_refs.json`` from a prior run must be deleted so the
+        absent-file signal stays accurate."""
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(
+            tmp_path, brief_uses={"metrics": [], "reference_sql": [], "ext_knowledge": []}
+        )
+        stale_path = analysis_dir / "subject_refs.json"
+        stale_path.write_text(
+            json.dumps({"metrics": [{"id": "old"}], "reference_sql": [], "ext_knowledge": []}),
+            encoding="utf-8",
+        )
+
+        model = Mock(spec=["generate_with_json_output"])
+        model.generate_with_json_output.return_value = _full_finalize_response()
+
+        run_finalize_analysis(
+            model=model,
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+        )
+        assert not stale_path.exists()
 
     def test_dashboard_does_not_write_insights(self, tmp_path: Path):
         artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
@@ -477,13 +519,13 @@ class TestRunFinalizeAnalysis:
         assert result["ok"] is False
         assert "LLM is down" in result["error"]
         # No analysis files were written when the LLM call failed up-front.
-        assert not (analysis_dir / "interpretation.json").exists()
+        assert not (analysis_dir / "insights.json").exists()
 
     def test_schema_validation_failure_surfaces_as_error(self, tmp_path: Path):
         artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
 
         model = Mock(spec=["generate_with_json_output"])
-        # Missing interpretation + suggested_questions — schema fails.
+        # Missing suggested_questions — schema fails.
         model.generate_with_json_output.return_value = {"insights": []}
 
         result = run_finalize_analysis(
@@ -497,4 +539,4 @@ class TestRunFinalizeAnalysis:
 
         assert result["ok"] is False
         assert "finalize output invalid" in result["error"]
-        assert not (analysis_dir / "interpretation.json").exists()
+        assert not (analysis_dir / "insights.json").exists()

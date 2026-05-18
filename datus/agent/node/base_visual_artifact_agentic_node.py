@@ -743,8 +743,8 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                 if hasattr(result, "error"):
                     result.error = error_msg  # type: ignore[attr-defined]
             elif self._active_artifact_slug:
-                # Finalize stage: produce interpretation / insights /
-                # suggested_questions / subject_refs under analysis/. Runs
+                # Finalize stage: produce insights / suggested_questions /
+                # subject_refs (present iff non-empty) under analysis/. Runs
                 # before _post_validate_hook so the HTML compile step (CLI
                 # mode) can pick up the freshly-written analysis files if
                 # it ever wants to. Finalize failures are surfaced via

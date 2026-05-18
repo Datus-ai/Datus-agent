@@ -254,7 +254,7 @@ class TestBindExistingReport:
 
 class TestRequireActive:
     def test_save_query_rejects_when_unbound(self, unbound_tools: ReportArtifactTools):
-        # Required reasoning args (goal/hypothesis) are present to prove the
+        # Required brief args (goal/hypothesis) are present to prove the
         # binding check runs BEFORE the arg validation — even a fully-valid
         # call must be rejected when no report is bound.
         result = unbound_tools.save_query(
@@ -321,21 +321,29 @@ class TestSaveQuery:
         assert payload["name"] == "sales_by_store"
         assert payload["data_ref"] == "queries/sales_by_store"
         assert payload["row_count"] == 3
-        # The reasoning sidecar lands alongside the .sql / .json files.
-        assert payload["reasoning_path"].endswith("sales_by_store.reasoning.json")
+        # The brief sidecar lands alongside the .sql / .json files.
+        assert payload["brief_path"].endswith("sales_by_store.brief.json")
 
         report_slug = report_tools.report_slug or ""
         assert report_slug == "demo_test"
         sql_file = project_root / "reports" / report_slug / "queries" / "sales_by_store.sql"
         json_file = project_root / "reports" / report_slug / "queries" / "sales_by_store.json"
-        reasoning_file = project_root / "reports" / report_slug / "queries" / "sales_by_store.reasoning.json"
+        brief_file = project_root / "reports" / report_slug / "queries" / "sales_by_store.brief.json"
         assert sql_file.exists()
         assert json_file.exists()
-        assert reasoning_file.exists()
+        assert brief_file.exists()
         # ``goal`` becomes the first SQL header comment (same slot the
-        # legacy ``description`` populated).
+        # legacy ``description`` populated) but is no longer persisted
+        # separately in the brief file.
         first_line = sql_file.read_text(encoding="utf-8").splitlines()[0]
         assert first_line == "-- Monthly sales by store"
+        import json as _json
+
+        brief_payload = _json.loads(brief_file.read_text(encoding="utf-8"))
+        # Legacy fields were trimmed from the brief schema — see schema tests.
+        assert "goal" not in brief_payload
+        assert "datasource" not in brief_payload
+        assert "created_at" not in brief_payload
 
     def test_invalid_slug_rejected(self, report_tools: ReportArtifactTools):
         result = report_tools.save_query(
@@ -374,8 +382,8 @@ class TestSaveQuery:
         assert result.success == 0
         assert "hypothesis" in (result.error or "").lower()
 
-    def test_uses_recorded_in_reasoning_file(self, report_tools: ReportArtifactTools, project_root: Path):
-        """``uses`` dict round-trips through coerce_uses_arg into the reasoning sidecar."""
+    def test_uses_recorded_in_brief_file(self, report_tools: ReportArtifactTools, project_root: Path):
+        """``uses`` dict round-trips through coerce_uses_arg into the brief sidecar."""
         result = report_tools.save_query(
             name="sales_by_store2",
             sql="SELECT store_name FROM sales",
@@ -384,18 +392,15 @@ class TestSaveQuery:
             uses={"metrics": ["m_sales"], "reference_sql": ["rs_sales_query"]},
         )
         assert result.success == 1, result.error
-        reasoning_file = (
-            project_root / "reports" / (report_tools.report_slug or "") / "queries" / "sales_by_store2.reasoning.json"
+        brief_file = (
+            project_root / "reports" / (report_tools.report_slug or "") / "queries" / "sales_by_store2.brief.json"
         )
         import json as _json
 
-        data = _json.loads(reasoning_file.read_text(encoding="utf-8"))
+        data = _json.loads(brief_file.read_text(encoding="utf-8"))
         assert data["uses"]["metrics"] == ["m_sales"]
         assert data["uses"]["reference_sql"] == ["rs_sales_query"]
         assert data["uses"]["ext_knowledge"] == []
-        # ``datasource`` falls back to the connector's default label when
-        # the caller omits it.
-        assert data["datasource"]
 
     def test_write_operations_rejected(self, report_tools: ReportArtifactTools):
         result = report_tools.save_query(

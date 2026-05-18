@@ -6,22 +6,29 @@
 ``GenVisualDashboardAgenticNode``.
 
 Runs after ``validate_render`` succeeds (but before ``_post_validate_hook``)
-and produces the three LLM-authored analysis files plus a code-aggregated
+and produces the two LLM-authored analysis files plus a code-aggregated
 ``analysis/subject_refs.json``:
 
-* ``analysis/interpretation.json`` — LLM's structured read of intent.md
 * ``analysis/insights.json``       — confirmed findings (REPORT ONLY;
                                      dashboards write ``[]``)
 * ``analysis/suggested_questions.json`` — 5 follow-up suggestions
 * ``analysis/subject_refs.json``   — index of every subject-library id
-                                     mentioned across queries/*.reasoning.json
+                                     mentioned across queries/*.brief.json.
+                                     **Present-iff-non-empty**: skipped
+                                     entirely when no query declared any
+                                     subject-library asset.
 
 Implementation choices worth remembering:
 
-* **Single LLM call** producing all three LLM-authored files in one shot
+* **Single LLM call** producing both LLM-authored files in one shot
   (schema ``FinalizeAnalysisOutput``). Independent call rather than
   reusing the main loop's last turn — see
   ``docs/analysis_artifacts.md`` §7 for the rationale.
+* **No ``interpretation.json``**: an earlier iteration produced a
+  separate "audience / goal / focus_questions" file, but it duplicated
+  ``manifest.description`` and was redundant with
+  ``insights[].evidence_queries``. The follow-up consultant reads the
+  manifest and the insights directly.
 * **subject_refs aggregation is id-only in this PR.** The schema reserves
   ``name`` / ``definition_or_summary`` / ``source`` for future
   population by a subject-library lookup pass; for now they're empty
@@ -45,7 +52,7 @@ from datus.schemas.analysis_artifacts import (
     SubjectAssetRef,
     SubjectRefs,
 )
-from datus.tools.func_tool._visual_artifact_helpers import _atomic_write_text, utc_now_iso
+from datus.tools.func_tool._visual_artifact_helpers import _atomic_write_text
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -72,10 +79,9 @@ def build_finalize_prompt(
     *,
     artifact_kind: str,
     intent_md: str,
-    reasoning_steps: List[Dict[str, Any]],
+    query_briefs: List[Dict[str, Any]],
     query_previews: List[Dict[str, Any]],
     action_history_hints: List[Dict[str, Any]],
-    existing_interpretation: Optional[Dict[str, Any]],
     existing_insights: Optional[List[Dict[str, Any]]],
     existing_suggested_questions: Optional[List[Dict[str, Any]]],
 ) -> str:
@@ -92,16 +98,13 @@ def build_finalize_prompt(
     sections.append(
         "You are finalizing the analysis-artifact bundle for a visual "
         f"{artifact_kind} that has just been generated. Your job is to "
-        "produce exactly ONE JSON object describing the user's intent, "
-        "the confirmed findings, and recommended follow-up questions."
+        "produce exactly ONE JSON object containing the confirmed findings "
+        "and recommended follow-up questions."
     )
 
     sections.append("## OUTPUT SCHEMA (strict)")
     sections.append(
         "Return a single JSON object with the following top-level keys:\n"
-        "  - `interpretation`: object with `audience` (string[]), `goal` "
-        "(string), `focus_questions` (string[]), `last_updated` "
-        "(ISO-8601 UTC string).\n"
         "  - `insights`: array of objects with `id` (slug, "
         "[a-z0-9_]{1,64}), `title`, `summary`, `confidence` (0..1), "
         "`evidence_queries` (string[]), `informed_by_knowledge` "
@@ -122,16 +125,13 @@ def build_finalize_prompt(
     sections.append("## RAW USER PROMPTS (intent.md)")
     sections.append(intent_md.strip() or "(empty)")
 
-    if existing_interpretation or existing_insights or existing_suggested_questions:
+    if existing_insights or existing_suggested_questions:
         sections.append("## PREVIOUS FINALIZE OUTPUT (edit mode)")
         sections.append(
             "An earlier finalize already produced the following. Treat it "
             "as a revisable draft: reuse what still holds, revise what's "
             "outdated, drop what's been refuted by newer queries."
         )
-        if existing_interpretation:
-            sections.append("### Previous interpretation")
-            sections.append(json.dumps(existing_interpretation, ensure_ascii=False, indent=2))
         if existing_insights:
             sections.append("### Previous insights")
             sections.append(json.dumps(existing_insights, ensure_ascii=False, indent=2))
@@ -139,11 +139,11 @@ def build_finalize_prompt(
             sections.append("### Previous suggested_questions")
             sections.append(json.dumps(existing_suggested_questions, ensure_ascii=False, indent=2))
 
-    sections.append("## QUERIES (reasoning steps)")
-    if reasoning_steps:
-        sections.append(json.dumps(reasoning_steps, ensure_ascii=False, indent=2))
+    sections.append("## QUERIES (briefs)")
+    if query_briefs:
+        sections.append(json.dumps(query_briefs, ensure_ascii=False, indent=2))
     else:
-        sections.append("(no reasoning steps recorded — this is unexpected)")
+        sections.append("(no query briefs recorded — this is unexpected)")
 
     sections.append("## QUERY RESULT PREVIEWS")
     sections.append(
@@ -182,22 +182,22 @@ def build_finalize_prompt(
 # --------------------------------------------------------------------------- #
 
 
-def collect_reasoning_steps(queries_dir: Path) -> List[Dict[str, Any]]:
-    """Load every ``<name>.reasoning.json`` in queries/ as a dict.
+def collect_query_briefs(queries_dir: Path) -> List[Dict[str, Any]]:
+    """Load every ``<name>.brief.json`` in queries/ as a dict.
 
     Files that fail to parse are skipped with a warning — the artifact
-    is still useful; missing reasoning entries just mean less context
+    is still useful; missing brief entries just mean less context
     for the finalize call.
     """
-    steps: List[Dict[str, Any]] = []
+    briefs: List[Dict[str, Any]] = []
     if not queries_dir.is_dir():
-        return steps
-    for path in sorted(queries_dir.glob("*.reasoning.json")):
+        return briefs
+    for path in sorted(queries_dir.glob("*.brief.json")):
         try:
-            steps.append(json.loads(path.read_text(encoding="utf-8")))
+            briefs.append(json.loads(path.read_text(encoding="utf-8")))
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("Failed to read %s: %s", path, exc)
-    return steps
+    return briefs
 
 
 def collect_query_previews(queries_dir: Path, *, max_rows: int = 5) -> List[Dict[str, Any]]:
@@ -304,8 +304,8 @@ def load_intent_md(analysis_dir: Path) -> str:
 
 def load_existing_finalize_output(
     analysis_dir: Path,
-) -> tuple[Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]], Optional[List[Dict[str, Any]]]]:
-    """Load the previous finalize trio if present (edit mode)."""
+) -> tuple[Optional[List[Dict[str, Any]]], Optional[List[Dict[str, Any]]]]:
+    """Load the previous finalize pair if present (edit mode)."""
 
     def _load(name: str) -> Optional[Any]:
         path = analysis_dir / name
@@ -317,7 +317,7 @@ def load_existing_finalize_output(
             logger.warning("Failed to read %s: %s", path, exc)
             return None
 
-    return _load("interpretation.json"), _load("insights.json"), _load("suggested_questions.json")
+    return _load("insights.json"), _load("suggested_questions.json")
 
 
 def parse_finalize_output(raw: Any, *, artifact_kind: str) -> FinalizeAnalysisOutput:
@@ -328,6 +328,11 @@ def parse_finalize_output(raw: Any, *, artifact_kind: str) -> FinalizeAnalysisOu
     not to, and we'd rather quietly drop them than persist conclusions
     that should never have been minted from runtime-parameterized
     queries.
+
+    Stray legacy ``interpretation`` keys produced by old prompts are
+    silently dropped — the field was removed in the brief.json
+    refactor; failing the whole finalize because a model still echoes
+    it would be a needless regression.
     """
     if not isinstance(raw, dict):
         raise ValueError(f"Finalize LLM response must be a dict; got {type(raw).__name__}")
@@ -335,27 +340,19 @@ def parse_finalize_output(raw: Any, *, artifact_kind: str) -> FinalizeAnalysisOu
         logger.info("Dashboard finalize returned %d insights; discarding per artifact kind.", len(raw["insights"]))
         raw = dict(raw)
         raw["insights"] = []
-    interp = raw.get("interpretation")
-    if isinstance(interp, dict) and "last_updated" not in interp:
-        interp["last_updated"] = utc_now_iso()
+    if "interpretation" in raw:
+        raw = {k: v for k, v in raw.items() if k != "interpretation"}
     return FinalizeAnalysisOutput.model_validate(raw)
 
 
 def write_finalize_output(analysis_dir: Path, *, output: FinalizeAnalysisOutput, artifact_kind: str) -> List[str]:
-    """Persist interpretation / insights / suggested_questions.
+    """Persist insights + suggested_questions.
 
     Returns a list of warning strings for fields that wrote partially or
     not at all. Insight file is skipped on dashboards.
     """
     warnings: List[str] = []
     analysis_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        _atomic_write_text(
-            analysis_dir / "interpretation.json",
-            json.dumps(output.interpretation.model_dump(), ensure_ascii=False, indent=2) + "\n",
-        )
-    except OSError as exc:
-        warnings.append(f"failed to write interpretation.json: {exc}")
     if artifact_kind == "report":
         try:
             _atomic_write_text(
@@ -375,7 +372,7 @@ def write_finalize_output(analysis_dir: Path, *, output: FinalizeAnalysisOutput,
 
 
 def aggregate_subject_refs(queries_dir: Path) -> SubjectRefs:
-    """Build ``analysis/subject_refs.json`` by walking reasoning sidecars.
+    """Build ``analysis/subject_refs.json`` by walking brief sidecars.
 
     First-PR scope: id collection + dedup only. Metadata snapshot
     (``name`` / ``definition_or_summary`` / ``source``) is left as
@@ -388,8 +385,8 @@ def aggregate_subject_refs(queries_dir: Path) -> SubjectRefs:
     reference_sql: Dict[str, SubjectAssetRef] = {}
     ext_knowledge: Dict[str, SubjectAssetRef] = {}
 
-    for step in collect_reasoning_steps(queries_dir):
-        uses = step.get("uses") or {}
+    for brief in collect_query_briefs(queries_dir):
+        uses = brief.get("uses") or {}
         if not isinstance(uses, dict):
             continue
         for asset_id in uses.get("metrics") or []:
@@ -410,6 +407,23 @@ def aggregate_subject_refs(queries_dir: Path) -> SubjectRefs:
 
 
 def write_subject_refs(analysis_dir: Path, refs: SubjectRefs) -> Optional[str]:
+    """Write ``subject_refs.json`` iff any bucket is non-empty.
+
+    Present-iff-non-empty semantics: an absent file means "no
+    subject-library attribution recorded"; a present file with empty
+    arrays would lie to the follow-up consultant ("we looked, found
+    nothing"). Skipping the write is the honest default. We also
+    proactively delete any stale file from a prior run so the absent
+    signal stays accurate after an edit-mode rerun drops all uses.
+    """
+    if not (refs.metrics or refs.reference_sql or refs.ext_knowledge):
+        stale = analysis_dir / "subject_refs.json"
+        if stale.is_file():
+            try:
+                stale.unlink()
+            except OSError as exc:
+                logger.warning("Failed to remove stale subject_refs.json: %s", exc)
+        return None
     try:
         analysis_dir.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(
@@ -492,18 +506,17 @@ def run_finalize_analysis(
     warnings: List[str] = []
 
     intent_md = load_intent_md(analysis_dir)
-    reasoning_steps = collect_reasoning_steps(queries_dir)
+    query_briefs = collect_query_briefs(queries_dir)
     query_previews = collect_query_previews(queries_dir)
     action_hints = collect_action_history_hints(actions)
-    existing_interp, existing_insights, existing_sq = load_existing_finalize_output(analysis_dir)
+    existing_insights, existing_sq = load_existing_finalize_output(analysis_dir)
 
     prompt = build_finalize_prompt(
         artifact_kind=artifact_kind,
         intent_md=intent_md,
-        reasoning_steps=reasoning_steps,
+        query_briefs=query_briefs,
         query_previews=query_previews,
         action_history_hints=action_hints,
-        existing_interpretation=existing_interp,
         existing_insights=existing_insights,
         existing_suggested_questions=existing_sq,
     )
@@ -519,10 +532,6 @@ def run_finalize_analysis(
     except Exception as exc:
         logger.warning("Finalize output validation failed: %s", exc)
         return {"ok": False, "warnings": warnings, "error": f"finalize output invalid: {exc}"}
-
-    # Stamp last_updated server-side so the field is authoritative even
-    # if the LLM produced a stale or omitted value.
-    output.interpretation.last_updated = utc_now_iso()
 
     warnings.extend(write_finalize_output(analysis_dir, output=output, artifact_kind=artifact_kind))
 

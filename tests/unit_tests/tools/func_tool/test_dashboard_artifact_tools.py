@@ -318,7 +318,7 @@ class TestBindExistingDashboard:
 
 class TestRequireActive:
     def test_save_query_template_rejects_when_unbound(self, unbound_tools: DashboardArtifactTools):
-        # Required reasoning args supplied to prove the binding check runs
+        # Required brief args supplied to prove the binding check runs
         # BEFORE arg validation — even a fully-valid call must be rejected
         # when no dashboard is bound.
         result = unbound_tools.save_query_template(
@@ -372,21 +372,26 @@ class TestSaveQueryTemplate:
         assert names == ["region", "revenue"]
         # 2 rows are inside NA / EU + month >= 2026-01.
         assert payload["sample_row_count"] == 2
-        # The reasoning sidecar joins the .sql.j2 / .params.json bundle.
-        assert payload["reasoning_path"].endswith("revenue_by_region.reasoning.json")
+        # The brief sidecar joins the .sql.j2 / .params.json bundle.
+        assert payload["brief_path"].endswith("revenue_by_region.brief.json")
 
         dash_slug = dashboard_tools.dashboard_slug or ""
         sql_path = project_root / "dashboards" / dash_slug / "queries" / "revenue_by_region.sql.j2"
         params_path = project_root / "dashboards" / dash_slug / "queries" / "revenue_by_region.params.json"
-        reasoning_path = project_root / "dashboards" / dash_slug / "queries" / "revenue_by_region.reasoning.json"
+        brief_path = project_root / "dashboards" / dash_slug / "queries" / "revenue_by_region.brief.json"
         assert sql_path.exists()
         assert params_path.exists()
-        assert reasoning_path.exists()
+        assert brief_path.exists()
         meta = json.loads(params_path.read_text())
         decl_names = [p["name"] for p in meta["params"]]
         assert decl_names == ["month_floor", "regions"]
         # The legacy ``description`` slot in params.json now mirrors ``goal``.
         assert meta["description"] == "Revenue per region with optional filter"
+        # The brief file holds only hypothesis / uses / caveats now.
+        brief_data = json.loads(brief_path.read_text(encoding="utf-8"))
+        assert "goal" not in brief_data
+        assert "datasource" not in brief_data
+        assert "created_at" not in brief_data
 
     def test_invalid_slug_rejected(self, dashboard_tools: DashboardArtifactTools):
         result = dashboard_tools.save_query_template(
@@ -434,7 +439,7 @@ class TestSaveQueryTemplate:
         assert result.success == 0
         assert "hypothesis" in (result.error or "").lower()
 
-    def test_uses_recorded_in_reasoning_file(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+    def test_uses_recorded_in_brief_file(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
         result = dashboard_tools.save_query_template(
             name="revenue_uses",
             sql_template=_REVENUE_TEMPLATE,
@@ -445,13 +450,11 @@ class TestSaveQueryTemplate:
         )
         assert result.success == 1, result.error
         dash_slug = dashboard_tools.dashboard_slug or ""
-        reasoning_file = project_root / "dashboards" / dash_slug / "queries" / "revenue_uses.reasoning.json"
-        data = json.loads(reasoning_file.read_text(encoding="utf-8"))
+        brief_file = project_root / "dashboards" / dash_slug / "queries" / "revenue_uses.brief.json"
+        data = json.loads(brief_file.read_text(encoding="utf-8"))
         assert data["uses"]["metrics"] == ["m_revenue"]
         assert data["uses"]["ext_knowledge"] == ["kb_business_units"]
         assert data["uses"]["reference_sql"] == []
-        # ``datasource`` falls back to the connector's default label.
-        assert data["datasource"]
 
     def test_unknown_sample_param_rejected(self, dashboard_tools: DashboardArtifactTools):
         result = dashboard_tools.save_query_template(

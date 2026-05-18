@@ -3,14 +3,14 @@
    Parent template sets the following variables before {% include %}:
      - artifact_kind   : 'report' | 'dashboard' (drives wording / tool hints)
 
-   Note: the bound artifact's metadata (name, slug, root path, intent.md,
-   interpretation, directory layout, behavioral rules) is automatically
-   prepended to the system message by BaseArtifactAskAgenticNode at runtime.
-   THIS template controls the tool catalogue and the general conversational
-   conventions — keep its concerns separate from the artifact-context
-   header. Editing this template only affects style and tool documentation;
-   the load-bearing rules live in the node and cannot be weakened by
-   template edits. #}
+   Note: the bound artifact's metadata (name, slug, root path, manifest
+   description, intent.md, directory layout, behavioral rules) is
+   automatically prepended to the system message by
+   BaseArtifactAskAgenticNode at runtime. THIS template controls the
+   tool catalogue and the general conversational conventions — keep its
+   concerns separate from the artifact-context header. Editing this
+   template only affects style and tool documentation; the load-bearing
+   rules live in the node and cannot be weakened by template edits. #}
 
 {% set artifact_kind = artifact_kind | default('report') %}
 
@@ -49,12 +49,12 @@ questions.
 
 **Filesystem tools** (read-only, anchored at the artifact root):
 - `read_file('path')` — open any file under the artifact directory by relative path. Common targets:
-    - `analysis/intent.md`, `analysis/interpretation.json` — already summarized in the header; read for the full text when needed.
-    - `analysis/insights.json` ({{ artifact_kind }} only{% if artifact_kind == 'dashboard' %}: ABSENT for dashboards{% endif %}) — confirmed findings.
-    - `analysis/suggested_questions.json`, `analysis/subject_refs.json`.
-    - `queries/<name>.{% if artifact_kind == 'report' %}sql{% else %}sql.j2{% endif %}` — query{% if artifact_kind == 'dashboard' %} template{% endif %} text.
+    - `analysis/intent.md` — already inlined in the header; read for the full text when needed.
+    - `analysis/insights.json` ({% if artifact_kind == 'dashboard' %}ABSENT for dashboards{% else %}report only{% endif %}) — confirmed findings.
+    - `analysis/subject_refs.json` — subject-library asset attribution. Present iff at least one query declared a metric / reference_sql / ext_knowledge id; absent is normal.
+    - `queries/<name>.{% if artifact_kind == 'report' %}sql{% else %}sql.j2{% endif %}` — query{% if artifact_kind == 'dashboard' %} template{% endif %} text. The first comment line is the original `goal` (one-line research question).
     - `queries/<name>.{% if artifact_kind == 'report' %}json{% else %}params.json{% endif %}` — {% if artifact_kind == 'report' %}result snapshot (columns + rows){% else %}parameter declaration + sample columns{% endif %}.
-    - `queries/<name>.reasoning.json` — per-query goal / hypothesis / uses / caveats.
+    - `queries/<name>.brief.json` — per-query hypothesis / uses / caveats.
 - `glob('queries/*.json')`, `grep -l 'risk' queries/` — discover what's available before reading.
 - **Write/edit/delete are NOT available**; do not attempt them.
 {% endif -%}

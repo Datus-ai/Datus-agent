@@ -5,7 +5,7 @@
 """Unit tests for ``datus/schemas/analysis_artifacts.py``.
 
 Pins the validation contract for every schema written under the
-``analysis/`` directory and the per-query ``reasoning.json`` sidecar.
+``analysis/`` directory and the per-query ``brief.json`` sidecar.
 Each schema is exercised for:
 
 * Round-trip serialization (model_validate → model_dump).
@@ -16,6 +16,14 @@ Each schema is exercised for:
   follow-up subagent.
 * Slug pattern matches the same character set every other artifact id
   in the codebase uses.
+
+History: an earlier ``Interpretation`` schema also lived here. It was
+removed when the corresponding ``analysis/interpretation.json`` file
+was deleted (duplicated ``manifest.description`` and was fully covered
+by ``insights[].evidence_queries``). The ``ReasoningStep`` schema was
+also renamed and trimmed to :class:`QueryBrief` (dropped ``goal`` /
+``datasource`` / ``created_at`` — the SQL header comment + result
+JSON + file mtime already carry those).
 """
 
 from __future__ import annotations
@@ -29,8 +37,7 @@ from datus.schemas.analysis_artifacts import (
     ANALYSIS_SLUG_PATTERN,
     FinalizeAnalysisOutput,
     Insight,
-    Interpretation,
-    ReasoningStep,
+    QueryBrief,
     SubjectAssetRef,
     SubjectRefIds,
     SubjectRefs,
@@ -63,101 +70,67 @@ class TestSubjectRefIds:
 
 
 # --------------------------------------------------------------------------- #
-# ReasoningStep                                                               #
+# QueryBrief                                                                  #
 # --------------------------------------------------------------------------- #
 
 
-def _full_reasoning_payload(**overrides):
+def _full_brief_payload(**overrides):
     base = {
         "name": "sales_by_store",
-        "goal": "distribution of high-risk signups by month",
         "hypothesis": "high-risk signups cluster around promotional campaigns",
         "uses": {"metrics": ["m_signups"], "reference_sql": [], "ext_knowledge": []},
         "caveats": "Excludes test accounts (signup_email LIKE '%@example.com').",
-        "datasource": "primary_pg",
-        "created_at": "2026-05-14T10:00:00Z",
     }
     base.update(overrides)
     return base
 
 
-class TestReasoningStep:
+class TestQueryBrief:
     def test_round_trip_full(self):
-        step = ReasoningStep.model_validate(_full_reasoning_payload())
-        dumped = step.model_dump()
-        restored = ReasoningStep.model_validate(dumped)
-        assert restored == step
+        brief = QueryBrief.model_validate(_full_brief_payload())
+        dumped = brief.model_dump()
+        restored = QueryBrief.model_validate(dumped)
+        assert restored == brief
         assert restored.uses.metrics == ["m_signups"]
 
     def test_round_trip_minimal(self):
-        # ``uses`` / ``caveats`` carry safe defaults.
+        # ``uses`` / ``caveats`` carry safe defaults — the only mandatory
+        # fields are ``name`` and ``hypothesis``.
         minimal = {
             "name": "sales_by_store",
-            "goal": "list stores",
             "hypothesis": "stores form a flat list",
-            "datasource": "default",
-            "created_at": "2026-05-14T10:00:00Z",
         }
-        step = ReasoningStep.model_validate(minimal)
-        assert step.uses == SubjectRefIds()
-        assert step.caveats == ""
-
-    def test_empty_goal_rejected(self):
-        with pytest.raises(ValidationError) as exc:
-            ReasoningStep.model_validate(_full_reasoning_payload(goal=""))
-        assert "goal" in str(exc.value)
+        brief = QueryBrief.model_validate(minimal)
+        assert brief.uses == SubjectRefIds()
+        assert brief.caveats == ""
 
     def test_empty_hypothesis_rejected(self):
         with pytest.raises(ValidationError) as exc:
-            ReasoningStep.model_validate(_full_reasoning_payload(hypothesis=""))
+            QueryBrief.model_validate(_full_brief_payload(hypothesis=""))
         assert "hypothesis" in str(exc.value)
 
     @pytest.mark.parametrize("bad_name", ["Bad-Slug", "UPPER", "with space", "中文", "a" * 65, ""])
     def test_invalid_slug_pattern_rejected(self, bad_name: str):
         with pytest.raises(ValidationError):
-            ReasoningStep.model_validate(_full_reasoning_payload(name=bad_name))
+            QueryBrief.model_validate(_full_brief_payload(name=bad_name))
 
     def test_extra_field_rejected(self):
+        # Catches both old-schema fields (``goal`` / ``datasource`` /
+        # ``created_at``) and any forward-looking LLM hallucination
+        # (``unknown``). ``extra=forbid`` is the schema gate.
         with pytest.raises(ValidationError):
-            ReasoningStep.model_validate(_full_reasoning_payload(unknown="x"))
+            QueryBrief.model_validate(_full_brief_payload(unknown="x"))
 
-
-# --------------------------------------------------------------------------- #
-# Interpretation                                                              #
-# --------------------------------------------------------------------------- #
-
-
-def _full_interpretation_payload(**overrides):
-    base = {
-        "audience": ["Ops managers", "Finance leads"],
-        "goal": "Understand quarterly revenue movement by region.",
-        "focus_questions": [
-            "Which regions grew fastest?",
-            "Where did revenue contract?",
-        ],
-        "last_updated": "2026-05-14T10:00:00Z",
-    }
-    base.update(overrides)
-    return base
-
-
-class TestInterpretation:
-    def test_round_trip(self):
-        interp = Interpretation.model_validate(_full_interpretation_payload())
-        restored = Interpretation.model_validate(interp.model_dump())
-        assert restored == interp
-
-    def test_empty_audience_rejected(self):
+    @pytest.mark.parametrize("dropped_field", ["goal", "datasource", "created_at"])
+    def test_legacy_fields_no_longer_accepted(self, dropped_field: str):
+        """The brief schema is the trimmed successor of ReasoningStep —
+        old fields must hard-fail rather than be silently accepted, so
+        a stale producer surfaces during migration instead of writing
+        a file the consumer no longer reads."""
+        payload = _full_brief_payload()
+        payload[dropped_field] = "stale"
         with pytest.raises(ValidationError):
-            Interpretation.model_validate(_full_interpretation_payload(audience=[]))
-
-    def test_empty_focus_questions_rejected(self):
-        with pytest.raises(ValidationError):
-            Interpretation.model_validate(_full_interpretation_payload(focus_questions=[]))
-
-    def test_empty_goal_rejected(self):
-        with pytest.raises(ValidationError):
-            Interpretation.model_validate(_full_interpretation_payload(goal=""))
+            QueryBrief.model_validate(payload)
 
 
 # --------------------------------------------------------------------------- #
@@ -295,7 +268,6 @@ class TestSubjectRefs:
 
 def _finalize_payload(*, n_suggested: int = 5, insights: list | None = None):
     return {
-        "interpretation": _full_interpretation_payload(),
         "insights": insights if insights is not None else [_full_insight_payload()],
         "suggested_questions": [_full_suggested_question_payload() for _ in range(n_suggested)],
     }
@@ -322,6 +294,16 @@ class TestFinalizeAnalysisOutput:
     def test_suggested_questions_count_out_of_bounds_rejected(self, n_suggested: int):
         with pytest.raises(ValidationError):
             FinalizeAnalysisOutput.model_validate(_finalize_payload(n_suggested=n_suggested))
+
+    def test_legacy_interpretation_field_rejected(self):
+        """``interpretation`` was removed from the schema. A stale producer
+        echoing it must be caught at the schema layer (the finalize
+        runtime additionally drops it before model_validate as a
+        defensive belt-and-braces, but the schema itself stays strict)."""
+        payload = _finalize_payload()
+        payload["interpretation"] = {"audience": ["x"], "goal": "y", "focus_questions": ["q"]}
+        with pytest.raises(ValidationError):
+            FinalizeAnalysisOutput.model_validate(payload)
 
     def test_extra_top_level_field_rejected(self):
         payload = _finalize_payload()

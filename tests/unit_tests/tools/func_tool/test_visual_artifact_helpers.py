@@ -18,14 +18,14 @@ from pathlib import Path
 
 import pytest
 
-from datus.schemas.analysis_artifacts import ReasoningStep, SubjectRefIds
+from datus.schemas.analysis_artifacts import QueryBrief, SubjectRefIds
 from datus.schemas.artifact_manifest import ArtifactManifest
 from datus.tools.func_tool._visual_artifact_helpers import (
     append_intent_section,
     coerce_uses_arg,
     upsert_manifest_after_save,
     utc_now_iso,
-    write_reasoning_step,
+    write_query_brief,
 )
 
 # --------------------------------------------------------------------------- #
@@ -87,6 +87,72 @@ class TestAppendIntentSection:
         assert err is None
         # Nothing was written.
         assert not (analysis_dir / "intent.md").exists()
+
+    @pytest.mark.parametrize(
+        "noise_message",
+        [
+            # Renderer / compiler error reports forwarded into the loop.
+            "Error: Failed to compile render/app.jsx: Unexpected token (152:158)",
+            "ReferenceError: Cell is not defined\n    at eval (render/chart.jsx:89:49)",
+            "TypeError: Cannot read properties of undefined (reading 'map')",
+            "Uncaught Traceback (most recent call last):\n  File 'x.py', line 1",
+        ],
+    )
+    def test_error_reports_dropped(self, tmp_path: Path, noise_message: str):
+        """Renderer / compiler errors are system→LLM signals, not user
+        intent. Recording them pollutes the file the follow-up ask agent
+        reads as the canonical user voice."""
+        analysis_dir = tmp_path / "analysis"
+        err = append_intent_section(
+            analysis_dir,
+            user_message=noise_message,
+            mode="edit",
+            timestamp="2026-05-14T10:00:00Z",
+        )
+        assert err is None
+        assert not (analysis_dir / "intent.md").exists()
+
+    @pytest.mark.parametrize(
+        "placeholder",
+        [
+            "继续",
+            "继续完成任务",
+            "继续完成任务。",
+            "继续执行",
+            "continue",
+            "Continue.",
+            "go on",
+            "next",
+            "proceed",
+            "OK",
+        ],
+    )
+    def test_placeholder_prompts_dropped(self, tmp_path: Path, placeholder: str):
+        """Pure continuation prompts carry no intent — recording them
+        anchors the ask agent on noise during multi-turn workflows."""
+        analysis_dir = tmp_path / "analysis"
+        err = append_intent_section(
+            analysis_dir,
+            user_message=placeholder,
+            mode="edit",
+            timestamp="2026-05-14T10:00:00Z",
+        )
+        assert err is None
+        assert not (analysis_dir / "intent.md").exists()
+
+    def test_substantive_prompt_with_continue_word_kept(self, tmp_path: Path):
+        """The placeholder filter is exact-match — a prompt that *contains*
+        the word "continue" alongside real intent must still be recorded."""
+        analysis_dir = tmp_path / "analysis"
+        err = append_intent_section(
+            analysis_dir,
+            user_message="please continue but switch the focus to APAC revenue",
+            mode="edit",
+            timestamp="2026-05-14T10:00:00Z",
+        )
+        assert err is None
+        text = (analysis_dir / "intent.md").read_text(encoding="utf-8")
+        assert "APAC revenue" in text
 
     def test_multiline_message_becomes_continuation_blockquote(self, tmp_path: Path):
         analysis_dir = tmp_path / "analysis"
@@ -207,65 +273,55 @@ class TestUpsertManifestAfterSave:
 
 
 # --------------------------------------------------------------------------- #
-# write_reasoning_step                                                        #
+# write_query_brief                                                           #
 # --------------------------------------------------------------------------- #
 
 
-class TestWriteReasoningStep:
+class TestWriteQueryBrief:
     def test_writes_file_that_round_trips(self, tmp_path: Path):
         queries_dir = tmp_path / "queries"
         queries_dir.mkdir()
-        err = write_reasoning_step(
+        err = write_query_brief(
             queries_dir,
             name="sales_by_store",
-            goal="distribution of high-risk signups by month",
             hypothesis="high-risk signups cluster around promotional campaigns",
             uses=SubjectRefIds(metrics=["m_signups"]),
             caveats="Excludes test accounts.",
-            datasource="primary_pg",
-            timestamp="2026-05-14T10:00:00Z",
         )
         assert err is None
-        path = queries_dir / "sales_by_store.reasoning.json"
+        path = queries_dir / "sales_by_store.brief.json"
         assert path.is_file()
         # Re-validate the file through the schema to prove the round-trip.
         data = json.loads(path.read_text(encoding="utf-8"))
-        step = ReasoningStep.model_validate(data)
-        assert step.name == "sales_by_store"
-        assert step.uses.metrics == ["m_signups"]
-        assert step.caveats == "Excludes test accounts."
-        assert step.datasource == "primary_pg"
+        brief = QueryBrief.model_validate(data)
+        assert brief.name == "sales_by_store"
+        assert brief.uses.metrics == ["m_signups"]
+        assert brief.caveats == "Excludes test accounts."
 
     def test_invalid_slug_returns_error(self, tmp_path: Path):
         queries_dir = tmp_path / "queries"
         queries_dir.mkdir()
-        err = write_reasoning_step(
+        err = write_query_brief(
             queries_dir,
             name="Has-Hyphen",  # invalid per ANALYSIS_SLUG_PATTERN
-            goal="goal",
             hypothesis="hypothesis",
             uses=SubjectRefIds(),
             caveats="",
-            datasource="ds",
-            timestamp="2026-05-14T10:00:00Z",
         )
         assert err is not None
         assert "schema validation failed" in err
         # No file gets written when validation fails.
-        assert not (queries_dir / "Has-Hyphen.reasoning.json").exists()
+        assert not (queries_dir / "Has-Hyphen.brief.json").exists()
 
     def test_empty_hypothesis_returns_error(self, tmp_path: Path):
         queries_dir = tmp_path / "queries"
         queries_dir.mkdir()
-        err = write_reasoning_step(
+        err = write_query_brief(
             queries_dir,
             name="empty_hypothesis",
-            goal="goal",
             hypothesis="",
             uses=SubjectRefIds(),
             caveats="",
-            datasource="ds",
-            timestamp="2026-05-14T10:00:00Z",
         )
         assert err is not None
         assert "schema validation failed" in err
