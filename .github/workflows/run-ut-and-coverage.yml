@@ -24,6 +24,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
       - name: Cache pip dependencies
         uses: actions/cache@v4
         with:
@@ -53,7 +58,7 @@ jobs:
       - name: Isolate test data directory
         run: |
           DATUS_TEST_HOME="${GITHUB_WORKSPACE}/.datus_test_data"
-          echo "DATUS_TEST_HOME=$DATUS_TEST_HOME" >> $GITHUB_ENV
+          echo "DATUS_TEST_HOME=$DATUS_TEST_HOME" >> "$GITHUB_ENV"
           sed -i "s|home: .datus_test_data|home: $DATUS_TEST_HOME|g" tests/conf/agent.yml
           sed -i "s|project_root: .datus_test_data/workspace|project_root: $DATUS_TEST_HOME/workspace|g" tests/conf/agent.yml
 
@@ -69,7 +74,7 @@ jobs:
               var_value=$(echo "$line" | cut -d'=' -f2-)
               echo "::add-mask::$var_value"
               echo "Loading variable: $var_name"
-              echo "$line" >> $GITHUB_ENV
+              echo "$line" >> "$GITHUB_ENV"
             fi
           done < .env
           echo "Environment variables loaded successfully"
