@@ -308,9 +308,15 @@ class ClaudeModel(OpenAICompatibleModel):
             Generated text response
         """
         if not self.use_native_api:
-            # Claude API does not allow both temperature and top_p simultaneously.
-            # Explicitly override top_p to None so the parent's default top_p=1.0
-            # is not added to the request — LiteLLM omits None-valued parameters.
+            # Anthropic rejects requests carrying BOTH ``temperature`` and
+            # ``top_p`` with HTTP 400 / ``invalid_request_error`` (the
+            # claude-sonnet-4.x family enforces this strictly). Setting
+            # ``top_p=None`` here is the agreed contract with the parent
+            # ``OpenAICompatibleModel._generate_operation``: an explicit
+            # ``None`` in kwargs tells it to omit the parameter from the
+            # final litellm payload entirely (rather than letting the
+            # non-reasoning default of ``top_p=1.0`` fall through). See
+            # the temperature / top_p block in ``openai_compatible.py``.
             kwargs["top_p"] = None
             self._inject_oauth_headers(kwargs)
             try:

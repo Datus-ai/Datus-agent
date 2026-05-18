@@ -280,6 +280,63 @@ class TestGenerate:
         call_kwargs = mock_lit.call_args[1]
         assert call_kwargs["top_p"] == 0.9
 
+    def test_top_p_explicit_none_drops_from_litellm_call(self):
+        """``kwargs['top_p'] = None`` is the caller's "drop this parameter"
+        signal — used by ClaudeModel.generate to honour Anthropic's
+        "temperature and top_p cannot both be specified" rule. The parent
+        must omit top_p from the final litellm payload entirely, NOT
+        forward ``top_p=None`` and rely on the downstream library to
+        filter it (which has been observed to leak through to Anthropic
+        and trigger HTTP 400 / invalid_request_error).
+        """
+        model = _make_model()
+        mock_resp = self._mock_litellm_response("ok")
+        with patch("datus.models.openai_compatible.litellm.completion", return_value=mock_resp) as mock_lit:
+            model.generate("prompt", top_p=None)
+        call_kwargs = mock_lit.call_args[1]
+        assert "top_p" not in call_kwargs, (
+            "Explicit None in kwargs must suppress top_p; observed in call_kwargs "
+            f"as {call_kwargs.get('top_p')!r}."
+        )
+
+    def test_temperature_explicit_none_drops_from_litellm_call(self):
+        """Same suppression contract for temperature, kept symmetric so
+        callers can drop either knob the same way."""
+        model = _make_model()
+        mock_resp = self._mock_litellm_response("ok")
+        with patch("datus.models.openai_compatible.litellm.completion", return_value=mock_resp) as mock_lit:
+            model.generate("prompt", temperature=None)
+        call_kwargs = mock_lit.call_args[1]
+        assert "temperature" not in call_kwargs
+
+    def test_top_p_explicit_none_wins_over_model_config(self):
+        """An explicit ``None`` from the caller must win over a
+        ``model_config.top_p`` value — otherwise ClaudeModel's
+        suppression would silently break on configs that carry a
+        non-default top_p (e.g. anything provider-tuned)."""
+        cfg = _make_model_config(top_p=0.95)
+        model = _make_model(cfg)
+        mock_resp = self._mock_litellm_response("ok")
+        with patch("datus.models.openai_compatible.litellm.completion", return_value=mock_resp) as mock_lit:
+            model.generate("prompt", top_p=None)
+        call_kwargs = mock_lit.call_args[1]
+        assert "top_p" not in call_kwargs
+
+    def test_top_p_explicit_none_blocks_non_reasoning_default(self):
+        """When neither kwargs (non-None) nor model_config provide a
+        value, the non-reasoning code path defaults to ``top_p=1.0``.
+        An explicit ``None`` in kwargs must short-circuit BEFORE that
+        default kicks in — this is the exact path that broke for
+        Claude finalize."""
+        model = _make_model()
+        mock_resp = self._mock_litellm_response("ok")
+        # _uses_completion_tokens_parameter is unset → non-reasoning path,
+        # which is where the default ``top_p=1.0`` lives.
+        with patch("datus.models.openai_compatible.litellm.completion", return_value=mock_resp) as mock_lit:
+            model.generate("prompt", top_p=None)
+        call_kwargs = mock_lit.call_args[1]
+        assert "top_p" not in call_kwargs
+
     def test_max_tokens_passed_through(self):
         model = _make_model()
         mock_resp = self._mock_litellm_response("ok")

@@ -262,6 +262,36 @@ class TestClaudeModelGenerate:
             model.generate("hello")
         assert captured_kwargs.get("top_p") is None
 
+    def test_claude_generate_does_not_send_top_p_to_litellm(self):
+        """Regression test for the Anthropic "temperature and top_p" 400.
+
+        Exercises the full pipeline (no mock at the parent boundary) so
+        a regression in either layer surfaces:
+
+        - ClaudeModel.generate sets ``kwargs['top_p'] = None`` (its
+          contract for "drop this param").
+        - OpenAICompatibleModel._generate_operation must then omit
+          ``top_p`` from the litellm payload entirely — NOT forward
+          ``top_p=None`` and rely on the downstream library to filter
+          it (which has been observed to leak through to Anthropic
+          and trigger HTTP 400 / ``invalid_request_error``).
+        """
+        model = _make_claude_model()
+        mock_resp = MagicMock()
+        mock_resp.choices = [MagicMock()]
+        mock_resp.choices[0].message.content = "ok"
+        mock_resp.choices[0].message.reasoning_content = None
+        mock_resp.choices[0].finish_reason = "stop"
+        mock_resp.model = "claude-sonnet-4-5"
+        mock_resp.usage = MagicMock(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+        with patch("datus.models.openai_compatible.litellm.completion", return_value=mock_resp) as mock_lit:
+            model.generate("hello")
+        call_kwargs = mock_lit.call_args[1]
+        assert "top_p" not in call_kwargs, (
+            "Anthropic rejects requests with both temperature and top_p; "
+            f"the suppression contract must reach litellm.completion. Got top_p={call_kwargs.get('top_p')!r}."
+        )
+
     def test_native_api_path_calls_anthropic_client(self):
         cfg = _make_model_config(use_native_api=True)
         model = _make_claude_model(cfg)

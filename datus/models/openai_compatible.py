@@ -374,15 +374,21 @@ class OpenAICompatibleModel(LLMBaseModel):
                     delay = base_delay * (2**attempt)  # Exponential backoff
                     logger.warning(
                         f"API error in {operation_name} (attempt {attempt + 1}/{max_retries + 1}): "
-                        f"{error_code.code} - {error_code.desc}. Retrying in {delay:.1f}s..."
+                        f"{error_code.code} - {error_code.desc}. Retrying in {delay:.1f}s... upstream={e!s}"
                     )
                     time.sleep(delay)
                     continue
                 else:
-                    # Max retries reached or non-retryable error
+                    # Max retries reached or non-retryable error. Surface the
+                    # upstream message verbatim — the wrapper code/desc is
+                    # often too generic (300002 = "Invalid request format,
+                    # content, or model response") and operators end up
+                    # grepping litellm tracebacks to figure out what really
+                    # broke. Keep ``str(e)`` on the same line so a single
+                    # CloudWatch entry has everything.
                     logger.error(
                         f"API error in {operation_name} after {attempt + 1} attempts: "
-                        f"{error_code.code} - {error_code.desc}"
+                        f"{error_code.code} - {error_code.desc}. upstream={e!s}"
                     )
                     raise DatusException(error_code)
             except Exception as e:
@@ -428,15 +434,18 @@ class OpenAICompatibleModel(LLMBaseModel):
                     delay = base_delay * (2**attempt)  # Exponential backoff
                     logger.warning(
                         f"API error in {operation_name} (attempt {attempt + 1}/{max_retries + 1}): "
-                        f"{error_code.code} - {error_code.desc}. Retrying in {delay:.1f}s..."
+                        f"{error_code.code} - {error_code.desc}. Retrying in {delay:.1f}s... upstream={e!s}"
                     )
                     await asyncio.sleep(delay)
                     continue
                 else:
-                    # Max retries reached or non-retryable error
+                    # Max retries reached or non-retryable error — same
+                    # reasoning as the sync ``_with_retry`` path: append
+                    # the upstream message so a single log line carries
+                    # both the wrapper classification and the raw cause.
                     logger.error(
                         f"API error in {operation_name} after {attempt + 1} attempts: "
-                        f"{error_code.code} - {error_code.desc}"
+                        f"{error_code.code} - {error_code.desc}. upstream={e!s}"
                     )
                     raise DatusException(error_code)
             except Exception as e:
@@ -476,9 +485,17 @@ class OpenAICompatibleModel(LLMBaseModel):
             if self.default_headers:
                 params["extra_headers"] = self.default_headers
 
-            # Add temperature: priority is kwargs > model_config > default (0.7)
+            # Add temperature: priority is kwargs > model_config > default (0.7).
+            # An explicit ``None`` in kwargs is the caller's "drop this param"
+            # signal — used by providers like Anthropic that reject some pairs
+            # (the claude-sonnet-4.x family rejects requests carrying BOTH
+            # ``temperature`` and ``top_p`` with HTTP 400 / invalid_request_error).
+            # Skip the param entirely; don't fall through to model_config /
+            # default — those branches would silently re-enable what the
+            # caller just asked us to drop.
             if "temperature" in kwargs:
-                params["temperature"] = kwargs["temperature"]
+                if kwargs["temperature"] is not None:
+                    params["temperature"] = kwargs["temperature"]
             elif self.model_config.temperature is not None:
                 # Use temperature from model config (e.g., kimi-k2.5 requires temperature=1)
                 params["temperature"] = self.model_config.temperature
@@ -486,9 +503,10 @@ class OpenAICompatibleModel(LLMBaseModel):
                 # Add default temperature only for non-reasoning models
                 params["temperature"] = 0.7
 
-            # Add top_p: priority is kwargs > model_config > default (1.0)
+            # Add top_p: same priority + same explicit-None contract as temperature above.
             if "top_p" in kwargs:
-                params["top_p"] = kwargs["top_p"]
+                if kwargs["top_p"] is not None:
+                    params["top_p"] = kwargs["top_p"]
             elif self.model_config.top_p is not None:
                 # Use top_p from model config (e.g., kimi-k2.5 requires top_p=0.95)
                 params["top_p"] = self.model_config.top_p
