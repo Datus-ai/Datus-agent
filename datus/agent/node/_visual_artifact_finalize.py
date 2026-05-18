@@ -420,8 +420,18 @@ def aggregate_subject_refs(queries_dir: Path) -> SubjectRefs:
 
 
 def _extract_tables_from_one_sql(sql_text: str) -> set[str]:
-    """Return the set of bare (unqualified) table names referenced by a
-    single SQL statement, with CTE aliases filtered out.
+    """Return every table reference in a single SQL statement, preserving
+    whatever qualification the SQL itself used.
+
+    - ``FROM Account``                  → ``"Account"``
+    - ``FROM main.Account``             → ``"main.Account"``
+    - ``FROM finbench.main.Account``    → ``"finbench.main.Account"``
+
+    The follow-up ask agent can paste the saved name straight into a new
+    SQL it writes; stripping the prefix would force it to guess the
+    catalog/schema and may produce queries that don't run on a strict-
+    schema dialect (DuckDB / Trino). CTE aliases are filtered out so a
+    ``WITH monthly AS (...)`` doesn't leak ``monthly`` into key_tables.
 
     Returns an empty set when sqlglot can't parse the input — finalize
     treats table aggregation as best-effort and never raises.
@@ -455,8 +465,43 @@ def _extract_tables_from_one_sql(sql_text: str) -> set[str]:
             continue
         if name.lower() in cte_names:
             continue
-        tables.add(name)
+        # ``Table`` exposes ``catalog`` / ``db`` / ``name`` separately.
+        # Reassemble in the order the SQL actually wrote them — empty
+        # parts mean "not qualified at that level".
+        parts = [p for p in (tbl.catalog, tbl.db, tbl.name) if p]
+        tables.add(".".join(parts))
     return tables
+
+
+def _dedupe_table_references(raw: set[str]) -> List[str]:
+    """Collapse same-table-different-qualification entries.
+
+    When a project writes one query as ``FROM Account`` and another as
+    ``FROM finbench.main.Account``, sqlglot reports both. We want the
+    qualified form (it's strictly more informative — the ask agent can
+    paste it without guessing) and drop the bare alias. Two genuinely
+    different tables that happen to share a bare name (e.g.
+    ``finbench.main.Account`` and ``warehouse.audit.Account``) both
+    survive — they have distinct fully-qualified strings.
+    """
+    by_bare: Dict[str, set[str]] = {}
+    for name in raw:
+        if not name:
+            continue
+        bare = name.rsplit(".", 1)[-1]
+        by_bare.setdefault(bare, set()).add(name)
+
+    result: set[str] = set()
+    for variants in by_bare.values():
+        qualified = {v for v in variants if "." in v}
+        # If at least one qualified variant exists, keep them and drop the
+        # bare alias (it's a strict subset of any qualified entry).
+        # Otherwise the bare form is all we have.
+        if qualified:
+            result.update(qualified)
+        else:
+            result.update(variants)
+    return sorted(result)
 
 
 def _strip_jinja(template_text: str) -> str:
@@ -471,14 +516,20 @@ def _strip_jinja(template_text: str) -> str:
 
 def aggregate_referenced_tables(queries_dir: Path) -> List[str]:
     """Walk ``queries/*.sql`` + ``queries/*.sql.j2`` and return every
-    distinct bare table name referenced across them, sorted alphabetically.
+    distinct table reference, preserving the qualification each SQL
+    used (``finbench.main.Account`` stays as is; bare ``Account``
+    stays bare). Sorted alphabetically for diff stability.
 
     Used to populate ``manifest.key_tables`` at finalize time so the
     follow-up ask agent doesn't need to grep every SQL file (or call
     ``list_tables`` / ``describe_table``) to discover which tables the
-    artifact actually touches. CTEs are filtered out; aliases preserve
-    case as the LLM wrote them (most likely PascalCase matching the
-    underlying database).
+    artifact actually touches, AND can paste the saved name straight
+    into a new SQL without guessing the catalog/schema prefix.
+
+    When the same table is referenced both qualified and unqualified
+    across different files (one query writes ``FROM Account``, another
+    writes ``FROM finbench.main.Account``), the qualified form wins
+    and the bare alias is dropped — see ``_dedupe_table_references``.
 
     Best-effort: a file that fails to parse contributes nothing to the
     aggregate. An empty list is a legitimate result (no queries on
@@ -502,7 +553,7 @@ def aggregate_referenced_tables(queries_dir: Path) -> List[str]:
             logger.warning("Failed to read %s for key_tables aggregation: %s", tpl_path, exc)
             continue
         tables.update(_extract_tables_from_one_sql(text))
-    return sorted(tables)
+    return _dedupe_table_references(tables)
 
 
 def update_manifest_key_tables(manifest_path: Path, key_tables: List[str]) -> Optional[str]:

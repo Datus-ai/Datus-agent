@@ -425,6 +425,52 @@ class TestAggregateReferencedTables:
         )
         assert aggregate_referenced_tables(queries_dir) == ["Account", "PersonOwnAccount"]
 
+    def test_two_part_qualified_preserved(self, tmp_path: Path):
+        """``schema.table`` form is kept verbatim — the ask agent can
+        copy it straight into a new SQL without inventing a prefix."""
+        queries_dir = tmp_path / "queries"
+        queries_dir.mkdir()
+        (queries_dir / "schema_q.sql").write_text("SELECT * FROM main.Account", encoding="utf-8")
+        assert aggregate_referenced_tables(queries_dir) == ["main.Account"]
+
+    def test_three_part_qualified_preserved(self, tmp_path: Path):
+        """Strict-schema dialects (DuckDB / Trino) need ``catalog.schema.table``;
+        dropping any segment would force the ask agent to guess on the
+        next query it writes."""
+        queries_dir = tmp_path / "queries"
+        queries_dir.mkdir()
+        (queries_dir / "full_q.sql").write_text(
+            "SELECT * FROM finbench.main.Account a JOIN finbench.main.PersonOwnAccount poa ON a.id = poa.id",
+            encoding="utf-8",
+        )
+        assert aggregate_referenced_tables(queries_dir) == [
+            "finbench.main.Account",
+            "finbench.main.PersonOwnAccount",
+        ]
+
+    def test_qualified_beats_bare_in_dedupe(self, tmp_path: Path):
+        """Mixed-style project: one file qualifies, another doesn't —
+        the qualified form wins so the saved name is always copy-pastable."""
+        queries_dir = tmp_path / "queries"
+        queries_dir.mkdir()
+        (queries_dir / "bare.sql").write_text("SELECT * FROM Account", encoding="utf-8")
+        (queries_dir / "qualified.sql").write_text("SELECT * FROM finbench.main.Account", encoding="utf-8")
+        # Only the qualified form survives.
+        assert aggregate_referenced_tables(queries_dir) == ["finbench.main.Account"]
+
+    def test_different_catalogs_for_same_bare_name_both_kept(self, tmp_path: Path):
+        """Same bare name, different qualifications → really two different
+        tables (e.g. prod ``main.Account`` vs audit ``audit.Account``)
+        — both must survive dedupe."""
+        queries_dir = tmp_path / "queries"
+        queries_dir.mkdir()
+        (queries_dir / "prod.sql").write_text("SELECT * FROM finbench.main.Account", encoding="utf-8")
+        (queries_dir / "audit.sql").write_text("SELECT * FROM finbench.audit.Account", encoding="utf-8")
+        assert aggregate_referenced_tables(queries_dir) == [
+            "finbench.audit.Account",
+            "finbench.main.Account",
+        ]
+
     def test_cte_aliases_are_filtered(self, tmp_path: Path):
         """A WITH-clause alias must not leak into key_tables — the LLM /
         UI would otherwise see ``monthly`` as if it were a real table."""
@@ -598,6 +644,38 @@ class TestRunFinalizeAnalysis:
         assert result["key_tables"] == ["Account", "PersonOwnAccount"]
         manifest = json.loads((artifact_dir / "manifest.json").read_text(encoding="utf-8"))
         assert manifest["key_tables"] == ["Account", "PersonOwnAccount"]
+
+    def test_end_to_end_preserves_qualified_table_references(self, tmp_path: Path):
+        """Real-world SQL is usually fully qualified (``finbench.main.Account``);
+        the saved key_tables must keep that form so the ask agent can paste
+        it into a new SQL on a strict-schema dialect (DuckDB) without
+        having to guess the catalog/schema prefix."""
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(
+            tmp_path,
+            sql_body=(
+                "SELECT * FROM finbench.main.Account a "
+                "LEFT JOIN finbench.main.PersonOwnAccount poa ON a.accountId = poa.accountId"
+            ),
+        )
+
+        model = Mock(spec=["generate_with_json_output"])
+        model.generate_with_json_output.return_value = _full_finalize_response()
+
+        result = run_finalize_analysis(
+            model=model,
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+        )
+
+        assert result["ok"] is True
+        manifest = json.loads((artifact_dir / "manifest.json").read_text(encoding="utf-8"))
+        assert manifest["key_tables"] == [
+            "finbench.main.Account",
+            "finbench.main.PersonOwnAccount",
+        ]
 
     def test_subject_refs_skipped_when_no_uses_declared(self, tmp_path: Path):
         """Present-iff-non-empty: a brief without any subject-library
