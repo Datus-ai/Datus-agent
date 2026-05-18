@@ -1,8 +1,30 @@
 import json
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _find_node_executable() -> str:
+    if node := shutil.which("node"):
+        return node
+
+    search_roots = []
+    for env_name in ("GITHUB_WORKSPACE", "RUNNER_TEMP"):
+        if value := os.environ.get(env_name):
+            search_roots.extend(Path(value).resolve().parents)
+
+    for root in search_roots:
+        externals_dir = root / "externals"
+        for candidate in externals_dir.glob("node*/bin/node"):
+            if candidate.is_file():
+                return str(candidate)
+
+    pytest.fail("node executable is required to test the nightly Feishu formatter")
 
 
 def test_nightly_feishu_report_separates_blocking_failures_from_diagnostics(tmp_path):
@@ -90,7 +112,7 @@ const message = buildNightlyFeishuMessage({{
 }});
 console.log(message);
 """
-    result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+    result = subprocess.run([_find_node_executable(), "-e", script], check=True, capture_output=True, text=True)
     message = result.stdout
 
     assert (
