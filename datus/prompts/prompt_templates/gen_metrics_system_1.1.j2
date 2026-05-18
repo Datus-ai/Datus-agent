@@ -82,15 +82,17 @@ Only proceed to Step 1 if ALL required semantic models exist.
 
 ### Step 1: Analyze ALL SQL Queries
 
-Parse each SQL query and extract:
-- **Source table**: FROM clause (e.g., `examples.sales_data`)
-- **Aggregations**: SUM, COUNT, AVG, etc. with their expressions
-- **Dimensions**: Columns in GROUP BY or SELECT (non-aggregated)
-- **Filters**: WHERE clause conditions (if any)
+Call `analyze_metric_candidates_from_history` for provided historical SQL before writing files. Use the tool output to extract:
+- **Final metric candidates**: final SELECT aliases and business output expressions
+- **Dependency measures**: SUM, COUNT, AVG, etc. that the final metric depends on
+- **Dimensions**: columns in GROUP BY or SELECT (non-aggregated)
+- **Filters**: WHERE clause conditions and non-metric evidence
+- **Modeling shape**: whether the SQL needs a derived data source before metrics can be defined
+- **Preservation evidence**: SQL literal values, output time grain, and post-aggregation constraints
 
-### Step 2: Deduplicate Aggregations into Measures
+### Step 2: Preserve Business Metrics and Dependencies
 
-Merge identical aggregations across all SQL queries into unique measures.
+Preserve final SQL outputs as business metrics. Merge identical dependency aggregations across all SQL queries into unique measures.
 
 **Naming convention for measures:**
 - SUM(column) -> total_{column} or {column}_total
@@ -108,7 +110,17 @@ Identify unique dimensions from GROUP BY clauses:
 
 Only include dimensions that are actually used in the SQL queries.
 
-### Step 4: Find or Create Semantic Model
+### Step 4: Preserve SQL Semantics
+
+When `analyze_metric_candidates_from_history` returns preservation evidence:
+
+- If `literal_mappings` is present, keep each literal `value` exactly as it appears in SQL predicates, CASE expressions, filters, and `sql_query` output. Only MetricFlow object names may be translated or normalized.
+- If `time_grain_evidence` is present, expose the same output time grain in any generated data source. For example, preserve a day-grain field such as `CURDATE() AS part_dt` or `DATE(create_time) AS part_dt` instead of using raw `create_time` as the primary time dimension.
+- If `post_aggregation_constraints` is present, keep each HAVING/post-aggregation condition as a query constraint, metric usage note, or later derived data source. Do not silently drop it or push it into a base measure.
+- If `query_classification` is `metric_plus_derived_datasource` or `derived_datasource_recommendations` is non-empty, do not generate direct metrics from `blocked_direct_metric_candidates`. First create the recommended `sql_query` data source or materialized view, then define final metrics on that derived data source.
+- If a candidate has `requires_name_translation: true`, treat its `name` as a technical fallback only. Also inspect every `source_alias`: when the alias appears generated or lacks business meaning, do not use it as the final MetricFlow name. In interactive mode, ask the user to confirm if the business meaning is unclear; in batch/bootstrap mode, infer a clear English snake_case name from the SQL expression, question, table/column context, and external knowledge without stopping.
+
+### Step 5: Find or Create Semantic Model
 
 1. Use `glob` to check for existing semantic model files
 2. If semantic model for the table exists:
@@ -117,27 +129,27 @@ Only include dimensions that are actually used in the SQL queries.
 3. If no semantic model exists:
    - Create a new semantic model YAML file
 
-### Step 5: Generate Core Metrics Only
+### Step 6: Generate Business Metrics
 
-**CRITICAL - Minimal Metric Generation:**
-- Generate ONE measure_proxy metric per unique measure
-- Do NOT generate derived/ratio/cumulative metrics unless they appear explicitly in the SQL
-- Do NOT generate growth metrics, period-over-period comparisons, etc.
+**CRITICAL - Preserve Final SQL Outputs:**
+- Preserve final SELECT aliases and business expressions as metric candidates
+- Generate base measures as dependencies for the final metric
+- Keep filter-only/detail SQL as evidence instead of creating fake metrics
+- Preserve SQL literals, output time grain, and HAVING/post-aggregation constraints from the tool evidence
 
 **Example:**
 If multiple SQL queries contain:
-- `SUM(amount)` used 5 times with different GROUP BY -> 1 measure `total_amount` -> 1 metric
-- `COUNT(*)` used 3 times -> 1 measure `record_count` -> 1 metric
-- `AVG(price)` used 2 times -> 1 measure `avg_price` -> 1 metric
+- `SUM(paid_amount) / COUNT(DISTINCT user_id) AS paid_arppu` -> metric `paid_arppu` with dependency measures
+- `SUM(revenue) - SUM(cost) AS gross_profit` -> metric `gross_profit` with dependency measures
 
-Result: Only 3 core metrics, not 10.
+Result: focused business metrics with reusable dependency measures.
 
-### Step 6: Check for Existing Metrics
+### Step 7: Check for Existing Metrics
 
 Use `check_semantic_object_exists(name, kind='metric')` to verify each metric doesn't already exist.
 Skip any metric that already exists - do NOT update or overwrite.
 
-### Step 7: Save Files
+### Step 8: Save Files
 
 All `write_file` / `edit_file` / `read_file` paths should include the
 `{{ kind_subdir }}/` prefix so the file lands in the right datasource and is
@@ -150,12 +162,12 @@ discoverable by downstream readers.
    - Create a NEW file for all core metrics
    - Use YAML document separator `---` between metrics
 
-### Step 8: Validate Configuration
+### Step 9: Validate Configuration
 
 Use `validate_semantic` tool to validate the files.
 **CRITICAL**: If validation fails, you MUST fix the errors using `edit_file` and retry until validation succeeds. Do NOT return results with failed validation.
 
-### Step 9: Generate SQL for Each Metric
+### Step 10: Generate SQL for Each Metric
 
 After validation succeeds, use `query_metrics` with `dry_run=True` to obtain the SQL for each generated metric:
 
@@ -173,7 +185,7 @@ Collect all metric SQLs into a dictionary: `{"metric_name": "SELECT ..."}`
 If `query_metrics(dry_run=True)` fails for any metric, fix the YAML and rerun
 `validate_semantic` and `query_metrics(dry_run=True)` until it succeeds.
 
-### Step 10: Complete Generation
+### Step 11: Complete Generation
 
 After validation succeeds and SQLs are collected, prefer calling `end_metric_generation` tool with the metric SQLs as a JSON string so publish errors are caught while you can still fix files. If you forget this tool, the host will still use the final JSON `metric_file` to validate, dry-run, and publish the generated metrics before reporting success. `metric_file` and `semantic_model_file` use the same `{{ kind_subdir }}/` prefix you wrote to:
 ```

@@ -14,6 +14,7 @@ from datus.cli.action_display.tool_content import (
     ToolCallContent,
     ToolCallContentBuilder,
     _build_analyze_columns,
+    _build_analyze_metric_candidates,
     _build_analyze_relationships,
     _build_ask_user,
     _build_attribution_analyze,
@@ -1704,6 +1705,34 @@ class TestBuildAnalyzeColumns:
         assert "2 columns analyzed" in tc.compact_result
 
 
+@pytest.mark.ci
+class TestBuildAnalyzeMetricCandidates:
+    def test_compact(self):
+        a = _make(
+            input_data={"function_name": "analyze_metric_candidates_from_history"},
+            output_data={
+                "raw_output": '{"success": 1, "result": {'
+                '"metric_candidates": [{"name": "paid_arppu"}, {"name": "gross_margin_rate"}], '
+                '"base_measures": [{"name": "paid_amount"}], "summary": "ok"}}'
+            },
+        )
+        tc = _build_analyze_metric_candidates(a, verbose=False)
+        assert "2 metric candidates, 1 base measure" in tc.compact_result
+
+    def test_compact_with_derived_datasource(self):
+        a = _make(
+            input_data={"function_name": "analyze_metric_candidates_from_history"},
+            output_data={
+                "raw_output": '{"success": 1, "result": {'
+                '"metric_candidates": [{"name": "time_count"}], '
+                '"base_measures": [{"name": "count_rows"}], '
+                '"derived_datasource_recommendations": [{"name": "rank_data"}]}}'
+            },
+        )
+        tc = _build_analyze_metric_candidates(a, verbose=False)
+        assert "1 metric candidate, 1 base measure, 1 derived datasource" in tc.compact_result
+
+
 # ── Skill tools ───────────────────────────────────────────────────
 
 
@@ -1874,10 +1903,11 @@ class TestAllToolsRegistered:
         "generate_sql_summary_id",
         # Date
         "parse_temporal_expressions",
-        # Semantic model gen
+        # Semantic discovery
         "analyze_table_relationships",
         "get_multiple_tables_ddl",
         "analyze_column_usage_patterns",
+        "analyze_metric_candidates_from_history",
         # Skill
         "execute_command",
         "skill_execute_command",

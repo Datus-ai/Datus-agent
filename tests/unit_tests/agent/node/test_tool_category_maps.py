@@ -153,7 +153,7 @@ class TestGenMetricsToolCategoryMap:
             end_metric_generation=_fn("end_metric_generation"),
             end_semantic_model_generation=_fn("end_semantic_model_generation"),
         )
-        node.gen_semantic_model_tools = _stub("build_measure")
+        node.semantic_discovery_tools = _stub("build_measure")
         node.filesystem_func_tool = _stub("read_file")
         node.ask_user_tool = _stub("ask_user")
 
@@ -172,7 +172,7 @@ class TestGenMetricsToolCategoryMap:
         node.db_func_tool = None
         node.semantic_tools = None
         node.generation_tools = None
-        node.gen_semantic_model_tools = None
+        node.semantic_discovery_tools = None
         node.filesystem_func_tool = None
         node.ask_user_tool = None
 

@@ -1,12 +1,12 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 
-"""Unit tests for datus/tools/func_tool/gen_semantic_model_tools.py"""
+"""Unit tests for datus/tools/func_tool/semantic_discovery_tools.py"""
 
 from unittest.mock import MagicMock, patch
 
 from datus.tools.func_tool.base import FuncToolResult
-from datus.tools.func_tool.gen_semantic_model_tools import GenSemanticModelTools
+from datus.tools.func_tool.semantic_discovery_tools import SemanticDiscoveryTools
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -21,10 +21,10 @@ def _make_db_tool(agent_config=None, sub_agent_name="test_agent"):
     return db_tool
 
 
-def _make_tools(db_tool=None) -> GenSemanticModelTools:
+def _make_tools(db_tool=None) -> SemanticDiscoveryTools:
     if db_tool is None:
         db_tool = _make_db_tool()
-    return GenSemanticModelTools(db_tool=db_tool)
+    return SemanticDiscoveryTools(db_tool=db_tool)
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +262,25 @@ class TestAnalyzeJoinPatterns:
         assert len(result) >= 1
         assert any(r["evidence"] == "join_pattern" for r in result)
 
+    def test_finds_alias_join_pattern(self):
+        db_tool = _make_db_tool()
+        sql_entry = {"sql": "SELECT * FROM orders o JOIN customers c ON o.customer_id = c.id"}
+        mock_rag = MagicMock()
+        mock_rag.search_reference_sql.return_value = [sql_entry]
+        with patch("datus.storage.reference_sql.store.ReferenceSqlRAG", return_value=mock_rag):
+            tools = _make_tools(db_tool)
+            result = tools._analyze_join_patterns_from_history(["orders", "customers"], 10)
+        assert result == [
+            {
+                "source_table": "orders",
+                "source_column": "customer_id",
+                "target_table": "customers",
+                "target_column": "id",
+                "confidence": "medium",
+                "evidence": "join_pattern",
+            }
+        ]
+
     def test_search_exception_handled_gracefully(self):
         db_tool = _make_db_tool()
         mock_rag = MagicMock()
@@ -415,3 +434,330 @@ class TestAnalyzeColumnUsagePatterns:
         tools = _make_tools(db_tool)
         result = tools.analyze_column_usage_patterns("orders")
         assert result.success == 0
+
+
+# ---------------------------------------------------------------------------
+# analyze_metric_candidates_from_history
+# ---------------------------------------------------------------------------
+
+
+class TestAnalyzeMetricCandidatesFromHistory:
+    def test_available_tools_includes_metric_candidate_mining(self):
+        tools = _make_tools()
+        tool_names = {tool.name for tool in tools.available_tools()}
+        assert {
+            "analyze_table_relationships",
+            "get_multiple_tables_ddl",
+            "analyze_column_usage_patterns",
+            "analyze_metric_candidates_from_history",
+        }.issubset(tool_names)
+
+    def test_ratio_candidate_preserves_base_measures(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=[
+                """
+                SELECT dt, SUM(paid_amount) / COUNT(DISTINCT user_id) AS paid_arppu
+                FROM orders
+                WHERE status = 'paid'
+                GROUP BY dt
+                """
+            ]
+        )
+
+        assert result.success == 1
+        candidates = result.result["metric_candidates"]
+        assert len(candidates) == 1
+        assert candidates[0]["name"] == "paid_arppu"
+        assert candidates[0]["metric_type"] == "ratio"
+        assert candidates[0]["dimensions"] == ["dt"]
+        assert candidates[0]["filters"] == ["status = 'paid'"]
+        assert {m["agg"] for m in candidates[0]["base_measures"]} == {"SUM", "COUNT_DISTINCT"}
+
+    def test_expr_candidate_for_measure_expression(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=[
+                """
+                SELECT (SUM(revenue) - SUM(cost)) / SUM(revenue) AS gross_margin_rate
+                FROM orders
+                """
+            ]
+        )
+
+        candidate = result.result["metric_candidates"][0]
+        assert candidate["name"] == "gross_margin_rate"
+        assert candidate["metric_type"] == "expr"
+        assert len(candidate["base_measures"]) == 2
+
+    def test_derived_candidate_for_existing_metric_expression(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=["SELECT revenue / ad_spend AS roas FROM metric_table"],
+            existing_metrics=["revenue", "ad_spend"],
+        )
+
+        candidate = result.result["metric_candidates"][0]
+        assert candidate["name"] == "roas"
+        assert candidate["metric_type"] == "derived"
+
+    def test_cumulative_candidate_for_window_expression(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=[
+                """
+                SELECT dt, SUM(revenue) OVER (ORDER BY dt ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS rolling_7d_revenue
+                FROM orders
+                """
+            ]
+        )
+
+        candidate = result.result["metric_candidates"][0]
+        assert candidate["name"] == "rolling_7d_revenue"
+        assert candidate["metric_type"] == "cumulative"
+
+    def test_conditional_aggregation_keeps_case_measure_evidence(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=[
+                """
+                SELECT SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END) AS paid_revenue
+                FROM orders
+                """
+            ]
+        )
+
+        candidate = result.result["metric_candidates"][0]
+        assert candidate["metric_type"] == "measure_proxy"
+        assert candidate["base_measures"][0]["expr"] == "CASE WHEN status = 'paid' THEN amount ELSE 0 END"
+
+    def test_filter_only_sql_becomes_non_metric_evidence(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=["SELECT * FROM users WHERE is_test = 0 AND country = 'US'"]
+        )
+
+        assert result.result["metric_candidates"] == []
+        evidence = result.result["non_metric_evidence"][0]
+        assert evidence["tables"] == ["users"]
+        assert evidence["filters"] == ["is_test = 0 AND country = 'US'"]
+
+    def test_repeated_aliases_are_merged(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=[
+                "SELECT SUM(amount) AS revenue FROM orders",
+                "SELECT SUM(amount) AS revenue FROM payments",
+            ]
+        )
+
+        candidates = result.result["metric_candidates"]
+        assert len(candidates) == 1
+        assert candidates[0]["name"] == "revenue"
+        assert candidates[0]["source_count"] == 2
+
+    def test_repeated_blocked_candidates_do_not_reappear_as_direct_candidates(self):
+        tools = _make_tools()
+        ranked_sql = """
+            WITH f_data AS (
+                SELECT
+                    dt,
+                    store_id,
+                    module,
+                    SUM(product_count) / SUM(non_prime_tc) AS sell_hitrate
+                FROM store_daily
+                GROUP BY dt, store_id, module
+            ),
+            rank_data AS (
+                SELECT
+                    f.*,
+                    RANK() OVER (
+                        PARTITION BY f.dt, f.module
+                        ORDER BY f.sell_hitrate ASC
+                    ) AS rank_no
+                FROM f_data f
+            )
+            SELECT store_id, COUNT(*) AS time_count
+            FROM rank_data
+            WHERE rank_no <= 10
+            GROUP BY store_id
+        """
+        result = tools.analyze_metric_candidates_from_history(sql_queries=[ranked_sql, ranked_sql])
+
+        assert result.result["query_classification"] == "metric_plus_derived_datasource"
+        assert result.result["metric_candidates"][0]["source_sql_name"] == "sql_1, sql_2"
+        assert result.result["direct_metric_candidates"] == []
+        assert len(result.result["blocked_direct_metric_candidates"]) == 2
+
+    def test_invalid_sql_does_not_block_other_queries(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=[
+                "SELECT FROM",
+                "SELECT SUM(amount) AS revenue FROM orders",
+            ]
+        )
+
+        assert len(result.result["parse_errors"]) == 1
+        assert result.result["metric_candidates"][0]["name"] == "revenue"
+
+    def test_mysql_dialect_fallback_parses_backtick_aliases(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=["SELECT COUNT(DISTINCT `user_id`) AS `人数` FROM `orders`"]
+        )
+
+        assert result.result["parse_errors"] == []
+        candidate = result.result["metric_candidates"][0]
+        assert candidate["source_alias"] == "人数"
+        assert candidate["requires_name_translation"] is True
+        assert candidate["name_source"] == "expression_fallback"
+        assert candidate["name"] == "count_distinct_user_id"
+
+    def test_ranked_window_blocks_direct_metric_and_recommends_datasource(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=[
+                """
+                WITH f_data AS (
+                    SELECT
+                        dt,
+                        store_id,
+                        module,
+                        SUM(product_count) / SUM(non_prime_tc) AS sell_hitrate
+                    FROM store_daily
+                    GROUP BY dt, store_id, module
+                ),
+                rank_data AS (
+                    SELECT
+                        f.*,
+                        RANK() OVER (
+                            PARTITION BY f.dt, f.module
+                            ORDER BY f.sell_hitrate ASC
+                        ) AS rank_no
+                    FROM f_data f
+                    WHERE f.sell_hitrate > 0
+                )
+                SELECT store_id, COUNT(*) AS time_count
+                FROM rank_data
+                WHERE rank_no <= 10
+                GROUP BY store_id
+                HAVING COUNT(*) >= 10
+                """
+            ]
+        )
+
+        assert result.result["query_classification"] == "metric_plus_derived_datasource"
+        assert result.result["direct_metric_candidates"] == []
+        assert result.result["blocked_direct_metric_candidates"][0]["name"] == "time_count"
+        recommendation = result.result["derived_datasource_recommendations"][0]
+        assert recommendation["source_cte"] == "rank_data"
+        assert recommendation["rank_alias"] == "rank_no"
+        assert recommendation["window"]["function"] == "RANK"
+        assert recommendation["window"]["partition_by"] == ["f.dt", "f.module"]
+        assert recommendation["window"]["order_by"] == [{"expr": "f.sell_hitrate", "direction": "ASC"}]
+        assert recommendation["ordering_metric_evidence"] == [
+            {"name": "sell_hitrate", "expression": "SUM(product_count) / SUM(non_prime_tc)"}
+        ]
+        assert result.result["post_aggregation_constraints"] == [
+            {
+                "source_sql_name": "sql_1",
+                "constraint": "COUNT(*) >= 10",
+                "clause": "HAVING",
+                "reason": "post-aggregation constraint must be preserved as a query filter or later derived data source",
+            }
+        ]
+
+    def test_row_number_main_entity_distribution_recommends_datasource(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=[
+                """
+                WITH user_total_playtime_per_mode AS (
+                    SELECT vplayerid, modename, SUM(roundtime) AS total_playtime
+                    FROM mode_roundrecord
+                    GROUP BY vplayerid, modename
+                ),
+                user_main_mode AS (
+                    SELECT
+                        vplayerid,
+                        modename,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY vplayerid
+                            ORDER BY total_playtime DESC
+                        ) AS rn
+                    FROM user_total_playtime_per_mode
+                )
+                SELECT modename AS `主玩玩法`, COUNT(*) AS `人数`
+                FROM user_main_mode
+                WHERE rn = 1
+                GROUP BY modename
+                """
+            ]
+        )
+
+        assert result.result["query_classification"] == "metric_plus_derived_datasource"
+        assert result.result["blocked_direct_metric_candidates"][0]["source_alias"] == "人数"
+        assert result.result["blocked_direct_metric_candidates"][0]["requires_name_translation"] is True
+        recommendation = result.result["derived_datasource_recommendations"][0]
+        assert recommendation["source_cte"] == "user_main_mode"
+        assert recommendation["rank_alias"] == "rn"
+        assert recommendation["window"]["function"] == "ROW_NUMBER"
+        assert recommendation["rank_filters"] == ["rn = 1"]
+
+    def test_simple_aggregation_stays_direct_metric(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=["SELECT dt, SUM(amount) AS revenue FROM orders GROUP BY dt"]
+        )
+
+        assert result.result["query_classification"] == "direct_metric"
+        assert result.result["derived_datasource_recommendations"] == []
+        assert result.result["blocked_direct_metric_candidates"] == []
+        assert result.result["direct_metric_candidates"][0]["name"] == "revenue"
+
+    def test_literal_values_and_time_grain_are_reported_as_preservation_evidence(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=[
+                """
+                SELECT
+                    store_code,
+                    CURDATE() AS part_dt,
+                    COUNT(DISTINCT table_source) AS table_count,
+                    MAX(CASE WHEN table_source = '7day_app_sale_rate_2_0_1' THEN 1 ELSE 0 END) AS seven_day_flag
+                FROM (
+                    SELECT
+                        co_4 AS store_code,
+                        '7day_app_sale_rate_2_0_1' AS table_source,
+                        create_time
+                    FROM app_event_source
+                    WHERE DATE(create_time) = CURDATE()
+                ) combined_data
+                GROUP BY store_code
+                """
+            ]
+        )
+
+        assert {
+            "source_sql_name": "sql_1",
+            "alias": "table_source",
+            "value": "7day_app_sale_rate_2_0_1",
+            "expression": "'7day_app_sale_rate_2_0_1'",
+            "projection": "'7day_app_sale_rate_2_0_1' AS table_source",
+            "preservation_rule": "preserve literal values verbatim; only MetricFlow object names may be normalized",
+        } in result.result["literal_mappings"]
+
+        time_evidence = result.result["time_grain_evidence"]
+        assert any(
+            item["alias"] == "part_dt"
+            and item["expression"] in {"CURRENT_DATE", "CURDATE()"}
+            and item["evidence_type"] == "projected_time_dimension"
+            for item in time_evidence
+        )
+        assert any(
+            item["expression"] in {"CAST(create_time AS DATE)", "DATE(create_time)"}
+            and item["evidence_type"] == "date_filter"
+            and ("CURRENT_DATE" in item["predicate"] or "CURDATE()" in item["predicate"])
+            for item in time_evidence
+        )

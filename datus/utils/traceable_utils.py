@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import logging
 from typing import Literal
 
 from datus.utils.loggings import get_logger
@@ -89,6 +90,17 @@ def optional_traceable(name: str = "", run_type: RUN_TYPE_T = "chain"):
 
 _tracing_initialized = False
 _tracing_processor = None
+
+
+def _suppress_noisy_otel_warnings() -> None:
+    """Suppress noisy OpenTelemetry span lifecycle warnings.
+
+    OpenTelemetry logs "Setting attribute on ended span." at WARNING level when
+    instrumentation tries to attach attributes after a span has closed. It is
+    useful while debugging instrumentation, but too noisy for normal Datus runs.
+    Keep ERROR-level OpenTelemetry diagnostics visible.
+    """
+    logging.getLogger("opentelemetry.sdk.trace").setLevel(logging.ERROR)
 
 
 def _is_tracing_enabled() -> bool:
@@ -199,6 +211,7 @@ def setup_tracing():
     Safe to call multiple times; initialization only happens once.
     """
     global _tracing_initialized, _tracing_processor
+    _suppress_noisy_otel_warnings()
     if _tracing_initialized:
         return
     _tracing_initialized = True

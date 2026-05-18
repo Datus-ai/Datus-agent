@@ -32,8 +32,8 @@ from datus.schemas.action_history import ActionHistoryManager, ActionRole, Actio
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
-from datus.tools.func_tool.gen_semantic_model_tools import GenSemanticModelTools
 from datus.tools.func_tool.generation_tools import GenerationTools
+from datus.tools.func_tool.semantic_discovery_tools import SemanticDiscoveryTools
 from tests.unit_tests.mock_llm_model import MockToolCall, build_simple_response, build_tool_then_response
 
 # ---------------------------------------------------------------------------
@@ -459,15 +459,15 @@ class TestSetupDbTools:
 
 
 # ---------------------------------------------------------------------------
-# TestSetupGenSemanticModelTools
+# TestSetupSemanticDiscoveryTools
 # ---------------------------------------------------------------------------
 
 
-class TestSetupGenSemanticModelTools:
-    """Tests for _setup_gen_semantic_model_tools() method."""
+class TestSetupSemanticDiscoveryTools:
+    """Tests for _setup_semantic_discovery_tools() method."""
 
-    def test_gen_semantic_model_tools_added_when_db_available(self, real_agent_config, mock_llm_create):
-        """When db_func_tool is initialized, gen_semantic_model_tools should be mounted."""
+    def test_semantic_discovery_tools_added_when_db_available(self, real_agent_config, mock_llm_create):
+        """When db_func_tool is initialized, semantic_discovery_tools should be mounted."""
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
         node = GenMetricsAgenticNode(
@@ -481,10 +481,13 @@ class TestSetupGenSemanticModelTools:
         assert "analyze_column_usage_patterns" in tool_names, (
             f"Missing analyze_column_usage_patterns, got: {tool_names}"
         )
-        assert isinstance(node.gen_semantic_model_tools, GenSemanticModelTools)
+        assert "analyze_metric_candidates_from_history" in tool_names, (
+            f"Missing analyze_metric_candidates_from_history, got: {tool_names}"
+        )
+        assert isinstance(node.semantic_discovery_tools, SemanticDiscoveryTools)
 
-    def test_gen_semantic_model_tools_skipped_when_no_db(self, real_agent_config, mock_llm_create):
-        """When DBFuncTool() constructor fails, gen_semantic_model_tools is None but node still works."""
+    def test_semantic_discovery_tools_skipped_when_no_db(self, real_agent_config, mock_llm_create):
+        """When DBFuncTool() constructor fails, semantic_discovery_tools is None but node still works."""
         from unittest.mock import patch as _patch
 
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
@@ -500,7 +503,7 @@ class TestSetupGenSemanticModelTools:
 
         tool_names = [tool.name for tool in node.tools]
         assert "analyze_table_relationships" not in tool_names
-        assert node.gen_semantic_model_tools is None
+        assert node.semantic_discovery_tools is None
         # Other tools still present
         assert "read_file" in tool_names
         assert "check_semantic_object_exists" in tool_names

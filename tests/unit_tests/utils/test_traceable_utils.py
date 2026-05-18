@@ -4,6 +4,7 @@
 
 """Tests for datus.utils.traceable_utils — LangSmith and Langfuse tracing integration."""
 
+import logging
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -116,6 +117,25 @@ class TestSetupTracing:
         setup_tracing()
 
         assert module._tracing_initialized is True
+
+    def test_setup_tracing_suppresses_noisy_otel_span_warnings(self, monkeypatch):
+        """setup_tracing suppresses OpenTelemetry ended-span warnings."""
+        import datus.utils.traceable_utils as module
+
+        _clear_all_tracing_envvars(monkeypatch)
+        otel_logger = logging.getLogger("opentelemetry.sdk.trace")
+        original_level = otel_logger.level
+        otel_logger.setLevel(logging.NOTSET)
+        monkeypatch.setattr(module, "_tracing_initialized", False)
+        monkeypatch.setattr(module, "_tracing_processor", None)
+        monkeypatch.setattr(module, "HAS_LANGSMITH", True)
+        monkeypatch.setattr(module, "HAS_LANGFUSE", False)
+
+        try:
+            setup_tracing()
+            assert otel_logger.level == logging.ERROR
+        finally:
+            otel_logger.setLevel(original_level)
 
     def test_disables_sdk_when_langsmith_not_installed(self, monkeypatch):
         """setup_tracing disables SDK tracing when HAS_LANGSMITH is False."""

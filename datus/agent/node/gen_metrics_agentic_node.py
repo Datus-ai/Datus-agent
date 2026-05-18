@@ -99,7 +99,7 @@ class GenMetricsAgenticNode(AgenticNode):
 
         # Setup tools
         self.db_func_tool = None
-        self.gen_semantic_model_tools = None
+        self.semantic_discovery_tools = None
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self.generation_tools: Optional[GenerationTools] = None
         self.ask_user_tool = None
@@ -123,9 +123,9 @@ class GenMetricsAgenticNode(AgenticNode):
 
         self.tools = []
 
-        # Setup db_tools.*, gen_semantic_model_tools.*, generation_tools.*, filesystem_tools.*, semantic_tools.*
+        # Setup db_tools.*, semantic_discovery_tools.*, generation_tools.*, filesystem_tools.*, semantic_tools.*
         self._setup_db_tools()
-        self._setup_gen_semantic_model_tools()
+        self._setup_semantic_discovery_tools()
         self._setup_generation_tools()
         self._setup_filesystem_tools()
         self._setup_semantic_tools()
@@ -205,27 +205,28 @@ class GenMetricsAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup database tools: {e}")
 
-    def _setup_gen_semantic_model_tools(self):
-        """Setup semantic model generation tools (table relationships, column usage patterns)."""
+    def _setup_semantic_discovery_tools(self):
+        """Setup read-only semantic discovery tools."""
         try:
             if not self.db_func_tool:
-                logger.warning("DBFuncTool not initialized, skipping gen_semantic_model_tools setup")
+                logger.warning("DBFuncTool not initialized, skipping semantic_discovery_tools setup")
                 return
 
-            from datus.tools.func_tool.gen_semantic_model_tools import GenSemanticModelTools
+            from datus.tools.func_tool.semantic_discovery_tools import SemanticDiscoveryTools
 
-            self.gen_semantic_model_tools = GenSemanticModelTools(self.db_func_tool)
-            self.tools.extend(self.gen_semantic_model_tools.available_tools())
+            self.semantic_discovery_tools = SemanticDiscoveryTools(self.db_func_tool)
+            self.tools.extend(self.semantic_discovery_tools.available_tools())
             logger.debug(
-                "Added gen_semantic_model tools: analyze_table_relationships, get_multiple_tables_ddl, analyze_column_usage_patterns"
+                "Added semantic discovery tools: analyze_table_relationships, get_multiple_tables_ddl, "
+                "analyze_column_usage_patterns, analyze_metric_candidates_from_history"
             )
         except Exception as e:
-            logger.error(f"Failed to setup gen_semantic_model tools: {e}")
+            logger.error(f"Failed to setup semantic discovery tools: {e}")
 
     def _tool_category_map(self) -> Dict[str, List[Any]]:
         """Map tools to permission categories so profile rules apply.
 
-        ``generation_tools`` / ``gen_semantic_model_tools`` expose semantic
+        ``generation_tools`` / ``semantic_discovery_tools`` expose semantic
         layer operations (``end_metric_generation`` etc.) so they ride the
         ``semantic_tools`` category for the sake of profile rules.
         """
@@ -245,8 +246,8 @@ class GenMetricsAgenticNode(AgenticNode):
                     trans_to_function_tool(self.generation_tools.end_semantic_model_generation),
                 ]
             )
-        if self.gen_semantic_model_tools:
-            semantic_bucket.extend(self.gen_semantic_model_tools.available_tools())
+        if self.semantic_discovery_tools:
+            semantic_bucket.extend(self.semantic_discovery_tools.available_tools())
         if semantic_bucket:
             mapping["semantic_tools"] = semantic_bucket
         if self.filesystem_func_tool:

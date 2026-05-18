@@ -92,15 +92,23 @@ Before generating metrics, verify that semantic models exist for all involved ta
 ### Step 3: Define Metrics
 
 **For SQL-based input:**
-- Parse aggregations (SUM, COUNT, AVG, etc.) → measures
+- Call `analyze_metric_candidates_from_history` for provided historical SQL before writing files.
+- Preserve final business output expressions as metric candidates.
+- Parse aggregations (SUM, COUNT, AVG, etc.) → dependency measures
 - Parse GROUP BY → dimensions
 - Deduplicate only the underlying measure definition when the aggregation/expression is identical
 - Preserve separate metrics when filters or business semantics differ (e.g., paid revenue vs refunded revenue)
+- Treat filter-only/detail SQL as filter, segment, dimension, or view evidence instead of a metric.
 - For filtered metrics, prefer adding a conditional measure to the semantic model, then write a `measure_proxy` metric that references that measure by name
+- If the tool returns `query_classification: "metric_plus_derived_datasource"` or non-empty `derived_datasource_recommendations`, do NOT generate direct metrics from `blocked_direct_metric_candidates`. First create the recommended `sql_query` data source or materialized view, then define final metrics on that derived data source.
+- If a candidate has `requires_name_translation: true`, treat its `name` as a technical fallback only. Also inspect every `source_alias`: when the alias appears generated or lacks business meaning, do not use it as the final MetricFlow name. In interactive mode, ask the user to confirm if the business meaning is unclear; in batch/bootstrap mode, infer a clear English snake_case name from the SQL expression, question, table/column context, and external knowledge without stopping.
+- Preserve SQL literal values from `literal_mappings` exactly inside `sql_query`, CASE, WHERE, and filter expressions. MetricFlow object names may be normalized, but string literal values must not be translated or renamed.
+- Preserve output time grain from `time_grain_evidence`. If SQL projects a day-grain field such as `CURDATE() AS part_dt` or `DATE(create_time) AS part_dt`, expose the same day-grain time dimension instead of using raw `create_time` as the primary time dimension.
+- Preserve `post_aggregation_constraints` such as HAVING clauses as query constraints, metric usage notes, or later derived data sources. Do not silently drop them or push them into base measures.
 
 **For natural language input:**
-- Identify metric type: simple counting+filter, aggregation+filter, ratio, derived, cumulative, or conversion
-- Map to MetricFlow types: `measure_proxy`, `ratio`, `derived`/`expr`, `cumulative`, `conversion`
+- Identify metric type: simple counting+filter, aggregation+filter, ratio, expr, derived, or cumulative
+- Map to MetricFlow types: `measure_proxy`, `ratio`, `expr`, `derived`, `cumulative`
 {% if has_ask_user_tool %}- **MUST call `ask_user`** to confirm the metric definition with the user before generating any files
 - When proposing multiple metric candidates, use `ask_user` with `multi_select: true` so the user can select multiple options via checkboxes. Example tool arguments:
   ```json
@@ -290,20 +298,36 @@ metric:
       - "subject_tree: {domain}/{layer1}/{layer2}"
 ```
 
-**derived/expr** (expression combining other metrics):
+**expr** (expression combining measures):
 ```yaml
 metric:
   name: {metric_name}
   description: "{description}"
   type: expr
   type_params:
-    expr: "{expression}"  # e.g. "metric_a / metric_b * 100"
+    measures:
+      - measure_a
+      - measure_b
+    expr: "{expression}"  # e.g. "(measure_a - measure_b) / measure_a"
+  locked_metadata:
+    tags:
+      - "subject_tree: {domain}/{layer1}/{layer2}"
+```
+
+**derived** (expression combining existing metrics):
+```yaml
+metric:
+  name: {metric_name}
+  description: "{description}"
+  type: derived
+  type_params:
     metrics:
       - name: metric_a
         # Optional: period-over-period comparison
         offset_window: 1 week    # compare to 1 week ago (WoW)
       - name: metric_b
         offset_to_grain: month   # compare to start of current month (MTD)
+    expr: "{expression}"  # e.g. "metric_a / metric_b"
   locked_metadata:
     tags:
       - "subject_tree: {domain}/{layer1}/{layer2}"
@@ -325,30 +349,13 @@ metric:
       - "subject_tree: {domain}/{layer1}/{layer2}"
 ```
 
-**conversion** (funnel conversion between events):
-```yaml
-metric:
-  name: {metric_name}
-  description: "{description}"
-  type: conversion
-  type_params:
-    entity: {entity_name}          # shared entity (e.g. "user")
-    calculation: conversion_rate   # conversion_rate or conversions
-    base_measure: {base_measure}   # e.g. "signups"
-    conversion_measure: {conv_measure}  # e.g. "purchases"
-    window: 7 days                 # conversion window
-  locked_metadata:
-    tags:
-      - "subject_tree: {domain}/{layer1}/{layer2}"
-```
-
 ## Key Reminders
 
 {% if has_ask_user_tool %}1. **User confirmation is MANDATORY**: ALWAYS call `ask_user` to confirm metric definition BEFORE writing any files. Never generate metrics without user approval.
 {% else %}1. **Proceed carefully**: If required input is missing or ambiguous, stop and explain what information is needed.
 {% endif %}
 2. **Skill-first**: Always check for and load matching skills before proceeding
-3. **Deduplicate**: Same aggregation pattern = ONE measure. Preserve separate metrics when filters or business semantics differ
+3. **Preserve final output expressions**: Historical SQL aliases and final SELECT expressions are metric candidates; base measures are dependencies
 4. **COUNT requires `expr: "1"`**: Never use `expr: {column}` with `agg: COUNT`
 5. **Primary time dimension required**: Every data_source must have exactly one `type: TIME` dimension with `is_primary: true`
 6. **Validate**: Always validate before completing

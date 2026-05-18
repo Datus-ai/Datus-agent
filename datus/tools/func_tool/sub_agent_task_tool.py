@@ -123,10 +123,10 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "(1) SQL-based: provide SQL queries for metric extraction. "
         "(2) Natural language: describe the business metric or calculation rules, "
         "the agent will guide through interactive Q&A to define the metric. "
-        "(3) Batch: provide multiple SQL queries for core metric extraction. "
+        "(3) Batch: provide multiple SQL queries for AST-backed metric candidate extraction. "
         "For batch input, if the user provides a CSV file path, YOU (the parent agent) must read the file content first "
         "and include the full content in the prompt — the metrics agent cannot access files outside its workspace. "
-        "The metrics agent will deduplicate aggregation patterns and propose only core base metrics. "
+        "The metrics agent will preserve final business output expressions and treat base measures as dependencies. "
         "Returns JSON with {response, tokens_used}."
     ),
     "gen_sql_summary": (

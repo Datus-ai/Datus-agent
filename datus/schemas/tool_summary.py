@@ -599,6 +599,21 @@ def _fmt_get_multiple_tables_ddl(result: Any) -> str:
     return ""
 
 
+def _fmt_analyze_metric_candidates_from_history(result: Any) -> str:
+    if isinstance(result, dict):
+        candidates = result.get("metric_candidates")
+        if isinstance(candidates, list):
+            n = len(candidates)
+            suffix = ""
+            if result.get("query_classification") == "metric_plus_derived_datasource":
+                suffix = " + datasource"
+            return (f"{n} metric cand" if n == 1 else f"{n} metric cands") + suffix
+        summary = result.get("summary")
+        if isinstance(summary, str) and summary:
+            return summary
+    return ""
+
+
 # === Scheduler tools ===
 
 
@@ -1155,7 +1170,7 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "search_reference_sql": _fmt_search_reference_sql,
         "search_semantic_objects": _fmt_search_semantic_objects,
         "search_knowledge": _fmt_search_knowledge,
-        # Generation / semantic-model-gen
+        # Generation / semantic discovery
         "check_semantic_object_exists": _fmt_check_semantic_object_exists,
         "check_semantic_model_exists": _fmt_check_semantic_model_exists,
         "end_semantic_model_generation": _fmt_end_semantic_model_generation,
@@ -1163,6 +1178,7 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "generate_sql_summary_id": _fmt_generate_sql_summary_id,
         "analyze_table_relationships": _fmt_analyze_table_relationships,
         "analyze_column_usage_patterns": _fmt_analyze_column_usage_patterns,
+        "analyze_metric_candidates_from_history": _fmt_analyze_metric_candidates_from_history,
         "get_multiple_tables_ddl": _fmt_get_multiple_tables_ddl,
         # Scheduler tools
         "submit_sql_job": _fmt_submit_sql_job,

@@ -7,7 +7,7 @@ Unit tests for GenSemanticModelAgenticNode.
 
 Tests cover:
 - Node creation in workflow and interactive modes
-- Tools setup (DBFuncTool, FilesystemFuncTool, GenerationTools, GenSemanticModelTools, SemanticTools)
+- Tools setup (DBFuncTool, FilesystemFuncTool, GenerationTools, SemanticDiscoveryTools, SemanticTools)
 - Max turns configuration
 - Streaming execution with MockLLMModel
 - Database tool invocation (describe_table)
@@ -30,7 +30,7 @@ import pytest
 
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
-from datus.tools.func_tool import DBFuncTool, FilesystemFuncTool, GenSemanticModelTools
+from datus.tools.func_tool import DBFuncTool, FilesystemFuncTool, SemanticDiscoveryTools
 from tests.unit_tests.mock_llm_model import MockToolCall, build_simple_response, build_tool_then_response
 
 # ---------------------------------------------------------------------------
@@ -97,8 +97,8 @@ class TestGenSemanticModelAgenticNodeInit:
         assert "check_semantic_object_exists" in tool_names
         assert "end_semantic_model_generation" in tool_names
 
-        # GenSemanticModelTools should be present
-        assert isinstance(node.gen_semantic_model_tools, GenSemanticModelTools)
+        # SemanticDiscoveryTools should be present
+        assert isinstance(node.semantic_discovery_tools, SemanticDiscoveryTools)
 
     def test_semantic_model_max_turns(self, real_agent_config, mock_llm_create):
         """Test max_turns is read from agentic_nodes config."""

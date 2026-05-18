@@ -465,6 +465,32 @@ class TestGenerationFormatters:
         )
         assert out == "DDL of 2 tables"
 
+    def test_analyze_metric_candidates_from_history(self):
+        out = _summarize(
+            "analyze_metric_candidates_from_history",
+            {
+                "success": 1,
+                "result": {
+                    "metric_candidates": [{"name": "paid_arppu"}, {"name": "gross_margin_rate"}],
+                    "base_measures": [{"name": "paid_amount"}],
+                },
+            },
+        )
+        assert out == "2 metric cands"
+
+    def test_analyze_metric_candidates_from_history_with_derived_datasource(self):
+        out = _summarize(
+            "analyze_metric_candidates_from_history",
+            {
+                "success": 1,
+                "result": {
+                    "metric_candidates": [{"name": "time_count"}],
+                    "query_classification": "metric_plus_derived_datasource",
+                },
+            },
+        )
+        assert out == "1 metric cand + da…"
+
 
 class TestSchedulerFormatters:
     def test_submit_sql_job(self):
