@@ -46,14 +46,15 @@ def _load_json(path: Path) -> dict[str, Any] | None:
 
 
 def load_suite_results(artifacts_dir: Path) -> list[dict[str, Any]]:
+    suite_results: list[dict[str, Any]] = []
     for path in sorted(artifacts_dir.rglob("merge-queue-results.json")):
         data = _load_json(path)
         if not data:
             continue
         results = data.get("results", [])
         if isinstance(results, list):
-            return [result for result in results if isinstance(result, dict)]
-    return []
+            suite_results.extend(result for result in results if isinstance(result, dict))
+    return suite_results
 
 
 def load_junit_failures(artifacts_dir: Path, *, max_failures: int = DEFAULT_MAX_FAILURES) -> list[dict[str, str]]:

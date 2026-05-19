@@ -43,6 +43,26 @@ def test_build_comment_includes_suite_and_junit_failure_details(tmp_path, build_
         + "\n",
         encoding="utf-8",
     )
+    nested_artifacts_dir = artifacts_dir / "nested"
+    nested_artifacts_dir.mkdir()
+    (nested_artifacts_dir / "merge-queue-results.json").write_text(
+        dedent(
+            """
+            {
+              "results": [
+                {
+                  "suite": "unit-tests",
+                  "status": "success",
+                  "exit_code": 0,
+                  "targets": ["tests/unit_tests"]
+                }
+              ]
+            }
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
     (artifacts_dir / "test-results-merge-acceptance-integration.xml").write_text(
         dedent(
             """
@@ -81,6 +101,7 @@ def test_build_comment_includes_suite_and_junit_failure_details(tmp_path, build_
     assert "- Failed jobs: `merge-queue-gate`" in comment
     assert "- Run: [#195](https://github.com/Datus-ai/Datus-agent/actions/runs/26038673148)" in comment
     assert "- `acceptance-integration`: failed, exit code `1`, targets `1`" in comment
+    assert "- `unit-tests`: passed, exit code `0`, targets `1`" in comment
     assert "`tests.integration.cli.test_cli_commands::test_save_command`" in comment
     assert "assert '/tmp/test_output.json' in stdout" in comment
     assert "AssertionError: assert '/tmp/test_output.json' in 'Save Output'" in comment
