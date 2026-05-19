@@ -460,6 +460,12 @@ class GenReportAgenticNode(AgenticNode):
             raise ValueError("Report input not set. Call setup_input() first or set self.input directly.")
 
         user_input = self.input
+        logger.info(
+            "%s execute_stream start: session=%s msg=%r",
+            self.get_node_name(),
+            self.session_id,
+            (user_input.user_message or "")[:120],
+        )
 
         # Create initial action
         action = ActionHistory.create_action(

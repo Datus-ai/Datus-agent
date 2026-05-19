@@ -245,9 +245,20 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             self._bind_artifact_from_blob(blob)
             return
 
-        # Path 2: subclass declared blob mandatory. Half-bound state
-        # (subagent exists but no published version) lands here.
+        if blob is not None:
+            logger.warning(
+                "%s artifact_blob present but unusable (type=%s, keys=%s); routing to BLOB_REQUIRED/disk fallback",
+                self.NODE_NAME,
+                type(blob).__name__,
+                sorted(blob.keys()) if isinstance(blob, dict) else None,
+            )
+
         if self.BLOB_REQUIRED:
+            logger.error(
+                "%s init failing: slug=%s has no usable artifact_blob and BLOB_REQUIRED=True",
+                self.NODE_NAME,
+                slug,
+            )
             raise DatusException(
                 code=ErrorCode.COMMON_CONFIG_ERROR,
                 message_args={
@@ -261,7 +272,6 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
                 },
             )
 
-        # Path 3: fall back to the on-disk artifact tree.
         self._bind_artifact_from_disk(agent_config, slug)
 
     @staticmethod
@@ -330,6 +340,12 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
                 files["manifest.json"] = "{}"
 
         self._artifact_files = files
+        logger.info(
+            "%s bound from in-memory blob: slug=%s files=%d",
+            self.NODE_NAME,
+            self._artifact_slug,
+            len(self._artifact_files),
+        )
 
     def _bind_artifact_from_disk(self, agent_config: AgentConfig, slug: str) -> None:
         """Bind to the on-disk ``<project_root>/<kind>/<slug>/`` directory."""
@@ -367,6 +383,12 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             )
 
         self._artifact_root = artifact_dir
+        logger.info(
+            "%s bound from on-disk artifact: slug=%s root=%s",
+            self.NODE_NAME,
+            self._artifact_slug,
+            artifact_dir,
+        )
 
     # ── Filesystem tool override ────────────────────────────────────────
 
@@ -389,14 +411,14 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         if self._artifact_files is not None:
             from datus.tools.func_tool import MemoryFilesystemFuncTool
 
-            # Forward caller-supplied kwargs the same way the disk-mode
-            # branch does (via the super-call below). Today's only caller
-            # — ``ChatAgenticNode._setup_filesystem_tools`` — passes no
-            # kwargs, but preserving the contract avoids a silent drop
-            # the day someone wires per-tool options into the helper.
-            # ``MemoryFilesystemFuncTool``'s ``BaseTool`` parent accepts
-            # arbitrary kwargs into ``tool_params``, so unknown keys are
-            # absorbed harmlessly rather than crashing init.
+            logger.info(
+                "%s filesystem tool wired to MemoryFilesystemFuncTool: slug=%s files=%d",
+                self.NODE_NAME,
+                self._artifact_slug,
+                len(self._artifact_files),
+            )
+            # BaseTool absorbs unknown kwargs into tool_params — keeps
+            # disk-mode-only kwargs from crashing init here.
             return MemoryFilesystemFuncTool(
                 self._artifact_files,
                 root_label=f"in-memory:{self._artifact_slug}",

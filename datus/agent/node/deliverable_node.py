@@ -252,6 +252,12 @@ class DeliverableAgenticNode(AgenticNode):
             raise DatusException(ErrorCode.COMMON_FIELD_REQUIRED, message_args={"field_name": "input"})
 
         user_input = self.input
+        logger.info(
+            "%s execute_stream start: session=%s msg=%r",
+            self.get_node_name(),
+            self.session_id,
+            (getattr(user_input, "user_message", "") or "")[:120],
+        )
 
         action = ActionHistory.create_action(
             role=ActionRole.USER,
