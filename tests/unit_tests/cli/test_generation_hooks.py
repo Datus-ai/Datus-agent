@@ -1511,6 +1511,25 @@ class TestSyncSemanticToDbMetricOnlyDiagnostic:
         assert "create_metric: true" in result["error"]
         assert str(empty_metric) in result["error"]
 
+    def test_metric_only_sync_with_unnamed_metric_blocks_returns_actionable_error(self, agent_config, tmp_path):
+        unnamed_metric = tmp_path / "unnamed_metrics.yml"
+        unnamed_metric.write_text("metric:\n  description: missing name\n  type: measure_proxy\n")
+
+        with (
+            patch("datus.cli.generation_hooks.SemanticModelRAG"),
+            patch("datus.cli.generation_hooks.MetricRAG"),
+        ):
+            result = GenerationHooks._sync_semantic_to_db(
+                file_path=str(unnamed_metric),
+                agent_config=agent_config,
+                include_semantic_objects=False,
+                include_metrics=True,
+            )
+
+        assert result["success"] is False
+        assert "non-empty `metric.name`" in result["error"]
+        assert str(unnamed_metric) in result["error"]
+
     def test_combined_sync_keeps_generic_error_when_both_missing(self, agent_config, tmp_path):
         """A combined sync (semantic + metrics) with neither still uses the
         original generic message; the new diagnostic only fires for the

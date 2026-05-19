@@ -1120,6 +1120,8 @@ class GenerationHooks(AgentHooks):
             # 3. Process Metrics (Standard Metrics) - These go to MetricStorage
             if include_metrics:
                 for metric in metrics_list:
+                    if not isinstance(metric, dict):
+                        continue
                     m_name = metric.get("name")
                     if not m_name:
                         continue
@@ -1309,6 +1311,16 @@ class GenerationHooks(AgentHooks):
                     ),
                 }
             else:
+                if include_metrics and not include_semantic_objects and metrics_list:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Metric file {file_path!r} contains `metric:` YAML blocks, "
+                            "but none has a non-empty `metric.name`. Rewrite the file with "
+                            "one explicit named metric per YAML document; unnamed metric blocks "
+                            "cannot be synced to the Knowledge Base."
+                        ),
+                    }
                 return {"success": False, "error": "No valid objects found to sync"}
 
         except Exception as e:

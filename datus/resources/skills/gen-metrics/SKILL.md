@@ -206,6 +206,7 @@ Do not read, edit, or pass `metric_file` / `semantic_model_file` paths from anot
 2. **Write metric YAML**: Use `write_file` to save each metric definition to `subject/semantic_models/<current_datasource>/metrics/{table_name}_metrics.yml`.
    - For `measure_proxy`, keep `type_params.measure` as a string measure name.
    - For filtered metrics, add a dedicated conditional measure to the semantic model first, then reference that measure from the metric YAML.
+   - Each generated metric must be an explicit named top-level `metric:` YAML document. Do not emit unnamed `metric:` blocks or wrap metrics inside another object.
 
 3. **Validate (MUST PASS)**: Call `validate_semantic` to check the metric YAML.
    - If validation fails, fix errors with `edit_file` and retry until it **passes**.
@@ -218,8 +219,8 @@ Do not read, edit, or pass `metric_file` / `semantic_model_file` paths from anot
 
 After all generated metrics have passed validation and dry-run:
 - Collect all generated metrics and their dry-run SQLs into `metric_sqls_json`
-- Prefer calling `end_metric_generation(metric_file, semantic_model_file, metric_sqls_json)` **ONCE** to sync them to Knowledge Base while you can still fix publish errors
-- If you miss this tool call, the host will use the final JSON `metric_file` to validate, dry-run, and publish before reporting success
+- You MUST call `end_metric_generation(metric_file, semantic_model_file, metric_sqls_json)` **ONCE** to sync them to Knowledge Base while you can still fix publish errors
+- Do not rely on the final JSON host fallback. The host fallback is only a last-resort guard when the tool call was accidentally missed.
 - If no metrics were generated, do NOT call `end_metric_generation`
 
 Phase 1 confirms the generation scope; validation plus dry-run are the acceptance gate before syncing.
@@ -244,7 +245,7 @@ Phase 1 confirms the generation scope; validation plus dry-run are the acceptanc
 
 - **Phase 1**: Confirm which metrics to generate before proceeding. Use `ask_user` when it is available.
 - **Validation MUST pass** — always call `validate_semantic` and ensure it passes before proceeding to the next phase. If it fails, fix and retry until it passes.
-- **Sync automatically after validation** — once validation and dry-run pass, prefer calling `end_metric_generation` without another user confirmation. The final JSON `metric_file` is the host fallback.
+- **Sync automatically after validation** — once validation and dry-run pass, call `end_metric_generation` without another user confirmation. The final JSON `metric_file` is only a last-resort fallback.
 - **COUNT agg must use `expr: "1"`** — never use `expr: {column}` with COUNT (use COUNT_DISTINCT for that).
 - For ratio metrics, both numerator and denominator measures must exist in the semantic model.
 - For expr metrics, all referenced measures must exist in the semantic model.
@@ -254,4 +255,4 @@ Phase 1 confirms the generation scope; validation plus dry-run are the acceptanc
 - Every data_source MUST have a primary time dimension (`type: TIME` with `is_primary: true`).
 - Measure names must be globally unique across all data sources.
 - For snapshot/balance data, always add `non_additive_dimension` to prevent incorrect time aggregation.
-- **Keep files scoped** — only write semantic model YAML and metric YAML files. Prefer syncing metrics through `end_metric_generation`; the final JSON `metric_file` is the host fallback.
+- **Keep files scoped** — only write semantic model YAML and metric YAML files. Sync metrics through `end_metric_generation`; the final JSON `metric_file` is only a last-resort fallback.

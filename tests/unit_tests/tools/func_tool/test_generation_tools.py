@@ -324,6 +324,20 @@ class TestEndMetricGenerationPreflight:
         assert "not valid YAML" in result.error
         sync_mock.assert_not_called()
 
+    def test_rejects_unnamed_metric_block(self, generation_tools, tmp_path):
+        self._mark_ready_to_publish(generation_tools)
+        bad = tmp_path / "semantic_models" / "unnamed_metric.yml"
+        bad.parent.mkdir(parents=True, exist_ok=True)
+        bad.write_text("metric:\n  description: missing name\n  type: measure_proxy\n")
+        with (
+            self._patch_path_resolution(generation_tools, tmp_path),
+            patch.object(generation_tools, "_sync_metric_to_db") as sync_mock,
+        ):
+            result = generation_tools.end_metric_generation(metric_file=str(bad))
+        assert result.success == 0
+        assert "non-empty `metric.name`" in result.error
+        sync_mock.assert_not_called()
+
     def test_accepts_file_with_metric_block(self, generation_tools, tmp_path):
         self._mark_ready_to_publish(generation_tools)
         generation_tools.generation_evidence.metric_dry_run_metrics.add("revenue_total")
@@ -391,6 +405,14 @@ class TestValidateMetricFileHasBlocks:
         f.write_text(": : :\n  - oops\n  not yaml")
         msg = GenerationTools._validate_metric_file_has_blocks(str(f))
         assert "not valid YAML" in msg
+
+    def test_returns_error_for_unnamed_metric_block(self, tmp_path):
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        f = tmp_path / "unnamed.yml"
+        f.write_text("metric:\n  description: missing name\n  type: measure_proxy\n")
+        msg = GenerationTools._validate_metric_file_has_blocks(str(f))
+        assert "non-empty `metric.name`" in msg
 
     def test_returns_none_for_single_metric_block(self, tmp_path):
         from datus.tools.func_tool.generation_tools import GenerationTools

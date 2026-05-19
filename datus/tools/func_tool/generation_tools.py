@@ -372,12 +372,12 @@ class GenerationTools:
     @staticmethod
     def _validate_metric_file_has_blocks(metric_file: str) -> Optional[str]:
         """Return an actionable error string when ``metric_file`` lacks any
-        ``metric:`` YAML document; return ``None`` when at least one is found.
+        named ``metric:`` YAML document; return ``None`` when at least one is found.
 
-        The check is intentionally lenient: a file is considered valid as long
-        as it parses as YAML and at least one document carries a top-level
-        ``metric:`` key. We don't validate the metric body here — the
-        downstream sync path does that.
+        The check is intentionally narrow: it verifies the file parses as YAML
+        and at least one document carries a top-level ``metric:`` mapping with
+        a non-empty ``name``. The downstream sync path still owns full metric
+        schema handling.
         """
         if not metric_file or not os.path.exists(metric_file):
             return f"Metric file not found: {metric_file!r}"
@@ -390,9 +390,22 @@ class GenerationTools:
                 "Rewrite the file with explicit `metric:` YAML blocks "
                 "(separated by `---`)."
             )
+        saw_metric_block = False
         for doc in docs:
             if isinstance(doc, dict) and "metric" in doc:
-                return None
+                saw_metric_block = True
+                metric = doc.get("metric")
+                if isinstance(metric, dict):
+                    name = metric.get("name")
+                    if isinstance(name, str) and name.strip():
+                        return None
+        if saw_metric_block:
+            return (
+                f"Metric file {metric_file!r} contains `metric:` YAML blocks, "
+                "but none has a non-empty `metric.name`. Rewrite the file with "
+                "one explicit named metric per YAML document, for example: "
+                "`metric: {name: revenue_total, type: measure_proxy, type_params: {measure: revenue_total}}`."
+            )
         return (
             f"Metric file {metric_file!r} contains no `metric:` YAML blocks. "
             "Documentation/markdown is not a metric definition. Rewrite the file "
