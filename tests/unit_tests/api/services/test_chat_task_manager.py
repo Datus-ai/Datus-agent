@@ -169,8 +169,11 @@ class TestApplyPermissionModeOverride:
         """Nodes without a permission_manager (e.g. workflow) are tolerated."""
         manager = ChatTaskManager()
         node = self._make_node(current_profile=None)
+        assert node.permission_manager is None
         manager._apply_permission_mode_override(node, self._make_agent_config(), "dangerous")
-        # No exception, no attribute access beyond what's expected.
+        # Permission manager must remain untouched — the override path is
+        # silently skipped when the node never had one to begin with.
+        assert node.permission_manager is None
 
     def test_noop_when_already_on_target_profile(self):
         """Requested profile == active profile must skip the switch."""
@@ -199,6 +202,32 @@ class TestApplyPermissionModeOverride:
         args, kwargs = node.permission_manager.switch_profile.call_args
         assert args == ("dangerous",)
         assert isinstance(kwargs["user_overrides"], PermissionConfig)
+
+    def test_raises_when_user_overrides_build_fails(self, monkeypatch):
+        """Fail closed if agent.yml permissions.rules can't be parsed.
+
+        Silently dropping malformed user rules and applying the bare
+        profile base would broaden permissions beyond the operator's
+        intent, so the override path must surface the error instead.
+        """
+        manager = ChatTaskManager()
+        node = self._make_node(current_profile="normal")
+
+        def _explode(*_args, **_kwargs):
+            raise ValueError("malformed rule")
+
+        monkeypatch.setattr(
+            "datus.tools.permission.profiles.build_user_overrides",
+            _explode,
+        )
+
+        with pytest.raises(RuntimeError, match="permission_mode='auto'"):
+            manager._apply_permission_mode_override(
+                node,
+                self._make_agent_config({"rules": [{"bad": "shape"}]}),
+                "auto",
+            )
+        node.permission_manager.switch_profile.assert_not_called()
 
     def test_swallows_switch_profile_failure(self):
         """A malformed override must not abort the chat turn."""

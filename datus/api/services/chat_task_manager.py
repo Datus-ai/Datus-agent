@@ -757,8 +757,17 @@ class ChatTaskManager:
         No-ops when ``permission_mode`` is falsy, the node has no
         ``permission_manager`` (e.g. workflow nodes that skip the skill
         setup), or the requested profile already matches the active one.
-        Logs and swallows ``DatusException`` from ``switch_profile`` so a
-        malformed override never aborts the entire chat turn.
+        Failure handling is split deliberately:
+
+        * Building ``user_overrides`` from ``agent.yml`` fails closed —
+          raises so the outer ``_run_loop`` aborts the turn and emits an
+          SSE error. Silently dropping malformed user rules would apply
+          the bare profile base, which can be **broader** than the
+          operator-configured posture (e.g. yaml had an explicit DENY
+          we'd lose), so the safe move is to refuse the switch loudly.
+        * ``switch_profile`` failures (unknown profile, malformed merge
+          result) are logged and swallowed because at that point the
+          node still has its original, server-default profile installed.
         """
         if not permission_mode:
             return
@@ -774,13 +783,19 @@ class ChatTaskManager:
         raw_user = {k: v for k, v in raw_permissions.items() if k != "profile"}
         try:
             user_overrides = build_user_overrides(permission_mode, raw_user)
-        except Exception as e:
-            logger.warning(
-                "Failed to build user overrides for permission_mode=%r: %s; applying profile base only",
+        except Exception as exc:
+            logger.error(
+                "Cannot build user overrides for permission_mode=%r from agent.yml: %s; "
+                "refusing to switch profile to avoid broadening permissions beyond the "
+                "operator-configured rules",
                 permission_mode,
-                e,
+                exc,
+                exc_info=True,
             )
-            user_overrides = None
+            raise RuntimeError(
+                f"Failed to apply permission_mode={permission_mode!r}: "
+                f"agent.yml permissions.rules is malformed ({exc})"
+            ) from exc
 
         try:
             permission_manager.switch_profile(permission_mode, user_overrides=user_overrides)
