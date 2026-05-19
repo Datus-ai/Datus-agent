@@ -23,7 +23,7 @@ from rich.syntax import Syntax
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.cli.action_display.display import ActionHistoryDisplay
-from datus.cli.cli_styles import CODE_THEME
+from datus.cli.cli_styles import CODE_THEME, print_warning
 from datus.cli.execution_state import ExecutionInterrupted, PendingInputQueue, auto_submit_interaction
 from datus.cli.list_selector_app import ListItem, ListSelectorApp
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
@@ -291,9 +291,10 @@ class ChatCommands:
                 break
 
             if continuations >= self.MAX_AUTO_CONTINUATIONS:
-                self.console.print(
-                    f"[yellow]{len(queue)} queued message(s) skipped — auto-continuation cap reached. "
-                    "Send a new prompt to flush them.[/]"
+                print_warning(
+                    self.console,
+                    f"{len(queue)} queued message(s) skipped — auto-continuation cap reached. "
+                    "Send a new prompt to flush them.",
                 )
                 break
 

@@ -170,7 +170,10 @@ class TestActivePendingInputQueueAccessor:
 
     def test_returns_queue_when_node_has_one(self):
         queue = PendingInputQueue()
-        chat_commands = SimpleNamespace(current_node=SimpleNamespace(pending_input_queue=queue))
+        chat_commands = SimpleNamespace(
+            current_node=SimpleNamespace(pending_input_queue=queue),
+            current_streaming_ctx=object(),
+        )
         cli = SimpleNamespace(chat_commands=chat_commands)
 
         assert self._call(cli) is queue
@@ -180,11 +183,26 @@ class TestActivePendingInputQueueAccessor:
         assert self._call(cli) is None
 
     def test_returns_none_when_no_current_node(self):
-        cli = SimpleNamespace(chat_commands=SimpleNamespace(current_node=None))
+        cli = SimpleNamespace(chat_commands=SimpleNamespace(current_node=None, current_streaming_ctx=object()))
         assert self._call(cli) is None
 
     def test_returns_none_when_node_has_no_queue_attribute(self):
-        chat_commands = SimpleNamespace(current_node=SimpleNamespace())
+        chat_commands = SimpleNamespace(current_node=SimpleNamespace(), current_streaming_ctx=object())
+        cli = SimpleNamespace(chat_commands=chat_commands)
+        assert self._call(cli) is None
+
+    def test_returns_none_when_not_streaming(self):
+        """Stale ``current_node`` between chat turns must not leak its queue.
+
+        Without an active streamed turn (``current_streaming_ctx is None``),
+        a slash command or other worker task could otherwise push input into
+        a queue that the next chat run would surprisingly flush.
+        """
+        queue = PendingInputQueue()
+        chat_commands = SimpleNamespace(
+            current_node=SimpleNamespace(pending_input_queue=queue),
+            current_streaming_ctx=None,
+        )
         cli = SimpleNamespace(chat_commands=chat_commands)
         assert self._call(cli) is None
 

@@ -1016,7 +1016,10 @@ class TestPendingInputQueue:
 
         q = PendingInputQueue()
         n_threads = 8
-        per_thread = 50
+        # Stay strictly below MAX_PENDING_ITEMS so the contention test
+        # asserts thread-safety, not overflow behaviour.
+        per_thread = PendingInputQueue.MAX_PENDING_ITEMS // n_threads
+        assert n_threads * per_thread <= PendingInputQueue.MAX_PENDING_ITEMS
         producers = []
         barrier = threading.Barrier(n_threads)
 
@@ -1036,6 +1039,23 @@ class TestPendingInputQueue:
         # producer's pushes is preserved by the underlying deque.
         items = q.drain_all()
         assert len(items) == n_threads * per_thread
+
+    def test_push_beyond_cap_drops_oldest_and_warns(self, caplog):
+        q = PendingInputQueue()
+        cap = PendingInputQueue.MAX_PENDING_ITEMS
+        for i in range(cap):
+            q.push(f"old-{i}")
+        assert len(q) == cap
+
+        with caplog.at_level("WARNING", logger="datus.cli.execution_state"):
+            q.push("new")
+
+        assert len(q) == cap
+        snapshot = q.snapshot()
+        # Oldest entry was dropped, newest is at the tail.
+        assert snapshot[0] == "old-1"
+        assert snapshot[-1] == "new"
+        assert any("PendingInputQueue overflow" in rec.message for rec in caplog.records)
 
 
 class TestEmitUserInsert:

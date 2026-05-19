@@ -65,13 +65,16 @@ class PendingInputQueue:
     """
 
     MAX_DRAIN_PER_TURN = 3
+    MAX_PENDING_ITEMS = 200
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._items: "deque[str]" = deque()
+        self._items: "deque[str]" = deque(maxlen=self.MAX_PENDING_ITEMS)
 
     def push(self, text: str) -> None:
         with self._lock:
+            if len(self._items) == self.MAX_PENDING_ITEMS:
+                logger.warning("PendingInputQueue overflow; dropping oldest staged input.")
             self._items.append(text)
 
     def drain(self) -> List[str]:

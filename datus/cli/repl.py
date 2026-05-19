@@ -544,7 +544,9 @@ class DatusCLI:
         getattr chain because ``chat_commands`` is only created lazily.
         """
         chat_commands = getattr(self, "chat_commands", None)
-        current_node = getattr(chat_commands, "current_node", None) if chat_commands else None
+        if chat_commands is None or getattr(chat_commands, "current_streaming_ctx", None) is None:
+            return None
+        current_node = getattr(chat_commands, "current_node", None)
         return getattr(current_node, "pending_input_queue", None) if current_node else None
 
     def _interrupt_agent(self) -> None:
