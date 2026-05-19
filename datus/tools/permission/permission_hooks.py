@@ -21,7 +21,7 @@ import logging
 import weakref
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, List, Optional, Set, Tuple
 
 from agents.lifecycle import AgentHooks
 
@@ -169,6 +169,7 @@ class PermissionHooks(AgentHooks):
         *,
         fs_policy: Optional[FilesystemPolicy] = None,
         non_interactive: bool = False,
+        proxied_tool_names: Optional[Set[str]] = None,
     ):
         """Initialize the permission hooks.
 
@@ -191,6 +192,15 @@ class PermissionHooks(AgentHooks):
                 subagents, etc.) where there is no human in the loop and any
                 ASK/EXTERNAL hit means the tool is outside the active profile's
                 scope. ``DENY`` continues to raise as before.
+            proxied_tool_names: Optional set of tool names that
+                :func:`datus.tools.proxy.proxy_tool.apply_proxy_tools` wrapped
+                with stdin-driven proxies. When provided, ``on_tool_start``
+                skips ALL permission checks (DENY/ASK/zone) for these tools —
+                the external caller (e.g. ``print_mode`` stdin protocol) owns
+                secondary confirmation, so the agent must not double-prompt or
+                block proxied calls. Passing the same set reference held by the
+                node lets late ``apply_proxy_tools`` invocations be observed
+                without rebuilding the hook.
         """
         self.broker = broker
         self.permission_manager = permission_manager
@@ -198,6 +208,7 @@ class PermissionHooks(AgentHooks):
         self.tool_registry = tool_registry
         self.fs_policy = fs_policy
         self.non_interactive = non_interactive
+        self.proxied_tool_names = proxied_tool_names
 
     # Plan-mode tooling is always allowed regardless of permission profile:
     # ``confirm_plan`` already runs its own user interaction, and ``todo_*``
@@ -227,6 +238,14 @@ class PermissionHooks(AgentHooks):
         # Short-circuit plan-mode helpers: they carry their own UX and have
         # no external side effects, so skip the permission profile entirely.
         if tool_name in self._PLAN_MODE_BYPASS_TOOLS:
+            return
+
+        # Short-circuit proxied tools: their execution is delegated to the
+        # external caller via the stdin proxy channel, which owns secondary
+        # confirmation. Re-checking the profile here would either double-prompt
+        # (ASK) or block calls the caller already authorised (DENY).
+        if self.proxied_tool_names and tool_name in self.proxied_tool_names:
+            logger.debug("Tool '%s' is proxied; skipping permission check", tool_name)
             return
 
         # Get tool category and pattern name for permission checking

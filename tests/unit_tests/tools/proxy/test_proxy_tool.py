@@ -453,3 +453,150 @@ class TestFsDependentNodeExclusion:
 
         # Should be proxied since node has no get_node_name
         assert node.tools[0].on_invoke_tool is not original_invoke
+
+
+# ---------------------------------------------------------------------------
+# Tests: proxied_tool_names exposure for PermissionHooks bypass
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ci
+class TestProxiedToolNames:
+    """``apply_proxy_tools`` records actually-wrapped tool names on the node."""
+
+    def _make_node(self, tools, registry=None, node_name=None, proxied_attr="missing"):
+        kwargs = {
+            "tools": tools,
+            "tool_channel": ToolResultChannel(),
+            "tool_registry": registry or ToolRegistry(),
+            "proxy_tool_patterns": None,
+        }
+        if node_name is not None:
+            kwargs["get_node_name"] = lambda: node_name
+        if proxied_attr == "set":
+            kwargs["proxied_tool_names"] = set()
+        node = SimpleNamespace(**kwargs)
+        return node
+
+    def test_records_wrapped_tool_names(self):
+        original_invoke = MagicMock()
+        read_file = FunctionTool(
+            name="read_file",
+            description="Read",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=original_invoke,
+        )
+        execute_sql = FunctionTool(
+            name="execute_sql",
+            description="SQL",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=original_invoke,
+        )
+
+        node = self._make_node(
+            [read_file, execute_sql],
+            registry=ToolRegistry({"read_file": "filesystem_tools", "execute_sql": "db_tools"}),
+        )
+
+        apply_proxy_tools(node, ["filesystem_tools.*"])
+
+        # Only the wrapped tool's name is recorded.
+        assert node.proxied_tool_names == {"read_file"}
+
+    def test_excludes_fs_dependent_skipped_tools(self):
+        original_invoke = MagicMock()
+        write_file = FunctionTool(
+            name="write_file",
+            description="Write",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=original_invoke,
+        )
+        execute_sql = FunctionTool(
+            name="execute_sql",
+            description="SQL",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=original_invoke,
+        )
+
+        # gen_semantic_model is in _FS_DEPENDENT_NODES — write_file must NOT be
+        # proxied or recorded, but execute_sql still is.
+        node = self._make_node(
+            [write_file, execute_sql],
+            registry=ToolRegistry({"write_file": "filesystem_tools", "execute_sql": "db_tools"}),
+            node_name="gen_semantic_model",
+        )
+
+        apply_proxy_tools(node, ["*"])
+
+        assert node.proxied_tool_names == {"execute_sql"}
+
+    def test_excludes_non_function_tools(self):
+        non_func_tool = MagicMock(spec=["name"])
+        non_func_tool.name = "mcp_tool"
+        read_file = FunctionTool(
+            name="read_file",
+            description="Read",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=MagicMock(),
+        )
+
+        node = self._make_node(
+            [non_func_tool, read_file],
+            registry=ToolRegistry({"read_file": "filesystem_tools"}),
+        )
+
+        apply_proxy_tools(node, ["*"])
+
+        # Non-FunctionTool instances are kept as-is and therefore NOT recorded.
+        assert node.proxied_tool_names == {"read_file"}
+
+    def test_subsequent_calls_overwrite(self):
+        original_invoke = MagicMock()
+        read_file = FunctionTool(
+            name="read_file",
+            description="Read",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=original_invoke,
+        )
+        execute_sql = FunctionTool(
+            name="execute_sql",
+            description="SQL",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=original_invoke,
+        )
+
+        node = self._make_node(
+            [read_file, execute_sql],
+            registry=ToolRegistry({"read_file": "filesystem_tools", "execute_sql": "db_tools"}),
+        )
+
+        apply_proxy_tools(node, ["filesystem_tools.*"])
+        assert node.proxied_tool_names == {"read_file"}
+
+        apply_proxy_tools(node, ["db_tools.*"])
+        # The second call resets the set: only db_tools matches now.
+        assert node.proxied_tool_names == {"execute_sql"}
+
+    def test_mutates_existing_set_reference(self):
+        """When node already exposes a set, ``apply_proxy_tools`` updates it in
+        place so PermissionHooks built earlier still observes the latest names.
+        """
+        original_invoke = MagicMock()
+        read_file = FunctionTool(
+            name="read_file",
+            description="Read",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=original_invoke,
+        )
+
+        node = self._make_node(
+            [read_file],
+            registry=ToolRegistry({"read_file": "filesystem_tools"}),
+            proxied_attr="set",
+        )
+        held_reference = node.proxied_tool_names
+
+        apply_proxy_tools(node, ["filesystem_tools.*"])
+
+        assert node.proxied_tool_names is held_reference
+        assert held_reference == {"read_file"}

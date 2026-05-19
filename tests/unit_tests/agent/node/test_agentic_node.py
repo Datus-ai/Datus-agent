@@ -1728,3 +1728,50 @@ class TestInjectResponseLanguage:
             mgr.return_value.render_template.side_effect = RuntimeError("boom")
             result = node._inject_response_language("BASE")
         assert result == "BASE"
+
+
+# ---------------------------------------------------------------------------
+# _ensure_permission_hooks: proxied_tool_names wiring
+# ---------------------------------------------------------------------------
+
+
+class TestEnsurePermissionHooksProxyWiring:
+    """The shared ``proxied_tool_names`` set must flow into ``PermissionHooks``."""
+
+    def _prepare_node(self, proxied_tool_names):
+        from datus.tools.registry.tool_registry import ToolRegistry
+
+        node = _make_simple_node()
+        node.permission_manager = MagicMock()
+        node.permission_hooks = None
+        node.tool_registry = ToolRegistry()
+        node.execution_mode = None
+        node.proxied_tool_names = proxied_tool_names
+        # ``_make_filesystem_policy`` looks at agent_config / root path; stub.
+        node._make_filesystem_policy = MagicMock(return_value=None)
+        node._populate_tool_registry = MagicMock()
+        return node
+
+    def test_passes_shared_set_reference(self):
+        """Constructor receives the *same* set object the node holds."""
+        proxied = {"read_file"}
+        node = self._prepare_node(proxied)
+
+        with patch("datus.tools.permission.permission_hooks.PermissionHooks") as ph_cls:
+            node._ensure_permission_hooks()
+
+        ph_cls.assert_called_once()
+        kwargs = ph_cls.call_args.kwargs
+        # Must be the same set instance, not a copy — late ``apply_proxy_tools``
+        # invocations mutate this set in place.
+        assert kwargs["proxied_tool_names"] is proxied
+
+    def test_default_empty_set_is_passed(self):
+        """A freshly-built node with no proxied tools still passes an empty set."""
+        node = self._prepare_node(set())
+
+        with patch("datus.tools.permission.permission_hooks.PermissionHooks") as ph_cls:
+            node._ensure_permission_hooks()
+
+        kwargs = ph_cls.call_args.kwargs
+        assert kwargs["proxied_tool_names"] == set()

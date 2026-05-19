@@ -325,6 +325,172 @@ class TestPermissionHooks:
         assert "run /profile to open the profile picker" in str(exc_info.value)
         assert "arrow keys" in str(exc_info.value)
 
+    def test_initialization_default_proxied_tool_names_is_none(self, mock_broker):
+        """``proxied_tool_names`` defaults to ``None`` for back-compat callers."""
+        hooks = PermissionHooks(
+            broker=mock_broker,
+            permission_manager=PermissionManager(),
+            node_name="chat",
+            tool_registry=ToolRegistry(),
+        )
+        assert hooks.proxied_tool_names is None
+
+    @pytest.mark.asyncio
+    async def test_on_tool_start_skips_check_for_proxied_tool(self, mock_broker):
+        """Proxied tools bypass permission checking even when DENY would normally fire.
+
+        The external caller (e.g. ``print_mode`` stdin protocol) is responsible
+        for secondary confirmation, so the agent must not double-check.
+        """
+        config = PermissionConfig(
+            default_permission=PermissionLevel.ALLOW,
+            rules=[
+                PermissionRule(tool="db_tools", pattern="*", permission=PermissionLevel.DENY),
+            ],
+        )
+        registry = ToolRegistry()
+        tool_mock = MagicMock()
+        tool_mock.name = "execute_sql"
+        registry.register_tools("db_tools", [tool_mock])
+
+        proxied = {"execute_sql"}
+        manager = PermissionManager(global_config=config)
+        check_spy = MagicMock(wraps=manager.check_permission)
+        manager.check_permission = check_spy  # type: ignore[assignment]
+
+        hooks = PermissionHooks(
+            broker=mock_broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=registry,
+            proxied_tool_names=proxied,
+        )
+
+        context = MagicMock()
+        context.tool_arguments = "{}"
+        agent = MagicMock()
+        tool = MagicMock()
+        tool.name = "execute_sql"
+
+        # No exception even though the profile says DENY for db_tools.*.
+        await hooks.on_tool_start(context, agent, tool)
+
+        # Permission lookup must not happen at all for proxied tools.
+        check_spy.assert_not_called()
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_on_tool_start_skips_check_for_proxied_ask_without_broker(self, mock_broker):
+        """An ASK-rule proxied tool also bypasses — broker must not be touched."""
+        config = PermissionConfig(
+            default_permission=PermissionLevel.ALLOW,
+            rules=[
+                PermissionRule(tool="db_tools", pattern="*", permission=PermissionLevel.ASK),
+            ],
+        )
+        registry = ToolRegistry()
+        tool_mock = MagicMock()
+        tool_mock.name = "execute_sql"
+        registry.register_tools("db_tools", [tool_mock])
+
+        manager = PermissionManager(global_config=config)
+        hooks = PermissionHooks(
+            broker=mock_broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=registry,
+            proxied_tool_names={"execute_sql"},
+        )
+
+        context = MagicMock()
+        context.tool_arguments = "{}"
+        agent = MagicMock()
+        tool = MagicMock()
+        tool.name = "execute_sql"
+
+        await hooks.on_tool_start(context, agent, tool)
+
+        # No broker prompt despite the ASK rule.
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_on_tool_start_observes_late_proxied_set_mutation(self, mock_broker):
+        """When the hook holds a shared set reference, names added AFTER
+        construction also bypass permission — this is the wiring used by
+        ``ChatAgenticNode._setup_permission_hooks`` together with
+        ``apply_proxy_tools`` running later in ``chat_task_manager``.
+        """
+        config = PermissionConfig(
+            default_permission=PermissionLevel.ALLOW,
+            rules=[
+                PermissionRule(tool="db_tools", pattern="*", permission=PermissionLevel.DENY),
+            ],
+        )
+        registry = ToolRegistry()
+        tool_mock = MagicMock()
+        tool_mock.name = "execute_sql"
+        registry.register_tools("db_tools", [tool_mock])
+
+        shared: set = set()
+        manager = PermissionManager(global_config=config)
+        hooks = PermissionHooks(
+            broker=mock_broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=registry,
+            proxied_tool_names=shared,
+        )
+
+        # Empty set at construction → DENY still applies.
+        context = MagicMock()
+        context.tool_arguments = "{}"
+        agent = MagicMock()
+        tool = MagicMock()
+        tool.name = "execute_sql"
+
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(context, agent, tool)
+
+        # Simulate ``apply_proxy_tools`` running later and mutating the shared set.
+        shared.add("execute_sql")
+
+        # Now the same hook observes the name and skips permission checking.
+        await hooks.on_tool_start(context, agent, tool)
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_on_tool_start_non_proxied_tool_still_checked(self, mock_broker):
+        """Tools outside ``proxied_tool_names`` follow the normal DENY behaviour."""
+        config = PermissionConfig(
+            default_permission=PermissionLevel.ALLOW,
+            rules=[
+                PermissionRule(tool="db_tools", pattern="*", permission=PermissionLevel.DENY),
+            ],
+        )
+        registry = ToolRegistry()
+        tool_mock = MagicMock()
+        tool_mock.name = "execute_sql"
+        registry.register_tools("db_tools", [tool_mock])
+
+        manager = PermissionManager(global_config=config)
+        hooks = PermissionHooks(
+            broker=mock_broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=registry,
+            # Different tool name → execute_sql should still be denied.
+            proxied_tool_names={"read_file"},
+        )
+
+        context = MagicMock()
+        context.tool_arguments = "{}"
+        agent = MagicMock()
+        tool = MagicMock()
+        tool.name = "execute_sql"
+
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(context, agent, tool)
+
     @pytest.mark.asyncio
     async def test_on_tool_start_ask_with_session_approval(self, mock_broker):
         """Test on_tool_start uses session cache for ASK permission."""

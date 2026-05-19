@@ -198,6 +198,10 @@ class TestChatAgenticNodeToolSetup:
             # Contract is mandatory: strict mode must reach the hook policy,
             # otherwise EXTERNAL paths would still trigger broker prompts in
             # non-interactive bootstraps (the whole point of strict mode).
+            # PermissionHooks is built lazily by ``_ensure_permission_hooks``
+            # (called from ``_compose_hooks`` on the first LLM turn); trigger
+            # it explicitly here to inspect the constructed policy.
+            node._ensure_permission_hooks()
             assert node.permission_hooks.fs_policy.strict is True
         finally:
             real_agent_config.filesystem_strict = previous_strict

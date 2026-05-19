@@ -10,7 +10,7 @@ chat interactions with markdown output, database/filesystem tool support,
 skills, and permissions. This node is fully independent from GenSQLAgenticNode.
 """
 
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.gen_sql_agentic_node import prepare_template_context
@@ -22,7 +22,6 @@ from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
-from datus.tools.permission.permission_hooks import PermissionHooks
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
 from datus.tools.skill_tools.skill_manager import SkillManager
@@ -93,9 +92,6 @@ class ChatAgenticNode(AgenticNode):
         self._platform_doc_tool: Optional[PlatformDocSearchTool] = None
         self.reference_template_tools: Optional[ReferenceTemplateTools] = None
 
-        # Chat-specific: permission hooks
-        self.permission_hooks: Optional[PermissionHooks] = None
-
         # Call parent constructor
         super().__init__(
             node_id=node_id,
@@ -148,8 +144,12 @@ class ChatAgenticNode(AgenticNode):
         self._rebuild_tools()
         self._setup_platform_doc_tools()
 
-        # Setup permission hooks after all tools are initialized
-        self._setup_permission_hooks()
+        # Populate the shared tool_registry eagerly so consumers that inspect
+        # categories before the first LLM turn (tests, ``apply_proxy_tools``'
+        # FS-dependent exclusion, etc.) see a populated mapping. The actual
+        # ``PermissionHooks`` is still built lazily by
+        # ``_ensure_permission_hooks`` via ``_compose_hooks``.
+        self._populate_tool_registry()
 
     def _setup_date_parsing_tools(self):
         """Setup date parsing tools."""
@@ -220,54 +220,38 @@ class ChatAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup skill tools: {e}")
 
-    def _setup_permission_hooks(self):
-        """Setup permission hooks and register all tool categories."""
-        if not self.permission_manager:
-            logger.debug("No permission manager available, skipping permission hooks setup")
-            return
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Declare chat-specific tool categories for permission registration.
 
-        try:
-            # 1. Populate the node-level tool_registry
-            if self.db_func_tool:
-                self.tool_registry.register_tools("db_tools", self.db_func_tool.available_tools())
-            if self.context_search_tools:
-                self.tool_registry.register_tools("context_search_tools", self.context_search_tools.available_tools())
-            if self.reference_template_tools:
-                self.tool_registry.register_tools(
-                    "reference_template_tools", self.reference_template_tools.available_tools()
-                )
-            if self.date_parsing_tools:
-                self.tool_registry.register_tools("date_parsing_tools", self.date_parsing_tools.available_tools())
-            if self.filesystem_func_tool:
-                self.tool_registry.register_tools("filesystem_tools", self.filesystem_func_tool.available_tools())
-            if self.bash_tool:
-                self.tool_registry.register_tools("bash_tools", self.bash_tool.available_tools())
-            if self.skill_func_tool:
-                self.tool_registry.register_tools("skills", self.skill_func_tool.available_tools())
-            if self.sub_agent_task_tool:
-                self.tool_registry.register_tools("sub_agent_tools", self.sub_agent_task_tool.available_tools())
-            if self.ask_user_tool:
-                self.tool_registry.register_tools("tools", self.ask_user_tool.available_tools())
-            if self._platform_doc_tool:
-                self.tool_registry.register_tools("tools", self._platform_doc_tool.available_tools())
-            # 2. Create PermissionHooks sharing the same tool_registry instance
-            broker = self._get_or_create_broker()
-            # ``workflow`` runs have no UI listener; ASK / EXTERNAL fs checks
-            # must fail closed instead of awaiting the broker forever.
-            non_interactive = getattr(self, "execution_mode", None) == "workflow"
-            self.permission_hooks = PermissionHooks(
-                broker=broker,
-                permission_manager=self.permission_manager,
-                node_name=self.get_node_name(),
-                tool_registry=self.tool_registry,
-                fs_policy=self._make_filesystem_policy(),
-                non_interactive=non_interactive,
-            )
-
-            logger.debug(f"Permission hooks setup with {len(self.tool_registry)} registered tools")
-        except Exception as e:
-            logger.error(f"Failed to setup permission hooks: {e}")
-            self.permission_hooks = None
+        Picked up by ``AgenticNode._populate_tool_registry`` so the base
+        ``_ensure_permission_hooks`` can build ``PermissionHooks`` with the
+        full registry. The base implementation already covers ``skills`` and
+        ``bash_tools``; this override extends with chat's own tool surface.
+        Tools that aren't tied to a profile category (``ask_user_tool``,
+        ``_platform_doc_tool``) land in the ``tools`` catch-all so explicit
+        ``tools.*`` rules can still match them.
+        """
+        mapping = super()._tool_category_map()
+        if self.db_func_tool:
+            mapping["db_tools"] = list(self.db_func_tool.available_tools())
+        if self.context_search_tools:
+            mapping["context_search_tools"] = list(self.context_search_tools.available_tools())
+        if self.reference_template_tools:
+            mapping["reference_template_tools"] = list(self.reference_template_tools.available_tools())
+        if self.date_parsing_tools:
+            mapping["date_parsing_tools"] = list(self.date_parsing_tools.available_tools())
+        if self.filesystem_func_tool:
+            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
+        if self.sub_agent_task_tool:
+            mapping["sub_agent_tools"] = list(self.sub_agent_task_tool.available_tools())
+        catch_all: List[Any] = []
+        if self.ask_user_tool:
+            catch_all.extend(self.ask_user_tool.available_tools())
+        if self._platform_doc_tool:
+            catch_all.extend(self._platform_doc_tool.available_tools())
+        if catch_all:
+            mapping["tools"] = catch_all
+        return mapping
 
     def _rebuild_tools(self):
         """Rebuild the tools list with current tool instances including skills."""

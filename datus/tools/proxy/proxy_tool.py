@@ -95,6 +95,7 @@ def apply_proxy_tools(
         exclude_categories = {"filesystem_tools"}
 
     new_tools = []
+    proxied_names: Set[str] = set()
     for tool in node.tools:
         if isinstance(tool, FunctionTool) and _matches(tool.name, registry, parsed):
             if exclude_categories and registry.get(tool.name) in exclude_categories:
@@ -103,9 +104,21 @@ def apply_proxy_tools(
             else:
                 logger.info(f"Proxying tool: {tool.name}")
                 new_tools.append(create_proxy_tool(tool, target_channel))
+                proxied_names.add(tool.name)
         else:
             new_tools.append(tool)
     node.tools = new_tools
+    # ``PermissionHooks`` consults this set in ``on_tool_start`` to skip the
+    # ALLOW/ASK/DENY check for proxied tools — the external caller (e.g.
+    # ``print_mode`` stdin protocol) owns secondary confirmation. Mutate in
+    # place so existing PermissionHooks instances built earlier still see the
+    # latest snapshot via the shared reference held on the node.
+    existing = getattr(node, "proxied_tool_names", None)
+    if isinstance(existing, set):
+        existing.clear()
+        existing.update(proxied_names)
+    else:
+        node.proxied_tool_names = proxied_names
 
 
 # ── Internal helpers ─────────────────────────────────────────────────

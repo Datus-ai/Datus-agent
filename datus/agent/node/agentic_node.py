@@ -15,7 +15,7 @@ import asyncio
 import os
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Set
 
 from agents import Tool
 from agents.extensions.memory import AdvancedSQLiteSession
@@ -198,6 +198,15 @@ class AgenticNode(Node):
 
         # Proxy tool patterns - stored when apply_proxy_tools() is called, inherited by sub-agents
         self.proxy_tool_patterns: Optional[List[str]] = None
+
+        # Names of tools that ``apply_proxy_tools`` actually replaced with proxy
+        # wrappers. ``PermissionHooks`` consults this set to short-circuit the
+        # permission check for proxied tools — the external caller (e.g.
+        # ``print_mode`` stdin protocol) is responsible for any secondary
+        # confirmation, so the agent must not double-prompt. Held as a stable
+        # reference so PermissionHooks can be built before the first proxy call
+        # and still observe later updates without rebuilding.
+        self.proxied_tool_names: Set[str] = set()
 
         # Shared tool_name -> category registry (used by PermissionHooks & proxy_tool)
         from datus.tools.registry.tool_registry import ToolRegistry
@@ -2427,6 +2436,7 @@ class AgenticNode(Node):
                 tool_registry=self.tool_registry,
                 fs_policy=self._make_filesystem_policy(),
                 non_interactive=non_interactive,
+                proxied_tool_names=self.proxied_tool_names,
             )
             logger.debug(
                 f"PermissionHooks attached to node '{self.get_node_name()}' "
