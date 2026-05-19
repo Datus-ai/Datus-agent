@@ -793,8 +793,7 @@ class ChatTaskManager:
                 exc_info=True,
             )
             raise RuntimeError(
-                f"Failed to apply permission_mode={permission_mode!r}: "
-                f"agent.yml permissions.rules is malformed ({exc})"
+                f"Failed to apply permission_mode={permission_mode!r}: agent.yml permissions.rules is malformed ({exc})"
             ) from exc
 
         try:
