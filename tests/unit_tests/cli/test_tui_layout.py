@@ -13,6 +13,9 @@ catch that class of regression without needing an interactive terminal.
 
 from __future__ import annotations
 
+import os
+
+import pytest
 from prompt_toolkit.layout.containers import ConditionalContainer, Window
 from prompt_toolkit.layout.menus import CompletionsMenuControl
 
@@ -82,6 +85,10 @@ class TestCompletionsMenuWired:
         assert bottom_children[5] is app._completions_menu
         assert bottom_children[6] is app._search_bar
 
+    @pytest.mark.skipif(
+        os.environ.get("TERMINAL_EMULATOR", "").strip().lower() == "jetbrains-jediterm",
+        reason="JediTerm forces mouse_support off; see datus/cli/tui/app.py:_resolve_mouse_support",
+    )
     def test_app_runs_in_full_screen_with_mouse_support(self):
         """Sidebar can only sit "next to" the output history when the
         Application owns the entire terminal — assert the two flags
