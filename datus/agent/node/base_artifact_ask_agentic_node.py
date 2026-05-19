@@ -234,9 +234,14 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
 
         # Path 1: in-memory blob from the agentic_nodes entry. Backend
         # populates this for ``ask_report`` from the latest VisualReportVersion
-        # at config-build time.
+        # at config-build time. Reject obviously degenerate shapes (empty
+        # dict, ``{"files": []}``, missing manifest) before binding so a
+        # malformed blob ends up in the BLOB_REQUIRED / disk-fallback
+        # branches below instead of silently binding to an empty
+        # filesystem — without this, a half-bound report would answer
+        # "File not found" to every read and look like a working agent.
         blob = entry.get("artifact_blob")
-        if isinstance(blob, dict):
+        if self._is_usable_blob(blob):
             self._bind_artifact_from_blob(blob)
             return
 
@@ -258,6 +263,28 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
 
         # Path 3: fall back to the on-disk artifact tree.
         self._bind_artifact_from_disk(agent_config, slug)
+
+    @staticmethod
+    def _is_usable_blob(blob: Any) -> bool:
+        """Return True only for blobs that carry real artifact content.
+
+        The backend's wire shape is ``{manifest: {...}, files: [{path,
+        content}, ...]}`` and a successful publish always populates both:
+        ``manifest`` is required on the source ``VisualReportVersion`` and
+        ``files`` covers the per-prefix allowlist (render/queries/analysis)
+        which is non-empty for any artifact that passed the publish
+        validator. So an empty dict, a ``files``-only blob with no
+        manifest, or a blob with ``files: []`` is a degenerate/half-bound
+        signal — treat it as a missing blob so the BLOB_REQUIRED branch
+        fires for kinds that need it (rather than the agent silently
+        binding to an empty filesystem and answering "File not found" to
+        every read).
+        """
+        if not isinstance(blob, dict):
+            return False
+        manifest = blob.get("manifest")
+        files = blob.get("files")
+        return isinstance(manifest, dict) and bool(manifest) and isinstance(files, list) and bool(files)
 
     def _bind_artifact_from_blob(self, blob: Dict[str, Any]) -> None:
         """Bind to an in-memory ``{manifest, files}`` snapshot.
@@ -362,7 +389,19 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         if self._artifact_files is not None:
             from datus.tools.func_tool import MemoryFilesystemFuncTool
 
-            return MemoryFilesystemFuncTool(self._artifact_files, root_label=f"in-memory:{self._artifact_slug}")
+            # Forward caller-supplied kwargs the same way the disk-mode
+            # branch does (via the super-call below). Today's only caller
+            # — ``ChatAgenticNode._setup_filesystem_tools`` — passes no
+            # kwargs, but preserving the contract avoids a silent drop
+            # the day someone wires per-tool options into the helper.
+            # ``MemoryFilesystemFuncTool``'s ``BaseTool`` parent accepts
+            # arbitrary kwargs into ``tool_params``, so unknown keys are
+            # absorbed harmlessly rather than crashing init.
+            return MemoryFilesystemFuncTool(
+                self._artifact_files,
+                root_label=f"in-memory:{self._artifact_slug}",
+                **kwargs,
+            )
 
         # ``root_path`` is what gates the LLM's ``read_file`` / ``glob`` /
         # ``grep`` reach; passing it via kwargs ensures the policy layer

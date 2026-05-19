@@ -167,6 +167,11 @@ class MemoryFilesystemFuncTool(BaseTool):
             prefix = self._normalize_dir(path)
             scoped = list(self._scoped_paths(prefix))
 
+            # Collect one match past the cap so we can distinguish
+            # "exactly the cap" (not truncated) from "actually had more"
+            # (truncated). Breaking at ``>= cap`` would conflate the two
+            # and falsely flag a bundle with exactly ``_MAX_GLOB_RESULTS``
+            # hits as truncated.
             matches: List[str] = []
             for full_key in scoped:
                 rel = full_key[len(prefix) :].lstrip("/") if prefix else full_key
@@ -176,10 +181,12 @@ class MemoryFilesystemFuncTool(BaseTool):
                     matched = rel == pattern
                 if matched:
                     matches.append(full_key)
-                    if len(matches) >= _MAX_GLOB_RESULTS:
+                    if len(matches) > _MAX_GLOB_RESULTS:
                         break
 
-            truncated = len(matches) >= _MAX_GLOB_RESULTS
+            truncated = len(matches) > _MAX_GLOB_RESULTS
+            if truncated:
+                matches = matches[:_MAX_GLOB_RESULTS]
             result: dict = {"files": matches, "truncated": truncated}
             if truncated:
                 result["message"] = (
@@ -235,15 +242,22 @@ class MemoryFilesystemFuncTool(BaseTool):
                 body = self._files[full_key]
                 if len(body.encode("utf-8")) > _MAX_READ_BYTES:
                     continue
+                # Same overshoot-by-one strategy as ``glob`` so a bundle
+                # with exactly ``_MAX_GREP_MATCHES`` hits isn't falsely
+                # flagged truncated. We break inside the line loop AND
+                # the outer loop once the overshoot is reached.
                 for line_num, line in enumerate(body.split("\n"), start=1):
                     if compiled.search(line):
                         matches.append({"file": full_key, "line": line_num, "content": line.rstrip()})
-                        if len(matches) >= _MAX_GREP_MATCHES:
+                        if len(matches) > _MAX_GREP_MATCHES:
                             break
-                if len(matches) >= _MAX_GREP_MATCHES:
+                if len(matches) > _MAX_GREP_MATCHES:
                     break
 
-            return FuncToolResult(result={"matches": matches, "truncated": len(matches) >= _MAX_GREP_MATCHES})
+            truncated = len(matches) > _MAX_GREP_MATCHES
+            if truncated:
+                matches = matches[:_MAX_GREP_MATCHES]
+            return FuncToolResult(result={"matches": matches, "truncated": truncated})
         except Exception as exc:
             logger.exception(f"MemoryFilesystemFuncTool.grep failed for {pattern} in {path}")
             return FuncToolResult(success=0, error=str(exc))

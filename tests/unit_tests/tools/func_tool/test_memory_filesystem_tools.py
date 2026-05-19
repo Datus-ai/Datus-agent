@@ -176,6 +176,58 @@ class TestGrep:
 # --------------------------------------------------------------------------- #
 
 
+class TestTruncationCap:
+    """Off-by-one regression guard for the truncation flag.
+
+    Earlier code broke when ``len(matches) >= _MAX_*`` and then declared
+    truncation from the same condition, so a bundle with EXACTLY the cap
+    was flagged truncated even though no further matches were skipped.
+    Fix: overshoot by one, set truncated from ``>``, trim back to cap.
+    """
+
+    def test_glob_at_exact_cap_not_marked_truncated(self, monkeypatch):
+        import datus.tools.func_tool.memory_filesystem_tools as mod
+
+        monkeypatch.setattr(mod, "_MAX_GLOB_RESULTS", 3)
+        fs = MemoryFilesystemFuncTool({f"f{i}.md": "x" for i in range(3)})
+        res = fs.glob("*.md")
+        assert len(res.result["files"]) == 3
+        assert res.result["truncated"] is False
+        # The truncation message is only attached when truncation actually
+        # happened — its absence is part of the "not truncated" contract.
+        assert "message" not in res.result
+
+    def test_glob_over_cap_marks_truncated_and_caps_results(self, monkeypatch):
+        import datus.tools.func_tool.memory_filesystem_tools as mod
+
+        monkeypatch.setattr(mod, "_MAX_GLOB_RESULTS", 3)
+        fs = MemoryFilesystemFuncTool({f"f{i}.md": "x" for i in range(5)})
+        res = fs.glob("*.md")
+        assert len(res.result["files"]) == 3
+        assert res.result["truncated"] is True
+        assert "Results truncated" in res.result["message"]
+
+    def test_grep_at_exact_cap_not_marked_truncated(self, monkeypatch):
+        import datus.tools.func_tool.memory_filesystem_tools as mod
+
+        monkeypatch.setattr(mod, "_MAX_GREP_MATCHES", 3)
+        # One file, three matching lines — hits the cap exactly.
+        fs = MemoryFilesystemFuncTool({"a.md": "hit\nhit\nhit\n"})
+        res = fs.grep("hit")
+        assert len(res.result["matches"]) == 3
+        assert res.result["truncated"] is False
+
+    def test_grep_over_cap_marks_truncated_and_caps_results(self, monkeypatch):
+        import datus.tools.func_tool.memory_filesystem_tools as mod
+
+        monkeypatch.setattr(mod, "_MAX_GREP_MATCHES", 3)
+        # Five matching lines — must report 3 and truncated=True.
+        fs = MemoryFilesystemFuncTool({"a.md": "hit\nhit\nhit\nhit\nhit\n"})
+        res = fs.grep("hit")
+        assert len(res.result["matches"]) == 3
+        assert res.result["truncated"] is True
+
+
 class TestSurfaceContract:
     def test_all_tools_name_is_read_only(self):
         """MemoryFilesystemFuncTool intentionally exposes only the three read operations."""

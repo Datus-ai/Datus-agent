@@ -219,6 +219,64 @@ class TestArtifactBinding:
                 node_name="ask_bad",
             )
 
+    @pytest.mark.parametrize(
+        "degenerate_blob",
+        [
+            pytest.param({}, id="empty_dict"),
+            pytest.param({"files": [{"path": "a", "content": "x"}]}, id="manifest_missing"),
+            pytest.param({"manifest": {}, "files": [{"path": "a", "content": "x"}]}, id="manifest_empty"),
+            pytest.param({"manifest": {"slug": "x"}, "files": []}, id="files_empty"),
+            pytest.param({"manifest": {"slug": "x"}, "files": "not a list"}, id="files_wrong_type"),
+            pytest.param({"manifest": "string", "files": []}, id="manifest_wrong_type"),
+        ],
+    )
+    def test_report_degenerate_blob_fails_loud(self, real_agent_config, degenerate_blob):
+        """Degenerate blob shapes must NOT silently bind to an empty
+        filesystem — they trip the same BLOB_REQUIRED branch as a
+        missing blob so the publish half-bound state is visible at init.
+        """
+        _seed_artifact(real_agent_config.project_root, "report", "degenerate")
+        _register_ask_agent(
+            real_agent_config,
+            name="ask_degenerate",
+            kind="report",
+            slug="degenerate",
+            blob=degenerate_blob,
+        )
+        with pytest.raises(DatusException):
+            AskReportAgenticNode(
+                node_id="x",
+                description="d",
+                node_type="chat",
+                agent_config=real_agent_config,
+                node_name="ask_degenerate",
+            )
+
+    def test_dashboard_degenerate_blob_falls_back_to_disk(self, real_agent_config):
+        """For BLOB_REQUIRED=False kinds, a degenerate blob behaves the
+        same as a missing blob: fall back to the on-disk artifact root.
+        Guards against the empty-blob path silently winning over a
+        perfectly valid disk tree."""
+        _seed_artifact(real_agent_config.project_root, "dashboard", "deg_dash")
+        _register_ask_agent(
+            real_agent_config,
+            name="ask_deg_dash",
+            kind="dashboard",
+            slug="deg_dash",
+            blob={"manifest": {"slug": "deg_dash"}, "files": []},
+        )
+        node = AskDashboardAgenticNode(
+            node_id="x",
+            description="d",
+            node_type="chat",
+            agent_config=real_agent_config,
+            node_name="ask_deg_dash",
+        )
+        # Disk fallback engaged: in-memory file map untouched, disk root
+        # populated and pointing at the seeded dashboard tree.
+        assert node._artifact_files is None
+        assert node._artifact_root.name == "deg_dash"
+
     def test_report_without_blob_raises_fail_loud(self, real_agent_config):
         """``ask_report`` declares ``BLOB_REQUIRED = True``. Half-bound
         state (subagent exists, no published version → config_loader didn't
@@ -448,6 +506,23 @@ class TestFilesystemAnchoring:
         assert res.success == 1
         assert "Demo Report" in res.result
 
+    def test_blob_branch_forwards_kwargs(self, real_agent_config):
+        """``_make_filesystem_tool`` must forward caller-supplied kwargs
+        in blob mode the same way it does in disk mode — otherwise any
+        future per-tool wiring routed through the helper would be
+        silently dropped only on blob-bound agents. We exercise this by
+        invoking the helper directly with a sentinel kwarg; the kwarg
+        lands in ``tool_params`` via ``BaseTool.__init__``.
+        """
+        node = _make_ask_report_node(real_agent_config)
+        sentinel = object()
+        tool = node._make_filesystem_tool(_test_marker=sentinel)
+        assert isinstance(tool, MemoryFilesystemFuncTool)
+        # BaseTool absorbs unknown kwargs into ``tool_params`` — verifying
+        # the round-trip proves forwarding works without coupling to any
+        # specific kwarg the caller might add in the future.
+        assert tool.tool_params.get("_test_marker") is sentinel
+
     def test_dashboard_filesystem_tool_anchored_at_disk_root(self, real_agent_config):
         """Dashboard keeps the legacy disk-rooted tool until its publish
         flow lands. ``filesystem_func_tool.root_path`` is what gates
@@ -485,9 +560,17 @@ class TestAnchorFilePreload:
     def test_missing_intent_degrades_silently_blob_mode(self, real_agent_config):
         """When intent.md is absent from the blob, init still succeeds
         and the cached value stays empty (prompt template branches on
-        emptiness). The manifest still comes through because it's at the
-        root, not under analysis/."""
+        emptiness). The manifest still comes through via the structured
+        blob path.
+
+        We add a render file so the blob has at least one entry in
+        ``files[]`` — an empty ``files`` list trips the degenerate-blob
+        validator (covered separately in
+        ``test_report_degenerate_blob_fails_loud``)."""
         _seed_artifact(real_agent_config.project_root, "report", "no_anchors", with_analysis=False)
+        (Path(real_agent_config.project_root) / "reports" / "no_anchors" / "render" / "app.jsx").write_text(
+            "export default function App(){return null}", encoding="utf-8"
+        )
         blob = _blob_from_disk(real_agent_config.project_root, "report", "no_anchors")
         _register_ask_agent(real_agent_config, name="ask_no_anchor", kind="report", slug="no_anchors", blob=blob)
         node = AskReportAgenticNode(
