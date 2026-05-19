@@ -94,6 +94,7 @@ Before generating metrics, verify that semantic models exist for all involved ta
 **For SQL-based input:**
 - Call `list_metrics()` first and build `existing_metric_catalog_json` with exact metric `name`, `type`, `description` when available, and `subject_path` when available.
 - Call `analyze_metric_candidates_from_history` for provided historical SQL before writing files, passing `existing_metric_catalog_json`.
+- Restrict filesystem reads/writes/reuse to `{{ kind_subdir }}/...`. Do not read, reuse, edit, or sync YAML files from sibling datasource directories; they are outside the active `{{ current_datasource }}` MetricFlow adapter scope.
 - Preserve final business output expressions as metric candidates.
 - Parse aggregations (SUM, COUNT, AVG, etc.) → dependency measures
 - Parse GROUP BY → dimensions
@@ -140,6 +141,7 @@ Skip any metric that already exists — do NOT update or overwrite.
   - Semantic model: `{{ kind_subdir }}/{table_name}.yml`
   - Metric file: `{{ kind_subdir }}/metrics/{table_name}_metrics.yml`
   Bare filenames are silently normalized by the host but the prefixed form is preferred so subsequent reads use the same path. Absolute paths are also tolerated.
+  Never pass paths from a sibling datasource directory such as `subject/semantic_models/other_datasource/...`.
 
 1. **Write files**: Use `write_file` to save metric YAML (and semantic model if newly created)
 2. **Validate (MUST PASS)**: Use `validate_semantic` — if validation fails, fix errors with `edit_file` and retry until it **passes**. Do NOT proceed to Step 6 until validation passes.

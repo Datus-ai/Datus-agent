@@ -23,6 +23,8 @@ Before anything else, call `list_metrics()` to get all metrics already in the kn
 - **Detect conflicts** — warn the user if a proposed metric name collides with an existing one
 - **Enable derived/ratio metrics** — know which metrics can serve as building blocks for more complex definitions
 
+Only inspect and edit semantic model YAML files under the current datasource directory shown in the system prompt, such as `subject/semantic_models/<current_datasource>/...`. Do not reuse or sync YAML files from sibling datasource directories; those files are outside the active MetricFlow adapter scope.
+
 ## Phase 1: Understand Intent
 
 Analyze the user's request and confirm the generation scope before proceeding. When `ask_user` is available, call it to confirm the metric name(s), business meaning, and calculation logic. When `ask_user` is not available (for example workflow or batch mode), infer from the provided SQL/request and stop only if the scope is materially ambiguous.
@@ -197,6 +199,7 @@ Use when: non-equi JOINs, > 2 hop joins, subqueries, LATERAL/CROSS joins, comple
 - Metric file: `subject/semantic_models/<current_datasource>/metrics/{table_name}_metrics.yml`
 
 Bare filenames are silently normalized by the host, but the prefixed form is preferred for clarity. Absolute paths are also tolerated.
+Do not read, edit, or pass `metric_file` / `semantic_model_file` paths from another datasource directory such as `subject/semantic_models/other_datasource/...`.
 
 1. **Check existing**: Call `check_semantic_object_exists(name="{metric_name}", kind="metric")` for each metric confirmed in Phase 1. If it already exists, inform the user and skip it.
 

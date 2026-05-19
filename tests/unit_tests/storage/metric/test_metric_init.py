@@ -265,6 +265,50 @@ class TestInitSuccessStoryMetricsAsync:
         assert "did not publish" in error
 
     @pytest.mark.asyncio
+    async def test_batch_flow_accepts_gen_metrics_response_action_type(self):
+        """Batch mode accepts the standard GenMetricsAgenticNode final response action."""
+        from unittest.mock import patch
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.storage.metric.metric_init import init_success_story_metrics_async
+
+        mock_node = MagicMock()
+
+        async def fake_execute_stream(action_manager):
+            final_action = MagicMock()
+            final_action.status = ActionStatus.SUCCESS
+            final_action.action_type = "gen_metrics_response"
+            final_action.output = {"response": "done"}
+            final_action.messages = "ok"
+            yield final_action
+
+        mock_node.execute_stream = fake_execute_stream
+
+        mock_config = MagicMock()
+        mock_config.current_db_config.return_value = MagicMock(catalog="", database="test_db", schema="")
+        mock_prompt_manager = MagicMock()
+        mock_prompt_manager.get_latest_version.return_value = "1.2"
+
+        import pandas as pd
+
+        with (
+            patch("datus.storage.metric.store.MetricRAG", MagicMock()),
+            patch("datus.storage.metric.metric_init.extract_tables_from_sql_list", return_value=[]),
+            patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_prompt_manager),
+            patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", return_value=mock_node),
+            patch("datus.storage.metric.metric_init.pd.read_csv") as mock_read_csv,
+        ):
+            mock_read_csv.return_value = pd.DataFrame([{"question": "Revenue?", "sql": "SELECT SUM(a) FROM t"}])
+            success, error, result = await init_success_story_metrics_async(
+                agent_config=mock_config,
+                success_story="dummy.csv",
+            )
+
+        assert success is True
+        assert error == ""
+        assert result == {"response": "done"}
+
+    @pytest.mark.asyncio
     async def test_batch_flow_allows_recoverable_tool_failure(self):
         """A failed intermediate tool action should not abort a later successful metrics response."""
         from unittest.mock import patch
