@@ -509,48 +509,79 @@ class DatusApp:
         wired (non-chat dispatch), the filter never reports visible.
         """
 
-        def _visible() -> bool:
-            if self._pending_input_provider is None:
-                return False
-            queue = self._pending_input_provider()
-            if queue is None:
-                return False
-            try:
-                return len(queue) > 0
-            except TypeError:
-                return False
-
-        def _tokens() -> List[Tuple[str, str]]:
-            if self._pending_input_provider is None:
-                return []
-            queue = self._pending_input_provider()
-            if queue is None:
-                return []
-            try:
-                items = queue.snapshot()
-            except AttributeError:
-                return []
-            if not items:
-                return []
-            lines: List[Tuple[str, str]] = [
-                ("class:queue-preview.header", f"⏎ queued for agent ({len(items)}):\n"),
-            ]
-            visible_items = items[: self._QUEUE_PREVIEW_MAX_LINES]
-            for idx, text in enumerate(visible_items, 1):
-                preview = text if len(text) <= 80 else text[:77] + "..."
-                lines.append(("class:queue-preview.item", f"  {idx}. {preview}\n"))
-            overflow = len(items) - len(visible_items)
-            if overflow > 0:
-                lines.append(("class:queue-preview.item", f"  (+{overflow} more)\n"))
-            return lines
-
         window = Window(
-            content=FormattedTextControl(_tokens),
+            content=FormattedTextControl(self._queue_preview_tokens),
             height=Dimension(min=1, max=self._QUEUE_PREVIEW_MAX_LINES + 2),
             style="class:queue-preview.box",
             always_hide_cursor=True,
         )
-        return ConditionalContainer(content=window, filter=Condition(_visible))
+        return ConditionalContainer(content=window, filter=Condition(self._queue_preview_visible))
+
+    def _enqueue_pending_input(self, buffer, app) -> bool:
+        """Push the input-buffer text into the running agent's pending queue.
+
+        Returns ``True`` when the text was successfully queued, ``False``
+        otherwise (no queue wired, blank text). The OpenAI Agents SDK
+        caches ``_model_input_items`` for the lifetime of a streamed run,
+        so dropping text into the session mid-stream is invisible to the
+        model. The queue is drained by the model layer's
+        ``call_model_input_filter`` before the next LLM turn.
+        """
+        queue = self._pending_input_provider() if self._pending_input_provider else None
+        if queue is None:
+            return False
+        text = buffer.text
+        if self._stored_paste:
+            placeholder = self._paste_placeholder(self._stored_paste.count("\n") + 1)
+            if placeholder in text:
+                text = text.replace(placeholder, self._stored_paste, 1)
+            self._stored_paste = None
+            self._paste_collapsed = False
+        stripped = text.strip()
+        if not stripped:
+            return False
+        queue.push(stripped)
+        buffer.reset()
+        if app is not None:
+            app.invalidate()
+        return True
+
+    def _queue_preview_visible(self) -> bool:
+        """Visibility predicate for the pinned queue-preview container."""
+        if self._pending_input_provider is None:
+            return False
+        queue = self._pending_input_provider()
+        if queue is None:
+            return False
+        try:
+            return len(queue) > 0
+        except TypeError:
+            return False
+
+    def _queue_preview_tokens(self) -> List[Tuple[str, str]]:
+        """Render the formatted-text rows for the queue-preview container."""
+        if self._pending_input_provider is None:
+            return []
+        queue = self._pending_input_provider()
+        if queue is None:
+            return []
+        try:
+            items = queue.snapshot()
+        except AttributeError:
+            return []
+        if not items:
+            return []
+        lines: List[Tuple[str, str]] = [
+            ("class:queue-preview.header", f"⏎ queued for agent ({len(items)}):\n"),
+        ]
+        visible_items = items[: self._QUEUE_PREVIEW_MAX_LINES]
+        for idx, text in enumerate(visible_items, 1):
+            preview = text if len(text) <= 80 else text[:77] + "..."
+            lines.append(("class:queue-preview.item", f"  {idx}. {preview}\n"))
+        overflow = len(items) - len(visible_items)
+        if overflow > 0:
+            lines.append(("class:queue-preview.item", f"  (+{overflow} more)\n"))
+        return lines
 
     def _build_todo_sidebar(self) -> ConditionalContainer:
         """Construct the TodoList sidebar column pinned above the status bar.
@@ -1810,31 +1841,7 @@ class DatusApp:
                     buffer.cancel_completion()
 
             if self._agent_running.is_set():
-                # Mid-run user-insert path. The OpenAI Agents SDK caches
-                # ``_model_input_items`` for the lifetime of a streamed run,
-                # so we cannot drop text into the session and expect the
-                # model to pick it up. Instead, push into the
-                # :class:`PendingInputQueue` carried by the running node;
-                # the model layer's ``call_model_input_filter`` drains it
-                # before the next LLM turn. When no queue is wired (e.g.
-                # the dispatch surface is not chat), fall through to a
-                # no-op as before.
-                queue = self._pending_input_provider() if self._pending_input_provider else None
-                if queue is None:
-                    return
-                text = buffer.text
-                if self._stored_paste:
-                    placeholder = self._paste_placeholder(self._stored_paste.count("\n") + 1)
-                    if placeholder in text:
-                        text = text.replace(placeholder, self._stored_paste, 1)
-                    self._stored_paste = None
-                    self._paste_collapsed = False
-                stripped = text.strip()
-                if not stripped:
-                    return
-                queue.push(stripped)
-                buffer.reset()
-                event.app.invalidate()
+                self._enqueue_pending_input(buffer, event.app)
                 return
 
             text = buffer.text
