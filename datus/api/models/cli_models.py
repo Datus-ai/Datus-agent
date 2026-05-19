@@ -291,6 +291,15 @@ class StreamChatInput(ChatInput):
         default=None,
         description="Source session to seed the agent with (currently used by feedback agent to copy history).",
     )
+    permission_mode: Optional[Literal["normal", "auto", "dangerous"]] = Field(
+        default=None,
+        description=(
+            "Per-request permission profile override. When set, the chat node's PermissionManager "
+            "is switched to this profile for the duration of the request without mutating shared "
+            "AgentConfig state — required so concurrent SaaS users don't pollute each other's "
+            "profile. None falls back to ``agent_config.active_profile_name``."
+        ),
+    )
 
 
 class FeedbackChatInput(ChatInput):

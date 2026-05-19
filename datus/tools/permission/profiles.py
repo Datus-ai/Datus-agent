@@ -205,6 +205,38 @@ def get_profile(name: str) -> PermissionConfig:
         raise ValueError(f"Unknown profile {name!r}. Valid options: {', '.join(PROFILE_NAMES)}") from e
 
 
+def build_user_overrides(
+    profile_name: str,
+    user_raw: Optional[dict] = None,
+) -> Optional[PermissionConfig]:
+    """Construct the ``user_overrides`` PermissionConfig for ``switch_profile``.
+
+    Mirrors the default-permission injection in :func:`build_effective_config`
+    so a runtime profile switch preserves the new profile's safety posture
+    instead of inheriting ``PermissionConfig.from_dict``'s built-in
+    ``"allow"`` default. Returns ``None`` when there are no user rules to
+    layer — callers can pass that directly to ``switch_profile``.
+
+    Args:
+        profile_name: Target profile name; raises ``ValueError`` if unknown.
+        user_raw: Raw user permissions dict (without the ``profile`` key).
+
+    Returns:
+        The user-overrides ``PermissionConfig``, or ``None`` if ``user_raw``
+        is empty.
+    """
+    if not user_raw:
+        return None
+    if "default" not in user_raw and "default_permission" not in user_raw:
+        base = get_profile(profile_name)
+        dp = base.default_permission
+        user_raw = {
+            **user_raw,
+            "default_permission": dp.value if hasattr(dp, "value") else dp,
+        }
+    return PermissionConfig.from_dict(user_raw)
+
+
 def build_effective_config(
     profile_name: str,
     user_raw: Optional[dict] = None,

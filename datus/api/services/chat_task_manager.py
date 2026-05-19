@@ -488,6 +488,15 @@ class ChatTaskManager:
             node = await asyncio.to_thread(_init_node)
             task.node = node
 
+            # Per-request permission profile override. We deliberately do
+            # NOT mutate ``agent_config.active_profile_name`` here because
+            # the AgentConfig instance is shared across concurrent SaaS
+            # users; rewriting it on one request would leak the new profile
+            # to every other in-flight or future request. Instead we
+            # switch the freshly created node's PermissionManager in
+            # place — it is scoped to this request only.
+            self._apply_permission_mode_override(node, agent_config, request.permission_mode)
+
             await self._push_event(
                 task,
                 SSEEvent(
@@ -724,6 +733,70 @@ class ChatTaskManager:
             execution_mode=execution_mode,
             node_id=node_id,
             session_id=session_id if session_id is not None else node_id,
+        )
+
+    # ------------------------------------------------------------------
+    # Per-request permission profile override
+    # ------------------------------------------------------------------
+
+    def _apply_permission_mode_override(
+        self,
+        node: AgenticNode,
+        agent_config: AgentConfig,
+        permission_mode: Optional[str],
+    ) -> None:
+        """Apply a per-request permission profile to the freshly created node.
+
+        Switches ``node.permission_manager`` to ``permission_mode`` without
+        touching ``agent_config.active_profile_name`` — the AgentConfig is
+        shared by every concurrent request in the SaaS deployment, so
+        mutating it would leak the override across users. The CLI's
+        ``/profile`` flow can still mutate the global field because it
+        owns the process exclusively; this API path cannot.
+
+        No-ops when ``permission_mode`` is falsy, the node has no
+        ``permission_manager`` (e.g. workflow nodes that skip the skill
+        setup), or the requested profile already matches the active one.
+        Logs and swallows ``DatusException`` from ``switch_profile`` so a
+        malformed override never aborts the entire chat turn.
+        """
+        if not permission_mode:
+            return
+        permission_manager = getattr(node, "permission_manager", None)
+        if permission_manager is None:
+            return
+        if getattr(permission_manager, "active_profile", None) == permission_mode:
+            return
+
+        from datus.tools.permission.profiles import build_user_overrides
+
+        raw_permissions = getattr(agent_config, "_raw_permissions", {}) or {}
+        raw_user = {k: v for k, v in raw_permissions.items() if k != "profile"}
+        try:
+            user_overrides = build_user_overrides(permission_mode, raw_user)
+        except Exception as e:
+            logger.warning(
+                "Failed to build user overrides for permission_mode=%r: %s; applying profile base only",
+                permission_mode,
+                e,
+            )
+            user_overrides = None
+
+        try:
+            permission_manager.switch_profile(permission_mode, user_overrides=user_overrides)
+        except Exception as e:
+            logger.error(
+                "Failed to switch permission profile to %r for session=%s: %s",
+                permission_mode,
+                getattr(node, "session_id", None),
+                e,
+            )
+            return
+
+        logger.info(
+            "Applied per-request permission profile %r for session=%s",
+            permission_mode,
+            getattr(node, "session_id", None),
         )
 
     # ------------------------------------------------------------------
