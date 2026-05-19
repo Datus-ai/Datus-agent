@@ -182,7 +182,7 @@ class TestInitSuccessStoryMetricsAsync:
             captured_input["input"] = mock_node.input
             action = MagicMock()
             action.status = ActionStatus.SUCCESS
-            action.action_type = "metrics_response"
+            action.action_type = "gen_metrics_response"
             action.output = {"response": "done"}
             action.messages = "ok"
             yield action
@@ -265,7 +265,7 @@ class TestInitSuccessStoryMetricsAsync:
         assert "did not publish" in error
 
     @pytest.mark.asyncio
-    async def test_batch_flow_accepts_gen_metrics_response_action_type(self):
+    async def test_batch_flow_accepts_standard_response_action_type(self):
         """Batch mode accepts the standard GenMetricsAgenticNode final response action."""
         from unittest.mock import patch
 
@@ -328,7 +328,7 @@ class TestInitSuccessStoryMetricsAsync:
 
             final_action = MagicMock()
             final_action.status = ActionStatus.SUCCESS
-            final_action.action_type = "metrics_response"
+            final_action.action_type = "gen_metrics_response"
             final_action.output = {"response": "done"}
             final_action.messages = "ok"
             yield final_action
@@ -471,7 +471,7 @@ class TestInitSuccessStoryMetricsAsyncOverwriteTruncate:
         async def fake_execute_stream(_action_manager):
             action = MagicMock()
             action.status = ActionStatus.SUCCESS
-            action.action_type = "metrics_response"
+            action.action_type = "gen_metrics_response"
             action.output = {"response": "done"}
             action.messages = "ok"
             yield action
@@ -525,7 +525,7 @@ class TestInitSuccessStoryMetricsAsyncOverwriteTruncate:
         async def fake_execute_stream(_action_manager):
             action = MagicMock()
             action.status = ActionStatus.SUCCESS
-            action.action_type = "metrics_response"
+            action.action_type = "gen_metrics_response"
             action.output = {"response": "done"}
             action.messages = "ok"
             yield action
@@ -593,7 +593,7 @@ class TestGenerateMetricsBatch:
         async def fake_stream(_ahm):
             action = MagicMock()
             action.status = ActionStatus.SUCCESS
-            action.action_type = "metrics_response"
+            action.action_type = "gen_metrics_response"
             action.output = {"metrics": ["revenue"]}
             action.messages = "ok"
             yield action
@@ -739,7 +739,7 @@ class TestBatchSplitting:
                 else:
                     action = MagicMock()
                     action.status = ActionStatus.SUCCESS
-                    action.action_type = "metrics_response"
+                    action.action_type = "gen_metrics_response"
                     action.output = {"metrics": [f"m{self._batch_idx}"]}
                     action.messages = "ok"
                     yield action
