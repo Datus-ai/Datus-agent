@@ -500,7 +500,9 @@ class TestGenSQLAgenticNodeExecution:
         node.input = None
 
         ahm = ActionHistoryManager()
-        with pytest.raises(ValueError, match="GenSQL input not set"):
+        from datus.utils.exceptions import DatusException
+
+        with pytest.raises(DatusException, match="Missing required field"):
             async for _ in node.execute_stream(ahm):
                 pass
 
@@ -732,7 +734,9 @@ class TestChatAgenticNodeExecution:
         node.input = None
 
         ahm = ActionHistoryManager()
-        with pytest.raises(ValueError, match="Chat input not set"):
+        from datus.utils.exceptions import DatusException
+
+        with pytest.raises(DatusException, match="Missing required field"):
             async for _ in node.execute_stream(ahm):
                 pass
 
@@ -1461,7 +1465,6 @@ class TestEndToEndGenerationHooksInteraction:
         node.tools.append(end_gen_tool)
 
         # Attach GenerationHooks via the permission_hooks slot
-        # ChatAgenticNode._get_execution_config will pass this as hooks to the model
         broker = node._get_or_create_broker()
         generation_hooks = GenerationHooks(broker=broker, agent_config=real_agent_config)
         node.permission_hooks = generation_hooks
@@ -1490,10 +1493,18 @@ class TestEndToEndGenerationHooksInteraction:
 
     @pytest.mark.asyncio
     async def test_e2e_generation_hooks_sync_error_logs_without_prompt(
-        self, real_agent_config, mock_llm_create, tmp_path, caplog
+        self, real_agent_config, mock_llm_create, tmp_path
     ):
-        """Full flow: sync errors are logged without falling back to a prompt."""
+        """Full flow: sync errors are logged without falling back to a prompt.
+
+        Patches ``datus.cli.generation_hooks.logger.error`` directly instead
+        of relying on pytest's ``caplog`` fixture: ``caplog`` is provided by
+        pytest's logging plugin, which several callers (CI variants, local
+        ``-p no:logging`` runs) disable for noise reasons. The patched mock
+        gives a stable assertion regardless of plugin state.
+        """
         import os
+        from unittest.mock import MagicMock
 
         from agents import FunctionTool
 
@@ -1558,15 +1569,18 @@ class TestEndToEndGenerationHooksInteraction:
             database="california_schools",
         )
 
-        caplog.set_level("ERROR", logger="datus.cli.generation_hooks")
         ahm = ActionHistoryManager()
         actions = []
-        with patch.object(
-            GenerationHooks,
-            "_sync_to_storage",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("sync failed"),
-        ) as mock_sync_to_storage:
+        recorded_error: MagicMock
+        with (
+            patch.object(
+                GenerationHooks,
+                "_sync_to_storage",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("sync failed"),
+            ) as mock_sync_to_storage,
+            patch("datus.cli.generation_hooks.logger.error") as recorded_error,
+        ):
             async for action in node.execute_stream_with_interactions(ahm):
                 actions.append(action)
 
@@ -1577,7 +1591,13 @@ class TestEndToEndGenerationHooksInteraction:
 
         interaction_actions = [a for a in actions if a.role == ActionRole.INTERACTION]
         assert len(interaction_actions) == 0
-        assert "Error handling end_semantic_model_generation: sync failed" in caplog.text
+        # Find the error log emitted by the end_semantic_model_generation
+        # branch of GenerationHooks. The format string keeps the literal
+        # prefix this test was originally asserting against.
+        logged_messages = [str(call.args[0]) if call.args else "" for call in recorded_error.call_args_list]
+        assert any("Error handling end_semantic_model_generation: sync failed" in msg for msg in logged_messages), (
+            f"expected sync-error log not found; got: {logged_messages}"
+        )
 
     @pytest.mark.asyncio
     async def test_e2e_generation_hooks_no_yaml_no_interaction(self, real_agent_config, mock_llm_create, tmp_path):
@@ -2066,7 +2086,9 @@ class TestExecuteStreamGenSQLExtra:
         node = _make_node(real_agent_config, mock_llm_create)
         node.input = None
 
-        with pytest.raises(ValueError, match="GenSQL input not set"):
+        from datus.utils.exceptions import DatusException
+
+        with pytest.raises(DatusException, match="Missing required field"):
             async for _ in node.execute_stream():
                 pass
 
@@ -2318,72 +2340,6 @@ class TestUpdateContextGenSQL:
 
         result = node.update_context(wf)
         assert result["success"] is False
-
-
-# ---------------------------------------------------------------------------
-# TestGetExecutionConfig
-# ---------------------------------------------------------------------------
-
-
-class TestGetExecutionConfig:
-    def test_main_agent_always_exposes_plan_tools(self, real_agent_config, mock_llm_create):
-        """Main agent: plan tools are registered on ``self.tools`` at setup time."""
-        node = _make_node_extra2(real_agent_config, mock_llm_create)
-        user_input = GenSQLNodeInput(user_message="query")
-
-        with patch.object(node, "_get_system_instruction", return_value="system instruction"):
-            config = node._get_execution_config(user_input)
-
-        tool_names = {getattr(t, "name", "") for t in config["tools"]}
-        assert "confirm_plan" in tool_names
-        assert "todo_write" in tool_names
-        assert config["instruction"] == "system instruction"
-        assert config["hooks"] is None
-
-    def test_subagent_never_gets_plan_tools(self, real_agent_config, mock_llm_create):
-        """Sub-agent invocation suppresses plan tools entirely (set at construction)."""
-        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
-
-        node = GenSQLAgenticNode(
-            node_id="test_subagent_no_plan",
-            description="subagent",
-            node_type=NodeType.TYPE_GENSQL,
-            agent_config=real_agent_config,
-            node_name="gensql",
-            is_subagent=True,
-        )
-        user_input = GenSQLNodeInput(user_message="query")
-
-        with patch.object(node, "_get_system_instruction", return_value="system instruction"):
-            config = node._get_execution_config(user_input)
-
-        tool_names = {getattr(t, "name", "") for t in config["tools"]}
-        assert "confirm_plan" not in tool_names
-        assert "todo_write" not in tool_names
-
-    def test_plan_mode_activation_does_not_change_tool_list(self, real_agent_config, mock_llm_create, tmp_path):
-        """Activating plan mode does not change the tool list — already registered at setup."""
-        import os
-
-        node = _make_node_extra2(real_agent_config, mock_llm_create)
-        user_input = GenSQLNodeInput(user_message="query", plan_mode=True)
-
-        cwd = os.getcwd()
-        os.chdir(tmp_path)
-        try:
-            with patch.object(node, "_get_system_instruction", return_value="base instruction"):
-                tools_before = list(node._get_execution_config(user_input)["tools"])
-            node.activate_plan_mode()
-            with patch.object(node, "_get_system_instruction", return_value="base instruction"):
-                tools_after = list(node._get_execution_config(user_input)["tools"])
-        finally:
-            node.deactivate_plan_mode()
-            os.chdir(cwd)
-
-        assert tools_before == tools_after
-        names = {getattr(t, "name", "") for t in tools_after}
-        assert "confirm_plan" in names
-        assert "todo_write" in names
 
 
 # ---------------------------------------------------------------------------

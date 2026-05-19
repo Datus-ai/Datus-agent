@@ -10,13 +10,13 @@ SQL generation with support for limited context, enhanced template variables,
 and flexible configuration through agent.yml.
 """
 
-from typing import Any, AsyncGenerator, Dict, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from datus.agent.node.agentic_node import AgenticNode
+from datus.agent.node.stream_run_context import StreamRunContext
 from datus.agent.workflow import Workflow
-from datus.cli.execution_state import ExecutionInterrupted
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.agent_models import SubAgentConfig
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput, GenSQLNodeResult
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
@@ -40,6 +40,8 @@ class GenSQLAgenticNode(AgenticNode):
     - Configurable tool sets and MCP server integration
     - Session-based conversation management
     """
+
+    result_class = GenSQLNodeResult
 
     def __init__(
         self,
@@ -699,190 +701,47 @@ class GenSQLAgenticNode(AgenticNode):
             return result.result if isinstance(result.result, str) else None
         return None
 
-    async def execute_stream(
-        self, action_history_manager: Optional[ActionHistoryManager] = None
-    ) -> AsyncGenerator[ActionHistory, None]:
-        """
-        Execute the customized node interaction with streaming support.
+    def _build_success_result(self, ctx: StreamRunContext) -> GenSQLNodeResult:
+        # GenSQL's parsing scans the full action history (not just the last
+        # assistant action) so it can recover SQL stashed in summary_report
+        # actions when the assistant returned a markdown overview instead.
+        response_content, sql_content = self._collect_final_response(ctx.action_history_manager)
 
-        Input is accessed from self.input instead of parameters.
+        all_actions = ctx.action_history_manager.get_actions()
+        tokens_used = self._extract_total_tokens(all_actions)
+        tool_calls = [
+            action for action in all_actions if action.role == ActionRole.TOOL and action.status == ActionStatus.SUCCESS
+        ]
+        execution_stats = {
+            "total_actions": len(all_actions),
+            "tool_calls_count": len(tool_calls),
+            "tools_used": list({a.action_type for a in tool_calls}),
+            "total_tokens": int(tokens_used),
+        }
 
-        Args:
-            action_history_manager: Optional action history manager
+        # Detect LLM-saved SQL file vs inline SQL — read the file when the
+        # response looks like a path so callers receive the full statement.
+        sql_file_path = None
+        sql_preview = None
+        result_sql = sql_content
+        if sql_content and sql_content.strip().endswith(".sql"):
+            candidate_path = sql_content.strip()
+            full_sql = self._read_existing_sql_file(candidate_path)
+            if full_sql:
+                sql_file_path = candidate_path
+                sql_preview = self._get_sql_preview(full_sql, self._get_sql_preview_lines())
+                result_sql = full_sql
 
-        Yields:
-            ActionHistory: Progress updates during execution
-        """
-        if not action_history_manager:
-            action_history_manager = ActionHistoryManager()
-
-        # Get input from self.input (set by setup_input or directly)
-        if not self.input:
-            raise ValueError("GenSQL input not set. Call setup_input() first or set self.input directly.")
-
-        user_input = self.input
-
-        # Create initial action
-        action = ActionHistory.create_action(
-            role=ActionRole.USER,
-            action_type=self.get_node_name(),
-            messages=f"User: {user_input.user_message}",
-            input_data=user_input.model_dump(),
-            status=ActionStatus.PROCESSING,
+        return GenSQLNodeResult(
+            success=True,
+            response=response_content,
+            sql=result_sql,
+            sql_file_path=sql_file_path,
+            sql_preview=sql_preview,
+            tokens_used=int(tokens_used),
+            action_history=[a.model_dump() for a in all_actions],
+            execution_stats=execution_stats,
         )
-        action_history_manager.add_action(action)
-        yield action
-
-        try:
-            # Check for auto-compact before session creation to ensure fresh context
-            await self._auto_compact()
-
-            # Get or create session and any available summary
-            session, conversation_summary = self._get_or_create_session()
-
-            enhanced_message = self._build_enhanced_message(user_input)
-
-            # Execute with streaming
-            response_content = ""
-            sql_content = None
-            tokens_used = 0
-            logger.debug(f"Tools available : {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
-            logger.debug(f"MCP servers available : {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}")
-
-            config = self._get_execution_config(user_input)
-
-            async for stream_action in self.model.generate_with_tools_stream(
-                prompt=enhanced_message,
-                tools=config["tools"],
-                mcp_servers=self.mcp_servers,
-                instruction=config["instruction"],
-                max_turns=self.max_turns,
-                session=session,
-                action_history_manager=action_history_manager,
-                hooks=config.get("hooks"),
-                agent_name=self.get_node_name(),
-                interrupt_controller=self.interrupt_controller,
-            ):
-                yield stream_action
-
-            response_content, sql_content = self._collect_final_response(action_history_manager)
-
-            logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
-            logger.debug(f"Final sql_content: {sql_content[:100] if sql_content else 'None'}...")
-
-            # Extract token usage from final actions
-            final_actions = action_history_manager.get_actions()
-            tokens_used = 0
-
-            # Find the final assistant action with token usage
-            for action in reversed(final_actions):
-                if action.role == "assistant":
-                    if action.output and isinstance(action.output, dict):
-                        usage_info = action.output.get("usage", {})
-                        if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                            try:
-                                tokens_used = int(usage_info.get("total_tokens", 0))
-                            except (TypeError, ValueError):
-                                tokens_used = 0
-                            if tokens_used > 0:
-                                break
-                            else:
-                                logger.warning(f"no usage token found in this action {action.messages}")
-
-            # Collect action history and calculate execution stats
-            all_actions = action_history_manager.get_actions()
-            tool_calls = [
-                action
-                for action in all_actions
-                if action.role == ActionRole.TOOL and action.status == ActionStatus.SUCCESS
-            ]
-
-            execution_stats = {
-                "total_actions": len(all_actions),
-                "tool_calls_count": len(tool_calls),
-                "tools_used": list(set([a.action_type for a in tool_calls])),
-                "total_tokens": int(tokens_used),
-            }
-
-            # Detect if LLM returned a .sql file path instead of inline SQL
-            sql_file_path = None
-            sql_preview = None
-            result_sql = sql_content
-
-            if sql_content and sql_content.strip().endswith(".sql"):
-                # LLM saved SQL to file via write_file and returned the path
-                candidate_path = sql_content.strip()
-                full_sql = self._read_existing_sql_file(candidate_path)
-                if full_sql:
-                    sql_file_path = candidate_path
-                    sql_preview = self._get_sql_preview(full_sql, self._get_sql_preview_lines())
-                    # Only clear inline SQL when file read succeeds — preserve as fallback
-                    result_sql = full_sql
-
-            # Create final result with action history
-            result = GenSQLNodeResult(
-                success=True,
-                response=response_content,
-                sql=result_sql,
-                sql_file_path=sql_file_path,
-                sql_preview=sql_preview,
-                tokens_used=int(tokens_used),
-                action_history=[action.model_dump() for action in all_actions],
-                execution_stats=execution_stats,
-            )
-
-            # Add to internal actions list
-            self.actions.extend(all_actions)
-
-            # Create final action
-            final_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type=f"{self.get_node_name()}_response",
-                messages=f"{self.get_node_name()} interaction completed successfully",
-                input_data=user_input.model_dump(),
-                output_data=result.model_dump(),
-                status=ActionStatus.SUCCESS,
-            )
-            action_history_manager.add_action(final_action)
-            yield final_action
-
-        except ExecutionInterrupted:
-            # Let ExecutionInterrupted propagate to execute_stream_with_interactions
-            raise
-
-        except Exception as e:
-            logger.error(f"{self.get_node_name()} execution error: {e}")
-
-            # Create error result
-            error_result = GenSQLNodeResult(
-                success=False,
-                error=str(e),
-                response="Sorry, I encountered an error while processing your request.",
-                tokens_used=0,
-            )
-
-            # Update action with error
-            action_history_manager.update_current_action(
-                status=ActionStatus.FAILED,
-                output=error_result.model_dump(),
-                messages=f"Error: {str(e)}",
-            )
-
-            # Create error action
-            error_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type="error",
-                messages=f"{self.get_node_name()} interaction failed: {str(e)}",
-                input_data=user_input.model_dump(),
-                output_data=error_result.model_dump(),
-                status=ActionStatus.FAILED,
-            )
-            action_history_manager.add_action(error_action)
-            yield error_action
-
-        # Plan-mode state intentionally persists across execute_stream calls so
-        # the LLM can iterate on the same plan file. Deactivation only happens
-        # via ``confirm_plan`` or via the toggle-off branch at the top.
 
     def update_context(self, workflow: Workflow) -> dict:
         """
@@ -918,22 +777,30 @@ class GenSQLAgenticNode(AgenticNode):
             logger.error(f"Failed to update SQL generation context: {e}")
             return {"success": False, "message": str(e)}
 
-    def _get_execution_config(self, original_input: GenSQLNodeInput) -> dict:
-        """Build execution config — tools, system instruction, hooks.
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Register tools under their canonical categories so permission rules fire.
 
-        Plan-mode tools were registered on ``self.tools`` once at setup time
-        via :meth:`AgenticNode._register_plan_mode_tools`.
+        Without this override the bound tools fall through to the ``tools.*``
+        catch-all (default ASK on normal/auto profiles), which would block at
+        ``InteractionBroker.request`` whenever a caller wires permission hooks
+        but does not also run an interactive broker listener.
         """
-        return {
-            "tools": self.tools,
-            "instruction": self._get_system_instruction(original_input),
-            "hooks": None,
-        }
-
-    def _get_system_instruction(self, original_input: GenSQLNodeInput) -> str:
-        """Get system instruction for normal mode."""
-        _, conversation_summary = self._get_or_create_session()
-        return self._get_system_prompt(conversation_summary, original_input.prompt_version)
+        mapping = super()._tool_category_map()
+        if getattr(self, "db_func_tool", None):
+            mapping["db_tools"] = list(self.db_func_tool.available_tools())
+        if getattr(self, "context_search_tools", None):
+            mapping["context_search_tools"] = list(self.context_search_tools.available_tools())
+        if getattr(self, "semantic_tools", None):
+            mapping["semantic_tools"] = list(self.semantic_tools.available_tools())
+        if getattr(self, "reference_template_tools", None):
+            mapping["semantic_tools"] = mapping.get("semantic_tools", []) + list(
+                self.reference_template_tools.available_tools()
+            )
+        if getattr(self, "date_parsing_tools", None):
+            mapping["date_parsing_tools"] = list(self.date_parsing_tools.available_tools())
+        if getattr(self, "filesystem_func_tool", None):
+            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
+        return mapping
 
     def _extract_sql_and_output_from_response(self, output: dict) -> tuple[Optional[str], Optional[str]]:
         """
@@ -998,20 +865,32 @@ class GenSQLAgenticNode(AgenticNode):
         self,
         action_history_manager: ActionHistoryManager,
     ) -> tuple[str, Optional[str]]:
-        """Collect final response text and SQL from accumulated action history."""
+        """Collect final response text and SQL from accumulated action history.
+
+        Only assistant-role actions are considered when accumulating
+        ``response_content``; tool results may carry their own ``raw_output``
+        / ``content`` fields and would otherwise overwrite the model's reply.
+        """
 
         response_content = ""
         last_successful_output = None
         for stream_action in action_history_manager.get_actions():
-            if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
+            if (
+                stream_action.role == ActionRole.ASSISTANT
+                and stream_action.status == ActionStatus.SUCCESS
+                and stream_action.output
+            ):
                 if isinstance(stream_action.output, dict):
                     last_successful_output = stream_action.output
-                    response_content = (
+                    candidate = (
                         stream_action.output.get("content", "")
                         or stream_action.output.get("response", "")
                         or stream_action.output.get("raw_output", "")
-                        or response_content
                     )
+                    if isinstance(candidate, str) and candidate:
+                        response_content = candidate
+                    elif candidate and not isinstance(candidate, str):
+                        response_content = str(candidate)
 
         if not response_content and last_successful_output:
             logger.debug(f"Trying to extract response from last_successful_output: {last_successful_output}")

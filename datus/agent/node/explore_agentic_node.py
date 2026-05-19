@@ -11,13 +11,13 @@ SQL generation. It exposes only read-only tools and runs with a low max_turns
 budget for fast, focused exploration.
 """
 
-from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
+from datus.agent.node.stream_run_context import StreamRunContext
 from datus.agent.workflow import Workflow
-from datus.cli.execution_state import ExecutionInterrupted
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.action_history import ActionRole, ActionStatus
 from datus.schemas.explore_agentic_node_models import ExploreNodeInput, ExploreNodeResult
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool
 from datus.tools.func_tool.base import trans_to_function_tool
@@ -47,6 +47,7 @@ class ExploreAgenticNode(AgenticNode):
     # when a custom alias (e.g. ``my_explorer: { node_class: explore }``) is
     # used, so skill ``allowed_agents: [explore]`` still matches aliases.
     NODE_NAME = "explore"
+    result_class = ExploreNodeResult
 
     def __init__(
         self,
@@ -260,170 +261,32 @@ class ExploreAgenticNode(AgenticNode):
         """Explore is read-only, no context updates needed."""
         return {"success": True, "message": "Explore node is read-only, no context updates"}
 
-    async def execute_stream(
-        self, action_history_manager: Optional[ActionHistoryManager] = None
-    ) -> AsyncGenerator[ActionHistory, None]:
-        """
-        Execute the exploration with streaming support.
-
-        Yields:
-            ActionHistory: Progress updates during execution
-        """
-        if not action_history_manager:
-            action_history_manager = ActionHistoryManager()
-
-        if not self.input:
-            from datus.utils.exceptions import DatusException, ErrorCode
-
-            raise DatusException(
-                code=ErrorCode.COMMON_CONFIG_ERROR,
-                message_args={
-                    "config_error": "Explore input not set. Call setup_input() first or set self.input directly."
-                },
+    def _build_success_result(self, ctx: StreamRunContext) -> ExploreNodeResult:
+        response_content = ctx.response_content
+        if not response_content and ctx.last_successful_output:
+            response_content = (
+                ctx.last_successful_output.get("content", "")
+                or ctx.last_successful_output.get("text", "")
+                or ctx.last_successful_output.get("response", "")
+                or ctx.last_successful_output.get("raw_output", "")
+                or str(ctx.last_successful_output)
             )
+        if not isinstance(response_content, str):
+            response_content = str(response_content) if response_content else ""
 
-        user_input = self.input
+        all_actions = ctx.action_history_manager.get_actions()
+        tokens_used = self._extract_total_tokens(all_actions)
+        tool_calls = [a for a in all_actions if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS]
 
-        # NOTE: per-run setup_tools() rebuild (for ExploreNodeInput.scoped_tables)
-        # is temporarily disabled — no production caller currently supplies
-        # scoped_tables, so the rebuild + permission-hooks reset is dead work.
-        # Re-enable together with the permission-hooks reset when a caller
-        # starts wiring scoped_tables into ExploreNodeInput.
-
-        # Create initial action
-        action = ActionHistory.create_action(
-            role=ActionRole.USER,
-            action_type=self.get_node_name(),
-            messages=f"User: {user_input.user_message}",
-            input_data=user_input.model_dump(),
-            status=ActionStatus.PROCESSING,
+        return ExploreNodeResult(
+            success=True,
+            response=response_content,
+            tokens_used=int(tokens_used),
+            action_history=[a.model_dump() for a in all_actions],
+            execution_stats={
+                "total_actions": len(all_actions),
+                "tool_calls_count": len(tool_calls),
+                "tools_used": sorted({a.action_type for a in tool_calls}),
+                "total_tokens": int(tokens_used),
+            },
         )
-        action_history_manager.add_action(action)
-        yield action
-
-        try:
-            await self._auto_compact()
-
-            session, conversation_summary = self._get_or_create_session()
-
-            system_prompt = self._get_system_prompt(conversation_summary)
-
-            response_content = ""
-            tokens_used = 0
-            last_successful_output = None
-
-            explore_prompt = self._build_enhanced_message(user_input)
-
-            async for stream_action in self.model.generate_with_tools_stream(
-                prompt=explore_prompt,
-                tools=self.tools or [],
-                mcp_servers={},
-                instruction=system_prompt,
-                max_turns=self.max_turns,
-                session=session,
-                action_history_manager=action_history_manager,
-                hooks=self._compose_hooks(),
-                agent_name=self.get_node_name(),
-                interrupt_controller=self.interrupt_controller,
-            ):
-                yield stream_action
-
-                if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
-                    if isinstance(stream_action.output, dict):
-                        last_successful_output = stream_action.output
-                        response_content = (
-                            stream_action.output.get("content", "")
-                            or stream_action.output.get("response", "")
-                            or stream_action.output.get("raw_output", "")
-                            or response_content
-                        )
-
-            if not response_content and last_successful_output:
-                response_content = (
-                    last_successful_output.get("content", "")
-                    or last_successful_output.get("text", "")
-                    or last_successful_output.get("response", "")
-                    or last_successful_output.get("raw_output", "")
-                    or str(last_successful_output)
-                )
-
-            # Extract token usage
-            for act in reversed(action_history_manager.get_actions()):
-                if act.role == "assistant" and act.output and isinstance(act.output, dict):
-                    usage_info = act.output.get("usage", {})
-                    if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                        try:
-                            tokens_used = int(usage_info.get("total_tokens", 0))
-                        except (TypeError, ValueError):
-                            tokens_used = 0
-                        if tokens_used > 0:
-                            break
-
-            # Build result
-            all_actions = action_history_manager.get_actions()
-            tool_calls = [a for a in all_actions if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS]
-
-            result = ExploreNodeResult(
-                success=True,
-                response=response_content,
-                tokens_used=int(tokens_used),
-                action_history=[a.model_dump() for a in all_actions],
-                execution_stats={
-                    "total_actions": len(all_actions),
-                    "tool_calls_count": len(tool_calls),
-                    "tools_used": sorted({a.action_type for a in tool_calls}),
-                    "total_tokens": int(tokens_used),
-                },
-            )
-
-            self.actions.extend(all_actions)
-            self.result = result
-
-            final_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type=f"{self.get_node_name()}_response",
-                messages=f"{self.get_node_name()} exploration completed successfully",
-                input_data=user_input.model_dump(),
-                output_data=result.model_dump(),
-                status=ActionStatus.SUCCESS,
-            )
-            action_history_manager.add_action(final_action)
-            yield final_action
-
-        except ExecutionInterrupted:
-            raise
-
-        except Exception as e:
-            from datus.utils.exceptions import DatusException
-
-            if isinstance(e, DatusException):
-                error_msg = f"[{e.code}] {e}"
-                logger.error(f"{self.get_node_name()} execution error: {error_msg}")
-            else:
-                error_msg = str(e)
-                logger.error(f"{self.get_node_name()} execution error: {error_msg}")
-
-            error_result = ExploreNodeResult(
-                success=False,
-                error=error_msg,
-                response="Sorry, I encountered an error during exploration.",
-                tokens_used=0,
-            )
-
-            action_history_manager.update_current_action(
-                status=ActionStatus.FAILED,
-                output=error_result.model_dump(),
-                messages=f"Error: {error_msg}",
-            )
-
-            error_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type=f"{self.get_node_name()}_error",
-                messages=f"Error: {error_msg}",
-                input_data=user_input.model_dump(),
-                output_data=error_result.model_dump(),
-                status=ActionStatus.FAILED,
-            )
-            action_history_manager.add_action(error_action)
-            self.result = error_result
-            yield error_action

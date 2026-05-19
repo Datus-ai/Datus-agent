@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 from datus.schemas.action_history import ActionHistory
-from datus.schemas.analysis_artifacts import QueryBrief, SubjectRefIds
+from datus.schemas.analysis_artifacts import QueryBrief, SubjectRefs
 from datus.schemas.artifact_manifest import ArtifactManifest
 from datus.utils.loggings import get_logger
 
@@ -287,7 +287,7 @@ def write_query_brief(
     *,
     name: str,
     hypothesis: str,
-    uses: SubjectRefIds,
+    uses: SubjectRefs,
     caveats: str,
 ) -> Optional[str]:
     """Write the per-query brief sidecar ``queries/<name>.brief.json``.
@@ -320,41 +320,37 @@ def write_query_brief(
         return f"Failed to write query brief: {exc}"
 
 
-def coerce_uses_arg(uses: Any) -> SubjectRefIds:
-    """Normalize an LLM-supplied ``uses`` argument into a :class:`SubjectRefIds`.
+def coerce_uses_arg(uses: Any) -> SubjectRefs:
+    """Normalize an LLM-supplied ``uses`` argument into a :class:`SubjectRefs`.
 
-    Tool framework deserializes function args from the LLM as plain
-    JSON-compatible Python, so by the time we see ``uses`` it's almost
-    always a ``dict`` (or ``None`` if the LLM omitted the field). We
-    accept either and let Pydantic catch obviously-malformed shapes.
+    The tool framework deserializes function args from the LLM as plain
+    JSON-compatible Python, so ``uses`` arrives as either:
 
-    Unknown subject kinds (anything outside ``metrics`` /
-    ``reference_sql`` / ``ext_knowledge``) are dropped silently with a
-    warning so a forward-looking LLM that learns about a future bucket
-    doesn't block the call.
+    * ``None`` — the LLM omitted the field. Returns an empty
+      :class:`SubjectRefs`.
+    * a :class:`SubjectRefs` instance — already validated upstream
+      (mainly the unit-test path). Passed through unchanged.
+    * a ``dict`` — the canonical wire shape. Validated against the
+      pydantic model so any malformed entry (missing ``path`` /
+      ``name``, wrong types, empty ``path``, unknown bucket key)
+      raises ``ValueError`` immediately. Strict validation is the
+      contract — LLMs that emit the legacy ``["metric:<id>"]`` string
+      form fail loudly here instead of poisoning ``subject_refs.json``
+      downstream.
+
+    Anything else raises ``ValueError`` so ``save_query`` can surface
+    a clear "uses argument invalid" error to the caller.
     """
     if uses is None:
-        return SubjectRefIds()
-    if isinstance(uses, SubjectRefIds):
+        return SubjectRefs()
+    if isinstance(uses, SubjectRefs):
         return uses
     if not isinstance(uses, dict):
-        raise ValueError(f"uses must be a JSON object with kind→ids; got {type(uses).__name__}")
-    known_kinds = {"metrics", "reference_sql", "ext_knowledge"}
-    cleaned: dict[str, List[str]] = {}
-    for kind, ids in uses.items():
-        if kind not in known_kinds:
-            logger.warning("Dropping unknown uses kind %r (not in %s)", kind, sorted(known_kinds))
-            continue
-        if ids is None:
-            cleaned[kind] = []
-            continue
-        if not isinstance(ids, list):
-            raise ValueError(f"uses.{kind} must be a list of strings; got {type(ids).__name__}")
-        for item in ids:
-            if not isinstance(item, str):
-                raise ValueError(f"uses.{kind} entries must be strings; got {type(item).__name__}")
-        cleaned[kind] = list(ids)
-    return SubjectRefIds(**cleaned)
+        raise ValueError(f"uses must be a JSON object; got {type(uses).__name__}")
+    try:
+        return SubjectRefs.model_validate(uses)
+    except Exception as exc:
+        raise ValueError(f"uses schema validation failed: {exc}") from exc
 
 
 def extract_artifact_result_list(action: ActionHistory, field: str) -> Optional[List[Any]]:

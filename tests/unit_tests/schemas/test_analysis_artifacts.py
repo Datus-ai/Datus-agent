@@ -39,34 +39,88 @@ from datus.schemas.analysis_artifacts import (
     Insight,
     QueryBrief,
     SubjectAssetRef,
-    SubjectRefIds,
     SubjectRefs,
     SuggestedQuestion,
 )
 
 # --------------------------------------------------------------------------- #
-# SubjectRefIds                                                               #
+# SubjectAssetRef                                                             #
 # --------------------------------------------------------------------------- #
 
 
-class TestSubjectRefIds:
+def _ref(path: list[str], name: str) -> SubjectAssetRef:
+    return SubjectAssetRef(path=path, name=name)
+
+
+class TestSubjectAssetRef:
+    """The ``(path, name)`` pair is the natural key for any subject-library
+    asset. Both fields are required and must be non-empty; ``path`` is
+    a list so callers can copy the same shape every discovery tool
+    already returns without joining/parsing strings."""
+
+    def test_round_trip(self):
+        ref = _ref(["Commerce", "Orders"], "average_gross_order_value")
+        restored = SubjectAssetRef.model_validate(ref.model_dump())
+        assert restored == ref
+
+    def test_empty_path_rejected(self):
+        with pytest.raises(ValidationError):
+            SubjectAssetRef.model_validate({"path": [], "name": "x"})
+
+    def test_empty_name_rejected(self):
+        with pytest.raises(ValidationError):
+            SubjectAssetRef.model_validate({"path": ["a"], "name": ""})
+
+    def test_missing_path_rejected(self):
+        with pytest.raises(ValidationError):
+            SubjectAssetRef.model_validate({"name": "x"})
+
+    def test_missing_name_rejected(self):
+        with pytest.raises(ValidationError):
+            SubjectAssetRef.model_validate({"path": ["a"]})
+
+    def test_extra_field_rejected(self):
+        # Old wire shapes used to carry ``id`` / ``definition_or_summary`` /
+        # ``source``. Strict validation slams the door on them so a stale
+        # producer surfaces immediately instead of silently writing fields
+        # the consumer no longer reads.
+        with pytest.raises(ValidationError):
+            SubjectAssetRef.model_validate({"path": ["a"], "name": "x", "id": "metric:a.x"})
+
+
+# --------------------------------------------------------------------------- #
+# SubjectRefs                                                                 #
+# --------------------------------------------------------------------------- #
+
+
+class TestSubjectRefs:
     def test_defaults_are_empty_buckets(self):
-        refs = SubjectRefIds()
+        refs = SubjectRefs()
         assert refs.metrics == []
         assert refs.reference_sql == []
         assert refs.ext_knowledge == []
 
     def test_round_trip(self):
-        refs = SubjectRefIds(metrics=["m_orders"], reference_sql=["rs_top_q"], ext_knowledge=["kb_rules"])
-        dumped = refs.model_dump()
-        restored = SubjectRefIds.model_validate(dumped)
+        refs = SubjectRefs(
+            metrics=[_ref(["Commerce", "Orders"], "aov")],
+            reference_sql=[_ref(["Templates"], "top_q")],
+            ext_knowledge=[_ref(["Policies"], "rules")],
+        )
+        restored = SubjectRefs.model_validate(refs.model_dump())
         assert restored == refs
+
+    def test_legacy_string_id_form_rejected(self):
+        """The old ``["metric:Sales/Revenue.gross"]`` shape must hard-fail
+        — that's the LLM-drift form previous PRs tolerated and the new
+        wire contract explicitly disallows."""
+        with pytest.raises(ValidationError):
+            SubjectRefs.model_validate({"metrics": ["metric:Sales/Revenue.gross"]})
 
     def test_extra_field_rejected(self):
         # ``extra=forbid`` keeps future LLM hallucinations from silently
         # landing in the file.
         with pytest.raises(ValidationError):
-            SubjectRefIds.model_validate({"metrics": [], "unknown_bucket": ["x"]})
+            SubjectRefs.model_validate({"metrics": [], "unknown_bucket": []})
 
 
 # --------------------------------------------------------------------------- #
@@ -78,7 +132,11 @@ def _full_brief_payload(**overrides):
     base = {
         "name": "sales_by_store",
         "hypothesis": "high-risk signups cluster around promotional campaigns",
-        "uses": {"metrics": ["m_signups"], "reference_sql": [], "ext_knowledge": []},
+        "uses": {
+            "metrics": [{"path": ["Signups", "Risk"], "name": "high_risk_signups"}],
+            "reference_sql": [],
+            "ext_knowledge": [],
+        },
         "caveats": "Excludes test accounts (signup_email LIKE '%@example.com').",
     }
     base.update(overrides)
@@ -91,7 +149,8 @@ class TestQueryBrief:
         dumped = brief.model_dump()
         restored = QueryBrief.model_validate(dumped)
         assert restored == brief
-        assert restored.uses.metrics == ["m_signups"]
+        assert restored.uses.metrics[0].name == "high_risk_signups"
+        assert restored.uses.metrics[0].path == ["Signups", "Risk"]
 
     def test_round_trip_minimal(self):
         # ``uses`` / ``caveats`` carry safe defaults — the only mandatory
@@ -101,7 +160,7 @@ class TestQueryBrief:
             "hypothesis": "stores form a flat list",
         }
         brief = QueryBrief.model_validate(minimal)
-        assert brief.uses == SubjectRefIds()
+        assert brief.uses == SubjectRefs()
         assert brief.caveats == ""
 
     def test_empty_hypothesis_rejected(self):
@@ -223,42 +282,6 @@ class TestSuggestedQuestion:
     def test_empty_question_rejected(self):
         with pytest.raises(ValidationError):
             SuggestedQuestion.model_validate(_full_suggested_question_payload(question=""))
-
-
-# --------------------------------------------------------------------------- #
-# SubjectAssetRef / SubjectRefs                                               #
-# --------------------------------------------------------------------------- #
-
-
-class TestSubjectAssetRef:
-    def test_defaults_for_unresolved_fields(self):
-        ref = SubjectAssetRef(id="m_orders", name="Orders metric")
-        assert ref.definition_or_summary == ""
-        assert ref.source == ""
-
-    def test_round_trip(self):
-        ref = SubjectAssetRef(
-            id="m_orders", name="Orders", definition_or_summary="SUM(orders)", source="metrics/m_orders"
-        )
-        restored = SubjectAssetRef.model_validate(ref.model_dump())
-        assert restored == ref
-
-
-class TestSubjectRefs:
-    def test_defaults_are_empty_lists(self):
-        refs = SubjectRefs()
-        assert refs.metrics == []
-        assert refs.reference_sql == []
-        assert refs.ext_knowledge == []
-
-    def test_round_trip(self):
-        refs = SubjectRefs(
-            metrics=[SubjectAssetRef(id="m1", name="m1")],
-            reference_sql=[SubjectAssetRef(id="rs1", name="rs1")],
-            ext_knowledge=[SubjectAssetRef(id="kb1", name="kb1")],
-        )
-        restored = SubjectRefs.model_validate(refs.model_dump())
-        assert restored == refs
 
 
 # --------------------------------------------------------------------------- #

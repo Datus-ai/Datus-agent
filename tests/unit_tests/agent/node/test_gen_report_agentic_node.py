@@ -402,7 +402,9 @@ class TestGenReportAgenticNodeExecution:
         node.input = None
 
         action_manager = ActionHistoryManager()
-        with pytest.raises(ValueError, match="Report input not set"):
+        from datus.utils.exceptions import DatusException
+
+        with pytest.raises(DatusException, match="Missing required field"):
             async for _ in node.execute_stream(action_manager):
                 pass
 

@@ -65,6 +65,7 @@ class GenVisualReportAgenticNode(BaseVisualArtifactAgenticNode[GenVisualReportNo
     """
 
     NODE_NAME = "gen_visual_report"
+    result_class = GenVisualReportNodeResult
     ARTIFACT_KIND = "report"
     ARTIFACT_ROOT_DIR_NAME = "reports"
     FILESYSTEM_TOOL_CLS = ReportFilesystemFuncTool
@@ -109,7 +110,7 @@ class GenVisualReportAgenticNode(BaseVisualArtifactAgenticNode[GenVisualReportNo
             return None
         return getattr(tools, "report_slug", None)
 
-    def _build_success_result(
+    def _finalize_artifact_success(
         self,
         *,
         user_input: GenVisualReportNodeInput,
@@ -146,7 +147,7 @@ class GenVisualReportAgenticNode(BaseVisualArtifactAgenticNode[GenVisualReportNo
             },
         )
 
-    def _build_error_result(self, exc: BaseException) -> GenVisualReportNodeResult:
+    def _finalize_artifact_error(self, exc: BaseException) -> GenVisualReportNodeResult:
         mode = getattr(self.artifact_tools, "mode", None) if self.artifact_tools is not None else None
         manifest = self._read_artifact_manifest(self._active_artifact_slug)
         return GenVisualReportNodeResult(

@@ -30,15 +30,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, AsyncGenerator, ClassVar, Dict, Generic, List, Literal, Optional, Type, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, Generic, List, Literal, Optional, Type, TypeVar
 
 from pydantic import BaseModel
 
 from datus.agent.node._visual_artifact_finalize import run_finalize_analysis
 from datus.agent.node.agentic_node import AgenticNode
-from datus.cli.execution_state import ExecutionInterrupted
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+if TYPE_CHECKING:
+    from datus.agent.node.stream_run_context import StreamRunContext
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool
 from datus.tools.func_tool._visual_artifact_helpers import (
     extract_artifact_result_field,
@@ -313,8 +315,22 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         mapping = super()._tool_category_map()
         if self.db_func_tool:
             mapping["db_tools"] = list(self.db_func_tool.available_tools())
+        semantic_bucket: List[Any] = []
         if self.semantic_tools:
-            mapping["semantic_tools"] = list(self.semantic_tools.available_tools())
+            semantic_bucket.extend(self.semantic_tools.available_tools())
+        # Artifact-specific helpers (``start_new_*`` / ``bind_existing_*`` /
+        # ``save_query*`` / ``validate_render``) are subagent-internal state
+        # mutations; lump them into the ``semantic_tools`` bucket so the
+        # ``semantic_tools.*`` ALLOW rule (normal profile) covers them.
+        # Without this they fall through to ``tools.<name>`` and the default
+        # ASK gate would block at the broker.
+        if self.artifact_tools and hasattr(self.artifact_tools, "available_tools"):
+            try:
+                semantic_bucket.extend(self.artifact_tools.available_tools())
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("artifact_tools.available_tools() failed: %s", exc)
+        if semantic_bucket:
+            mapping["semantic_tools"] = semantic_bucket
         if self.context_search_tools:
             mapping["context_search_tools"] = list(self.context_search_tools.available_tools())
         if self.filesystem_func_tool:
@@ -561,7 +577,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
 
     # ── Result construction (subclass overrides) ──────────────────────────
 
-    def _build_success_result(
+    def _finalize_artifact_success(
         self,
         *,
         user_input: InputT,
@@ -574,11 +590,21 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         all_actions: List[ActionHistory],
         tool_calls: List[ActionHistory],
     ) -> ResultT:
-        """Construct the per-run result object (typed per artifact kind)."""
+        """Construct the per-run result object (typed per artifact kind).
+
+        Renamed from ``_build_success_result`` so it does not clash with the
+        ``AgenticNode._build_success_result(ctx)`` template hook. Subclasses
+        (gen_visual_dashboard, gen_visual_report) implement this and let the
+        ``_build_success_result(ctx)`` adapter below assemble the kwargs.
+        """
         raise NotImplementedError
 
-    def _build_error_result(self, exc: BaseException) -> ResultT:
-        """Construct the result returned when ``execute_stream`` raises."""
+    def _finalize_artifact_error(self, exc: BaseException) -> ResultT:
+        """Construct the result returned when ``execute_stream`` raises.
+
+        Renamed from ``_build_error_result`` so it does not clash with the
+        ``AgenticNode._build_error_result(exc, ctx)`` adapter.
+        """
         raise NotImplementedError
 
     def _post_validate_hook(self, artifact_slug: str, result: ResultT) -> None:
@@ -630,163 +656,90 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                 return a
         return None
 
-    # ── Execution ─────────────────────────────────────────────────────────
+    # ── Template hooks ─────────────────────────────────────────────────────
 
-    async def execute_stream(
-        self, action_history_manager: Optional[ActionHistoryManager] = None
-    ) -> AsyncGenerator[ActionHistory, None]:
-        if not action_history_manager:
-            action_history_manager = ActionHistoryManager()
-        if not self.input:
-            raise ValueError(
-                f"Visual {self.ARTIFACT_KIND} input not set. Provide the corresponding NodeInput via setup_input()."
-            )
-        user_input: InputT = self.input  # type: ignore[assignment]
-
+    async def _before_stream(self, ctx: "StreamRunContext") -> None:
         # Bind artifact tools for this run (regenerates artifact id every call).
-        self._prepare_artifacts(user_input)
+        self._prepare_artifacts(ctx.user_input)
 
-        action = ActionHistory.create_action(
-            role=ActionRole.USER,
-            action_type=self.get_node_name(),
-            messages=f"User: {getattr(user_input, 'user_message', '')}",
-            input_data=user_input.model_dump(),
-            status=ActionStatus.PROCESSING,
+    def _build_success_result(self, ctx: "StreamRunContext") -> ResultT:
+        all_actions = ctx.action_history_manager.get_actions()
+        tool_calls = [a for a in all_actions if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS]
+        tokens_used = self._extract_total_tokens(all_actions)
+
+        query_actions = [a for a in tool_calls if a.action_type == self.QUERY_SAVE_ACTION_TYPE]
+        app_jsx_rel_path: Optional[str] = None
+        render_file_count = 0
+        for tc in reversed(tool_calls):
+            if tc.action_type != "validate_render":
+                continue
+            candidate = extract_artifact_result_field(tc, "app_jsx_path")
+            if candidate:
+                app_jsx_rel_path = candidate
+                render_files = extract_artifact_result_list(tc, "render_files")
+                render_file_count = len(render_files) if render_files else 0
+                break
+
+        # The LLM picked the active artifact slug by calling
+        # start_new_<kind> / bind_existing_<kind>; the tools instance owns it.
+        picked = self._read_artifact_slug_from_tools()
+        if picked:
+            self._active_artifact_slug = picked
+
+        response_content = ctx.response_content
+        if not isinstance(response_content, str):
+            response_content = str(response_content) if response_content else ""
+
+        result = self._finalize_artifact_success(
+            user_input=ctx.user_input,
+            response_content=response_content,
+            artifact_slug=self._active_artifact_slug,
+            app_jsx_rel_path=app_jsx_rel_path,
+            render_file_count=render_file_count,
+            query_actions=query_actions,
+            tokens_used=tokens_used,
+            all_actions=all_actions,
+            tool_calls=tool_calls,
         )
-        action_history_manager.add_action(action)
-        yield action
 
-        try:
-            await self._auto_compact()
-            session, conversation_summary = self._get_or_create_session()
-            prompt_version = getattr(user_input, "prompt_version", None) or self.node_config.get("prompt_version")
-            system_instruction = self._get_system_prompt(conversation_summary, prompt_version)
-            enhanced_message = self._build_enhanced_message(user_input)
-
-            response_content = ""
-            tokens_used = 0
-
-            async for stream_action in self.model.generate_with_tools_stream(
-                prompt=enhanced_message,
-                tools=self.tools,
-                mcp_servers=self.mcp_servers,
-                instruction=system_instruction,
-                max_turns=self.max_turns,
-                session=session,
-                action_history_manager=action_history_manager,
-                agent_name=self.get_node_name(),
-                interrupt_controller=self.interrupt_controller,
-            ):
-                if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
-                    if isinstance(stream_action.output, dict):
-                        response_content = (
-                            stream_action.output.get("content")
-                            or stream_action.output.get("response")
-                            or stream_action.output.get("raw_output")
-                            or response_content
-                        )
-                yield stream_action
-
-            all_actions = action_history_manager.get_actions()
-            tool_calls = [a for a in all_actions if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS]
-
-            for past in reversed(all_actions):
-                if past.role == ActionRole.ASSISTANT and isinstance(past.output, dict):
-                    usage = past.output.get("usage") or {}
-                    if isinstance(usage, dict) and usage.get("total_tokens"):
-                        tokens_used = int(usage["total_tokens"])
-                        break
-
-            # Find the most recent successful validate_render call. That's
-            # the terminal action of this subagent; its result envelope
-            # carries app_jsx_path on success. Failed validations (the LLM
-            # may iterate) have no app_jsx_path and are skipped.
-            query_actions = [a for a in tool_calls if a.action_type == self.QUERY_SAVE_ACTION_TYPE]
-            app_jsx_rel_path: Optional[str] = None
-            render_file_count = 0
-            for tc in reversed(tool_calls):
-                if tc.action_type != "validate_render":
-                    continue
-                candidate = extract_artifact_result_field(tc, "app_jsx_path")
-                if candidate:
-                    app_jsx_rel_path = candidate
-                    render_files = extract_artifact_result_list(tc, "render_files")
-                    render_file_count = len(render_files) if render_files else 0
-                    break
-
-            # The LLM picked the active artifact slug by calling
-            # start_new_<kind> / bind_existing_<kind>; the tools instance
-            # owns the resulting slug.
-            picked = self._read_artifact_slug_from_tools()
-            if picked:
-                self._active_artifact_slug = picked
-
-            result = self._build_success_result(
-                user_input=user_input,
-                response_content=response_content,
-                artifact_slug=self._active_artifact_slug,
-                app_jsx_rel_path=app_jsx_rel_path,
-                render_file_count=render_file_count,
-                query_actions=query_actions,
-                tokens_used=tokens_used,
-                all_actions=all_actions,
-                tool_calls=tool_calls,
+        if app_jsx_rel_path is None:
+            error_msg = (
+                self._missing_binding_error() if self._active_artifact_slug is None else self._incomplete_render_error()
             )
+            if hasattr(result, "error"):
+                result.error = error_msg  # type: ignore[attr-defined]
+            # When the render is incomplete, success must reflect that so the
+            # template's final action emits SUCCESS=False status.
+            if hasattr(result, "success"):
+                result.success = False  # type: ignore[attr-defined]
+        elif self._active_artifact_slug:
+            # Finalize stage: produce insights / suggested_questions /
+            # subject_refs (present iff non-empty) under analysis/. Runs
+            # before _post_validate_hook so the HTML compile step (CLI
+            # mode) can pick up the freshly-written analysis files if
+            # it ever wants to. Finalize failures are surfaced via
+            # ``result.finalize_warnings`` but never block the main
+            # artifact — the SQL+render bundle is already on disk.
+            finalize_summary = self._run_finalize(self._active_artifact_slug, all_actions)
+            if hasattr(result, "finalize_warnings") and finalize_summary.get("warnings"):
+                result.finalize_warnings = finalize_summary["warnings"]  # type: ignore[attr-defined]
+            if hasattr(result, "finalize_error") and finalize_summary.get("error"):
+                result.finalize_error = finalize_summary["error"]  # type: ignore[attr-defined]
+            self._post_validate_hook(self._active_artifact_slug, result)
 
-            if app_jsx_rel_path is None:
-                error_msg = (
-                    self._missing_binding_error()
-                    if self._active_artifact_slug is None
-                    else self._incomplete_render_error()
-                )
-                # Both result models expose ``error: Optional[str]``.
-                if hasattr(result, "error"):
-                    result.error = error_msg  # type: ignore[attr-defined]
-            elif self._active_artifact_slug:
-                # Finalize stage: produce insights / suggested_questions /
-                # subject_refs (present iff non-empty) under analysis/. Runs
-                # before _post_validate_hook so the HTML compile step (CLI
-                # mode) can pick up the freshly-written analysis files if
-                # it ever wants to. Finalize failures are surfaced via
-                # ``result.finalize_warnings`` but never block the main
-                # artifact — the SQL+render bundle is already on disk.
-                finalize_summary = self._run_finalize(self._active_artifact_slug, all_actions)
-                if hasattr(result, "finalize_warnings") and finalize_summary.get("warnings"):
-                    result.finalize_warnings = finalize_summary["warnings"]  # type: ignore[attr-defined]
-                if hasattr(result, "finalize_error") and finalize_summary.get("error"):
-                    result.finalize_error = finalize_summary["error"]  # type: ignore[attr-defined]
-                self._post_validate_hook(self._active_artifact_slug, result)
+        # Stash artifact summary so ``_final_summary_for_action`` (used by the
+        # base template's final action emit) can render the right message.
+        ctx.extras["artifact_app_jsx_rel_path"] = app_jsx_rel_path
+        ctx.extras["artifact_slug"] = self._active_artifact_slug
+        return result
 
-            self.actions.extend(all_actions)
-
-            final_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type=f"{self.get_node_name()}_response",
-                messages=self._final_summary_message(self._active_artifact_slug, app_jsx_rel_path),
-                input_data=user_input.model_dump(),
-                output_data=result.model_dump(),
-                status=ActionStatus.SUCCESS if app_jsx_rel_path else ActionStatus.FAILED,
-            )
-            action_history_manager.add_action(final_action)
-            yield final_action
-
-        except ExecutionInterrupted:
-            raise
-        except Exception as exc:
-            logger.error("%s execution error: %s", self.get_node_name(), exc, exc_info=True)
-            error_result = self._build_error_result(exc)
-            action_history_manager.update_current_action(
-                status=ActionStatus.FAILED,
-                output=error_result.model_dump(),
-                messages=f"Error: {exc}",
-            )
-            error_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type="error",
-                messages=f"{self.get_node_name()} failed: {exc}",
-                input_data=user_input.model_dump(),
-                output_data=error_result.model_dump(),
-                status=ActionStatus.FAILED,
-            )
-            action_history_manager.add_action(error_action)
-            yield error_action
+    def _build_error_result(self, exc: BaseException, ctx: "StreamRunContext") -> ResultT:
+        # Visual-artifact subclasses pre-existed the unified base error helper
+        # and own a richer error shape (manifest snapshot, artifact mode).
+        # Refresh the bound artifact slug from the tools so manifest/artifact
+        # metadata is not lost when the LLM bound an artifact before the
+        # run failed (success path does the same refresh in _build_success_result).
+        picked = self._read_artifact_slug_from_tools()
+        if picked:
+            self._active_artifact_slug = picked
+        return self._finalize_artifact_error(exc)

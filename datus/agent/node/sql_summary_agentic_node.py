@@ -11,13 +11,12 @@ generation tools, and hooks.
 """
 
 import re
-from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
-from datus.cli.execution_state import ExecutionInterrupted
+from datus.agent.node.stream_run_context import StreamRunContext
 from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput, SqlSummaryNodeResult
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_tools import GenerationTools
@@ -38,6 +37,8 @@ class SqlSummaryAgenticNode(AgenticNode):
     - Configurable tool sets
     - Session-based conversation management
     """
+
+    result_class = SqlSummaryNodeResult
 
     def __init__(
         self,
@@ -348,204 +349,57 @@ class SqlSummaryAgenticNode(AgenticNode):
                 message_args={"config_error": f"Template loading failed for '{template_name}': {str(e)}"},
             ) from e
 
-    async def execute_stream(
-        self,
-        action_history_manager: Optional[ActionHistoryManager] = None,
-    ) -> AsyncGenerator[ActionHistory, None]:
-        """
-        Execute the SQL summary node interaction with streaming support.
+    def _build_template_context(self, ctx: StreamRunContext) -> Optional[dict]:
+        """Delegate to the existing ``_prepare_template_context`` helper."""
+        return self._prepare_template_context(ctx.user_input)
 
-        Args:
-            action_history_manager: Optional action history manager
+    def _build_enhanced_message(self, user_input, extra_enhanced_parts=None) -> str:
+        """Splice sql_query / comment into the enhanced section."""
+        extra_parts: List[str] = list(extra_enhanced_parts or [])
+        sql_query = getattr(user_input, "sql_query", "")
+        comment = getattr(user_input, "comment", "")
+        if sql_query:
+            extra_parts.append(f"SQL Query:\n```sql\n{sql_query}\n```")
+        if comment:
+            extra_parts.append(f"Comment: {comment}")
+        return super()._build_enhanced_message(user_input, extra_enhanced_parts=extra_parts)
 
-        Yields:
-            ActionHistory: Progress updates during execution
-        """
-        if not action_history_manager:
-            action_history_manager = ActionHistoryManager()
+    def _build_success_result(self, ctx: StreamRunContext) -> SqlSummaryNodeResult:
+        response_content = ctx.response_content
+        if not response_content and ctx.last_successful_output:
+            raw_output = ctx.last_successful_output.get("raw_output", "")
+            if isinstance(raw_output, dict) or raw_output:
+                response_content = raw_output
+            else:
+                response_content = str(ctx.last_successful_output)
 
-        # Get input from self.input
-        if self.input is None:
-            raise ValueError("SQL summary input not set. Set self.input before calling execute_stream.")
-
-        user_input = self.input
-
-        # Create initial action
-        action = ActionHistory.create_action(
-            role=ActionRole.USER,
-            action_type=self.get_node_name(),
-            messages=f"User: {user_input.user_message}",
-            input_data=user_input.model_dump(),
-            status=ActionStatus.PROCESSING,
+        sql_summary_file, extracted_output = self._extract_sql_summary_and_output_from_response(
+            {"content": response_content}
         )
-        action_history_manager.add_action(action)
-        yield action
+        if extracted_output:
+            response_content = extracted_output
 
-        try:
-            # Session management (only in interactive mode)
-            session = None
-            conversation_summary = None
-            if self.execution_mode == "interactive":
-                # Check for auto-compact before session creation to ensure fresh context
-                await self._auto_compact()
+        if not isinstance(response_content, str):
+            response_content = str(response_content) if response_content else ""
 
-                # Get or create session and any available summary
-                session, conversation_summary = self._get_or_create_session()
+        tokens_used = 0
+        if self.execution_mode == "interactive":
+            tokens_used = self._extract_total_tokens(ctx.action_history_manager.get_actions())
 
-            # Prepare enhanced template context
-            template_context = self._prepare_template_context(user_input)
+        # Workflow mode auto-saves discovered sql_summary files to the DB.
+        # Persistence is the only durability path in workflow mode, so let
+        # the exception propagate to the template's error handler instead
+        # of silently returning success when the DB write failed.
+        if self.execution_mode == "workflow" and sql_summary_file:
+            self._save_to_db(sql_summary_file)
+            logger.info(f"Auto-saved to database: {sql_summary_file}")
 
-            # Get system instruction from template with enhanced context
-            # prompt_version is now hardcoded to "1.0" in _get_system_prompt
-            system_instruction = self._get_system_prompt(conversation_summary, None, template_context)
-
-            # sql_query / comment are node-specific extras spliced into the
-            # enhanced section; DB context + plan-mode prompt are added by base.
-            extra_parts: List[str] = []
-            if user_input.sql_query:
-                extra_parts.append(f"SQL Query:\n```sql\n{user_input.sql_query}\n```")
-            if user_input.comment:
-                extra_parts.append(f"Comment: {user_input.comment}")
-
-            enhanced_message = self._build_enhanced_message(user_input, extra_enhanced_parts=extra_parts)
-
-            logger.debug(f"Tools available: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
-            logger.debug(f"Passing hooks to model: {self.hooks} (type: {type(self.hooks)})")
-
-            # Initialize response collection variables
-            response_content = ""
-            sql_summary_file = None
-            tokens_used = 0
-            last_successful_output = None
-
-            # Stream response using the model's generate_with_tools_stream
-            async for stream_action in self.model.generate_with_tools_stream(
-                prompt=enhanced_message,
-                tools=self.tools,
-                mcp_servers=self.mcp_servers,
-                instruction=system_instruction,
-                max_turns=self.max_turns,
-                session=session,
-                action_history_manager=action_history_manager,
-                hooks=self._compose_hooks(self.hooks if self.execution_mode == "interactive" else None),
-                agent_name=self.get_node_name(),
-                interrupt_controller=self.interrupt_controller,
-            ):
-                yield stream_action
-
-                # Collect response content from successful actions
-                if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
-                    if isinstance(stream_action.output, dict):
-                        last_successful_output = stream_action.output
-                        # Look for content in various possible fields
-                        raw_output = stream_action.output.get("raw_output", "")
-                        # Handle case where raw_output is already a dict
-                        if isinstance(raw_output, dict):
-                            response_content = raw_output
-                        elif raw_output:
-                            response_content = raw_output
-
-            # If we still don't have response_content, check the last successful output
-            if not response_content and last_successful_output:
-                logger.debug(f"Trying to extract response from last_successful_output: {last_successful_output}")
-                # Try different fields that might contain the response
-                raw_output = last_successful_output.get("raw_output", "")
-                if isinstance(raw_output, dict):
-                    response_content = raw_output
-                elif raw_output:
-                    response_content = raw_output
-                else:
-                    response_content = str(last_successful_output)  # Fallback to string representation
-
-            # Extract sql_summary_file and output from the final response_content
-            sql_summary_file, extracted_output = self._extract_sql_summary_and_output_from_response(
-                {"content": response_content}
-            )
-            if extracted_output:
-                response_content = extracted_output
-
-            logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
-
-            # Extract token usage (only in interactive mode with session)
-            tokens_used = 0
-            if self.execution_mode == "interactive":
-                final_actions = action_history_manager.get_actions()
-
-                # Find the final assistant action with token usage
-                for action in reversed(final_actions):
-                    if action.role == "assistant":
-                        if action.output and isinstance(action.output, dict):
-                            usage_info = action.output.get("usage", {})
-                            if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                                tokens_used = usage_info.get("total_tokens", 0)
-                                if tokens_used > 0:
-                                    break
-                            else:
-                                logger.warning(f"no usage token found in this action {action.messages}")
-
-            # Auto-save to database in workflow mode
-            if self.execution_mode == "workflow" and sql_summary_file:
-                try:
-                    self._save_to_db(sql_summary_file)
-                    logger.info(f"Auto-saved to database: {sql_summary_file}")
-                except Exception as e:
-                    logger.error(f"Failed to auto-save to database: {e}")
-
-            # Create final result
-            result = SqlSummaryNodeResult(
-                success=True,
-                response=response_content,
-                sql_summary_file=sql_summary_file,
-                tokens_used=int(tokens_used),
-            )
-
-            # Add to internal actions list
-            self.actions.extend(action_history_manager.get_actions())
-
-            # Create final action
-            final_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type="sql_summary_response",
-                messages=f"{self.get_node_name()} interaction completed successfully",
-                input_data=user_input.model_dump(),
-                output_data=result.model_dump(),
-                status=ActionStatus.SUCCESS,
-            )
-            action_history_manager.add_action(final_action)
-            yield final_action
-
-        except ExecutionInterrupted:
-            raise
-
-        except Exception as e:
-            logger.error(f"{self.get_node_name()} execution error: {e}")
-
-            # Create error result
-            error_result = SqlSummaryNodeResult(
-                success=False,
-                error=str(e),
-                response="Sorry, I encountered an error while processing your request.",
-                tokens_used=0,
-            )
-
-            # Update action with error
-            action_history_manager.update_current_action(
-                status=ActionStatus.FAILED,
-                output=error_result.model_dump(),
-                messages=f"Error: {str(e)}",
-            )
-
-            # Create error action
-            error_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type="error",
-                messages=f"{self.get_node_name()} interaction failed: {str(e)}",
-                input_data=user_input.model_dump(),
-                output_data=error_result.model_dump(),
-                status=ActionStatus.FAILED,
-            )
-            action_history_manager.add_action(error_action)
-            yield error_action
+        return SqlSummaryNodeResult(
+            success=True,
+            response=response_content,
+            sql_summary_file=sql_summary_file,
+            tokens_used=int(tokens_used),
+        )
 
     def _extract_sql_summary_and_output_from_response(self, output: dict) -> tuple[Optional[str], Optional[str]]:
         """

@@ -422,7 +422,7 @@ class TestGenExtKnowledgeNodeExecution:
 
         assert len(actions) >= 2
         assert actions[-1].status == ActionStatus.SUCCESS
-        assert actions[-1].action_type == "ext_knowledge_response"
+        assert actions[-1].action_type == "gen_ext_knowledge_response"
 
     @pytest.mark.asyncio
     async def test_ext_knowledge_interactive_mode_token_tracking(self, real_agent_config, mock_llm_create):
@@ -511,7 +511,9 @@ class TestGenExtKnowledgeNodeExecution:
         node = _create_node(real_agent_config)
         node.input = None
 
-        with pytest.raises(ValueError, match="External knowledge input not set"):
+        from datus.utils.exceptions import DatusException
+
+        with pytest.raises(DatusException, match="Missing required field"):
             async for _ in node.execute_stream():
                 pass
 

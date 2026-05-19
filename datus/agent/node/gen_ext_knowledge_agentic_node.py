@@ -11,16 +11,16 @@ generation tools, and hooks.
 """
 
 from dataclasses import dataclass
-from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
+from typing import Any, Dict, Iterable, List, Literal, Optional
 
 import pandas as pd
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.compare_agentic_node import CompareAgenticNode
-from datus.cli.execution_state import ExecutionInterrupted
+from datus.agent.node.stream_run_context import StreamRunContext
 from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput, ExtKnowledgeNodeResult
 from datus.schemas.node_models import SQLContext, SqlTask
@@ -47,6 +47,66 @@ class VerifyResult:
     outcome: Optional[ComparisonOutcome] = None
 
 
+class VerifySqlRetryPolicy:
+    """:class:`~datus.agent.node.retry_policy.RetryPolicy` driven by ``verify_sql``.
+
+    Used exclusively by :class:`GenExtKnowledgeAgenticNode`. The node owns
+    the ``_verification_passed`` flag and the ``_get_retry_prompt`` helper;
+    this policy is a thin adapter that lets the template's generic retry
+    loop consume them. When gold_sql is absent (``node._gold_sql`` falsy)
+    verification is considered passed and the loop exits after the first
+    attempt.
+
+    Lives in this module — not in a shared ``policies/`` package — because
+    it closes over a GenExtKnowledgeAgenticNode instance and would not be
+    reused by any other node.
+    """
+
+    def __init__(self, node: "GenExtKnowledgeAgenticNode"):
+        self.node = node
+        # ``max_verification_retries`` is the number of *retries*; the
+        # total attempt count is one larger (initial + retries).
+        self.max_attempts = max(1, node.max_verification_retries + 1)
+
+    def reset(self, ctx: StreamRunContext) -> None:
+        # Verification state is owned by the node so the ``verify_sql`` tool's
+        # ``on_end`` hook can keep updating it during the stream.
+        self.node._reset_verification_state()
+
+    def should_retry(self, ctx: StreamRunContext) -> bool:
+        if self.node._verification_passed:
+            return False
+        # No gold_sql means there is nothing to verify against — treat as passed.
+        if not getattr(self.node, "_gold_sql", None):
+            return False
+        logger.info(
+            "Verification failed for %s (attempt %d/%d), scheduling retry",
+            self.node.get_node_name(),
+            ctx.attempt,
+            self.max_attempts,
+        )
+        return True
+
+    def next_prompt(self, ctx: StreamRunContext) -> Optional[str]:
+        # ``ctx.attempt`` is the iteration we just finished; the next attempt
+        # uses it as the retry index (1-based for the user-facing
+        # "(N/max)" suffix the node's prompt builder embeds).
+        return self.node._get_retry_prompt(ctx.attempt)
+
+    def on_retry_actions(self, ctx: StreamRunContext) -> Iterable[ActionHistory]:
+        action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="verification_retry",
+            messages=(f"Verification failed, retrying ({ctx.attempt}/{self.node.max_verification_retries})..."),
+            input_data={"attempt": ctx.attempt},
+            status=ActionStatus.PROCESSING,
+        )
+        return (action,)
+
+    def finalise(self, ctx: StreamRunContext) -> None:
+        return None
+
+
 class GenExtKnowledgeAgenticNode(AgenticNode):
     """
     External knowledge generation agentic node with enhanced configuration.
@@ -59,6 +119,8 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
     - Subject tree management with 3-level priority
     - Session-based conversation management
     """
+
+    result_class = ExtKnowledgeNodeResult
 
     def __init__(
         self,
@@ -760,282 +822,81 @@ Rules:
                 message_args={"config_error": f"Template loading failed for '{template_name}': {str(e)}"},
             ) from e
 
-    async def execute_stream(
-        self,
-        action_history_manager: Optional[ActionHistoryManager] = None,
-    ) -> AsyncGenerator[ActionHistory, None]:
-        """
-        Execute the external knowledge node interaction with streaming support.
+    # ── template hooks ────────────────────────────────────────────────
 
-        Args:
-            action_history_manager: Optional action history manager
+    async def _before_stream(self, ctx: StreamRunContext) -> None:
+        # Parse question / gold_sql out of either workflow fields or the raw
+        # ``user_message`` before tools and prompts are wired up: the presence
+        # of gold_sql decides whether ``verify_sql`` is registered, and the
+        # template context branches on it too.
+        user_input = ctx.user_input
+        if user_input.question is not None:
+            question = user_input.question
+            gold_sql = user_input.gold_sql
+            logger.info("Using directly provided question and gold_sql (workflow mode)")
+        else:
+            question, gold_sql = await self._parse_user_message(user_input.user_message)
+            logger.info(f"Parsed from user_message (agentic mode): has_gold_sql={gold_sql is not None}")
 
-        Yields:
-            ActionHistory: Progress updates during execution
-        """
-        if not action_history_manager:
-            action_history_manager = ActionHistoryManager()
+        self._current_question = question
 
-        # Get input from self.input
-        if self.input is None:
-            raise ValueError("External knowledge input not set. Set self.input before calling execute_stream.")
-        user_input = self.input
-        prompt_version = getattr(user_input, "prompt_version", None) or self.node_config.get("prompt_version")
+        if gold_sql:
+            self._validate_gold_sql(gold_sql)
+            self._gold_sql = gold_sql
+            self._enable_verify_sql_tool()
+        else:
+            self._disable_verify_sql_tool()
+            if hasattr(self, "_gold_sql"):
+                delattr(self, "_gold_sql")
 
-        # Create initial action
-        action = ActionHistory.create_action(
-            role=ActionRole.USER,
-            action_type=self.get_node_name(),
-            messages=f"User: {user_input.user_message}",
-            input_data=user_input.model_dump(),
-            status=ActionStatus.PROCESSING,
+        # The parsed ``question`` replaces ``user_input.user_message`` when
+        # the template calls ``_build_enhanced_message``.
+        ctx.user_message_override = question
+        ctx.extras["ext_knowledge_gold_sql"] = gold_sql
+
+    def _build_template_context(self, ctx: StreamRunContext) -> Optional[dict]:
+        gold_sql = ctx.extras.get("ext_knowledge_gold_sql")
+        return self._prepare_template_context(ctx.user_input, gold_sql=gold_sql)
+
+    def _get_retry_policy(self):
+        return VerifySqlRetryPolicy(node=self)
+
+    def _build_success_result(self, ctx: StreamRunContext) -> ExtKnowledgeNodeResult:
+        response_content = ctx.response_content
+        if not response_content and ctx.last_successful_output:
+            raw_output = ctx.last_successful_output.get("raw_output", "")
+            if isinstance(raw_output, dict) or raw_output:
+                response_content = raw_output
+            else:
+                response_content = str(ctx.last_successful_output)
+
+        ext_knowledge_file, extracted_output = self._extract_ext_knowledge_and_output_from_response(
+            {"content": response_content}
         )
-        action_history_manager.add_action(action)
-        yield action
+        if extracted_output:
+            response_content = extracted_output
+        if not isinstance(response_content, str):
+            response_content = str(response_content) if response_content else ""
 
-        try:
-            # Session management (only in interactive mode)
-            session = None
-            conversation_summary = None
-            if self.execution_mode == "interactive":
-                # Check for auto-compact before session creation to ensure fresh context
-                await self._auto_compact()
+        tokens_used = 0
+        if self.execution_mode == "interactive":
+            tokens_used = self._extract_total_tokens(ctx.action_history_manager.get_actions())
 
-                # Get or create session and any available summary
-                session, conversation_summary = self._get_or_create_session()
-
-            # Determine question and gold_sql based on mode BEFORE building
-            # the template context / tools — the gold_sql presence decides
-            # whether verify_sql is registered and which PHASE 2 branch the
-            # Prompt renders.
-            # workflow mode: use fields directly; agentic mode: parse user_message
-            if user_input.question is not None:
-                # workflow mode: use provided question and gold_sql directly
-                question = user_input.question
-                gold_sql = user_input.gold_sql
-                logger.info("Using directly provided question and gold_sql (workflow mode)")
-            else:
-                # agentic mode: parse user_message to extract question and gold_sql
-                question, gold_sql = await self._parse_user_message(user_input.user_message)
-                logger.info(f"Parsed from user_message (agentic mode): has_gold_sql={gold_sql is not None}")
-
-            self._current_question = question
-
-            # Pre-validate gold_sql and wire verify_sql accordingly.
-            # - Empty gold_sql: drop verify_sql tool; Prompt will tell the
-            #   model to skip PHASE 2 and go straight to knowledge extraction.
-            # - Non-empty but unrunnable gold_sql: raise DatusException here
-            #   so the outer handler emits a FAILED action WITHOUT spending
-            #   any LLM turns on a futile retry loop.
-            if gold_sql:
-                self._validate_gold_sql(gold_sql)
-                self._gold_sql = gold_sql
-                self._enable_verify_sql_tool()
-            else:
-                self._disable_verify_sql_tool()
-                if hasattr(self, "_gold_sql"):
-                    delattr(self, "_gold_sql")
-
-            # Prepare enhanced template context (depends on gold_sql presence)
-            template_context = self._prepare_template_context(user_input, gold_sql=gold_sql)
-
-            # Get system instruction from template with enhanced context
-            system_instruction = self._get_system_prompt(conversation_summary, prompt_version, template_context)
-
-            # Use the parsed question (extracted from raw user_message) as the
-            # user-side prompt; DB context + plan-mode workflow come from base.
-            original_user_message = user_input.user_message
-            user_input.user_message = question
+        # Workflow-mode auto-save side effect preserved from the legacy
+        # execute_stream — fires only when an ext_knowledge file was produced.
+        if self.execution_mode == "workflow" and ext_knowledge_file:
             try:
-                enhanced_message = self._build_enhanced_message(user_input)
-            finally:
-                user_input.user_message = original_user_message
+                self._save_to_db(ext_knowledge_file)
+                logger.info(f"Auto-saved to database: {ext_knowledge_file}")
+            except Exception as e:
+                logger.error(f"Failed to auto-save to database: {e}")
 
-            logger.debug(f"Tools available: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
-            logger.info(f"Passing hooks to model: {self.hooks} (type: {type(self.hooks)})")
-
-            # Initialize verification retry loop
-            self._verification_attempt_count = 0
-            current_prompt = enhanced_message
-
-            # Initialize response collection variables (outside retry loop to preserve final values)
-            response_content = ""
-            ext_knowledge_file = None
-            tokens_used = 0
-            last_successful_output = None
-
-            # Verification retry loop - continues if verification fails
-            while self._verification_attempt_count <= self.max_verification_retries:
-                # Reset verification state for this attempt
-                self._reset_verification_state()
-
-                # Stream response using the model's generate_with_tools_stream
-                async for stream_action in self.model.generate_with_tools_stream(
-                    prompt=current_prompt,
-                    tools=self.tools,
-                    mcp_servers=self.mcp_servers,
-                    instruction=system_instruction,
-                    max_turns=self.max_turns,
-                    session=session,
-                    action_history_manager=action_history_manager,
-                    hooks=self._compose_hooks(self.hooks if self.execution_mode == "interactive" else None),
-                    agent_name=self.get_node_name(),
-                    interrupt_controller=self.interrupt_controller,
-                ):
-                    yield stream_action
-
-                    # Collect response content from successful actions
-                    if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
-                        if isinstance(stream_action.output, dict):
-                            last_successful_output = stream_action.output
-                            # Look for content in various possible fields
-                            raw_output = stream_action.output.get("raw_output", "")
-                            # Handle case where raw_output is already a dict
-                            if isinstance(raw_output, dict):
-                                response_content = raw_output
-                            elif raw_output:
-                                response_content = raw_output
-
-                # Agentic loop ended, check verification status
-                logger.info(
-                    f"Agentic loop ended. Verification passed: {self._verification_passed}, "
-                    f"attempt: {self._verification_attempt_count + 1}/{self.max_verification_retries + 1}"
-                )
-
-                # Exit retry loop if verification passed or no gold_sql to verify against
-                if self._verification_passed or not hasattr(self, "_gold_sql") or not self._gold_sql:
-                    logger.info("Verification passed or no gold_sql available, exiting retry loop")
-                    break
-
-                # Verification failed, check if we have retries left
-                self._verification_attempt_count += 1
-                if self._verification_attempt_count > self.max_verification_retries:
-                    logger.warning(
-                        f"Max verification retries ({self.max_verification_retries}) exceeded, "
-                        f"giving up on verification"
-                    )
-                    break
-
-                # Inject retry prompt and continue agentic loop
-                current_prompt = self._get_retry_prompt(self._verification_attempt_count)
-
-                # Create retry notification action
-                retry_action = ActionHistory.create_action(
-                    role=ActionRole.ASSISTANT,
-                    action_type="verification_retry",
-                    messages=f"Verification failed, retrying "
-                    f"({self._verification_attempt_count}/{self.max_verification_retries})...",
-                    input_data={"retry_prompt": current_prompt},
-                    status=ActionStatus.PROCESSING,
-                )
-                action_history_manager.add_action(retry_action)
-                yield retry_action
-
-                logger.info(f"Starting verification retry attempt {self._verification_attempt_count}")
-
-            # If we still don't have response_content, check the last successful output
-            if not response_content and last_successful_output:
-                logger.debug(f"Trying to extract response from last_successful_output: {last_successful_output}")
-                # Try different fields that might contain the response
-                raw_output = last_successful_output.get("raw_output", "")
-                if isinstance(raw_output, dict):
-                    response_content = raw_output
-                elif raw_output:
-                    response_content = raw_output
-                else:
-                    response_content = str(last_successful_output)  # Fallback to string representation
-
-            # Extract ext_knowledge_file and output from the final response_content
-            ext_knowledge_file, extracted_output = self._extract_ext_knowledge_and_output_from_response(
-                {"content": response_content}
-            )
-            if extracted_output:
-                response_content = extracted_output
-
-            if not isinstance(response_content, str):
-                response_content = str(response_content) if response_content else ""
-            logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
-
-            # Extract token usage (only in interactive mode with session)
-            tokens_used = 0
-            if self.execution_mode == "interactive":
-                final_actions = action_history_manager.get_actions()
-
-                # Find the final assistant action with token usage
-                for action in reversed(final_actions):
-                    if action.role == "assistant":
-                        if action.output and isinstance(action.output, dict):
-                            usage_info = action.output.get("usage", {})
-                            if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                                tokens_used = usage_info.get("total_tokens", 0)
-                                if tokens_used > 0:
-                                    break
-                            else:
-                                logger.warning(f"no usage token found in this action {action.messages}")
-
-            # Auto-save to database in workflow mode
-            if self.execution_mode == "workflow" and ext_knowledge_file:
-                try:
-                    self._save_to_db(ext_knowledge_file)
-                    logger.info(f"Auto-saved to database: {ext_knowledge_file}")
-                except Exception as e:
-                    logger.error(f"Failed to auto-save to database: {e}")
-
-            # Create final result
-            result = ExtKnowledgeNodeResult(
-                success=True,
-                response=response_content,
-                ext_knowledge_file=ext_knowledge_file,
-                tokens_used=int(tokens_used),
-            )
-
-            # Add to internal actions list
-            self.actions.extend(action_history_manager.get_actions())
-
-            # Create final action
-            final_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type="ext_knowledge_response",
-                messages=f"{self.get_node_name()} interaction completed successfully",
-                input_data=user_input.model_dump(),
-                output_data=result.model_dump(),
-                status=ActionStatus.SUCCESS,
-            )
-            action_history_manager.add_action(final_action)
-            yield final_action
-
-        except ExecutionInterrupted:
-            raise
-
-        except Exception as e:
-            logger.error(f"{self.get_node_name()} execution error: {e}")
-
-            # Create error result
-            error_result = ExtKnowledgeNodeResult(
-                success=False,
-                error=str(e),
-                response="Sorry, I encountered an error while processing your request.",
-                tokens_used=0,
-            )
-
-            # Update action with error
-            action_history_manager.update_current_action(
-                status=ActionStatus.FAILED,
-                output=error_result.model_dump(),
-                messages=f"Error: {str(e)}",
-            )
-
-            # Create error action
-            error_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type="error",
-                messages=f"{self.get_node_name()} interaction failed: {str(e)}",
-                input_data=user_input.model_dump(),
-                output_data=error_result.model_dump(),
-                status=ActionStatus.FAILED,
-            )
-            action_history_manager.add_action(error_action)
-            yield error_action
+        return ExtKnowledgeNodeResult(
+            success=True,
+            response=response_content,
+            ext_knowledge_file=ext_knowledge_file,
+            tokens_used=int(tokens_used),
+        )
 
     def _extract_ext_knowledge_and_output_from_response(self, output: dict) -> tuple[Optional[str], Optional[str]]:
         """
