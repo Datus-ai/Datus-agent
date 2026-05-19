@@ -399,7 +399,7 @@ class SemanticDiscoveryTools:
         query_text: Optional[str] = "",
         tables: Optional[List[str]] = None,
         sample_sql_queries: int = 50,
-        existing_metrics: Optional[List[str]] = None,
+        existing_metric_catalog_json: Optional[str] = "",
     ) -> FuncToolResult:
         """
         Mine MetricFlow metric candidates from historical SQL using SQL ASTs.
@@ -419,22 +419,26 @@ class SemanticDiscoveryTools:
             tables: Optional table names used to search reference SQL and filter
                 evidence.
             sample_sql_queries: Maximum reference SQL rows to inspect.
-            existing_metrics: Existing metric names. Expressions over these
-                names can be classified as derived metrics.
+            existing_metric_catalog_json: JSON array of existing metric objects.
+                Each item should include at least name, and may include type,
+                description, and subject_path. Expressions over these metrics
+                can be classified as derived metrics.
 
         Returns:
-            FuncToolResult with metric_candidates, base_measures,
+            FuncToolResult with metric_candidates, direct_metric_candidates,
+            derived_metric_candidates, base_measures, identity_metric_references,
             non_metric_evidence, parse_errors, and summary.
         """
         try:
             entries = self._load_metric_mining_entries(
                 sql_queries, sql_entries_json, query_text, tables, sample_sql_queries
             )
-            existing_metric_names = {self._normalize_identifier(name) for name in (existing_metrics or []) if name}
+            existing_metric_catalog = self._load_existing_metric_catalog(existing_metric_catalog_json)
 
             metric_candidates: Dict[str, Dict[str, Any]] = {}
             base_measures: Dict[str, Dict[str, Any]] = {}
             non_metric_evidence: List[Dict[str, Any]] = []
+            identity_metric_references: List[Dict[str, Any]] = []
             parse_errors: List[Dict[str, Any]] = []
             source_classifications: List[Dict[str, Any]] = []
             derived_datasource_recommendations: List[Dict[str, Any]] = []
@@ -457,6 +461,7 @@ class SemanticDiscoveryTools:
 
                 entry_candidates: List[Dict[str, Any]] = []
                 entry_has_non_metric_evidence = False
+                entry_has_metric_evidence = False
                 modeling_analysis = self._analyze_query_modeling(parsed_expressions, source_name)
                 if modeling_analysis["derived_datasource_recommendations"]:
                     derived_datasource_recommendations.extend(modeling_analysis["derived_datasource_recommendations"])
@@ -482,9 +487,13 @@ class SemanticDiscoveryTools:
                                 tables=select_tables,
                                 filters=filters,
                                 dimensions=dimensions,
-                                existing_metrics=existing_metric_names,
+                                existing_metric_catalog=existing_metric_catalog,
                             )
                             if not candidate:
+                                continue
+                            entry_has_metric_evidence = True
+                            if candidate.get("evidence_kind") == "identity_metric_reference":
+                                identity_metric_references.append(candidate)
                                 continue
                             found_candidate = True
                             entry_candidates.append(candidate)
@@ -492,7 +501,11 @@ class SemanticDiscoveryTools:
                             for measure in candidate.get("base_measures", []):
                                 self._merge_base_measure(base_measures, measure)
 
-                        if not found_candidate and (filters or dimensions or select_tables):
+                        if (
+                            not found_candidate
+                            and not entry_has_metric_evidence
+                            and (filters or dimensions or select_tables)
+                        ):
                             entry_has_non_metric_evidence = True
                             non_metric_evidence.append(
                                 {
@@ -531,15 +544,24 @@ class SemanticDiscoveryTools:
             direct_candidates = [
                 candidate
                 for candidate in candidates
-                if not self._is_blocked_direct_candidate(candidate, blocked_direct_metric_candidates)
+                if candidate.get("metric_type") != "derived"
+                and not self._is_blocked_direct_candidate(candidate, blocked_direct_metric_candidates)
+            ]
+            derived_candidates = [
+                candidate
+                for candidate in candidates
+                if candidate.get("metric_type") == "derived"
+                and not self._is_blocked_direct_candidate(candidate, blocked_direct_metric_candidates)
             ]
             modeling_plan = self._build_modeling_plan(derived_datasource_recommendations)
             return FuncToolResult(
                 result={
                     "metric_candidates": candidates,
                     "direct_metric_candidates": direct_candidates,
+                    "derived_metric_candidates": derived_candidates,
                     "base_measures": measures,
                     "non_metric_evidence": non_metric_evidence,
+                    "identity_metric_references": identity_metric_references,
                     "parse_errors": parse_errors,
                     "query_classification": self._overall_query_classification(
                         source_classifications=source_classifications,
@@ -1166,6 +1188,33 @@ class SemanticDiscoveryTools:
                     entries.append(entry)
         return entries
 
+    def _load_existing_metric_catalog(self, existing_metric_catalog_json: Optional[str]) -> Dict[str, Dict[str, Any]]:
+        """Parse existing metric catalog JSON keyed by normalized metric name."""
+        import json
+
+        if not existing_metric_catalog_json:
+            return {}
+
+        loaded = json.loads(existing_metric_catalog_json)
+        if not isinstance(loaded, list):
+            raise ValueError("existing_metric_catalog_json must be a JSON array")
+
+        catalog: Dict[str, Dict[str, Any]] = {}
+        for item in loaded:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            normalized_name = self._normalize_identifier(name)
+            catalog[normalized_name] = {
+                "name": name,
+                "type": item.get("type") or item.get("metric_type") or "",
+                "description": item.get("description") or "",
+                "subject_path": item.get("subject_path") or item.get("path") or "",
+            }
+        return catalog
+
     def _parse_sql(self, sql_text: str):
         """Parse one SQL string into sqlglot expressions."""
         import sqlglot
@@ -1209,7 +1258,7 @@ class SemanticDiscoveryTools:
         tables: List[str],
         filters: List[str],
         dimensions: List[str],
-        existing_metrics: set,
+        existing_metric_catalog: Dict[str, Dict[str, Any]],
     ) -> Optional[Dict[str, Any]]:
         """Build a metric candidate from a SELECT projection if possible."""
         from sqlglot import expressions as exp
@@ -1221,11 +1270,27 @@ class SemanticDiscoveryTools:
         aggregates = list(expr.find_all(*aggregate_classes))
         has_aggregates = bool(aggregates)
         columns = {self._normalize_identifier(col.name) for col in expr.find_all(exp.Column)}
+        existing_metric_names = set(existing_metric_catalog)
+        referenced_metric_names = columns & existing_metric_names
 
-        if not has_aggregates and not (columns & existing_metrics):
+        if not has_aggregates and not referenced_metric_names:
             return None
+        if not has_aggregates and referenced_metric_names:
+            if not columns <= existing_metric_names:
+                return None
+            referenced_metrics = self._referenced_metric_items(referenced_metric_names, existing_metric_catalog)
+            if not self._has_real_metric_math(expr):
+                return {
+                    "evidence_kind": "identity_metric_reference",
+                    "name": name,
+                    "expression": expr.sql(),
+                    "source_alias": alias or "",
+                    "source_sql_name": source_name,
+                    "referenced_metrics": referenced_metrics,
+                    "reason": "projection references existing metric without a new business formula",
+                }
 
-        metric_type = self._classify_metric_expression(expr, name, aggregates, columns, existing_metrics)
+        metric_type = self._classify_metric_expression(expr, name, aggregates, columns, existing_metric_names)
         measures = [
             self._measure_from_aggregate(agg, alias if len(aggregates) == 1 else "", expr) for agg in aggregates
         ]
@@ -1267,10 +1332,11 @@ class SemanticDiscoveryTools:
             "confidence": confidence,
             "score_reasons": score_reasons,
             "source_count": 1,
+            "referenced_metrics": self._referenced_metric_items(referenced_metric_names, existing_metric_catalog),
         }
 
     def _classify_metric_expression(
-        self, expr: Any, name: str, aggregates: List[Any], columns: set, existing_metrics: set
+        self, expr: Any, name: str, aggregates: List[Any], columns: set, existing_metric_names: set
     ) -> str:
         """Classify one projected expression into a MetricFlow metric type."""
         from sqlglot import expressions as exp
@@ -1280,7 +1346,7 @@ class SemanticDiscoveryTools:
             return "cumulative"
         if list(expr.find_all(exp.Window)):
             return "cumulative"
-        if columns and columns <= existing_metrics and not aggregates:
+        if columns and columns <= existing_metric_names and not aggregates:
             return "derived"
         has_division = bool(list(expr.find_all(exp.Div)))
         has_additive_math = any(list(expr.find_all(cls)) for cls in (exp.Add, exp.Sub))
@@ -1297,6 +1363,33 @@ class SemanticDiscoveryTools:
         if len(aggregates) > 1 or has_math:
             return "expr"
         return "measure_proxy"
+
+    def _has_real_metric_math(self, expr: Any) -> bool:
+        """Return true when an existing-metric expression defines a new formula."""
+        from sqlglot import expressions as exp
+
+        math_classes = (exp.Add, exp.Sub, exp.Mul, exp.Div)
+        if any(list(expr.find_all(cls)) for cls in math_classes):
+            return True
+        return bool(list(expr.find_all(exp.Case)))
+
+    def _referenced_metric_items(
+        self,
+        referenced_metric_names: set,
+        existing_metric_catalog: Dict[str, Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Return catalog entries for referenced metrics in a stable order."""
+        items = []
+        for normalized_name in sorted(referenced_metric_names):
+            metric = existing_metric_catalog.get(normalized_name, {})
+            item = {
+                "name": metric.get("name") or normalized_name,
+                "type": metric.get("type", ""),
+                "description": metric.get("description", ""),
+                "subject_path": metric.get("subject_path", ""),
+            }
+            items.append({key: value for key, value in item.items() if value})
+        return items
 
     def _measure_from_aggregate(self, aggregate: Any, alias: str = "", projection_expr: Any = None) -> Dict[str, Any]:
         """Create base measure evidence from an aggregate expression."""
@@ -1347,6 +1440,8 @@ class SemanticDiscoveryTools:
             existing[field] = sorted(set(existing.get(field, []) + candidate.get(field, [])))
         for measure in candidate.get("base_measures", []):
             self._append_unique(existing["base_measures"], measure, ["name", "agg", "expr", "filter"])
+        for metric in candidate.get("referenced_metrics", []):
+            self._append_unique(existing["referenced_metrics"], metric, ["name", "type", "subject_path"])
 
     def _metric_candidate_merge_key(self, candidate: Dict[str, Any]) -> str:
         """Build a stable candidate identity without collapsing distinct formulas."""

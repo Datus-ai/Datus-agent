@@ -17,7 +17,7 @@ Guide the user through metric generation using natural language business descrip
 
 ## Phase 0: Discovery — Scan Existing Assets
 
-Before anything else, call `list_metrics()` to get all metrics already in the knowledge base. Note their names, types, and associated measures. Use this throughout the remaining phases to:
+Before anything else, call `list_metrics()` to get all metrics already in the knowledge base. Build an existing metric catalog JSON array with each metric's exact `name`, `type`, `description` when available, and `subject_path` when available. Use this throughout the remaining phases to:
 - **Skip redundant work** — don't recreate metrics that already exist
 - **Reuse existing measures** — reference measures from existing models instead of creating duplicates
 - **Detect conflicts** — warn the user if a proposed metric name collides with an existing one
@@ -69,7 +69,7 @@ If the user skips, proceed to Step 1c using only table structure and the user's 
 
 **Step 1-batch-b: Mine metric candidates from SQL ASTs**
 
-Call `analyze_metric_candidates_from_history` with all parsed SQL queries. Use its output to preserve final business metric expressions and their dependencies:
+Call `analyze_metric_candidates_from_history` with all parsed SQL queries and `existing_metric_catalog_json` from Phase 0. Use its output to preserve final business metric expressions and their dependencies:
 
 1. **Preserve final output metrics** — SQL aliases and final SELECT expressions are the primary metric candidates.
 2. **Keep base measures as dependencies** — base measures support the final metric but do not replace it.
@@ -81,6 +81,8 @@ Call `analyze_metric_candidates_from_history` with all parsed SQL queries. Use i
 8. **Preserve SQL time grain** — if `time_grain_evidence` is present, expose an equivalent time dimension in any derived data source. Do not replace a projected date such as `CURDATE() AS part_dt` or `DATE(create_time) AS part_dt` with raw `create_time` as the primary time dimension.
 9. **Preserve post-aggregation constraints** — if `post_aggregation_constraints` is present, keep each HAVING/post-aggregation condition as a query constraint, metric usage note, or later derived data source. Do not silently drop it or push it into a base measure.
 10. **Cross-reference with Phase 0** — remove any candidate that already exists in the knowledge base.
+11. **Separate derived metrics** — treat `derived_metric_candidates` as second-stage metrics over existing metrics. Do not mix them into base semantic model or measure generation.
+12. **Ignore passthrough references** — entries in `identity_metric_references` show existing metrics selected without new business formula; do not generate new metrics for them.
 
 **Step 1-batch-c: Business metric principle**
 
@@ -233,6 +235,8 @@ Phase 1 confirms the generation scope; validation plus dry-run are the acceptanc
 
 6. **Every metric needs explicit YAML**: Whether it's a simple aggregation, filtered variant, ratio, expr, derived, or cumulative — write a `metric:` entry in the metrics YAML file so it can be persisted and discovered later.
 
+7. **Derived metrics are second-stage**: Generate non-derived metrics first, validate them, refresh the metric catalog with `list_metrics`, then generate `derived_metric_candidates` only when every referenced metric exists in the refreshed catalog or was generated earlier in the same batch.
+
 ## Important Rules
 
 - **Phase 1**: Confirm which metrics to generate before proceeding. Use `ask_user` when it is available.
@@ -241,7 +245,7 @@ Phase 1 confirms the generation scope; validation plus dry-run are the acceptanc
 - **COUNT agg must use `expr: "1"`** — never use `expr: {column}` with COUNT (use COUNT_DISTINCT for that).
 - For ratio metrics, both numerator and denominator measures must exist in the semantic model.
 - For expr metrics, all referenced measures must exist in the semantic model.
-- For derived metrics, all referenced metrics must already be defined.
+- For derived metrics, all referenced metrics must already be defined, the expression must not be a single metric passthrough, and the dependency graph must not contain cycles.
 - For cumulative metrics, the measure must exist and a primary time dimension must be defined.
 - Use consistent naming: metric names in snake_case, measure names matching the semantic model.
 - Every data_source MUST have a primary time dimension (`type: TIME` with `is_primary: true`).

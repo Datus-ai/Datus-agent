@@ -494,12 +494,56 @@ class TestAnalyzeMetricCandidatesFromHistory:
         tools = _make_tools()
         result = tools.analyze_metric_candidates_from_history(
             sql_queries=["SELECT revenue / ad_spend AS roas FROM metric_table"],
-            existing_metrics=["revenue", "ad_spend"],
+            existing_metric_catalog_json=(
+                '[{"name": "revenue", "type": "measure_proxy", "subject_path": "finance"}, '
+                '{"name": "ad_spend", "type": "measure_proxy", "subject_path": "finance"}]'
+            ),
         )
 
         candidate = result.result["metric_candidates"][0]
         assert candidate["name"] == "roas"
         assert candidate["metric_type"] == "derived"
+        assert result.result["direct_metric_candidates"] == []
+        assert result.result["derived_metric_candidates"] == [candidate]
+        assert candidate["referenced_metrics"] == [
+            {"name": "ad_spend", "type": "measure_proxy", "subject_path": "finance"},
+            {"name": "revenue", "type": "measure_proxy", "subject_path": "finance"},
+        ]
+
+    def test_existing_metric_passthrough_is_identity_reference_not_derived_candidate(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=["SELECT revenue AS revenue FROM metric_table"],
+            existing_metric_catalog_json='[{"name": "revenue", "type": "measure_proxy"}]',
+        )
+
+        assert result.result["metric_candidates"] == []
+        assert result.result["direct_metric_candidates"] == []
+        assert result.result["derived_metric_candidates"] == []
+        assert result.result["identity_metric_references"] == [
+            {
+                "evidence_kind": "identity_metric_reference",
+                "name": "revenue",
+                "expression": "revenue",
+                "source_alias": "revenue",
+                "source_sql_name": "sql_1",
+                "referenced_metrics": [{"name": "revenue", "type": "measure_proxy"}],
+                "reason": "projection references existing metric without a new business formula",
+            }
+        ]
+
+    def test_reference_sql_search_keeps_all_unique_entries(self):
+        tools = _make_tools()
+        with patch("datus.storage.reference_sql.store.ReferenceSqlRAG") as rag_cls:
+            rag_cls.return_value.search_reference_sql.return_value = [
+                {"sql": "SELECT SUM(amount) AS revenue FROM orders"},
+                {"sql": "SELECT SUM(cost) AS cost FROM orders"},
+            ]
+
+            result = tools.analyze_metric_candidates_from_history(query_text="orders")
+
+        assert result.success == 1
+        assert {candidate["name"] for candidate in result.result["metric_candidates"]} == {"revenue", "cost"}
 
     def test_cumulative_candidate_for_window_expression(self):
         tools = _make_tools()

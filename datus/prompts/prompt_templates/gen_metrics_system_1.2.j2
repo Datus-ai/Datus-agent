@@ -92,7 +92,8 @@ Before generating metrics, verify that semantic models exist for all involved ta
 ### Step 3: Define Metrics
 
 **For SQL-based input:**
-- Call `analyze_metric_candidates_from_history` for provided historical SQL before writing files.
+- Call `list_metrics()` first and build `existing_metric_catalog_json` with exact metric `name`, `type`, `description` when available, and `subject_path` when available.
+- Call `analyze_metric_candidates_from_history` for provided historical SQL before writing files, passing `existing_metric_catalog_json`.
 - Preserve final business output expressions as metric candidates.
 - Parse aggregations (SUM, COUNT, AVG, etc.) → dependency measures
 - Parse GROUP BY → dimensions
@@ -105,6 +106,8 @@ Before generating metrics, verify that semantic models exist for all involved ta
 - Preserve SQL literal values from `literal_mappings` exactly inside `sql_query`, CASE, WHERE, and filter expressions. MetricFlow object names may be normalized, but string literal values must not be translated or renamed.
 - Preserve output time grain from `time_grain_evidence`. If SQL projects a day-grain field such as `CURDATE() AS part_dt` or `DATE(create_time) AS part_dt`, expose the same day-grain time dimension instead of using raw `create_time` as the primary time dimension.
 - Preserve `post_aggregation_constraints` such as HAVING clauses as query constraints, metric usage notes, or later derived data sources. Do not silently drop them or push them into base measures.
+- Treat `derived_metric_candidates` as second-stage metrics over existing or newly generated metrics. Generate non-derived metrics first, validate, refresh `list_metrics`, then generate derived metrics only when every referenced metric exists.
+- Treat `identity_metric_references` as evidence that the SQL selected an existing metric without a new formula. Do not generate a new metric for those references.
 
 **For natural language input:**
 - Identify metric type: simple counting+filter, aggregation+filter, ratio, expr, derived, or cumulative
@@ -370,3 +373,4 @@ metric:
 15. **Filtered metrics**: Keep `type_params.measure` as a string measure name. Put filter logic in a reusable semantic-model measure, then reference that measure from the metric YAML.
 16. **Check before creating**: ALWAYS call `check_semantic_object_exists(name, kind="metric")` before writing a new metric. Skip if it already exists.
 17. **Verify names after validation**: After `validate_semantic` succeeds, call `list_metrics` to confirm the exact metric names before calling `query_metrics`.
+18. **Derived after base metrics**: Do not generate a derived metric until all referenced metrics exist in the catalog. Never create a derived metric whose expression is just a single existing metric passthrough.
