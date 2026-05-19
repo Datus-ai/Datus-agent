@@ -57,14 +57,28 @@ if [ ! -d "$NATIVE_DIR" ]; then
     exit 1
 fi
 
-COMMIT="$(cat "$REF_FILE")"
+COMMIT="$(tr -d '[:space:]' < "$REF_FILE")"
+if [ -z "$COMMIT" ]; then
+    echo "[prefetch] ERROR: empty commit hash in $REF_FILE" >&2
+    exit 1
+fi
 SNAP_DIR="$HF_DIR/snapshots/$COMMIT"
 mkdir -p "$SNAP_DIR"
 
-for f in model.onnx config.json tokenizer.json tokenizer_config.json special_tokens_map.json vocab.txt; do
-    if [ -f "$NATIVE_DIR/$f" ]; then
-        cp -f "$NATIVE_DIR/$f" "$SNAP_DIR/$f"
+# Required artifacts: if any are missing the runtime check_snapshot() will fail,
+# so fail fast here instead of producing a silently broken cache.
+required_files=(model.onnx config.json tokenizer.json tokenizer_config.json)
+for f in "${required_files[@]}"; do
+    if [ ! -f "$NATIVE_DIR/$f" ]; then
+        echo "[prefetch] ERROR: required artifact missing: $NATIVE_DIR/$f (snapshot $SNAP_DIR)" >&2
+        exit 1
     fi
+    cp -f "$NATIVE_DIR/$f" "$SNAP_DIR/$f"
+done
+
+# Optional artifacts: copy when present; absence is non-fatal.
+for f in special_tokens_map.json vocab.txt; do
+    [ -f "$NATIVE_DIR/$f" ] && cp -f "$NATIVE_DIR/$f" "$SNAP_DIR/$f"
 done
 
 # Strip macOS AppleDouble sidecar files that confuse Linux readers.

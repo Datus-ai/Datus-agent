@@ -20,9 +20,10 @@ RUN apt-get update && \
         libsqlite3-dev default-libmysqlclient-dev pkg-config vim procps && \
     rm -rf /var/lib/apt/lists/*
 
-# Use Aliyun PyPI mirror for faster installs inside China
-RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple && \
-    pip config set install.trusted-host mirrors.aliyun.com
+# Use Aliyun PyPI mirror for faster installs inside China. The mirror is served
+# over HTTPS with a valid certificate, so no `trusted-host` opt-out is needed
+# (and adding one would disable TLS/hostname verification for that host).
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple
 
 # Install datus-agent (fastembed + huggingface_hub come in transitively)
 RUN pip install --no-cache-dir datus-agent==0.3.0
