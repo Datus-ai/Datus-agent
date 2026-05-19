@@ -144,6 +144,7 @@ _AUTO_EXTRA_RULES = [
     # the zone branch (ASK in auto, ALLOW only in dangerous).
     _rule("filesystem_tools", "write_file", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "edit_file", PermissionLevel.ALLOW),
+    _rule("filesystem_tools", "delete_file", PermissionLevel.ALLOW),
     # plan writes
     _rule("tools", "todo_write", PermissionLevel.ALLOW),
     _rule("tools", "todo_update", PermissionLevel.ALLOW),
