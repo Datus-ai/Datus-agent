@@ -121,12 +121,13 @@ class TestAutoProfile:
 
     def test_workspace_writes_allowed(self):
         config = AUTO
-        # ``write_file`` / ``edit_file`` are the full set of write tools
-        # ``FilesystemFuncTool`` exposes today (``create_directory`` /
-        # ``move_file`` were removed in the #561 refactor and used to live here
-        # as dead rules — see ``test_dead_filesystem_rules_absent``).
+        # ``write_file`` / ``edit_file`` / ``delete_file`` are the full set of
+        # write tools ``FilesystemFuncTool`` exposes today (``create_directory``
+        # / ``move_file`` were removed in the #561 refactor and used to live
+        # here as dead rules — see ``test_dead_filesystem_rules_absent``).
         assert _resolve(config, "filesystem_tools", "write_file") == PermissionLevel.ALLOW
         assert _resolve(config, "filesystem_tools", "edit_file") == PermissionLevel.ALLOW
+        assert _resolve(config, "filesystem_tools", "delete_file") == PermissionLevel.ALLOW
 
     def test_bi_write_allowed_delete_asks(self):
         """Auto downgrades NORMAL's DENY on destructives to ASK — user is
@@ -180,7 +181,7 @@ class TestFilesystemRuleSurface:
     """
 
     _DEAD_PATTERNS = ("list_*", "directory_tree", "search_files", "create_directory", "move_file")
-    _LIVE_PATTERNS = ("read_*", "glob", "grep", "write_file", "edit_file")
+    _LIVE_PATTERNS = ("read_*", "glob", "grep", "write_file", "edit_file", "delete_file")
 
     def test_dead_filesystem_rules_absent(self):
         for cfg in (NORMAL, AUTO):
