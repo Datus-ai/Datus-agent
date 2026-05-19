@@ -1,12 +1,11 @@
 """CompareAgenticNode shim for backwards compatibility."""
 
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
-from datus.cli.execution_state import ExecutionInterrupted
+from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.agent_config import AgentConfig
 from datus.prompts.prompt_manager import get_prompt_manager
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.compare_node_models import CompareInput, CompareResult
 from datus.tools.func_tool import DBFuncTool
 from datus.utils.json_utils import llm_result2json
@@ -25,10 +24,13 @@ class CompareAgenticNode(AgenticNode):
     produces structured comparison results.
     """
 
+    result_class = CompareResult
+
     def __init__(
         self,
         node_name: str = "compare",
         agent_config: Optional[AgentConfig] = None,
+        execution_mode: Literal["interactive", "workflow"] = "interactive",
         is_subagent: bool = False,
         session_id: Optional[str] = None,
     ):
@@ -38,9 +40,13 @@ class CompareAgenticNode(AgenticNode):
         Args:
             node_name: Name of the node configuration in agent.yml (default: "compare")
             agent_config: Agent configuration
+            execution_mode: ``"interactive"`` (default) enables session
+                management, auto-compaction, and token accounting;
+                ``"workflow"`` skips those for unattended pipelines.
             is_subagent: When True, skip SubAgentTaskTool setup (2-level depth enforcement)
         """
         self.configured_node_name = node_name
+        self.execution_mode = execution_mode
 
         # Use TYPE_COMPARE as the node type
         from datus.configuration.node_type import NodeType
@@ -102,6 +108,19 @@ class CompareAgenticNode(AgenticNode):
         except Exception as exc:
             logger.error(f"Failed to initialize tools for CompareAgenticNode: {exc}")
             self.tools = self.tools or []
+
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Register the db tools under ``db_tools`` so permission rules fire.
+
+        Without this override the bound ``read_query`` lookup falls through to
+        the ``tools.*`` catch-all (default ASK on normal/auto profiles), which
+        would block at ``InteractionBroker.request`` whenever a caller wires
+        permission hooks but does not also run an interactive broker listener.
+        """
+        mapping = super()._tool_category_map()
+        if getattr(self, "db_func_tool", None):
+            mapping["db_tools"] = list(self.db_func_tool.available_tools())
+        return mapping
 
     @staticmethod
     def _prepare_prompt_components(
@@ -169,155 +188,59 @@ class CompareAgenticNode(AgenticNode):
         logger.debug(f"Unexpected comparison output type: {type(raw_output)}")
         return {}
 
-    async def execute_stream(
-        self,
-        action_history_manager: Optional[ActionHistoryManager] = None,
-    ) -> AsyncGenerator[ActionHistory, None]:
+    # ── template hooks ──────────────────────────────────────────────────
+
+    async def _before_stream(self, ctx: StreamRunContext) -> None:
+        """Pre-render Compare's hand-written system + user prompts.
+
+        ``_prepare_prompt_components`` returns both prompts together (they share
+        Jinja context), so we cache the system instruction on ``self`` for the
+        ``_get_system_prompt`` override and stash the rendered user prompt in
+        ``ctx.extras`` for ``_build_template_context`` to combine with the
+        session's ``conversation_summary``.
         """
-        Execute SQL comparison with streaming support and action history tracking.
-
-        Args:
-            action_history_manager: Optional action history manager
-
-        Yields:
-            ActionHistory: Progress updates during execution
-        """
-        # Get input from self.input
-        if self.input is None:
-            raise ValueError("Compare input not set. Set self.input before calling execute_stream.")
-
-        if not isinstance(self.input, CompareInput):
-            raise ValueError("Input must be a CompareInput instance")
-
-        user_input = self.input
-
-        if not self.model:
-            raise ValueError("Model is not initialized for CompareAgenticNode")
-
-        if action_history_manager is None:
-            action_history_manager = ActionHistoryManager()
-
-        user_action = ActionHistory.create_action(
-            role=ActionRole.USER,
-            action_type="compare_sql_request",
-            messages=f"Compare SQL task: {user_input.sql_task.task}",
-            input_data=user_input.model_dump(),
-            status=ActionStatus.PROCESSING,
+        system_instruction, raw_user_prompt, _ = self._prepare_prompt_components(
+            ctx.user_input, agent_config=self.agent_config
         )
-        action_history_manager.add_action(user_action)
-        yield user_action
+        self._cached_system_instruction = system_instruction
+        ctx.extras["compare_user_prompt"] = raw_user_prompt
 
-        try:
-            await self._auto_compact()
-            session, conversation_summary = self._get_or_create_session()
+    def _build_template_context(self, ctx: StreamRunContext) -> Optional[dict]:
+        """Combine conversation_summary + rendered user prompt into user_message_override.
 
-            system_instruction, user_prompt, _ = self._prepare_prompt_components(
-                user_input, agent_config=self.agent_config
+        Runs after session setup so ``ctx.conversation_summary`` is populated.
+        Returns ``None`` because Compare uses a pre-rendered system instruction,
+        not template-driven rendering.
+        """
+        raw_user_prompt = ctx.extras.pop("compare_user_prompt", "")
+        if ctx.conversation_summary:
+            raw_user_prompt = (
+                f"Previous conversation summary:\n{ctx.conversation_summary}\n\n"
+                f"New comparison request:\n{raw_user_prompt}"
             )
-            if conversation_summary:
-                user_prompt = (
-                    f"Previous conversation summary:\n{conversation_summary}\n\nNew comparison request:\n{user_prompt}"
-                )
+        ctx.user_message_override = raw_user_prompt
+        return None
 
-            response_content: Any = ""
-            last_successful_output: Optional[Dict[str, Any]] = None
+    def _get_system_prompt(
+        self,
+        conversation_summary: Optional[str] = None,
+        prompt_version: Optional[str] = None,
+        template_context: Optional[dict] = None,
+    ) -> str:
+        # Compare bypasses the standard ``{node_name}_system`` resolution and
+        # uses ``compare_sql_system_mcp`` rendered in ``_before_stream``.
+        return getattr(self, "_cached_system_instruction", "")
 
-            # The Jinja-rendered ``user_prompt`` already inlines the full
-            # comparison context (two SQLs + expectation). Stash it as the
-            # input's user-side text only for the helper call, then restore
-            # so downstream ``action.input_data`` keeps the original request.
-            original_user_message = user_input.user_message
-            user_input.user_message = user_prompt
-            try:
-                user_prompt = self._build_enhanced_message(user_input)
-            finally:
-                user_input.user_message = original_user_message
+    def _build_success_result(self, ctx: StreamRunContext) -> CompareResult:
+        response_content = ctx.response_content
+        if not response_content and ctx.last_successful_output:
+            response_content = ctx.last_successful_output.get("raw_output", "")
 
-            async for stream_action in self.model.generate_with_tools_stream(
-                prompt=user_prompt,
-                tools=self.tools or [],
-                mcp_servers=self.mcp_servers or {},
-                instruction=system_instruction,
-                max_turns=self.max_turns,
-                session=session,
-                action_history_manager=action_history_manager,
-                agent_name=self.get_node_name(),
-                interrupt_controller=self.interrupt_controller,
-            ):
-                yield stream_action
-
-                if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
-                    output_value = stream_action.output
-                    if isinstance(output_value, dict):
-                        last_successful_output = output_value
-                        raw_output = output_value.get("raw_output")
-                        if raw_output:
-                            response_content = raw_output
-                    else:
-                        response_content = output_value
-
-            if not response_content and last_successful_output:
-                logger.debug(f"Trying to extract response from last_successful_output: {last_successful_output}")
-                response_content = last_successful_output.get("raw_output", "")
-
-            result_dict = self._parse_comparison_output(response_content)
-            tokens_used = 0
-
-            for action in reversed(action_history_manager.get_actions()):
-                if action.role == ActionRole.ASSISTANT and isinstance(action.output, dict):
-                    usage = action.output.get("usage", {})
-                    if isinstance(usage, dict):
-                        conversation_tokens = usage.get("total_tokens") or usage.get("output_tokens")
-                        if conversation_tokens:
-                            tokens_used = int(conversation_tokens)
-                            break
-
-            result = CompareResult(
-                success=True,
-                explanation=result_dict.get("explanation", "No explanation provided"),
-                suggest=result_dict.get("suggest", "No suggestions provided"),
-                tokens_used=tokens_used,
-            )
-
-            self.actions.extend(action_history_manager.get_actions())
-
-            final_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type="compare_sql_response",
-                messages="Comparison completed successfully.",
-                input_data=user_input.model_dump(),
-                output_data=result.model_dump(),
-                status=ActionStatus.SUCCESS,
-            )
-            action_history_manager.add_action(final_action)
-            yield final_action
-
-        except ExecutionInterrupted:
-            raise
-
-        except Exception as exc:
-            logger.error(f"CompareAgenticNode streaming execution failed: {exc}")
-
-            error_result = CompareResult(
-                success=False,
-                error=str(exc),
-                explanation="Comparison analysis failed",
-                suggest="Please check the input parameters and try again",
-            )
-
-            action_history_manager.update_current_action(
-                status=ActionStatus.FAILED,
-                output=error_result.model_dump(),
-                messages=f"Comparison failed: {exc}",
-            )
-
-            error_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type="compare_sql_error",
-                messages=f"Comparison failed: {exc}",
-                input_data=user_input.model_dump(),
-                output_data=error_result.model_dump(),
-                status=ActionStatus.FAILED,
-            )
-            action_history_manager.add_action(error_action)
-            yield error_action
+        result_dict = self._parse_comparison_output(response_content)
+        tokens_used = self._extract_total_tokens(ctx.action_history_manager.get_actions())
+        return CompareResult(
+            success=True,
+            explanation=result_dict.get("explanation", "No explanation provided"),
+            suggest=result_dict.get("suggest", "No suggestions provided"),
+            tokens_used=tokens_used,
+        )

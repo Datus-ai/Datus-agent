@@ -11,15 +11,25 @@ matching ``gen_visual_*`` subagent). They reuse the conversational
 plumbing of :class:`ChatAgenticNode` (sessions, memory, SSE, tool
 permissions, etc.) and add three things:
 
-1. **Artifact binding** — read ``artifact_slug`` from the agentic_nodes
-   config, resolve it under the project root, and fail loud if the
-   directory is missing or escapes ``project_root``.
+1. **Artifact binding** — bind to one specific artifact via either of two
+   sources: an in-memory ``artifact_blob`` injected into the agentic_nodes
+   entry by the backend (a frozen ``{manifest, files}`` snapshot of the
+   latest published version), or an on-disk ``reports/<slug>/`` /
+   ``dashboards/<slug>/`` directory under ``project_root``. The blob
+   source wins when present; the disk source remains the fallback for
+   CLI runs and kinds that have not yet been wired through publish
+   (currently ``ask_dashboard``). ``BLOB_REQUIRED = True`` on a subclass
+   turns missing-blob into a hard failure rather than a disk fallback —
+   used by ``ask_report`` where every live SaaS session must answer
+   against the published artifact, not whatever happens to be on local
+   disk.
 2. **Constrained filesystem view** — override ``_make_filesystem_tool``
    so the LLM's ``read_file`` / ``glob`` / ``grep`` calls are anchored
    at the artifact root. Relative paths in prompts (``analysis/intent.md``,
    ``queries/<name>.json``) just work, and the LLM cannot accidentally
    peek into a sibling artifact or the global subject library through
-   filesystem traversal.
+   filesystem traversal. The blob source uses :class:`MemoryFilesystemFuncTool` (no disk
+   touched); the disk source uses :class:`FilesystemFuncTool`.
 3. **Artifact context injection** — load ``manifest.json`` plus
    ``analysis/intent.md`` once at node startup, and surface them to
    the prompt template so the LLM has a baseline grounding without
@@ -34,7 +44,8 @@ chips, but injecting it here would anchor the LLM toward a fixed
 question set whenever the user types an open-ended follow-up.
 
 Per-kind specialization (``ARTIFACT_KIND`` / template name / whether
-``insights.json`` is expected) lives in the two concrete subclasses.
+``insights.json`` is expected / whether ``BLOB_REQUIRED``) lives in the
+two concrete subclasses.
 """
 
 from __future__ import annotations
@@ -69,6 +80,16 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
     NODE_NAME: ClassVar[str] = "ask_artifact"
     ARTIFACT_KIND: ClassVar[Literal["report", "dashboard"]] = "report"
     ARTIFACT_ROOT_DIR_NAME: ClassVar[str] = "reports"
+    # When True, a missing ``artifact_blob`` in the agentic_nodes entry is a
+    # fatal startup error rather than a signal to fall back to the on-disk
+    # ``<kind>/<slug>/`` directory. Kinds whose backend publish flow always
+    # produces a blob (currently ``ask_report``) set this to True so the
+    # half-bound state (subagent exists, no published version) errors at init
+    # instead of silently grounding the LLM against an unrelated on-disk
+    # tree (or worse, the backend's own filesystem which won't have the
+    # artifact at all). Kinds without a publish flow yet
+    # (``ask_dashboard``) keep this False so the disk path stays available.
+    BLOB_REQUIRED: ClassVar[bool] = False
 
     def __init__(
         self,
@@ -102,7 +123,12 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         self._artifact_root: Optional[Path] = None
         self._artifact_manifest: Dict[str, Any] = {}
         self._artifact_intent_md: str = ""
-        self._resolve_artifact_root_early(agent_config)
+        # Populated only when the agentic_nodes entry carries an
+        # ``artifact_blob``. When set, the filesystem tool is wired through
+        # :class:`MemoryFilesystemFuncTool` instead of the disk-backed
+        # :class:`FilesystemFuncTool` and ``_artifact_root`` stays None.
+        self._artifact_files: Optional[Dict[str, str]] = None
+        self._resolve_artifact_binding_early(agent_config)
         self._load_artifact_anchor_files()
 
         super().__init__(
@@ -141,13 +167,24 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
 
     # ── Artifact binding resolution ─────────────────────────────────────
 
-    def _resolve_artifact_root_early(self, agent_config: Optional[AgentConfig]) -> None:
+    def _resolve_artifact_binding_early(self, agent_config: Optional[AgentConfig]) -> None:
         """Resolve the artifact binding directly from the agentic_nodes entry.
 
         Called BEFORE ``super().__init__()`` runs, so we can't rely on
         ``self.node_config`` (set by AgenticNode init) or on
         ``self.agent_config`` (set by AgenticNode init). We read the raw
         ``agent_config.agentic_nodes[subagent_name]`` entry directly.
+
+        Resolution order:
+
+        1. If ``entry["artifact_blob"]`` is present, bind to the in-memory
+           bundle (``{manifest, files}``). The filesystem tool then runs
+           against :class:`MemoryFilesystemFuncTool` and ``_artifact_root`` stays None.
+        2. Otherwise, if ``BLOB_REQUIRED`` is True, fail — the caller is
+           contractually supposed to provide a blob for this kind.
+        3. Otherwise, fall back to resolving the on-disk
+           ``<project_root>/<kind>/<slug>/`` directory (legacy CLI flow and
+           kinds without a backend publish path yet).
 
         Failures raise :class:`DatusException` — there is no useful default
         for a missing binding and we'd rather see a clear startup error
@@ -193,6 +230,125 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
                 message_args={"config_error": (f"artifact_slug {slug!r} must match {ARTIFACT_SLUG_RE.pattern}")},
             )
 
+        self._artifact_slug = slug
+
+        # Path 1: in-memory blob from the agentic_nodes entry. Backend
+        # populates this for ``ask_report`` from the latest VisualReportVersion
+        # at config-build time. Reject obviously degenerate shapes (empty
+        # dict, ``{"files": []}``, missing manifest) before binding so a
+        # malformed blob ends up in the BLOB_REQUIRED / disk-fallback
+        # branches below instead of silently binding to an empty
+        # filesystem — without this, a half-bound report would answer
+        # "File not found" to every read and look like a working agent.
+        blob = entry.get("artifact_blob")
+        if self._is_usable_blob(blob):
+            self._bind_artifact_from_blob(blob)
+            return
+
+        if blob is not None:
+            logger.warning(
+                "%s artifact_blob present but unusable (type=%s, keys=%s); routing to BLOB_REQUIRED/disk fallback",
+                self.NODE_NAME,
+                type(blob).__name__,
+                sorted(blob.keys()) if isinstance(blob, dict) else None,
+            )
+
+        if self.BLOB_REQUIRED:
+            logger.error(
+                "%s init failing: slug=%s has no usable artifact_blob and BLOB_REQUIRED=True",
+                self.NODE_NAME,
+                slug,
+            )
+            raise DatusException(
+                code=ErrorCode.COMMON_CONFIG_ERROR,
+                message_args={
+                    "config_error": (
+                        f"{self.NODE_NAME} agent for slug {slug!r} has no "
+                        "``artifact_blob`` in its agentic_nodes entry. The "
+                        f"{self.ARTIFACT_KIND} has not been published yet — "
+                        "publish it first so the latest version's artifact is "
+                        "snapshotted into the subagent config."
+                    )
+                },
+            )
+
+        self._bind_artifact_from_disk(agent_config, slug)
+
+    @staticmethod
+    def _is_usable_blob(blob: Any) -> bool:
+        """Return True only for blobs that carry real artifact content.
+
+        The backend's wire shape is ``{manifest: {...}, files: [{path,
+        content}, ...]}`` and a successful publish always populates both:
+        ``manifest`` is required on the source ``VisualReportVersion`` and
+        ``files`` covers the per-prefix allowlist (render/queries/analysis)
+        which is non-empty for any artifact that passed the publish
+        validator. So an empty dict, a ``files``-only blob with no
+        manifest, or a blob with ``files: []`` is a degenerate/half-bound
+        signal — treat it as a missing blob so the BLOB_REQUIRED branch
+        fires for kinds that need it (rather than the agent silently
+        binding to an empty filesystem and answering "File not found" to
+        every read).
+        """
+        if not isinstance(blob, dict):
+            return False
+        manifest = blob.get("manifest")
+        files = blob.get("files")
+        return isinstance(manifest, dict) and bool(manifest) and isinstance(files, list) and bool(files)
+
+    def _bind_artifact_from_blob(self, blob: Dict[str, Any]) -> None:
+        """Bind to an in-memory ``{manifest, files}`` snapshot.
+
+        Flattens the ``files: [{path, content}, ...]`` list into a dict
+        keyed by slug-relative path so :class:`MemoryFilesystemFuncTool` can serve it
+        directly. Non-dict / malformed entries are skipped silently — the
+        wire format is owned by the backend and any drift should surface
+        as missing files at read time rather than a hard init error.
+
+        ``manifest.json`` is intentionally omitted from the backend's
+        ``files[]`` (it's already carried structured at ``blob["manifest"]``
+        to avoid duplication on the wire), but the LLM-facing tool surface
+        advertises it as a readable file — the prompt preamble even prints
+        ``manifest.json`` in the directory tree. To keep blob mode
+        feature-parity with the disk-backed tool (and avoid an LLM-visible
+        "File not found" the moment it follows the prompt), synthesize the
+        entry back from the structured form.
+        """
+        manifest = blob.get("manifest")
+        if isinstance(manifest, dict):
+            self._artifact_manifest = manifest
+
+        raw_files = blob.get("files")
+        files: Dict[str, str] = {}
+        if isinstance(raw_files, list):
+            for entry in raw_files:
+                if not isinstance(entry, dict):
+                    continue
+                path = entry.get("path")
+                content = entry.get("content")
+                if isinstance(path, str) and path and isinstance(content, str):
+                    files[path] = content
+
+        if "manifest.json" not in files and isinstance(manifest, dict):
+            try:
+                files["manifest.json"] = json.dumps(manifest, ensure_ascii=False, indent=2)
+            except TypeError:
+                # Manifest carries something json can't encode (shouldn't
+                # happen with the current Pydantic-derived shape, but stay
+                # defensive). Init still succeeds; the LLM gets a clearly
+                # empty placeholder rather than a "File not found".
+                files["manifest.json"] = "{}"
+
+        self._artifact_files = files
+        logger.info(
+            "%s bound from in-memory blob: slug=%s files=%d",
+            self.NODE_NAME,
+            self._artifact_slug,
+            len(self._artifact_files),
+        )
+
+    def _bind_artifact_from_disk(self, agent_config: AgentConfig, slug: str) -> None:
+        """Bind to the on-disk ``<project_root>/<kind>/<slug>/`` directory."""
         project_root_raw = getattr(agent_config, "project_root", None)
         if not project_root_raw:
             raise DatusException(
@@ -226,19 +382,49 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
                 },
             )
 
-        self._artifact_slug = slug
         self._artifact_root = artifact_dir
+        logger.info(
+            "%s bound from on-disk artifact: slug=%s root=%s",
+            self.NODE_NAME,
+            self._artifact_slug,
+            artifact_dir,
+        )
 
-    # ── Filesystem tool override (cwd → artifact_root) ──────────────────
+    # ── Filesystem tool override ────────────────────────────────────────
 
     def _make_filesystem_tool(self, **kwargs):
-        """Anchor the filesystem tool at the artifact root.
+        """Anchor the filesystem tool at the bound artifact.
 
-        Overrides the base node's default which uses
-        ``_resolve_workspace_root()``. By the time ``setup_tools`` calls
-        this, ``_resolve_artifact_root()`` has already run during
-        ``__init__``, so ``self._artifact_root`` is set.
+        Two modes:
+
+        * **Blob mode** (``self._artifact_files is not None``): return a
+          :class:`MemoryFilesystemFuncTool` reading from the in-memory bundle. The disk is
+          never touched, so concurrent writes to the on-disk source tree
+          can't drift the answer mid-conversation, and the backend can
+          serve ``ask_report`` even when it has no access to the IDE's
+          filesystem.
+        * **Disk mode** (``self._artifact_root is not None``): fall through
+          to the base node's :class:`FilesystemFuncTool` with ``root_path``
+          pinned to the artifact directory — preserves the original
+          behaviour for CLI runs and kinds without a publish path.
         """
+        if self._artifact_files is not None:
+            from datus.tools.func_tool import MemoryFilesystemFuncTool
+
+            logger.info(
+                "%s filesystem tool wired to MemoryFilesystemFuncTool: slug=%s files=%d",
+                self.NODE_NAME,
+                self._artifact_slug,
+                len(self._artifact_files),
+            )
+            # BaseTool absorbs unknown kwargs into tool_params — keeps
+            # disk-mode-only kwargs from crashing init here.
+            return MemoryFilesystemFuncTool(
+                self._artifact_files,
+                root_label=f"in-memory:{self._artifact_slug}",
+                **kwargs,
+            )
+
         # ``root_path`` is what gates the LLM's ``read_file`` / ``glob`` /
         # ``grep`` reach; passing it via kwargs ensures the policy layer
         # rejects any attempt to traverse outside this artifact.
@@ -262,7 +448,16 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         Missing / corrupt files degrade silently to empty values; the
         prompt template branches on emptiness. We log a warning so
         operators can investigate but never block the conversation.
+
+        In blob mode the manifest was already populated by
+        ``_bind_artifact_from_blob`` (parsed directly from the JSON
+        structure rather than re-decoded from a string), so this method
+        only needs to populate ``intent.md`` from the in-memory file map.
         """
+        if self._artifact_files is not None:
+            self._artifact_intent_md = self._artifact_files.get("analysis/intent.md", "")
+            return
+
         if self._artifact_root is None:
             return
 
@@ -322,7 +517,7 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         already in memory, and a 30-line template adds more indirection
         than it saves.
         """
-        if self._artifact_root is None:
+        if self._artifact_files is None and self._artifact_root is None:
             return ""
 
         manifest = self._artifact_manifest or {}
@@ -333,7 +528,13 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         lines.append(f"## Bound Artifact — {self.ARTIFACT_KIND.title()}: {artifact_name}")
         lines.append("")
         lines.append(f"- **Slug**: `{self._artifact_slug}`")
-        lines.append(f"- **Root**: `{self._artifact_root}` (anchors the filesystem tool)")
+        if self._artifact_files is not None:
+            lines.append(
+                f"- **Source**: in-memory snapshot of the latest published version "
+                f"({len(self._artifact_files)} files; filesystem tool anchored here)"
+            )
+        else:
+            lines.append(f"- **Root**: `{self._artifact_root}` (anchors the filesystem tool)")
         if artifact_description:
             lines.append(f"- **Description**: {artifact_description}")
         if manifest.get("datasources"):
@@ -364,9 +565,10 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         # for it if it cares.
         lines.append("### Artifact Filesystem Layout")
         lines.append("")
+        layout_root_label = self._artifact_root.name if self._artifact_root is not None else self.ARTIFACT_ROOT_DIR_NAME
         lines.append(
             f"Your filesystem tools are anchored at the artifact root. "
-            f"Relative paths resolve under `{self._artifact_root.name}/`:"
+            f"Relative paths resolve under `{layout_root_label}/`:"
         )
         lines.append("")
         lines.append("```")

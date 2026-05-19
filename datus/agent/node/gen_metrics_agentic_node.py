@@ -10,12 +10,11 @@ metrics generation with support for filesystem tools, generation tools,
 hooks, and metricflow MCP server integration.
 """
 
-from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
-from datus.cli.execution_state import ExecutionInterrupted
+from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SemanticNodeResult
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
@@ -40,6 +39,7 @@ class GenMetricsAgenticNode(AgenticNode):
     """
 
     NODE_NAME = "gen_metrics"
+    result_class = SemanticNodeResult
 
     # Define-metric workflow scoped to ``gen_metrics`` via SKILL.md allowed_agents.
     DEFAULT_SKILLS = "gen-metrics, gen-semantic-model"
@@ -317,6 +317,7 @@ class GenMetricsAgenticNode(AgenticNode):
     def _get_system_prompt(
         self,
         conversation_summary: Optional[str] = None,
+        prompt_version: Optional[str] = None,
         template_context: Optional[dict] = None,
     ) -> str:
         """
@@ -324,12 +325,16 @@ class GenMetricsAgenticNode(AgenticNode):
 
         Args:
             conversation_summary: Optional summary from previous conversation compact
+            prompt_version: Optional prompt version override (ignored when the
+                ``node_config`` / ``self.input`` already pin a version)
             template_context: Optional template context variables
 
         Returns:
             System prompt string loaded from the template
         """
-        version = getattr(self.input, "prompt_version", None) or self.node_config.get("prompt_version")
+        version = (
+            prompt_version or getattr(self.input, "prompt_version", None) or self.node_config.get("prompt_version")
+        )
 
         # Hardcoded system_prompt template name
         template_name = f"{self.NODE_NAME}_system"
@@ -371,195 +376,43 @@ class GenMetricsAgenticNode(AgenticNode):
                 message_args={"config_error": f"Template loading failed for '{template_name}': {str(e)}"},
             ) from e
 
-    async def execute_stream(
-        self,
-        action_history_manager: Optional[ActionHistoryManager] = None,
-    ) -> AsyncGenerator[ActionHistory, None]:
-        """
-        Execute the metrics generation with streaming support.
+    def _build_template_context(self, ctx: StreamRunContext) -> Optional[dict]:
+        return self._prepare_template_context(ctx.user_input)
 
-        Args:
-            action_history_manager: Optional action history manager
+    def _build_success_result(self, ctx: StreamRunContext) -> SemanticNodeResult:
+        response_content = ctx.response_content
+        if not response_content and ctx.last_successful_output:
+            raw_output = ctx.last_successful_output.get("raw_output", "")
+            if isinstance(raw_output, dict) or raw_output:
+                response_content = raw_output
+            else:
+                response_content = str(ctx.last_successful_output)
 
-        Yields:
-            ActionHistory: Progress updates during execution
-        """
-        if not action_history_manager:
-            action_history_manager = ActionHistoryManager()
-
-        # Get input from self.input
-        if self.input is None:
-            raise ValueError("Metrics input not set. Set self.input before calling execute_stream.")
-
-        user_input = self.input
-
-        # Create initial action
-        action = ActionHistory.create_action(
-            role=ActionRole.USER,
-            action_type=self.get_node_name(),
-            messages=f"User: {user_input.user_message}",
-            input_data=user_input.model_dump(),
-            status=ActionStatus.PROCESSING,
+        semantic_model_file, metric_file, status, extracted_output = self._extract_metric_and_output_from_response(
+            {"content": response_content}
         )
-        action_history_manager.add_action(action)
-        yield action
+        if extracted_output:
+            response_content = extracted_output
 
-        try:
-            # Session management (only in interactive mode)
-            session = None
-            conversation_summary = None
-            if self.execution_mode == "interactive":
-                # Check for auto-compact before session creation to ensure fresh context
-                await self._auto_compact()
+        if not isinstance(response_content, str):
+            response_content = str(response_content) if response_content else ""
 
-                # Get or create session and any available summary
-                session, conversation_summary = self._get_or_create_session()
+        self._finalize_metric_generation(
+            semantic_model_file=semantic_model_file,
+            metric_file=metric_file,
+            status=status,
+        )
 
-            # Prepare enhanced template context
-            template_context = self._prepare_template_context(user_input)
+        tokens_used = 0
+        if self.execution_mode == "interactive":
+            tokens_used = self._extract_total_tokens(ctx.action_history_manager.get_actions())
 
-            # Get system instruction from template with enhanced context
-            system_instruction = self._get_system_prompt(conversation_summary, template_context)
-
-            enhanced_message = self._build_enhanced_message(user_input)
-
-            logger.debug(f"Tools available : {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
-            logger.debug(f"MCP servers available : {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}")
-            logger.debug(f"Tools: {len(self.tools)}, MCP: {len(self.mcp_servers)}")
-
-            # Initialize response collection variables
-            response_content = ""
-            metric_file = None
-            tokens_used = 0
-            last_successful_output = None
-
-            # Stream response using the model's generate_with_tools_stream
-            async for stream_action in self.model.generate_with_tools_stream(
-                prompt=enhanced_message,
-                tools=self.tools,
-                mcp_servers=self.mcp_servers,
-                instruction=system_instruction,
-                max_turns=user_input.max_turns if user_input.max_turns else self.max_turns,
-                session=session,
-                action_history_manager=action_history_manager,
-                hooks=self._compose_hooks(self.hooks),
-                agent_name=self.get_node_name(),
-                interrupt_controller=self.interrupt_controller,
-            ):
-                yield stream_action
-
-                # Collect response content from successful actions
-                if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
-                    if isinstance(stream_action.output, dict):
-                        last_successful_output = stream_action.output
-                        # Look for content in various possible fields
-                        raw_output = stream_action.output.get("raw_output", "")
-                        # Handle case where raw_output is already a dict
-                        if isinstance(raw_output, dict):
-                            response_content = raw_output
-                        elif raw_output:
-                            response_content = raw_output
-
-            # If we still don't have response_content, check the last successful output
-            if not response_content and last_successful_output:
-                # Try different fields that might contain the response
-                raw_output = last_successful_output.get("raw_output", "")
-                if isinstance(raw_output, dict):
-                    response_content = raw_output
-                elif raw_output:
-                    response_content = raw_output
-                else:
-                    response_content = str(last_successful_output)  # Fallback to string representation
-
-            # Extract semantic_model_file, metric_file, status and output from the final response_content
-            (
-                semantic_model_file,
-                metric_file,
-                status,
-                extracted_output,
-            ) = self._extract_metric_and_output_from_response({"content": response_content})
-            if extracted_output:
-                response_content = extracted_output
-
-            self._finalize_metric_generation(
-                semantic_model_file=semantic_model_file,
-                metric_file=metric_file,
-                status=status,
-            )
-
-            # Extract token usage (only in interactive mode with session)
-            tokens_used = 0
-            if self.execution_mode == "interactive":
-                # With our streaming token fix, only the final assistant action will have accurate usage
-                final_actions = action_history_manager.get_actions()
-
-                # Find the final assistant action with token usage
-                for action in reversed(final_actions):
-                    if action.role == "assistant":
-                        if action.output and isinstance(action.output, dict):
-                            usage_info = action.output.get("usage", {})
-                            if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                                tokens_used = usage_info.get("total_tokens", 0)
-                                if tokens_used > 0:
-                                    break
-                                else:
-                                    logger.warning(f"no usage token found in this action {action.messages}")
-
-            # Create final result
-            result = SemanticNodeResult(
-                success=True,
-                response=response_content,
-                semantic_models=[metric_file] if metric_file else [],  # Note: field name kept for compatibility
-                tokens_used=int(tokens_used),
-            )
-
-            # Add to internal actions list
-            self.actions.extend(action_history_manager.get_actions())
-
-            # Create final action
-            final_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type="metrics_response",
-                messages=f"{self.get_node_name()} interaction completed successfully",
-                input_data=user_input.model_dump(),
-                output_data=result.model_dump(),
-                status=ActionStatus.SUCCESS,
-            )
-            action_history_manager.add_action(final_action)
-            yield final_action
-
-        except ExecutionInterrupted:
-            raise
-
-        except Exception as e:
-            logger.error(f"{self.get_node_name()} execution error: {e}")
-
-            # Create error result
-            error_result = SemanticNodeResult(
-                success=False,
-                error=str(e),
-                response="Sorry, I encountered an error while processing your request.",
-                tokens_used=0,
-            )
-
-            # Update action with error
-            action_history_manager.update_current_action(
-                status=ActionStatus.FAILED,
-                output=error_result.model_dump(),
-                messages=f"Error: {str(e)}",
-            )
-
-            # Create error action
-            error_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type="error",
-                messages=f"{self.get_node_name()} interaction failed: {str(e)}",
-                input_data=user_input.model_dump(),
-                output_data=error_result.model_dump(),
-                status=ActionStatus.FAILED,
-            )
-            action_history_manager.add_action(error_action)
-            yield error_action
+        return SemanticNodeResult(
+            success=True,
+            response=response_content,
+            semantic_models=[metric_file] if metric_file else [],
+            tokens_used=int(tokens_used),
+        )
 
     @staticmethod
     def _tool_succeeded(result: Any) -> bool:

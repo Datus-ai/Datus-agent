@@ -10,12 +10,12 @@ report generation with semantic and database tools. It can be used directly
 or extended by specialized report nodes like AttributionAgenticNode.
 """
 
-from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
-from datus.cli.execution_state import ExecutionInterrupted
+from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput, GenReportNodeResult
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool
 from datus.tools.func_tool.semantic_tools import SemanticTools
@@ -38,6 +38,7 @@ class GenReportAgenticNode(AgenticNode):
     """
 
     NODE_NAME = "gen_report"
+    result_class = GenReportNodeResult
 
     # Default tools when not configured in agent.yml
     DEFAULT_TOOLS = "semantic_tools.*, context_search_tools.list_subject_tree"
@@ -201,6 +202,25 @@ class GenReportAgenticNode(AgenticNode):
 
         except Exception as e:
             logger.error(f"Failed to setup tool pattern '{pattern}': {e}")
+
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Register tools under their canonical categories so permission rules fire.
+
+        Without this override the bound tools fall through to the ``tools.*``
+        catch-all (default ASK on normal/auto profiles), which would block at
+        ``InteractionBroker.request`` whenever a caller wires permission hooks
+        but does not also run an interactive broker listener.
+        """
+        mapping = super()._tool_category_map()
+        if getattr(self, "db_func_tool", None):
+            mapping["db_tools"] = list(self.db_func_tool.available_tools())
+        if getattr(self, "semantic_tools", None):
+            mapping["semantic_tools"] = list(self.semantic_tools.available_tools())
+        if getattr(self, "context_search_tools", None):
+            mapping["context_search_tools"] = list(self.context_search_tools.available_tools())
+        if getattr(self, "filesystem_func_tool", None):
+            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
+        return mapping
 
     def _setup_db_tools(self):
         """Setup database tools."""
@@ -440,206 +460,77 @@ class GenReportAgenticNode(AgenticNode):
             logger.error(f"Unexpected error extracting report: {e}", exc_info=True)
             return "", None
 
-    async def execute_stream(
-        self, action_history_manager: Optional[ActionHistoryManager] = None
-    ) -> AsyncGenerator[ActionHistory, None]:
+    def _maybe_rewrite_stream_action(self, action: ActionHistory, ctx: StreamRunContext) -> Optional[ActionHistory]:
+        """Swap raw JSON payloads for rendered markdown while streaming.
+
+        GenReport's prompt instructs the LLM to emit ``{"report": "<markdown>"}``.
+        Without this rewrite the UI would briefly show raw JSON before the
+        final action carries the extracted report.
         """
-        Execute the report generation with streaming support.
+        if (
+            action.role != ActionRole.ASSISTANT
+            or action.status != ActionStatus.SUCCESS
+            or not isinstance(action.output, dict)
+        ):
+            return None
 
-        Args:
-            action_history_manager: Optional action history manager
-
-        Yields:
-            ActionHistory: Progress updates during execution
-        """
-        if not action_history_manager:
-            action_history_manager = ActionHistoryManager()
-
-        # Get input from self.input
-        if not self.input:
-            raise ValueError("Report input not set. Call setup_input() first or set self.input directly.")
-
-        user_input = self.input
-
-        # Create initial action
-        action = ActionHistory.create_action(
-            role=ActionRole.USER,
-            action_type=self.get_node_name(),
-            messages=f"User: {user_input.user_message}",
-            input_data=user_input.model_dump(),
-            status=ActionStatus.PROCESSING,
+        candidate = (
+            action.output.get("content", "") or action.output.get("response", "") or action.output.get("raw_output", "")
         )
-        action_history_manager.add_action(action)
-        yield action
+        if not isinstance(candidate, str) or not candidate:
+            return None
+        if '{"report"' not in candidate and '"report":' not in candidate:
+            return None
 
-        try:
-            # Check for auto-compact before session creation
-            await self._auto_compact()
+        extracted_report, _ = self._extract_report_from_response(action.output)
+        if not extracted_report:
+            return None
 
-            # Get or create session
-            session, conversation_summary = self._get_or_create_session()
-            prompt_version = getattr(user_input, "prompt_version", None) or self.node_config.get("prompt_version")
-            system_instruction = self._get_system_prompt(conversation_summary, prompt_version)
+        action.output["content"] = extracted_report
+        action.output["response"] = extracted_report
+        action.output["raw_output"] = extracted_report
+        preview = extracted_report[:200] + "..." if len(extracted_report) > 200 else extracted_report
+        action.messages = f"Report generated: {preview}"
+        return action  # in-place mutation; return same object to short-circuit
 
-            # Build enhanced message with context
-            enhanced_message = self._build_enhanced_message(user_input)
+    def _build_success_result(self, ctx: StreamRunContext) -> GenReportNodeResult:
+        response_content = ctx.response_content
+        if not response_content and ctx.last_successful_output:
+            response_content = (
+                ctx.last_successful_output.get("content", "")
+                or ctx.last_successful_output.get("text", "")
+                or ctx.last_successful_output.get("response", "")
+                or str(ctx.last_successful_output)
+            )
 
-            # Execute with streaming
-            response_content = ""
-            tokens_used = 0
-            last_successful_output = None
+        # Final-pass JSON extraction in case the streaming rewrite missed
+        # (e.g. report split across multiple assistant turns).
+        report_metadata = None
+        if ctx.last_successful_output:
+            extracted_report, report_metadata = self._extract_report_from_response(ctx.last_successful_output)
+            if extracted_report:
+                response_content = extracted_report
 
-            logger.debug(f"Tools available: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
+        all_actions = ctx.action_history_manager.get_actions()
+        report_result = self._extract_report_result(all_actions)
+        if report_metadata and not report_result:
+            report_result = report_metadata
 
-            # Stream response using model's generate_with_tools_stream
-            async for stream_action in self.model.generate_with_tools_stream(
-                prompt=enhanced_message,
-                tools=self.tools,
-                mcp_servers=self.mcp_servers,
-                instruction=system_instruction,
-                max_turns=self.max_turns,
-                session=session,
-                action_history_manager=action_history_manager,
-                agent_name=self.get_node_name(),
-                interrupt_controller=self.interrupt_controller,
-            ):
-                # Collect response content from successful actions
-                if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
-                    if isinstance(stream_action.output, dict):
-                        last_successful_output = stream_action.output
-                        response_content = (
-                            stream_action.output.get("content", "")
-                            or stream_action.output.get("response", "")
-                            or stream_action.output.get("raw_output", "")
-                            or response_content
-                        )
+        tokens_used = self._extract_total_tokens(all_actions)
+        tool_calls = [a for a in all_actions if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS]
+        if not isinstance(response_content, str):
+            response_content = str(response_content) if response_content else ""
 
-                        # Try to extract report from JSON and update action for display
-                        # This prevents raw JSON from being displayed in the stream
-                        if stream_action.role == ActionRole.ASSISTANT and response_content:
-                            # Check if response looks like JSON (contains {"report": pattern)
-                            is_json_response = '{"report"' in response_content or '"report":' in response_content
-                            if is_json_response:
-                                extracted_report, _ = self._extract_report_from_response(stream_action.output)
-                                if extracted_report:
-                                    # Update the action's output to show extracted report instead of raw JSON
-                                    stream_action.output["content"] = extracted_report
-                                    stream_action.output["response"] = extracted_report
-                                    stream_action.output["raw_output"] = extracted_report
-                                    response_content = extracted_report
-                                    # Also update messages field (used by action_history_display)
-                                    # Truncate for display, show first 200 chars with "..." if longer
-                                    preview = (
-                                        extracted_report[:200] + "..."
-                                        if len(extracted_report) > 200
-                                        else extracted_report
-                                    )
-                                    stream_action.messages = f"Report generated: {preview}"
-                                    logger.debug("Updated stream action with extracted report")
-
-                yield stream_action
-
-            # If we still don't have response_content, check the last successful output
-            if not response_content and last_successful_output:
-                response_content = (
-                    last_successful_output.get("content", "")
-                    or last_successful_output.get("text", "")
-                    or last_successful_output.get("response", "")
-                    or str(last_successful_output)
-                )
-
-            # Extract report markdown from JSON response (if LLM returned structured output)
-            report_metadata = None
-            if last_successful_output:
-                extracted_report, report_metadata = self._extract_report_from_response(last_successful_output)
-                if extracted_report:
-                    response_content = extracted_report
-                    logger.debug(f"Extracted report from JSON response, length={len(response_content)}")
-
-            # Extract report result from tool calls (subclass-specific)
-            all_actions = action_history_manager.get_actions()
-            report_result = self._extract_report_result(all_actions)
-
-            # Merge report metadata into report_result if available
-            if report_metadata and not report_result:
-                report_result = report_metadata
-
-            # Extract token usage
-            for action in reversed(all_actions):
-                if action.role == "assistant":
-                    if action.output and isinstance(action.output, dict):
-                        usage_info = action.output.get("usage", {})
-                        if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                            tokens_used = usage_info.get("total_tokens", 0)
-                            break
-
-            # Collect execution stats
-            tool_calls = [
-                action
-                for action in all_actions
-                if action.role == ActionRole.TOOL and action.status == ActionStatus.SUCCESS
-            ]
-            execution_stats = {
+        return GenReportNodeResult(
+            success=True,
+            response=response_content,
+            report_result=report_result,
+            tokens_used=int(tokens_used),
+            action_history=[a.model_dump() for a in all_actions],
+            execution_stats={
                 "total_actions": len(all_actions),
                 "tool_calls_count": len(tool_calls),
-                "tools_used": list(set([a.action_type for a in tool_calls])),
+                "tools_used": list({a.action_type for a in tool_calls}),
                 "total_tokens": int(tokens_used),
-            }
-
-            # Create final result
-            result = GenReportNodeResult(
-                success=True,
-                response=response_content,
-                report_result=report_result,
-                tokens_used=int(tokens_used),
-                action_history=[action.model_dump() for action in all_actions],
-                execution_stats=execution_stats,
-            )
-
-            # Add to internal actions list
-            self.actions.extend(all_actions)
-
-            # Create final action
-            final_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type=f"{self.get_node_name()}_response",
-                messages=f"{self.get_node_name()} analysis completed successfully",
-                input_data=user_input.model_dump(),
-                output_data=result.model_dump(),
-                status=ActionStatus.SUCCESS,
-            )
-            action_history_manager.add_action(final_action)
-            yield final_action
-
-        except ExecutionInterrupted:
-            raise
-
-        except Exception as e:
-            logger.error(f"{self.get_node_name()} execution error: {e}")
-
-            # Create error result
-            error_result = GenReportNodeResult(
-                success=False,
-                error=str(e),
-                response="Sorry, I encountered an error while generating the report.",
-                tokens_used=0,
-            )
-
-            # Update action with error
-            action_history_manager.update_current_action(
-                status=ActionStatus.FAILED,
-                output=error_result.model_dump(),
-                messages=f"Error: {str(e)}",
-            )
-
-            # Create error action
-            error_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type="error",
-                messages=f"{self.get_node_name()} analysis failed: {str(e)}",
-                input_data=user_input.model_dump(),
-                output_data=error_result.model_dump(),
-                status=ActionStatus.FAILED,
-            )
-            action_history_manager.add_action(error_action)
-            yield error_action
+            },
+        )

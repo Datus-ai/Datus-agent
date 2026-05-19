@@ -389,7 +389,10 @@ class TestSaveQuery:
             sql="SELECT store_name FROM sales",
             goal="store list",
             hypothesis="store names are unique within the dataset",
-            uses={"metrics": ["m_sales"], "reference_sql": ["rs_sales_query"]},
+            uses={
+                "metrics": [{"path": ["Sales"], "name": "total_sales"}],
+                "reference_sql": [{"path": ["Templates"], "name": "sales_query"}],
+            },
         )
         assert result.success == 1, result.error
         brief_file = (
@@ -398,8 +401,8 @@ class TestSaveQuery:
         import json as _json
 
         data = _json.loads(brief_file.read_text(encoding="utf-8"))
-        assert data["uses"]["metrics"] == ["m_sales"]
-        assert data["uses"]["reference_sql"] == ["rs_sales_query"]
+        assert data["uses"]["metrics"] == [{"path": ["Sales"], "name": "total_sales"}]
+        assert data["uses"]["reference_sql"] == [{"path": ["Templates"], "name": "sales_query"}]
         assert data["uses"]["ext_knowledge"] == []
 
     def test_write_operations_rejected(self, report_tools: ReportArtifactTools):

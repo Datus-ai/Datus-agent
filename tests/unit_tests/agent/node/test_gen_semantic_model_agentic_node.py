@@ -330,7 +330,9 @@ class TestGenSemanticModelAgenticNodeExecution:
         node.input = None
 
         action_manager = ActionHistoryManager()
-        with pytest.raises(ValueError, match="Semantic input not set"):
+        from datus.utils.exceptions import DatusException
+
+        with pytest.raises(DatusException, match="Missing required field"):
             async for _ in node.execute_stream(action_manager):
                 pass
 
@@ -614,7 +616,7 @@ class TestExecuteStreamGenSemanticModelError:
                 actions.append(action)
 
         assert actions[-1].status == ActionStatus.SUCCESS
-        assert actions[-1].action_type == "semantic_response"
+        assert actions[-1].action_type == "gen_semantic_model_response"
         node.semantic_func_tool.validate_semantic.assert_called_once()
         sync_mock.assert_called_once()
 

@@ -250,33 +250,19 @@ class TestClaudeModelGenerate:
         mock_super.assert_called_once()
         assert result == "from litellm"
 
-    def test_litellm_path_passes_top_p_none(self):
-        model = _make_claude_model()
-        captured_kwargs = {}
-
-        def capture_generate(self_inner, prompt, **kwargs):
-            captured_kwargs.update(kwargs)
-            return "ok"
-
-        with patch("datus.models.openai_compatible.OpenAICompatibleModel.generate", capture_generate):
-            model.generate("hello")
-        assert captured_kwargs.get("top_p") is None
-
     def test_claude_generate_does_not_send_top_p_to_litellm(self):
         """Regression test for the Anthropic "temperature and top_p" 400.
 
         Exercises the full pipeline (no mock at the parent boundary) so
-        a regression in either layer surfaces:
-
-        - ClaudeModel.generate sets ``kwargs['top_p'] = None`` (its
-          contract for "drop this param").
-        - OpenAICompatibleModel._generate_operation must then omit
-          ``top_p`` from the litellm payload entirely — NOT forward
-          ``top_p=None`` and rely on the downstream library to filter
-          it (which has been observed to leak through to Anthropic
-          and trigger HTTP 400 / ``invalid_request_error``).
+        a regression in either layer surfaces. The suppression is
+        owned by ``OpenAICompatibleModel._generate_operation`` and gates
+        on ``litellm_adapter.provider == LLMProvider.CLAUDE``, so this
+        test relies on ``_make_claude_model`` exposing the correct
+        runtime provider — override the fixture's default value
+        explicitly to make the contract visible.
         """
         model = _make_claude_model()
+        model.litellm_adapter.provider = "claude"
         mock_resp = MagicMock()
         mock_resp.choices = [MagicMock()]
         mock_resp.choices[0].message.content = "ok"

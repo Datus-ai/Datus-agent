@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
-from abc import abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional
 
@@ -36,6 +35,7 @@ from datus.utils.message_utils import build_structured_content
 from datus.utils.node_utils import build_database_context
 
 if TYPE_CHECKING:
+    from datus.agent.node.stream_run_context import StreamRunContext
     from datus.agent.workflow import Workflow
     from datus.schemas.token_usage import TokenUsage
     from datus.tools.permission.permission_manager import PermissionManager
@@ -732,7 +732,10 @@ class AgenticNode(Node):
         return AgenticNode.get_node_name(self)
 
     def _get_system_prompt(
-        self, conversation_summary: Optional[str] = None, prompt_version: Optional[str] = None
+        self,
+        conversation_summary: Optional[str] = None,
+        prompt_version: Optional[str] = None,
+        template_context: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Get the system prompt for this agentic node using PromptManager.
@@ -742,6 +745,10 @@ class AgenticNode(Node):
         Args:
             conversation_summary: Optional summary from previous conversation compact
             prompt_version: Optional prompt version to use, overrides agent config version
+            template_context: Optional extra keyword arguments forwarded into the
+                template render call. Subclasses populate this via
+                ``_prepare_template_context`` when their templates need extra
+                variables beyond the common ones.
 
         Returns:
             System prompt string loaded from the template
@@ -756,17 +763,21 @@ class AgenticNode(Node):
         # Construct template name: {template_name}_system_{version}
         template_name = f"{self.get_node_name()}_system"
 
+        render_kwargs: Dict[str, Any] = {
+            "agent_config": self.agent_config,
+            "datasource": getattr(self.agent_config, "current_datasource", None) if self.agent_config else None,
+            "workspace_root": root_path,  # DEPRECATED: Use semantic_model_dir or sql_summary_dir instead
+            "conversation_summary": conversation_summary,
+        }
+        if template_context:
+            render_kwargs.update(template_context)
+
         try:
             # Use prompt manager to render the template
             base_prompt = get_prompt_manager(agent_config=self.agent_config).render_template(
                 template_name=template_name,
                 version=version,
-                # Add common template variables
-                agent_config=self.agent_config,
-                datasource=getattr(self.agent_config, "current_datasource", None) if self.agent_config else None,
-                workspace_root=root_path,  # DEPRECATED: Use semantic_model_dir or sql_summary_dir instead
-                # Add conversation summary if available
-                conversation_summary=conversation_summary,
+                **render_kwargs,
             )
 
         except FileNotFoundError as e:
@@ -1720,26 +1731,22 @@ class AgenticNode(Node):
             if final_action and final_action.output:
                 output_data = final_action.output
                 if isinstance(output_data, dict):
-                    # Try to determine the result class from the subclass
-                    result_class = self._get_result_class()
+                    result_class = getattr(self, "result_class", None)
                     if result_class:
                         try:
                             self.result = result_class.model_validate(output_data)
                         except Exception as e:
                             logger.warning(f"Failed to validate result as {result_class.__name__}: {e}")
-                            # Fallback: create a generic BaseResult
                             self.result = BaseResult(
                                 success=output_data.get("success", True),
                                 error=output_data.get("error"),
                             )
                     else:
-                        # No specific result class, create generic BaseResult
                         self.result = BaseResult(
                             success=output_data.get("success", True),
                             error=output_data.get("error"),
                         )
                 else:
-                    # Output is already a BaseResult instance
                     self.result = output_data
 
             if not self.result:
@@ -1752,73 +1759,347 @@ class AgenticNode(Node):
             self.result = BaseResult(success=False, error=str(e))
             return self.result
 
-    def _get_result_class(self):
-        """
-        Get the result class for this node type.
+    # ── execute_stream template method ──────────────────────────────────
+    #
+    # The base class owns the streaming skeleton (input validation, session
+    # setup, prompt assembly, retry loop, error handling). Subclasses customise
+    # behaviour through the optional hooks declared below this method:
+    #
+    #   - ``_before_stream``               (async, side-effect init)
+    #   - ``_build_template_context``      (extra render kwargs)
+    #   - ``_compose_run_hooks``           (extra model hooks)
+    #   - ``_maybe_rewrite_stream_action`` (live action rewrite, e.g. JSON→md)
+    #   - ``_get_retry_policy``            (validate/retry strategy)
+    #   - ``_build_success_result``        (REQUIRED — construct NodeResult)
+    #
+    # Subclasses also MUST declare ``result_class`` (a ``ClassVar[type[BaseResult]]``)
+    # so the unified ``_build_error_result`` can construct the right NodeResult
+    # subtype on the failure path.
+    #
+    # Subclasses MUST NOT override ``execute_stream`` itself — the template
+    # contract is final. Add a new hook to ``AgenticNode`` if you encounter a
+    # variation point that none of the existing hooks captures.
 
-        Subclasses can override this to return their specific result class.
-        Default implementation tries to infer from common naming patterns.
+    # Declared as ``Optional`` so abstract intermediates (DeliverableAgenticNode,
+    # BaseVisualArtifactAgenticNode) can leave it unset; concrete subclasses
+    # must assign a real ``BaseResult`` subclass. Runtime check lives in
+    # ``_build_error_result``.
+    result_class: Any = None
 
-        Returns:
-            Result class or None if cannot determine
-        """
-        # Try to import and return the appropriate result class
-        class_name = self.__class__.__name__
-
-        # Map node class names to result class names
-        result_class_map = {
-            "ChatAgenticNode": "ChatNodeResult",
-            "GenSQLAgenticNode": "GenSQLNodeResult",
-            "CompareAgenticNode": "CompareResult",
-            "ExploreAgenticNode": "ExploreNodeResult",
-        }
-
-        result_class_name = result_class_map.get(class_name)
-        if not result_class_name:
-            return None
-
-        try:
-            # Try to import the result class from corresponding schema module
-            if class_name == "ChatAgenticNode":
-                from datus.schemas.chat_agentic_node_models import ChatNodeResult
-
-                return ChatNodeResult
-            elif class_name == "GenSQLAgenticNode":
-                from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeResult
-
-                return GenSQLNodeResult
-            elif class_name == "CompareAgenticNode":
-                from datus.schemas.compare_node_models import CompareResult
-
-                return CompareResult
-            elif class_name == "ExploreAgenticNode":
-                from datus.schemas.explore_agentic_node_models import ExploreNodeResult
-
-                return ExploreNodeResult
-        except ImportError as e:
-            logger.debug(f"Could not import result class {result_class_name}: {e}")
-            return None
-
-        return None
-
-    @abstractmethod
     async def execute_stream(
         self, action_history_manager: Optional[ActionHistoryManager] = None
     ) -> AsyncGenerator[ActionHistory, None]:
-        """
-        Execute the agentic node with streaming support.
+        """Execute the agentic node with streaming support — template method.
 
-        This method should be implemented by subclasses to provide specific
-        functionality while using the common session and tool management.
-
-        Input should be accessed from self.input instead of parameters.
+        Drives the full lifecycle: input validation → initial USER action →
+        session setup → prompt assembly → optional retry loop around
+        ``_stream_once`` → success/error result construction → closing
+        ASSISTANT action. Subclasses customise via the hooks below, never by
+        overriding this method.
 
         Args:
-            action_history_manager: Optional action history manager for tracking
+            action_history_manager: Optional action history manager. A fresh
+                one is created when omitted.
 
         Yields:
-            ActionHistory: Progress updates during execution
+            ActionHistory: Progress updates during execution.
         """
+        from datus.agent.node.retry_policy import NoRetryPolicy
+        from datus.agent.node.stream_run_context import StreamRunContext
+
+        ahm = action_history_manager or ActionHistoryManager()
+        if self.input is None:
+            raise DatusException(
+                code=ErrorCode.COMMON_FIELD_REQUIRED,
+                message_args={"field_name": "input"},
+            )
+
+        ctx = StreamRunContext(user_input=self.input, action_history_manager=ahm)
+
+        node_name = self.get_node_name()
+        logger.info(
+            "%s execute_stream start: session=%s msg=%r",
+            node_name,
+            getattr(self, "session_id", None),
+            (getattr(self.input, "user_message", "") or "")[:120],
+        )
+        initial_action = ActionHistory.create_action(
+            role=ActionRole.USER,
+            action_type=f"{node_name}_request",
+            messages=f"User: {getattr(self.input, 'user_message', '')}",
+            input_data=self.input.model_dump(),
+            status=ActionStatus.PROCESSING,
+        )
+        ahm.add_action(initial_action)
+        yield initial_action
+
+        try:
+            await self._before_stream(ctx)
+
+            if self.execution_mode == "interactive":
+                await self._auto_compact()
+                ctx.session, ctx.conversation_summary = self._get_or_create_session()
+
+            template_context = self._build_template_context(ctx)
+            prompt_version = getattr(self.input, "prompt_version", None)
+            if template_context:
+                ctx.system_instruction = self._get_system_prompt(
+                    conversation_summary=ctx.conversation_summary,
+                    prompt_version=prompt_version,
+                    template_context=template_context,
+                )
+            else:
+                ctx.system_instruction = self._get_system_prompt(
+                    conversation_summary=ctx.conversation_summary,
+                    prompt_version=prompt_version,
+                )
+
+            # Compose the user prompt, optionally with a per-run override of
+            # ``user_input.user_message`` set during ``_before_stream`` (used
+            # by Compare and GenExtKnowledge to inject node-specific text
+            # without mutating the caller's input object).
+            if ctx.user_message_override is not None:
+                original = self.input.user_message
+                self.input.user_message = ctx.user_message_override
+                try:
+                    ctx.user_prompt = self._build_enhanced_message(self.input)
+                finally:
+                    self.input.user_message = original
+            else:
+                ctx.user_prompt = self._build_enhanced_message(self.input)
+
+            policy = self._get_retry_policy() or NoRetryPolicy()
+            max_attempts = max(1, getattr(policy, "max_attempts", 1))
+
+            for attempt in range(1, max_attempts + 1):
+                ctx.attempt = attempt
+                policy.reset(ctx)
+
+                async for stream_action in self._stream_once(ctx):
+                    yield stream_action
+
+                # Always probe ``should_retry`` so the policy can stash
+                # per-attempt state (validation reports, verification flags)
+                # for ``finalise`` to surface — even on the final attempt
+                # when no further retry will actually fire.
+                wants_retry = policy.should_retry(ctx)
+                if not wants_retry or attempt >= max_attempts:
+                    break
+                for retry_action in policy.on_retry_actions(ctx):
+                    ahm.add_action(retry_action)
+                    yield retry_action
+                next_prompt = policy.next_prompt(ctx)
+                if next_prompt is not None:
+                    ctx.user_prompt = next_prompt
+
+            policy.finalise(ctx)
+
+            result = self._build_success_result(ctx)
+            self.result = result
+            self.actions.extend(ahm.get_actions())
+
+            final_action = ActionHistory.create_action(
+                role=ActionRole.ASSISTANT,
+                action_type=f"{node_name}_response",
+                messages=(
+                    f"{node_name} interaction completed successfully"
+                    if getattr(result, "success", True)
+                    else f"{node_name} interaction completed with failures"
+                ),
+                input_data=self.input.model_dump(),
+                output_data=result.model_dump(),
+                status=ActionStatus.SUCCESS if getattr(result, "success", True) else ActionStatus.FAILED,
+            )
+            ahm.add_action(final_action)
+            yield final_action
+
+        except ExecutionInterrupted:
+            raise
+        except Exception as exc:
+            error_msg = self._format_execution_error(exc)
+            logger.error("%s execution error: %s", node_name, error_msg)
+
+            error_result = self._build_error_result(exc, ctx)
+            self.result = error_result
+            ahm.update_current_action(
+                status=ActionStatus.FAILED,
+                output=error_result.model_dump(),
+                messages=f"Error: {error_msg}",
+            )
+            error_action = ActionHistory.create_action(
+                role=ActionRole.ASSISTANT,
+                action_type="error",
+                messages=f"{node_name} interaction failed: {error_msg}",
+                input_data=self.input.model_dump(),
+                output_data=error_result.model_dump(),
+                status=ActionStatus.FAILED,
+            )
+            ahm.add_action(error_action)
+            # Mirror the success path: persist this turn's actions onto the
+            # node so cross-turn helpers (``_count_session_tokens``,
+            # ``get_last_turn_usage``) don't keep reading stale state after
+            # a failed attempt.
+            self.actions.extend(ahm.get_actions())
+            yield error_action
+
+    async def _stream_once(self, ctx: "StreamRunContext") -> AsyncGenerator[ActionHistory, None]:
+        """Run the model once and yield every action while collecting state.
+
+        The template invokes this method ``max_attempts`` times (once for
+        every retry-policy iteration). Each call:
+
+        - Calls ``model.generate_with_tools_stream`` with the current
+          ``ctx.user_prompt`` and per-node-configured tools / hooks.
+        - Routes every emitted action through ``_maybe_rewrite_stream_action``
+          so subclasses can re-shape items mid-flight (used by GenReport).
+        - Updates ``ctx.response_content`` / ``ctx.last_successful_output``
+          from assistant chunks (skipping ``is_thinking`` items so the
+          model's internal monologue never lands in the final response) and
+          ``ctx.last_tool_summary`` from successful tool actions.
+        """
+        async for stream_action in self.model.generate_with_tools_stream(
+            prompt=ctx.user_prompt,
+            tools=self.tools or [],
+            mcp_servers=self.mcp_servers,
+            instruction=ctx.system_instruction,
+            max_turns=getattr(ctx.user_input, "max_turns", None) or self.max_turns,
+            session=ctx.session,
+            action_history_manager=ctx.action_history_manager,
+            hooks=self._compose_run_hooks(ctx),
+            agent_name=self.get_node_name(),
+            interrupt_controller=self.interrupt_controller,
+        ):
+            rewritten = self._maybe_rewrite_stream_action(stream_action, ctx)
+            action_to_yield = rewritten or stream_action
+
+            if (
+                action_to_yield.role == ActionRole.ASSISTANT
+                and action_to_yield.status == ActionStatus.SUCCESS
+                and action_to_yield.output
+            ):
+                output = action_to_yield.output
+                if isinstance(output, dict) and output.get("is_thinking") is not True:
+                    ctx.last_successful_output = output
+                    candidate = output.get("content", "") or output.get("response", "") or output.get("raw_output", "")
+                    # Preserve dict candidates (used by Deliverable / ExtKnowledge
+                    # for structured outputs); coerce only when the candidate is
+                    # a non-empty non-string scalar.
+                    if isinstance(candidate, str):
+                        if candidate:
+                            ctx.response_content = candidate
+                    elif candidate:
+                        ctx.response_content = candidate
+            elif action_to_yield.role == ActionRole.TOOL and action_to_yield.status == ActionStatus.SUCCESS:
+                tool_output = action_to_yield.output if isinstance(action_to_yield.output, dict) else {}
+                summary = tool_output.get("summary") or tool_output.get("status_message") or ""
+                if isinstance(summary, str) and summary.strip():
+                    ctx.last_tool_summary = summary.strip()
+
+            yield action_to_yield
+
+    # ── optional hooks (subclasses override as needed) ──────────────────
+
+    async def _before_stream(self, ctx: "StreamRunContext") -> None:
+        """Hook: side-effect initialisation before the stream loop begins.
+
+        Runs after input validation / initial action emission but BEFORE
+        session setup and prompt assembly. Use this for async setup whose
+        outcome affects tool selection, prompt building, or template context
+        (e.g. parse ``user_input`` to derive ``ctx.user_message_override`` /
+        ``ctx.extras``, enable/disable tools on ``self.tools``).
+        """
+        return None
+
+    def _build_template_context(self, ctx: "StreamRunContext") -> Optional[Dict[str, Any]]:
+        """Hook: extra keyword arguments forwarded to the system-prompt template.
+
+        Return a dict to enable template-context rendering; return ``None``
+        (default) when the node's template needs only the common variables
+        injected by :meth:`_get_system_prompt`.
+
+        Distinct from the per-subclass helper ``_prepare_template_context``
+        (which various subclasses already define with ``(user_input, …)``
+        signatures); subclasses that need template context override this hook
+        and typically delegate: ``return self._prepare_template_context(ctx.user_input)``.
+        """
+        return None
+
+    def _compose_run_hooks(self, ctx: "StreamRunContext") -> Any:
+        """Hook: compose the final ``hooks`` argument passed to the model.
+
+        Default: include ``self.hooks`` (typically a ``GenerationHooks``
+        instance for todo/plan workflow nodes) only in interactive mode;
+        otherwise return permission hooks alone. This covers SqlSummary,
+        Feedback, GenSemanticModel, GenExtKnowledge, GenMetrics out of the
+        box.
+
+        Subclasses with non-``self.hooks`` extras (Deliverable's
+        ``_validation_hook``) override to call ``self._compose_hooks(extra)``
+        directly.
+        """
+        extra_hook = getattr(self, "hooks", None)
+        if extra_hook is None or self.execution_mode != "interactive":
+            return self._compose_hooks()
+        return self._compose_hooks(extra_hook)
+
+    def _maybe_rewrite_stream_action(self, action: ActionHistory, ctx: "StreamRunContext") -> Optional[ActionHistory]:
+        """Hook: optionally replace a streamed action before it is yielded.
+
+        Return a replacement :class:`ActionHistory` to substitute it (used by
+        GenReport to swap JSON payloads for rendered markdown in real time)
+        or ``None`` (default) to keep the original action unchanged.
+        """
+        return None
+
+    def _get_retry_policy(self):
+        """Hook: return a :class:`RetryPolicy` to drive validate/retry.
+
+        Default returns :class:`NoRetryPolicy` (single execution). Override
+        to return :class:`ValidationHookRetryPolicy` (deliverable_node.py) /
+        :class:`VerifySqlRetryPolicy` (gen_ext_knowledge_agentic_node.py) when
+        the node needs re-prompting on validation failure. Concrete policies
+        live in their owning node's module — there is no shared ``policies/``
+        package since each policy is bound to a specific node's internals.
+        """
+        from datus.agent.node.retry_policy import NoRetryPolicy
+
+        return NoRetryPolicy()
+
+    def _build_success_result(self, ctx: "StreamRunContext") -> BaseResult:
+        """Hook (REQUIRED): construct the NodeResult on the success path.
+
+        Subclasses parse ``ctx.response_content`` / ``ctx.last_successful_output``
+        / ``ctx.last_tool_summary`` / ``ctx.extras`` and return an instance
+        of ``self.result_class``.
+        """
+        raise NotImplementedError(f"{type(self).__name__} must override _build_success_result(ctx)")
+
+    def _build_error_result(self, exc: BaseException, ctx: "StreamRunContext") -> BaseResult:
+        """Construct a uniform error NodeResult — base implementation final.
+
+        Builds an instance of ``self.result_class`` populated with
+        ``success=False``, ``error=<formatted>``, ``response=""``,
+        ``tokens_used=0``. Automatically fills ``action_history`` for
+        NodeResult subtypes that declare that field.
+
+        Subclasses MUST declare ``result_class`` for this to work; the
+        runtime guard below produces a clear error otherwise.
+        """
+        if self.result_class is None:
+            raise NotImplementedError(
+                f"{type(self).__name__} must declare a class-level "
+                f"`result_class` attribute pointing to its BaseResult subtype"
+            )
+
+        kwargs: Dict[str, Any] = {
+            "success": False,
+            "error": self._format_execution_error(exc),
+            "response": "",
+            "tokens_used": 0,
+        }
+        if "action_history" in getattr(self.result_class, "model_fields", {}):
+            kwargs["action_history"] = [a.model_dump() for a in ctx.action_history_manager.get_actions()]
+        return self.result_class(**kwargs)
 
     def _get_or_create_broker(self) -> "InteractionBroker":
         """
@@ -2164,6 +2445,55 @@ class AgenticNode(Node):
                 code=ErrorCode.COMMON_CONFIG_ERROR,
                 message_args={"config_error": f"Permission hook setup failed for {self.get_node_name()}: {e}"},
             ) from e
+
+    @staticmethod
+    def _extract_total_tokens(actions: List[ActionHistory]) -> int:
+        """Walk the current root turn and return its assistant token count.
+
+        Iterates in reverse from the most recent action, stopping at the
+        last root-level user message so child/tool usage from sub-agents
+        does not leak into the parent's per-turn total — same scoping as
+        ``_count_session_tokens`` / ``get_last_turn_usage``. Tolerates
+        ``total_tokens`` being a numeric string (some providers emit
+        ``"1234"`` rather than ``1234``) — anything that fails an ``int``
+        cast contributes ``0`` and the loop continues looking further back.
+        Returns ``0`` when no assistant action carries a usable usage block.
+        """
+        for action in reversed(actions):
+            if action.role == ActionRole.USER and action.depth == 0:
+                break
+            if action.role != ActionRole.ASSISTANT or action.depth != 0:
+                continue
+            output = action.output
+            if not isinstance(output, dict):
+                continue
+            usage_info = output.get("usage")
+            if not isinstance(usage_info, dict):
+                continue
+            total = usage_info.get("total_tokens")
+            if not total:
+                continue
+            try:
+                tokens = int(total)
+            except (TypeError, ValueError):
+                continue
+            if tokens > 0:
+                return tokens
+        return 0
+
+    @staticmethod
+    def _format_execution_error(exc: BaseException) -> str:
+        """Render an exception for error_result / error_action display.
+
+        ``DatusException`` carries a structured error code that is normally
+        lost when callers fall back to ``str(exc)``. Surface it as
+        ``[CODE] <message>`` so logs and SSE error cards remain greppable.
+        """
+        from datus.utils.exceptions import DatusException
+
+        if isinstance(exc, DatusException):
+            return f"[{exc.code}] {exc}"
+        return str(exc)
 
     def _compose_hooks(self, extra: Any = None) -> Any:
         """Combine permission hooks with an optional per-node hook.

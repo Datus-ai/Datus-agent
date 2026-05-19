@@ -14,7 +14,6 @@ Tests verify:
 - setup_input / update_context workflow integration
 - execute_stream error handling (cancellation, general exceptions, ExecutionInterrupted)
 - _get_system_prompt fallback and error paths
-- _get_execution_config plan vs. normal vs. unknown mode
 - _build_plan_prompt structured / non-structured content branches
 - _update_database_connection
 - Summary report fallback logic in execute_stream
@@ -472,7 +471,9 @@ class TestChatAgenticNodeExecuteStream:
         node.input = None
 
         ahm = ActionHistoryManager()
-        with pytest.raises(ValueError, match="Chat input not set"):
+        from datus.utils.exceptions import DatusException
+
+        with pytest.raises(DatusException, match="Missing required field"):
             async for _ in node.execute_stream(ahm):
                 pass
 
@@ -720,86 +721,6 @@ class TestChatAgenticNodeSystemPrompt:
 
 
 # ===========================================================================
-# _get_execution_config Tests
-# ===========================================================================
-
-
-class TestChatAgenticNodeExecutionConfig:
-    """Verify _get_execution_config now that plan-mode lives on AgenticNode."""
-
-    def test_normal_mode_config(self, real_agent_config, mock_llm_create):
-        """Returns tools + system instruction; no hooks when permission hooks absent."""
-        from datus.agent.node.chat_agentic_node import ChatAgenticNode
-
-        node = ChatAgenticNode(
-            node_id="test_exec_normal",
-            description="Test normal exec config",
-            node_type=NodeType.TYPE_CHAT,
-            agent_config=real_agent_config,
-        )
-        node.input = ChatNodeInput(user_message="test", database="california_schools")
-
-        config = node._get_execution_config(node.input)
-
-        assert "tools" in config
-        assert "instruction" in config
-        assert isinstance(config["instruction"], str)
-        assert "list_tables" in {tool.name for tool in config["tools"]}
-
-    def test_main_agent_always_exposes_plan_tools(self, real_agent_config, mock_llm_create):
-        """Main agent gets ``confirm_plan`` / ``todo_*`` regardless of plan_mode state."""
-        from datus.agent.node.chat_agentic_node import ChatAgenticNode
-
-        node = ChatAgenticNode(
-            node_id="test_exec_plan_tools",
-            description="Test plan-tool availability",
-            node_type=NodeType.TYPE_CHAT,
-            agent_config=real_agent_config,
-        )
-        node.input = ChatNodeInput(user_message="test", database="california_schools")
-        node._is_subagent = False
-        assert node.plan_mode_active is False
-
-        tool_names = {t.name for t in node._get_execution_config(node.input)["tools"]}
-        assert "confirm_plan" in tool_names
-        assert "todo_write" in tool_names
-
-    def test_subagent_does_not_get_plan_tools(self, real_agent_config, mock_llm_create):
-        """Sub-agent invocation suppresses plan tools entirely."""
-        from datus.agent.node.chat_agentic_node import ChatAgenticNode
-
-        node = ChatAgenticNode(
-            node_id="test_exec_subagent",
-            description="Test sub-agent plan tools off",
-            node_type=NodeType.TYPE_CHAT,
-            agent_config=real_agent_config,
-            is_subagent=True,
-        )
-        node.input = ChatNodeInput(user_message="test", database="california_schools")
-
-        tool_names = {t.name for t in node._get_execution_config(node.input)["tools"]}
-        assert "confirm_plan" not in tool_names
-        assert "todo_write" not in tool_names
-
-    def test_permission_hooks_are_applied(self, real_agent_config, mock_llm_create):
-        """Permission hooks are attached to the execution config when available."""
-        from datus.agent.node.chat_agentic_node import ChatAgenticNode
-
-        node = ChatAgenticNode(
-            node_id="test_exec_hooks",
-            description="Test exec hooks",
-            node_type=NodeType.TYPE_CHAT,
-            agent_config=real_agent_config,
-        )
-        node.input = ChatNodeInput(user_message="test", database="california_schools")
-
-        config = node._get_execution_config(node.input)
-
-        # Permission hooks should always be set up for chat node
-        assert config["hooks"] is node.permission_hooks
-
-
-# ===========================================================================
 # setup_input Tests
 # ===========================================================================
 
@@ -948,9 +869,18 @@ class TestChatAgenticNodeExecuteStreamErrors:
             mock_llm_create.generate_with_tools_stream = original_method
 
     @pytest.mark.asyncio
-    async def test_execute_stream_handles_user_cancellation(self, real_agent_config, mock_llm_create):
-        """User cancellation yields a SUCCESS action with cancellation message."""
+    async def test_execute_stream_user_cancellation_via_execution_interrupted(self, real_agent_config, mock_llm_create):
+        """User cancellations propagate as ``ExecutionInterrupted``.
+
+        Cancellation is the single, typed channel used everywhere else
+        (``execute_stream_with_interactions`` converts it into the
+        ``interrupted`` SUCCESS action). Generic ``Exception("User
+        cancelled ...")`` strings raised by upstream SDK plumbing fall
+        through to the regular error branch — they're real failures, not
+        user-initiated cancels.
+        """
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.cli.execution_state import ExecutionInterrupted
 
         node = ChatAgenticNode(
             node_id="test_cancel",
@@ -962,7 +892,7 @@ class TestChatAgenticNodeExecuteStreamErrors:
         original_method = mock_llm_create.generate_with_tools_stream
 
         async def cancel_stream(*args, **kwargs):
-            raise Exception("User cancelled the operation")
+            raise ExecutionInterrupted("Ctrl+C")
             yield  # noqa: unreachable
 
         mock_llm_create.generate_with_tools_stream = cancel_stream
@@ -971,14 +901,9 @@ class TestChatAgenticNodeExecuteStreamErrors:
         ahm = ActionHistoryManager()
 
         try:
-            actions = []
-            async for action in node.execute_stream(ahm):
-                actions.append(action)
-
-            assert len(actions) >= 2
-            final_action = actions[-1]
-            assert final_action.status == ActionStatus.SUCCESS
-            assert final_action.action_type == "user_cancellation"
+            with pytest.raises(ExecutionInterrupted):
+                async for _ in node.execute_stream(ahm):
+                    pass
         finally:
             mock_llm_create.generate_with_tools_stream = original_method
 
@@ -1195,7 +1120,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
 
         # Simulate the problematic scenario: the last successful action's output
         # has "response" as a dict (e.g. DB tool result) and no string "content".
-        async def mock_execute(prompt, execution_mode, original_input, action_history_manager, session):
+        async def mock_execute(*args, action_history_manager, **kwargs):
             action = ActionHistory(
                 action_id="msg_dict",
                 role=ActionRole.ASSISTANT,
@@ -1211,7 +1136,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
             action_history_manager.add_action(action)
             yield action
 
-        with patch.object(node, "_execute_with_recursive_replan", mock_execute):
+        with patch.object(mock_llm_create, "generate_with_tools_stream", mock_execute):
             ahm = ActionHistoryManager()
             actions = []
             async for action in node.execute_stream(ahm):
@@ -1241,7 +1166,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
         )
         node.input = ChatNodeInput(user_message="List tables", database="california_schools")
 
-        async def mock_execute(prompt, execution_mode, original_input, action_history_manager, session):
+        async def mock_execute(*args, action_history_manager, **kwargs):
             action = ActionHistory(
                 action_id="complete_tool",
                 role=ActionRole.TOOL,
@@ -1262,7 +1187,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
             action_history_manager.add_action(action)
             yield action
 
-        with patch.object(node, "_execute_with_recursive_replan", mock_execute):
+        with patch.object(mock_llm_create, "generate_with_tools_stream", mock_execute):
             ahm = ActionHistoryManager()
             actions = []
             async for action in node.execute_stream(ahm):
@@ -1273,8 +1198,16 @@ class TestChatAgenticNodeExecuteStreamWithTools:
         assert final_action.output["response"] == "1 table: orders"
 
     @pytest.mark.asyncio
-    async def test_execute_stream_keeps_final_thinking_text_after_tool(self, real_agent_config, mock_llm_create):
-        """Provider-marked thinking text after a tool result can be the final visible answer."""
+    async def test_execute_stream_filters_all_thinking_text(self, real_agent_config, mock_llm_create):
+        """Provider-marked thinking text never lands in the final response.
+
+        Behavior change (template refactor): the unified ``_stream_once``
+        helper drops any assistant chunk with ``is_thinking=True`` regardless
+        of whether a tool result already arrived. Pre-refactor ChatNode had a
+        ``tool_result_seen`` gate that promoted post-tool thinking to the
+        final response — this distinction is gone now. The tool's summary
+        becomes the response fallback (see ``last_tool_summary`` path).
+        """
         from unittest.mock import patch
 
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
@@ -1288,7 +1221,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
         )
         node.input = ChatNodeInput(user_message="List tables", database="california_schools")
 
-        async def mock_execute(prompt, execution_mode, original_input, action_history_manager, session):
+        async def mock_execute(*args, action_history_manager, **kwargs):
             pre_tool_thinking = ActionHistory(
                 action_id="thinking_before_tool",
                 role=ActionRole.ASSISTANT,
@@ -1325,7 +1258,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
             action_history_manager.add_action(final_thinking)
             yield final_thinking
 
-        with patch.object(node, "_execute_with_recursive_replan", mock_execute):
+        with patch.object(mock_llm_create, "generate_with_tools_stream", mock_execute):
             ahm = ActionHistoryManager()
             actions = []
             async for action in node.execute_stream(ahm):
@@ -1333,7 +1266,8 @@ class TestChatAgenticNodeExecuteStreamWithTools:
 
         final_action = actions[-1]
         assert final_action.action_type == "chat_response"
-        assert final_action.output["response"] == "The database has one table: orders."
+        # Both thinking chunks are filtered; tool summary fills the response.
+        assert final_action.output["response"] == "1 table: orders"
 
     @pytest.mark.asyncio
     async def test_execute_stream_extracts_string_content_from_action(self, real_agent_config, mock_llm_create):
@@ -1354,7 +1288,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
         )
         node.input = ChatNodeInput(user_message="Hello", database="california_schools")
 
-        async def mock_execute(prompt, execution_mode, original_input, action_history_manager, session):
+        async def mock_execute(*args, action_history_manager, **kwargs):
             action = ActionHistory(
                 action_id="msg_str",
                 role=ActionRole.ASSISTANT,
@@ -1367,7 +1301,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
             action_history_manager.add_action(action)
             yield action
 
-        with patch.object(node, "_execute_with_recursive_replan", mock_execute):
+        with patch.object(mock_llm_create, "generate_with_tools_stream", mock_execute):
             ahm = ActionHistoryManager()
             actions = []
             async for action in node.execute_stream(ahm):
@@ -1398,7 +1332,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
         )
         node.input = ChatNodeInput(user_message="Query", database="california_schools")
 
-        async def mock_execute(prompt, execution_mode, original_input, action_history_manager, session):
+        async def mock_execute(*args, action_history_manager, **kwargs):
             # Action with "text" as dict — stream loop doesn't check "text",
             # so response_content stays empty. Fallback checks "text" and finds the dict.
             action = ActionHistory(
@@ -1418,7 +1352,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
             action_history_manager.add_action(action)
             yield action
 
-        with patch.object(node, "_execute_with_recursive_replan", mock_execute):
+        with patch.object(mock_llm_create, "generate_with_tools_stream", mock_execute):
             ahm = ActionHistoryManager()
             actions = []
             async for action in node.execute_stream(ahm):
@@ -1452,7 +1386,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
         )
         node.input = ChatNodeInput(user_message="Summarize", database="california_schools")
 
-        async def mock_execute(prompt, execution_mode, original_input, action_history_manager, session):
+        async def mock_execute(*args, action_history_manager, **kwargs):
             # Add summary_report directly to action_history_manager (simulates sub-component adding it).
             # Do NOT yield it, so last_successful_output stays None and the summary_report
             # fallback loop is actually reached.
@@ -1482,7 +1416,7 @@ class TestChatAgenticNodeExecuteStreamWithTools:
             )
             yield empty_action
 
-        with patch.object(node, "_execute_with_recursive_replan", mock_execute):
+        with patch.object(mock_llm_create, "generate_with_tools_stream", mock_execute):
             ahm = ActionHistoryManager()
             actions = []
             async for action in node.execute_stream(ahm):

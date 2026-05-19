@@ -10,14 +10,14 @@ chat interactions with markdown output, database/filesystem tool support,
 skills, and permissions. This node is fully independent from GenSQLAgenticNode.
 """
 
-from typing import Any, AsyncGenerator, Dict, Literal, Optional
+from typing import Any, Dict, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.gen_sql_agentic_node import prepare_template_context
+from datus.agent.node.stream_run_context import StreamRunContext
 from datus.agent.workflow import Workflow
-from datus.cli.execution_state import ExecutionInterrupted
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.action_history import ActionRole, ActionStatus
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
@@ -46,6 +46,7 @@ class ChatAgenticNode(AgenticNode):
     """
 
     DEFAULT_SUBAGENTS = "*"
+    result_class = ChatNodeResult
 
     def __init__(
         self,
@@ -443,64 +444,6 @@ class ChatAgenticNode(AgenticNode):
                 message_args={"config_error": f"Template loading failed for '{template_name}': {str(e)}"},
             ) from e
 
-    def _get_system_instruction(self, original_input: ChatNodeInput) -> str:
-        """Get system instruction for normal mode."""
-        _, conversation_summary = self._get_or_create_session()
-        return self._get_system_prompt(conversation_summary, original_input.prompt_version)
-
-    # ── Execution ───────────────────────────────────────────────────────
-
-    def _get_execution_config(self, original_input) -> dict:
-        """Build execution config — tools, system instruction, hooks.
-
-        Plan-mode tools were registered on ``self.tools`` once at setup time
-        (see :meth:`AgenticNode._register_plan_mode_tools`), so they are
-        already part of ``self.tools`` here for main agents.
-        """
-        config = {
-            "tools": self.tools,
-            "instruction": self._get_system_instruction(original_input),
-            "hooks": None,
-        }
-
-        if self.permission_hooks:
-            config["hooks"] = self.permission_hooks
-
-        return config
-
-    async def _execute_with_recursive_replan(
-        self,
-        prompt: str,
-        execution_mode: str,
-        original_input,
-        action_history_manager: ActionHistoryManager,
-        session,
-    ) -> AsyncGenerator[ActionHistory, None]:
-        """Thin wrapper around :meth:`LLMBaseModel.generate_with_tools_stream`.
-
-        The legacy recursive plan-mode flow was removed when plan mode moved
-        to a file-backed workflow. This wrapper is kept so that existing
-        tests (and any external code patching this method) continue to work.
-        ``execution_mode`` is accepted for backward compatibility but is
-        unused — tool/hook selection now lives entirely in
-        :meth:`_get_execution_config`.
-        """
-        del execution_mode  # legacy positional, no longer drives behavior
-        config = self._get_execution_config(original_input)
-        async for stream_action in self.model.generate_with_tools_stream(
-            prompt=prompt,
-            tools=config["tools"],
-            mcp_servers=self.mcp_servers,
-            instruction=config["instruction"],
-            max_turns=self.max_turns,
-            session=session,
-            action_history_manager=action_history_manager,
-            hooks=config.get("hooks"),
-            agent_name=self.get_node_name(),
-            interrupt_controller=self.interrupt_controller,
-        ):
-            yield stream_action
-
     # ── Workflow Integration ────────────────────────────────────────────
 
     def setup_input(self, workflow: Workflow) -> dict:
@@ -548,244 +491,58 @@ class ChatAgenticNode(AgenticNode):
 
         return {"success": True, "message": "Updated chat context"}
 
-    # ── execute_stream ──────────────────────────────────────────────────
+    # ── execute_stream hooks ────────────────────────────────────────────
 
-    async def execute_stream(
-        self, action_history_manager: Optional[ActionHistoryManager] = None
-    ) -> AsyncGenerator[ActionHistory, None]:
-        """
-        Execute the chat interaction with streaming support.
+    def _build_success_result(self, ctx: StreamRunContext) -> ChatNodeResult:
+        response_content = ctx.response_content
 
-        Produces markdown output directly — no SQL extraction or JSON parsing.
+        # Fallback chain when the assistant's content channel was empty:
+        # last_successful_output → last_tool_summary → scan for summary_report.
+        if not response_content and ctx.last_successful_output:
+            candidate = (
+                ctx.last_successful_output.get("content", "")
+                or ctx.last_successful_output.get("text", "")
+                or ctx.last_successful_output.get("response", "")
+                or ctx.last_successful_output.get("raw_output", "")
+            )
+            if isinstance(candidate, str) and candidate:
+                response_content = candidate
+            elif candidate and not isinstance(candidate, str):
+                response_content = str(candidate)
 
-        Args:
-            action_history_manager: Optional action history manager
+        if not response_content and ctx.last_tool_summary:
+            response_content = ctx.last_tool_summary
 
-        Yields:
-            ActionHistory: Progress updates during execution
-        """
-        if not action_history_manager:
-            action_history_manager = ActionHistoryManager()
-
-        if not self.input:
-            raise ValueError("Chat input not set. Call setup_input() first or set self.input directly.")
-
-        user_input = self.input
-
-        # Plan-mode state transition is handled inside ``_build_enhanced_message``.
-        # We still read the raw input flag here for the user-visible action label.
-        is_plan_mode = getattr(user_input, "plan_mode", False)
-        action_type = "plan_mode_interaction" if is_plan_mode else "chat_interaction"
-        action = ActionHistory.create_action(
-            role=ActionRole.USER,
-            action_type=action_type,
-            messages=f"User: {user_input.user_message}",
-            input_data=user_input.model_dump(),
-            status=ActionStatus.PROCESSING,
-        )
-        action_history_manager.add_action(action)
-        yield action
-
-        try:
-            await self._auto_compact()
-
-            session, conversation_summary = self._get_or_create_session()
-
-            # Shared base-class assembly handles DB context + plan-mode
-            # workflow injection (plan tools were registered at setup time).
-            enhanced_message = self._build_enhanced_message(user_input)
-
-            response_content = ""
-            tokens_used = 0
-            last_successful_output = None
-            last_successful_tool_summary = ""
-            tool_result_seen = False
-
-            async for stream_action in self._execute_with_recursive_replan(
-                prompt=enhanced_message,
-                execution_mode="normal",
-                original_input=user_input,
-                action_history_manager=action_history_manager,
-                session=session,
-            ):
-                yield stream_action
-
-                # Collect response content only from assistant text actions.
-                # Tool results are displayed as tool cards and must not become
-                # the final chat response.
-                if (
-                    stream_action.role == ActionRole.ASSISTANT
-                    and stream_action.status == ActionStatus.SUCCESS
-                    and stream_action.output
-                ):
+        if not response_content:
+            for stream_action in reversed(ctx.action_history_manager.get_actions()):
+                if stream_action.action_type == "summary_report" and stream_action.output:
                     if isinstance(stream_action.output, dict):
-                        if stream_action.output.get("is_thinking") is True and not tool_result_seen:
-                            continue
-                        last_successful_output = stream_action.output
-                        raw_output_value = ""
-                        if stream_action.action_type == "message" and "raw_output" in stream_action.output:
-                            raw_output_value = stream_action.output.get("raw_output", "")
-
-                        # Extract string content only; dict values from tool results must not leak through
                         candidate = (
-                            stream_action.output.get("content", "")
+                            stream_action.output.get("markdown", "")
+                            or stream_action.output.get("content", "")
                             or stream_action.output.get("response", "")
-                            or raw_output_value
                         )
-                        if isinstance(candidate, str) and candidate:
-                            response_content = candidate
-                        elif candidate and not isinstance(candidate, str):
-                            response_content = str(candidate)
-                elif stream_action.role == ActionRole.TOOL:
-                    if stream_action.status == ActionStatus.SUCCESS:
-                        output = stream_action.output if isinstance(stream_action.output, dict) else {}
-                        summary = output.get("summary") or output.get("status_message") or ""
-                        if isinstance(summary, str) and summary.strip():
-                            last_successful_tool_summary = summary.strip()
-                    if stream_action.status != ActionStatus.PROCESSING:
-                        tool_result_seen = True
+                        if candidate:
+                            response_content = str(candidate) if not isinstance(candidate, str) else candidate
+                            break
 
-            # Fallback: extract from last successful output
-            if not response_content and last_successful_output:
-                logger.debug(f"Trying to extract response from last_successful_output: {last_successful_output}")
-                candidate = (
-                    last_successful_output.get("content", "")
-                    or last_successful_output.get("text", "")
-                    or last_successful_output.get("response", "")
-                    or last_successful_output.get("raw_output", "")
-                )
-                if isinstance(candidate, str) and candidate:
-                    response_content = candidate
-                elif candidate and not isinstance(candidate, str):
-                    response_content = str(candidate)
+        if not isinstance(response_content, str):
+            response_content = str(response_content) if response_content else ""
 
-            if not response_content and last_successful_tool_summary:
-                response_content = last_successful_tool_summary
-
-            # Check summary_report actions for content if still empty
-            if not response_content:
-                for stream_action in reversed(action_history_manager.get_actions()):
-                    if stream_action.action_type == "summary_report" and stream_action.output:
-                        if isinstance(stream_action.output, dict):
-                            candidate = (
-                                stream_action.output.get("markdown", "")
-                                or stream_action.output.get("content", "")
-                                or stream_action.output.get("response", "")
-                            )
-                            if candidate:
-                                response_content = str(candidate) if not isinstance(candidate, str) else candidate
-                                break
-
-            logger.debug(f"Final response_content: '{response_content}' (length: {len(response_content)})")
-
-            # Extract token usage
-            final_actions = action_history_manager.get_actions()
-            tokens_used = 0
-
-            for action in reversed(final_actions):
-                if action.role == "assistant":
-                    if action.output and isinstance(action.output, dict):
-                        usage_info = action.output.get("usage", {})
-                        if usage_info and isinstance(usage_info, dict) and usage_info.get("total_tokens"):
-                            tokens_used = usage_info.get("total_tokens", 0)
-                            if tokens_used > 0:
-                                break
-                            else:
-                                logger.warning(f"no usage token found in this action {action.messages}")
-
-            # Collect execution stats
-            all_actions = action_history_manager.get_actions()
-            tool_calls = [
-                action
-                for action in all_actions
-                if action.role == ActionRole.TOOL and action.status == ActionStatus.SUCCESS
-            ]
-
-            execution_stats = {
+        all_actions = ctx.action_history_manager.get_actions()
+        tokens_used = self._extract_total_tokens(all_actions)
+        tool_calls = [
+            action for action in all_actions if action.role == ActionRole.TOOL and action.status == ActionStatus.SUCCESS
+        ]
+        return ChatNodeResult(
+            success=True,
+            response=response_content,
+            tokens_used=int(tokens_used),
+            action_history=[action.model_dump() for action in all_actions],
+            execution_stats={
                 "total_actions": len(all_actions),
                 "tool_calls_count": len(tool_calls),
-                "tools_used": list(set([a.action_type for a in tool_calls])),
+                "tools_used": list({a.action_type for a in tool_calls}),
                 "total_tokens": int(tokens_used),
-            }
-
-            # Create final result — markdown output, no SQL
-            result = ChatNodeResult(
-                success=True,
-                response=response_content,
-                tokens_used=int(tokens_used),
-                action_history=[action.model_dump() for action in all_actions],
-                execution_stats=execution_stats,
-            )
-
-            self.actions.extend(action_history_manager.get_actions())
-
-            final_action = ActionHistory.create_action(
-                role=ActionRole.ASSISTANT,
-                action_type="chat_response",
-                messages="Chat interaction completed successfully",
-                input_data=user_input.model_dump(),
-                output_data=result.model_dump(),
-                status=ActionStatus.SUCCESS,
-            )
-            action_history_manager.add_action(final_action)
-            yield final_action
-
-        except ExecutionInterrupted:
-            raise
-
-        except Exception as e:
-            if "User cancelled" in str(e) or "UserCancelledException" in str(type(e).__name__):
-                logger.info("User cancelled execution, stopping gracefully...")
-
-                result = ChatNodeResult(
-                    success=True,
-                    response="Execution cancelled by user.",
-                    tokens_used=0,
-                )
-
-                action_history_manager.update_current_action(
-                    status=ActionStatus.SUCCESS,
-                    output=result.model_dump(),
-                    messages="Execution cancelled by user",
-                )
-
-                action = ActionHistory.create_action(
-                    role=ActionRole.ASSISTANT,
-                    action_type="user_cancellation",
-                    messages="Execution cancelled by user",
-                    input_data=user_input.model_dump(),
-                    output_data=result.model_dump(),
-                    status=ActionStatus.SUCCESS,
-                )
-            else:
-                logger.error(f"Chat execution error: {e}")
-
-                result = ChatNodeResult(
-                    success=False,
-                    error=str(e),
-                    response="Sorry, I encountered an error while processing your request.",
-                    tokens_used=0,
-                )
-
-                action_history_manager.update_current_action(
-                    status=ActionStatus.FAILED,
-                    output=result.model_dump(),
-                    messages=f"Error: {str(e)}",
-                )
-
-                action = ActionHistory.create_action(
-                    role=ActionRole.ASSISTANT,
-                    action_type="error",
-                    messages=f"Chat interaction failed: {str(e)}",
-                    input_data=user_input.model_dump(),
-                    output_data=result.model_dump(),
-                    status=ActionStatus.FAILED,
-                )
-
-            action_history_manager.add_action(action)
-            yield action
-
-        # Note: plan-mode state intentionally persists across execute_stream
-        # invocations so the LLM can iterate on the same plan over multiple
-        # turns. It is cleared either by ``confirm_plan`` (user confirms) or
-        # by the entry guard above when the user toggles plan mode off.
+            },
+        )

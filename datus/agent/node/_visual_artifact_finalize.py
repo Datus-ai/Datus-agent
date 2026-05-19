@@ -45,7 +45,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import sqlglot
 from sqlglot.expressions import CTE, Table
@@ -386,30 +386,46 @@ def write_finalize_output(analysis_dir: Path, *, output: FinalizeAnalysisOutput,
 def aggregate_subject_refs(queries_dir: Path) -> SubjectRefs:
     """Build ``analysis/subject_refs.json`` by walking brief sidecars.
 
-    First-PR scope: id collection + dedup only. Metadata snapshot
-    (``name`` / ``definition_or_summary`` / ``source``) is left as
-    empty strings — populating them needs the subject-library RAG
-    stores wired in, which lands with the subagent-introduction PR.
-    Empty-string fallbacks make consumers (subagent UI) degrade
-    gracefully when the id-only mode is in effect.
+    For each ``queries/<name>.brief.json`` we parse the ``uses`` block
+    through :class:`SubjectRefs`'s pydantic validator and dedup entries
+    by ``(tuple(path), name)`` — the natural key for any subject-library
+    asset. Briefs whose ``uses`` block fails validation (legacy
+    string-id form, missing ``path`` / ``name``, etc.) are skipped with
+    a warning so a single malformed brief doesn't strand the whole
+    aggregate; ``coerce_uses_arg`` in ``save_query`` catches the same
+    shape errors earlier on the write path, so this is a belt-and-
+    suspenders boundary.
+
+    First-occurrence wins per dedup key, preserving the order the LLM
+    declared assets in across queries. The ``ask_*`` consultant
+    reading the resulting file uses each ``(path, name)`` to call
+    ``get_metrics`` / ``get_reference_sql`` for the canonical
+    definition; no other metadata is snapshotted here because the
+    subject library is the source of truth.
     """
-    metrics: Dict[str, SubjectAssetRef] = {}
-    reference_sql: Dict[str, SubjectAssetRef] = {}
-    ext_knowledge: Dict[str, SubjectAssetRef] = {}
+    metrics: Dict[Tuple[Tuple[str, ...], str], SubjectAssetRef] = {}
+    reference_sql: Dict[Tuple[Tuple[str, ...], str], SubjectAssetRef] = {}
+    ext_knowledge: Dict[Tuple[Tuple[str, ...], str], SubjectAssetRef] = {}
 
     for brief in collect_query_briefs(queries_dir):
-        uses = brief.get("uses") or {}
-        if not isinstance(uses, dict):
+        raw_uses = brief.get("uses") or {}
+        try:
+            uses = SubjectRefs.model_validate(raw_uses)
+        except Exception as exc:
+            logger.warning(
+                "Skipping brief %r — uses block failed schema validation: %s",
+                brief.get("name", "<unknown>"),
+                exc,
+            )
             continue
-        for asset_id in uses.get("metrics") or []:
-            if isinstance(asset_id, str) and asset_id and asset_id not in metrics:
-                metrics[asset_id] = SubjectAssetRef(id=asset_id, name="", definition_or_summary="", source="")
-        for asset_id in uses.get("reference_sql") or []:
-            if isinstance(asset_id, str) and asset_id and asset_id not in reference_sql:
-                reference_sql[asset_id] = SubjectAssetRef(id=asset_id, name="", definition_or_summary="", source="")
-        for asset_id in uses.get("ext_knowledge") or []:
-            if isinstance(asset_id, str) and asset_id and asset_id not in ext_knowledge:
-                ext_knowledge[asset_id] = SubjectAssetRef(id=asset_id, name="", definition_or_summary="", source="")
+        for bucket, ref_list in (
+            (metrics, uses.metrics),
+            (reference_sql, uses.reference_sql),
+            (ext_knowledge, uses.ext_knowledge),
+        ):
+            for ref in ref_list:
+                key = (tuple(ref.path), ref.name)
+                bucket.setdefault(key, ref)
 
     return SubjectRefs(
         metrics=list(metrics.values()),
