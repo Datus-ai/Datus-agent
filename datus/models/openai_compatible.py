@@ -20,6 +20,7 @@ from agents import Agent, ModelSettings, Runner, Tool
 from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError
 from agents.extensions.memory import AdvancedSQLiteSession
 from agents.mcp import MCPServerStdio
+from agents.run import CallModelData, ModelInputData, RunConfig
 from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
 from openai.types.shared.reasoning import Reasoning
 from pydantic import AnyUrl
@@ -715,6 +716,8 @@ class OpenAICompatibleModel(LLMBaseModel):
         action_history_manager: Optional[ActionHistoryManager] = None,
         hooks=None,
         interrupt_controller=None,
+        pending_input_queue=None,
+        interaction_broker=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """
@@ -750,9 +753,74 @@ class OpenAICompatibleModel(LLMBaseModel):
             action_history_manager,
             hooks,
             interrupt_controller=interrupt_controller,
+            pending_input_queue=pending_input_queue,
+            interaction_broker=interaction_broker,
             **kwargs,
         ):
             yield action
+
+    def _build_run_config(
+        self,
+        pending_input_queue=None,
+        session: Optional[AdvancedSQLiteSession] = None,
+        interrupt_controller=None,
+        interaction_broker=None,
+    ) -> Optional[RunConfig]:
+        """Build a :class:`RunConfig` carrying our mid-run input filter.
+
+        Returns ``None`` when no ``pending_input_queue`` is wired in — the
+        SDK then runs with its default config and behavior is unchanged.
+
+        The filter is invoked by the SDK before every LLM turn within a
+        ``Runner.run_streamed`` invocation (``agents/run.py`` ~1483). It
+        drains the queue (up to ``MAX_DRAIN_PER_TURN`` items) and appends
+        each as a structured Responses-API user message, also persisting
+        them onto the session so future runs see them.
+
+        When ``interaction_broker`` is provided, each drained item is also
+        emitted as a USER ``ActionHistory`` via
+        :meth:`InteractionBroker.emit_user_insert`. That makes the
+        injection visible to the TUI's streaming display and to the API
+        SSE consumer at the exact moment it's being flushed to the model.
+
+        All exceptions in the filter body are swallowed: the SDK re-raises
+        uncaught filter errors and aborts the entire run, which we must
+        never let a queue or sqlite hiccup do.
+        """
+        if pending_input_queue is None:
+            return None
+
+        async def _filter(data: CallModelData) -> ModelInputData:
+            try:
+                if interrupt_controller is not None and getattr(interrupt_controller, "is_interrupted", False):
+                    return data.model_data
+                pending = pending_input_queue.drain()
+                if not pending:
+                    return data.model_data
+                new_items = list(data.model_data.input)
+                for text in pending:
+                    user_item = {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": text}],
+                    }
+                    new_items.append(user_item)
+                    if session is not None:
+                        try:
+                            await session.add_items([user_item])
+                        except Exception:  # noqa: BLE001 — never abort the run on a session write
+                            logger.exception("Failed to persist injected user item; in-memory only.")
+                    if interaction_broker is not None:
+                        try:
+                            interaction_broker.emit_user_insert(text)
+                        except Exception:  # noqa: BLE001 — broker emission is best-effort
+                            logger.exception("Failed to emit user_insert ActionHistory; model still sees the text.")
+                return ModelInputData(input=new_items, instructions=data.model_data.instructions)
+            except Exception:  # noqa: BLE001 — filter exceptions abort the SDK run
+                logger.exception("call_model_input_filter raised; returning original input unchanged.")
+                return data.model_data
+
+        return RunConfig(call_model_input_filter=_filter)
 
     def _build_agent(
         self,
@@ -963,6 +1031,8 @@ class OpenAICompatibleModel(LLMBaseModel):
         action_history_manager: ActionHistoryManager,
         hooks=None,
         interrupt_controller=None,
+        pending_input_queue=None,
+        interaction_broker=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Internal method for tool streaming execution with error handling.
@@ -988,8 +1058,20 @@ class OpenAICompatibleModel(LLMBaseModel):
                     agent_name=kwargs.pop("agent_name", "Tools_Agent"),
                 )
 
+                run_config = self._build_run_config(
+                    pending_input_queue=pending_input_queue,
+                    session=session,
+                    interrupt_controller=interrupt_controller,
+                    interaction_broker=interaction_broker,
+                )
                 try:
-                    result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
+                    result = Runner.run_streamed(
+                        agent,
+                        input=prompt,
+                        max_turns=max_turns,
+                        session=session,
+                        run_config=run_config,
+                    )
                 except MaxTurnsExceeded as e:
                     logger.error(f"Max turns exceeded in streaming: {str(e)}")
                     raise DatusException(

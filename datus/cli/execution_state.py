@@ -8,6 +8,7 @@
 import asyncio
 import threading
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, AsyncGenerator, Dict, List, Optional
@@ -50,6 +51,56 @@ class InterruptController:
     def reset(self):
         """Clear the interrupt signal for a new execution cycle."""
         self._interrupted.clear()
+
+
+class PendingInputQueue:
+    """Thread-safe FIFO of free-text user messages staged during an agent run.
+
+    Producer side (TUI Enter handler, API ``/insert`` route) calls
+    :meth:`push`. Consumer side (``call_model_input_filter`` closure,
+    chat-layer auto-continuation) calls :meth:`drain`. The queue is
+    bounded per-turn by :attr:`MAX_DRAIN_PER_TURN`; overflow naturally
+    flushes on subsequent turns so spammed input cannot blow the
+    context window in a single LLM call.
+    """
+
+    MAX_DRAIN_PER_TURN = 3
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._items: "deque[str]" = deque()
+
+    def push(self, text: str) -> None:
+        with self._lock:
+            self._items.append(text)
+
+    def drain(self) -> List[str]:
+        """Pop up to ``MAX_DRAIN_PER_TURN`` items in FIFO order."""
+        result: List[str] = []
+        with self._lock:
+            while self._items and len(result) < self.MAX_DRAIN_PER_TURN:
+                result.append(self._items.popleft())
+        return result
+
+    def drain_all(self) -> List[str]:
+        """Pop every queued item. Used by final-turn auto-continuation."""
+        with self._lock:
+            result = list(self._items)
+            self._items.clear()
+        return result
+
+    def snapshot(self) -> List[str]:
+        """Return a read-only copy of the current queue without consuming."""
+        with self._lock:
+            return list(self._items)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._items.clear()
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._items)
 
 
 @dataclass
@@ -134,6 +185,32 @@ class InteractionBroker:
                 except RuntimeError:
                     pass
         self._output_queue.put_nowait(self._STOP_SENTINEL)
+
+    def emit_user_insert(self, text: str) -> None:
+        """Push a USER ``ActionHistory`` representing a mid-run insertion.
+
+        Called from the model layer's ``call_model_input_filter`` the moment
+        a queued mid-run message is actually being flushed into the next
+        LLM turn. Surfacing the action through the broker's output queue
+        makes it visible both to the TUI (which renders the merged action
+        stream) and to the API SSE stream (which serialises the same
+        merged stream via :func:`action_to_sse_event`). The action is
+        synchronous because the producer side is the SDK's asyncio loop —
+        we only need to enqueue, not await a response.
+        """
+        if self._closed:
+            logger.debug("InteractionBroker.emit_user_insert called after close(); ignored")
+            return
+        action = ActionHistory(
+            action_id=str(uuid.uuid4()),
+            role=ActionRole.USER,
+            status=ActionStatus.SUCCESS,
+            action_type="user_insert",
+            messages=text,
+            input={"user_message": text, "source": "mid_run_insert"},
+            output={"user_message": text},
+        )
+        self._output_queue.put_nowait(action)
 
     async def send(
         self,

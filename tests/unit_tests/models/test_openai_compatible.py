@@ -1960,3 +1960,166 @@ class TestExtractUsageInfo:
             info = model._extract_usage_info(usage)
 
         assert info["last_call_input_tokens"] == 0
+
+
+# ===========================================================================
+# Mid-run input filter (call_model_input_filter) tests
+# ===========================================================================
+
+
+class TestBuildRunConfigInputFilter:
+    """Behavioural contract for :meth:`OpenAICompatibleModel._build_run_config`.
+
+    The filter is the load-bearing piece of the mid-run user-insert
+    feature: when the user types into the TUI or POSTs to the API while
+    the agent is streaming, the filter is what injects that text into the
+    next LLM turn within the running ``Runner.run_streamed`` invocation.
+    """
+
+    @staticmethod
+    def _make_call_data():
+        """Build a CallModelData stand-in mirroring what the SDK passes."""
+        from agents.run import CallModelData, ModelInputData
+
+        baseline = ModelInputData(
+            input=[{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hello"}]}],
+            instructions="be helpful",
+        )
+        # CallModelData also carries agent + context; the filter does not
+        # read them, so MagicMocks are sufficient.
+        return CallModelData(model_data=baseline, agent=MagicMock(), context=None)
+
+    def test_returns_none_when_no_queue(self):
+        """Without a queue wired in, no RunConfig is constructed — SDK
+        runs with default behavior and the run is unchanged."""
+        model = _make_model()
+        assert model._build_run_config(pending_input_queue=None) is None
+
+    @pytest.mark.asyncio
+    async def test_filter_appends_queued_items_and_persists_to_session(self):
+        """When the queue has pending text, the filter appends each as a
+        structured Responses user message AND calls ``session.add_items``
+        once per item so future runs see them. With a broker plumbed in,
+        each drained item also flows out as a USER ``user_insert``
+        ActionHistory so the TUI and API SSE see the injection live."""
+        from datus.cli.execution_state import InteractionBroker, PendingInputQueue
+        from datus.schemas.action_history import ActionRole
+
+        model = _make_model()
+        queue = PendingInputQueue()
+        queue.push("追加 1")
+        queue.push("追加 2")
+        session = MagicMock()
+        session.add_items = AsyncMock()
+        broker = InteractionBroker()
+        broker.reset_queue()
+
+        rc = model._build_run_config(pending_input_queue=queue, session=session, interaction_broker=broker)
+        assert rc is not None and rc.call_model_input_filter is not None
+
+        result = await rc.call_model_input_filter(self._make_call_data())
+
+        # Original message preserved; two structured user items appended.
+        assert len(result.input) == 3
+        for injected, expected in zip(result.input[1:], ["追加 1", "追加 2"]):
+            assert injected["type"] == "message"
+            assert injected["role"] == "user"
+            assert injected["content"][0]["type"] == "input_text"
+            assert injected["content"][0]["text"] == expected
+
+        # Session persistence: once per drained item.
+        assert session.add_items.await_count == 2
+        # Queue drained.
+        assert len(queue) == 0
+        # Instructions passed through untouched.
+        assert result.instructions == "be helpful"
+
+        # Broker emission: each drained item becomes a USER user_insert
+        # ActionHistory in the broker's output queue, in original order.
+        emitted = [broker._output_queue.get_nowait() for _ in range(2)]
+        assert [a.messages for a in emitted] == ["追加 1", "追加 2"]
+        for action in emitted:
+            assert action.role == ActionRole.USER
+            assert action.action_type == "user_insert"
+
+    @pytest.mark.asyncio
+    async def test_filter_returns_unchanged_when_queue_empty(self):
+        """Empty queue → filter returns the original model_data verbatim."""
+        from datus.cli.execution_state import PendingInputQueue
+
+        model = _make_model()
+        queue = PendingInputQueue()
+        rc = model._build_run_config(pending_input_queue=queue, session=MagicMock())
+
+        data = self._make_call_data()
+        result = await rc.call_model_input_filter(data)
+
+        assert result is data.model_data
+        assert len(result.input) == 1
+
+    @pytest.mark.asyncio
+    async def test_filter_short_circuits_when_interrupted(self):
+        """An interrupted run must not inject pending text — the user
+        explicitly cancelled, so leaking the queue into the model would
+        contradict intent. ESC also clears the queue elsewhere, but this
+        is the safety net inside the filter itself."""
+        from datus.cli.execution_state import InterruptController, PendingInputQueue
+
+        model = _make_model()
+        queue = PendingInputQueue()
+        queue.push("should-not-be-sent")
+        controller = InterruptController()
+        controller.interrupt()
+        session = MagicMock()
+        session.add_items = AsyncMock()
+
+        rc = model._build_run_config(
+            pending_input_queue=queue,
+            session=session,
+            interrupt_controller=controller,
+        )
+        result = await rc.call_model_input_filter(self._make_call_data())
+
+        # Original input unchanged, queue NOT drained, session NOT written.
+        assert len(result.input) == 1
+        assert len(queue) == 1
+        session.add_items.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_filter_session_write_failure_does_not_abort_run(self):
+        """If ``session.add_items`` raises, the filter logs and continues
+        — a sqlite hiccup must never kill the entire agent run. The
+        in-memory injection still lands so the model sees the message."""
+        from datus.cli.execution_state import PendingInputQueue
+
+        model = _make_model()
+        queue = PendingInputQueue()
+        queue.push("persist me")
+        session = MagicMock()
+        session.add_items = AsyncMock(side_effect=RuntimeError("disk full"))
+
+        rc = model._build_run_config(pending_input_queue=queue, session=session)
+        result = await rc.call_model_input_filter(self._make_call_data())
+
+        # Message still reached the model layer despite session failure.
+        assert len(result.input) == 2
+        assert result.input[-1]["content"][0]["text"] == "persist me"
+
+    @pytest.mark.asyncio
+    async def test_filter_top_level_exception_returns_original(self):
+        """A bug inside the filter body must never propagate out of the
+        callback — the SDK re-raises filter exceptions and aborts the
+        run. We catch-and-return the original model_data so the agent
+        continues."""
+        model = _make_model()
+        # A queue stub whose drain() raises will trigger the outer
+        # except, exercising the safety net without monkey-patching the
+        # real class.
+        broken_queue = MagicMock()
+        broken_queue.drain.side_effect = RuntimeError("queue corrupted")
+
+        rc = model._build_run_config(pending_input_queue=broken_queue, session=MagicMock())
+        data = self._make_call_data()
+        result = await rc.call_model_input_filter(data)
+
+        assert result is data.model_data

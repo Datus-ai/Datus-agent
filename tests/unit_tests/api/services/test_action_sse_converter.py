@@ -870,6 +870,25 @@ class TestActionToSSEEvent:
         assert event.data.payload.role == "user"
         assert event.data.payload.content[0].type == "markdown"
 
+    def test_user_insert_action_always_emitted(self):
+        """``user_insert`` actions represent text the user typed mid-run
+        (TUI / API ``/insert``) and must reach the SSE client regardless
+        of ``include_user_message`` — that flag gates the initial-request
+        echo, which is unrelated to live mid-run injections."""
+        action = _make_action(
+            role=ActionRole.USER,
+            action_type="user_insert",
+            status=ActionStatus.SUCCESS,
+            input={"user_message": "顺便统计行数", "source": "mid_run_insert"},
+            output={"user_message": "顺便统计行数"},
+        )
+        # No include_user_message flag — default False; must still emit.
+        event = action_to_sse_event(action, event_id=6, message_id="msg-6")
+        event = _assert_sse_event(event)
+        assert event.data.payload.role == "user"
+        assert event.data.payload.content[0].type == "markdown"
+        assert event.data.payload.content[0].payload["content"] == "顺便统计行数"
+
     def test_visual_report_response_emits_artifact_without_final_response_flag(self):
         """gen_visual_report completion fires an artifact event even when include_final_response=False.
 

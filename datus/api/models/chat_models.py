@@ -50,3 +50,22 @@ class ToolResultData(BaseModel):
 
     call_tool_id: str = Field(..., description="Unique identifier for the tool call")
     status: str = Field(..., description="Status of the tool result submission", examples=["received"])
+
+
+class InsertMessageInput(BaseModel):
+    """Input for appending a free-text user message to a running chat."""
+
+    session_id: str = Field(..., description="Active chat session id")
+    message: str = Field(
+        ...,
+        min_length=1,
+        max_length=4000,
+        description="Free-text user message to inject into the agent's pending input queue",
+    )
+
+
+class InsertMessageData(BaseModel):
+    """Data for /chat/insert response."""
+
+    session_id: str = Field(..., description="Session id the message was queued for")
+    queued_count: int = Field(..., description="Number of pending items in the queue after this push")

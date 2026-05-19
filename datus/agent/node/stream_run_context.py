@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 if TYPE_CHECKING:
     from agents.extensions.memory import AdvancedSQLiteSession
 
+    from datus.cli.execution_state import PendingInputQueue
     from datus.schemas.action_history import ActionHistoryManager
     from datus.schemas.base import BaseInput
 
@@ -62,3 +63,12 @@ class StreamRunContext:
 
     # Free-form scratchpad for subclass hooks to share state.
     extras: Dict[str, Any] = field(default_factory=dict)
+
+    # Per-run queue of free-text user messages staged during an agent run.
+    # When set (typically by interactive callers like CLI/TUI and the API
+    # ``/insert`` endpoint), the model layer attaches a
+    # ``call_model_input_filter`` that drains this queue before each LLM
+    # turn so injected text is seen on the very next request within the
+    # same run. ``None`` for non-interactive callers (regression tests,
+    # batch workflows) — those keep current behavior.
+    pending_input_queue: Optional["PendingInputQueue"] = None

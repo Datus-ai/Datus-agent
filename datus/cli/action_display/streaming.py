@@ -600,9 +600,15 @@ class InlineStreamingContext:
                         self.display.renderer.render_separator(),
                     ],
                 )
-            # 3. Render already-processed actions
+            # 3. Render already-processed actions. The initial USER request
+            # is dropped on reprint because it was already echoed at the
+            # top of the turn; mid-run ``user_insert`` injections are kept
+            # — they only ever appear in this list and must remain visible
+            # after a Ctrl+O verbose toggle.
             current_actions = [
-                a for a in self.actions[: self._processed_index] if not (a.role == ActionRole.USER and a.depth == 0)
+                a
+                for a in self.actions[: self._processed_index]
+                if not (a.role == ActionRole.USER and a.depth == 0 and a.action_type != "user_insert")
             ]
             self.display.render_action_history(current_actions, verbose=verbose, _show_partial_done=False)
             # 3a. Render the streaming main-agent body (from the active

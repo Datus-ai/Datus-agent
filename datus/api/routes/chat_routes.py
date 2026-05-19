@@ -26,6 +26,8 @@ from datus.api.hooks import (
 )
 from datus.api.models.base_models import Result
 from datus.api.models.chat_models import (
+    InsertMessageData,
+    InsertMessageInput,
     ResumeChatInput,
     StopChatInput,
     ToolResultData,
@@ -320,6 +322,57 @@ async def submit_user_interaction(
     return Result[dict](
         success=success,
         data={"interaction_key": request.interaction_key, "submitted": success},
+    )
+
+
+# ========== Insert Message (mid-run user input) ==========
+
+
+@router.post(
+    "/insert",
+    response_model=Result[InsertMessageData],
+    summary="Insert user message into a running chat",
+    description=(
+        "Append a free-text user message to the agent's pending input queue. The message "
+        "is delivered to the model before its next LLM turn within the same run via the "
+        "OpenAI Agents SDK ``call_model_input_filter`` hook. If the run has already entered "
+        "its final turn, the message will auto-continue the conversation in a follow-up run "
+        "(up to a small cap on consecutive continuations)."
+    ),
+)
+async def insert_message(
+    request: InsertMessageInput,
+    svc: ServiceDep,
+) -> Result[InsertMessageData]:
+    task_manager = svc.task_manager
+    task = task_manager.get_task(request.session_id)
+    if task is None or task.node is None:
+        return Result[InsertMessageData](
+            success=False,
+            errorCode="SESSION_NOT_RUNNING",
+            errorMessage="No active chat task for this session",
+        )
+
+    text = request.message.strip()
+    if not text:
+        return Result[InsertMessageData](
+            success=False,
+            errorCode="INVALID_INPUT",
+            errorMessage="message must be non-empty after stripping whitespace",
+        )
+
+    queue = getattr(task.node, "pending_input_queue", None)
+    if queue is None:
+        return Result[InsertMessageData](
+            success=False,
+            errorCode="QUEUE_UNAVAILABLE",
+            errorMessage="Pending input queue is not initialized for this session",
+        )
+
+    queue.push(text)
+    return Result[InsertMessageData](
+        success=True,
+        data=InsertMessageData(session_id=request.session_id, queued_count=len(queue)),
     )
 
 

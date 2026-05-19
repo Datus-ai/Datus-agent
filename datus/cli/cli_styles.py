@@ -129,6 +129,15 @@ STATUS_BAR_STYLE: dict[str, str] = {
     "todo-sidebar.in_progress": "#f1fa8c",
     "todo-sidebar.completed": "#50fa7b",
     "todo-sidebar.failed": "#ff5555",
+    # Pinned queue-preview box above the status bar. Visible only while
+    # the agent is streaming and the user has typed mid-run messages
+    # that are waiting to be flushed into the model's next turn. Per
+    # CLAUDE.md only the header may use ``bold``; rows use the same
+    # hint colour as the rest of the status furniture so the box reads
+    # as ambient context, not as a transcript.
+    "queue-preview.box": STATUS_BAR_FG_HINT,
+    "queue-preview.header": "#f1fa8c bold",
+    "queue-preview.item": STATUS_BAR_FG_HINT,
     # Slash-command autocomplete popup. ``bg:default`` blends into the
     # terminal palette; ``noreverse`` strips prompt_toolkit's default
     # reverse-video highlight so the selection is conveyed by bright

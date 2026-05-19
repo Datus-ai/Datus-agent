@@ -536,6 +536,17 @@ class DatusCLI:
             logger.debug(f"todo sidebar line_count failed: {e}")
             return 0
 
+    def _active_pending_input_queue(self):
+        """Return the active chat node's :class:`PendingInputQueue` or None.
+
+        Consulted by the TUI Enter handler and the pinned queue-preview
+        ``ConditionalContainer`` while the agent is streaming. Defensive
+        getattr chain because ``chat_commands`` is only created lazily.
+        """
+        chat_commands = getattr(self, "chat_commands", None)
+        current_node = getattr(chat_commands, "current_node", None) if chat_commands else None
+        return getattr(current_node, "pending_input_queue", None) if current_node else None
+
     def _interrupt_agent(self) -> None:
         chat_commands = getattr(self, "chat_commands", None)
         current_node = getattr(chat_commands, "current_node", None) if chat_commands else None
@@ -690,6 +701,11 @@ class DatusCLI:
             # inside the viewport. This keeps type-latency flat even when the
             # verbose-mode scrollback grows into thousands of lines.
             output_buffer=self._tui_output_buffer,
+            # Mid-run user-insert path. The TUI's Enter handler consults
+            # this provider while the agent is streaming so typed messages
+            # are queued for the next LLM turn (via the OpenAI Agents SDK
+            # ``call_model_input_filter`` hook) instead of being dropped.
+            pending_input_provider=self._active_pending_input_queue,
         )
 
         # Now that the Application exists, wire the buffer's ``on_change``

@@ -24,7 +24,7 @@ from rich.syntax import Syntax
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.cli.action_display.display import ActionHistoryDisplay
 from datus.cli.cli_styles import CODE_THEME
-from datus.cli.execution_state import ExecutionInterrupted, auto_submit_interaction
+from datus.cli.execution_state import ExecutionInterrupted, PendingInputQueue, auto_submit_interaction
 from datus.cli.list_selector_app import ListItem, ListSelectorApp
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
@@ -248,19 +248,58 @@ class ChatCommands:
         )
         return f"{message.rstrip()}\n\n{annotation}"
 
+    # Hard cap on how many extra turns the chat layer will auto-spawn to
+    # drain a non-empty :class:`PendingInputQueue` after a run finishes
+    # (final-turn residue case). Bounded so a misbehaving producer cannot
+    # turn the agent into a perpetual motion machine; the remaining
+    # backlog is surfaced as a warning and waits for the next manual
+    # prompt.
+    MAX_AUTO_CONTINUATIONS = 3
+
     def execute_chat_command(
         self,
         message: str,
         plan_mode: bool = False,
         subagent_name: Optional[str] = None,
     ):
-        """Execute a chat command in interactive REPL mode."""
-        self._execute_chat(
-            message,
-            plan_mode=plan_mode,
-            subagent_name=subagent_name,
-            interactive=True,
-        )
+        """Execute a chat command in interactive REPL mode.
+
+        Wraps :meth:`_execute_chat` in an auto-continuation loop: when the
+        agent finishes a run but the pending-input queue is non-empty
+        (final-turn residue — messages pushed by the user / API after the
+        SDK has already left its per-turn ``call_model_input_filter``
+        hook), drain those messages and feed them into a fresh run so they
+        are not silently dropped.
+        """
+        current_message = message
+        continuations = 0
+        while True:
+            self._execute_chat(
+                current_message,
+                plan_mode=plan_mode,
+                subagent_name=subagent_name,
+                interactive=True,
+            )
+
+            node = self.current_node
+            queue = node.pending_input_queue if node is not None else None
+            if queue is None or len(queue) == 0:
+                break
+
+            if node.interrupt_controller.is_interrupted:
+                queue.clear()
+                break
+
+            if continuations >= self.MAX_AUTO_CONTINUATIONS:
+                self.console.print(
+                    f"[yellow]{len(queue)} queued message(s) skipped — auto-continuation cap reached. "
+                    "Send a new prompt to flush them.[/]"
+                )
+                break
+
+            residual = queue.drain_all()
+            current_message = "\n\n".join(residual)
+            continuations += 1
 
     def _resolve_clean_output(
         self,
@@ -354,6 +393,14 @@ class ChatCommands:
                 self.current_node = self._create_new_node(None)
                 current_node = self.current_node
 
+            # Ensure the node has a pending-input queue so the TUI Enter
+            # handler, the API ``/insert`` route, and the model layer's
+            # ``call_model_input_filter`` can all push and drain through
+            # the same instance. Lazy-init keeps non-interactive callers
+            # (which never reach here) at their default ``None``.
+            if current_node.pending_input_queue is None:
+                current_node.pending_input_queue = PendingInputQueue()
+
             # Create input using shared method
             node_input, node_type = self.create_node_input(
                 message, current_node, at_tables, at_metrics, at_sqls, plan_mode
@@ -401,8 +448,12 @@ class ChatCommands:
                     async for action in current_node.execute_stream_with_interactions(
                         action_history_manager=self.cli.actions
                     ):
-                        # Skip USER actions (depth=0) — already printed by _echo_user_input
-                        if action.role == ActionRole.USER and action.depth == 0:
+                        # Skip USER actions (depth=0) — already printed by _echo_user_input.
+                        # ``user_insert`` is the exception: it represents text the
+                        # user injected mid-run via the TUI / API ``/insert`` route,
+                        # which has *not* been echoed yet and needs to be rendered
+                        # the moment the model layer flushes it into the next turn.
+                        if action.role == ActionRole.USER and action.depth == 0 and action.action_type != "user_insert":
                             continue
                         # Streaming text deltas go to their own queue. Sub-agent
                         # deltas (depth > 0) are ignored here — they'd pollute
@@ -513,6 +564,8 @@ class ChatCommands:
                             self.cli.run_on_bg_loop(run_chat_stream())
                         except KeyboardInterrupt:
                             current_node.interrupt_controller.interrupt()
+                            if current_node.pending_input_queue is not None:
+                                current_node.pending_input_queue.clear()
                             logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
                         except ExecutionInterrupted:
                             logger.info("ExecutionInterrupted caught, execution stopped gracefully")

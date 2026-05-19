@@ -22,7 +22,7 @@ from agents.extensions.memory import AdvancedSQLiteSession
 from agents.mcp import MCPServerStdio
 
 from datus.agent.node.node import Node
-from datus.cli.execution_state import ExecutionInterrupted, InteractionBroker, InterruptController
+from datus.cli.execution_state import ExecutionInterrupted, InteractionBroker, InterruptController, PendingInputQueue
 from datus.configuration.agent_config import AgentConfig
 from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import get_prompt_manager
@@ -242,6 +242,14 @@ class AgenticNode(Node):
 
         self.interaction_broker = InteractionBroker()
         self.interrupt_controller = InterruptController()
+
+        # Per-chat-session queue of free-text user messages staged during
+        # an agent run. Set to a real ``PendingInputQueue`` by interactive
+        # callers (CLI/TUI and the API ``/insert`` route) before
+        # ``execute_stream``; ``None`` for non-interactive callers so they
+        # keep current behavior. Lifecycle is owned by the caller — the
+        # node treats it as a borrowed reference and never replaces it.
+        self.pending_input_queue: Optional[PendingInputQueue] = None
 
         # Plan mode state (managed at base class, shared by all subclasses).
         # Activated manually via REPL/CLI for the current primary agent; sub-agents
@@ -1823,7 +1831,13 @@ class AgenticNode(Node):
                 message_args={"field_name": "input"},
             )
 
-        ctx = StreamRunContext(user_input=self.input, action_history_manager=ahm)
+        ctx = StreamRunContext(
+            user_input=self.input,
+            action_history_manager=ahm,
+            # Tolerate test doubles that bypass ``AgenticNode.__init__``
+            # and therefore don't have ``pending_input_queue`` set.
+            pending_input_queue=getattr(self, "pending_input_queue", None),
+        )
 
         node_name = self.get_node_name()
         logger.info(
@@ -1977,6 +1991,10 @@ class AgenticNode(Node):
             hooks=self._compose_run_hooks(ctx),
             agent_name=self.get_node_name(),
             interrupt_controller=self.interrupt_controller,
+            pending_input_queue=ctx.pending_input_queue,
+            # Defensive: test doubles that bypass ``AgenticNode.__init__``
+            # may not have a broker; the model layer skips emit when None.
+            interaction_broker=getattr(self, "interaction_broker", None),
         ):
             rewritten = self._maybe_rewrite_stream_action(stream_action, ctx)
             action_to_yield = rewritten or stream_action

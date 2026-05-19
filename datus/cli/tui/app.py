@@ -165,9 +165,16 @@ class DatusApp:
         output_tokens_fn: Optional[Callable[[], List[Tuple[str, str]]]] = None,
         output_line_count_fn: Optional[Callable[[], int]] = None,
         output_buffer: Optional["TUIOutputBuffer"] = None,
+        pending_input_provider: Optional[Callable[[], Any]] = None,
     ) -> None:
         self._status_tokens_fn = status_tokens_fn
         self._dispatch_fn = dispatch_fn
+        # Returns the active :class:`PendingInputQueue` (or ``None``) for
+        # the running chat session. Consulted by the Enter handler when
+        # ``_agent_running`` is set so the user can stage messages
+        # mid-stream, and by the queue-preview ``ConditionalContainer``
+        # pinned above the status bar.
+        self._pending_input_provider = pending_input_provider
         self._placeholder_fn = placeholder_fn or (lambda: "")
         self._input_prompt_fn = input_prompt_fn or (lambda: "> ")
         self._live_state = live_display_state
@@ -411,8 +418,10 @@ class DatusApp:
         # takes the slot instead, hiding status + input and pushing the
         # output row upward as much as the wizard needs. See
         # ``datus/cli/tui/wizard_host.py`` for the embedding contract.
+        self._queue_preview = self._build_queue_preview()
         self._normal_bottom_section = HSplit(
             [
+                self._queue_preview,
                 self._make_separator(),
                 self._status_window,
                 self._make_separator(),
@@ -484,6 +493,64 @@ class DatusApp:
     # be readable (20% of 60 columns ≈ 12, with a 1-col rule on its
     # left). Below this threshold the entire right column is hidden.
     _SIDEBAR_MIN_TERMINAL_COLS = 60
+
+    # Max number of pending lines rendered in the queue preview before
+    # the trailing items are collapsed into an "(+N more)" line. The
+    # preview's job is just to confirm "your text is queued" — it is
+    # not a transcript and should never push the layout around.
+    _QUEUE_PREVIEW_MAX_LINES = 5
+
+    def _build_queue_preview(self) -> ConditionalContainer:
+        """Build the pinned queue-preview box rendered above the status bar.
+
+        Visibility is driven by :class:`Condition` so the entire container
+        collapses to zero rows when the queue is empty — no layout churn,
+        no manual show/hide. When :attr:`_pending_input_provider` is not
+        wired (non-chat dispatch), the filter never reports visible.
+        """
+
+        def _visible() -> bool:
+            if self._pending_input_provider is None:
+                return False
+            queue = self._pending_input_provider()
+            if queue is None:
+                return False
+            try:
+                return len(queue) > 0
+            except TypeError:
+                return False
+
+        def _tokens() -> List[Tuple[str, str]]:
+            if self._pending_input_provider is None:
+                return []
+            queue = self._pending_input_provider()
+            if queue is None:
+                return []
+            try:
+                items = queue.snapshot()
+            except AttributeError:
+                return []
+            if not items:
+                return []
+            lines: List[Tuple[str, str]] = [
+                ("class:queue-preview.header", f"⏎ queued for agent ({len(items)}):\n"),
+            ]
+            visible_items = items[: self._QUEUE_PREVIEW_MAX_LINES]
+            for idx, text in enumerate(visible_items, 1):
+                preview = text if len(text) <= 80 else text[:77] + "..."
+                lines.append(("class:queue-preview.item", f"  {idx}. {preview}\n"))
+            overflow = len(items) - len(visible_items)
+            if overflow > 0:
+                lines.append(("class:queue-preview.item", f"  (+{overflow} more)\n"))
+            return lines
+
+        window = Window(
+            content=FormattedTextControl(_tokens),
+            height=Dimension(min=1, max=self._QUEUE_PREVIEW_MAX_LINES + 2),
+            style="class:queue-preview.box",
+            always_hide_cursor=True,
+        )
+        return ConditionalContainer(content=window, filter=Condition(_visible))
 
     def _build_todo_sidebar(self) -> ConditionalContainer:
         """Construct the TodoList sidebar column pinned above the status bar.
@@ -1743,6 +1810,31 @@ class DatusApp:
                     buffer.cancel_completion()
 
             if self._agent_running.is_set():
+                # Mid-run user-insert path. The OpenAI Agents SDK caches
+                # ``_model_input_items`` for the lifetime of a streamed run,
+                # so we cannot drop text into the session and expect the
+                # model to pick it up. Instead, push into the
+                # :class:`PendingInputQueue` carried by the running node;
+                # the model layer's ``call_model_input_filter`` drains it
+                # before the next LLM turn. When no queue is wired (e.g.
+                # the dispatch surface is not chat), fall through to a
+                # no-op as before.
+                queue = self._pending_input_provider() if self._pending_input_provider else None
+                if queue is None:
+                    return
+                text = buffer.text
+                if self._stored_paste:
+                    placeholder = self._paste_placeholder(self._stored_paste.count("\n") + 1)
+                    if placeholder in text:
+                        text = text.replace(placeholder, self._stored_paste, 1)
+                    self._stored_paste = None
+                    self._paste_collapsed = False
+                stripped = text.strip()
+                if not stripped:
+                    return
+                queue.push(stripped)
+                buffer.reset()
+                event.app.invalidate()
                 return
 
             text = buffer.text

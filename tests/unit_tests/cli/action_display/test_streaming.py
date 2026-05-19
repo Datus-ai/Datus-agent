@@ -571,6 +571,61 @@ class TestUnifiedReprint:
         assert "Previous question" in output
         assert "Current question" in output
 
+    def test_reprint_preserves_user_insert_actions(self):
+        """Ctrl+O verbose toggle reprints history from ``self.actions``.
+
+        The initial USER request (depth=0, original action_type) is
+        dropped because it's already echoed by the user-header at the top
+        of the turn. But ``user_insert`` actions — text the user typed
+        mid-run via TUI / API — must survive the reprint, otherwise the
+        verbose snapshot would silently lose the user's own mid-stream
+        contributions.
+        """
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+
+        actions = [
+            # 1) Initial request — should NOT appear in reprint body
+            # (the user-header at the top already shows it).
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.PROCESSING,
+                action_type="chat_agentic_node_request",
+                messages="User: original question",
+                input_data={"user_message": "original question"},
+            ),
+            # 2) A tool call mid-turn.
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                messages="ok",
+                input_data={"function_name": "list_tables"},
+            ),
+            # 3) The mid-run user injection that must survive Ctrl+O.
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.SUCCESS,
+                action_type="user_insert",
+                messages="also count the rows",
+                input_data={"user_message": "also count the rows", "source": "mid_run_insert"},
+                output_data={"user_message": "also count the rows"},
+            ),
+        ]
+
+        ctx = InlineStreamingContext(actions, display, current_user_message="original question")
+        ctx._processed_index = len(actions)
+        ctx._verbose = True
+
+        ctx._reprint_history(verbose=True)
+
+        output = buf.getvalue()
+        # The verbose reprint must include the mid-run injection ...
+        assert "also count the rows" in output
+        # ... but not echo the initial request twice (its text only shows
+        # up once, in the user header at the top — which we also emit).
+        assert output.count("original question") == 1
+
     def test_reprint_verbose_mode_with_active_groups(self):
         """Reprint in verbose mode shows active groups with in-progress indicator."""
         buf = StringIO()

@@ -24,6 +24,7 @@ from datus.cli.execution_state import (
     InteractionBroker,
     InteractionCancelled,
     InterruptController,
+    PendingInputQueue,
     PendingInteraction,
     auto_submit_interaction,
     merge_interaction_stream,
@@ -940,3 +941,156 @@ class TestInteractionBrokerAllowFreeText:
         action = broker._output_queue.get_nowait()
         events = action.input.get("events", []) if isinstance(action.input, dict) else []
         assert events and events[0].get("allow_free_text") is True
+
+
+class TestPendingInputQueue:
+    """Behavioural contract for the mid-run user-insert queue."""
+
+    def test_push_and_drain_preserves_fifo_order(self):
+        q = PendingInputQueue()
+        q.push("first")
+        q.push("second")
+        q.push("third")
+
+        # __len__ reflects pending count.
+        assert len(q) == 3
+
+        drained = q.drain()
+        # MAX_DRAIN_PER_TURN caps per-turn drain at 3 — all three fit.
+        assert drained == ["first", "second", "third"]
+        assert len(q) == 0
+
+    def test_drain_respects_max_per_turn_cap(self):
+        q = PendingInputQueue()
+        for i in range(PendingInputQueue.MAX_DRAIN_PER_TURN + 2):
+            q.push(f"msg-{i}")
+
+        first = q.drain()
+        assert len(first) == PendingInputQueue.MAX_DRAIN_PER_TURN
+        # Remaining items stay in the queue and flush on the next drain.
+        assert len(q) == 2
+        second = q.drain()
+        assert second == ["msg-3", "msg-4"]
+        assert len(q) == 0
+
+    def test_snapshot_does_not_consume(self):
+        q = PendingInputQueue()
+        q.push("alpha")
+        q.push("beta")
+
+        snap1 = q.snapshot()
+        snap2 = q.snapshot()
+
+        assert snap1 == ["alpha", "beta"]
+        assert snap2 == ["alpha", "beta"]
+        # Snapshot returns a copy, not the internal deque view.
+        snap1.clear()
+        assert q.snapshot() == ["alpha", "beta"]
+        # Items still available for actual drain afterwards.
+        assert q.drain() == ["alpha", "beta"]
+
+    def test_drain_all_pops_everything(self):
+        q = PendingInputQueue()
+        for i in range(7):
+            q.push(f"m{i}")
+        all_items = q.drain_all()
+        assert len(all_items) == 7
+        assert len(q) == 0
+
+    def test_clear_drops_pending_items(self):
+        q = PendingInputQueue()
+        q.push("x")
+        q.push("y")
+        q.clear()
+        assert len(q) == 0
+        assert q.snapshot() == []
+        assert q.drain() == []
+
+    def test_drain_on_empty_returns_empty_list(self):
+        q = PendingInputQueue()
+        assert q.drain() == []
+        assert q.drain_all() == []
+
+    def test_concurrent_push_from_multiple_threads_preserves_count(self):
+        import threading
+
+        q = PendingInputQueue()
+        n_threads = 8
+        per_thread = 50
+        producers = []
+        barrier = threading.Barrier(n_threads)
+
+        def producer(tid):
+            barrier.wait()
+            for i in range(per_thread):
+                q.push(f"t{tid}-i{i}")
+
+        for tid in range(n_threads):
+            t = threading.Thread(target=producer, args=(tid,))
+            producers.append(t)
+            t.start()
+        for t in producers:
+            t.join()
+
+        # No items lost under contention; FIFO order within a single
+        # producer's pushes is preserved by the underlying deque.
+        items = q.drain_all()
+        assert len(items) == n_threads * per_thread
+
+
+class TestEmitUserInsert:
+    """``InteractionBroker.emit_user_insert`` enqueues a USER ActionHistory
+    visible to both the TUI and the API SSE consumers."""
+
+    @pytest.mark.asyncio
+    async def test_emit_pushes_user_action_with_user_insert_type(self):
+        broker = InteractionBroker()
+        broker.reset_queue()  # bind the queue to the running loop
+
+        broker.emit_user_insert("追加：还要顺便统计行数")
+
+        # The action lands in the broker's output queue, where
+        # ``broker.fetch()`` (and thus the merged action stream) consumes it.
+        action = broker._output_queue.get_nowait()
+        assert action.role == ActionRole.USER
+        assert action.action_type == "user_insert"
+        assert action.status == ActionStatus.SUCCESS
+        assert action.messages == "追加：还要顺便统计行数"
+        # ``_build_user_content`` reads ``input["user_message"]`` — emit
+        # must produce that shape so the SSE converter renders correctly.
+        assert action.input["user_message"] == "追加：还要顺便统计行数"
+        assert action.input.get("source") == "mid_run_insert"
+        assert action.output["user_message"] == "追加：还要顺便统计行数"
+
+    @pytest.mark.asyncio
+    async def test_emit_after_close_is_noop(self):
+        """A broker that has already closed must drop the emission rather
+        than raise — the filter is best-effort and the run might be tearing
+        down."""
+        broker = InteractionBroker()
+        broker.reset_queue()
+        broker.close()
+
+        # Drain the close sentinel so we can observe that nothing else lands.
+        sentinel = broker._output_queue.get_nowait()
+        assert sentinel is broker._STOP_SENTINEL
+
+        broker.emit_user_insert("ignored")
+
+        # No further item after the sentinel.
+        assert broker._output_queue.empty()
+
+    @pytest.mark.asyncio
+    async def test_multiple_emits_preserve_order(self):
+        broker = InteractionBroker()
+        broker.reset_queue()
+
+        broker.emit_user_insert("first")
+        broker.emit_user_insert("second")
+        broker.emit_user_insert("third")
+
+        actions = [broker._output_queue.get_nowait() for _ in range(3)]
+        assert [a.messages for a in actions] == ["first", "second", "third"]
+        for a in actions:
+            assert a.role == ActionRole.USER
+            assert a.action_type == "user_insert"

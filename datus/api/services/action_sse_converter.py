@@ -422,7 +422,12 @@ def action_to_sse_event(
             if contents is None:
                 return None
         elif role == ActionRole.USER:
-            if include_user_message:
+            # ``user_insert`` is a mid-run injection: text the user typed
+            # into the TUI / POSTed to ``/chat/insert`` while the agent
+            # was already streaming. It must always reach the SSE client,
+            # independent of ``include_user_message`` (which gates the
+            # initial-request action that the caller already knows about).
+            if include_user_message or action.action_type == "user_insert":
                 contents = _build_user_content(action)
                 sse_role = "user"
             else:

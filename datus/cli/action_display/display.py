@@ -372,7 +372,14 @@ class ActionHistoryDisplay:
                 self.console,
                 [self.renderer.render_user_header(user_message), self.renderer.render_separator()],
             )
-            non_user_actions = [a for a in actions if not (a.role == ActionRole.USER and a.depth == 0)]
+            # Drop the initial USER request (already rendered by render_user_header)
+            # but keep mid-run ``user_insert`` injections so they remain visible
+            # in history reprints (including Ctrl+O verbose toggle).
+            non_user_actions = [
+                a
+                for a in actions
+                if not (a.role == ActionRole.USER and a.depth == 0 and a.action_type != "user_insert")
+            ]
             self.render_action_history(non_user_actions, verbose=verbose)
             if per_turn_callback:
                 per_turn_callback(actions)

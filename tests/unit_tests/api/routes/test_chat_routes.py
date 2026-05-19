@@ -252,3 +252,126 @@ class TestChatRouteAcceptance:
         assert isinstance(response, StreamingResponse)
         assert response.status_code == 200
         assert response.media_type == "text/event-stream"
+
+
+# ===========================================================================
+# /api/v1/chat/insert — mid-run user-text injection
+# ===========================================================================
+
+
+class TestInsertMessageEndpoint:
+    """Behavioural contract for the ``/insert`` endpoint.
+
+    The endpoint is the API equivalent of typing in the TUI while the
+    agent is streaming: it appends a free-text user message to the
+    pending-input queue carried by the running node, so the model sees
+    it before its next LLM turn.
+    """
+
+    @staticmethod
+    def _make_request(message: str = "describe customers", session_id: str = "s1"):
+        from datus.api.models.chat_models import InsertMessageInput
+
+        return InsertMessageInput(session_id=session_id, message=message)
+
+    @staticmethod
+    def _make_task_with_queue(queue=None):
+        from datus.cli.execution_state import PendingInputQueue
+
+        task = MagicMock()
+        task.node.pending_input_queue = queue if queue is not None else PendingInputQueue()
+        return task
+
+    @pytest.mark.asyncio
+    async def test_push_success_returns_queued_count(self):
+        from datus.api.routes.chat_routes import insert_message
+
+        task = self._make_task_with_queue()
+        svc = _mock_svc(task=task)
+
+        result = await insert_message(self._make_request("hello"), svc)
+
+        assert result.success is True
+        assert result.data.session_id == "s1"
+        assert result.data.queued_count == 1
+        assert task.node.pending_input_queue.snapshot() == ["hello"]
+
+    @pytest.mark.asyncio
+    async def test_multiple_pushes_accumulate(self):
+        from datus.api.routes.chat_routes import insert_message
+
+        task = self._make_task_with_queue()
+        svc = _mock_svc(task=task)
+
+        await insert_message(self._make_request("first"), svc)
+        result = await insert_message(self._make_request("second"), svc)
+
+        assert result.success is True
+        assert result.data.queued_count == 2
+        assert task.node.pending_input_queue.snapshot() == ["first", "second"]
+
+    @pytest.mark.asyncio
+    async def test_missing_task_returns_session_not_running(self):
+        from datus.api.routes.chat_routes import insert_message
+
+        svc = _mock_svc(task=None)
+
+        result = await insert_message(self._make_request("anything"), svc)
+
+        assert result.success is False
+        assert result.errorCode == "SESSION_NOT_RUNNING"
+
+    @pytest.mark.asyncio
+    async def test_task_without_node_returns_session_not_running(self):
+        from datus.api.routes.chat_routes import insert_message
+
+        task = MagicMock()
+        task.node = None
+        svc = _mock_svc(task=task)
+
+        result = await insert_message(self._make_request("anything"), svc)
+
+        assert result.success is False
+        assert result.errorCode == "SESSION_NOT_RUNNING"
+
+    @pytest.mark.asyncio
+    async def test_whitespace_only_message_returns_invalid_input(self):
+        from datus.api.routes.chat_routes import insert_message
+
+        task = self._make_task_with_queue()
+        svc = _mock_svc(task=task)
+
+        result = await insert_message(self._make_request("   \t  "), svc)
+
+        assert result.success is False
+        assert result.errorCode == "INVALID_INPUT"
+        # Queue untouched.
+        assert len(task.node.pending_input_queue) == 0
+
+    @pytest.mark.asyncio
+    async def test_node_without_queue_returns_queue_unavailable(self):
+        """Node exists but caller never initialised pending_input_queue —
+        the route must surface that as a distinct error rather than
+        silently pushing nowhere."""
+        from datus.api.routes.chat_routes import insert_message
+
+        task = MagicMock()
+        task.node.pending_input_queue = None
+        svc = _mock_svc(task=task)
+
+        result = await insert_message(self._make_request("hello"), svc)
+
+        assert result.success is False
+        assert result.errorCode == "QUEUE_UNAVAILABLE"
+
+    @pytest.mark.asyncio
+    async def test_message_is_stripped_before_push(self):
+        from datus.api.routes.chat_routes import insert_message
+
+        task = self._make_task_with_queue()
+        svc = _mock_svc(task=task)
+
+        await insert_message(self._make_request("  padded  "), svc)
+
+        # Stripped form lands in the queue.
+        assert task.node.pending_input_queue.snapshot() == ["padded"]
