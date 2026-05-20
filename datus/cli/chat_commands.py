@@ -449,13 +449,6 @@ class ChatCommands:
                     async for action in current_node.execute_stream_with_interactions(
                         action_history_manager=self.cli.actions
                     ):
-                        # Skip USER actions (depth=0) — already printed by _echo_user_input.
-                        # ``user_insert`` is the exception: it represents text the
-                        # user injected mid-run via the TUI / API ``/insert`` route,
-                        # which has *not* been echoed yet and needs to be rendered
-                        # the moment the model layer flushes it into the next turn.
-                        if action.role == ActionRole.USER and action.depth == 0 and action.action_type != "user_insert":
-                            continue
                         # Streaming text deltas go to their own queue. Sub-agent
                         # deltas (depth > 0) are ignored here — they'd pollute
                         # the main-agent accumulator; sub-agents have their own
@@ -1319,6 +1312,23 @@ class ChatCommands:
         else:
             self.console.print("[yellow]No active session.[/]")
 
+    def _clear_scrollback(self) -> None:
+        """Wipe the scrollable output region in a TUI-safe way.
+
+        Full-screen TUI binds Rich to ``TUIOutputBuffer``; writing ANSI
+        clear-screen escapes via ``Console.clear()`` would just inject
+        raw bytes into the buffer instead of clearing it. Reset the
+        buffer directly in TUI mode, and fall back to terminal escapes
+        for the legacy console path.
+        """
+        tui_output_buffer = getattr(self.cli, "_tui_output_buffer", None)
+        if tui_output_buffer is not None:
+            tui_output_buffer.clear()
+        else:
+            self.console.clear()
+            sys.stdout.write("\033[3J")
+            sys.stdout.flush()
+
     def _full_screen_reprint(
         self,
         verbose: bool,
@@ -1354,13 +1364,7 @@ class ChatCommands:
                 single action list instead. Used by Ctrl+O on the very first
                 turn before ``all_turn_actions.append`` runs.
         """
-        tui_output_buffer = getattr(self.cli, "_tui_output_buffer", None)
-        if tui_output_buffer is not None:
-            tui_output_buffer.clear()
-        else:
-            self.console.clear()
-            sys.stdout.write("\033[3J")
-            sys.stdout.flush()
+        self._clear_scrollback()
         banner_callback = getattr(self.cli, "_print_welcome", None)
         if banner_callback is not None:
             banner_callback()
@@ -1589,6 +1593,7 @@ class ChatCommands:
             messages = session_manager.get_session_messages(target_session_id)
             self.all_turn_actions = []
             if messages:
+                self._clear_scrollback()
                 self.console.print(f"\n[green]Session resumed![/] Showing {len(messages)} message(s):\n")
                 last_assistant_actions = self._render_restored_messages(messages)
                 if last_assistant_actions:
@@ -1686,6 +1691,7 @@ class ChatCommands:
                 self.chat_history = []
                 self.all_turn_actions = []
                 self.last_actions = []
+                self._clear_scrollback()
                 self.console.print(
                     f"\n[green]Rewound to before turn 1.[/] New session: [cyan]{new_node.session_id}[/]\n"
                 )
@@ -1709,6 +1715,7 @@ class ChatCommands:
 
             new_messages = session_manager.get_session_messages(new_session_id)
             if new_messages:
+                self._clear_scrollback()
                 self.console.print(
                     f"\n[green]Rewound to before turn {turn_num}.[/] "
                     f"New session: [cyan]{new_session_id}[/] ({len(new_messages)} messages)\n"

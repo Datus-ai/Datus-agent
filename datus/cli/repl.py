@@ -898,26 +898,25 @@ class DatusCLI:
         if not user_input:
             return None
 
-        # Re-echo user input with syntax highlighting. In TUI mode the input
-        # TextArea clears on Enter, so echoing via the patched stdout keeps a
-        # transcript of what was submitted. In PromptSession mode
-        # ``erase_when_done=True`` removes the prompt line, so the echo is
-        # still useful.
-        prompt_text = self._get_prompt_text()
-        try:
-            lines = user_input.split("\n")
-            if len(lines) > PASTE_COLLAPSE_THRESHOLD:
-                summary_line = f"[Pasted content: {len(lines)} lines]"
-                self._echo_user_input(prompt_text, summary_line)
-                preview = "\n".join(lines[:3]) + "\n..."
-                self.console.print(f"[dim]{preview}[/]")
-            else:
-                self._echo_user_input(prompt_text, user_input)
-        except Exception as e:  # pragma: no cover - defensive
-            logger.debug(f"echo_user_input failed: {e}")
-
         try:
             cmd_type, cmd, args = self._parse_command(user_input)
+            # CHAT commands render the user message via the action stream
+            # (the node yields a depth-0 USER ActionHistory that the renderer
+            # turns into the scrollback header). Non-CHAT commands have no
+            # action stream, so echo the input here to keep a transcript.
+            if cmd_type != CommandType.CHAT:
+                prompt_text = self._get_prompt_text()
+                try:
+                    lines = user_input.split("\n")
+                    if len(lines) > PASTE_COLLAPSE_THRESHOLD:
+                        summary_line = f"[Pasted content: {len(lines)} lines]"
+                        self._echo_user_input(prompt_text, summary_line)
+                        preview = "\n".join(lines[:3]) + "\n..."
+                        self.console.print(f"[dim]{preview}[/]")
+                    else:
+                        self._echo_user_input(prompt_text, user_input)
+                except Exception as e:  # pragma: no cover - defensive
+                    logger.debug(f"echo_user_input failed: {e}")
             if cmd_type == CommandType.EXIT:
                 return EXIT_SENTINEL
             if cmd_type == CommandType.SQL:
