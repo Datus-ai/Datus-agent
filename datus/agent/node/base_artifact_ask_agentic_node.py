@@ -571,9 +571,30 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         # base class untouched.
         base_prompt = super()._get_system_prompt(conversation_summary, prompt_version)
         artifact_header = self._render_artifact_context_block()
-        if artifact_header:
-            return artifact_header + "\n\n" + base_prompt
-        return base_prompt
+        final_prompt = (artifact_header + "\n\n" + base_prompt) if artifact_header else base_prompt
+        # Observability hook: real-world prompt growth after the
+        # inline-rendering rework is hard to predict per artifact (varies
+        # with insight count, query catalog size, table schema width).
+        # Single grep-friendly line per turn so operators can spot
+        # outliers without dragging through trace logs. Key=value form
+        # makes ad-hoc parsing trivial.
+        header_bytes = len(artifact_header.encode("utf-8")) if artifact_header else 0
+        base_bytes = len(base_prompt.encode("utf-8"))
+        final_bytes = len(final_prompt.encode("utf-8"))
+        # ``count('\n') + 1`` matches what an LLM would see as "the
+        # number of lines"; cheaper than splitting and we don't need
+        # accuracy on trailing newlines.
+        logger.info(
+            "ask_artifact prompt assembled: node=%s kind=%s slug=%s lines=%d bytes=%d header_bytes=%d base_bytes=%d",
+            self._configured_subagent_name,
+            self.ARTIFACT_KIND,
+            self._artifact_slug,
+            final_prompt.count("\n") + 1,
+            final_bytes,
+            header_bytes,
+            base_bytes,
+        )
+        return final_prompt
 
     def _render_artifact_context_block(self) -> str:
         """Build the artifact-context preamble prepended to the chat prompt.

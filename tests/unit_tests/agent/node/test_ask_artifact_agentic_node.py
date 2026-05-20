@@ -1531,6 +1531,53 @@ class TestTableSchemasSection:
         # minor sizing shifts in the intro string.
         assert any(f"#### `tbl_{i}`" not in block for i in (3, 4))
 
+    def test_get_system_prompt_logs_size_for_observability(self, real_agent_config, caplog):
+        """One INFO log per system-prompt assembly with kind / slug /
+        lines / bytes / header_bytes / base_bytes. Operators grep for
+        ``ask_artifact prompt assembled`` to monitor real-world prompt
+        growth — pin the prefix + key names so a refactor that drops
+        keys (and breaks the grep) trips."""
+        import logging
+
+        node = _make_report_with_queries(
+            real_agent_config,
+            slug="size_log",
+            queries=[
+                {
+                    "slug": "q",
+                    "brief": {"name": "q", "uses": {}},
+                    "result": _basic_query_result("q"),
+                    "sql": "SELECT 1",
+                }
+            ],
+        )
+        with caplog.at_level(logging.INFO, logger="datus.agent.node.base_artifact_ask_agentic_node"):
+            prompt = node._get_system_prompt()
+
+        # structlog wraps the formatted message with ANSI/timestamp prefixes,
+        # so the assembled record's text doesn't ``startswith`` the literal
+        # prefix — match the unique substring instead (same idiom the
+        # existing caplog tests use, e.g. test_agent_config_permissions).
+        size_logs = [
+            rec
+            for rec in caplog.records
+            if rec.name == "datus.agent.node.base_artifact_ask_agentic_node"
+            and "ask_artifact prompt assembled" in rec.getMessage()
+        ]
+        assert len(size_logs) == 1, (
+            f"expected exactly one prompt-size log line, got {len(size_logs)}: {[r.getMessage() for r in size_logs]}"
+        )
+        msg = size_logs[0].getMessage()
+        # All the keys an operator needs to grep / parse a real trace.
+        for key in ("node=", "kind=report", "slug=size_log", "lines=", "bytes=", "header_bytes=", "base_bytes="):
+            assert key in msg, f"size log missing {key!r} key: {msg}"
+        # Sanity-check the byte count against the actual prompt — if the
+        # log drifts from the real prompt size the value loses meaning.
+        expected_bytes = len(prompt.encode("utf-8"))
+        assert f"bytes={expected_bytes}" in msg, (
+            f"logged bytes don't match actual prompt size (expected {expected_bytes}): {msg}"
+        )
+
     def test_layout_tree_mentions_schema_file(self, real_agent_config):
         """The filesystem layout tree should explicitly list
         ``key_tables_schema.json`` so a model that ``glob``s the
