@@ -77,7 +77,7 @@ function RevenueTrendCard() {
 
   // 2. Data hooks — every `useQuerySql` at the top, before any early return.
   const { useQuerySql } = useDatusArtifact();
-  const { isLoading, errorMessage, data } = useQuerySql('queries/revenue_by_month');
+  const { isLoading, errorMessage, data, refetch } = useQuerySql('queries/revenue_by_month');
 
   // 3. Derived data — `useMemo` with stable deps; coerce numerics with N().
   const rows = useMemo(
@@ -88,7 +88,7 @@ function RevenueTrendCard() {
   // 4. Early returns — only AFTER every hook above. Render loading / error
   //    placeholders here; never inline a hook into the skeleton below.
   if (isLoading) return <Skeleton minHeight={300} />;
-  if (errorMessage) return <ErrorBlock msg={errorMessage} />;
+  if (errorMessage) return <ErrorBlock msg={errorMessage} onRetry={refetch} />;
 
   // 5. JSX — wrapper `<div ref={cardRef}>` is the screenshot root for
   //    ChartEntryMore. `titleRight` hosts the action menu so `<Card>` itself
@@ -133,13 +133,14 @@ All data access goes through one hook:
 import { useDatusArtifact } from '@datus/web-artifact';
 
 const { useQuerySql } = useDatusArtifact();
-const { isLoading, errorMessage, data } = useQuerySql('queries/account_activity_by_city');
+const { isLoading, errorMessage, data, refetch } = useQuerySql('queries/account_activity_by_city');
 ```
 
 Returns:
 - `isLoading: boolean` — true until the artifact resolves.
 - `errorMessage: string | null` — non-null when the sqlId is unpublished or the JSON is malformed.
 - `data: ISqlQueryResult | null` — null until ready.
+- `refetch: () => void` — re-runs the query against the underlying provider, ignoring any in-memory cache. Pass into `<ErrorBlock onRetry={refetch}>` to wire up the placeholder's Retry button.
 
 ```ts
 type ColumnSemanticType = 'string' | 'integer' | 'number' | 'date' | 'boolean';
@@ -311,17 +312,16 @@ Rules:
 - **Always import `{ Skeleton, ErrorBlock }` from `./shared/card`** — never inline a one-off placeholder per component. The whole point of the shared module is consistent loading/error UX across the artifact.
 - **Skeleton uses a shimmering bar stack**, not a single pulsing dot. Three stacked bars at 60% / 80% / 40% widths read as "a card whose contents haven't loaded yet"; a centered dot reads as "spinner in an empty box". Skeletons live on the card's own background — do **not** add a separate filled rectangle behind the bars.
 - **ErrorBlock always shows a Retry control**, even on errors the user can't directly fix. The action gives the reader an obvious recovery affordance instead of a dead-end red box. Use Lucide `AlertCircle` (24×24, `COLORS.negative`) above the message and Lucide `RotateCcw` (14×14) inside the button — these are an explicit exception to the "icons sparingly" rule below because the placeholders are functional UI.
-- **`onRetry` is optional**. Pass a callback when the caller knows how to re-trigger the query (typically: a `retryKey` from `useState` that you increment, used in the component's own re-mount key); when omitted, the button falls back to `window.location.reload()` so the artifact always has a working recovery path.
+- **`onRetry` is optional but should always be wired up** in components that use `useQuerySql`. The hook exposes a stable `refetch()` action — pass it straight through. When `onRetry` is omitted (e.g. a placeholder rendered outside the data-hooks flow), the button falls back to `window.location.reload()` so every artifact still has a working recovery path.
 - **Component usage** matches the canonical-component-shape early returns:
 
   ```jsx
-  const [retryKey, setRetryKey] = useState(0);
-  const { isLoading, errorMessage, data } = useQuerySql('queries/foo', { ...params, _retry: retryKey });
+  const { isLoading, errorMessage, data, refetch } = useQuerySql('queries/foo', params);
   if (isLoading) return <Skeleton minHeight={300} />;
-  if (errorMessage) return <ErrorBlock msg={errorMessage} onRetry={() => setRetryKey(k => k + 1)} />;
+  if (errorMessage) return <ErrorBlock msg={errorMessage} onRetry={refetch} />;
   ```
 
-  The `_retry` key trick is only needed when you want the retry to re-run the *same* query without a full page reload; if a page reload is acceptable, omit `onRetry` entirely and let the default kick in.
+  `refetch` re-runs the same `(sqlId, params)` pair against the provider without remounting the component — preferred over `window.location.reload()`, which reloads the entire artifact iframe.
 
 ### Iconography & emoji (read this twice)
 
