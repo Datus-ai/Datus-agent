@@ -617,7 +617,7 @@ class TestExecuteStreamGenSemanticModelError:
 
         assert actions[-1].status == ActionStatus.SUCCESS
         assert actions[-1].action_type == "gen_semantic_model_response"
-        node.semantic_func_tool.validate_semantic.assert_called_once()
+        node.semantic_func_tool.validate_semantic.assert_called_once_with(scope="semantic_model")
         sync_mock.assert_called_once()
 
     @pytest.mark.asyncio
@@ -664,6 +664,7 @@ class TestExecuteStreamGenSemanticModelError:
         assert actions[-1].status == ActionStatus.FAILED
         assert actions[-1].action_type == "error"
         assert "validate_semantic failed before publishing semantic models" in actions[-1].output["error"]
+        node.semantic_func_tool.validate_semantic.assert_called_once_with(scope="semantic_model")
         sync_mock.assert_not_called()
 
     @pytest.mark.asyncio

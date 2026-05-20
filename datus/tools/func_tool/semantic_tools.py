@@ -9,8 +9,9 @@ Provides unified interface to semantic layer services through adapters.
 Tools delegate to registered semantic adapters while leveraging unified storage for performance.
 """
 
+import inspect
 import json
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from agents import Tool
 
@@ -27,6 +28,8 @@ from datus.utils.compress_utils import DataCompressor
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+NO_METRICS_PRESENT_MESSAGE = "No metrics present in the model."
 
 
 def _normalize_dimension_rows(raw) -> list:
@@ -74,6 +77,45 @@ def _normalize_name_list(value) -> List[str]:
         if text:
             names.append(text)
     return names
+
+
+def _serialize_validation_issue(issue) -> dict:
+    if hasattr(issue, "model_dump"):
+        issue_data = issue.model_dump(mode="json")
+    else:
+        issue_data = {"severity": "error", "message": str(issue)}
+
+    severity = issue_data.get("severity")
+    if severity is not None:
+        issue_data["severity"] = str(severity).lower()
+    return issue_data
+
+
+def _is_no_metrics_present_issue(issue: dict) -> bool:
+    message = str(issue.get("message") or "")
+    return NO_METRICS_PRESENT_MESSAGE in message
+
+
+def _validation_has_errors(issues: List[dict]) -> bool:
+    return any(str(issue.get("severity") or "").lower() == "error" for issue in issues)
+
+
+def _format_validation_error(issues: List[dict]) -> str:
+    count = len(issues)
+    if count == 0:
+        return "0 validation errors"
+
+    messages = []
+    for issue in issues[:3]:
+        message = str(issue.get("message") or "").strip()
+        if message:
+            messages.append(message)
+
+    if not messages:
+        return f"{count} validation errors"
+
+    suffix = f"; ... {count - len(messages)} more" if count > len(messages) else ""
+    return f"{count} validation errors: {'; '.join(messages)}{suffix}"
 
 
 def _run_async(coro):
@@ -596,7 +638,7 @@ class SemanticTools:
                 error=f"Failed to query metrics: {str(e)}",
             )
 
-    def validate_semantic(self) -> FuncToolResult:
+    def validate_semantic(self, scope: Literal["all", "semantic_model"] = "all") -> FuncToolResult:
         """
         Validate semantic layer configuration (requires adapter).
 
@@ -604,10 +646,24 @@ class SemanticTools:
         metrics or semantic model changes. This ensures that subsequent calls to
         query_metrics can find newly created metrics.
 
+        Args:
+            scope: Validation scope. Use "all" for full semantic-layer validation,
+                including metrics. Use "semantic_model" when generating semantic
+                models before metric definitions exist; this still fails on real
+                semantic model errors but ignores the expected no-metrics issue.
+
         Returns:
             FuncToolResult with validation status and issues
         """
-        logger.info("validate_semantic called")
+        scope = normalize_null(scope) or "all"
+        if scope not in ("all", "semantic_model"):
+            return FuncToolResult(
+                success=0,
+                error="scope must be one of: all, semantic_model",
+                result=None,
+            )
+
+        logger.info(f"validate_semantic called scope={scope}")
         adapter = self.adapter
         if not adapter:
             if self._adapter_load_error:
@@ -623,23 +679,57 @@ class SemanticTools:
             )
 
         try:
-            validation_result = _run_async(adapter.validate_semantic())
+            validate_semantic = adapter.validate_semantic
+            validation_kwargs = {}
+            if scope != "all":
+                try:
+                    signature = inspect.signature(validate_semantic)
+                    if "scope" in signature.parameters:
+                        validation_kwargs["scope"] = scope
+                    elif "validation_scope" in signature.parameters:
+                        validation_kwargs["validation_scope"] = scope
+                except (TypeError, ValueError):
+                    validation_kwargs = {}
+
+            validation_result = _run_async(validate_semantic(**validation_kwargs))
 
             # Serialize ValidationIssue objects to dicts
-            issues_data = [
-                issue.model_dump() if hasattr(issue, "model_dump") else {"severity": "error", "message": str(issue)}
-                for issue in validation_result.issues
-            ]
+            issues_data = [_serialize_validation_issue(issue) for issue in validation_result.issues]
+
+            ignored_issues = []
+            effective_issues = issues_data
+            if scope == "semantic_model":
+                ignored_issues = [issue for issue in issues_data if _is_no_metrics_present_issue(issue)]
+                effective_issues = [issue for issue in issues_data if not _is_no_metrics_present_issue(issue)]
+
+            effective_valid = validation_result.valid or (
+                scope == "semantic_model" and not _validation_has_errors(effective_issues)
+            )
+
+            if issues_data:
+                logger.warning(
+                    "Semantic validation issues scope=%s valid=%s effective_valid=%s issues=%s ignored=%s",
+                    scope,
+                    validation_result.valid,
+                    effective_valid,
+                    json.dumps(effective_issues, ensure_ascii=False),
+                    json.dumps(ignored_issues, ensure_ascii=False),
+                )
 
             # If validation succeeded, reload the adapter to pick up new metrics
-            if validation_result.valid:
+            if effective_valid:
                 logger.info("Validation succeeded, reloading adapter to pick up new metrics...")
                 self._reload_adapter()
 
             tool_result = FuncToolResult(
-                success=1 if validation_result.valid else 0,
-                result={"valid": validation_result.valid, "issues": issues_data},
-                error=None if validation_result.valid else f"{len(validation_result.issues)} validation errors",
+                success=1 if effective_valid else 0,
+                result={
+                    "valid": effective_valid,
+                    "issues": effective_issues,
+                    "scope": scope,
+                    "ignored_issues": ignored_issues,
+                },
+                error=None if effective_valid else _format_validation_error(effective_issues),
             )
             if self.generation_evidence:
                 self.generation_evidence.record_validation_result(tool_result)

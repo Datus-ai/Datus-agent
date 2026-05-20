@@ -3,6 +3,8 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import asyncio
+import os
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
@@ -27,6 +29,33 @@ def _action_status_value(action: Any) -> Optional[str]:
     if status is None:
         return None
     return status.value if hasattr(status, "value") else str(status)
+
+
+def _resolve_generated_summary_file_path(
+    agent_config: AgentConfig,
+    node: SqlSummaryAgenticNode,
+    sql_summary_file: str,
+) -> Optional[Path]:
+    """Resolve a generated SQL summary path reported by the workflow node."""
+    knowledge_base_dir = getattr(node, "knowledge_base_dir", None)
+    if isinstance(knowledge_base_dir, (str, os.PathLike)) and not hasattr(knowledge_base_dir, "mock_calls"):
+        from datus.cli.generation_hooks import resolve_kb_sandbox_path
+
+        resolved = resolve_kb_sandbox_path(sql_summary_file, "sql_summary", str(knowledge_base_dir))
+        return Path(resolved) if resolved else None
+
+    reported_path = Path(sql_summary_file)
+    if reported_path.is_absolute():
+        return reported_path
+
+    parts = reported_path.parts
+    if "sql_summaries" in parts:
+        summary_dir_index = parts.index("sql_summaries")
+        summary_relative_parts = parts[summary_dir_index + 1 :]
+        if summary_relative_parts:
+            return Path(agent_config.path_manager.sql_summary_path()).joinpath(*summary_relative_parts)
+
+    return Path(agent_config.path_manager.sql_summary_path()) / reported_path
 
 
 async def process_sql_item(
@@ -105,11 +134,14 @@ async def process_sql_item(
 
         logger.info(f"Generated SQL summary: {sql_summary_file}")
 
-        file_path = agent_config.path_manager.sql_summary_path() / sql_summary_file
+        file_path = _resolve_generated_summary_file_path(agent_config, node, sql_summary_file)
         import yaml
 
         try:
             # Load YAML file to get name and subject_tree
+            if not file_path:
+                logger.warning(f"SQL summary file rejected by sandbox check: {sql_summary_file!r}")
+                return None
             with open(file_path, "r", encoding="utf-8") as f:
                 doc = yaml.safe_load(f)
                 if not item.get("name"):

@@ -19,6 +19,8 @@ from datus.utils.terminal_utils import suppress_keyboard_input
 
 logger = get_logger(__name__)
 
+SEMANTIC_MODEL_RESPONSE_ACTION_TYPE = f"{GenSemanticModelAgenticNode.NODE_NAME}_response"
+
 
 async def init_success_story_semantic_model_async(
     agent_config: AgentConfig,
@@ -150,7 +152,11 @@ async def init_success_story_semantic_model_async(
                 )
 
             action_type = getattr(action, "action_type", "")
-            if action.status == ActionStatus.SUCCESS and action_type == "semantic_response" and action.output:
+            if (
+                action.status == ActionStatus.SUCCESS
+                and action_type == SEMANTIC_MODEL_RESPONSE_ACTION_TYPE
+                and action.output
+            ):
                 if isinstance(action.output, dict):
                     # Check for semantic_models field (from SemanticNodeResult)
                     if "semantic_models" in action.output:
@@ -159,7 +165,7 @@ async def init_success_story_semantic_model_async(
                             generated_files.extend(models)
                         elif models:  # Single file as string
                             generated_files.append(models)
-            elif action.status == ActionStatus.FAILED and action_type == "error":
+            elif action.status == ActionStatus.FAILED and action_type in {"error", SEMANTIC_MODEL_RESPONSE_ACTION_TYPE}:
                 terminal_error = action.messages or "Semantic model generation failed"
                 logger.error(terminal_error)
                 continue

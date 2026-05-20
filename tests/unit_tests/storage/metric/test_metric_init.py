@@ -182,7 +182,7 @@ class TestInitSuccessStoryMetricsAsync:
             captured_input["input"] = mock_node.input
             action = MagicMock()
             action.status = ActionStatus.SUCCESS
-            action.action_type = "metrics_response"
+            action.action_type = "gen_metrics_response"
             action.output = {"response": "done"}
             action.messages = "ok"
             yield action
@@ -284,7 +284,7 @@ class TestInitSuccessStoryMetricsAsync:
 
             final_action = MagicMock()
             final_action.status = ActionStatus.SUCCESS
-            final_action.action_type = "metrics_response"
+            final_action.action_type = "gen_metrics_response"
             final_action.output = {"response": "done"}
             final_action.messages = "ok"
             yield final_action
@@ -427,7 +427,7 @@ class TestInitSuccessStoryMetricsAsyncOverwriteTruncate:
         async def fake_execute_stream(_action_manager):
             action = MagicMock()
             action.status = ActionStatus.SUCCESS
-            action.action_type = "metrics_response"
+            action.action_type = "gen_metrics_response"
             action.output = {"response": "done"}
             action.messages = "ok"
             yield action
@@ -481,7 +481,7 @@ class TestInitSuccessStoryMetricsAsyncOverwriteTruncate:
         async def fake_execute_stream(_action_manager):
             action = MagicMock()
             action.status = ActionStatus.SUCCESS
-            action.action_type = "metrics_response"
+            action.action_type = "gen_metrics_response"
             action.output = {"response": "done"}
             action.messages = "ok"
             yield action
@@ -549,7 +549,7 @@ class TestGenerateMetricsBatch:
         async def fake_stream(_ahm):
             action = MagicMock()
             action.status = ActionStatus.SUCCESS
-            action.action_type = "metrics_response"
+            action.action_type = "gen_metrics_response"
             action.output = {"metrics": ["revenue"]}
             action.messages = "ok"
             yield action
@@ -619,6 +619,48 @@ class TestGenerateMetricsBatch:
 
         assert ok is False
         assert "Max turns" in err
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_failed_final_response_returns_failure(self):
+        from unittest.mock import patch
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.schemas.batch_events import BatchEventHelper
+
+        mock_node = MagicMock()
+
+        async def fake_stream(_ahm):
+            action = MagicMock()
+            action.status = ActionStatus.FAILED
+            action.action_type = "gen_metrics_response"
+            action.output = {"error": "publish failed"}
+            action.messages = "publish failed"
+            yield action
+
+        mock_node.execute_stream = fake_stream
+
+        mock_config = MagicMock()
+        mock_config.current_db_config.return_value = MagicMock(catalog="", database="db", schema="")
+        mock_pm = MagicMock()
+        mock_pm.get_latest_version.return_value = "1.0"
+
+        with (
+            patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_pm),
+            patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", return_value=mock_node),
+        ):
+            ok, err, result = await _generate_metrics_batch(
+                ["Query 1:\nQuestion: q?\nSQL:\nSELECT 1"],
+                0,
+                mock_config,
+                None,
+                None,
+                BatchEventHelper("test", None),
+                None,
+            )
+
+        assert ok is False
+        assert "publish failed" in err
         assert result is None
 
     @pytest.mark.asyncio
@@ -695,7 +737,7 @@ class TestBatchSplitting:
                 else:
                     action = MagicMock()
                     action.status = ActionStatus.SUCCESS
-                    action.action_type = "metrics_response"
+                    action.action_type = "gen_metrics_response"
                     action.output = {"metrics": [f"m{self._batch_idx}"]}
                     action.messages = "ok"
                     yield action
