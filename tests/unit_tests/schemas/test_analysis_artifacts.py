@@ -250,6 +250,7 @@ class TestInsight:
 def _full_suggested_question_payload(**overrides):
     base = {
         "question": "Which regions drove the March dip?",
+        "kind": "quick",
         "related_queries": ["rev_by_region_monthly"],
         "related_insight": "revenue_dipped_in_eu",
         "priority": 0.6,
@@ -265,11 +266,13 @@ class TestSuggestedQuestion:
         assert restored == sq
 
     def test_related_insight_none_accepted(self):
+        # ``quick`` still satisfied by non-empty related_queries alone.
         sq = SuggestedQuestion.model_validate(_full_suggested_question_payload(related_insight=None))
         assert sq.related_insight is None
 
     def test_related_queries_default_empty(self):
-        payload = _full_suggested_question_payload()
+        # Default empty list is fine for deep_dive (no grounding required).
+        payload = _full_suggested_question_payload(kind="deep_dive", related_insight=None)
         payload.pop("related_queries")
         sq = SuggestedQuestion.model_validate(payload)
         assert sq.related_queries == []
@@ -282,6 +285,75 @@ class TestSuggestedQuestion:
     def test_empty_question_rejected(self):
         with pytest.raises(ValidationError):
             SuggestedQuestion.model_validate(_full_suggested_question_payload(question=""))
+
+
+class TestSuggestedQuestionKind:
+    """Pins the ``kind`` field contract: required, restricted to
+    ``quick`` / ``deep_dive``, and the quick-grounding model validator.
+
+    The split exists so the ask-agent's inlined artifact context (insights,
+    briefs, preview rows, key-table schemas) actually pays off — quick
+    chips MUST be answerable from that context, otherwise clicking one
+    forces a full new analysis loop and defeats the inlining contract
+    set up by the prior round of optimizations.
+    """
+
+    def test_kind_required(self):
+        # No default — finalize LLM must explicitly classify every chip.
+        payload = _full_suggested_question_payload()
+        payload.pop("kind")
+        with pytest.raises(ValidationError):
+            SuggestedQuestion.model_validate(payload)
+
+    @pytest.mark.parametrize("bad_kind", ["medium", "Quick", "", "follow_up", None])
+    def test_invalid_kind_rejected(self, bad_kind):
+        with pytest.raises(ValidationError):
+            SuggestedQuestion.model_validate(_full_suggested_question_payload(kind=bad_kind))
+
+    def test_quick_with_only_related_queries_accepted(self):
+        sq = SuggestedQuestion.model_validate(
+            _full_suggested_question_payload(
+                kind="quick", related_queries=["rev_by_region_monthly"], related_insight=None
+            )
+        )
+        assert sq.kind == "quick"
+
+    def test_quick_with_only_related_insight_accepted(self):
+        sq = SuggestedQuestion.model_validate(
+            _full_suggested_question_payload(kind="quick", related_queries=[], related_insight="revenue_dipped_in_eu")
+        )
+        assert sq.kind == "quick"
+
+    def test_quick_without_any_grounding_rejected(self):
+        # The whole point of "quick": it MUST cite where the answer lives.
+        # Bare quick with no grounding becomes a hallucination invitation.
+        with pytest.raises(ValidationError, match="kind='quick'"):
+            SuggestedQuestion.model_validate(
+                _full_suggested_question_payload(kind="quick", related_queries=[], related_insight=None)
+            )
+
+    def test_deep_dive_without_grounding_accepted(self):
+        # deep_dive is exempt — by definition the data isn't in the artifact
+        # yet, so pointing at a "closest existing query" is encouraged but
+        # not required.
+        sq = SuggestedQuestion.model_validate(
+            _full_suggested_question_payload(kind="deep_dive", related_queries=[], related_insight=None)
+        )
+        assert sq.kind == "deep_dive"
+        assert sq.related_queries == []
+        assert sq.related_insight is None
+
+    def test_deep_dive_with_partial_grounding_accepted(self):
+        # Pointing at the closest existing query as a starting hint is the
+        # encouraged shape for deep_dive.
+        sq = SuggestedQuestion.model_validate(
+            _full_suggested_question_payload(
+                kind="deep_dive",
+                related_queries=["aov_by_store"],
+                related_insight="philly_dominates",
+            )
+        )
+        assert sq.kind == "deep_dive"
 
 
 # --------------------------------------------------------------------------- #

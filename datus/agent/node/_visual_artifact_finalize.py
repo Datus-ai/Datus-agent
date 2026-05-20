@@ -123,8 +123,10 @@ def build_finalize_prompt(
         "`evidence_queries` (string[]), `informed_by_knowledge` "
         "(string[]). 3–8 entries typical.\n"
         "  - `suggested_questions`: array of objects with `question`, "
-        "`related_queries` (string[]), `related_insight` (string or "
-        "null), `priority` (0..1). Aim for exactly 5 entries."
+        "`kind` (`'quick'` or `'deep_dive'` — see SUGGESTED QUESTIONS "
+        "CONTRACT below), `related_queries` (string[]), `related_insight` "
+        "(string or null), `priority` (0..1). EXACTLY 5 entries, split as "
+        "3 quick + 2 deep_dive."
     )
     if is_dashboard:
         sections.append(
@@ -132,8 +134,56 @@ def build_finalize_prompt(
             "templates with no statically-known results. You MUST return "
             "`insights: []` (empty array). Suggested questions should focus "
             "on `how to use the dashboard` and `which filters/dimensions to "
-            "explore`, NOT on data conclusions."
+            "explore`, NOT on data conclusions. The quick / deep_dive split "
+            "still applies: `quick` = answerable from the inlined template "
+            "metadata + sample params + columns (e.g. 'which filters does "
+            "this dashboard expose'); `deep_dive` = needs a real query run "
+            "(e.g. 'what trend does dimension X show under filter Y')."
         )
+
+    sections.append("## SUGGESTED QUESTIONS CONTRACT (3 quick + 2 deep_dive)")
+    sections.append(
+        "Generate EXACTLY 5 follow-up questions. They are surfaced to the "
+        "user as chips in the artifact detail view; clicking a chip launches "
+        "the ask-agent against this artifact's pre-loaded context. The split "
+        "matters because the artifact already inlines insights, query briefs, "
+        "preview rows, and key-table schemas into the ask prompt — chips that "
+        "match that inlined context answer in ~0 tool calls; chips that go "
+        "beyond it trigger a full new analysis loop.\n\n"
+        '### 3 × `kind="quick"` — answerable from the inlined artifact\n'
+        "The answer must be fully derivable from the QUERIES (briefs) and "
+        "QUERY RESULT PREVIEWS shown above (plus the report's insights for "
+        "report mode). A user clicking the chip must get an answer the "
+        "ask-agent can write WITHOUT calling any tools.\n"
+        '  - Frame as descriptive / lookup questions: "which months had X", '
+        '"how does Y compare between A and B", "what share of Z falls '
+        'above N", "which insight has the highest confidence".\n'
+        "  - MUST cite at least one `related_queries` slug whose preview "
+        "rows contain the answer, OR one `related_insight` whose `summary` "
+        "already states the answer.\n"
+        '  - AVOID "why" / "what caused" / "can we replicate" / "what '
+        'factors contribute" — those require decomposition the artifact '
+        "didn't pre-compute and belong in deep_dive.\n"
+        "  - Self-check: before tagging a question quick, draft a one-sentence "
+        "answer from the preview rows alone. If you cannot, it is deep_dive.\n\n"
+        '### 2 × `kind="deep_dive"` — requires new analysis\n'
+        "The question legitimately needs new SQL, new tables, customer / "
+        "product / segment joins, or counterfactual analysis the existing "
+        "queries didn't cover. The UI will warn the user that this takes "
+        "longer (~5–10 tool calls expected).\n"
+        '  - These are the "why" / "what factors" / "can we forecast" / '
+        '"what segments drive" questions a sharp analyst would ask after '
+        "reading the report.\n"
+        "  - `related_queries` and `related_insight` are OPTIONAL but "
+        "encouraged — point at the closest existing query as a starting "
+        "hint so the consultant knows where to begin extending.\n"
+        "  - Use this tag honestly: a question that needs columns NOT in the "
+        "existing query previews is deep_dive even if the topic feels "
+        "related to an existing insight.\n\n"
+        "Distribution: aim for EXACTLY 3 quick + 2 deep_dive in the 5-entry "
+        "output. The schema rejects quick questions with no grounding, and a "
+        "post-validation check warns when the distribution drifts off-target."
+    )
 
     sections.append("## RAW USER PROMPTS (intent.md)")
     sections.append(intent_md.strip() or "(empty)")
@@ -180,6 +230,11 @@ def build_finalize_prompt(
         "## CONSTRAINTS RECAP\n"
         f"  - artifact_kind = {artifact_kind!r}\n"
         f"  - `insights` MUST be {'an empty array' if is_dashboard else '3–8 entries'}.\n"
+        "  - `suggested_questions` MUST contain exactly 5 entries split as "
+        "3 `kind='quick'` + 2 `kind='deep_dive'`.\n"
+        "  - Every `kind='quick'` entry MUST cite a non-empty "
+        "`related_queries` slug OR a non-null `related_insight` so the "
+        "consultant has explicit grounding in the inlined artifact context.\n"
         "  - Every `evidence_queries` / `related_queries` entry MUST be a "
         "query name that appears in the reasoning steps above.\n"
         "  - Every `related_insight` MUST reference an `id` you declare in "
@@ -1074,6 +1129,36 @@ def consistency_check(
                 warnings.append(f"suggested_question references missing query {q!r}")
         if sq.related_insight is not None and sq.related_insight not in insight_ids:
             warnings.append(f"suggested_question.related_insight {sq.related_insight!r} not in insights")
+        # ``kind='quick'`` already had schema-level validation that at least
+        # one of related_queries / related_insight is set. We re-check here
+        # against the *resolved* world: a quick chip whose grounding points
+        # at slugs that don't exist on disk (or an insight id this same
+        # finalize call didn't declare) can't be answered from the inlined
+        # context either — the schema validator only sees field presence,
+        # not whether the referenced names resolve.
+        if sq.kind == "quick":
+            valid_query_refs = [q for q in sq.related_queries if q in existing_query_slugs]
+            valid_insight_ref = sq.related_insight is not None and sq.related_insight in insight_ids
+            if not valid_query_refs and not valid_insight_ref:
+                warnings.append(
+                    f"suggested_question {sq.question[:60]!r} kind='quick' has no "
+                    "resolvable grounding (related_queries point to missing slugs "
+                    "and related_insight is null/unknown); ask-agent will be unable "
+                    "to answer from the inlined artifact"
+                )
+
+    # Distribution check — the contract asks for exactly 3 quick + 2 deep_dive
+    # out of 5. The schema keeps the count range 1..8 forgiving (so a single
+    # off-by-one doesn't strand the whole finalize), so we surface drift as
+    # a warning here for ops visibility instead of as a hard failure.
+    quick_count = sum(1 for sq in output.suggested_questions if sq.kind == "quick")
+    deep_count = sum(1 for sq in output.suggested_questions if sq.kind == "deep_dive")
+    total = len(output.suggested_questions)
+    if total != 5 or quick_count != 3 or deep_count != 2:
+        warnings.append(
+            f"suggested_questions distribution off-target: total={total} "
+            f"quick={quick_count} deep_dive={deep_count} (expected 5 / 3 / 2)"
+        )
 
     for w in warnings:
         logger.warning("finalize consistency: %s", w)

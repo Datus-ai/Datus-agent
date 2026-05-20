@@ -30,6 +30,7 @@ from datus.agent.node._visual_artifact_finalize import (
     aggregate_referenced_tables,
     aggregate_subject_refs,
     bake_key_tables_schema,
+    build_finalize_prompt,
     collect_query_briefs,
     collect_query_previews,
     consistency_check,
@@ -63,7 +64,13 @@ def _write_brief(queries_dir: Path, name: str, *, uses: Dict[str, List[str]] | N
 
 
 def _full_finalize_response(*, insights: list | None = None, suggested_questions: list | None = None) -> Dict[str, Any]:
-    """Build a ``FinalizeAnalysisOutput``-compatible dict the LLM mock will return."""
+    """Build a ``FinalizeAnalysisOutput``-compatible dict the LLM mock will return.
+
+    Suggested questions default to a single ``kind='quick'`` entry that
+    satisfies the schema's grounding rule (cites ``related_queries`` and
+    ``related_insight``). Tests exercising the 3-quick + 2-deep_dive
+    distribution / consistency_check assemble their own lists.
+    """
     return {
         "insights": insights
         if insights is not None
@@ -82,12 +89,37 @@ def _full_finalize_response(*, insights: list | None = None, suggested_questions
         else [
             {
                 "question": "Which regions drove the dip?",
+                "kind": "quick",
                 "related_queries": ["rev_by_region"],
                 "related_insight": "revenue_dip",
                 "priority": 0.6,
             }
         ],
     }
+
+
+def _sq(
+    *,
+    question: str = "q?",
+    kind: str = "deep_dive",
+    related_queries: list[str] | None = None,
+    related_insight: str | None = None,
+    priority: float = 0.5,
+) -> SuggestedQuestion:
+    """Build a SuggestedQuestion with sensible defaults for tests.
+
+    Defaults to ``kind='deep_dive'`` so tests that don't care about the
+    quick-grounding contract get a schema-valid object without having to
+    set ``related_queries`` / ``related_insight``. Override ``kind`` when
+    exercising the quick path.
+    """
+    return SuggestedQuestion(
+        question=question,
+        kind=kind,
+        related_queries=related_queries or [],
+        related_insight=related_insight,
+        priority=priority,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -317,9 +349,24 @@ class TestParseFinalizeOutput:
 def _make_output(*, insights=None, suggested_questions=None) -> FinalizeAnalysisOutput:
     return FinalizeAnalysisOutput(
         insights=insights or [],
-        suggested_questions=suggested_questions
-        or [SuggestedQuestion(question="q?", related_queries=[], related_insight=None, priority=0.5)],
+        suggested_questions=suggested_questions or [_sq()],
     )
+
+
+def _balanced_suggestions(*, quick_query_slug: str = "alpha", quick_insight_id: str = "i1") -> list[SuggestedQuestion]:
+    """A schema-valid 3 quick + 2 deep_dive list for distribution tests.
+
+    Quick chips ground on ``quick_query_slug`` (and ``quick_insight_id`` on
+    the third) so consistency_check's resolved-grounding check passes when
+    the caller materializes the matching SQL file + insight on disk.
+    """
+    return [
+        _sq(question="quick A?", kind="quick", related_queries=[quick_query_slug]),
+        _sq(question="quick B?", kind="quick", related_queries=[quick_query_slug]),
+        _sq(question="quick C?", kind="quick", related_insight=quick_insight_id),
+        _sq(question="deep A?", kind="deep_dive"),
+        _sq(question="deep B?", kind="deep_dive", related_queries=[quick_query_slug]),
+    ]
 
 
 class TestConsistencyCheck:
@@ -337,9 +384,7 @@ class TestConsistencyCheck:
                     evidence_queries=["alpha"],
                 )
             ],
-            suggested_questions=[
-                SuggestedQuestion(question="q?", related_queries=["alpha"], related_insight="i1", priority=0.5)
-            ],
+            suggested_questions=_balanced_suggestions(),
         )
         warnings = consistency_check(queries_dir=queries_dir, output=output)
         assert warnings == []
@@ -367,12 +412,190 @@ class TestConsistencyCheck:
         queries_dir.mkdir()
         output = _make_output(
             insights=[],
-            suggested_questions=[
-                SuggestedQuestion(question="q?", related_queries=[], related_insight="unknown", priority=0.5)
-            ],
+            suggested_questions=[_sq(kind="deep_dive", related_insight="unknown")],
         )
         warnings = consistency_check(queries_dir=queries_dir, output=output)
         assert any("unknown" in w for w in warnings)
+
+
+class TestConsistencyCheckDistribution:
+    """The 3 quick + 2 deep_dive split is the contract every artifact ships
+    under. The schema keeps the total range 1..8 forgiving so a marginal
+    LLM run isn't outright rejected; consistency_check surfaces drift as a
+    warning so ops can spot finalize regressions in the trace log without
+    blocking the artifact.
+    """
+
+    def test_no_distribution_warning_on_3_quick_2_deep(self, tmp_path: Path):
+        queries_dir = tmp_path / "queries"
+        queries_dir.mkdir()
+        (queries_dir / "alpha.sql").write_text("SELECT 1", encoding="utf-8")
+        output = _make_output(
+            insights=[
+                Insight(id="i1", title="t", summary="s", confidence=0.5, evidence_queries=["alpha"]),
+            ],
+            suggested_questions=_balanced_suggestions(),
+        )
+        warnings = consistency_check(queries_dir=queries_dir, output=output)
+        assert not any("distribution off-target" in w for w in warnings)
+
+    def test_distribution_warning_when_all_quick(self, tmp_path: Path):
+        queries_dir = tmp_path / "queries"
+        queries_dir.mkdir()
+        (queries_dir / "alpha.sql").write_text("SELECT 1", encoding="utf-8")
+        five_quick = [_sq(question=f"q{i}", kind="quick", related_queries=["alpha"]) for i in range(5)]
+        output = _make_output(suggested_questions=five_quick)
+        warnings = consistency_check(queries_dir=queries_dir, output=output)
+        assert any("distribution off-target" in w and "quick=5" in w for w in warnings)
+
+    def test_distribution_warning_when_wrong_total(self, tmp_path: Path):
+        queries_dir = tmp_path / "queries"
+        queries_dir.mkdir()
+        (queries_dir / "alpha.sql").write_text("SELECT 1", encoding="utf-8")
+        # 4 entries instead of 5 — schema allows 1..8 but contract is 5.
+        four = [
+            _sq(question="q1", kind="quick", related_queries=["alpha"]),
+            _sq(question="q2", kind="quick", related_queries=["alpha"]),
+            _sq(question="q3", kind="quick", related_queries=["alpha"]),
+            _sq(question="q4", kind="deep_dive"),
+        ]
+        output = _make_output(suggested_questions=four)
+        warnings = consistency_check(queries_dir=queries_dir, output=output)
+        assert any("distribution off-target" in w and "total=4" in w for w in warnings)
+
+
+class TestConsistencyCheckQuickGrounding:
+    """The schema validator only sees that quick has *some* grounding pointer
+    (non-empty related_queries OR non-null related_insight). It can't tell
+    whether those pointers actually resolve to artifacts on disk. The
+    consistency check closes that gap so a quick chip whose only grounding
+    is a typo'd slug surfaces as a warning instead of silently failing the
+    ask-agent at click time.
+    """
+
+    def test_warns_when_quick_grounding_does_not_resolve(self, tmp_path: Path):
+        queries_dir = tmp_path / "queries"
+        queries_dir.mkdir()
+        # Real SQL on disk; the quick chip cites a different (missing) slug.
+        (queries_dir / "alpha.sql").write_text("SELECT 1", encoding="utf-8")
+        output = _make_output(
+            insights=[],
+            suggested_questions=[_sq(kind="quick", related_queries=["ghost_query"])],
+        )
+        warnings = consistency_check(queries_dir=queries_dir, output=output)
+        assert any("no resolvable grounding" in w for w in warnings)
+
+    def test_no_quick_grounding_warning_when_insight_resolves(self, tmp_path: Path):
+        queries_dir = tmp_path / "queries"
+        queries_dir.mkdir()
+        output = _make_output(
+            insights=[
+                Insight(id="i1", title="t", summary="s", confidence=0.5, evidence_queries=["alpha"]),
+            ],
+            suggested_questions=[_sq(kind="quick", related_insight="i1")],
+        )
+        # SQL "alpha" exists too so the insight's evidence resolves.
+        (queries_dir / "alpha.sql").write_text("SELECT 1", encoding="utf-8")
+        warnings = consistency_check(queries_dir=queries_dir, output=output)
+        assert not any("no resolvable grounding" in w for w in warnings)
+
+    def test_deep_dive_without_grounding_does_not_warn(self, tmp_path: Path):
+        queries_dir = tmp_path / "queries"
+        queries_dir.mkdir()
+        output = _make_output(
+            suggested_questions=[_sq(kind="deep_dive", related_queries=[], related_insight=None)],
+        )
+        warnings = consistency_check(queries_dir=queries_dir, output=output)
+        # deep_dive is exempt — data isn't in the artifact yet, by design.
+        assert not any("no resolvable grounding" in w for w in warnings)
+
+
+class TestBuildFinalizePrompt:
+    """Pin the SUGGESTED QUESTIONS CONTRACT section of the finalize prompt.
+
+    The prompt is the only place we communicate the 3-quick + 2-deep_dive
+    split to the LLM, so a regression that drops or muddies the wording
+    will silently let the finalize step revert to the pre-split behavior
+    (all-aspirational chips that trigger a full new analysis loop on
+    every click).
+    """
+
+    @pytest.fixture
+    def report_prompt(self) -> str:
+        return build_finalize_prompt(
+            artifact_kind="report",
+            intent_md="user wanted an AOV report",
+            query_briefs=[{"name": "alpha", "hypothesis": "h"}],
+            query_previews=[{"name": "alpha", "kind": "report_result", "preview_rows": []}],
+            action_history_hints=[],
+            existing_insights=None,
+            existing_suggested_questions=None,
+        )
+
+    def test_prompt_announces_kind_field_in_schema(self, report_prompt: str):
+        # Schema section must mention the kind field by name so the LLM
+        # actually emits it.
+        assert "`kind`" in report_prompt
+        assert "'quick'" in report_prompt
+        assert "'deep_dive'" in report_prompt
+
+    def test_prompt_pins_3_quick_2_deep_split(self, report_prompt: str):
+        # OUTPUT SCHEMA section spells the split in plain prose; the
+        # CONTRACT section spells it in code-block form. Both must be
+        # present so the LLM has the rule reinforced.
+        assert "3 quick + 2 deep_dive" in report_prompt
+        assert '3 × `kind="quick"`' in report_prompt
+        assert '2 × `kind="deep_dive"`' in report_prompt
+
+    def test_prompt_states_quick_grounding_rule(self, report_prompt: str):
+        # The "quick MUST cite grounding" invariant has to be visible in
+        # the prompt — the schema validator catches violations, but the
+        # prompt is what gets the LLM to produce valid output in the
+        # first place.
+        assert "MUST cite" in report_prompt
+        assert "related_queries" in report_prompt
+        assert "related_insight" in report_prompt
+
+    def test_prompt_calls_out_avoid_aspirational_quick(self, report_prompt: str):
+        # The single biggest failure mode the contract guards against:
+        # "why" / "what factors" questions tagged as quick because the
+        # LLM sees them as obvious follow-ups. The prompt must call this
+        # out explicitly or the LLM regresses to the old behavior.
+        assert '"why"' in report_prompt
+        assert "deep_dive" in report_prompt
+
+    def test_prompt_calls_out_self_check(self, report_prompt: str):
+        # The "draft a one-sentence answer from preview rows alone"
+        # heuristic is the operational version of the quick contract —
+        # pinning the exact wording so a future prose-tweak that drops
+        # the imperative ("could try drafting…") still fails this test.
+        assert "Self-check: before tagging a question quick" in report_prompt
+
+    def test_dashboard_prompt_keeps_kind_split(self):
+        prompt = build_finalize_prompt(
+            artifact_kind="dashboard",
+            intent_md="dashboard intent",
+            query_briefs=[],
+            query_previews=[],
+            action_history_hints=[],
+            existing_insights=None,
+            existing_suggested_questions=None,
+        )
+        # Dashboards skip insights but the quick/deep_dive split still
+        # applies — quick chips describe the template metadata, deep_dive
+        # chips trigger a real query run.
+        assert "DASHBOARD MODE" in prompt
+        assert "quick" in prompt
+        assert "deep_dive" in prompt
+
+    def test_constraints_recap_pins_distribution(self, report_prompt: str):
+        # The "CONSTRAINTS RECAP" block is the prompt's TL;DR. The exact
+        # "5 entries split as 3 ... + 2 ..." wording must surface here so
+        # an LLM that skims past the long-form CONTRACT section still
+        # gets the distribution rule.
+        assert "5 entries split as" in report_prompt
+        assert "kind='quick'" in report_prompt
+        assert "kind='deep_dive'" in report_prompt
 
 
 # --------------------------------------------------------------------------- #

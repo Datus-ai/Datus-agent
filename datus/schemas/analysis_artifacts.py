@@ -50,7 +50,7 @@ from __future__ import annotations
 import re
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Same character set as ``REPORT_SLUG_RE`` / ``QUERY_SLUG_RE`` so insight
 # ids stay filesystem-friendly and easy to ``grep`` from compiled HTML
@@ -60,6 +60,8 @@ ANALYSIS_SLUG_PATTERN = r"^[a-z0-9_]{1,64}$"
 ANALYSIS_SLUG_RE = re.compile(ANALYSIS_SLUG_PATTERN)
 
 SubjectAssetKind = Literal["metric", "reference_sql", "ext_knowledge"]
+
+SuggestionKind = Literal["quick", "deep_dive"]
 
 
 class SubjectAssetRef(BaseModel):
@@ -247,6 +249,32 @@ class SuggestedQuestion(BaseModel):
     ``analysis/suggested_questions.json``. Both report and dashboard
     produce these — dashboards just keep ``related_insight=None``
     (there are no insights to anchor to).
+
+    Each suggestion declares a ``kind`` so the UI can set user
+    expectations on latency:
+
+    * ``"quick"`` — answer is fully derivable from what the artifact
+      already pre-loaded into the ask-agent prompt
+      (``insights[]`` + per-query ``brief.json`` + preview rows + key
+      tables schema). A user clicking the chip should get an answer
+      with ~0 new tool calls. **Must** cite at least one
+      ``related_queries`` slug or one ``related_insight`` so the
+      consultant has an explicit grounding pointer.
+    * ``"deep_dive"`` — legitimately requires new SQL, new tables, or
+      decomposition the artifact didn't pre-compute (e.g. "why does
+      Philly's AOV beat Brooklyn's" needs item-level / product-mix
+      data that the headline AOV-by-store query doesn't have). UI
+      surfaces a chip badge so users know ~5–10 tool calls are
+      expected. ``related_queries`` / ``related_insight`` are
+      optional starting hints.
+
+    The split matters because the artifact-inlining work in the
+    ask-agent prompt (insights / subject scope / query catalog /
+    key-table schemas) only pays off when suggested chips actually
+    point at questions the inlined context can answer. Without the
+    tag, the LLM tended to emit aspirational "why" questions that
+    triggered a full new analysis loop on every click — defeating the
+    inlining contract.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -257,15 +285,31 @@ class SuggestedQuestion(BaseModel):
         max_length=300,
         description="Single-sentence follow-up. Same language as the user's prompts where possible.",
     )
+    kind: SuggestionKind = Field(
+        ...,
+        description=(
+            "``'quick'`` if the answer is fully derivable from the inlined "
+            "artifact context (insights / briefs / preview rows / key-table "
+            "schemas); ``'deep_dive'`` if it requires new SQL or tables the "
+            "artifact didn't pre-compute. Frontend renders this as a chip tag "
+            "to set latency expectations."
+        ),
+    )
     related_queries: List[str] = Field(
         default_factory=list,
-        description="Query slugs the suggestion would build on.",
+        description=(
+            "Query slugs the suggestion would build on. **Required** (non-empty "
+            "or paired with ``related_insight``) when ``kind='quick'`` — the "
+            "consultant needs an explicit grounding pointer to answer from the "
+            "inlined preview rows."
+        ),
     )
     related_insight: Optional[str] = Field(
         default=None,
         description=(
             "Insight slug this follow-up extends. Report-only; dashboards always set "
-            "this to ``None`` since there are no insights for them."
+            "this to ``None`` since there are no insights for them. Counts as "
+            "grounding for ``kind='quick'`` when ``related_queries`` is empty."
         ),
     )
     priority: float = Field(
@@ -274,6 +318,31 @@ class SuggestedQuestion(BaseModel):
         le=1.0,
         description="LLM-assigned priority in [0,1]; frontend uses it for display order when more than one suggestion competes for the same slot.",
     )
+
+    @model_validator(mode="after")
+    def _quick_requires_grounding(self) -> "SuggestedQuestion":
+        """``kind='quick'`` must declare at least one grounding pointer.
+
+        Quick questions promise an answer with no new tool calls. The
+        ask-agent only achieves that when it can cite a specific
+        inlined source (``related_queries`` slug → preview rows / SQL;
+        ``related_insight`` → insights.json entry). A quick question
+        with no grounding either becomes a hallucinated answer or
+        forces the LLM to fall back to ``glob`` / ``read_file``,
+        defeating the whole point of the chip.
+
+        ``deep_dive`` is exempt because by definition the data isn't
+        in the artifact yet — pointing at a "closest existing query"
+        is encouraged but not required.
+        """
+        if self.kind == "quick" and not self.related_queries and self.related_insight is None:
+            raise ValueError(
+                "SuggestedQuestion with kind='quick' must cite at least one "
+                "related_queries slug or one related_insight so the consultant "
+                "can answer from the inlined artifact. Use kind='deep_dive' for "
+                "questions that legitimately require new SQL or tables."
+            )
+        return self
 
 
 class FinalizeAnalysisOutput(BaseModel):
