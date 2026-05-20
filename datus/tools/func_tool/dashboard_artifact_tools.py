@@ -185,6 +185,60 @@ def resolve_bind_placeholders(rendered_sql: str, params_decl: List[TemplateParam
 _resolve_bind_placeholders = resolve_bind_placeholders
 
 
+def strip_sql_comments(sql: str) -> str:
+    """Strip SQL ``-- to EOL`` and ``/* ... */`` comments, preserving literals.
+
+    Called between Jinja2 rendering and bind-placeholder substitution because
+    the saved template's first line is the ``-- @datus-params <name>:<type>[:optional]``
+    header — without this strip, the ``:optional`` tail would survive
+    ``resolve_bind_placeholders`` (lookbehind sees ``]`` so the regex matches,
+    and unknown names fall through to ``match.group(0)``) and the connector's
+    SQL parser (SQLAlchemy / DuckDB) would treat the ``:optional`` inside the
+    comment as an unbound placeholder. The same applies to any inline ``--``
+    or ``/* */`` comment the LLM adds whose body happens to contain a ``:foo``
+    token.
+
+    String-literal-aware: ``'foo -- bar'`` and ``"col_with -- in name"``
+    survive untouched, and SQL's ``''`` escape sequence is honored. Block
+    comments are not nested (standard SQL).
+    """
+    out: List[str] = []
+    i = 0
+    n = len(sql)
+    in_squote = False
+    in_dquote = False
+    while i < n:
+        ch = sql[i]
+        nxt = sql[i + 1] if i + 1 < n else ""
+        if not in_squote and not in_dquote:
+            if ch == "-" and nxt == "-":
+                # Line comment — drop everything up to (but excluding) the newline.
+                j = sql.find("\n", i)
+                if j == -1:
+                    break
+                i = j
+                continue
+            if ch == "/" and nxt == "*":
+                # Block comment — drop through ``*/``.
+                j = sql.find("*/", i + 2)
+                if j == -1:
+                    # Unterminated block comment — drop to EOF rather than leave dangling text.
+                    break
+                i = j + 2
+                continue
+        if not in_dquote and ch == "'":
+            if in_squote and sql[i + 1 : i + 2] == "'":
+                out.append("''")
+                i += 2
+                continue
+            in_squote = not in_squote
+        elif not in_squote and ch == '"':
+            in_dquote = not in_dquote
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def render_dashboard_template(sql_template: str, params_decl: List[TemplateParamDecl], values: Dict[str, Any]) -> str:
     """Render a dashboard's Jinja2 SQL template and substitute bind placeholders.
 
@@ -211,6 +265,11 @@ def render_dashboard_template(sql_template: str, params_decl: List[TemplateParam
         rendered = template.render(**context)
     except TemplateError as exc:
         raise ValueError(f"Jinja2 render error: {exc}") from exc
+
+    # Strip SQL comments before bind substitution — the ``-- @datus-params``
+    # header would otherwise leak its ``:optional`` tail through to the
+    # connector and trigger "A value is required for bind parameter 'optional'".
+    rendered = strip_sql_comments(rendered)
 
     return resolve_bind_placeholders(rendered, params_decl, values)
 

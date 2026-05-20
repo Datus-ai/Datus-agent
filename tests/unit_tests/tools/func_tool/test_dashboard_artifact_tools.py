@@ -40,6 +40,7 @@ from datus.tools.func_tool.dashboard_artifact_tools import (
     render_dashboard_template,
     resolve_bind_placeholders,
     sql_quote_scalar,
+    strip_sql_comments,
 )
 
 # ----------------------------------------------------------------------------- #
@@ -203,6 +204,68 @@ class TestRenderDashboardTemplate:
         decls = [TemplateParamDecl(name="x", type="string")]
         with pytest.raises(ValueError, match="Jinja2 parse error"):
             render_dashboard_template("{% if x %}", decls, {"x": "v"})
+
+    def test_datus_params_header_optional_tail_does_not_leak(self):
+        # Regression: the ``-- @datus-params x:string[]:optional`` header used
+        # to survive the render and pass ``:optional`` through to the driver,
+        # which treated it as an unbound bind parameter.
+        tpl = (
+            "-- @datus-params start_date:date, store_ids:string[]:optional\n"
+            "SELECT * FROM raw_orders WHERE day = :start_date\n"
+            "{% if store_ids %}AND store_id IN :store_ids{% endif %}"
+        )
+        decls = [
+            TemplateParamDecl(name="start_date", type="date", required=True),
+            TemplateParamDecl(name="store_ids", type="string[]", required=False),
+        ]
+        out = render_dashboard_template(tpl, decls, {"start_date": "2026-01-01", "store_ids": []})
+        assert ":optional" not in out
+        assert "@datus-params" not in out
+        assert "WHERE day = '2026-01-01'" in out
+        assert "store_id IN" not in out  # empty array → {% if %} branch skipped
+
+    def test_inline_comment_with_colon_token_stripped(self):
+        # An inline ``-- :foo`` comment in the template body would also leak
+        # ``:foo`` into the bound SQL without comment stripping.
+        tpl = "-- @datus-params start_date:date\nSELECT 1 -- baseline :foo placeholder\nWHERE day = :start_date"
+        decls = [TemplateParamDecl(name="start_date", type="date", required=True)]
+        out = render_dashboard_template(tpl, decls, {"start_date": "2026-01-01"})
+        assert ":foo" not in out
+        assert "baseline" not in out  # comment fully removed
+        assert "WHERE day = '2026-01-01'" in out
+
+
+class TestStripSqlComments:
+    def test_strips_line_comment(self):
+        assert strip_sql_comments("SELECT 1 -- ignored\nFROM t") == "SELECT 1 \nFROM t"
+
+    def test_strips_block_comment(self):
+        assert strip_sql_comments("SELECT /* note */ 1") == "SELECT  1"
+
+    def test_strips_multiline_block_comment(self):
+        assert strip_sql_comments("SELECT /* line1\nline2 */ 1") == "SELECT  1"
+
+    def test_preserves_dashes_inside_single_quoted_literal(self):
+        sql = "SELECT 'foo -- bar' AS label FROM t"
+        assert strip_sql_comments(sql) == sql
+
+    def test_preserves_dashes_inside_double_quoted_identifier(self):
+        sql = 'SELECT "col -- with dashes" FROM t'
+        assert strip_sql_comments(sql) == sql
+
+    def test_honors_sql_doubled_single_quote_escape(self):
+        # ``''`` inside a string is an escaped single quote, not the end of
+        # the literal. The ``-- danger`` that follows must stay quoted.
+        sql = "SELECT 'it''s -- danger' FROM t"
+        assert strip_sql_comments(sql) == sql
+
+    def test_unterminated_block_comment_truncates_to_eof(self):
+        # We bias toward keeping the connector from seeing dangling text — if
+        # the LLM somehow emits an unterminated ``/*``, drop everything after.
+        assert strip_sql_comments("SELECT 1 /* unterminated") == "SELECT 1 "
+
+    def test_line_comment_at_eof_without_newline(self):
+        assert strip_sql_comments("SELECT 1 -- tail") == "SELECT 1 "
 
 
 # ----------------------------------------------------------------------------- #
