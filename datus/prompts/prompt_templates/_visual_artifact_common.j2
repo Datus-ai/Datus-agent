@@ -97,7 +97,7 @@ function RevenueTrendCard() {
     <div ref={cardRef}>
       <Card
         title="Revenue trend"
-        titleRight={<ChartEntryMore sqlId="queries/revenue_by_month" cardRef={cardRef} />}
+        titleRight={<ChartEntryMore sqlId="queries/revenue_by_month" data={data} cardRef={cardRef} />}
       >
         <AnimateOnVisible minHeight={300}>
           <ResponsiveContainer width="100%" height={300}>
@@ -361,15 +361,17 @@ Every visualization backed by a `useQuerySql(...)` call gets a `<ChartEntryMore>
 1. **Always wrap the card in `<div ref={cardRef}>`.** The wrapper div is the screenshot root for PNG export. Mandatory; don't skip even if your `<Card>` primitive looks like it could host the ref.
 2. **Never pass `ref` directly to `<Card>`.** React 18 strips `ref` from props on function components, so `cardRef.current` stays null and PNG export throws. The wrapper-div pattern in rule 1 sidesteps this entirely.
 3. **Always pass `cardRef` to `<ChartEntryMore>`.** Don't rely on the `cardSelector` fallback below.
-4. **Render `<ChartEntryMore>` in the card's `titleRight` slot** when it exists (every shared `card.jsx` should expose one). Otherwise lay it out inline with `display: 'flex'` + `justifyContent: 'space-between'` in the card header row.
-5. **One `<ChartEntryMore>` per card.** Don't add multiple for different sub-charts inside one card — combine them into one card per query, or pick the most-prominent sqlId.
-6. **Add `<ChartEntryMore>` to every `useQuerySql`-backed visualization** — line / bar / area / pie / scatter / radar charts, KPI cards, KPI sparklines, custom inline SVG visualizations, **and data tables** (trigger in the header strip above `<table>`, not inside `<thead>`). The "View SQL" action is the single best credibility move for an analytical deliverable; don't gate it on whether the chart "looks important enough".
+4. **Always pass `data` to `<ChartEntryMore>`** — feed it the `data` field from the matching `useQuerySql(sqlId, params)` call. `ChartEntryMore` no longer fetches on its own; without `data` the View SQL / Export SQL / Export CSV / Export JSON actions are disabled (PNG actions still work). This is **mandatory in dashboard mode** because the menu has no way to know what `params` the parent applied — passing `data` is the only way to keep menu and chart in sync.
+5. **Render `<ChartEntryMore>` in the card's `titleRight` slot** when it exists (every shared `card.jsx` should expose one). Otherwise lay it out inline with `display: 'flex'` + `justifyContent: 'space-between'` in the card header row.
+6. **One `<ChartEntryMore>` per card.** Don't add multiple for different sub-charts inside one card — combine them into one card per query, or pick the most-prominent sqlId.
+7. **Add `<ChartEntryMore>` to every `useQuerySql`-backed visualization** — line / bar / area / pie / scatter / radar charts, KPI cards, KPI sparklines, custom inline SVG visualizations, **and data tables** (trigger in the header strip above `<table>`, not inside `<thead>`). The "View SQL" action is the single best credibility move for an analytical deliverable; don't gate it on whether the chart "looks important enough".
 
 #### Props
 
 | Prop | Required | Notes |
 |---|---|---|
-| `sqlId` | yes | Same literal you passed to `useQuerySql`. The component looks up the cached query result and the raw `.sql` text by this id. |
+| `sqlId` | yes | The same literal you passed to `useQuerySql`. Used only for the View SQL modal title and as the default download filename — the component does **not** re-fetch by this id. |
+| `data` | yes (per rule 4) | Pass through the `data` field from the matching `useQuerySql(sqlId, params)` call. Provides the rows / columns for CSV+JSON export and `data.sql` for the SQL actions. |
 | `cardRef` | yes (per rule 3) | Ref on the **outer wrapper div** — the screenshot root for "Export PNG" / "Copy PNG". |
 | `cardSelector` | no (fallback only) | Used when `cardRef` is omitted; do not rely on this. Defaults to `'[data-datus-chart-card]'` — if you skip `cardRef`, mark the card root with that attribute. |
 | `filenameBase` | no | Override the downloaded basename (default: the slug). Extensions are added automatically. |
