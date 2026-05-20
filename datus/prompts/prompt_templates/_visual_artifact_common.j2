@@ -58,6 +58,12 @@ Do **not** import from: `react-dom`, `next/*`, `react-router*`, state-management
 
 Relative paths must stay under `render/` — `../../../escape` is rejected.
 
+### Import every name you reference
+
+Every JSX component (`<Cell>`, `<Legend>`, `<Coffee>`) and every helper (`useMemo`, `formatCurrency`, `N`) used in a file must appear in a named import at the top of *that same file*. `recharts`, `lucide-react`, and `@datus/web-artifact` do not register globals — a missing import surfaces at render time as `ReferenceError: <name> is not defined` and crashes the whole artifact. `validate_render` only checks that the import *paths* resolve; it does not check that every JSX identifier is imported, so the burden is on you.
+
+Before saving a file, scan its body and JSX for every capitalized component (Recharts primitives like `<Cell>`, Lucide icons like `<Coffee>`) plus every helper call (`N`, `formatCurrency`, …) and confirm each one is in one of the file's `import { ... }` lines. The most common miss: adding `<Cell>` inside `<Bar>` / `<Pie>` for per-row coloring while leaving `Cell` out of the existing `recharts` import.
+
 ### Canonical component shape
 
 Every chart / table / KPI component in `render/` follows the same five-section shape. **Copy this skeleton when you author a new component.** Data flow, hook ordering, ref handling, AnimateOnVisible wiring, and the ChartEntryMore action menu are all here — if your component structurally matches this shape, you cannot trip the most common rendering errors.
