@@ -94,6 +94,14 @@ def test_ensure_version_can_advance_rejects_same_or_lower_version(tmp_path, prep
         prepare_release.ensure_version_can_advance(repo_root, Version("0.2.6"))
 
 
+def test_ensure_version_can_advance_can_allow_current_version(tmp_path, prepare_release):
+    repo_root = _write_release_repo(tmp_path)
+
+    assert prepare_release.ensure_version_can_advance(repo_root, Version("0.2.6"), allow_current_version=True) is None
+    with pytest.raises(ValueError, match="must advance current version"):
+        prepare_release.ensure_version_can_advance(repo_root, Version("0.2.5"), allow_current_version=True)
+
+
 def test_prepare_release_updates_version_and_adapter_bounds(tmp_path, monkeypatch, prepare_release):
     repo_root = _write_release_repo(tmp_path)
     monkeypatch.setattr(
@@ -145,3 +153,21 @@ def test_prepare_release_can_leave_adapter_bounds_unchanged(tmp_path, monkeypatc
         "pyproject.toml",
     }
     assert '"datus-db-core>=0.1.3"' in (repo_root / "pyproject.toml").read_text(encoding="utf-8")
+
+
+def test_main_can_treat_already_prepared_release_as_success(tmp_path, prepare_release):
+    repo_root = _write_release_repo(tmp_path)
+
+    result = prepare_release.main(
+        [
+            "--repo-root",
+            str(repo_root),
+            "--version",
+            "0.2.6",
+            "--allow-current-version",
+            "--allow-no-changes",
+            "--no-update-adapter-bounds",
+        ]
+    )
+
+    assert result == 0
