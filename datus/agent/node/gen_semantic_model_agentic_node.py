@@ -434,7 +434,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
                 raise RuntimeError(
                     "Semantic model generation produced semantic_model_files, but validate_semantic is unavailable."
                 )
-            validation_result = self.semantic_func_tool.validate_semantic()
+            validation_result = self.semantic_func_tool.validate_semantic(scope="semantic_model")
             self.generation_evidence.record_validation_result(validation_result)
             if not self._tool_succeeded(validation_result):
                 raise RuntimeError(
