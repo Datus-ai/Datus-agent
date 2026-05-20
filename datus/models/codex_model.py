@@ -11,6 +11,7 @@ from agents import Agent, ModelSettings, Runner, SQLiteSession, Tool
 from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
 from agents.models.openai_responses import OpenAIResponsesModel
+from agents.run import RunConfig
 
 from datus.auth.oauth_config import CODEX_API_BASE_URL
 from datus.auth.oauth_manager import OAuthManager
@@ -21,6 +22,7 @@ from datus.models.mcp_utils import multiple_mcp_servers
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.trace_context import build_agents_run_config_kwargs
 
 logger = get_logger(__name__)
 
@@ -312,9 +314,12 @@ class CodexModel(LLMBaseModel):
 
             agent = Agent(**agent_kwargs)
 
+            run_config_kwargs = build_agents_run_config_kwargs(agent_name=agent_kwargs["name"])
+            run_config = RunConfig(**run_config_kwargs) if run_config_kwargs else None
+
             async def _run_streamed_to_completion(a, p):
                 """Run agent via streaming (Codex API requires stream=True) and return the result."""
-                result = Runner.run_streamed(a, input=p, max_turns=max_turns, session=session)
+                result = Runner.run_streamed(a, input=p, max_turns=max_turns, session=session, run_config=run_config)
                 while not result.is_complete:
                     async for _ in result.stream_events():
                         pass
@@ -393,7 +398,11 @@ class CodexModel(LLMBaseModel):
 
             agent = Agent(**agent_kwargs)
 
-            result = Runner.run_streamed(agent, input=prompt, max_turns=max_turns, session=session)
+            run_config_kwargs = build_agents_run_config_kwargs(agent_name=agent_kwargs["name"])
+            run_config = RunConfig(**run_config_kwargs) if run_config_kwargs else None
+            result = Runner.run_streamed(
+                agent, input=prompt, max_turns=max_turns, session=session, run_config=run_config
+            )
 
             # Stream events and yield ActionHistory objects
             temp_tool_calls = {}  # {call_id: {"tool_name": ..., "arguments": ...}}

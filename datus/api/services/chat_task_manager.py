@@ -33,6 +33,7 @@ from datus.tools.proxy.proxy_tool import apply_proxy_tools
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import set_current_path_manager
 from datus.utils.time_utils import now_utc_iso
+from datus.utils.trace_context import build_chat_trace_context, reset_trace_context, set_trace_context
 
 logger = get_logger(__name__)
 
@@ -443,6 +444,7 @@ class ChatTaskManager:
         """Execute the full agentic loop, pushing SSE events to the task buffer."""
         session_id = task.session_id
         event_id = 0
+        trace_token = None
 
         # Pin the path manager into this task's context. Required when the caller
         # dispatched us from a thread that never inherited AgentConfig's ContextVar
@@ -487,6 +489,20 @@ class ChatTaskManager:
 
             node = await asyncio.to_thread(_init_node)
             task.node = node
+            trace_token = set_trace_context(
+                build_chat_trace_context(
+                    session_id=session_id,
+                    llm_session_id=node.session_id,
+                    node_name=node.get_node_name() if hasattr(node, "get_node_name") else None,
+                    subagent_id=sub_agent_id,
+                    user_id=user_id,
+                    datasource=agent_config.current_datasource,
+                    source_session_id=request.source_session_id,
+                    source=request.source or self._default_source,
+                    model=request.model,
+                    agent_home=agent_config.home,
+                )
+            )
 
             # Per-request permission profile override. We deliberately do
             # NOT mutate ``agent_config.active_profile_name`` here because
@@ -659,6 +675,8 @@ class ChatTaskManager:
             event_id += 1
 
         finally:
+            if trace_token is not None:
+                reset_trace_context(trace_token)
             async with task.condition:
                 task.condition.notify_all()
             self._tasks.pop(session_id, None)

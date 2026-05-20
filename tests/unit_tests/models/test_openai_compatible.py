@@ -22,6 +22,7 @@ from datus.models.openai_compatible import (
 )
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.trace_context import TraceContext, trace_context
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1994,6 +1995,25 @@ class TestBuildRunConfigInputFilter:
         runs with default behavior and the run is unchanged."""
         model = _make_model()
         assert model._build_run_config(pending_input_queue=None) is None
+
+    def test_returns_trace_config_when_trace_context_is_active(self):
+        """TraceContext should turn into Agents SDK workflow/group metadata."""
+        model = _make_model()
+        ctx = TraceContext(
+            name="benchmark/baisheng/semantic_model/task-1",
+            session_id="benchmark:semantic_model_20260520_054027",
+            tags=("benchmark", "task:1"),
+            metadata={"task_id": "1"},
+        )
+
+        with trace_context(ctx, replace=True):
+            rc = model._build_run_config(pending_input_queue=None, agent_name="gen_sql")
+
+        assert rc is not None
+        assert rc.workflow_name == "benchmark/baisheng/semantic_model/task-1/gen_sql"
+        assert rc.group_id == "benchmark:semantic_model_20260520_054027"
+        assert rc.trace_metadata["task_id"] == "1"
+        assert rc.trace_metadata["agent_name"] == "gen_sql"
 
     @pytest.mark.asyncio
     async def test_filter_appends_queued_items_and_persists_to_session(self):

@@ -7,6 +7,7 @@
 import sys
 from unittest.mock import MagicMock, patch
 
+from datus.utils.trace_context import TraceContext, get_trace_context
 from datus.utils.traceable_utils import (
     _disable_sdk_tracing,
     _get_langfuse_trace_url,
@@ -479,6 +480,71 @@ class TestOptionalTraceableLangfuse:
 
                 assert add(1, 2) == 3
                 mock_observe.assert_not_called()
+        finally:
+            _restore_langfuse_module(saved)
+
+    def test_context_builder_scopes_context_without_langfuse(self, monkeypatch):
+        """A context_builder still scopes TraceContext when Langfuse export is disabled."""
+        import datus.utils.traceable_utils as module
+
+        monkeypatch.setattr(module, "HAS_LANGFUSE", False)
+        monkeypatch.setattr(module, "_langfuse_enabled", False)
+        seen = {}
+
+        @optional_traceable(
+            name="test_op",
+            context_builder=lambda *_args, **_kwargs: TraceContext(
+                name="cli/run/test",
+                session_id="cli:run:test",
+                tags=("cli", "run"),
+                metadata={"workflow": "test"},
+            ),
+        )
+        def op():
+            seen["ctx"] = get_trace_context()
+            return "ok"
+
+        assert op() == "ok"
+        assert seen["ctx"].name == "cli/run/test"
+        assert get_trace_context() is None
+
+    def test_langfuse_propagates_runtime_attributes(self, monkeypatch):
+        """Langfuse observe receives runtime trace name/session/tags/metadata."""
+        import datus.utils.traceable_utils as module
+
+        monkeypatch.setattr(module, "HAS_LANGFUSE", True)
+        monkeypatch.setattr(module, "_langfuse_enabled", True)
+
+        saved = _ensure_langfuse_module()
+        try:
+            mock_observe = MagicMock(side_effect=lambda *a, **kw: lambda fn: fn)
+            mock_propagate = MagicMock()
+            mock_propagate.return_value.__enter__.return_value = None
+            mock_propagate.return_value.__exit__.return_value = None
+            with (
+                patch("langfuse.observe", mock_observe),
+                patch("langfuse.propagate_attributes", mock_propagate),
+            ):
+
+                @optional_traceable(
+                    name="test_langfuse_op",
+                    context_builder=lambda *_args, **_kwargs: TraceContext(
+                        name="benchmark/baisheng/semantic_model/task-1",
+                        session_id="benchmark:semantic_model_20260520_054027",
+                        tags=("benchmark", "task:1"),
+                        metadata={"task_id": "1", "benchmark_run_id": "semantic_model_20260520_054027"},
+                    ),
+                )
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_propagate.assert_called_once()
+                kwargs = mock_propagate.call_args.kwargs
+                assert kwargs["trace_name"] == "benchmark/baisheng/semantic_model/task-1"
+                assert kwargs["session_id"] == "benchmark:semantic_model_20260520_054027"
+                assert kwargs["tags"] == ["benchmark", "task:1"]
+                assert kwargs["metadata"]["task_id"] == "1"
         finally:
             _restore_langfuse_module(saved)
 

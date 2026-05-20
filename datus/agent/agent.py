@@ -39,6 +39,11 @@ from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
 from datus.utils.path_utils import safe_rmtree
 from datus.utils.time_utils import format_duration_human
+from datus.utils.trace_context import (
+    build_benchmark_trace_context,
+    build_bootstrap_trace_context_from_agent,
+    trace_context,
+)
 from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
@@ -337,7 +342,7 @@ class Agent:
             logger.info("Metrics item success")
             return
 
-    @optional_traceable(name="bootstrap_kb")
+    @optional_traceable(name="bootstrap_kb", context_builder=build_bootstrap_trace_context_from_agent)
     def bootstrap_kb(self):
         """Initialize knowledge base storage components."""
         logger.info("Initializing knowledge base components")
@@ -711,26 +716,40 @@ class Agent:
             # Use hierarchical save directory structure
             output_dir = self.global_config.get_save_run_dir(run_id) if run_id else self.global_config.output_dir
 
-            result = self.run(
-                SqlTask(
-                    id=task_id,
-                    database_type=conn.dialect,
-                    task=task,
-                    database_name=database_name,
-                    output_dir=output_dir,
-                    current_date=self.args.current_date,
-                    tables=use_tables,
-                    external_knowledge=(
-                        ""
-                        if not benchmark_config.ext_knowledge_key
-                        else task_item.get(benchmark_config.ext_knowledge_key, "")
-                    ),
-                    schema_linking_type="full",
-                ),
-                check_storage=False,
-                check_db=False,
-                run_id=run_id,
+            trace_ctx = build_benchmark_trace_context(
+                benchmark=benchmark_platform,
+                run_id=run_id or "",
+                task_id=task_id,
+                workflow=getattr(self.args, "workflow", None),
+                context_type=getattr(self.args, "context_type", None),
+                datasource=self.global_config.current_datasource,
+                agent_home=self.global_config.home,
+                extra={
+                    "max_steps": getattr(self.args, "max_steps", None),
+                    "max_workers": getattr(self.args, "max_workers", None),
+                },
             )
+            with trace_context(trace_ctx, replace=True):
+                result = self.run(
+                    SqlTask(
+                        id=task_id,
+                        database_type=conn.dialect,
+                        task=task,
+                        database_name=database_name,
+                        output_dir=output_dir,
+                        current_date=self.args.current_date,
+                        tables=use_tables,
+                        external_knowledge=(
+                            ""
+                            if not benchmark_config.ext_knowledge_key
+                            else task_item.get(benchmark_config.ext_knowledge_key, "")
+                        ),
+                        schema_linking_type="full",
+                    ),
+                    check_storage=False,
+                    check_db=False,
+                    run_id=run_id,
+                )
             logger.info(f"Finish benchmark with {task_id}, file saved in {output_dir}/{task_id}.csv.")
             return task_id, result
 

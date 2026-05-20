@@ -312,11 +312,18 @@ class TestChatTaskManagerBehavior:
         """The web stream must surface chat_response when the model only produced tool cards."""
         from datus.api.models.cli_models import StreamChatInput
         from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+        from datus.utils.trace_context import get_trace_context
+
+        captured = {}
 
         class FakeNode:
             session_id = "s-final"
 
+            def get_node_name(self):
+                return "chat"
+
             async def execute_stream_with_interactions(self, action_history_manager):
+                captured["trace_context"] = get_trace_context()
                 yield ActionHistory(
                     action_id="final",
                     role=ActionRole.ASSISTANT,
@@ -336,6 +343,8 @@ class TestChatTaskManagerBehavior:
 
         await manager._run_loop(task, real_agent_config, StreamChatInput(message="tables", session_id="s-final"))
 
+        assert captured["trace_context"].name == "chat/chat"
+        assert captured["trace_context"].session_id == "s-final"
         message_events = [event for event in task.events if event.event == "message"]
         assert len(message_events) == 1
         content = message_events[0].data.payload.content[0]

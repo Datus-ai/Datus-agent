@@ -38,7 +38,7 @@ _LANGFUSE_TYPE_MAP = {
 _langfuse_enabled = False
 
 
-def optional_traceable(name: str = "", run_type: RUN_TYPE_T = "chain"):
+def optional_traceable(name: str = "", run_type: RUN_TYPE_T = "chain", context_builder=None):
     """
     Optional traceable decorator that wraps functions with LangSmith and/or Langfuse tracing.
 
@@ -64,21 +64,53 @@ def optional_traceable(name: str = "", run_type: RUN_TYPE_T = "chain"):
             except ImportError:
                 pass
 
-        if HAS_LANGFUSE:
+        if HAS_LANGFUSE or context_builder is not None:
             _inner = wrapped
             _observed = None
 
             @functools.wraps(_inner)
             def _langfuse_lazy(*args, **kwargs):
                 nonlocal _observed
-                if _langfuse_enabled:
-                    if _observed is None:
-                        from langfuse import observe
+                token = None
+                try:
+                    from datus.utils.trace_context import get_trace_context, set_trace_context
 
-                        t = name or getattr(func, "__name__", "agent_operation")
-                        _observed = observe(name=t, as_type=_LANGFUSE_TYPE_MAP.get(run_type, "span"))(_inner)
-                    return _observed(*args, **kwargs)
-                return _inner(*args, **kwargs)
+                    trace_ctx = get_trace_context()
+                    if trace_ctx is None and context_builder is not None:
+                        trace_ctx = context_builder(*args, **kwargs)
+                        if trace_ctx is not None:
+                            token = set_trace_context(trace_ctx)
+                except Exception as e:
+                    logger.debug(f"Failed to prepare trace context: {e}")
+                    trace_ctx = None
+
+                try:
+                    if _langfuse_enabled and HAS_LANGFUSE:
+                        if _observed is None:
+                            from langfuse import observe
+
+                            t = name or getattr(func, "__name__", "agent_operation")
+                            _observed = observe(name=t, as_type=_LANGFUSE_TYPE_MAP.get(run_type, "span"))(_inner)
+
+                        if trace_ctx is not None:
+                            try:
+                                from langfuse import propagate_attributes
+
+                                with propagate_attributes(**trace_ctx.langfuse_kwargs()):
+                                    return _observed(*args, **kwargs)
+                            except Exception as e:
+                                logger.debug(f"Langfuse propagate_attributes unavailable or failed: {e}")
+                        return _observed(*args, **kwargs)
+
+                    return _inner(*args, **kwargs)
+                finally:
+                    if token is not None:
+                        try:
+                            from datus.utils.trace_context import reset_trace_context
+
+                            reset_trace_context(token)
+                        except Exception as e:
+                            logger.debug(f"Failed to reset trace context: {e}")
 
             wrapped = _langfuse_lazy
 

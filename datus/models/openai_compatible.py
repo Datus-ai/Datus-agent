@@ -38,6 +38,7 @@ from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
 from datus.utils.resource_utils import read_data_file_text
 from datus.utils.text_utils import LitellmPlaceholderStreamFilter, strip_litellm_placeholder
+from datus.utils.trace_context import build_agents_run_config_kwargs
 from datus.utils.traceable_utils import setup_tracing
 
 logger = get_logger(__name__)
@@ -765,11 +766,13 @@ class OpenAICompatibleModel(LLMBaseModel):
         session: Optional[AdvancedSQLiteSession] = None,
         interrupt_controller=None,
         interaction_broker=None,
+        agent_name: Optional[str] = None,
     ) -> Optional[RunConfig]:
         """Build a :class:`RunConfig` carrying our mid-run input filter.
 
-        Returns ``None`` when no ``pending_input_queue`` is wired in — the
-        SDK then runs with its default config and behavior is unchanged.
+        Returns ``None`` when neither tracing context nor ``pending_input_queue``
+        is wired in — the SDK then runs with its default config and behavior is
+        unchanged.
 
         The filter is invoked by the SDK before every LLM turn within a
         ``Runner.run_streamed`` invocation (``agents/run.py`` ~1483). It
@@ -787,7 +790,8 @@ class OpenAICompatibleModel(LLMBaseModel):
         uncaught filter errors and aborts the entire run, which we must
         never let a queue or sqlite hiccup do.
         """
-        if pending_input_queue is None:
+        trace_kwargs = build_agents_run_config_kwargs(agent_name=agent_name)
+        if pending_input_queue is None and not trace_kwargs:
             return None
 
         async def _filter(data: CallModelData) -> ModelInputData:
@@ -820,7 +824,10 @@ class OpenAICompatibleModel(LLMBaseModel):
                 logger.exception("call_model_input_filter raised; returning original input unchanged.")
                 return data.model_data
 
-        return RunConfig(call_model_input_filter=_filter)
+        if pending_input_queue is None:
+            return RunConfig(**trace_kwargs)
+
+        return RunConfig(call_model_input_filter=_filter, **trace_kwargs)
 
     def _build_agent(
         self,
@@ -955,6 +962,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         async def _tools_operation():
             # Use multiple_mcp_servers context manager with empty dict if no MCP servers
             async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
+                agent_name = kwargs.pop("agent_name", "default_agent")
                 agent = self._build_agent(
                     instruction=instruction,
                     output_type=output_type,
@@ -962,13 +970,20 @@ class OpenAICompatibleModel(LLMBaseModel):
                     connected_servers=connected_servers,
                     tools=tools,
                     hooks=hooks,
-                    agent_name=kwargs.pop("agent_name", "default_agent"),
+                    agent_name=agent_name,
                 )
+                run_config = self._build_run_config(agent_name=agent_name)
 
                 # Run agent with LangSmith tracing via OpenAIAgentsTracingProcessor
                 # (configured at module level, captures all SDK traces automatically)
                 try:
-                    result = await Runner.run(agent, input=prompt, max_turns=max_turns, session=session)
+                    result = await Runner.run(
+                        agent,
+                        input=prompt,
+                        max_turns=max_turns,
+                        session=session,
+                        run_config=run_config,
+                    )
                 except MaxTurnsExceeded as e:
                     logger.error(f"Max turns exceeded: {str(e)}")
                     raise DatusException(
@@ -1048,6 +1063,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         async def _stream_operation():
             # Use multiple_mcp_servers context manager with empty dict if no MCP servers
             async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
+                agent_name = kwargs.pop("agent_name", "Tools_Agent")
                 agent = self._build_agent(
                     instruction=instruction,
                     output_type=output_type,
@@ -1055,7 +1071,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                     connected_servers=connected_servers,
                     tools=tools,
                     hooks=hooks,
-                    agent_name=kwargs.pop("agent_name", "Tools_Agent"),
+                    agent_name=agent_name,
                 )
 
                 run_config = self._build_run_config(
@@ -1063,6 +1079,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                     session=session,
                     interrupt_controller=interrupt_controller,
                     interaction_broker=interaction_broker,
+                    agent_name=agent_name,
                 )
                 try:
                     result = Runner.run_streamed(

@@ -31,6 +31,7 @@ from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import now_utc_iso, to_utc_iso
+from datus.utils.trace_context import build_bootstrap_trace_context, trace_context
 
 logger = get_logger(__name__)
 
@@ -72,16 +73,21 @@ class KbService:
                 break
             # Run the sync init in a background thread.
             # Stream BatchEvents from the queue in real-time while the thread runs.
-            future = loop.run_in_executor(
-                None,
-                self._run_component,
-                request,
-                comp_name,
-                queue,
-                loop,
-                cancel_event,
-                project_root,
+            trace_component = comp_name.value if hasattr(comp_name, "value") else str(comp_name)
+            trace_ctx = build_bootstrap_trace_context(
+                datasource=self.agent_config.current_datasource,
+                components=[trace_component],
+                strategy=request.strategy,
+                stream_id=stream_id,
+                agent_home=self.agent_config.home,
+                extra={"source": "api"},
             )
+
+            def _run_component_with_trace(trace_ctx=trace_ctx, comp_name=comp_name):
+                with trace_context(trace_ctx, replace=True):
+                    return self._run_component(request, comp_name, queue, loop, cancel_event, project_root)
+
+            future = loop.run_in_executor(None, _run_component_with_trace)
 
             # Consume events as they arrive until the thread signals completion
             result = None

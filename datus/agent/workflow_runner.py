@@ -12,6 +12,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.base import BaseResult
 from datus.schemas.node_models import SqlTask
 from datus.utils.loggings import get_logger
+from datus.utils.trace_context import build_workflow_trace_context_from_runner
 from datus.utils.traceable_utils import get_trace_url, optional_traceable
 
 logger = get_logger(__name__)
@@ -165,7 +166,7 @@ class WorkflowRunner:
             if output_data:
                 action.output.update(output_data)
 
-    @optional_traceable(name="agent")
+    @optional_traceable(name="agent", context_builder=build_workflow_trace_context_from_runner)
     def run(self, sql_task: Optional[SqlTask] = None, check_storage: bool = False) -> Dict:
         """Execute the workflow synchronously."""
         logger.info("Starting agent execution")
@@ -223,7 +224,7 @@ class WorkflowRunner:
         metadata = self._finalize_workflow(step_count)
         return metadata.get("final_result", {})
 
-    @optional_traceable(name="agent_stream")
+    @optional_traceable(name="agent_stream", context_builder=build_workflow_trace_context_from_runner)
     async def run_stream(
         self,
         sql_task: Optional[SqlTask] = None,
