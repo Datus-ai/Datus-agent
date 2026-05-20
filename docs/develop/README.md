@@ -1,325 +1,254 @@
-# Datus-agent
+# Developer Guide
 
----
-# Deployment
+This page is for contributors running Datus Agent from a source checkout. If you are installing a released package, start with the [Quickstart](../getting_started/Quickstart.md) instead.
 
-## Pulling submodule code locally
+## Source Setup
+
+Clone the repository and initialize submodules:
+
 ```bash
 git submodule update --init
 ```
 
-## Install the Necessary Dependencies
-
-### Using `uv`
+Use Python 3.12. The recommended development environment is `uv`:
 
 ```bash
-# Create a virtual environment
 uv venv -p 3.12
-
-# Synchronize all dependencies
-uv sync
-# with dev dependencies
 uv sync --dev
-
-# Use current environment
 source .venv/bin/activate
 ```
 
-### Using `conda`
+`uv sync --dev` installs the runtime package, test tools, and tracing integrations used during development.
+
+The source checkout exposes the same console entry points as the installed package:
 
 ```bash
-conda create -n datus-agent python=3.12
-conda activate datus-agent
-pip install -r requirements.txt
+uv run datus --version
+uv run datus-agent --version
 ```
 
-### Using `venv`
+Use these entry points in docs and scripts:
+
+| Command | Purpose |
+| --- | --- |
+| `datus` | Interactive REPL and TUI |
+| `datus-agent` | Batch commands such as `probe-llm`, `check-db`, `bootstrap-kb`, and `benchmark` |
+| `datus-api` | REST API server |
+| `datus-mcp` | MCP server |
+
+`python -m datus.main` and `python -m datus.cli.main` still work for low-level debugging, but they are not the preferred user-facing commands.
+
+To build the docs from a fresh source checkout, provide the MkDocs plugins required by `mkdocs.yml`:
 
 ```bash
-virtualenv datus-agent --python=python3.12
-source datus-agent/bin/activate
-pip install -r requirements.txt
+uv run --with mkdocs-material --with mike --with mkdocs-static-i18n mkdocs build --strict
 ```
-
----
 
 ## Configuration
 
-### Agent.yml
+Configuration lookup order is:
+
+1. `--config <path>` if provided.
+2. `./conf/agent.yml` in the current working directory.
+3. `~/.datus/conf/agent.yml`.
+
+For local source work, copy the example only if you do not already have a local config:
 
 ```bash
-cp conf/agent.yml.qs conf/agent.yml
+cp conf/agent.yml.example conf/agent.yml
 ```
 
-Then modify `conf/agent.yml` as needed:
+Keep secrets in environment variables rather than committing literal API keys.
+
+### Models
+
+Current model configuration is provider-based. Put credentials under `agent.providers`, then use `/model` in the REPL to choose the active provider/model for the current project. The selection is written to `./.datus/config.yml`.
 
 ```yaml
 agent:
-  target: deepseek-v3
-  models:
-    deepseek-v3:
-      type: deepseek
-      base_url: https://api.deepseek.com
+  home: ~/.datus
+  providers:
+    openai:
+      api_key: ${OPENAI_API_KEY}
+    deepseek:
       api_key: ${DEEPSEEK_API_KEY}
-      model: deepseek-chat
+    claude:
+      api_key: ${ANTHROPIC_API_KEY}
+    gemini:
+      api_key: ${GEMINI_API_KEY}
+```
 
-    deepseek-r1:
-      type: deepseek
-      base_url: https://api.deepseek.com
-      api_key: ${DEEPSEEK_API_KEY}
-      model: deepseek-reasoner
+Use `agent.models` only for custom or private endpoints that are not covered by `conf/providers.yml`.
 
-  storage_path: data
+### Datasources
 
-  benchmark:
-    bird_dev:
-      benchmark_path: benchmark/bird/dev_20240627
-    spider2:
-      benchmark_path: benchmark/spider2/spider2-snow
+For a quick local smoke test, use the bundled DuckDB sample:
 
+```yaml
+agent:
   services:
     datasources:
       local_duckdb:
         type: duckdb
-        uri: ./tests/duckdb-demo.duckdb
-      spider-snow:
-        type: snowflake
-        warehouse: ${SNOWFLAKE_WAREHOUSE}
-        account: ${SNOWFLAKE_ACCOUNT}
-        username: ${SNOWFLAKE_USER}
-        password: ${SNOWFLAKE_PASSWORD}
-      bird_sqlite:
-        type: sqlite
-        path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite
-
-  storage:
-    base_path: data
-    # Local model recommendations:
-    # 1. For extreme performance: all-MiniLM-L6-v2 (~100M) or intfloat/multilingual-e5-small (~460M)
-    # 2. For balanced performance and quality: intfloat/multilingual-e5-large-instruct (~1.2G)
-    # 3. For optimal retrieval quality: BAAI/bge-large-en-v1.5 or BAAI/bge-large-zh-v1.5 (~3.6G)
-    # You can also select any model that suits your requirements.
-    # Default: all-MiniLM-L6-v2 if no model is configured.
-    # Claude model suggestions: Now we just support openai.
-    database:
-      registry_name: sentence-transformers # default is sentence-transformers, now just support sentence-transformers and openai.
-      model_name: text-embedding-v3
-      dim_size: 1024
-      # batch_size: 10 # This configuration is required when the registration mode is openai
-    document:
-      model_name: intfloat/multilingual-e5-large-instruct
-      dim_size: 1024
-    metric:
-      model_name:  all-MiniLM-L6-v2
-      dim_size: 384
+        uri: duckdb:///datus/sample_data/duckdb-demo.duckdb
 ```
 
-You can configure multiple models and databases. The `target` is the default model to use.
-
----
-
-### Langsmith (Optional)
-
-Set the following environment variables for Langsmith integration:
-
-```env
-LANGSMITH_TRACING=true
-LANGSMITH_ENDPOINT=https://api.smith.langchain.com
-LANGCHAIN_API_KEY=xxx
-LANGSMITH_PROJECT=Datus-agent
-```
-
----
-
-# Have a Try
-
-## Test Connection
+Then verify the connection and open the REPL:
 
 ```bash
-python -m datus.main probe-llm
+uv run datus-agent check-db --config conf/agent.yml --datasource local_duckdb
+uv run datus --config conf/agent.yml --datasource local_duckdb
 ```
 
-Example Output:
+Inside the REPL, SQL is detected automatically:
+
 ```text
-LLM model test successful
-Final Result: {"status": "success", "message": "LLM model test successful", "response": "Yes, I can 'hear' you! 😊 How can I assist you today?"}
+> show tables;
+> select * from tree;
+> /help
 ```
+
+You can also configure datasources interactively with `/datasource`; it writes to `~/.datus/conf/agent.yml` by default.
+
+### Storage Layout
+
+Do not configure `storage_path` for new setups. Data paths are derived from `agent.home`:
+
+| Path | Contents |
+| --- | --- |
+| `{agent.home}/data/` | RDB/vector storage backends |
+| `{agent.home}/sessions/` | Persisted chat sessions |
+| `{agent.home}/benchmark/` | Built-in and custom benchmark data |
+| `{agent.home}/trajectory/` | Workflow checkpoints and local LLM trace YAML files |
+| `{cwd}/subject/` | Project semantic models, SQL summaries, and external knowledge |
+| `{cwd}/.datus/config.yml` | Project-local model, datasource, and service pins |
+
+## Smoke Tests
+
+Run a model probe after configuring at least one provider:
 
 ```bash
-python -m datus.main check-db --datasource local_duckdb
+uv run datus-agent probe-llm --config conf/agent.yml
 ```
 
----
-
-## Run SQL
+Run a datasource probe:
 
 ```bash
-python -m datus.cli.main --datasource local_duckdb --config conf/agent.yml
-
-Datus> select * from tree;
-┏━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┓
-┃ Continent ┃ TradingBloc ┃ Country    ┃ GDP    ┃
-┡━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━┩
-│ NA        │ US          │ US         │ 19.485 │
-│ Asia      │ China       │ China      │ 12.238 │
-│ Asia      │ Japan       │ Japan      │ 4.872  │
-│ Europe    │ EU          │ Germany    │ 3.693  │
-│ Asia      │ India       │ India      │ 2.651  │
-│ Europe    │ UK          │ UK         │ 2.638  │
-│ Europe    │ EU          │ France     │ 2.583  │
-│ SA        │ Brazil      │ Brazil     │ 2.054  │
-│ Europe    │ EU          │ Italy      │ 1.944  │
-│ NA        │ US          │ Canada     │ 1.647  │
-│ Europe    │ Russia      │ Russia     │ 1.578  │
-│ Asia      │ SouthKorea  │ SouthKorea │ 1.531  │
-│ Australia │ Australia   │ Australia  │ 1.323  │
-│ Europe    │ EU          │ Spain      │ 1.314  │
-│ NA        │ US          │ Mexico     │ 1.151  │
-└───────────┴─────────────┴────────────┴────────┘
-Returned 15 rows in 0.03 seconds
-
-Datus> /help
+uv run datus-agent check-db --config conf/agent.yml --datasource local_duckdb
 ```
 
----
-
-# Spider2 Benchmark
-
-## Initialization
-
-Update `agent.yml` if needed:
-
-```yaml
-benchmark:
-  spider2:
-    benchmark_path: benchmark/spider2/spider2-snow
-
-agent:
-  services:
-    datasources:
-      spider-snow:
-        type: snowflake
-        username: ${SNOWFLAKE_USER}
-        account: ${SNOWFLAKE_ACCOUNT}
-        warehouse: ${SNOWFLAKE_WAREHOUSE}
-        password: ${SNOWFLAKE_PASSWORD}
-```
-
-### Bootstrap Knowledge Base
+Start the REPL:
 
 ```bash
-python -m datus.main bootstrap-kb --datasource spider-snow --benchmark spider2 --kb_update_strategy overwrite
+uv run datus --config conf/agent.yml --datasource local_duckdb
 ```
 
-> ⚠️ May take hours (approx. 14,000 tables).
-
-### Run Test by IDs
+For one-shot workflow execution, use `datus-agent run`:
 
 ```bash
-python -m datus.main benchmark --datasource spider-snow --benchmark spider2 --benchmark_task_ids sf_bq104
+uv run datus-agent run \
+  --config conf/agent.yml \
+  --datasource local_duckdb \
+  --task_db_name duckdb-demo \
+  --task "List the top 5 rows from the tree table"
 ```
+
+## Benchmarks
+
+`bird_dev`, `spider2`, and `semantic_layer` are built-in benchmark names. Their paths are fixed by Datus and are resolved under `{agent.home}/benchmark`; do not override their `benchmark_path` in `agent.yml`.
+
+Expected built-in locations:
+
+```text
+~/.datus/benchmark/bird/dev_20240627/
+~/.datus/benchmark/spider2/spider2-snow/
+~/.datus/benchmark/semantic_layer/
+```
+
+Only custom benchmarks need entries under `agent.benchmark`.
+
+### BIRD
+
+Download the BIRD dev dataset into the Datus home directory:
 
 ```bash
-python -m datus.cli.main --datasource spider-snow  --config conf/agent.yml
-
-Datus> !darun_screen
-Creating a new SQL task
-Enter task ID (49856268):
-Enter task description (): Based on the most recent refresh date, identify the top-ranked rising search term for the week that is exactly one year prior to the latest available week in the dataset.
-Enter database name: GOOGLE_TRENDS
-Enter output directory (output):
-Enter external knowledge (optional) ():
-SQL Task created: 49856268
-Database: snowflake - GOOGLE_TRENDS
-
-```
----
-
-# Bird Benchmark
-
-## Initialization
-
-Update Configuration:
-
-```yaml
-benchmark:
-  bird_dev:
-    benchmark_path: benchmark/bird/dev_20240627
-
-agent:
-  services:
-    datasources:
-      bird_sqlite:
-        type: sqlite
-        path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite
-```
-
-### Download and Extract Bird Dev
-
-```bash
+cd ~/.datus
 wget https://bird-bench.oss-cn-beijing.aliyuncs.com/dev.zip
 unzip dev.zip
 mkdir -p benchmark/bird
-mv dev_20240627 benchmark/bird
+mv dev_20240627 benchmark/bird/
 cd benchmark/bird/dev_20240627
 unzip dev_databases
-cd ../../..
 ```
 
-### Bootstrap Knowledge Base
+Configure a SQLite datasource that points at the extracted databases:
+
+```yaml
+agent:
+  services:
+    datasources:
+      bird_sqlite:
+        type: sqlite
+        path_pattern: ~/.datus/benchmark/bird/dev_20240627/dev_databases/**/*.sqlite
+```
+
+Bootstrap metadata and run selected tasks:
 
 ```bash
-python -m datus.main bootstrap-kb --datasource bird_sqlite --benchmark bird_dev --kb_update_strategy overwrite
+uv run datus-agent bootstrap-kb \
+  --config conf/agent.yml \
+  --datasource bird_sqlite \
+  --benchmark bird_dev \
+  --kb_update_strategy overwrite
+
+uv run datus-agent benchmark \
+  --config conf/agent.yml \
+  --datasource bird_sqlite \
+  --benchmark bird_dev \
+  --workflow fixed \
+  --schema_linking_rate medium \
+  --benchmark_task_ids 14 15
 ```
 
-### Run Tests
+### Spider 2.0 Snow
+
+Configure a Snowflake datasource. The datasource name can be anything; the examples use `snowflake`.
+
+```yaml
+agent:
+  services:
+    datasources:
+      snowflake:
+        type: snowflake
+        account: ${SNOWFLAKE_ACCOUNT}
+        username: ${SNOWFLAKE_USER}
+        password: ${SNOWFLAKE_PASSWORD}
+        warehouse: ${SNOWFLAKE_WAREHOUSE}
+```
+
+Bootstrap and run selected tasks:
 
 ```bash
-python -m datus.main benchmark --datasource bird_sqlite --benchmark bird_dev --workflow fixed --schema_linking_rate medium --benchmark_task_ids 14 15
+uv run datus-agent bootstrap-kb \
+  --config conf/agent.yml \
+  --datasource snowflake \
+  --benchmark spider2 \
+  --kb_update_strategy overwrite
+
+uv run datus-agent benchmark \
+  --config conf/agent.yml \
+  --datasource snowflake \
+  --benchmark spider2 \
+  --benchmark_task_ids sf_bq104
 ```
 
-```bash
-python -m datus.main benchmark --datasource bird_sqlite --benchmark bird_dev --schema_linking_rate fast --benchmark_task_ids 32
-```
+Spider metadata bootstrap can take hours because the benchmark contains thousands of tables.
 
-```bash
-python -m datus.main benchmark --datasource bird_sqlite --benchmark bird_dev --workflow fixed --schema_linking_rate medium
-```
+### Semantic Layer
 
-### Using cli to develop
+MetricFlow is configured through the semantic adapter system, not by running `poetry lock`, `mf setup`, or editing `~/.metricflow/config.yml` manually.
 
-```bash
-python -m datus.cli.main --datasource bird_sqlite  --config conf/agent.yml
-```
-
-# Semantic Layer Benchmark
-
-## Initialization
-
-Install Metricflow:
-
-```bash
-# poetry config virtualenvs.in-project true
-poetry lock
-poetry install
-source .venv/bin/activate
-
-# make sure these commands succeeded
-mf setup
-mf tutorial
-mf validate-configs
-```
-
-Update Configuration `~/.metricflow/config.yml`:
-
-```yml
-model_path: </path/to/semantic-models-dir>
-dwh_schema: mf_demo
-dwh_dialect: duckdb
-dwh_database: <home dir>/.metricflow/duck.db
-```
-
-Update Configuration conf/agent.yml:
+At minimum, configure a datasource and an explicit MetricFlow semantic adapter:
 
 ```yaml
 agent:
@@ -327,28 +256,164 @@ agent:
     datasources:
       duckdb:
         type: duckdb
-        uri: ~/.metricflow/duck.db
-
-  benchmark:
+        uri: duckdb:///path/to/duck.db
     semantic_layer:
-      benchmark_path: benchmark/semantic_layer
+      metricflow: {}
 ```
 
-Export Environment Variables:
-```bash
-export MF_PATH=</path/to/metricflow>/.venv/bin/mf
-export MF_VERBOSE=true
-export MF_MODEL_PATH=</path/to/semantic-models-dir>
+The `/services semantic` TUI can add the `metricflow` entry and install `datus-semantic-metricflow` if the adapter package is missing.
+
+Place semantic-layer benchmark data under:
+
+```text
+~/.datus/benchmark/semantic_layer/
 ```
 
-### Bootstrap Metrics Generation
-
-```bash
-python -m datus.main bootstrap-kb --datasource duckdb --components metrics --kb_update_strategy overwrite
-```
-
-### Run Tests
+Then run:
 
 ```bash
-python -m datus.main benchmark --datasource duckdb --benchmark semantic_layer --workflow metric_to_sql
+uv run datus-agent bootstrap-kb \
+  --config conf/agent.yml \
+  --datasource duckdb \
+  --components metrics \
+  --kb_update_strategy overwrite
+
+uv run datus-agent benchmark \
+  --config conf/agent.yml \
+  --datasource duckdb \
+  --benchmark semantic_layer \
+  --workflow metric_to_sql
 ```
+
+## Observability
+
+Datus has three complementary ways to inspect execution:
+
+| Scope | Mechanism | When to use |
+| --- | --- | --- |
+| Current REPL turn | Press `Ctrl+O` | Inspect tool calls, SQL, and raw outputs while interacting locally |
+| Local files | `--save_llm_trace` or `save_llm_trace: true` | Debug exact prompts and model outputs without sending data to a hosted tracing system |
+| Hosted traces | LangSmith and/or Langfuse | Debug full workflow, benchmark, chat, LiteLLM, and OpenAI Agents SDK traces across runs |
+
+### Inline REPL Trace
+
+In the `datus` REPL, press `Ctrl+O` during or after a turn to toggle verbose trace details. Press it again, or `q`, to return to the compact view.
+
+### Local YAML Traces
+
+Use `--save_llm_trace` to persist model inputs and outputs:
+
+```bash
+uv run datus-agent --save_llm_trace run \
+  --config conf/agent.yml \
+  --datasource local_duckdb \
+  --task_db_name duckdb-demo \
+  --task "Summarize the tree table"
+```
+
+You can also enable it for a custom model entry:
+
+```yaml
+agent:
+  models:
+    my-internal:
+      type: openai
+      base_url: https://internal.example.com/v1
+      api_key: ${MY_KEY}
+      model: internal-gpt-4
+      save_llm_trace: true
+```
+
+Trace YAML files are written under `{agent.home}/trajectory/...`. Workflow checkpoints are saved in the same trajectory tree and may include a `trace_url` metadata field when LangSmith or Langfuse is enabled.
+
+### LangSmith
+
+LangSmith tracing is enabled only when tracing is explicitly switched on and an API key is available.
+
+For source development, `uv sync --dev` installs the LangSmith packages. In a minimal environment, install them into the active Datus environment:
+
+```bash
+uv pip install langsmith langsmith-fetch
+```
+
+Set environment variables before starting `datus` or `datus-agent`:
+
+```bash
+export LANGSMITH_TRACING=true
+export LANGSMITH_API_KEY=<your-langsmith-key>
+export LANGSMITH_PROJECT=datus-agent-dev
+
+# Optional, for self-hosted LangSmith:
+export LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+```
+
+`LANGCHAIN_TRACING_V2=true` and `LANGCHAIN_API_KEY` are also accepted for compatibility.
+
+Run any traced path:
+
+```bash
+uv run datus-agent benchmark \
+  --config conf/agent.yml \
+  --datasource bird_sqlite \
+  --benchmark bird_dev \
+  --benchmark_task_ids 14
+```
+
+View traces in the LangSmith project named by `LANGSMITH_PROJECT`. Workflow runs log the LangSmith trace URL when the trace ends and persist it in the saved workflow metadata when available.
+
+### Langfuse
+
+Langfuse requires both public and secret keys. For complete agent/tool spans, keep the OpenInference and OpenTelemetry packages installed; they are included by `uv sync --dev`.
+
+In a minimal environment:
+
+```bash
+uv pip install langfuse openinference-instrumentation-openai-agents opentelemetry-exporter-otlp
+```
+
+Set environment variables before starting Datus:
+
+```bash
+export LANGFUSE_PUBLIC_KEY=<your-langfuse-public-key>
+export LANGFUSE_SECRET_KEY=<your-langfuse-secret-key>
+export LANGFUSE_HOST=https://us.cloud.langfuse.com
+```
+
+For self-hosted Langfuse, point `LANGFUSE_HOST` at your instance. If your OTLP ingestion endpoint differs from the UI/API host, set `LANGFUSE_OTEL_HOST` explicitly. Otherwise Datus derives it from `LANGFUSE_HOST` or `LANGFUSE_BASE_URL`.
+
+Run a command:
+
+```bash
+uv run datus-agent bootstrap-kb \
+  --config conf/agent.yml \
+  --datasource local_duckdb \
+  --components metadata
+```
+
+Open the Langfuse project for the key pair you configured. Traces are named by operation, for example:
+
+| Operation | Trace name shape |
+| --- | --- |
+| Workflow run | `cli/run/<workflow>` |
+| Benchmark task | `benchmark/<benchmark>/<context>/task-<id>` |
+| Knowledge bootstrap | `bootstrap-kb/<datasource>/<components>` |
+| Chat/API session | `chat/<agent>` |
+
+Tags and metadata include datasource, workflow, benchmark, task id, run id, and `agent.home` when available.
+
+### Running LangSmith and Langfuse Together
+
+Both backends can be enabled in the same process. LangSmith handles SDK tracing through its tracing processor; Langfuse receives LiteLLM callbacks and, when OpenInference is installed, OpenAI Agents SDK spans as well.
+
+Only one `trace_url` is stored in workflow metadata. If both systems are enabled and LangSmith has produced a URL, that LangSmith URL takes precedence; Langfuse still receives traces.
+
+After changing tracing environment variables, restart the Datus process. Tracing setup is initialized once per process.
+
+## Useful References
+
+- [Quickstart](../getting_started/Quickstart.md)
+- [Configuration Guide](../configuration/introduction.md)
+- [Agent Configuration](../configuration/agent.md)
+- [Benchmark Manual](../benchmark/benchmark_manual.md)
+- [Semantic Layer Configuration](../configuration/semantic_layer.md)
+- [LLM Trace Usage](../training/llm_trace_usage.md)
