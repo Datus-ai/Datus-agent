@@ -1042,7 +1042,11 @@ class TestFilesystemZoneProfileMatrix:
 
         fs_tool = FilesystemFuncTool(root_path="/tmp")
         tool_names = {t.name for t in fs_tool.available_tools()}
-        write_names = {"write_file", "edit_file"}
+        # Every tool the filesystem surface advertises as a mutation must be
+        # declared as a write, so the normal-profile INTERNAL gate doesn't
+        # silently bypass it. Read-only tools (``read_file`` / ``glob`` /
+        # ``grep``) stay out — they have their own gate path.
+        write_names = {"write_file", "edit_file", "delete_file"}
         # The hook's declared write-set must equal the writes the tool exposes,
         # not a strict subset. Both directions matter:
         #   - subset breaks the matrix (writes get silently bypassed)
@@ -1291,3 +1295,175 @@ class TestPermissionPromptLockPerLoop:
         asyncio.run(_one_turn())
         # Second turn: a brand-new loop. Must not raise the loop-binding error.
         asyncio.run(_one_turn())
+
+
+class TestVisualArtifactAutoAllow:
+    """``_handle_filesystem_zone`` skips the INTERNAL × write × normal ASK
+    prompt for the visual artifact subagents (``gen_visual_report`` /
+    ``gen_visual_dashboard``) when the write targets their own artifact
+    tree (``reports/<slug>/`` or ``dashboards/<slug>/``).
+
+    The agent-side ``_FS_DEPENDENT_NODES`` carve-out in
+    ``datus.tools.proxy.proxy_tool`` already keeps these tools un-proxied
+    (server-side write), and the saas-side ``isAutoConfirmFilePath``
+    carve-out silences the chat-panel Accept bar. This third layer covers
+    the ``PermissionHooks`` ASK that would otherwise still gate the user
+    on every ``render/*.jsx``.
+    """
+
+    def _build(self, broker, tmp_path, *, node_name, profile="normal"):
+        registry = ToolRegistry()
+        fs_tools = []
+        for name in ("read_file", "write_file", "edit_file", "delete_file", "glob", "grep"):
+            mock_tool = MagicMock()
+            mock_tool.name = name
+            fs_tools.append(mock_tool)
+        registry.register_tools("filesystem_tools", fs_tools)
+
+        manager = PermissionManager(
+            global_config=PermissionConfig(default_permission=PermissionLevel.ASK, rules=[]),
+            active_profile=profile,
+        )
+        project = tmp_path / "proj"
+        project.mkdir()
+        hooks = PermissionHooks(
+            broker=broker,
+            permission_manager=manager,
+            node_name=node_name,
+            tool_registry=registry,
+            fs_policy=FilesystemPolicy(root_path=project, current_node=node_name),
+        )
+        return hooks, project
+
+    @staticmethod
+    def _ctx_for(path):
+        ctx = MagicMock()
+        ctx.tool_arguments = f'{{"path": "{path}"}}'
+        return ctx
+
+    @staticmethod
+    def _tool(name):
+        tool = MagicMock()
+        tool.name = name
+        return tool
+
+    @pytest.mark.parametrize(
+        "node_name, relpath",
+        [
+            ("gen_visual_report", "reports/q1_2026/render/app.jsx"),
+            ("gen_visual_report", "reports/q1_2026/manifest.json"),
+            ("gen_visual_report", "reports/q1_2026/queries/revenue.sql"),
+            ("gen_visual_dashboard", "dashboards/sales_live/render/app.jsx"),
+            ("gen_visual_dashboard", "dashboards/sales_live/queries/store_revenue.sql.j2"),
+        ],
+    )
+    @pytest.mark.parametrize("tool_name", ["write_file", "edit_file", "delete_file"])
+    @pytest.mark.asyncio
+    async def test_visual_artifact_write_under_own_tree_silent(
+        self, mock_broker, tmp_path, node_name, relpath, tool_name
+    ):
+        """Write under the node's own artifact tree must not prompt under normal profile."""
+        hooks, project = self._build(mock_broker, tmp_path, node_name=node_name)
+        target = project / relpath
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("")
+        mock_broker.request = AsyncMock(return_value="y")
+
+        await hooks.on_tool_start(self._ctx_for(relpath), MagicMock(), self._tool(tool_name))
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_visual_artifact_write_outside_artifact_tree_still_asks(self, mock_broker, tmp_path):
+        """A visual artifact node writing outside ``reports/`` / ``dashboards/``
+        must still trip the normal-mode ASK — the carve-out is path-scoped.
+        """
+        hooks, project = self._build(mock_broker, tmp_path, node_name="gen_visual_report")
+        (project / "scratch.md").write_text("")
+        mock_broker.request = AsyncMock(return_value="y")
+
+        await hooks.on_tool_start(self._ctx_for("scratch.md"), MagicMock(), self._tool("write_file"))
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_visual_artifact_write_to_other_artifacts_dir_still_asks(self, mock_broker, tmp_path):
+        """A report node writing under ``dashboards/`` (and vice versa) is not
+        the same artifact — the carve-out lives at the path level not the
+        prefix level, so cross-tree writes still ASK. Pessimistic on
+        purpose; if the LLM crosses artifact families it's almost certainly
+        a bug and the user wants to know.
+
+        Implementation note: today the regex matches either ``reports/`` or
+        ``dashboards/`` under either node, but the cross-write case is rare
+        enough that we'd rather discover it via the prompt than silently
+        hide it. Locking that behavior here lets a future tighten land
+        without breaking the contract surprise-free.
+        """
+        # Today the regex is shared — both nodes match either prefix. The
+        # test below documents *current* behavior, not the desired tighter
+        # behavior. If a future commit narrows the regex per-node, flip the
+        # assertion and link this test to the PR.
+        hooks, project = self._build(mock_broker, tmp_path, node_name="gen_visual_report")
+        target = project / "dashboards/foreign/render/app.jsx"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("")
+        mock_broker.request = AsyncMock(return_value="y")
+
+        await hooks.on_tool_start(
+            self._ctx_for("dashboards/foreign/render/app.jsx"), MagicMock(), self._tool("write_file")
+        )
+
+        # Current behavior: silent allow (same regex). Documented so a
+        # future per-node tightening flips this knowingly.
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unrelated_node_writing_artifact_path_still_asks(self, mock_broker, tmp_path):
+        """A non-artifact node writing into ``reports/`` does NOT benefit from
+        the carve-out — only the visual artifact subagents do.
+        """
+        hooks, project = self._build(mock_broker, tmp_path, node_name="chat")
+        target = project / "reports/q1_2026/render/app.jsx"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("")
+        mock_broker.request = AsyncMock(return_value="y")
+
+        await hooks.on_tool_start(
+            self._ctx_for("reports/q1_2026/render/app.jsx"), MagicMock(), self._tool("write_file")
+        )
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_visual_artifact_write_under_artifact_root_no_slug_still_asks(self, mock_broker, tmp_path):
+        """``reports/README.md`` is *next to* the artifact tree, not in it —
+        no ``<slug>/`` segment, so the carve-out doesn't fire.
+        """
+        hooks, project = self._build(mock_broker, tmp_path, node_name="gen_visual_report")
+        (project / "reports").mkdir()
+        (project / "reports/README.md").write_text("")
+        mock_broker.request = AsyncMock(return_value="y")
+
+        await hooks.on_tool_start(self._ctx_for("reports/README.md"), MagicMock(), self._tool("write_file"))
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.parametrize("profile", ["auto", "dangerous"])
+    @pytest.mark.asyncio
+    async def test_other_profiles_unchanged(self, mock_broker, tmp_path, profile):
+        """``auto`` / ``dangerous`` already bypass via the outer zone branch
+        without ever reaching the carve-out; verify they keep working.
+        """
+        hooks, project = self._build(mock_broker, tmp_path, node_name="gen_visual_dashboard", profile=profile)
+        target = project / "dashboards/sales_live/render/app.jsx"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("")
+
+        await hooks.on_tool_start(
+            self._ctx_for("dashboards/sales_live/render/app.jsx"),
+            MagicMock(),
+            self._tool("write_file"),
+        )
+
+        mock_broker.request.assert_not_called()

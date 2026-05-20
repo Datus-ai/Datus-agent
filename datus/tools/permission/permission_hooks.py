@@ -18,6 +18,7 @@ when prompting users for permission confirmation.
 import asyncio
 import json
 import logging
+import re
 import weakref
 from dataclasses import dataclass
 from pathlib import Path
@@ -340,8 +341,30 @@ class PermissionHooks(AgentHooks):
     # Tool-name set used to distinguish destructive writes from reads.
     # Keep in sync with ``FilesystemFuncTool.available_tools`` — adding a new
     # write-capable filesystem tool (e.g. ``append_file``) requires extending
-    # this set so the profile-aware gate treats it as a write.
-    _FILESYSTEM_WRITE_TOOLS = frozenset({"write_file", "edit_file"})
+    # this set so the profile-aware gate treats it as a write. ``delete_file``
+    # belongs here too — it mutates the filesystem just as much as a write
+    # and should hit the same INTERNAL × write × normal ASK gate.
+    _FILESYSTEM_WRITE_TOOLS = frozenset({"write_file", "edit_file", "delete_file"})
+
+    # Subagents that author their own artifact tree (manifest.json,
+    # queries/*, render/*.jsx, analysis/*) in one turn — usually 5-10 files
+    # per run. Under ``normal`` profile the default ASK gate would prompt
+    # the user for every single ``write_file`` / ``edit_file``, which
+    # defeats the purpose: the artifact only makes sense as a whole and
+    # the user reviews it via the rendered preview, not per-file diffs.
+    # Mirror of ``_FS_DEPENDENT_NODES`` in ``datus.tools.proxy.proxy_tool``
+    # (which exempts the same nodes from the IDE proxy round-trip) and the
+    # ``isAutoConfirmFilePath`` carve-out in ``Datus-saas`` (which silences
+    # the per-tool Accept bar in the chat panel). All three layers must
+    # agree or one of them keeps gating the user.
+    _ARTIFACT_AUTOALLOW_NODES = frozenset({"gen_visual_report", "gen_visual_dashboard"})
+
+    # Relative-to-project-root path prefixes the carve-out applies to.
+    # Slug character class is loose on purpose — ``ARTIFACT_SLUG_PATTERN``
+    # in ``datus.schemas.artifact_manifest`` is the source of truth and
+    # may evolve; matching ``[^/]+`` keeps the carve-out in lockstep
+    # without dragging the schema dep into this hook.
+    _ARTIFACT_AUTOALLOW_PATH_RE = re.compile(r"^(?:reports|dashboards)/[^/]+/")
 
     async def _handle_filesystem_zone(self, context: Any, tool_name: str, pattern_name: str) -> bool:
         """Zone × profile × read-vs-write gating for ``filesystem_tools.*`` calls.
@@ -416,6 +439,23 @@ class PermissionHooks(AgentHooks):
             # at the tool layer (parent-memory inheritance is read-only),
             # so we keep bypass here to avoid a wasted ASK round-trip.
             if is_write and profile == "normal" and resolved.zone == PathZone.INTERNAL:
+                # Visual artifact subagents author the entire artifact tree
+                # in one turn — bypass the per-file ASK for paths under
+                # their own ``reports/<slug>/`` or ``dashboards/<slug>/``
+                # directory. See ``_ARTIFACT_AUTOALLOW_NODES`` docstring.
+                if self.node_name in self._ARTIFACT_AUTOALLOW_NODES:
+                    try:
+                        rel = resolved.resolved.relative_to(policy.root_path).as_posix()
+                    except ValueError:
+                        rel = None
+                    if rel and self._ARTIFACT_AUTOALLOW_PATH_RE.match(rel):
+                        logger.debug(
+                            "Filesystem zone INTERNAL × write × normal: auto-allowing %s on %s for artifact node %r",
+                            tool_name,
+                            rel,
+                            self.node_name,
+                        )
+                        return True
                 logger.debug(
                     "Filesystem zone INTERNAL × write × normal: deferring to rule lookup for %s",
                     resolved.display,
