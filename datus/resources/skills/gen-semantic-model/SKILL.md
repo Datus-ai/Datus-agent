@@ -28,6 +28,8 @@ Create production-ready MetricFlow semantic model YAML for one or more database 
    - Define identifiers for primary keys and join keys.
    - Define measures only for reusable aggregations.
    - Define dimensions for grouping/filtering fields.
+   - Do not define the same column/name under both `identifiers` and `dimensions`. Use identifiers for
+     primary/join keys and dimensions for grouping/filtering fields.
    - Use `expr: "1"` for row-count measures with `agg: COUNT`.
    - For measures, use `agg` for the aggregation type; do not add a `type` field to measure entries.
 
@@ -40,7 +42,7 @@ Create production-ready MetricFlow semantic model YAML for one or more database 
    - If explicit metric definitions are needed, write them through the metrics generation workflow as separate `metric:` documents.
 
 4. **Validate and fix**
-   - Call `validate_semantic`.
+   - Call `validate_semantic(scope="semantic_model")`.
    - If validation fails, use `edit_file` to fix the YAML and call `validate_semantic` again.
    - Repeat until `validate_semantic` succeeds.
 

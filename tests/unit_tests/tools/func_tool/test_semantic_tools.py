@@ -795,7 +795,96 @@ class TestValidateSemantic:
         assert result.result["valid"] is False
         assert len(result.result["issues"]) == 1
         assert "1 validation errors" in result.error
+        assert "bad config" in result.error
         assert evidence.validation_passed is False
+
+    def test_all_scope_keeps_no_metrics_validation_error(self, semantic_tools_with_adapter):
+        tool, mock_adapter = semantic_tools_with_adapter
+        evidence = GenerationEvidence()
+        tool.generation_evidence = evidence
+
+        mock_issue = Mock()
+        mock_issue.model_dump.return_value = {
+            "severity": "error",
+            "message": "No metrics present in the model.",
+        }
+        mock_validation = Mock()
+        mock_validation.valid = False
+        mock_validation.issues = [mock_issue]
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=mock_validation):
+            result = tool.validate_semantic()
+
+        assert result.success == 0
+        assert result.result["valid"] is False
+        assert result.result["issues"] == [{"severity": "error", "message": "No metrics present in the model."}]
+        assert result.result["ignored_issues"] == []
+        assert evidence.validation_passed is False
+
+    def test_semantic_model_scope_ignores_no_metrics_validation_error(self, semantic_tools_with_adapter):
+        tool, mock_adapter = semantic_tools_with_adapter
+        evidence = GenerationEvidence()
+        tool.generation_evidence = evidence
+
+        mock_issue = Mock()
+        mock_issue.model_dump.return_value = {
+            "severity": "error",
+            "message": "No metrics present in the model.",
+        }
+        mock_validation = Mock()
+        mock_validation.valid = False
+        mock_validation.issues = [mock_issue]
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=mock_validation):
+            with patch.object(tool, "_reload_adapter", return_value=True):
+                result = tool.validate_semantic(scope="semantic_model")
+
+        assert result.success == 1
+        assert result.result["valid"] is True
+        assert result.result["issues"] == []
+        assert result.result["ignored_issues"] == [{"severity": "error", "message": "No metrics present in the model."}]
+        assert result.result["scope"] == "semantic_model"
+        assert evidence.validation_passed is True
+
+    def test_semantic_model_scope_keeps_real_validation_errors(self, semantic_tools_with_adapter):
+        tool, mock_adapter = semantic_tools_with_adapter
+        evidence = GenerationEvidence()
+        tool.generation_evidence = evidence
+
+        no_metrics_issue = Mock()
+        no_metrics_issue.model_dump.return_value = {
+            "severity": "error",
+            "message": "No metrics present in the model.",
+        }
+        duplicate_issue = Mock()
+        duplicate_issue.model_dump.return_value = {
+            "severity": "error",
+            "message": "Element ac_code has already been used as Dimension",
+        }
+        mock_validation = Mock()
+        mock_validation.valid = False
+        mock_validation.issues = [no_metrics_issue, duplicate_issue]
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=mock_validation):
+            result = tool.validate_semantic(scope="semantic_model")
+
+        assert result.success == 0
+        assert result.result["valid"] is False
+        assert result.result["issues"] == [
+            {"severity": "error", "message": "Element ac_code has already been used as Dimension"}
+        ]
+        assert result.result["ignored_issues"] == [{"severity": "error", "message": "No metrics present in the model."}]
+        assert "1 validation errors" in result.error
+        assert "Element ac_code" in result.error
+        assert evidence.validation_passed is False
+
+    def test_invalid_scope_returns_error(self, semantic_tools_with_adapter):
+        tool, mock_adapter = semantic_tools_with_adapter
+
+        result = tool.validate_semantic(scope="unknown")
+
+        assert result.success == 0
+        assert "scope must be one of" in result.error
 
     def test_exception_returns_failure(self, semantic_tools_with_adapter):
         tool, mock_adapter = semantic_tools_with_adapter

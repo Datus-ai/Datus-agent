@@ -66,6 +66,7 @@ Please strictly follow the instructions below:
    - Create a semantic model following the specification below.
    - A semantic model generation file should define `data_source:` document(s). Do not add a top-level `metrics:` list to the same YAML document.
    - If explicit metric definitions are required later, generate them in the metrics workflow as separate `metric:` YAML documents. MetricFlow requires each YAML document to have exactly one top-level object type.
+   - Do not define the same column/name under both `identifiers` and `dimensions`. Use identifiers for primary/join keys and dimensions for grouping/filtering fields.
    - **CRITICAL**: Populate `description` fields for ALL measures, dimensions, and identifiers by **COMBINING ALL** available information:
      - Start with DDL comments (preserve original language)
      - Append usage patterns and **filter examples** from `analyze_column_usage_patterns`
@@ -87,16 +88,17 @@ Please strictly follow the instructions below:
    - If semantic model already exists, update it with `edit_file` if anything changed
 
 6. **Validate configuration** (MANDATORY - DO NOT SKIP):
-   - Use `validate_semantic` tool to validate the semantic model
+   - Use `validate_semantic(scope="semantic_model")` tool to validate the semantic model
    - **CRITICAL**: If validation fails:
      1. Analyze the error message carefully
      2. Use `edit_file` tool to fix the YAML file (do NOT just describe the fix - actually execute the fix)
-     3. Call `validate_semantic` again to verify the fix
+     3. Call `validate_semantic(scope="semantic_model")` again to verify the fix
      4. Repeat until validation passes
    - **ABSOLUTE RULE**: You MUST NOT return the final JSON response until `validate_semantic` returns success
    - Common validation errors and fixes:
      - PostgreSQL column case sensitivity: wrap uppercase column names in double quotes (e.g., `expr: '"SP_POP_TOTL"'`)
      - Column not found: check column names match exactly with DDL
+     - Duplicate semantic element name: remove a column from either `identifiers` or `dimensions`; do not keep the same `name` in both lists
      - Invalid YAML syntax: check indentation and quoting
 
 7. **Complete generation** (ONLY AFTER VALIDATION PASSES):
@@ -176,11 +178,11 @@ data_source:
 ```
 
 ### Step 6: Validate All Files Together (MANDATORY)
-- Call `validate_semantic` tool
+- Call `validate_semantic(scope="semantic_model")` tool
 - **CRITICAL**: If validation fails:
   1. Analyze the error message (e.g., "column xxx does not exist")
   2. Use `edit_file` tool to fix the YAML file - actually execute the fix, don't just describe it
-  3. Call `validate_semantic` again
+  3. Call `validate_semantic(scope="semantic_model")` again
   4. Repeat until ALL validations pass
 - **ABSOLUTE RULE**: Do NOT proceed to Step 7 until validation succeeds
 
