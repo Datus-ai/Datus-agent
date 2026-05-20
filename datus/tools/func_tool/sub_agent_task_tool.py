@@ -1175,6 +1175,32 @@ class SubAgentTaskTool:
                 }
             )
 
+        # Visual dashboard result (new artifact-based subagent). The
+        # legacy ``dashboard_result`` envelope above is from
+        # ``gen_dashboard_agentic_node.py``; the new
+        # ``GenVisualDashboardNodeResult`` carries the documented fields
+        # (``dashboard_slug``, ``app_jsx_path``, ``render_file_count``,
+        # ``template_count``) flat at the top level. Without this branch
+        # the conversion falls through to the generic envelope and drops
+        # everything the parent LLM was told (via
+        # ``BUILTIN_SUBAGENT_DESCRIPTIONS["gen_visual_dashboard"]``) to
+        # expect. Match on the slug key's presence rather than tool name
+        # so the branch also fires for legitimate model_dump output
+        # where ``dashboard_slug`` is None (run failed before binding) —
+        # preserving the explicit None is more honest than silently
+        # collapsing into the generic envelope.
+        if "dashboard_slug" in output:
+            return _wrap(
+                {
+                    "response": response,
+                    "dashboard_slug": output.get("dashboard_slug"),
+                    "app_jsx_path": output.get("app_jsx_path"),
+                    "render_file_count": output.get("render_file_count", 0),
+                    "template_count": output.get("template_count", 0),
+                    "tokens_used": tokens,
+                }
+            )
+
         # Scheduler result: has 'scheduler_result' key
         scheduler_result = output.get("scheduler_result")
         if scheduler_result is not None:

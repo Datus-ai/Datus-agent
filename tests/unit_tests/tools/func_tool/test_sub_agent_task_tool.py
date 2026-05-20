@@ -604,6 +604,74 @@ class TestConvertToFuncResult:
         assert result.success == 1
         assert result.result["response"] == "Some content"
 
+    def test_visual_dashboard_result_preserves_documented_fields(self, task_tool):
+        """``GenVisualDashboardNodeResult.model_dump()`` carries
+        ``dashboard_slug``, ``app_jsx_path``, ``render_file_count``,
+        ``template_count`` flat at the top level (no
+        ``dashboard_result`` envelope — that key belongs to the legacy
+        ``gen_dashboard`` node). The conversion must preserve every
+        field the parent LLM is told to expect via
+        ``BUILTIN_SUBAGENT_DESCRIPTIONS["gen_visual_dashboard"]``.
+        """
+        # Shape mirrors ``GenVisualDashboardNodeResult(...).model_dump()``
+        # — only the documented + load-bearing fields are inlined here
+        # so a regression that adds a new field to the model doesn't
+        # spuriously fail this test.
+        output = {
+            "success": True,
+            "response": "Dashboard built.",
+            "dashboard_slug": "aov_weekly",
+            "app_jsx_path": "dashboards/aov_weekly/render/app.jsx",
+            "render_file_count": 4,
+            "template_count": 3,
+            "tokens_used": 12345,
+            "artifact_kind": "dashboard",
+            "artifact_mode": "new",
+            "name": "AOV Weekly Trend",
+        }
+        result = task_tool._convert_to_func_result(output)
+        assert result.success == 1
+        # Every documented field present + non-discarded.
+        assert result.result["response"] == "Dashboard built."
+        assert result.result["dashboard_slug"] == "aov_weekly"
+        assert result.result["app_jsx_path"] == "dashboards/aov_weekly/render/app.jsx"
+        assert result.result["render_file_count"] == 4
+        assert result.result["template_count"] == 3
+        assert result.result["tokens_used"] == 12345
+
+    def test_visual_dashboard_result_preserves_none_slug_on_partial_run(self, task_tool):
+        """When the dashboard run failed before binding, the model
+        emits ``dashboard_slug=None`` (still a populated key). The
+        conversion must keep that explicit None rather than fall
+        through to the generic envelope — otherwise the parent LLM
+        can't tell "the subagent kind ran but didn't bind" apart from
+        "the subagent kind wasn't even invoked"."""
+        output = {
+            "success": False,
+            "response": "Failed before binding an artifact.",
+            "dashboard_slug": None,
+            "app_jsx_path": None,
+            "render_file_count": 0,
+            "template_count": 0,
+            "tokens_used": 42,
+        }
+        # The branch fires regardless of the ``success`` flag because
+        # the early ``output.get("success") is False`` check intercepts
+        # explicit failures. For partial-runs where the result model
+        # was constructed with ``success=True`` but bindings still
+        # None, the same branch handles it.
+        # We simulate the partial-success case by removing the
+        # explicit-failure signal.
+        partial = dict(output, success=True)
+        result = task_tool._convert_to_func_result(partial)
+        assert result.success == 1
+        # ``dashboard_slug`` key present with None — operators / parent
+        # LLM can disambiguate "ran but no artifact" from missing-key.
+        assert "dashboard_slug" in result.result
+        assert result.result["dashboard_slug"] is None
+        assert result.result["render_file_count"] == 0
+        assert result.result["template_count"] == 0
+
 
 @pytest.mark.acceptance
 class TestSubAgentTaskAcceptance:
