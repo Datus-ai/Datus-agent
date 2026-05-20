@@ -216,11 +216,15 @@ Treat each output as a polished deliverable — a small **branded analytics prod
 `Skeleton` and `ErrorBlock` are runtime-provided primitives — **import them directly from `@datus/web-artifact`**. Do not re-implement them in `render/shared/card.jsx`; every artifact shares one canonical look and gets free upgrades when the runtime ships new versions, exactly like `AnimateOnVisible` and `ChartEntryMore`.
 
 ```jsx
-import { Skeleton, ErrorBlock } from '@datus/web-artifact';
+import { useDatusArtifact, Skeleton, ErrorBlock } from '@datus/web-artifact';
 
-const { isLoading, errorMessage, data, refetch } = useQuerySql('queries/foo', params);
-if (isLoading) return <Skeleton minHeight={300} />;
-if (errorMessage) return <ErrorBlock msg={errorMessage} onRetry={refetch} />;
+function RevenueCard({ params }) {
+  const { useQuerySql } = useDatusArtifact();
+  const { isLoading, errorMessage, data, refetch } = useQuerySql('queries/foo', params);
+  if (isLoading) return <Skeleton minHeight={300} />;
+  if (errorMessage) return <ErrorBlock msg={errorMessage} onRetry={refetch} />;
+  // ... chart JSX
+}
 ```
 
 Props:
