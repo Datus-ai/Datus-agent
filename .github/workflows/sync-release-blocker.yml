@@ -103,6 +103,10 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git fetch origin --prune main "${RELEASE_BRANCH}" --tags
+          existing_sync_sha="$(git ls-remote --heads origin "${SYNC_BRANCH}" | awk '{print $1}')"
+          if [[ -n "${existing_sync_sha}" ]]; then
+            git fetch origin "refs/heads/${SYNC_BRANCH}:refs/remotes/origin/${SYNC_BRANCH}"
+          fi
           git checkout -B "${SYNC_BRANCH}" origin/main
 
           commit_word_count="$(git rev-list --parents -n 1 "${MERGE_COMMIT}" | wc -w | tr -d ' ')"
@@ -121,7 +125,13 @@ jobs:
             exit 1
           fi
 
-          git push --force-with-lease --set-upstream origin "${SYNC_BRANCH}"
+          if [[ -n "${existing_sync_sha}" ]]; then
+            git push \
+              --force-with-lease="refs/heads/${SYNC_BRANCH}:${existing_sync_sha}" \
+              --set-upstream origin "${SYNC_BRANCH}"
+          else
+            git push --set-upstream origin "${SYNC_BRANCH}"
+          fi
 
       - name: Create or update main sync PR
         shell: bash
