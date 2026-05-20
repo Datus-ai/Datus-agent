@@ -210,6 +210,119 @@ Treat each output as a polished deliverable — a small **branded analytics prod
 - **Figure captions** (report mode): every chart gets a caption beneath the `<ResponsiveContainer>` in the form `Figure N. <one-line description>. Source: <sqlId>, executed <date>`. Captions in 11px italic muted text.
 - **Data tables**: zebra-striped rows, right-aligned numeric columns, left-aligned string columns, sticky header within the table card. When the dataset has **more than 15 rows, paginate** at 15 rows/page. Render a small pagination footer beneath the table — `‹ Prev`, `<current> / <total>` indicator, `Next ›` laid out in a single row and **right-aligned within the card** (`display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8`). Never center the footer in the card or stretch it edge-to-edge — flex-end is mandatory so multiple tables on the same page align visually. Keep the current page in component-local `useState`; disable the boundary button at page 1 / last page. Don't use a "show more" toggle and don't render all rows at once; paginating is the cleaner read for the user and keeps the rendered DOM small.
 
+### Loading & error placeholders — `Skeleton` / `ErrorBlock`
+
+`Skeleton` and `ErrorBlock` live alongside `Card` in `render/shared/card.jsx` and every component imports them as `import Card, { Skeleton, ErrorBlock } from './shared/card'`. They are the **first thing the reader sees** while a query resolves or when it fails — treat them as part of the visual system, not as throwaway placeholders. The default LLM versions (one centered pulsing dot, one red text line) read as cheap and unfinished. Use the reference implementation below as a starting point and adapt the palette/copy to the artifact.
+
+```jsx
+// render/shared/card.jsx
+import { AlertCircle, RotateCcw } from 'lucide-react';
+import { COLORS } from './colors';
+
+const PLACEHOLDER_KEYFRAMES = `
+  @keyframes datus-shimmer { 0% { background-position: 200% 0 } 100% { background-position: -200% 0 } }
+`;
+
+export function Skeleton({ minHeight = 200, bars = 3 }) {
+  // Three stacked shimmer bars at 60% / 80% / 40% width — reads as "data is
+  // loading" without committing to a chart shape that would flash and
+  // re-arrange when real data arrives.
+  const widths = ['60%', '80%', '40%'];
+  return (
+    <div
+      style={{
+        minHeight,
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        gap: 12,
+        padding: 20,
+      }}
+    >
+      <style>{PLACEHOLDER_KEYFRAMES}</style>
+      {Array.from({ length: bars }).map((_, i) => (
+        <div
+          key={i}
+          style={{
+            height: 12,
+            width: widths[i % widths.length],
+            borderRadius: 6,
+            background:
+              'linear-gradient(90deg, #F3F4F6 0%, #E5E7EB 50%, #F3F4F6 100%)',
+            backgroundSize: '200% 100%',
+            animation: 'datus-shimmer 1.4s ease-in-out infinite',
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+export function ErrorBlock({ msg, onRetry }) {
+  const handleRetry = onRetry ?? (() => window.location.reload());
+  return (
+    <div
+      style={{
+        minHeight: 140,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+        padding: 20,
+        background: '#FEF2F2',
+        border: '1px solid #FECACA',
+        borderRadius: 12,
+        textAlign: 'center',
+      }}
+    >
+      <AlertCircle size={24} strokeWidth={2} style={{ color: COLORS.negative }} />
+      <span style={{ fontSize: 13, color: COLORS.negative, maxWidth: 360, lineHeight: 1.5 }}>
+        {msg}
+      </span>
+      <button
+        type="button"
+        onClick={handleRetry}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '6px 12px',
+          marginTop: 4,
+          borderRadius: 6,
+          border: `1px solid ${COLORS.negative}`,
+          background: 'transparent',
+          color: COLORS.negative,
+          fontSize: 12,
+          fontWeight: 500,
+          cursor: 'pointer',
+        }}
+      >
+        <RotateCcw size={14} strokeWidth={2} />
+        Retry
+      </button>
+    </div>
+  );
+}
+```
+
+Rules:
+
+- **Always import `{ Skeleton, ErrorBlock }` from `./shared/card`** — never inline a one-off placeholder per component. The whole point of the shared module is consistent loading/error UX across the artifact.
+- **Skeleton uses a shimmering bar stack**, not a single pulsing dot. Three stacked bars at 60% / 80% / 40% widths read as "a card whose contents haven't loaded yet"; a centered dot reads as "spinner in an empty box". Skeletons live on the card's own background — do **not** add a separate filled rectangle behind the bars.
+- **ErrorBlock always shows a Retry control**, even on errors the user can't directly fix. The action gives the reader an obvious recovery affordance instead of a dead-end red box. Use Lucide `AlertCircle` (24×24, `COLORS.negative`) above the message and Lucide `RotateCcw` (14×14) inside the button — these are an explicit exception to the "icons sparingly" rule below because the placeholders are functional UI.
+- **`onRetry` is optional**. Pass a callback when the caller knows how to re-trigger the query (typically: a `retryKey` from `useState` that you increment, used in the component's own re-mount key); when omitted, the button falls back to `window.location.reload()` so the artifact always has a working recovery path.
+- **Component usage** matches the canonical-component-shape early returns:
+
+  ```jsx
+  const [retryKey, setRetryKey] = useState(0);
+  const { isLoading, errorMessage, data } = useQuerySql('queries/foo', { ...params, _retry: retryKey });
+  if (isLoading) return <Skeleton minHeight={300} />;
+  if (errorMessage) return <ErrorBlock msg={errorMessage} onRetry={() => setRetryKey(k => k + 1)} />;
+  ```
+
+  The `_retry` key trick is only needed when you want the retry to re-run the *same* query without a full page reload; if a page reload is acceptable, omit `onRetry` entirely and let the default kick in.
+
 ### Iconography & emoji (read this twice)
 
 The default LLM instinct is to pepper an artifact with 📊 📈 🌍 💰 🏦 📱 — **don't**. Emoji read as consumer / casual / cheap and undercut the analytical credibility a BI deliverable needs. They render at different sizes across platforms, can't be color-coordinated with the palette, and turn a research-grade deliverable into something that looks like a Slack post.
@@ -318,7 +431,7 @@ Rules of thumb when wiring this in:
 #### Other motion concerns
 
 - **Custom inline SVG** (treemaps, gauges, score sliders): also wrap in `AnimateOnVisible` (imported from `@datus/web-artifact`). Inside, animate with CSS transitions on `transform` / `opacity` / `stroke-dashoffset`, driven by `useState` + a `useEffect(() => setMounted(true), [])` toggle on mount. Same easing language: `transition: 'transform 800ms ease-out'`.
-- **Loading skeletons** should pulse, not animate full charts. A subtle `@keyframes pulse { 0%, 100% { opacity: 0.6 } 50% { opacity: 1 } }` on the skeleton block is enough — defined via an inline `<style>` tag at the top of the file or in a shared `card.jsx`.
+- **Loading skeletons** animate at the card boundary, never at the chart-primitive boundary — see the "Loading & error placeholders" section above for the canonical `Skeleton` (shimmering bar stack) and `ErrorBlock` (Lucide icon + retry) implementations to copy into `render/shared/card.jsx`.
 - **Respect reduced motion.** Compute `window.matchMedia('(prefers-reduced-motion: reduce)').matches` once at the top of `app.jsx` (via `useState` + `useEffect`) and pass `animationDuration={prefersReducedMotion ? 0 : 1500}` to Recharts primitives. `AnimateOnVisible` itself is fine to keep on — it only delays mount, never adds motion.
 
 Animation is part of the visual polish — the same way you'd pick a palette and a card primitive. An artifact whose charts pop in *as the reader reaches them* feels alive; one whose charts have already finished by the time they're seen feels like a screenshot.
