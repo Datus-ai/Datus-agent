@@ -805,8 +805,15 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         if not isinstance(refs, dict):
             return ""
 
-        # Reverse index: (kind, name) -> sorted list of query slugs.
-        usage_by_asset: Dict[Tuple[str, str], List[str]] = {}
+        # Reverse index: (kind, tuple(path), name) -> sorted list of
+        # referencing query slugs. The path is part of the key because
+        # ``get_metrics(path, name)`` / ``get_reference_sql(path, name)``
+        # both take (path, name) and two different assets can legitimately
+        # share a leaf ``name`` under different folders (e.g.
+        # ``Commerce/Orders/aov`` vs ``Finance/Reporting/aov``). Keying
+        # on name alone would conflate them and the "used by" list would
+        # falsely show queries from the wrong asset.
+        usage_by_asset: Dict[Tuple[str, Tuple[str, ...], str], List[str]] = {}
         for slug in self._query_slugs():
             brief_raw = self._read_artifact_file(f"queries/{slug}.brief.json")
             if not brief_raw:
@@ -820,10 +827,20 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
                 continue
             for kind_key in ("metrics", "reference_sql", "ext_knowledge"):
                 for entry in uses.get(kind_key) or []:
-                    if isinstance(entry, dict):
-                        name = entry.get("name")
-                        if isinstance(name, str) and name:
-                            usage_by_asset.setdefault((kind_key, name), []).append(slug)
+                    if not isinstance(entry, dict):
+                        continue
+                    name = entry.get("name")
+                    raw_path = entry.get("path")
+                    if not isinstance(name, str) or not name:
+                        continue
+                    if not isinstance(raw_path, list) or not all(isinstance(p, str) for p in raw_path):
+                        # Drop malformed brief entries entirely rather
+                        # than fall back to a path-less key — letting
+                        # one bad entry coalesce with valid ones would
+                        # silently re-introduce the conflation we're
+                        # fixing.
+                        continue
+                    usage_by_asset.setdefault((kind_key, tuple(raw_path), name), []).append(slug)
 
         body_lines: List[str] = []
         for kind_key, label in (
@@ -840,12 +857,14 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
                 name = entry.get("name") or ""
                 if not isinstance(name, str) or not name:
                     continue
-                path = entry.get("path") or []
-                if isinstance(path, list) and all(isinstance(p, str) for p in path):
-                    path_str = " > ".join(path) if path else "(no path)"
+                raw_path = entry.get("path") or []
+                if isinstance(raw_path, list) and all(isinstance(p, str) for p in raw_path):
+                    path_tuple = tuple(raw_path)
+                    path_str = " > ".join(raw_path) if raw_path else "(no path)"
                 else:
+                    path_tuple = ()
                     path_str = "(no path)"
-                used_by = sorted(set(usage_by_asset.get((kind_key, name), [])))
+                used_by = sorted(set(usage_by_asset.get((kind_key, path_tuple, name), [])))
                 line = f"- **{label}** `{path_str} > {name}`"
                 if used_by:
                     line += f"\n  · used by: {', '.join(used_by)}"
@@ -913,13 +932,19 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         )
 
         lines: List[str] = ["### Table Schemas (`analysis/key_tables_schema.json`)", "", intro, ""]
-        running_bytes = sum(len(line) + 1 for line in lines)
+        # Measure in UTF-8 bytes (not code points) since the cap is
+        # phrased in bytes; a Chinese-heavy description (each CJK
+        # codepoint ≈ 3 UTF-8 bytes) would otherwise silently fit
+        # ~3× more content than INLINE_SCHEMA_BYTES_CAP intends. The
+        # ``+1`` per line accounts for the joining newline appended at
+        # render time by ``"\n".join(...)``.
+        running_bytes = sum(len(line.encode("utf-8")) + 1 for line in lines)
         cap_reached = False
         for tbl in tables:
             if not isinstance(tbl, dict):
                 continue
             entry_lines = self._render_table_schema_entry(tbl)
-            entry_bytes = sum(len(line) + 1 for line in entry_lines)
+            entry_bytes = sum(len(line.encode("utf-8")) + 1 for line in entry_lines)
             if running_bytes + entry_bytes > INLINE_SCHEMA_BYTES_CAP:
                 cap_reached = True
                 break
@@ -1065,16 +1090,22 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         header: List[str] = ["### Query Catalog", "", intro, ""]
 
         body: List[str] = []
-        running_bytes = 0
+        # Cap is phrased in bytes (UTF-8) and the cap covers the whole
+        # section, not just the body — count the header upfront so a
+        # large intro doesn't silently leak past the cap, and use
+        # ``.encode("utf-8")`` length on every line so non-ASCII content
+        # (Chinese caveats, emoji in SQL comments, etc.) is sized
+        # honestly.
+        running_bytes = sum(len(line.encode("utf-8")) + 1 for line in header)
         degraded = False
         for slug in slugs:
             brief, data, sql = self._load_query_bundle(slug)
             entry_lines = self._render_query_catalog_entry(slug, brief, data, sql, degraded=degraded)
-            entry_bytes = sum(len(line) + 1 for line in entry_lines)
+            entry_bytes = sum(len(line.encode("utf-8")) + 1 for line in entry_lines)
             if not degraded and running_bytes + entry_bytes > INLINE_CATALOG_BYTES_CAP:
                 degraded = True
                 entry_lines = self._render_query_catalog_entry(slug, brief, data, sql, degraded=True)
-                entry_bytes = sum(len(line) + 1 for line in entry_lines)
+                entry_bytes = sum(len(line.encode("utf-8")) + 1 for line in entry_lines)
             body.extend(entry_lines)
             body.append("")
             running_bytes += entry_bytes
@@ -1199,6 +1230,28 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
 
         return lines
 
+    def _artifact_has_insights(self) -> bool:
+        """Same emptiness check ``_render_insights_section`` uses.
+
+        The layout-tree and ``loaded_list`` are claims to the LLM that
+        a file is already in the prompt. If we unconditionally said so
+        for every report — even those whose finalize LLM failed and
+        never wrote ``insights.json`` — the LLM would believe the file
+        is loaded and skip a legitimate ``read_file``. Mirror the
+        renderer's exact gate so the tree only advertises insights
+        when the section actually rendered them.
+        """
+        if self.ARTIFACT_KIND != "report":
+            return False
+        raw = self._read_artifact_file("analysis/insights.json")
+        if not raw:
+            return False
+        try:
+            insights = json.loads(raw)
+        except json.JSONDecodeError:
+            return False
+        return isinstance(insights, list) and bool(insights)
+
     def _render_filesystem_layout_section(self) -> str:
         """Tell the LLM what's already inlined vs what still needs read_file.
 
@@ -1208,9 +1261,10 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         files immediately sees that defensive reads are not useful.
         """
         layout_root_label = self._artifact_root.name if self._artifact_root is not None else self.ARTIFACT_ROOT_DIR_NAME
+        has_insights = self._artifact_has_insights()
         loaded_list = (
             "manifest.json, analysis/intent.md, "
-            + ("analysis/insights.json, " if self.ARTIFACT_KIND == "report" else "")
+            + ("analysis/insights.json, " if has_insights else "")
             + "analysis/subject_refs.json (when present), "
             "analysis/key_tables_schema.json (when present), and every "
             "`queries/*.brief.json` plus the inlined slice of "
@@ -1234,7 +1288,11 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             "├── analysis/",
             "│   ├── intent.md                # inlined above",
         ]
-        if self.ARTIFACT_KIND == "report":
+        # Only advertise insights when there's actually a populated
+        # insights.json on disk / in the blob — see
+        # :meth:`_artifact_has_insights`. Dashboards skip the line
+        # unconditionally (no insights file by design).
+        if has_insights:
             lines.append("│   ├── insights.json            # inlined above")
         lines.extend(
             [
@@ -1257,12 +1315,21 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         sidecar at turn start out of habit, paying many serial tool
         round-trips for content the prompt already carries.
         """
+        # Same presence check the layout-tree uses (see
+        # ``_artifact_has_insights``). Drives both rule 1's preamble
+        # (which lists what was actually inlined) and rule 6's
+        # report-only branch — without this, a report whose finalize
+        # produced no insights would still have rule 6 claim
+        # "insights.json is the authoritative findings record" and
+        # rule 1 claim "confirmed insights" are inlined, both of
+        # which would mislead the LLM.
+        has_insights = self._artifact_has_insights()
         lines: List[str] = ["### Behavioral Rules (load-bearing)", ""]
         lines.append(
             "1. **Answer from the inlined context first**. The header above "
             "already contains the manifest, the original intent, the "
             "subject library scope, the table schemas snapshot, "
-            + ("confirmed insights, " if self.ARTIFACT_KIND == "report" else "")
+            + ("confirmed insights, " if has_insights else "")
             + "and a query catalog with hypothesis / caveats / columns / "
             "sample rows / SQL for every saved query. **Do NOT issue "
             "`glob` or `read_file` to pre-fetch anything already inlined "
@@ -1307,11 +1374,26 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
                 "declaration to explain what user-controllable filters "
                 "exist."
             )
-        else:
+        elif has_insights:
             lines.append(
                 "6. **`insights.json` is the authoritative findings "
                 "record**. Already inlined above; each insight has "
                 "`evidence_queries[]` you can cross-reference."
+            )
+        else:
+            # Report whose finalize LLM crashed (or whose insights list
+            # was empty). Emit rule 6 in its insights-absent form so
+            # the numbering stays 1–7 across kinds AND the LLM knows
+            # not to claim non-existent findings as if it had read
+            # them. Without this branch the rule is silently dropped
+            # and the LLM sees rules 1..5,7 (jumping over 6) — a small
+            # but persistent prompt-quality regression.
+            lines.append(
+                "6. **No confirmed-findings record for this report**. "
+                "Finalize did not produce a populated `insights.json`. "
+                "Ground answers in the query catalog above and cite "
+                "individual queries by slug; do NOT claim insights "
+                "that aren't in the prompt."
             )
         lines.append(
             "7. **No artifact mutations**. Filesystem write/edit/delete "

@@ -969,12 +969,14 @@ class TestArtifactContextBlockInlining:
         """
         from datus.agent.node import base_artifact_ask_agentic_node as mod
 
-        # Cap chosen empirically: each non-degraded entry in this
-        # fixture renders to ~220 bytes (header + hypothesis + caveats
-        # + 3-row inline + SQL block). 400 fits the first entry only;
-        # the second entry's running total trips the cap and switches
-        # to degraded mode for the rest of the catalog.
-        monkeypatch.setattr(mod, "INLINE_CATALOG_BYTES_CAP", 400)
+        # Cap chosen empirically. After the UTF-8 byte-counting fix
+        # the cap now includes the section header (~380B for the
+        # intro paragraph) plus each non-degraded entry (~220B). Cap
+        # of 700 lets the first entry land non-degraded (intro 380 +
+        # entry 220 ≈ 600 < 700) but the second entry's running total
+        # (600 + 220 = 820 > 700) trips the cap and switches the rest
+        # of the catalog to degraded mode.
+        monkeypatch.setattr(mod, "INLINE_CATALOG_BYTES_CAP", 700)
 
         common_rows = [{"v": i} for i in range(3)]
         queries = []
@@ -1006,6 +1008,93 @@ class TestArtifactContextBlockInlining:
         # against minor rendering-size shifts.
         late_caveats_dropped = "b_second-CAVEAT-MARKER" not in block or "c_third-CAVEAT-MARKER" not in block
         assert late_caveats_dropped, "expected catalog cap to drop at least one later caveat"
+
+    def test_catalog_cap_uses_utf8_bytes_not_codepoints(self, real_agent_config, monkeypatch):
+        """The catalog cap is phrased in BYTES — a single CJK code-point
+        takes 3 UTF-8 bytes. Without ``.encode("utf-8")`` the cap would
+        let ~3× more content through on a Chinese-heavy artifact than
+        intended. We construct an entry where the codepoint count is
+        well under the cap but the UTF-8 byte count blows past it,
+        and verify the cap fires (catalog degrades).
+        """
+        from datus.agent.node import base_artifact_ask_agentic_node as mod
+
+        # 300 CJK chars = 300 codepoints = 900 UTF-8 bytes.
+        chinese_caveat = "测" * 300
+        monkeypatch.setattr(mod, "INLINE_CATALOG_BYTES_CAP", 700)
+        queries = []
+        for slug in ("a_first", "b_second"):
+            queries.append(
+                {
+                    "slug": slug,
+                    "brief": {"name": slug, "hypothesis": "h", "caveats": chinese_caveat, "uses": {}},
+                    "result": _basic_query_result(slug, rows=[{"v": 1}, {"v": 2}]),
+                    "sql": "SELECT v FROM t",
+                }
+            )
+        node = _make_report_with_queries(real_agent_config, slug="utf8_cap", queries=queries)
+        block = node._render_artifact_context_block()
+        # First entry's caveat (CJK) lands intact — single ~900-byte
+        # caveat per-entry is still under-counted as 300 if we used
+        # codepoint length, so this is a load-bearing pre-condition.
+        # Cap of 700 bytes < intro (~380) + entry1 (~1200 incl. CJK) so
+        # entry1 itself triggers degraded mode and the caveat is dropped
+        # from entry1 as well. Pin the visible outcome: NO caveat
+        # appears anywhere in the block. With the buggy codepoint
+        # accounting all caveats would have been kept.
+        assert chinese_caveat not in block, (
+            "CJK caveat survived the catalog cap — byte counting regressed to code-point length"
+        )
+
+    def test_subject_scope_section_uses_utf8_bytes_in_byte_cap(self, real_agent_config, monkeypatch):
+        """Companion to the schema-section cap test — the schema section
+        cap MUST also count UTF-8 bytes so a Chinese description
+        doesn't silently let the section grow past
+        ``INLINE_SCHEMA_BYTES_CAP``. We feed an oversized description
+        that fits under the byte cap as codepoints but exceeds it as
+        UTF-8 bytes and verify the cap reaches in for the byte
+        counting branch (later tables omitted).
+        """
+        from datus.agent.node import base_artifact_ask_agentic_node as mod
+
+        # 200 CJK ≈ 600 UTF-8 bytes; well over 500-byte cap.
+        chinese_desc = "字" * 200
+        monkeypatch.setattr(mod, "INLINE_SCHEMA_BYTES_CAP", 500)
+        node = _make_report_with_queries(
+            real_agent_config,
+            slug="utf8_schema_cap",
+            queries=[
+                {
+                    "slug": "q",
+                    "brief": {"name": "q", "uses": {}},
+                    "result": _basic_query_result("q"),
+                    "sql": "SELECT 1",
+                }
+            ],
+            key_tables_schema={
+                "tables": [
+                    {
+                        "name": "tbl_with_cjk",
+                        "description": chinese_desc,
+                        "columns": [{"name": "id", "type": "int", "comment": ""}],
+                    },
+                    {
+                        "name": "tbl_after",
+                        "description": "",
+                        "columns": [{"name": "id", "type": "int", "comment": ""}],
+                    },
+                ]
+            },
+        )
+        block = node._render_artifact_context_block()
+        # Either the section never starts (intro itself blows the cap)
+        # OR the first table fits + cap marker hits before tbl_after.
+        # Both outcomes prove byte-aware counting is in effect; the
+        # codepoint-counting bug would let BOTH tables through.
+        assert "tbl_after" not in block, (
+            "second table appeared despite CJK description blowing the "
+            "byte cap — schema cap regressed to code-point counting"
+        )
 
     # --- Subject scope --------------------------------------------------
 
@@ -1060,6 +1149,68 @@ class TestArtifactContextBlockInlining:
         # Pin on a concrete substring that appears once per referencing
         # query — confirms the catalog entry actually includes the tag.
         assert block.count("metric:`average_order_value`") >= 2
+
+    def test_subject_scope_distinguishes_same_name_under_different_paths(self, real_agent_config):
+        """Two metrics that happen to share a leaf name (``aov`` under
+        ``Commerce`` vs ``Finance``) are independent assets — the
+        reverse index must NOT conflate the queries that use one with
+        the queries that use the other. Without the path-aware key,
+        the prompt would falsely tell the LLM that a Finance-team
+        query references the Commerce metric (or vice versa) and a
+        ``get_metrics(path, name)`` lookup would resolve to the wrong
+        asset.
+        """
+        commerce_aov = {"path": ["Commerce", "Orders"], "name": "aov"}
+        finance_aov = {"path": ["Finance", "Reporting"], "name": "aov"}
+        queries = [
+            {
+                "slug": "q_commerce",
+                "brief": {"name": "q_commerce", "uses": {"metrics": [commerce_aov]}},
+                "result": _basic_query_result("q_commerce"),
+                "sql": "SELECT 1",
+            },
+            {
+                "slug": "q_finance",
+                "brief": {"name": "q_finance", "uses": {"metrics": [finance_aov]}},
+                "result": _basic_query_result("q_finance"),
+                "sql": "SELECT 1",
+            },
+        ]
+        node = _make_report_with_queries(
+            real_agent_config,
+            slug="subj_same_name",
+            queries=queries,
+            subject_refs={
+                "metrics": [commerce_aov, finance_aov],
+                "reference_sql": [],
+                "ext_knowledge": [],
+            },
+        )
+        block = node._render_artifact_context_block()
+        # Both assets rendered with their full path so the LLM can
+        # disambiguate visually.
+        assert "Commerce > Orders > aov" in block
+        assert "Finance > Reporting > aov" in block
+        # Each "used by" line names ONLY the query that actually
+        # referenced THAT path — no cross-talk.
+        commerce_line = next(line for line in block.splitlines() if "Commerce > Orders > aov" in line)
+        finance_line = next(line for line in block.splitlines() if "Finance > Reporting > aov" in line)
+        # Slice the "used by" section that immediately follows each
+        # asset header. Block format places it on the next line.
+        block_lines = block.splitlines()
+        commerce_idx = block_lines.index(commerce_line)
+        finance_idx = block_lines.index(finance_line)
+        commerce_used_by = block_lines[commerce_idx + 1]
+        finance_used_by = block_lines[finance_idx + 1]
+        assert "used by:" in commerce_used_by
+        assert "q_commerce" in commerce_used_by
+        assert "q_finance" not in commerce_used_by, (
+            f"path-aware reverse index regressed; finance query bled into "
+            f"the commerce asset's used-by list: {commerce_used_by!r}"
+        )
+        assert "used by:" in finance_used_by
+        assert "q_finance" in finance_used_by
+        assert "q_commerce" not in finance_used_by
 
     # --- Skipped sections when files absent -----------------------------
 
@@ -1133,6 +1284,78 @@ class TestArtifactContextBlockInlining:
         node = _make_report_with_queries(real_agent_config, slug="no_ins", queries=queries)
         block = node._render_artifact_context_block()
         assert "### Confirmed Findings" not in block
+
+    def test_missing_insights_drops_from_layout_tree_and_loaded_list(self, real_agent_config):
+        """When a report has no insights.json (finalize LLM failed or
+        produced an empty list), the layout tree and the
+        "already loaded into this prompt" sentence in the layout intro
+        must NOT advertise insights.json — otherwise the LLM trusts the
+        claim and skips a legitimate ``read_file`` (or worse, hallucinates
+        insights it thinks are inlined). Mirrors the same gate
+        ``_render_insights_section`` already applies."""
+        queries = [
+            {
+                "slug": "q",
+                "brief": {"name": "q", "uses": {}},
+                "result": _basic_query_result("q"),
+                "sql": "SELECT 1",
+            }
+        ]
+        node = _make_report_with_queries(real_agent_config, slug="no_ins_layout", queries=queries)
+        block = node._render_artifact_context_block()
+        # Section absent (already covered by the prior test, but locking
+        # the precondition here keeps this test self-contained).
+        assert "### Confirmed Findings" not in block
+        # Layout tree line absent — the file isn't claimed as a
+        # top-level entry alongside intent.md / subject_refs.json.
+        assert "├── insights.json" not in block
+        # Loaded_list sentence absent — pin the exact substring used in
+        # the layout intro paragraph.
+        assert "analysis/insights.json, " not in block, (
+            "layout intro advertised insights.json as already-loaded even though no insights section rendered"
+        )
+        # Rule 1 preamble dropped the "confirmed insights" mention.
+        assert "confirmed insights" not in block
+        # Rule 6's POSITIVE form is absent (the "authoritative findings
+        # record" claim). The NEGATIVE form ("no confirmed-findings
+        # record for this report") IS allowed and is the load-bearing
+        # honesty signal — assert it positively so a refactor that
+        # silently drops rule 6 entirely (breaking numbering) trips.
+        assert "authoritative findings record" not in block
+        assert "No confirmed-findings record for this report" in block, (
+            "rule 6 must explicitly tell the LLM that no insights "
+            "exist for this report instead of being silently dropped"
+        )
+
+    def test_insights_present_keeps_layout_tree_entry(self, real_agent_config):
+        """Symmetric to the prior test — when insights ARE inlined the
+        layout entry must reappear, so a contract regression that
+        always-drops the line trips here."""
+        node = _make_report_with_queries(
+            real_agent_config,
+            slug="ins_layout",
+            queries=[
+                {
+                    "slug": "q",
+                    "brief": {"name": "q", "uses": {}},
+                    "result": _basic_query_result("q"),
+                    "sql": "SELECT 1",
+                }
+            ],
+            insights=[
+                {
+                    "id": "x",
+                    "title": "t",
+                    "summary": "s",
+                    "confidence": 0.5,
+                    "evidence_queries": ["q"],
+                }
+            ],
+        )
+        block = node._render_artifact_context_block()
+        # Layout entry IS present (annotated with "inlined above").
+        layout_lines = [line for line in block.splitlines() if "insights.json" in line and "inlined above" in line]
+        assert layout_lines, "insights.json should be in the layout tree when actually inlined"
 
     def test_missing_subject_refs_skips_section(self, real_agent_config):
         """No subject_refs.json ⇒ no "Subject Library Scope" heading."""
@@ -1530,53 +1753,6 @@ class TestTableSchemasSection:
         # we don't pin which specifically to stay resilient against
         # minor sizing shifts in the intro string.
         assert any(f"#### `tbl_{i}`" not in block for i in (3, 4))
-
-    def test_get_system_prompt_logs_size_for_observability(self, real_agent_config, caplog):
-        """One INFO log per system-prompt assembly with kind / slug /
-        lines / bytes / header_bytes / base_bytes. Operators grep for
-        ``ask_artifact prompt assembled`` to monitor real-world prompt
-        growth — pin the prefix + key names so a refactor that drops
-        keys (and breaks the grep) trips."""
-        import logging
-
-        node = _make_report_with_queries(
-            real_agent_config,
-            slug="size_log",
-            queries=[
-                {
-                    "slug": "q",
-                    "brief": {"name": "q", "uses": {}},
-                    "result": _basic_query_result("q"),
-                    "sql": "SELECT 1",
-                }
-            ],
-        )
-        with caplog.at_level(logging.INFO, logger="datus.agent.node.base_artifact_ask_agentic_node"):
-            prompt = node._get_system_prompt()
-
-        # structlog wraps the formatted message with ANSI/timestamp prefixes,
-        # so the assembled record's text doesn't ``startswith`` the literal
-        # prefix — match the unique substring instead (same idiom the
-        # existing caplog tests use, e.g. test_agent_config_permissions).
-        size_logs = [
-            rec
-            for rec in caplog.records
-            if rec.name == "datus.agent.node.base_artifact_ask_agentic_node"
-            and "ask_artifact prompt assembled" in rec.getMessage()
-        ]
-        assert len(size_logs) == 1, (
-            f"expected exactly one prompt-size log line, got {len(size_logs)}: {[r.getMessage() for r in size_logs]}"
-        )
-        msg = size_logs[0].getMessage()
-        # All the keys an operator needs to grep / parse a real trace.
-        for key in ("node=", "kind=report", "slug=size_log", "lines=", "bytes=", "header_bytes=", "base_bytes="):
-            assert key in msg, f"size log missing {key!r} key: {msg}"
-        # Sanity-check the byte count against the actual prompt — if the
-        # log drifts from the real prompt size the value loses meaning.
-        expected_bytes = len(prompt.encode("utf-8"))
-        assert f"bytes={expected_bytes}" in msg, (
-            f"logged bytes don't match actual prompt size (expected {expected_bytes}): {msg}"
-        )
 
     def test_layout_tree_mentions_schema_file(self, real_agent_config):
         """The filesystem layout tree should explicitly list

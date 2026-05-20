@@ -494,6 +494,56 @@ class TestBakeKeyTablesSchema:
         assert warning is None
         assert not (analysis_dir / "key_tables_schema.json").exists()
 
+    def test_early_return_removes_stale_schema_file(self, tmp_path: Path):
+        """Edit-mode rerun where the new SQL set produces no
+        ``key_tables`` (or finalize runs without a db tool this time)
+        MUST proactively delete any prior ``key_tables_schema.json`` —
+        otherwise ask_* would serve the previous artifact's schema
+        snapshot indefinitely. Mirrors the present-iff-non-empty
+        semantics already used by ``write_subject_refs`` for
+        ``subject_refs.json``."""
+        analysis_dir = tmp_path / "analysis"
+        analysis_dir.mkdir()
+        stale_path = analysis_dir / "key_tables_schema.json"
+        stale_path.write_text(
+            json.dumps({"tables": [{"name": "old_tbl", "columns": []}]}),
+            encoding="utf-8",
+        )
+        assert stale_path.is_file()
+
+        warning = bake_key_tables_schema(
+            db_func_tool=None,
+            key_tables=["some_tbl_that_would_have_been_baked"],
+            analysis_dir=analysis_dir,
+        )
+        assert warning is None
+        # Stale file gone — the absent signal is now truthful.
+        assert not stale_path.exists()
+
+    def test_early_return_with_empty_key_tables_also_clears_stale(self, tmp_path: Path):
+        """Same cleanup applies when ``key_tables`` is empty — finalize
+        re-aggregated the SQL set and there are no tables anymore, so
+        the prior snapshot is wrong by definition."""
+        analysis_dir = tmp_path / "analysis"
+        analysis_dir.mkdir()
+        stale_path = analysis_dir / "key_tables_schema.json"
+        stale_path.write_text(
+            json.dumps({"tables": [{"name": "obsolete", "columns": []}]}),
+            encoding="utf-8",
+        )
+
+        tool = _mock_describe_table_tool({})
+        warning = bake_key_tables_schema(
+            db_func_tool=tool,
+            key_tables=[],
+            analysis_dir=analysis_dir,
+        )
+        assert warning is None
+        assert not stale_path.exists()
+        # And describe_table was NOT called — empty key_tables is a
+        # short-circuit, not "ask the connector about nothing".
+        tool.describe_table.assert_not_called()
+
     def test_empty_key_tables_skips_silently(self, tmp_path: Path):
         """Manifest has no key_tables (e.g. an artifact with only
         literal/constant SQL) ⇒ no schema to bake, no sidecar file."""

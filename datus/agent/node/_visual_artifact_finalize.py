@@ -646,6 +646,19 @@ def bake_key_tables_schema(
     tables were unavailable.
     """
     if db_func_tool is None or not key_tables:
+        # Present-iff-bakeable semantics: if a prior finalize wrote a
+        # schema sidecar but the current run has nothing to bake
+        # (key_tables emptied after an edit-mode rerun, or this run has
+        # no db tool), the stale file would lie to the follow-up
+        # consultant. Proactively unlink so the "absent" signal stays
+        # accurate. Mirrors what ``write_subject_refs`` does for
+        # subject_refs.json.
+        stale = analysis_dir / "key_tables_schema.json"
+        if stale.is_file():
+            try:
+                stale.unlink()
+            except OSError as exc:
+                logger.warning("Failed to remove stale %s: %s", stale, exc)
         return None
 
     # Lazy import keeps the schema module out of the dependency graph
