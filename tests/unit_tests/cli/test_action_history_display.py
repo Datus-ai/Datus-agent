@@ -859,7 +859,7 @@ class TestRenderActionHistory:
     # -- user prompt rendering --
 
     def test_user_action_rendered(self):
-        """USER action at depth=0 renders user prompt with Datus> prefix."""
+        """USER action at depth=0 renders user prompt with > prefix."""
         display = ActionHistoryDisplay()
         actions = [
             _make_action(
@@ -870,9 +870,10 @@ class TestRenderActionHistory:
             ),
         ]
         printed = self._collect_prints(display, actions)
-        assert len(printed) == 1
-        assert "Datus>" in printed[0]
+        assert len(printed) == 2
+        assert printed[0].startswith("> ")
         assert "how many tables are there?" in printed[0]
+        assert printed[1] == ""
 
     def test_user_action_rendered_without_prefix(self):
         """USER action without 'User: ' prefix still renders correctly."""
@@ -886,9 +887,10 @@ class TestRenderActionHistory:
             ),
         ]
         printed = self._collect_prints(display, actions)
-        assert len(printed) == 1
-        assert "Datus>" in printed[0]
+        assert len(printed) == 2
+        assert printed[0].startswith("> ")
         assert "some direct message" in printed[0]
+        assert printed[1] == ""
 
     # -- main agent rendering --
 
@@ -2071,7 +2073,7 @@ class TestRenderMultiTurnHistory:
         ]
         display.render_multi_turn_history([("Hello world", actions)], verbose=False)
         output = buf.getvalue()
-        assert "Datus>" in output
+        assert "> Hello world" in output
         assert "Hello world" in output
 
     def test_multi_turns(self):
@@ -3250,7 +3252,7 @@ class TestRenderMainAction:
         action = _make_action(ActionRole.USER, ActionStatus.SUCCESS, messages="User: What is revenue?")
         display._render_main_action(action, verbose=False)
         output = buf.getvalue()
-        assert "Datus>" in output
+        assert "> What is revenue?" in output
         assert "What is revenue?" in output
 
     def test_user_action_without_prefix(self):

@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Set, Tuple
 
 from rich.console import Console
+from rich.text import Text
 
 from datus.cli.action_display.renderers import ActionContentGenerator, ActionRenderer, is_task_anchor_input
 from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
@@ -67,8 +68,8 @@ class ActionHistoryDisplay:
         end_action: ActionHistory,
     ) -> None:
         """Render a completed subagent group as collapsed: header line + Done summary line."""
-        self.renderer.print_renderables(
-            self.console, self.renderer.render_subagent_collapsed(first_action, tool_count, start_time, end_action)
+        self._print_block_renderables(
+            self.renderer.render_subagent_collapsed(first_action, tool_count, start_time, end_action)
         )
 
     def _render_subagent_response(self, action: ActionHistory) -> None:
@@ -90,6 +91,7 @@ class ActionHistoryDisplay:
         self._render_subagent_done(group["tool_count"], group["start_time"], end_action)
         if verbose:
             self._render_subagent_response(task_tool_action)
+        self.console.print(Text(""))
 
     def _flush_deferred_groups(
         self,
@@ -104,14 +106,24 @@ class ActionHistoryDisplay:
                     self._render_subagent_header(buffered, verbose)
                 self._render_subagent_action(buffered, verbose)
             self._render_subagent_done(grp["tool_count"], grp["start_time"], end_act)
+            self.console.print(Text(""))
 
     def _render_task_tool_as_subagent(self, action: ActionHistory, verbose: bool) -> None:
         """Render a standalone 'task' tool action as a subagent summary."""
-        self.renderer.print_renderables(self.console, self.renderer.render_task_tool_as_subagent(action, verbose))
+        self._print_block_renderables(self.renderer.render_task_tool_as_subagent(action, verbose))
 
     def _render_main_action(self, action: ActionHistory, verbose: bool) -> None:
         """Print a depth=0 completed action."""
-        self.renderer.print_renderables(self.console, self.renderer.render_main_action(action, verbose))
+        self._print_block_renderables(self.renderer.render_main_action(action, verbose))
+
+    def _print_block_renderables(self, renderables) -> None:
+        """Print a top-level completed block and add the standard trailing gap."""
+        if not renderables:
+            return
+        self.renderer.print_renderables(self.console, renderables)
+        last = renderables[-1]
+        if not (isinstance(last, Text) and last.plain == ""):
+            self.console.print(Text(""))
 
     def render_action_history(
         self,
@@ -234,8 +246,10 @@ class ActionHistoryDisplay:
                 and action.depth == 0
             ):
                 continue
-            # Trailing plain ``response``: duplicates the wrapping
-            # ``*_response`` rendered externally — skip to avoid double paint.
+            # Final plain ``response`` actions duplicate the response rendered
+            # externally by the per-turn callback / restored message content.
+            # A wrapper may follow in the raw list, so locate the last plain
+            # response by type instead of requiring it to be the final item.
             if (
                 action.role == ActionRole.ASSISTANT
                 and action.action_type == "response"

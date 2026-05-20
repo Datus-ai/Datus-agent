@@ -781,6 +781,7 @@ class TestDisplayMarkdownResponse:
         output = _get_console_output(console)
         assert "Hello World" in output
         assert "test" in output
+        assert "⏺" not in output
 
     def test_json_response_extracts_report(self, real_agent_config, mock_llm_create):
         """JSON response with 'report' field displays the report content."""
@@ -792,6 +793,7 @@ class TestDisplayMarkdownResponse:
 
         output = _get_console_output(console)
         assert "Extracted report content here" in output
+        assert "⏺" not in output
 
     def test_plain_json_without_report_still_displays(self, real_agent_config, mock_llm_create):
         """JSON without 'report' field falls through to display as markdown."""
@@ -803,6 +805,20 @@ class TestDisplayMarkdownResponse:
 
         output = _get_console_output(console)
         assert "SELECT 1" in output
+        assert "⏺" not in output
+
+    def test_markdown_fence_renders_without_assistant_prefix(self, real_agent_config, mock_llm_create):
+        """Fenced Markdown renders without an assistant marker in the source."""
+        console = Console(file=io.StringIO(), no_color=True, width=120)
+        cmds = _make_chat_commands(real_agent_config, console=console)
+
+        cmds._display_markdown_response("```markdown\n# Hello\n```")
+
+        output = _get_console_output(console)
+        assert "Hello" in output
+        assert "⏺" not in output
+        assert "⏺ ```markdown" not in output
+        assert "```markdown" not in output
 
 
 class TestDisplaySemanticModel:
@@ -1473,6 +1489,7 @@ class TestEdgeCases:
 
         output = _get_console_output(console)
         assert "plain text response" in output
+        assert "⏺" not in output
         assert len(output) > 20
 
     def test_gensql_node_creation_default_subagent(self, real_agent_config, mock_llm_create):
@@ -2361,8 +2378,51 @@ class TestCmdResumeWithSession:
         cmds.cmd_resume(session_id)
 
         output = _get_console_output(console)
-        # Should show "You:" for user messages
-        assert "You:" in output
+        # Restored sessions use the same user header as live/reprint paths.
+        assert "> What is SQL?" in output
+        assert "You:" not in output
+
+    def test_restored_final_response_printed_once(self, real_agent_config, mock_llm_create):
+        """Restored final response content is not duplicated by the action trace."""
+        console = Console(file=io.StringIO(), no_color=True, width=120)
+        cmds = _make_chat_commands(real_agent_config, console=console)
+        action = _make_action_for_chat(
+            role=ActionRole.ASSISTANT,
+            messages="Thinking: Final answer",
+            output_data={"raw_output": "Final answer", "is_thinking": False},
+        )
+        action.action_type = "response"
+
+        cmds._render_restored_messages(
+            [
+                {"role": "user", "content": "Question"},
+                {"role": "assistant", "content": "Final answer", "actions": [action]},
+            ]
+        )
+
+        output = _get_console_output(console)
+        assert output.count("Final answer") == 1
+
+    def test_restored_content_skips_action_duplicate(self, real_agent_config, mock_llm_create):
+        """Content already rendered by a non-final assistant action is skipped."""
+        console = Console(file=io.StringIO(), no_color=True, width=120)
+        cmds = _make_chat_commands(real_agent_config, console=console)
+        action = _make_action_for_chat(
+            role=ActionRole.ASSISTANT,
+            messages="Intermediate note",
+            output_data={"raw_output": "Intermediate note", "is_thinking": True},
+        )
+        action.action_type = "note"
+
+        cmds._render_restored_messages(
+            [
+                {"role": "user", "content": "Question"},
+                {"role": "assistant", "content": "Intermediate note", "actions": [action]},
+            ]
+        )
+
+        output = _get_console_output(console)
+        assert output.count("Intermediate note") == 1
 
 
 # ===========================================================================

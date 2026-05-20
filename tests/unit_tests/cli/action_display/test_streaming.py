@@ -1301,6 +1301,9 @@ class TestStreamingMarkdown:
         assert ctx._markdown_buffer.get_tail() == "hello world"
         assert ctx._markdown_stream_has_streamed is True
         assert live_state.is_active() is True
+        joined = "\n".join("".join(txt for _, txt in line.segments) for line in live_state.snapshot())
+        assert "hello world" in joined
+        assert "⏺" not in joined
         # Nothing stable yet, so the scrollback console remains empty.
         assert "hello" not in buf.getvalue()
 
@@ -1319,6 +1322,7 @@ class TestStreamingMarkdown:
 
         # The closed paragraph landed in the scrollback right away.
         assert buf.getvalue().count("para one") == 1
+        assert "⏺" not in buf.getvalue()
         # The unfinished second paragraph rides live in the pinned region.
         assert ctx._markdown_buffer.get_tail() == "head of two"
         assert live_state.is_active() is True
@@ -1332,6 +1336,7 @@ class TestStreamingMarkdown:
         assert ctx._markdown_buffer.has_tail() is False
         assert buf.getvalue().count("para one") == 1
         assert buf.getvalue().count("head of two") == 1
+        assert "⏺" not in buf.getvalue()
 
     def test_response_action_dedupes_when_stream_active(self):
         """Paired terminal action must not duplicate the streamed body.
@@ -1399,6 +1404,7 @@ class TestStreamingMarkdown:
         assert ctx._markdown_stream_has_streamed is False
         assert live_state.is_active() is False
         assert "tail only" in buf.getvalue()
+        assert "⏺" not in buf.getvalue()
 
     def test_repaint_priority_processing_over_markdown(self):
         """Running tool blink takes the pinned region over markdown tail."""

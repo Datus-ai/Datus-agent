@@ -19,7 +19,7 @@ from rich.markup import escape as rich_escape
 from rich.syntax import Syntax
 from rich.text import Text
 
-from datus.cli.cli_styles import ACTION_ROLE_COLOR_NAMES, CODE_THEME
+from datus.cli.cli_styles import ACTION_ROLE_COLOR_NAMES, CODE_THEME, render_user_scrollback_text
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
 
@@ -55,6 +55,11 @@ def _get_assistant_content(action: ActionHistory) -> str:
         if raw:
             return raw
     return strip_litellm_placeholder(action.messages or "")
+
+
+def render_assistant_response_markdown(content: str) -> Markdown:
+    """Render top-level assistant response content consistently."""
+    return Markdown(content)
 
 
 # ── Icon/color mappings ─────────────────────────────────────────────────────
@@ -745,7 +750,7 @@ class ActionRenderer:
         if action.role == ActionRole.ASSISTANT:
             content = _get_assistant_content(action)
             if content:
-                return [Markdown(f"\u23fa \U0001f4ac {content}")]
+                return [render_assistant_response_markdown(content)]
             return []
 
         # USER -> styled Text
@@ -753,7 +758,7 @@ class ActionRenderer:
             msg = action.messages
             if msg.startswith("User: "):
                 msg = msg[6:]
-            return [Text.from_markup(f"[green bold]Datus> [/green bold]{msg}")]
+            return [render_user_scrollback_text(msg)]
 
         # TOOL / WORKFLOW / SYSTEM -> generate Rich Text directly
         if action.role == ActionRole.TOOL:
@@ -879,8 +884,8 @@ class ActionRenderer:
     # -- utility renderables ------------------------------------------------
 
     def render_user_header(self, message: str) -> Text:
-        """Render 'Datus> ...' user message header."""
-        return Text.from_markup(f"[green bold]Datus> [/green bold]{message}")
+        """Render a restored/reprinted user message header."""
+        return render_user_scrollback_text(message)
 
     def render_separator(self) -> Text:
         """Render horizontal separator."""

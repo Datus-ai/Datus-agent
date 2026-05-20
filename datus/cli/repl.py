@@ -51,10 +51,12 @@ from datus.cli.chat_commands import ChatCommands
 from datus.cli.cli_styles import (
     PASTE_COLLAPSE_THRESHOLD,
     STATUS_BAR_STYLE,
+    USER_SCROLLBACK_PROMPT,
     print_error,
     print_info,
     print_success,
     print_warning,
+    render_user_scrollback_text,
 )
 from datus.cli.context_commands import ContextCommands
 from datus.cli.effort_commands import EffortCommands
@@ -436,25 +438,16 @@ class DatusCLI:
         return kb
 
     def _echo_user_input(self, prompt_text: str, user_input: str):
-        """Re-echo user input with Pygments syntax highlighting matching prompt_toolkit style."""
-        from pygments import highlight
-        from pygments.formatters import TerminalTrueColorFormatter
-        from rich.text import Text
-
-        highlighted = highlight(user_input, CustomSqlLexer(), TerminalTrueColorFormatter(style=CustomPygmentsStyle))
-        echoed = Text(prompt_text, style="green bold")
-        echoed.append_text(Text.from_ansi(highlighted.rstrip("\n")))
-        self.console.print(echoed)
+        """Re-echo user input in the scrollback with the unified user-row style."""
+        self.console.print(render_user_scrollback_text(user_input, prompt_text))
 
     def _get_prompt_text(self):
         """Input-line prompt text.
 
-        The Datus brand, plan mode, and current agent are now rendered by the
-        status bar on the line above, so the input line keeps a single minimal
-        indicator. Legacy call sites that expect a textual prompt still receive
-        a non-empty string here.
+        The Datus brand, plan mode, and current agent are rendered by the
+        status bar on the line above, so the input line uses a minimal prompt.
         """
-        return "> "
+        return USER_SCROLLBACK_PROMPT
 
     def _update_prompt(self):
         """Update the prompt display (called when mode changes)"""

@@ -33,7 +33,7 @@ and user overrides shadow the packaged copy by skill name.
 ## Basic Usage
 
 ```text
-Datus> /init
+> /init
 ```
 
 `/init` takes no arguments. The datasource passed to `db_tools.list_tables`
@@ -81,9 +81,9 @@ Because `/init` is just a chat turn, you can keep chatting afterwards to
 refine the result, e.g.:
 
 ```text
-Datus> /init
+> /init
 … <streaming output, AGENTS.md written> …
-Datus> Rewrite the Architecture section to emphasize the data warehouse layer.
+> Rewrite the Architecture section to emphasize the data warehouse layer.
 ```
 
 The agent will edit `AGENTS.md` in place using `filesystem_tools.write_file`.

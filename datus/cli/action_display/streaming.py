@@ -17,7 +17,12 @@ from rich.markdown import Markdown
 from rich.text import Text
 
 from datus.cli.action_display.markdown_stream import MarkdownStreamBuffer
-from datus.cli.action_display.renderers import _truncate_middle, is_task_anchor_input, parse_task_tool_input
+from datus.cli.action_display.renderers import (
+    _truncate_middle,
+    is_task_anchor_input,
+    parse_task_tool_input,
+    render_assistant_response_markdown,
+)
 from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
 
@@ -632,7 +637,7 @@ class InlineStreamingContext:
                     # the already-committed prefix.
                     remaining = self._markdown_buffer.get_tail()
                     if remaining.strip():
-                        self.display.console.print(Markdown(remaining))
+                        self.display.console.print(self._render_streamed_markdown_segment(remaining))
                     self._markdown_buffer.clear()
                     self._stream_body_finalized = True
                 else:
@@ -644,7 +649,7 @@ class InlineStreamingContext:
                                 last_accumulated = candidate
                                 break
                     if last_accumulated.strip():
-                        self.display.console.print(Markdown(last_accumulated))
+                        self.display.console.print(render_assistant_response_markdown(last_accumulated))
                         if self._markdown_buffer is not None:
                             self._markdown_buffer.clear()
                         self._stream_body_finalized = True
@@ -913,6 +918,26 @@ class InlineStreamingContext:
 
         run_in_terminal_sync(_emit)
 
+    def _print_subagent_collapsed_to_append(
+        self,
+        first_action: ActionHistory,
+        tool_count: int,
+        start_time: Optional[datetime],
+        end_action: ActionHistory,
+    ) -> None:
+        """Emit the standard compact collapsed subagent block into the append area."""
+        from datus.cli.tui.console_bridge import run_in_terminal_sync
+
+        console = self.display.console
+        renderables = self.display.renderer.render_subagent_collapsed(first_action, tool_count, start_time, end_action)
+
+        def _emit() -> None:
+            self.display.renderer.print_renderables(console, renderables)
+            if renderables and not (isinstance(renderables[-1], Text) and renderables[-1].plain == ""):
+                console.print(Text(""))
+
+        run_in_terminal_sync(_emit)
+
     def _start_subagent_group(self, first_action: ActionHistory, group_key: Optional[str] = None) -> None:
         """Create sub-agent group and update the Live display.
 
@@ -990,12 +1015,12 @@ class InlineStreamingContext:
         summary = f"  \u23bf  Done ({tool_count} tool uses{duration})"
 
         if self._tui_mode:
-            # TUI mode: emit ⏺ header + ⎿ Done into the append area as a
-            # permanent scrollback block so the reader knows which subagent
-            # this Done refers to. No reprint-with-collapse is performed.
+            # TUI mode: emit the same compact collapsed block that replay
+            # paths render, so live-completed scrollback matches /resume and
+            # Ctrl+O redraw for the same finished history.
             first_action = group.get("first_action")
             if first_action is not None:
-                self._print_subagent_summary_to_append(first_action, summary)
+                self._print_subagent_collapsed_to_append(first_action, tool_count, group["start_time"], end_action)
             else:
                 self._print_to_append_area(f"[dim]{summary}[/dim]")
             # Refresh the pinned region: either paint remaining subagent
@@ -1394,12 +1419,16 @@ class InlineStreamingContext:
         from datus.cli.tui.console_bridge import run_in_terminal_sync
 
         console = self.display.console
-        md = Markdown(segment)
+        md = self._render_streamed_markdown_segment(segment)
 
         def _emit() -> None:
             console.print(md)
 
         run_in_terminal_sync(_emit)
+
+    def _render_streamed_markdown_segment(self, segment: str) -> Markdown:
+        """Render a streamed markdown segment using the shared assistant renderer."""
+        return render_assistant_response_markdown(segment)
 
     def _finalize_markdown_stream(self) -> None:
         """Flush the accumulated body to the scrollback and reset state.
@@ -1444,11 +1473,18 @@ class InlineStreamingContext:
 
     def _print_completed_action(self, action: ActionHistory) -> None:
         """Print a completed action permanently to the console."""
-        # Skip "task" tool calls — already represented by the subagent group display
+        # Skip only the ``task`` tool calls that are already represented by a
+        # subagent group. Standalone task tool calls still need normal output.
         if action.role == ActionRole.TOOL:
             fn = action.input.get("function_name", "") if action.input else ""
             if fn == "task":
-                return
+                normalized_id = action.action_id
+                if normalized_id and normalized_id.startswith("complete_"):
+                    normalized_id = normalized_id[len("complete_") :]
+                if normalized_id in self._completed_group_ids or normalized_id in self._subagent_groups:
+                    return
+                if not is_task_anchor_input(action.input):
+                    return
         # Streaming-markdown de-dup: once this turn has emitted any
         # thinking_delta, the next main-agent ASSISTANT SUCCESS action is
         # the paired completion regardless of ``action_type`` (plain

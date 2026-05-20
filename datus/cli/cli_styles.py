@@ -22,6 +22,7 @@ from __future__ import annotations
 from typing import List, Tuple
 
 from rich.console import Console
+from rich.text import Text
 
 # ── Symbols ──────────────────────────────────────────────────
 SYM_CHECK = "\u2713"  # ✓
@@ -95,6 +96,19 @@ ACTION_ROLE_COLOR_NAMES: dict[str, str] = {
     "WORKFLOW": "bright_yellow",
     "INTERACTION": "bright_yellow",
 }
+
+USER_SCROLLBACK_PROMPT = "> "
+USER_SCROLLBACK_BACKGROUND = "#eeeeee"
+USER_SCROLLBACK_PROMPT_STYLE = f"green bold on {USER_SCROLLBACK_BACKGROUND}"
+USER_SCROLLBACK_TEXT_STYLE = f"on {USER_SCROLLBACK_BACKGROUND}"
+
+
+def render_user_scrollback_text(message: str, prompt_text: str = USER_SCROLLBACK_PROMPT) -> Text:
+    """Render a user scrollback row with a green prompt and neutral text."""
+    text = Text()
+    text.append(prompt_text, style=USER_SCROLLBACK_PROMPT_STYLE)
+    text.append(message, style=USER_SCROLLBACK_TEXT_STYLE)
+    return text
 
 # ── prompt_toolkit Style dicts ──────────────────────────────
 # Main REPL / TUI status bar + completion menu + pinned rolling window.

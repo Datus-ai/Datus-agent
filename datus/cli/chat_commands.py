@@ -17,12 +17,12 @@ import sys
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 
-from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.syntax import Syntax
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.cli.action_display.display import ActionHistoryDisplay
+from datus.cli.action_display.renderers import render_assistant_response_markdown
 from datus.cli.cli_styles import CODE_THEME, print_warning
 from datus.cli.execution_state import ExecutionInterrupted, PendingInputQueue, auto_submit_interaction
 from datus.cli.list_selector_app import ListItem, ListSelectorApp
@@ -757,7 +757,7 @@ class ChatCommands:
             return
 
         sql = final_action.output.get("sql")
-        response = final_action.output.get("response")
+        response = final_action.output.get("response") or final_action.output.get("raw_output")
 
         extracted_sql, extracted_output = self._extract_sql_and_output_from_content(response)
         sql = sql or extracted_sql
@@ -905,10 +905,99 @@ class ChatCommands:
 
     def _find_node_final_action(self, actions: List["ActionHistory"]) -> Optional["ActionHistory"]:
         """Find the node final action (e.g. chat_response) from an action list."""
-        for a in reversed(actions):
-            if a.role == ActionRole.ASSISTANT and a.action_type and a.action_type.endswith("_response"):
-                return a
-        return None
+        return self._find_turn_response_action(actions)
+
+    @staticmethod
+    def _action_response_text(action: "ActionHistory") -> str:
+        """Best-effort user-facing body for an assistant action."""
+        if isinstance(action.output, dict):
+            for key in ("response", "raw_output"):
+                value = action.output.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return (action.messages or "").removeprefix("Thinking: ").strip()
+
+    @staticmethod
+    def _find_turn_response_action(actions: List["ActionHistory"]) -> Optional["ActionHistory"]:
+        """Find the response action that owns a restored/reprinted turn body."""
+        wrapper = None
+        plain = None
+        for action in reversed(actions or []):
+            if (
+                action.role != ActionRole.ASSISTANT
+                or action.depth != 0
+                or action.status != ActionStatus.SUCCESS
+                or not action.action_type
+            ):
+                continue
+            if action.action_type.endswith("_response") and action.action_type != "response":
+                wrapper = action
+                break
+            if action.action_type == "response" and plain is None:
+                plain = action
+        return wrapper or plain
+
+    def _should_display_restored_content(
+        self,
+        content: str,
+        actions: Optional[List["ActionHistory"]],
+        sql: Optional[str],
+    ) -> bool:
+        """Return whether session ``content`` should be rendered after actions."""
+        if not content:
+            return False
+        stripped = content.strip()
+        is_json = stripped.startswith("{") and stripped.endswith("}")
+        if is_json and (sql or actions):
+            return False
+
+        actions = actions or []
+        final_action = self._find_turn_response_action(actions)
+        if final_action is not None and stripped == self._action_response_text(final_action):
+            # The final response action is intentionally skipped by the trace
+            # renderer, so restored session content is the one visible copy.
+            return True
+
+        for action in actions:
+            if action.role == ActionRole.ASSISTANT and action.depth == 0 and stripped == self._action_response_text(action):
+                return False
+        return True
+
+    def _render_restored_messages(self, messages: List[dict]) -> List["ActionHistory"]:
+        """Render session messages using the same turn shell as replay paths."""
+        action_display = ActionHistoryDisplay(self.console, live_state=getattr(self.cli, "live_state", None))
+        last_assistant_actions: List[ActionHistory] = []
+        current_user_msg = ""
+
+        for msg in messages:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            if role == "user":
+                current_user_msg = content
+                action_display.renderer.print_renderables(
+                    self.console,
+                    [
+                        action_display.renderer.render_user_header(content),
+                        action_display.renderer.render_separator(),
+                    ],
+                )
+                continue
+
+            actions = msg.get("actions") or []
+            if actions:
+                action_display.render_action_history(actions)
+                last_assistant_actions = actions
+            sql = msg.get("sql")
+            if sql:
+                self._display_sql_with_copy(sql)
+            if self._should_display_restored_content(content, actions, sql):
+                self._display_markdown_response(content)
+            if actions and current_user_msg:
+                self.all_turn_actions.append((current_user_msg, actions))
+            current_user_msg = ""
+            self.console.print()
+
+        return last_assistant_actions
 
     def _display_sql_with_copy(self, sql: str):
         """
@@ -980,15 +1069,15 @@ class ChatCommands:
                     response = extracted
                 # If extraction fails, fall through to display raw content
 
-            # Display as markdown with proper formatting
-            markdown_content = Markdown(response)
+            # Display as markdown with the same assistant prefix used by history.
+            markdown_content = render_assistant_response_markdown(response)
             self.console.print()  # Add spacing
             self.console.print(markdown_content)
 
         except Exception as e:
             logger.error(f"Error displaying markdown: {e}")
             # Fallback to plain text display
-            self.console.print(f"\n[bold blue]Assistant:[/] {response}")
+            self.console.print(f"\n\u23fa {response}")
 
     def _display_semantic_model(self, semantic_models: Optional[List[str]]):
         """
@@ -1395,37 +1484,8 @@ class ChatCommands:
 
         # Rebuild state from session messages
         if messages:
-            from rich.rule import Rule
-
             self.console.print()
-            action_display = ActionHistoryDisplay(self.console, live_state=getattr(self.cli, "live_state", None))
-            last_assistant_actions = []
-            current_user_msg = ""
-
-            for msg in messages:
-                role = msg.get("role", "unknown")
-                content = msg.get("content", "")
-                if role == "user":
-                    current_user_msg = content
-                    self.console.print(f"[bold blue]You:[/] {content}")
-                else:
-                    actions = msg.get("actions")
-                    if actions:
-                        action_display.render_action_history(actions)
-                        last_assistant_actions = actions
-                    sql = msg.get("sql")
-                    if sql:
-                        self._display_sql_with_copy(sql)
-                    if content:
-                        stripped = content.strip()
-                        is_json = stripped.startswith("{") and stripped.endswith("}")
-                        if not (is_json and (sql or actions)):
-                            self._display_markdown_response(content)
-                    # Rebuild all_turn_actions
-                    if actions and current_user_msg:
-                        self.all_turn_actions.append((current_user_msg, actions))
-                    current_user_msg = ""
-                self.console.print(Rule(style="dim"))
+            last_assistant_actions = self._render_restored_messages(messages)
 
             if last_assistant_actions:
                 self.last_actions = last_assistant_actions
@@ -1526,50 +1586,14 @@ class ChatCommands:
             if hasattr(self.cli, "plan_mode_active"):
                 self.cli.plan_mode_active = bool(getattr(new_node, "plan_mode_active", False))
 
-            # Show conversation history with full formatting
-            from rich.rule import Rule
-
             messages = session_manager.get_session_messages(target_session_id)
+            self.all_turn_actions = []
             if messages:
                 self.console.print(f"\n[green]Session resumed![/] Showing {len(messages)} message(s):\n")
-                action_display = ActionHistoryDisplay(self.console, live_state=getattr(self.cli, "live_state", None))
-                last_assistant_actions = []
-                for msg in messages:
-                    role = msg.get("role", "unknown")
-                    content = msg.get("content", "")
-                    if role == "user":
-                        self.console.print(f"[bold blue]You:[/] {content}")
-                    else:
-                        actions = msg.get("actions")
-                        if actions:
-                            action_display.render_action_history(actions)
-                            last_assistant_actions = actions
-                        sql = msg.get("sql")
-                        if sql:
-                            self._display_sql_with_copy(sql)
-                        if content:
-                            stripped = content.strip()
-                            is_json = stripped.startswith("{") and stripped.endswith("}")
-                            if not (is_json and (sql or actions)):
-                                self._display_markdown_response(content)
-                    self.console.print(Rule(style="dim"))
-                self.console.print()
+                last_assistant_actions = self._render_restored_messages(messages)
                 if last_assistant_actions:
                     self.last_actions = last_assistant_actions
                     self._trace_verbose = False
-
-                # Rebuild all_turn_actions from session messages
-                self.all_turn_actions = []
-                current_user_msg = ""
-                for msg in messages:
-                    role = msg.get("role", "unknown")
-                    if role == "user":
-                        current_user_msg = msg.get("content", "")
-                    else:
-                        actions = msg.get("actions", [])
-                        if actions and current_user_msg:
-                            self.all_turn_actions.append((current_user_msg, actions))
-                        current_user_msg = ""
 
             self.console.print("[green]You can now continue the conversation.[/]")
 
@@ -1683,48 +1707,14 @@ class ChatCommands:
             if hasattr(self.cli, "plan_mode_active"):
                 self.cli.plan_mode_active = bool(getattr(new_node, "plan_mode_active", False))
 
-            # Show the rewound conversation
-            from rich.rule import Rule
-
             new_messages = session_manager.get_session_messages(new_session_id)
             if new_messages:
                 self.console.print(
                     f"\n[green]Rewound to before turn {turn_num}.[/] "
                     f"New session: [cyan]{new_session_id}[/] ({len(new_messages)} messages)\n"
                 )
-                action_display = ActionHistoryDisplay(self.console, live_state=getattr(self.cli, "live_state", None))
-                for msg in new_messages:
-                    role = msg.get("role", "unknown")
-                    content = msg.get("content", "")
-                    if role == "user":
-                        self.console.print(f"[bold blue]You:[/] {content}")
-                    else:
-                        actions = msg.get("actions")
-                        if actions:
-                            action_display.render_action_history(actions)
-                        sql = msg.get("sql")
-                        if sql:
-                            self._display_sql_with_copy(sql)
-                        if content:
-                            stripped = content.strip()
-                            is_json = stripped.startswith("{") and stripped.endswith("}")
-                            if not (is_json and (sql or actions)):
-                                self._display_markdown_response(content)
-                    self.console.print(Rule(style="dim"))
-                self.console.print()
-
-                # Rebuild all_turn_actions from rewound messages
                 self.all_turn_actions = []
-                current_user_msg = ""
-                for msg in new_messages:
-                    role = msg.get("role", "unknown")
-                    if role == "user":
-                        current_user_msg = msg.get("content", "")
-                    else:
-                        actions = msg.get("actions", [])
-                        if actions and current_user_msg:
-                            self.all_turn_actions.append((current_user_msg, actions))
-                        current_user_msg = ""
+                self._render_restored_messages(new_messages)
 
             self.console.print("[green]Selected message placed in input buffer.[/]")
             return rewind_user_message
