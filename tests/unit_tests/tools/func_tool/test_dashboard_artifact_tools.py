@@ -697,6 +697,56 @@ class TestValidateRender:
         result = dashboard_tools.validate_render()
         assert result.success == 1, result.error
 
+    def test_accepts_multiline_shorthand_param_object(
+        self, dashboard_tools: DashboardArtifactTools, project_root: Path
+    ):
+        # The subagent often emits the params object across multiple lines.
+        # `\s*` in both `_PARAMS_KEY_RE` and `_PARAMS_SHORTHAND_KEY_RE` is
+        # expected to absorb the newline + indentation between keys.
+        _seed_template(dashboard_tools)
+        app_multiline_shorthand = (
+            "import React from 'react';\n"
+            "import { useDatusArtifact } from '@datus/web-artifact';\n"
+            "export default function App() {\n"
+            "  const month_floor = '2026-01';\n"
+            "  const regions = ['NA', 'EU'];\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            "  const { data } = useQuerySql('queries/revenue_by_region', {\n"
+            "    month_floor,\n"
+            "    regions,\n"
+            "  });\n"
+            "  return React.createElement('pre', null, JSON.stringify(data?.rows ?? []));\n"
+            "}\n"
+        )
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app_multiline_shorthand})
+        result = dashboard_tools.validate_render()
+        assert result.success == 1, result.error
+        assert "queries/revenue_by_region" in result.result["query_refs"]
+
+    def test_accepts_multiline_mixed_shorthand_and_explicit(
+        self, dashboard_tools: DashboardArtifactTools, project_root: Path
+    ):
+        # Mixed form across lines: one key uses shorthand, the other uses
+        # explicit `key: value` syntax. Neither side may be misclassified.
+        _seed_template(dashboard_tools)
+        app_multiline_mixed = (
+            "import React from 'react';\n"
+            "import { useDatusArtifact } from '@datus/web-artifact';\n"
+            "export default function App() {\n"
+            "  const sd = '2026-01';\n"
+            "  const regions = ['NA', 'EU'];\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            "  const { data } = useQuerySql('queries/revenue_by_region', {\n"
+            "    month_floor: sd,\n"
+            "    regions,\n"
+            "  });\n"
+            "  return React.createElement('pre', null, JSON.stringify(data?.rows ?? []));\n"
+            "}\n"
+        )
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app_multiline_mixed})
+        result = dashboard_tools.validate_render()
+        assert result.success == 1, result.error
+
     def test_rejects_unknown_param_key(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
         _seed_template(dashboard_tools)
         app_extra_key = (
