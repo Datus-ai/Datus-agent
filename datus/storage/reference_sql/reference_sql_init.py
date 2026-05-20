@@ -44,7 +44,18 @@ def _resolve_generated_summary_file_path(
         resolved = resolve_kb_sandbox_path(sql_summary_file, "sql_summary", str(knowledge_base_dir))
         return Path(resolved) if resolved else None
 
-    return Path(agent_config.path_manager.sql_summary_path()) / sql_summary_file
+    reported_path = Path(sql_summary_file)
+    if reported_path.is_absolute():
+        return reported_path
+
+    parts = reported_path.parts
+    if "sql_summaries" in parts:
+        summary_dir_index = parts.index("sql_summaries")
+        summary_relative_parts = parts[summary_dir_index + 1 :]
+        if summary_relative_parts:
+            return Path(agent_config.path_manager.sql_summary_path()).joinpath(*summary_relative_parts)
+
+    return Path(agent_config.path_manager.sql_summary_path()) / reported_path
 
 
 async def process_sql_item(

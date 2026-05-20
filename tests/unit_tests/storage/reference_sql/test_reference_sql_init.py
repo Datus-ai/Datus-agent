@@ -83,6 +83,35 @@ class TestBizNameConstant:
 class TestProcessSqlItem:
     """Tests for process_sql_item summary-path handling."""
 
+    def test_fallback_summary_path_strips_generated_sql_summaries_prefix(self, tmp_path):
+        """Fallback path resolution accepts generated paths that already include sql_summaries."""
+        from datus.storage.reference_sql.reference_sql_init import _resolve_generated_summary_file_path
+
+        summary_dir = tmp_path / "subject" / "sql_summaries"
+        mock_config = MagicMock()
+        mock_config.path_manager.sql_summary_path.return_value = summary_dir
+        mock_node = MagicMock()
+
+        result = _resolve_generated_summary_file_path(
+            mock_config,
+            mock_node,
+            "subject/sql_summaries/ref_001.yaml",
+        )
+
+        assert result == summary_dir / "ref_001.yaml"
+
+    def test_fallback_summary_path_allows_absolute_path(self, tmp_path):
+        """Fallback path resolution preserves absolute paths when no KB root is available."""
+        from datus.storage.reference_sql.reference_sql_init import _resolve_generated_summary_file_path
+
+        summary_file = tmp_path / "subject" / "sql_summaries" / "ref_001.yaml"
+        mock_config = MagicMock()
+        mock_node = MagicMock()
+
+        result = _resolve_generated_summary_file_path(mock_config, mock_node, str(summary_file))
+
+        assert result == summary_file
+
     @pytest.mark.asyncio
     async def test_success_with_subject_prefixed_summary_path(self, tmp_path):
         """LLM may report subject/sql_summaries/...; resolver should not duplicate prefixes."""
