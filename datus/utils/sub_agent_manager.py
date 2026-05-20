@@ -109,6 +109,8 @@ class SubAgentManager:
             source_template = "gen_report_system"
         elif node_class == "gen_visual_report":
             source_template = "gen_visual_report_system"
+        elif node_class == "gen_visual_dashboard":
+            source_template = "gen_visual_dashboard_system"
         else:
             source_template = "sql_system"
 

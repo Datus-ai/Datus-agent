@@ -52,6 +52,7 @@ SYS_SUB_AGENTS = {
     "gen_sql",
     "gen_report",
     "gen_visual_report",
+    "gen_visual_dashboard",
     "gen_table",
     "gen_job",
     "gen_skill",

@@ -236,6 +236,20 @@ class TestResolveNodeType:
         assert NODE_CLASS_MAP["gen_visual_report"] == NodeType.TYPE_GEN_VISUAL_REPORT
         assert "gen_visual_report" in BUILTIN_SUBAGENT_DESCRIPTIONS
 
+    def test_gen_visual_dashboard_resolves(self, task_tool):
+        """gen_visual_dashboard must be registered alongside the other visual subagent.
+
+        Mirrors :meth:`test_gen_visual_report_resolves` — the dashboard subagent
+        is enumerated in ``SYS_SUB_AGENTS`` and exposed via the chat agent's
+        task tool, so missing entries in NODE_CLASS_MAP / descriptions /
+        factory cause the LLM to report it as 'unavailable'.
+        """
+        node_type, node_name = task_tool._resolve_node_type("gen_visual_dashboard")
+        assert node_type == NodeType.TYPE_GEN_VISUAL_DASHBOARD
+        assert node_name == "gen_visual_dashboard"
+        assert NODE_CLASS_MAP["gen_visual_dashboard"] == NodeType.TYPE_GEN_VISUAL_DASHBOARD
+        assert "gen_visual_dashboard" in BUILTIN_SUBAGENT_DESCRIPTIONS
+
     def test_resolve_effective_inherits_parent_when_child_empty(self, task_tool):
         parent = MagicMock()
         parent.node_config = {"scoped_context": {"tables": "public.users"}}
@@ -329,6 +343,7 @@ class TestResolveNodeType:
             "chat": NodeType.TYPE_CHAT,
             "gen_report": NodeType.TYPE_GEN_REPORT,
             "gen_visual_report": NodeType.TYPE_GEN_VISUAL_REPORT,
+            "gen_visual_dashboard": NodeType.TYPE_GEN_VISUAL_DASHBOARD,
             "ext_knowledge": NodeType.TYPE_EXT_KNOWLEDGE,
             "semantic": NodeType.TYPE_SEMANTIC,
             "sql_summary": NodeType.TYPE_SQL_SUMMARY,

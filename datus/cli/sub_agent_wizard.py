@@ -520,12 +520,16 @@ class SubAgentWizard:
         self.name_buffer.on_text_changed += self._update_previews
         self.description_area = TextArea(text="", multiline=True, wrap_lines=True, style="class:textarea")
         self.description_area.buffer.on_text_changed += self._update_previews
-        # Node class selection (gen_sql / gen_report / gen_visual_report)
+        # Node class selection (gen_sql / gen_report / gen_visual_report / gen_visual_dashboard)
         self.node_class_radio = RadioList(
             values=[
                 ("gen_sql", "gen_sql - SQL generation (default)"),
                 ("gen_report", "gen_report - Report/analysis generation"),
                 ("gen_visual_report", "gen_visual_report - Structured report artifact (manifest + queries)"),
+                (
+                    "gen_visual_dashboard",
+                    "gen_visual_dashboard - Parameterized dashboard artifact (Jinja2 SQL templates)",
+                ),
             ],
             default="gen_sql",
         )
@@ -1705,6 +1709,8 @@ class SubAgentWizard:
             fallback_template = "gen_report_system"
         elif node_class == "gen_visual_report":
             fallback_template = "gen_visual_report_system"
+        elif node_class == "gen_visual_dashboard":
+            fallback_template = "gen_visual_dashboard_system"
         else:
             fallback_template = "sql_system"
         try:
@@ -1735,6 +1741,8 @@ class SubAgentWizard:
             default_template = "gen_report_system"
         elif node_class == "gen_visual_report":
             default_template = "gen_visual_report_system"
+        elif node_class == "gen_visual_dashboard":
+            default_template = "gen_visual_dashboard_system"
         else:
             default_template = "sql_system"
         if (
