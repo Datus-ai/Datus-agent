@@ -1,0 +1,167 @@
+name: "Sync Release Blocker"
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - "release/**"
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Merged release blocker PR number to sync back to main"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-release-blocker-${{ github.event.pull_request.number || inputs.pr_number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  sync-back:
+    name: Cherry-pick release blocker to main
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event.pull_request.merged == true &&
+          startsWith(github.event.pull_request.base.ref, 'release/') &&
+          contains(github.event.pull_request.labels.*.name, 'release-blocker')
+        )
+      }}
+    runs-on: ubuntu-latest
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve release blocker PR
+        id: blocker
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${PR_NUMBER}" =~ ^[0-9]+$ ]]; then
+            echo "::error::pr_number must be numeric, got '${PR_NUMBER}'"
+            exit 1
+          fi
+
+          pr_json="$(gh pr view "${PR_NUMBER}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --json baseRefName,labels,mergeCommit,state,title,url)"
+
+          state="$(jq -r '.state' <<< "${pr_json}")"
+          release_branch="$(jq -r '.baseRefName' <<< "${pr_json}")"
+          has_blocker_label="$(jq -r 'any(.labels[]?; .name == "release-blocker")' <<< "${pr_json}")"
+          merge_commit="$(jq -r '.mergeCommit.oid // empty' <<< "${pr_json}")"
+          pr_title="$(jq -r '.title' <<< "${pr_json}")"
+          pr_url="$(jq -r '.url' <<< "${pr_json}")"
+
+          if [[ "${state}" != "MERGED" || -z "${merge_commit}" ]]; then
+            echo "::error::PR #${PR_NUMBER} must be merged before it can be synced back to main"
+            exit 1
+          fi
+          if [[ ! "${release_branch}" == release/* ]]; then
+            echo "::error::PR #${PR_NUMBER} targets '${release_branch}', expected a release/** branch"
+            exit 1
+          fi
+          if [[ "${has_blocker_label}" != "true" ]]; then
+            echo "::error::PR #${PR_NUMBER} must have the 'release-blocker' label before sync-back"
+            exit 1
+          fi
+
+          {
+            echo "release_branch=${release_branch}"
+            echo "merge_commit=${merge_commit}"
+            echo "sync_branch=sync/release-blocker-pr-${PR_NUMBER}-to-main"
+            echo "pr_url=${pr_url}"
+            echo "pr_title<<EOF"
+            echo "${pr_title}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Cherry-pick blocker fix
+        id: cherry_pick
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || secrets.GITHUB_TOKEN }}
+          RELEASE_BRANCH: ${{ steps.blocker.outputs.release_branch }}
+          MERGE_COMMIT: ${{ steps.blocker.outputs.merge_commit }}
+          SYNC_BRANCH: ${{ steps.blocker.outputs.sync_branch }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch origin --prune main "${RELEASE_BRANCH}" --tags
+          git checkout -B "${SYNC_BRANCH}" origin/main
+
+          commit_word_count="$(git rev-list --parents -n 1 "${MERGE_COMMIT}" | wc -w | tr -d ' ')"
+          if [[ "${commit_word_count}" != "2" ]]; then
+            message="Automatic sync-back only supports squash-merged release blocker PRs. PR #${PR_NUMBER} produced merge commit ${MERGE_COMMIT}, so please cherry-pick the blocker fix to main manually."
+            echo "::error::${message}"
+            gh pr comment "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --body "${message}" || true
+            exit 1
+          fi
+
+          if ! git cherry-pick -x "${MERGE_COMMIT}"; then
+            git cherry-pick --abort || true
+            message="Automatic sync-back failed while cherry-picking ${MERGE_COMMIT} to main. Please create the main sync PR manually and resolve the conflict there."
+            echo "::error::${message}"
+            gh pr comment "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --body "${message}" || true
+            exit 1
+          fi
+
+          git push --force-with-lease --set-upstream origin "${SYNC_BRANCH}"
+
+      - name: Create or update main sync PR
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || secrets.GITHUB_TOKEN }}
+          RELEASE_BRANCH: ${{ steps.blocker.outputs.release_branch }}
+          MERGE_COMMIT: ${{ steps.blocker.outputs.merge_commit }}
+          SYNC_BRANCH: ${{ steps.blocker.outputs.sync_branch }}
+          ORIGINAL_PR_URL: ${{ steps.blocker.outputs.pr_url }}
+          ORIGINAL_PR_TITLE: ${{ steps.blocker.outputs.pr_title }}
+        run: |
+          set -euo pipefail
+          title="[Fix] Sync release blocker #${PR_NUMBER} to main"
+          body_file="$(mktemp)"
+          cat > "${body_file}" <<EOF
+          ## Why
+
+          Sync a blocker fix that was merged into ${RELEASE_BRANCH} back to main.
+
+          ## Source
+
+          - Release PR: ${ORIGINAL_PR_URL}
+          - Release PR title: ${ORIGINAL_PR_TITLE}
+          - Cherry-picked commit: ${MERGE_COMMIT}
+
+          ## Notes
+
+          This PR was created automatically by the Sync Release Blocker workflow. It cherry-picks only the release blocker fix commit and does not merge the full release branch back to main.
+          EOF
+
+          if gh pr view "${SYNC_BRANCH}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh pr edit "${SYNC_BRANCH}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "${title}" \
+              --body-file "${body_file}"
+          else
+            gh pr create \
+              --repo "${GITHUB_REPOSITORY}" \
+              --base main \
+              --head "${SYNC_BRANCH}" \
+              --title "${title}" \
+              --body-file "${body_file}"
+          fi
