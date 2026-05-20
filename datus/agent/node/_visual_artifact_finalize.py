@@ -658,7 +658,16 @@ def bake_key_tables_schema(
             try:
                 stale.unlink()
             except OSError as exc:
+                # Surface to the caller's ``warnings`` list — silently
+                # dropping the failure would let the next ask_* session
+                # serve a snapshot the renderer believes is fresh.
+                # ``run_finalize_analysis`` already appends the
+                # write-side warnings from this function to the same
+                # list; the unlink-side warning uses the same string
+                # shape so consumers parsing warnings don't need a new
+                # branch.
                 logger.warning("Failed to remove stale %s: %s", stale, exc)
+                return f"failed to remove stale key_tables_schema.json at {stale}: {exc}"
         return None
 
     # Lazy import keeps the schema module out of the dependency graph

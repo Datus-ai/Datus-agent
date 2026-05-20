@@ -520,6 +520,46 @@ class TestBakeKeyTablesSchema:
         # Stale file gone — the absent signal is now truthful.
         assert not stale_path.exists()
 
+    def test_stale_cleanup_unlink_failure_surfaces_as_warning(self, tmp_path: Path, monkeypatch):
+        """When ``stale.unlink()`` fails (read-only filesystem, immutable
+        flag, racing process), the bake must return a warning string so
+        ``run_finalize_analysis`` collects it into its ``warnings``
+        list. Silently logging would leave the next ask_* turn serving
+        a snapshot the consumer treats as fresh — the exact lying-
+        snapshot scenario the stale-cleanup was added to prevent."""
+        analysis_dir = tmp_path / "analysis"
+        analysis_dir.mkdir()
+        stale_path = analysis_dir / "key_tables_schema.json"
+        stale_path.write_text(json.dumps({"tables": []}), encoding="utf-8")
+
+        # Patch ``Path.unlink`` so only the stale-cleanup call raises —
+        # other Path operations stay live and the test doesn't trip on
+        # incidental mkdir / is_file etc.
+        original_unlink = Path.unlink
+
+        def boom(self, *args, **kwargs):  # noqa: ARG001 — match Path.unlink signature
+            if self == stale_path:
+                raise OSError("read-only filesystem")
+            return original_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", boom)
+
+        warning = bake_key_tables_schema(
+            db_func_tool=None,
+            key_tables=["bake-would-have-happened"],
+            analysis_dir=analysis_dir,
+        )
+        assert isinstance(warning, str), f"expected a warning string, got {warning!r}"
+        # The warning must include both the filename (consumer-facing
+        # identifier) and the underlying OSError message (actionable
+        # detail) — pin both so a refactor that swallows one trips.
+        assert "key_tables_schema.json" in warning
+        assert "read-only filesystem" in warning
+        # File still on disk (unlink failed) — proves the warning is
+        # actually correlated with the lying-snapshot risk, not just
+        # a phantom error string.
+        assert stale_path.is_file()
+
     def test_early_return_with_empty_key_tables_also_clears_stale(self, tmp_path: Path):
         """Same cleanup applies when ``key_tables`` is empty — finalize
         re-aggregated the SQL set and there are no tables anymore, so
