@@ -360,7 +360,7 @@ class TestInitSuccessStorySemanticModelAsyncLLMPath:
             async def execute_stream(self, action_history_manager):
                 action = SimpleNamespace(
                     status=ActionStatus.SUCCESS,
-                    action_type="semantic_response",
+                    action_type="gen_semantic_model_response",
                     output={"semantic_models": ["model1.yaml", "model2.yaml"]},
                     messages="Generated models",
                 )
@@ -402,7 +402,7 @@ class TestInitSuccessStorySemanticModelAsyncLLMPath:
             async def execute_stream(self, action_history_manager):
                 action = SimpleNamespace(
                     status=ActionStatus.SUCCESS,
-                    action_type="semantic_response",
+                    action_type="gen_semantic_model_response",
                     output={"semantic_models": ["model.yaml"]},
                     messages="Generated model",
                 )
@@ -450,7 +450,7 @@ class TestInitSuccessStorySemanticModelAsyncLLMPath:
                 # single string instead of list
                 action = SimpleNamespace(
                     status=ActionStatus.SUCCESS,
-                    action_type="semantic_response",
+                    action_type="gen_semantic_model_response",
                     output={"semantic_models": "single_model.yaml"},
                     messages="Generated",
                 )
@@ -497,7 +497,7 @@ class TestInitSuccessStorySemanticModelAsyncLLMPath:
                 )
                 yield SimpleNamespace(
                     status=ActionStatus.SUCCESS,
-                    action_type="semantic_response",
+                    action_type="gen_semantic_model_response",
                     output={"semantic_models": ["model.yaml"]},
                     messages="Generated",
                 )
@@ -553,6 +553,46 @@ class TestInitSuccessStorySemanticModelAsyncLLMPath:
         assert "did not publish" in error
 
     @pytest.mark.asyncio
+    async def test_failed_final_response_action_returns_failure(self, tmp_path, monkeypatch):
+        """A failed final response action still fails the batch."""
+        from types import SimpleNamespace
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        csv_path = tmp_path / "story.csv"
+        csv_path.write_text("sql,question\nSELECT 1,Q?\n")
+
+        mock_config = MagicMock()
+        mock_db_config = MagicMock()
+        mock_db_config.catalog = ""
+        mock_db_config.database = "db"
+        mock_db_config.schema = ""
+        mock_config.current_db_config.return_value = mock_db_config
+
+        class MockSemanticNode:
+            def __init__(self, *args, **kwargs):
+                self.input = None
+
+            async def execute_stream(self, action_history_manager):
+                yield SimpleNamespace(
+                    status=ActionStatus.FAILED,
+                    action_type="gen_semantic_model_response",
+                    output={"error": "failed final response"},
+                    messages="failed final response",
+                )
+
+        monkeypatch.setattr(
+            "datus.storage.semantic_model.semantic_model_init.GenSemanticModelAgenticNode",
+            MockSemanticNode,
+        )
+
+        success, error = await init_success_story_semantic_model_async(mock_config, str(csv_path))
+
+        assert success is False
+        assert "failed final response" in error
+
+    @pytest.mark.asyncio
     async def test_empty_result_path_returns_false(self, tmp_path, monkeypatch):
         """Empty result path: no generated files → returns (False, error)."""
         from types import SimpleNamespace
@@ -578,7 +618,7 @@ class TestInitSuccessStorySemanticModelAsyncLLMPath:
                 # Yields an action with SUCCESS but no semantic_models key
                 action = SimpleNamespace(
                     status=ActionStatus.SUCCESS,
-                    action_type="semantic_response",
+                    action_type="gen_semantic_model_response",
                     output={"other_key": "value"},
                     messages="Nothing useful",
                 )
@@ -620,7 +660,7 @@ class TestInitSuccessStorySemanticModelAsyncLLMPath:
             async def execute_stream(self, action_history_manager):
                 action = SimpleNamespace(
                     status=ActionStatus.SUCCESS,
-                    action_type="semantic_response",
+                    action_type="gen_semantic_model_response",
                     output={},
                     messages="",
                 )
@@ -738,7 +778,7 @@ class TestInitSuccessStorySemanticModelAsyncLLMPath:
             async def execute_stream(self, action_history_manager):
                 action = SimpleNamespace(
                     status=ActionStatus.SUCCESS,
-                    action_type="semantic_response",
+                    action_type="gen_semantic_model_response",
                     output=None,
                     messages="",
                 )
@@ -793,7 +833,7 @@ class TestInitSuccessStorySemanticModelAsyncOverwriteTruncate:
             async def execute_stream(self, action_history_manager):
                 yield SimpleNamespace(
                     status=ActionStatus.SUCCESS,
-                    action_type="semantic_response",
+                    action_type="gen_semantic_model_response",
                     output={"semantic_models": ["m.yaml"]},
                     messages="ok",
                 )
@@ -840,7 +880,7 @@ class TestInitSuccessStorySemanticModelAsyncOverwriteTruncate:
             async def execute_stream(self, action_history_manager):
                 yield SimpleNamespace(
                     status=ActionStatus.SUCCESS,
-                    action_type="semantic_response",
+                    action_type="gen_semantic_model_response",
                     output={"semantic_models": ["m.yaml"]},
                     messages="ok",
                 )
