@@ -210,6 +210,12 @@ def test_resolve_explicit_compare_ref_prefers_origin_for_branch_name(monkeypatch
     assert run_pr_tests._resolve_explicit_compare_ref("main") == "origin/main"
 
 
+def test_resolve_explicit_compare_ref_prefers_origin_for_slash_branch(monkeypatch):
+    monkeypatch.setattr(run_pr_tests, "_git_ref_exists", lambda ref: ref == "origin/release/0.3.1")
+
+    assert run_pr_tests._resolve_explicit_compare_ref("release/0.3.1") == "origin/release/0.3.1"
+
+
 def test_resolve_explicit_compare_ref_accepts_remote_ref(monkeypatch):
     monkeypatch.setattr(run_pr_tests, "_git_ref_exists", lambda ref: ref == "upstream/main")
 
