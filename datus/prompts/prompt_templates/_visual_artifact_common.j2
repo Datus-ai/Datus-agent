@@ -47,7 +47,7 @@ The optional `/** @datus-title ... */` annotation at the top is used by the stan
 | Module | Notes |
 |---|---|
 | `react` | `useState`, `useEffect`, `useRef`, `useMemo`, `useCallback`, `useContext`, `createContext`, plus the default `React` namespace |
-| `@datus/web-artifact` | `useDatusArtifact`, `AnimateOnVisible` (see "Motion & animation"), `ChartEntryMore` (see "Chart action menu") |
+| `@datus/web-artifact` | `useDatusArtifact`, `AnimateOnVisible` (see "Motion & animation"), `ChartEntryMore` (see "Chart action menu"), `Skeleton`, `ErrorBlock` (see "Loading & error placeholders") |
 | `recharts` | any named export (`AreaChart`, `LineChart`, `BarChart`, `RadarChart`, `PieChart`, `ResponsiveContainer`, `Tooltip`, `XAxis`, `YAxis`, `CartesianGrid`, `Area`, `Line`, `Bar`, `Radar`, `Pie`, `Cell`, etc.) |
 | `lucide-react` | any icon component (`User`, `TrendingUp`, `Banknote`, `Globe`, `Landmark`, …). **Use these instead of emoji** — see the "Iconography & emoji" section below. |
 | `d3-format` | `format` — build numeric / currency / percent / SI-prefix formatters |
@@ -64,9 +64,9 @@ Every chart / table / KPI component in `render/` follows the same five-section s
 
 ```jsx
 import { useMemo, useRef } from 'react';
-import { useDatusArtifact, AnimateOnVisible, ChartEntryMore } from '@datus/web-artifact';
+import { useDatusArtifact, AnimateOnVisible, ChartEntryMore, Skeleton, ErrorBlock } from '@datus/web-artifact';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip } from 'recharts';
-import Card, { Skeleton, ErrorBlock } from './shared/card';
+import Card from './shared/card';
 import { N } from './shared/formatters';
 
 function RevenueTrendCard() {
@@ -213,115 +213,31 @@ Treat each output as a polished deliverable — a small **branded analytics prod
 
 ### Loading & error placeholders — `Skeleton` / `ErrorBlock`
 
-`Skeleton` and `ErrorBlock` live alongside `Card` in `render/shared/card.jsx` and every component imports them as `import Card, { Skeleton, ErrorBlock } from './shared/card'`. They are the **first thing the reader sees** while a query resolves or when it fails — treat them as part of the visual system, not as throwaway placeholders. The default LLM versions (one centered pulsing dot, one red text line) read as cheap and unfinished. Use the reference implementation below as a starting point and adapt the palette/copy to the artifact.
+`Skeleton` and `ErrorBlock` are runtime-provided primitives — **import them directly from `@datus/web-artifact`**. Do not re-implement them in `render/shared/card.jsx`; every artifact shares one canonical look and gets free upgrades when the runtime ships new versions, exactly like `AnimateOnVisible` and `ChartEntryMore`.
 
 ```jsx
-// render/shared/card.jsx
-import { AlertCircle, RotateCcw } from 'lucide-react';
-import { COLORS } from './colors';
+import { Skeleton, ErrorBlock } from '@datus/web-artifact';
 
-const PLACEHOLDER_KEYFRAMES = `
-  @keyframes datus-shimmer { 0% { background-position: 200% 0 } 100% { background-position: -200% 0 } }
-`;
-
-export function Skeleton({ minHeight = 200, bars = 3 }) {
-  // Three stacked shimmer bars at 60% / 80% / 40% width — reads as "data is
-  // loading" without committing to a chart shape that would flash and
-  // re-arrange when real data arrives.
-  const widths = ['60%', '80%', '40%'];
-  return (
-    <div
-      style={{
-        minHeight,
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        gap: 12,
-        padding: 20,
-      }}
-    >
-      <style>{PLACEHOLDER_KEYFRAMES}</style>
-      {Array.from({ length: bars }).map((_, i) => (
-        <div
-          key={i}
-          style={{
-            height: 12,
-            width: widths[i % widths.length],
-            borderRadius: 6,
-            background:
-              'linear-gradient(90deg, #F3F4F6 0%, #E5E7EB 50%, #F3F4F6 100%)',
-            backgroundSize: '200% 100%',
-            animation: 'datus-shimmer 1.4s ease-in-out infinite',
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
-export function ErrorBlock({ msg, onRetry }) {
-  const handleRetry = onRetry ?? (() => window.location.reload());
-  return (
-    <div
-      style={{
-        minHeight: 140,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 10,
-        padding: 20,
-        background: '#FEF2F2',
-        border: '1px solid #FECACA',
-        borderRadius: 12,
-        textAlign: 'center',
-      }}
-    >
-      <AlertCircle size={24} strokeWidth={2} style={{ color: COLORS.negative }} />
-      <span style={{ fontSize: 13, color: COLORS.negative, maxWidth: 360, lineHeight: 1.5 }}>
-        {msg}
-      </span>
-      <button
-        type="button"
-        onClick={handleRetry}
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 6,
-          padding: '6px 12px',
-          marginTop: 4,
-          borderRadius: 6,
-          border: `1px solid ${COLORS.negative}`,
-          background: 'transparent',
-          color: COLORS.negative,
-          fontSize: 12,
-          fontWeight: 500,
-          cursor: 'pointer',
-        }}
-      >
-        <RotateCcw size={14} strokeWidth={2} />
-        Retry
-      </button>
-    </div>
-  );
-}
+const { isLoading, errorMessage, data, refetch } = useQuerySql('queries/foo', params);
+if (isLoading) return <Skeleton minHeight={300} />;
+if (errorMessage) return <ErrorBlock msg={errorMessage} onRetry={refetch} />;
 ```
+
+Props:
+
+| Component | Prop | Default | Notes |
+|---|---|---|---|
+| `Skeleton` | `minHeight` | `200` | Match the chart's expected height so the layout doesn't shift when real content mounts. |
+| `Skeleton` | `bars` | `3` | Number of shimmer bars (60% / 80% / 40% width cycle). Bump to 4–5 for taller cards. |
+| `ErrorBlock` | `msg` | — (required) | The `errorMessage` field from `useQuerySql`. |
+| `ErrorBlock` | `onRetry` | `window.location.reload` | Pass `refetch` from `useQuerySql` so the Retry button re-runs just the failed query instead of reloading the whole iframe. |
+| `ErrorBlock` | `minHeight` | `140` | Override only when the surrounding layout demands a specific height. |
 
 Rules:
 
-- **Always import `{ Skeleton, ErrorBlock }` from `./shared/card`** — never inline a one-off placeholder per component. The whole point of the shared module is consistent loading/error UX across the artifact.
-- **Skeleton uses a shimmering bar stack**, not a single pulsing dot. Three stacked bars at 60% / 80% / 40% widths read as "a card whose contents haven't loaded yet"; a centered dot reads as "spinner in an empty box". Skeletons live on the card's own background — do **not** add a separate filled rectangle behind the bars.
-- **ErrorBlock always shows a Retry control**, even on errors the user can't directly fix. The action gives the reader an obvious recovery affordance instead of a dead-end red box. Use Lucide `AlertCircle` (24×24, `COLORS.negative`) above the message and Lucide `RotateCcw` (14×14) inside the button — these are an explicit exception to the "icons sparingly" rule below because the placeholders are functional UI.
-- **`onRetry` is optional but should always be wired up** in components that use `useQuerySql`. The hook exposes a stable `refetch()` action — pass it straight through. When `onRetry` is omitted (e.g. a placeholder rendered outside the data-hooks flow), the button falls back to `window.location.reload()` so every artifact still has a working recovery path.
-- **Component usage** matches the canonical-component-shape early returns:
-
-  ```jsx
-  const { isLoading, errorMessage, data, refetch } = useQuerySql('queries/foo', params);
-  if (isLoading) return <Skeleton minHeight={300} />;
-  if (errorMessage) return <ErrorBlock msg={errorMessage} onRetry={refetch} />;
-  ```
-
-  `refetch` re-runs the same `(sqlId, params)` pair against the provider without remounting the component — preferred over `window.location.reload()`, which reloads the entire artifact iframe.
+- **Always wire `onRetry={refetch}`** in components that use `useQuerySql`. The fallback (`window.location.reload()`) re-mounts the entire artifact iframe and loses any local UI state (filters, page numbers, scroll position) — fine as a last resort but not the preferred path.
+- **The placeholders use a fixed neutral palette** (gray-100/200 shimmer for `Skeleton`; red-50 / red-200 / red-700 for `ErrorBlock`) so error UX is consistent across every artifact. Do not try to override their colors via wrapper divs — if a future palette knob is needed, it will land as an explicit prop.
+- **Lucide icons inside the runtime placeholders** (`AlertCircle`, `RotateCcw`) are part of the component, not something you import — they are an exception to the "icons sparingly" rule below because the placeholders are functional UI.
 
 ### Iconography & emoji (read this twice)
 
