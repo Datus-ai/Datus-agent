@@ -450,6 +450,18 @@ class SubAgentTaskTool:
                 session_id=session_id,
             )
         elif subagent_type == "gen_visual_report":
+            # Same session_id contract as gen_visual_dashboard below —
+            # ``BaseVisualArtifactAgenticNode.__init__`` doesn't accept
+            # ``session_id``, so silently dropping it would let resume
+            # loops spawn a fresh session per turn while the LLM
+            # thinks it picked up an existing one. Fail loud.
+            if session_id is not None:
+                raise ValueError(
+                    "gen_visual_report does not support session resume "
+                    "(BaseVisualArtifactAgenticNode constructor has no "
+                    "session_id parameter). Drop the session_id kwarg, "
+                    "or use a resumable subagent type."
+                )
             from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
 
             return GenVisualReportAgenticNode(

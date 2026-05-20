@@ -236,6 +236,44 @@ class TestResolveNodeType:
         assert NODE_CLASS_MAP["gen_visual_report"] == NodeType.TYPE_GEN_VISUAL_REPORT
         assert "gen_visual_report" in BUILTIN_SUBAGENT_DESCRIPTIONS
 
+    def test_gen_visual_report_constructs_and_builds_input(self, task_tool, tmp_path):
+        """Mirror of ``test_gen_visual_dashboard_constructs_and_builds_input``
+        for the report subagent — ``_create_builtin_node`` + the
+        matching ``_build_node_input`` branch must produce the right
+        node class and input dataclass. The mapping-level
+        ``test_gen_visual_report_resolves`` check above won't catch
+        constructor signature drift or an input-builder branch
+        returning the wrong type.
+        """
+        from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
+        from datus.schemas.gen_visual_report_models import GenVisualReportNodeInput
+
+        task_tool.agent_config.workspace_root = str(tmp_path)
+
+        node = task_tool._create_builtin_node("gen_visual_report")
+        assert isinstance(node, GenVisualReportAgenticNode), f"factory returned wrong type: {type(node).__name__}"
+        assert node.configured_node_name == "gen_visual_report"
+        assert node.NODE_NAME == "gen_visual_report"
+        assert node.ARTIFACT_KIND == "report"
+        assert node.execution_mode == "interactive"
+
+        prompt = "produce a quarterly revenue report"
+        node_input = task_tool._build_node_input(node, prompt)
+        assert isinstance(node_input, GenVisualReportNodeInput), (
+            f"input builder returned wrong type: {type(node_input).__name__}"
+        )
+        assert node_input.user_message == prompt
+        assert node_input.database == "test_db"
+
+    def test_gen_visual_report_rejects_session_id(self, task_tool):
+        """gen_visual_report has the same no-resume contract as
+        gen_visual_dashboard — both inherit from
+        ``BaseVisualArtifactAgenticNode`` which doesn't accept
+        ``session_id``. Pin ValueError + the load-bearing substring
+        so a regression to silent-drop trips here."""
+        with pytest.raises(ValueError, match="gen_visual_report.*session resume"):
+            task_tool._create_builtin_node("gen_visual_report", session_id="some-prior-session")
+
     def test_gen_visual_dashboard_resolves(self, task_tool):
         """gen_visual_dashboard must be registered alongside the other visual subagent.
 
