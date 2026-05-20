@@ -85,8 +85,6 @@ nav:
       - LLM Trace Usage: training/llm_trace_usage.md
     - Develop:
       - Overview: develop/README.md
-      - Architecture: develop/Architecture.md
-      - Contributing: develop/Contributing.md
     - VSCode Extension: vscode_extension/introduction.md
 
   - Release Notes: release_notes.md
@@ -166,6 +164,7 @@ plugins:
             Skills: Skills
             Validation: 校验
             Auto Memory: 自动记忆
+            Develop: 开发
             VSCode Extension: VSCode 插件
             Release Notes: 发布说明
 
