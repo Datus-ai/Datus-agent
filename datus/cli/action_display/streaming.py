@@ -600,10 +600,7 @@ class InlineStreamingContext:
             if self._current_user_message:
                 self.display.renderer.print_renderables(
                     self.display.console,
-                    [
-                        self.display.renderer.render_user_header(self._current_user_message),
-                        self.display.renderer.render_separator(),
-                    ],
+                    [self.display.renderer.render_user_header(self._current_user_message)],
                 )
             # 3. Render already-processed actions. The initial USER request
             # is dropped on reprint because it was already echoed at the

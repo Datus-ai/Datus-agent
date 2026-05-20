@@ -556,20 +556,27 @@ class DatusCLI:
         """Width in cells available to the left output pane.
 
         Mirrors ``DatusApp._sidebar_target_width`` so Rich's wrap width
-        matches the column prompt_toolkit will paint into:
+        matches the column prompt_toolkit will paint into. The scrollbar
+        gutter (``_scrollbar_window`` in ``DatusApp``) is always present
+        — its ``visible_filter`` is ``lambda: True`` — so 1 column is
+        deducted regardless of sidebar visibility. Renderables that draw
+        a right edge (e.g. ``Panel`` borders) would otherwise overlap or
+        be clipped by the gutter.
 
-        * Sidebar visible: ``cols - max(14, cols // 5) - 1`` (the trailing
-          ``- 1`` is the ``│`` separator), floored at 20 so Rich can still
-          format something on absurdly narrow terminals.
-        * Sidebar hidden: ``cols`` (full screen), floored at 20.
+        * Sidebar visible: ``cols - max(14, cols // 5) - 1`` (scrollbar)
+        * Sidebar hidden: ``cols - 1`` (scrollbar)
+
+        Floored at 20 so Rich can still format something on absurdly
+        narrow terminals.
         """
         import shutil
 
         cols = shutil.get_terminal_size(fallback=(120, 30)).columns
+        scrollbar_width = 1
         if sidebar_visible:
             sidebar_width = max(14, cols // 5)
-            return max(20, cols - sidebar_width - 1)
-        return max(20, cols)
+            return max(20, cols - sidebar_width - scrollbar_width)
+        return max(20, cols - scrollbar_width)
 
     def _reflow_for_sidebar(self, sidebar_visible: bool) -> None:
         """Reflow the output pane when the sidebar appears/disappears.

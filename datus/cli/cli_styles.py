@@ -21,7 +21,9 @@ from __future__ import annotations
 
 from typing import List, Tuple
 
+from rich.box import ROUNDED
 from rich.console import Console
+from rich.panel import Panel
 from rich.text import Text
 
 # ── Symbols ──────────────────────────────────────────────────
@@ -101,14 +103,27 @@ USER_SCROLLBACK_PROMPT = "> "
 USER_SCROLLBACK_BACKGROUND = "#eeeeee"
 USER_SCROLLBACK_PROMPT_STYLE = f"green bold on {USER_SCROLLBACK_BACKGROUND}"
 USER_SCROLLBACK_TEXT_STYLE = f"on {USER_SCROLLBACK_BACKGROUND}"
+USER_SCROLLBACK_BORDER_STYLE = "green"
 
 
-def render_user_scrollback_text(message: str, prompt_text: str = USER_SCROLLBACK_PROMPT) -> Text:
-    """Render a user scrollback row with a green prompt and neutral text."""
+def render_user_scrollback_text(message: str, prompt_text: str = USER_SCROLLBACK_PROMPT) -> Panel:
+    """Render a user scrollback block — bordered panel with background fill.
+
+    The border and background give USER messages a strong visual identity
+    that separates them from neighbouring ASSISTANT markdown blocks.
+    """
     text = Text()
     text.append(prompt_text, style=USER_SCROLLBACK_PROMPT_STYLE)
     text.append(message, style=USER_SCROLLBACK_TEXT_STYLE)
-    return text
+    return Panel(
+        text,
+        border_style=USER_SCROLLBACK_BORDER_STYLE,
+        style=USER_SCROLLBACK_TEXT_STYLE,
+        box=ROUNDED,
+        padding=(0, 1),
+        expand=True,
+    )
+
 
 # ── prompt_toolkit Style dicts ──────────────────────────────
 # Main REPL / TUI status bar + completion menu + pinned rolling window.

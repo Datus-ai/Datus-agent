@@ -31,28 +31,29 @@ def _bare_cli() -> DatusCLI:
 
 
 class TestComputePaneWidth:
-    def test_sidebar_visible_subtracts_column_and_separator(self) -> None:
+    def test_sidebar_visible_subtracts_sidebar_and_scrollbar(self) -> None:
         cli = _bare_cli()
         with mock.patch("shutil.get_terminal_size", return_value=mock.MagicMock(columns=200)):
-            # cols=200, sidebar=max(14, 200//5)=40, pane=200-40-1=159
+            # cols=200, sidebar=max(14, 200//5)=40, scrollbar=1, pane=200-40-1=159
             assert cli._compute_pane_width(sidebar_visible=True) == 159
 
     def test_sidebar_visible_min_sidebar_width_floor(self) -> None:
         cli = _bare_cli()
         with mock.patch("shutil.get_terminal_size", return_value=mock.MagicMock(columns=60)):
-            # cols=60, sidebar=max(14, 60//5)=14, pane=60-14-1=45
+            # cols=60, sidebar=max(14, 60//5)=14, scrollbar=1, pane=60-14-1=45
             assert cli._compute_pane_width(sidebar_visible=True) == 45
 
-    def test_sidebar_hidden_uses_full_terminal(self) -> None:
+    def test_sidebar_hidden_subtracts_scrollbar(self) -> None:
         cli = _bare_cli()
         with mock.patch("shutil.get_terminal_size", return_value=mock.MagicMock(columns=200)):
-            assert cli._compute_pane_width(sidebar_visible=False) == 200
+            # scrollbar gutter is always rendered (visible_filter=lambda: True)
+            assert cli._compute_pane_width(sidebar_visible=False) == 199
 
     def test_narrow_terminal_floored_at_twenty(self) -> None:
         cli = _bare_cli()
         with mock.patch("shutil.get_terminal_size", return_value=mock.MagicMock(columns=10)):
             assert cli._compute_pane_width(sidebar_visible=False) == 20
-            # cols=10, sidebar=14, pane=10-14-1=-5 → floored
+            # cols=10, sidebar=14, scrollbar=1, pane=10-14-1=-5 → floored
             assert cli._compute_pane_width(sidebar_visible=True) == 20
 
 
@@ -76,19 +77,20 @@ class TestReflowForSidebar:
 
         # Same instance, new width — so chat_commands.console (which captured
         # this reference) and any ActionHistoryDisplay still see the new width.
+        # cols=200, scrollbar=1, sidebar hidden → pane=199
         assert cli.console is original_console
-        assert cli.console.width == 200
+        assert cli.console.width == 199
         cli.chat_commands._full_screen_reprint.assert_called_once_with(verbose=False, in_progress_actions=None)
         cli.tui_app.invalidate.assert_called_once()
 
     def test_same_width_is_noop(self) -> None:
-        cli = self._build_cli(width=200)
+        cli = self._build_cli(width=199)
         with mock.patch("shutil.get_terminal_size", return_value=mock.MagicMock(columns=200)):
             cli._reflow_for_sidebar(sidebar_visible=False)
 
         cli.chat_commands._full_screen_reprint.assert_not_called()
         cli.tui_app.invalidate.assert_not_called()
-        assert cli.console.width == 200
+        assert cli.console.width == 199
 
     def test_reprint_uses_current_trace_verbose(self) -> None:
         cli = self._build_cli(width=100)
@@ -134,5 +136,6 @@ class TestReflowForSidebar:
             cli._reflow_for_sidebar(sidebar_visible=False)
 
         # Width still updated, invalidate still called.
-        assert cli.console.width == 200
+        # cols=200, scrollbar=1, sidebar hidden → pane=199
+        assert cli.console.width == 199
         cli.tui_app.invalidate.assert_called_once()

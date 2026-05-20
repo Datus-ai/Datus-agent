@@ -595,6 +595,12 @@ def extract_selection_text(
     selection boundary are honoured, so a partial click on a CJK glyph
     selects the whole glyph (matches :func:`split_line_for_selection`'s
     snap-past behaviour).
+
+    Trailing whitespace is stripped from each extracted line. Renderables
+    with background fill (e.g. the bordered USER message panel) pad each
+    row with spaces out to the pane width; without this strip those
+    padding spaces would land on the clipboard and force the user to
+    clean them up manually after pasting.
     """
     rng = selection.range()
     if rng is None:
@@ -614,5 +620,5 @@ def extract_selection_text(
             from_col, to_col = 0, end.column
         else:
             from_col, to_col = 0, line_char_count(fragments)
-        out_lines.append(extract_plain_text_between(fragments, from_col, to_col))
+        out_lines.append(extract_plain_text_between(fragments, from_col, to_col).rstrip())
     return "\n".join(out_lines)

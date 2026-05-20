@@ -10,6 +10,7 @@ from io import StringIO
 
 import pytest
 from rich.console import Console
+from rich.panel import Panel
 from rich.text import Text
 
 from datus.cli.action_display.renderers import (
@@ -471,19 +472,23 @@ class TestRenderMainAction:
         assert "```markdown" not in text
 
     def test_user_action(self):
-        """USER action renders with > prefix."""
+        """USER action renders as a bordered Panel with > prefix inside."""
         action = _make_action(
             ActionRole.USER,
             ActionStatus.SUCCESS,
             messages="User: my question",
         )
         result = _renderer().render_main_action(action, verbose=False)
-        text = _plain(result)
-        assert text.startswith("> ")
-        assert "my question" in text
-        spans = result[0].spans
-        assert str(spans[0].style) == "green bold on #eeeeee"
-        assert str(spans[1].style) == "on #eeeeee"
+        panel = result[0]
+        assert isinstance(panel, Panel)
+        assert str(panel.border_style) == "green"
+        assert str(panel.style) == "on #eeeeee"
+        inner = panel.renderable
+        assert isinstance(inner, Text)
+        assert inner.plain.startswith("> ")
+        assert "my question" in inner.plain
+        assert str(inner.spans[0].style) == "green bold on #eeeeee"
+        assert str(inner.spans[1].style) == "on #eeeeee"
 
 
 # ── render_task_tool_as_subagent ──────────────────────────────────
@@ -666,11 +671,16 @@ class TestUtilityRenderables:
     """Test utility renderables."""
 
     def test_user_header(self):
-        text = _renderer().render_user_header("What is revenue?")
-        assert text.plain.startswith("> ")
-        assert "What is revenue?" in text.plain
-        assert str(text.spans[0].style) == "green bold on #eeeeee"
-        assert str(text.spans[1].style) == "on #eeeeee"
+        panel = _renderer().render_user_header("What is revenue?")
+        assert isinstance(panel, Panel)
+        assert str(panel.border_style) == "green"
+        assert str(panel.style) == "on #eeeeee"
+        inner = panel.renderable
+        assert isinstance(inner, Text)
+        assert inner.plain.startswith("> ")
+        assert "What is revenue?" in inner.plain
+        assert str(inner.spans[0].style) == "green bold on #eeeeee"
+        assert str(inner.spans[1].style) == "on #eeeeee"
 
     def test_separator(self):
         text = _renderer().render_separator()

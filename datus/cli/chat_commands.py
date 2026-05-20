@@ -952,7 +952,11 @@ class ChatCommands:
             return True
 
         for action in actions:
-            if action.role == ActionRole.ASSISTANT and action.depth == 0 and stripped == self._action_response_text(action):
+            if (
+                action.role == ActionRole.ASSISTANT
+                and action.depth == 0
+                and stripped == self._action_response_text(action)
+            ):
                 return False
         return True
 
@@ -969,10 +973,7 @@ class ChatCommands:
                 current_user_msg = content
                 action_display.renderer.print_renderables(
                     self.console,
-                    [
-                        action_display.renderer.render_user_header(content),
-                        action_display.renderer.render_separator(),
-                    ],
+                    [action_display.renderer.render_user_header(content)],
                 )
                 continue
 

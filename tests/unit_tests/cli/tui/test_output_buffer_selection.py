@@ -117,6 +117,21 @@ def test_blank_lines_padded_with_single_space_in_rendered_get_line():
     assert "".join(f[1] for f in content.get_line(0)) == "first"
 
 
+def test_extract_selection_text_strips_trailing_whitespace_per_line():
+    """Background-filled renderables (e.g. the USER message Panel) pad
+    each row out to the pane width. Selecting across those rows would
+    otherwise drop the padding spaces onto the clipboard.
+    """
+    buf = TUIOutputBuffer()
+    _populate(buf, ["hello       ", "world   ", "tail"])
+    selection = TranscriptSelection()
+    selection.begin(SelectionPoint(line=0, column=0))
+    selection.update_head(SelectionPoint(line=2, column=4))
+    # Start/middle rows reach the line's end and get rstripped; the
+    # final row uses the partial end column and ends at "tail" exactly.
+    assert extract_selection_text(buf, selection) == "hello\nworld\ntail"
+
+
 def test_extract_selection_text_preserves_blank_rows_without_phantom_space():
     """Extraction reads the raw snapshot so the padded space never ends up
     on the clipboard."""

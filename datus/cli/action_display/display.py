@@ -384,7 +384,7 @@ class ActionHistoryDisplay:
         for user_message, actions in turns:
             self.renderer.print_renderables(
                 self.console,
-                [self.renderer.render_user_header(user_message), self.renderer.render_separator()],
+                [self.renderer.render_user_header(user_message)],
             )
             # Drop the initial USER request (already rendered by render_user_header)
             # but keep mid-run ``user_insert`` injections so they remain visible
