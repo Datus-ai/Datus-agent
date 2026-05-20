@@ -250,6 +250,67 @@ class TestResolveNodeType:
         assert NODE_CLASS_MAP["gen_visual_dashboard"] == NodeType.TYPE_GEN_VISUAL_DASHBOARD
         assert "gen_visual_dashboard" in BUILTIN_SUBAGENT_DESCRIPTIONS
 
+    def test_gen_visual_dashboard_constructs_and_builds_input(self, task_tool, tmp_path):
+        """``_create_builtin_node`` and ``_build_node_input`` must wire
+        together for gen_visual_dashboard the same way they do for
+        every other builtin subagent. The mapping-level assertions in
+        :meth:`test_gen_visual_dashboard_resolves` cover registration
+        but won't catch a constructor signature drift or an input-
+        builder branch that returns the wrong dataclass — both would
+        only surface at runtime when the LLM actually invokes the
+        subagent.
+        """
+        from datus.agent.node.gen_visual_dashboard_agentic_node import GenVisualDashboardAgenticNode
+        from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeInput
+
+        # ``_setup_filesystem_tools`` reaches for the workspace root;
+        # the fixture's bare Mock would otherwise emit a TypeError-noise
+        # log line during construction. Setting it to a real path keeps
+        # the captured-log output clean for future log-based tests.
+        task_tool.agent_config.workspace_root = str(tmp_path)
+
+        node = task_tool._create_builtin_node("gen_visual_dashboard")
+        assert isinstance(node, GenVisualDashboardAgenticNode), f"factory returned wrong type: {type(node).__name__}"
+        # Both the configured name (used for node_config lookup) and
+        # the class-level NODE_NAME / ARTIFACT_KIND constants are
+        # load-bearing for the prompt template / artifact dir routing.
+        assert node.configured_node_name == "gen_visual_dashboard"
+        assert node.NODE_NAME == "gen_visual_dashboard"
+        assert node.ARTIFACT_KIND == "dashboard"
+        assert node.execution_mode == "interactive"
+
+        # Cross-component contract: feeding the same prompt into
+        # ``_build_node_input`` must yield the dashboard-specific
+        # input dataclass with the user_message + scoped datasource
+        # populated. Hits the ``isinstance(node, GenVisualDashboardAgenticNode)``
+        # branch on the input builder side — without this assertion a
+        # branch that's only registered but not wired to build input
+        # would slip through.
+        prompt = "build a dashboard for daily AOV by store"
+        node_input = task_tool._build_node_input(node, prompt)
+        assert isinstance(node_input, GenVisualDashboardNodeInput), (
+            f"input builder returned wrong type: {type(node_input).__name__}"
+        )
+        assert node_input.user_message == prompt
+        # ``database`` is sourced from ``agent_config.current_datasource``
+        # which the fixture pins to "test_db".
+        assert node_input.database == "test_db"
+
+    def test_gen_visual_dashboard_rejects_session_id(self, task_tool):
+        """``_create_builtin_node`` for gen_visual_dashboard MUST fail
+        loud when a session_id is passed — the underlying
+        ``BaseVisualArtifactAgenticNode`` constructor has no
+        ``session_id`` parameter so silently dropping it (the prior
+        behaviour) would let resume loops spawn a fresh session per
+        turn while the LLM thinks it picked up an existing one. Pin
+        on ValueError + a substring that names both the subagent type
+        and the load-bearing reason ("does not support session
+        resume") so a regression to silent-drop or to a different
+        error class trips here.
+        """
+        with pytest.raises(ValueError, match="gen_visual_dashboard.*session resume"):
+            task_tool._create_builtin_node("gen_visual_dashboard", session_id="some-prior-session")
+
     def test_resolve_effective_inherits_parent_when_child_empty(self, task_tool):
         parent = MagicMock()
         parent.node_config = {"scoped_context": {"tables": "public.users"}}

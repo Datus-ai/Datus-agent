@@ -464,6 +464,23 @@ class SubAgentTaskTool:
                 is_subagent=True,
             )
         elif subagent_type == "gen_visual_dashboard":
+            # ``GenVisualDashboardAgenticNode`` inherits from
+            # ``BaseVisualArtifactAgenticNode`` whose ``__init__`` does
+            # NOT accept ``session_id`` (no resume flow yet — the
+            # artifact directory + manifest itself is the persistence
+            # boundary). Silently dropping a caller-supplied session_id
+            # the way other visual subagents do would let resume loops
+            # spawn a fresh session every turn while the LLM thinks it
+            # picked up an existing one. Fail loud instead so the
+            # caller can either drop the kwarg or wait for a
+            # constructor-level resume API.
+            if session_id is not None:
+                raise ValueError(
+                    "gen_visual_dashboard does not support session resume "
+                    "(BaseVisualArtifactAgenticNode constructor has no "
+                    "session_id parameter). Drop the session_id kwarg, "
+                    "or use a resumable subagent type."
+                )
             from datus.agent.node.gen_visual_dashboard_agentic_node import GenVisualDashboardAgenticNode
 
             return GenVisualDashboardAgenticNode(
