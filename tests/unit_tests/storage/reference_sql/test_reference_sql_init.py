@@ -5,7 +5,7 @@
 """Unit tests for datus.storage.reference_sql.reference_sql_init."""
 
 from enum import Enum
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -72,6 +72,99 @@ class TestBizNameConstant:
     def test_biz_name_value(self):
         """BIZ_NAME is reference_sql_init."""
         assert BIZ_NAME == "reference_sql_init"
+
+
+# ---------------------------------------------------------------------------
+# process_sql_item
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ci
+class TestProcessSqlItem:
+    """Tests for process_sql_item summary-path handling."""
+
+    def test_fallback_summary_path_strips_generated_sql_summaries_prefix(self, tmp_path):
+        """Fallback path resolution accepts generated paths that already include sql_summaries."""
+        from datus.storage.reference_sql.reference_sql_init import _resolve_generated_summary_file_path
+
+        summary_dir = tmp_path / "subject" / "sql_summaries"
+        mock_config = MagicMock()
+        mock_config.path_manager.sql_summary_path.return_value = summary_dir
+        mock_node = MagicMock()
+
+        result = _resolve_generated_summary_file_path(
+            mock_config,
+            mock_node,
+            "subject/sql_summaries/ref_001.yaml",
+        )
+
+        assert result == summary_dir / "ref_001.yaml"
+
+    def test_fallback_summary_path_allows_absolute_path(self, tmp_path):
+        """Fallback path resolution preserves absolute paths when no KB root is available."""
+        from datus.storage.reference_sql.reference_sql_init import _resolve_generated_summary_file_path
+
+        summary_file = tmp_path / "subject" / "sql_summaries" / "ref_001.yaml"
+        mock_config = MagicMock()
+        mock_node = MagicMock()
+
+        result = _resolve_generated_summary_file_path(mock_config, mock_node, str(summary_file))
+
+        assert result == summary_file
+
+    @pytest.mark.asyncio
+    async def test_success_with_subject_prefixed_summary_path(self, tmp_path):
+        """LLM may report subject/sql_summaries/...; resolver should not duplicate prefixes."""
+        import yaml
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.storage.reference_sql.reference_sql_init import process_sql_item
+
+        kb_dir = tmp_path / "subject"
+        summary_dir = kb_dir / "sql_summaries"
+        summary_dir.mkdir(parents=True)
+        summary_file = summary_dir / "ref_001.yaml"
+        summary_file.write_text(
+            yaml.safe_dump(
+                {
+                    "name": "new_product_activity_query",
+                    "subject_tree": "运营/活动/类别",
+                },
+                allow_unicode=True,
+            ),
+            encoding="utf-8",
+        )
+
+        success_action = MagicMock()
+        success_action.status = ActionStatus.SUCCESS
+        success_action.output = {"sql_summary_file": "subject/sql_summaries/ref_001.yaml"}
+        success_action.messages = []
+
+        async def mock_execute_stream(*args, **kwargs):
+            yield success_action
+
+        mock_node = MagicMock()
+        mock_node.knowledge_base_dir = str(kb_dir)
+        mock_node.execute_stream = mock_execute_stream
+
+        mock_config = MagicMock()
+        mock_config.path_manager.sql_summary_path.return_value = summary_dir
+
+        item = {
+            "sql": "SELECT * FROM v_udata_ac_info",
+            "filepath": "/tmp/ref.sql",
+            "comment": "",
+        }
+
+        with patch(
+            "datus.storage.reference_sql.reference_sql_init.SqlSummaryAgenticNode",
+            return_value=mock_node,
+        ):
+            result = await process_sql_item(item, mock_config, build_mode="overwrite")
+
+        assert result == "subject/sql_summaries/ref_001.yaml"
+        assert item["name"] == "new_product_activity_query"
+        assert item["subject_tree"] == "运营/活动/类别"
 
 
 # ---------------------------------------------------------------------------
