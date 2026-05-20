@@ -36,9 +36,11 @@ def parse_canonical_version(raw_version: str) -> Version:
     return version
 
 
-def ensure_version_can_advance(repo_root: Path, target_version: Version) -> None:
+def ensure_version_can_advance(
+    repo_root: Path, target_version: Version, *, allow_current_version: bool = False
+) -> None:
     current_version = read_pyproject_version(repo_root)
-    if target_version <= current_version:
+    if target_version < current_version or (target_version == current_version and not allow_current_version):
         raise ValueError(f"Release version must advance current version {current_version}; got {target_version}")
 
     tag_errors = check_tag_available(repo_root, target_version)
@@ -148,6 +150,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Allow prerelease adapter versions when updating adapter core lower bounds",
     )
+    parser.add_argument(
+        "--allow-current-version",
+        action="store_true",
+        help="Allow preparing a release branch that already has the target version",
+    )
+    parser.add_argument(
+        "--allow-no-changes",
+        action="store_true",
+        help="Exit successfully when release metadata is already prepared",
+    )
     parser.add_argument("--pypi-timeout", type=float, default=10.0, help="PyPI request timeout in seconds")
     return parser
 
@@ -157,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     repo_root = args.repo_root.resolve()
     try:
         version = parse_canonical_version(args.version)
-        ensure_version_can_advance(repo_root, version)
+        ensure_version_can_advance(repo_root, version, allow_current_version=args.allow_current_version)
         changed = prepare_release(
             repo_root,
             version,
@@ -170,6 +182,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if not changed or not git_has_diff(repo_root):
+        if args.allow_no_changes:
+            print(f"Release metadata is already prepared for datus-agent {version}")
+            return 0
         print(f"Release preparation produced no changes for {version}", file=sys.stderr)
         return 1
 
