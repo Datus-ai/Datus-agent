@@ -611,6 +611,128 @@ def update_manifest_key_tables(manifest_path: Path, key_tables: List[str]) -> Op
         return f"failed to write key_tables: {exc}"
 
 
+def bake_key_tables_schema(
+    *,
+    db_func_tool: Optional[Any],
+    key_tables: List[str],
+    analysis_dir: Path,
+) -> Optional[str]:
+    """Snapshot ``describe_table`` output for every ``manifest.key_tables``
+    entry into ``analysis/key_tables_schema.json``.
+
+    The follow-up ``ask_*`` consultant inlines this file into the system
+    prompt so SQL planning on the listed tables skips
+    ``describe_table`` round-trips. Companion file to
+    ``manifest.key_tables`` (names only) — that field stays a small
+    list of strings for list-page consumers; the schema detail lives
+    in this sidecar instead.
+
+    Best-effort:
+
+    * ``db_func_tool is None`` → silently skip (CLI tests, dry runs).
+    * Empty ``key_tables`` → skip (no schema to bake).
+    * ``describe_table`` per-table failure → record the error string
+      on the table entry rather than aborting the whole bake — the
+      LLM gets a partial schema plus a "schema unavailable" hint per
+      missing table, and can re-fetch via ``describe_table`` for the
+      blanks if the user asks.
+    * Write OSError → returned as a warning string for the caller to
+      surface; the artifact's primary contract (queries/, render/,
+      manifest.json) is already on disk by the time this runs.
+
+    Returns ``None`` on success / skip; a warning string on write
+    failure. Per-table errors are NOT propagated as warnings — they
+    travel with the sidecar so the prompt can be specific about which
+    tables were unavailable.
+    """
+    if db_func_tool is None or not key_tables:
+        return None
+
+    # Lazy import keeps the schema module out of the dependency graph
+    # for callers that only run the LLM-authored side of finalize.
+    from datus.schemas.key_tables_schema import KeyTableColumn, KeyTableSchema, KeyTablesSchemaFile
+
+    tables_out: List[KeyTableSchema] = []
+    for table_name in key_tables:
+        try:
+            result = db_func_tool.describe_table(table_name=table_name)
+        except Exception as exc:
+            # Broad except: connector implementations raise their own
+            # exception types and we don't want to enumerate them. The
+            # bake is best-effort; a single misbehaving connector
+            # shouldn't strand the whole sidecar.
+            logger.warning("describe_table raised for %s during key_tables bake: %s", table_name, exc)
+            tables_out.append(KeyTableSchema(name=table_name, error=f"describe_table raised: {exc}"))
+            continue
+
+        if result is None or getattr(result, "success", 1) == 0:
+            err = (
+                (getattr(result, "error", None) or "describe_table returned no usable result")
+                if result
+                else "describe_table returned None"
+            )
+            tables_out.append(KeyTableSchema(name=table_name, error=str(err)))
+            continue
+
+        payload = getattr(result, "result", None)
+        if not isinstance(payload, dict):
+            tables_out.append(
+                KeyTableSchema(
+                    name=table_name,
+                    error=f"describe_table returned unexpected payload type: {type(payload).__name__}",
+                )
+            )
+            continue
+
+        raw_columns = payload.get("columns") or []
+        if not isinstance(raw_columns, list):
+            tables_out.append(
+                KeyTableSchema(
+                    name=table_name,
+                    error=f"describe_table returned non-list columns: {type(raw_columns).__name__}",
+                )
+            )
+            continue
+
+        cols: List[KeyTableColumn] = []
+        for raw_col in raw_columns:
+            if not isinstance(raw_col, dict):
+                continue
+            cname = raw_col.get("name")
+            if not isinstance(cname, str) or not cname:
+                continue
+            # ``is_dimension`` may legitimately be missing (no semantic
+            # model). Distinguish "absent" from "False" via None.
+            is_dimension = raw_col.get("is_dimension")
+            if not isinstance(is_dimension, bool):
+                is_dimension = None
+            cols.append(
+                KeyTableColumn(
+                    name=cname,
+                    type=str(raw_col.get("type") or ""),
+                    comment=str(raw_col.get("comment") or ""),
+                    is_dimension=is_dimension,
+                )
+            )
+
+        table_meta = payload.get("table") if isinstance(payload.get("table"), dict) else {}
+        description = str(table_meta.get("description") or "") if table_meta else ""
+
+        tables_out.append(KeyTableSchema(name=table_name, description=description, columns=cols))
+
+    schema_file = KeyTablesSchemaFile(tables=tables_out)
+    out_path = analysis_dir / "key_tables_schema.json"
+    try:
+        _atomic_write_text(
+            out_path,
+            json.dumps(schema_file.model_dump(), ensure_ascii=False, indent=2) + "\n",
+        )
+    except OSError as exc:
+        logger.warning("Failed to write %s: %s", out_path, exc)
+        return f"failed to write key_tables_schema.json: {exc}"
+    return None
+
+
 def write_subject_refs(analysis_dir: Path, refs: SubjectRefs) -> Optional[str]:
     """Write ``subject_refs.json`` iff any bucket is non-empty.
 
@@ -955,6 +1077,7 @@ def run_finalize_analysis(
     queries_dir: Path,
     analysis_dir: Path,
     actions: Iterable[ActionHistory],
+    db_func_tool: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Top-level orchestrator. Returns a result dict::
 
@@ -1062,6 +1185,20 @@ def run_finalize_analysis(
     kt_err = update_manifest_key_tables(artifact_dir / "manifest.json", key_tables)
     if kt_err:
         warnings.append(kt_err)
+
+    # Snapshot column metadata for every key_table into
+    # ``analysis/key_tables_schema.json``. ask_* inlines this so SQL
+    # planning skips ``describe_table`` round-trips on tables the
+    # artifact already touched. Best-effort: per-table errors travel
+    # with the sidecar (so the prompt can be specific about gaps);
+    # only a write OSError surfaces as a warning here.
+    schema_err = bake_key_tables_schema(
+        db_func_tool=db_func_tool,
+        key_tables=key_tables,
+        analysis_dir=analysis_dir,
+    )
+    if schema_err:
+        warnings.append(schema_err)
 
     subject_refs_count = {
         "metrics": len(refs.metrics),

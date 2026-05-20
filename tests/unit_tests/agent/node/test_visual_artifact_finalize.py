@@ -29,6 +29,7 @@ from datus.agent.node._visual_artifact_finalize import (
     _sanitize_curated_intent_md,
     aggregate_referenced_tables,
     aggregate_subject_refs,
+    bake_key_tables_schema,
     collect_query_briefs,
     collect_query_previews,
     consistency_check,
@@ -433,6 +434,249 @@ def _make_artifact_layout(
             encoding="utf-8",
         )
     return artifact_dir, queries_dir, analysis_dir
+
+
+# --------------------------------------------------------------------------- #
+# bake_key_tables_schema                                                      #
+# --------------------------------------------------------------------------- #
+
+
+def _mock_describe_table_tool(per_table_payload: Dict[str, Any]) -> Mock:
+    """Build a mock ``db_func_tool`` whose ``describe_table`` returns
+    a pre-canned payload per table name.
+
+    Each entry in ``per_table_payload`` is either:
+    * ``{"result": {...}}`` for a successful describe
+    * ``{"success": 0, "error": "..."}`` for a connector-side failure
+    * an ``Exception`` instance to raise
+
+    Builds a FuncToolResult-shaped Mock object (``success``, ``result``,
+    ``error`` attrs) so the bake function's duck-typed access path
+    works the same way it does against the real tool.
+    """
+    tool = Mock()
+
+    def describe(*, table_name: str, **_kwargs: Any) -> Any:
+        spec = per_table_payload.get(table_name)
+        if isinstance(spec, Exception):
+            raise spec
+        if spec is None:
+            return None
+        result_mock = Mock()
+        result_mock.success = spec.get("success", 1)
+        result_mock.result = spec.get("result")
+        result_mock.error = spec.get("error")
+        return result_mock
+
+    tool.describe_table = Mock(side_effect=describe)
+    return tool
+
+
+class TestBakeKeyTablesSchema:
+    """Snapshot ``describe_table`` output per key_table into the sidecar.
+
+    The bake is best-effort: per-table failures get captured inline so
+    a single broken connector / dropped table doesn't strand the whole
+    schema sidecar.
+    """
+
+    def test_no_db_func_tool_skips_silently(self, tmp_path: Path):
+        """A node without a DB tool (rare, but supported in tests / dry
+        runs) must skip the bake without writing a misleading empty
+        sidecar."""
+        analysis_dir = tmp_path / "analysis"
+        analysis_dir.mkdir()
+        warning = bake_key_tables_schema(
+            db_func_tool=None,
+            key_tables=["jeff_shop.raw_orders"],
+            analysis_dir=analysis_dir,
+        )
+        assert warning is None
+        assert not (analysis_dir / "key_tables_schema.json").exists()
+
+    def test_empty_key_tables_skips_silently(self, tmp_path: Path):
+        """Manifest has no key_tables (e.g. an artifact with only
+        literal/constant SQL) ⇒ no schema to bake, no sidecar file."""
+        analysis_dir = tmp_path / "analysis"
+        analysis_dir.mkdir()
+        tool = _mock_describe_table_tool({})
+        warning = bake_key_tables_schema(
+            db_func_tool=tool,
+            key_tables=[],
+            analysis_dir=analysis_dir,
+        )
+        assert warning is None
+        assert not (analysis_dir / "key_tables_schema.json").exists()
+        # describe_table must not be called when there's nothing to describe.
+        tool.describe_table.assert_not_called()
+
+    def test_writes_schema_when_describe_succeeds(self, tmp_path: Path):
+        """Happy path: one table, describe_table returns columns + an
+        optional semantic-model description; the sidecar carries
+        name/description/columns shape verbatim."""
+        analysis_dir = tmp_path / "analysis"
+        analysis_dir.mkdir()
+        tool = _mock_describe_table_tool(
+            {
+                "jeff_shop.raw_orders": {
+                    "result": {
+                        "columns": [
+                            {"name": "order_id", "type": "bigint", "comment": "primary key"},
+                            {"name": "order_total", "type": "int", "comment": "stored in cents"},
+                        ],
+                        "table": {
+                            "name": "raw_orders",
+                            "description": "canonical orders fact table",
+                        },
+                    }
+                }
+            }
+        )
+        warning = bake_key_tables_schema(
+            db_func_tool=tool,
+            key_tables=["jeff_shop.raw_orders"],
+            analysis_dir=analysis_dir,
+        )
+        assert warning is None
+        out = json.loads((analysis_dir / "key_tables_schema.json").read_text())
+        # Exact shape pinned so consumers can rely on this contract.
+        assert out == {
+            "tables": [
+                {
+                    "name": "jeff_shop.raw_orders",
+                    "description": "canonical orders fact table",
+                    "columns": [
+                        {
+                            "name": "order_id",
+                            "type": "bigint",
+                            "comment": "primary key",
+                            "is_dimension": None,
+                        },
+                        {
+                            "name": "order_total",
+                            "type": "int",
+                            "comment": "stored in cents",
+                            "is_dimension": None,
+                        },
+                    ],
+                    "error": None,
+                }
+            ]
+        }
+
+    def test_is_dimension_propagates_when_semantic_model_present(self, tmp_path: Path):
+        """When describe_table found a semantic model, the per-column
+        ``is_dimension`` flag is preserved through to the sidecar so
+        the LLM can tell measures from dimensions without a semantic
+        lookup.
+        """
+        analysis_dir = tmp_path / "analysis"
+        analysis_dir.mkdir()
+        tool = _mock_describe_table_tool(
+            {
+                "tbl_a": {
+                    "result": {
+                        "columns": [
+                            {"name": "id", "type": "int", "comment": "", "is_dimension": True},
+                            {"name": "amount", "type": "decimal", "comment": "", "is_dimension": False},
+                        ],
+                        "table": {"name": "tbl_a", "description": ""},
+                    }
+                }
+            }
+        )
+        bake_key_tables_schema(
+            db_func_tool=tool,
+            key_tables=["tbl_a"],
+            analysis_dir=analysis_dir,
+        )
+        out = json.loads((analysis_dir / "key_tables_schema.json").read_text())
+        cols_by_name = {c["name"]: c for c in out["tables"][0]["columns"]}
+        assert cols_by_name["id"]["is_dimension"] is True
+        assert cols_by_name["amount"]["is_dimension"] is False
+
+    def test_per_table_describe_failure_captured_inline(self, tmp_path: Path):
+        """Mixed success: one table works, one returns ``success=0``,
+        one raises. All three appear in the sidecar — the failing two
+        with their error strings so the prompt can render a per-table
+        "schema unavailable" hint instead of dropping them."""
+        analysis_dir = tmp_path / "analysis"
+        analysis_dir.mkdir()
+        tool = _mock_describe_table_tool(
+            {
+                "good_tbl": {
+                    "result": {
+                        "columns": [{"name": "c", "type": "int", "comment": ""}],
+                    }
+                },
+                "permission_denied_tbl": {"success": 0, "error": "access denied"},
+                "raising_tbl": RuntimeError("connection reset"),
+            }
+        )
+        warning = bake_key_tables_schema(
+            db_func_tool=tool,
+            key_tables=["good_tbl", "permission_denied_tbl", "raising_tbl"],
+            analysis_dir=analysis_dir,
+        )
+        assert warning is None
+        out = json.loads((analysis_dir / "key_tables_schema.json").read_text())
+        by_name = {t["name"]: t for t in out["tables"]}
+        assert by_name["good_tbl"]["error"] is None
+        assert len(by_name["good_tbl"]["columns"]) == 1
+        # Connector-side failure: error string from the tool surfaces verbatim.
+        assert by_name["permission_denied_tbl"]["columns"] == []
+        assert "access denied" in by_name["permission_denied_tbl"]["error"]
+        # Exception: bake catches and records the message.
+        assert by_name["raising_tbl"]["columns"] == []
+        assert "connection reset" in by_name["raising_tbl"]["error"]
+
+    def test_non_dict_payload_captured_as_error(self, tmp_path: Path):
+        """A connector that returns the wrong shape (string, list,
+        None) gets caught at validation time so the LLM never sees a
+        half-populated entry that looks valid."""
+        analysis_dir = tmp_path / "analysis"
+        analysis_dir.mkdir()
+        tool = _mock_describe_table_tool({"weird_tbl": {"result": "not a dict"}})
+        bake_key_tables_schema(
+            db_func_tool=tool,
+            key_tables=["weird_tbl"],
+            analysis_dir=analysis_dir,
+        )
+        out = json.loads((analysis_dir / "key_tables_schema.json").read_text())
+        assert out["tables"][0]["columns"] == []
+        # Pin the substring rather than the exact wording — error
+        # message is constructed at the bake site and may be tuned.
+        assert "unexpected payload type" in out["tables"][0]["error"]
+
+    def test_columns_without_name_silently_skipped(self, tmp_path: Path):
+        """Malformed column entries (non-dict, missing/blank name) are
+        skipped at the column level so one bad row doesn't strand the
+        rest of the table's schema."""
+        analysis_dir = tmp_path / "analysis"
+        analysis_dir.mkdir()
+        tool = _mock_describe_table_tool(
+            {
+                "tbl": {
+                    "result": {
+                        "columns": [
+                            {"name": "good", "type": "int", "comment": ""},
+                            "not a dict",
+                            {"name": "", "type": "int"},
+                            {"type": "bigint"},  # no name
+                            {"name": "also_good", "type": "varchar"},
+                        ],
+                    }
+                }
+            }
+        )
+        bake_key_tables_schema(
+            db_func_tool=tool,
+            key_tables=["tbl"],
+            analysis_dir=analysis_dir,
+        )
+        out = json.loads((analysis_dir / "key_tables_schema.json").read_text())
+        names = [c["name"] for c in out["tables"][0]["columns"]]
+        assert names == ["good", "also_good"]
 
 
 # --------------------------------------------------------------------------- #
@@ -950,6 +1194,82 @@ class TestRunFinalizeAnalysis:
         assert result["key_tables"] == ["Account", "PersonOwnAccount"]
         manifest = json.loads((artifact_dir / "manifest.json").read_text(encoding="utf-8"))
         assert manifest["key_tables"] == ["Account", "PersonOwnAccount"]
+
+    def test_end_to_end_bakes_key_tables_schema_when_db_tool_passed(self, tmp_path: Path):
+        """When the orchestrator is given a ``db_func_tool`` (the
+        production wiring), it bakes ``analysis/key_tables_schema.json``
+        from the same key_tables it wrote to the manifest. ask_* reads
+        this sidecar so SQL planning on the listed tables skips
+        ``describe_table`` round-trips."""
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(
+            tmp_path,
+            sql_body="SELECT * FROM Account",
+        )
+        model = Mock(spec=["generate_with_json_output"])
+        model.generate_with_json_output.return_value = _full_finalize_response()
+
+        db_tool = _mock_describe_table_tool(
+            {
+                "Account": {
+                    "result": {
+                        "columns": [
+                            {"name": "id", "type": "int", "comment": "primary key"},
+                            {"name": "name", "type": "varchar", "comment": ""},
+                        ],
+                        "table": {"name": "Account", "description": ""},
+                    }
+                }
+            }
+        )
+
+        result = run_finalize_analysis(
+            model=model,
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+            db_func_tool=db_tool,
+        )
+
+        assert result["ok"] is True
+        schema_path = analysis_dir / "key_tables_schema.json"
+        assert schema_path.is_file()
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        # The bake walks ``key_tables`` (already populated by the
+        # update_manifest_key_tables step in the same orchestrator pass)
+        # so the sidecar tables list mirrors the manifest entries.
+        assert [t["name"] for t in schema["tables"]] == ["Account"]
+        assert {c["name"] for c in schema["tables"][0]["columns"]} == {"id", "name"}
+
+    def test_end_to_end_skips_schema_bake_without_db_tool(self, tmp_path: Path):
+        """Backwards-compatible default: no ``db_func_tool`` ⇒ no schema
+        sidecar. Existing finalize call sites (and the older
+        BaseVisualArtifactAgenticNode signature before this PR) keep
+        working unchanged."""
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(
+            tmp_path,
+            sql_body="SELECT * FROM Account",
+        )
+        model = Mock(spec=["generate_with_json_output"])
+        model.generate_with_json_output.return_value = _full_finalize_response()
+
+        result = run_finalize_analysis(
+            model=model,
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+            # No db_func_tool — explicit None to make the default-
+            # behaviour assertion clear.
+            db_func_tool=None,
+        )
+
+        assert result["ok"] is True
+        assert result["key_tables"] == ["Account"]
+        # Sidecar absent — only the deterministic manifest update fired.
+        assert not (analysis_dir / "key_tables_schema.json").exists()
 
     def test_end_to_end_preserves_qualified_table_references(self, tmp_path: Path):
         """Real-world SQL is usually fully qualified (``finbench.main.Account``);

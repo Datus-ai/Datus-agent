@@ -737,6 +737,7 @@ def _seed_analysis_extras(
     insights: list[dict] | None = None,
     subject_refs: dict | None = None,
     suggested_questions: list[dict] | None = None,
+    key_tables_schema: dict | None = None,
 ) -> None:
     """Drop optional analysis files into an already-seeded artifact root."""
     analysis_dir = artifact_root / "analysis"
@@ -747,6 +748,8 @@ def _seed_analysis_extras(
         (analysis_dir / "subject_refs.json").write_text(json.dumps(subject_refs), encoding="utf-8")
     if suggested_questions is not None:
         (analysis_dir / "suggested_questions.json").write_text(json.dumps(suggested_questions), encoding="utf-8")
+    if key_tables_schema is not None:
+        (analysis_dir / "key_tables_schema.json").write_text(json.dumps(key_tables_schema), encoding="utf-8")
 
 
 def _make_dashboard_with_queries(agent_config, *, slug: str, queries: list[dict], subject_refs: dict | None = None):
@@ -779,6 +782,7 @@ def _make_report_with_queries(
     insights: list[dict] | None = None,
     subject_refs: dict | None = None,
     suggested_questions: list[dict] | None = None,
+    key_tables_schema: dict | None = None,
 ):
     """Build a report node from a fully-seeded artifact via the blob path.
 
@@ -796,6 +800,7 @@ def _make_report_with_queries(
         insights=insights,
         subject_refs=subject_refs,
         suggested_questions=suggested_questions,
+        key_tables_schema=key_tables_schema,
     )
     blob = _blob_from_disk(agent_config.project_root, "report", slug)
     _register_ask_agent(agent_config, name=f"ask_{slug}", kind="report", slug=slug, blob=blob)
@@ -1259,3 +1264,299 @@ class TestArtifactContextBlockInlining:
         # NOT" so a future copy-edit that softens the rule trips.
         assert "1. **Answer from the inlined context first**" in block
         assert "Do NOT issue `glob` or `read_file`" in block
+
+
+# --------------------------------------------------------------------------- #
+# Table Schemas section                                                       #
+# --------------------------------------------------------------------------- #
+
+
+class TestTableSchemasSection:
+    """Inline ``analysis/key_tables_schema.json`` so the LLM plans
+    follow-up SQL without ``describe_table`` round-trips for tables
+    already in ``manifest.key_tables``.
+
+    The section's intro is load-bearing: it explicitly carves out the
+    cases where the LLM MUST still call ``describe_table`` (live
+    schema state, unknown columns, tables outside key_tables). These
+    tests pin both the inlining behavior AND the carve-out wording.
+    """
+
+    def _basic_schema(self) -> dict:
+        return {
+            "tables": [
+                {
+                    "name": "jeff_shop.raw_orders",
+                    "description": "canonical orders fact table",
+                    "columns": [
+                        {"name": "order_id", "type": "bigint", "comment": "primary key"},
+                        {
+                            "name": "order_total",
+                            "type": "int",
+                            "comment": "stored in cents",
+                            "is_dimension": False,
+                        },
+                        {"name": "store_id", "type": "int", "comment": "FK to raw_stores.id"},
+                    ],
+                },
+                {
+                    "name": "jeff_shop.raw_stores",
+                    "description": "",
+                    "columns": [
+                        {"name": "id", "type": "int", "comment": ""},
+                        {"name": "name", "type": "varchar", "comment": ""},
+                    ],
+                },
+            ]
+        }
+
+    def test_section_renders_tables_and_columns(self, real_agent_config):
+        """Happy path: schema sidecar present ⇒ section renders both
+        tables with columns + types + comments. The catalog and rule
+        sections still follow."""
+        node = _make_report_with_queries(
+            real_agent_config,
+            slug="schema_basic",
+            queries=[
+                {
+                    "slug": "q",
+                    "brief": {"name": "q", "uses": {}},
+                    "result": _basic_query_result("q"),
+                    "sql": "SELECT 1",
+                }
+            ],
+            key_tables_schema=self._basic_schema(),
+        )
+        block = node._render_artifact_context_block()
+        assert "### Table Schemas (`analysis/key_tables_schema.json`)" in block
+        # Both table headers present.
+        assert "#### `jeff_shop.raw_orders`" in block
+        assert "#### `jeff_shop.raw_stores`" in block
+        # Description from semantic model only on the first table.
+        assert "_(description: canonical orders fact table)_" in block
+        # Per-column rendering: type + comment via ``--``.
+        assert "- `order_id`: bigint  -- primary key" in block
+        assert "- `order_total`: int  -- stored in cents" in block
+        # Comment-less columns just show name + type.
+        assert "- `id`: int" in block
+        assert "- `name`: varchar" in block
+
+    def test_section_intro_carves_out_live_state_call_describe(self, real_agent_config):
+        """The intro MUST explicitly tell the LLM to fall back to
+        ``describe_table`` for live schema / unknown columns / non-
+        key_tables. Without this carve-out the LLM would treat the
+        snapshot as authoritative forever and answer stale-schema
+        questions confidently. Pin on substrings that survive minor
+        copy-edits but trip if the safety guidance gets weakened."""
+        node = _make_report_with_queries(
+            real_agent_config,
+            slug="schema_carveout",
+            queries=[
+                {
+                    "slug": "q",
+                    "brief": {"name": "q", "uses": {}},
+                    "result": _basic_query_result("q"),
+                    "sql": "SELECT 1",
+                }
+            ],
+            key_tables_schema=self._basic_schema(),
+        )
+        block = node._render_artifact_context_block()
+        assert "SNAPSHOT" in block
+        assert "describe_table" in block
+        # Specific carve-out scenarios are named in the intro.
+        assert "LATEST / CURRENT schema" in block
+        assert "column NOT in this list" in block
+        assert "tables NOT in `manifest.key_tables`" in block
+
+    def test_rule_one_includes_live_state_exception(self, real_agent_config):
+        """Behavioral rule 1 (already pins the "no defensive read"
+        contract) must also carry the LIVE/CURRENT exception clause
+        so the LLM knows when re-fetching IS expected."""
+        node = _make_report_with_queries(
+            real_agent_config,
+            slug="rule_live",
+            queries=[
+                {
+                    "slug": "q",
+                    "brief": {"name": "q", "uses": {}},
+                    "result": _basic_query_result("q"),
+                    "sql": "SELECT 1",
+                }
+            ],
+            key_tables_schema=self._basic_schema(),
+        )
+        block = node._render_artifact_context_block()
+        # Find the line starting rule 1 and verify it mentions the
+        # LIVE / CURRENT exception.
+        rule1_idx = block.find("1. **Answer from the inlined context first**")
+        rule2_idx = block.find("2. **Do NOT regenerate the artifact**")
+        assert rule1_idx > 0 and rule2_idx > rule1_idx
+        rule1_text = block[rule1_idx:rule2_idx]
+        assert "LIVE / CURRENT" in rule1_text
+        assert "describe_table" in rule1_text
+
+    def test_missing_schema_skips_section(self, real_agent_config):
+        """No sidecar (older artifacts, dry runs, finalize without a
+        db tool) ⇒ section absent. The other inlined sections must
+        still render."""
+        node = _make_report_with_queries(
+            real_agent_config,
+            slug="schema_missing",
+            queries=[
+                {
+                    "slug": "q",
+                    "brief": {"name": "q", "uses": {}},
+                    "result": _basic_query_result("q"),
+                    "sql": "SELECT 1",
+                }
+            ],
+            # No key_tables_schema kwarg ⇒ file not seeded.
+        )
+        block = node._render_artifact_context_block()
+        assert "### Table Schemas" not in block
+        # But rule 1 still mentions LIVE/CURRENT (it's a static
+        # behavioral rule, independent of whether the schema sidecar
+        # exists for THIS artifact).
+        assert "LIVE / CURRENT" in block
+
+    def test_per_table_error_renders_describe_hint(self, real_agent_config):
+        """When the bake captured an error for a specific table
+        (permission denied, table dropped, etc.), the renderer
+        surfaces the failure with the exact remediation rather than
+        silently dropping the entry. Without this hint the LLM might
+        assume the table doesn't exist."""
+        schema = {
+            "tables": [
+                {"name": "ok_tbl", "columns": [{"name": "id", "type": "int", "comment": ""}]},
+                {"name": "denied_tbl", "columns": [], "error": "access denied"},
+            ]
+        }
+        node = _make_report_with_queries(
+            real_agent_config,
+            slug="schema_partial",
+            queries=[
+                {
+                    "slug": "q",
+                    "brief": {"name": "q", "uses": {}},
+                    "result": _basic_query_result("q"),
+                    "sql": "SELECT 1",
+                }
+            ],
+            key_tables_schema=schema,
+        )
+        block = node._render_artifact_context_block()
+        # Good table still shows columns.
+        assert "#### `ok_tbl`" in block
+        assert "- `id`: int" in block
+        # Failed table: header + "schema unavailable" hint + specific
+        # remediation call. Pin the literal remediation form so a
+        # regression that drops the call hint trips.
+        assert "#### `denied_tbl`" in block
+        assert "schema unavailable: access denied" in block
+        assert "describe_table('denied_tbl')" in block
+
+    def test_wide_table_truncated_with_remediation_hint(self, real_agent_config):
+        """A table with > INLINE_SCHEMA_COLS_PER_TABLE columns must
+        truncate the column list with a marker telling the LLM how
+        to get the rest. Without this the LLM might write SQL against
+        a column that exists but wasn't shown."""
+        wide_cols = [{"name": f"col_{i}", "type": "varchar", "comment": ""} for i in range(80)]
+        schema = {"tables": [{"name": "wide_tbl", "columns": wide_cols}]}
+        node = _make_report_with_queries(
+            real_agent_config,
+            slug="schema_wide",
+            queries=[
+                {
+                    "slug": "q",
+                    "brief": {"name": "q", "uses": {}},
+                    "result": _basic_query_result("q"),
+                    "sql": "SELECT 1",
+                }
+            ],
+            key_tables_schema=schema,
+        )
+        block = node._render_artifact_context_block()
+        # First 50 columns present.
+        assert "- `col_0`: varchar" in block
+        assert "- `col_49`: varchar" in block
+        # 50 onwards absent.
+        assert "- `col_50`:" not in block
+        # Truncation marker mentions the remaining count + describe_table.
+        assert "30 more columns" in block
+        assert "describe_table('wide_tbl')" in block
+
+    def test_section_byte_cap_drops_trailing_tables(self, real_agent_config, monkeypatch):
+        """When many tables collectively blow the section cap, later
+        tables are omitted with a "cap reached" footer. Each table
+        keeps its column block intact (no half-rendered entries) so
+        the LLM never sees a misleading partial schema. We
+        monkeypatch the cap to ~720B — the section intro alone is
+        ~640B (the carve-out paragraph), so only 1–2 small table
+        entries fit before the cap fires."""
+        from datus.agent.node import base_artifact_ask_agentic_node as mod
+
+        monkeypatch.setattr(mod, "INLINE_SCHEMA_BYTES_CAP", 720)
+        many_tables = []
+        for i in range(5):
+            many_tables.append(
+                {
+                    "name": f"tbl_{i}",
+                    "columns": [
+                        {"name": "id", "type": "int", "comment": ""},
+                        {"name": "name", "type": "varchar", "comment": ""},
+                    ],
+                }
+            )
+        node = _make_report_with_queries(
+            real_agent_config,
+            slug="schema_capped",
+            queries=[
+                {
+                    "slug": "q",
+                    "brief": {"name": "q", "uses": {}},
+                    "result": _basic_query_result("q"),
+                    "sql": "SELECT 1",
+                }
+            ],
+            key_tables_schema={"tables": many_tables},
+        )
+        block = node._render_artifact_context_block()
+        # First table survives.
+        assert "#### `tbl_0`" in block
+        # Some later table is dropped + cap marker present.
+        assert "schema section cap reached" in block
+        # At least one of the last tables must NOT be in the block —
+        # we don't pin which specifically to stay resilient against
+        # minor sizing shifts in the intro string.
+        assert any(f"#### `tbl_{i}`" not in block for i in (3, 4))
+
+    def test_layout_tree_mentions_schema_file(self, real_agent_config):
+        """The filesystem layout tree should explicitly list
+        ``key_tables_schema.json`` so a model that ``glob``s the
+        analysis directory finds the file by name and knows it's
+        already inlined. Without this entry the LLM might assume the
+        sidecar is absent and skip the schema section."""
+        node = _make_report_with_queries(
+            real_agent_config,
+            slug="schema_tree",
+            queries=[
+                {
+                    "slug": "q",
+                    "brief": {"name": "q", "uses": {}},
+                    "result": _basic_query_result("q"),
+                    "sql": "SELECT 1",
+                }
+            ],
+            key_tables_schema=self._basic_schema(),
+        )
+        block = node._render_artifact_context_block()
+        # File appears in the tree with the "inlined above" annotation
+        # AND the describe_table fallback hint on the same line.
+        tree_lines = [line for line in block.splitlines() if "key_tables_schema.json" in line]
+        assert tree_lines, "key_tables_schema.json missing from layout tree"
+        # At least one mention is in the tree (has the # comment style),
+        # and at least one mention contains describe_table to make the
+        # "snapshot only" contract visible from the tree itself.
+        assert any("inlined above" in line for line in tree_lines)
+        assert any("describe_table" in line for line in tree_lines)

@@ -476,6 +476,13 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                 queries_dir=queries_dir,
                 analysis_dir=analysis_dir,
                 actions=actions,
+                # ``db_func_tool`` is wired by ``setup_tools`` early in
+                # the run. Passing it through enables the finalize-time
+                # ``key_tables_schema.json`` bake (describe_table snapshot
+                # per manifest.key_tables entry). The bake is best-effort
+                # so finalize still runs when this is None (e.g. node was
+                # configured without db tools — unusual but supported).
+                db_func_tool=self.db_func_tool,
             )
         except Exception as exc:
             logger.warning("Finalize stage crashed for %s/%s: %s", self.ARTIFACT_KIND, artifact_slug, exc)

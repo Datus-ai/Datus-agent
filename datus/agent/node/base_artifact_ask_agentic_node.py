@@ -100,6 +100,20 @@ INLINE_SQL_LINE_LIMIT = 40
 # knows what data exists; a follow-up ``read_file`` can fetch detail.
 INLINE_CATALOG_BYTES_CAP = 64 * 1024
 
+# Per-table column cap for the Table Schemas section. A wide fact table
+# (200+ columns) inlined whole would dominate the prompt without payoff —
+# the LLM only references a handful per follow-up. We truncate to the
+# first N and tell the LLM to call ``describe_table()`` for the full list
+# when it needs more.
+INLINE_SCHEMA_COLS_PER_TABLE = 50
+
+# Soft cap on the Table Schemas section as a whole. Sized so a typical
+# report (2–5 tables × ~10–30 columns each) fits comfortably; a report
+# referencing 20+ tables hits the cap and the renderer drops trailing
+# tables with a "remaining omitted" marker so the LLM knows to fall back
+# to ``describe_table``.
+INLINE_SCHEMA_BYTES_CAP = 8 * 1024
+
 
 def _compact_row(row: Any) -> str:
     """Render a single result row as one deterministic line.
@@ -588,6 +602,7 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         for render in (
             self._render_intent_section,
             self._render_subject_scope_section,
+            self._render_table_schemas_section,
             self._render_insights_section,
             self._render_query_catalog_section,
         ):
@@ -831,6 +846,118 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         ]
         return "\n".join(header + body_lines)
 
+    def _render_table_schemas_section(self) -> str:
+        """Inline ``analysis/key_tables_schema.json`` — snapshot of
+        ``describe_table`` output for every ``manifest.key_tables`` entry.
+
+        The snapshot lets the LLM plan follow-up SQL on the listed
+        tables without paying ``describe_table`` round-trips. Critical
+        prompt design choice: the intro **explicitly carves out** the
+        cases where the LLM MUST still call ``describe_table`` — live
+        schema drift (user asking about "current" / "latest" state),
+        column names not in this list (typos / post-finalize
+        additions), and tables outside ``manifest.key_tables``. Without
+        the carve-out the LLM would treat the snapshot as authoritative
+        forever and answer stale-schema questions confidently.
+
+        Returns "" when the file is missing or empty so reports
+        without a baked schema (older artifacts, dry runs) skip the
+        section silently.
+        """
+        raw = self._read_artifact_file("analysis/key_tables_schema.json")
+        if not raw:
+            return ""
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            logger.warning("Table schemas render: key_tables_schema.json unreadable: %s", exc)
+            return ""
+        if not isinstance(data, dict):
+            return ""
+        tables = data.get("tables")
+        if not isinstance(tables, list) or not tables:
+            return ""
+
+        intro = (
+            "Columns of every table in `manifest.key_tables` at the time "
+            "the artifact was finalized. **This is a SNAPSHOT — call "
+            "`describe_table('<table>')` instead when the user explicitly "
+            "asks about the LATEST / CURRENT schema, when they reference "
+            "a column NOT in this list (could be a typo or a post-"
+            "finalize addition), or when they ask about tables NOT in "
+            "`manifest.key_tables`.** For everything else (writing "
+            "follow-up SQL on the listed tables, explaining a column, "
+            "planning a join between listed tables), use this snapshot "
+            "directly — no `describe_table` round-trip needed."
+        )
+
+        lines: List[str] = ["### Table Schemas (`analysis/key_tables_schema.json`)", "", intro, ""]
+        running_bytes = sum(len(line) + 1 for line in lines)
+        cap_reached = False
+        for tbl in tables:
+            if not isinstance(tbl, dict):
+                continue
+            entry_lines = self._render_table_schema_entry(tbl)
+            entry_bytes = sum(len(line) + 1 for line in entry_lines)
+            if running_bytes + entry_bytes > INLINE_SCHEMA_BYTES_CAP:
+                cap_reached = True
+                break
+            lines.extend(entry_lines)
+            lines.append("")
+            running_bytes += entry_bytes
+        if cap_reached:
+            lines.append(
+                "_(schema section cap reached — remaining tables omitted; "
+                "call `describe_table('<table>')` for any name in "
+                "`manifest.key_tables` not shown above.)_"
+            )
+        return "\n".join(lines).rstrip()
+
+    def _render_table_schema_entry(self, tbl: Dict[str, Any]) -> List[str]:
+        """Render one table block: header + optional description + columns.
+
+        Per-table ``error`` (populated when ``describe_table`` failed
+        at finalize) surfaces as a "schema unavailable" hint with the
+        exact remediation (call ``describe_table('<name>')``) so the
+        LLM has a clear next step rather than guessing.
+        """
+        name = tbl.get("name") or "?"
+        if not isinstance(name, str):
+            name = str(name)
+        description = tbl.get("description") or ""
+        columns = tbl.get("columns") or []
+        error = tbl.get("error")
+
+        lines: List[str] = [f"#### `{name}`"]
+        if description:
+            lines.append(f"_(description: {description})_")
+        if error:
+            lines.append(f"_(schema unavailable: {error}; call `describe_table('{name}')` to fetch live schema.)_")
+            return lines
+        if not isinstance(columns, list):
+            return lines
+
+        # Truncate wide tables: keep the first N columns + a marker
+        # pointing the LLM at ``describe_table`` for the rest.
+        truncated = len(columns) > INLINE_SCHEMA_COLS_PER_TABLE
+        cols_to_render = columns[:INLINE_SCHEMA_COLS_PER_TABLE] if truncated else columns
+        for c in cols_to_render:
+            if not isinstance(c, dict):
+                continue
+            cname = c.get("name")
+            if not isinstance(cname, str) or not cname:
+                continue
+            ctype = c.get("type") or "?"
+            comment = c.get("comment") or ""
+            line = f"- `{cname}`: {ctype}"
+            if comment:
+                line += f"  -- {comment}"
+            lines.append(line)
+        if truncated:
+            remaining = len(columns) - INLINE_SCHEMA_COLS_PER_TABLE
+            lines.append(f"- _(... {remaining} more columns; call `describe_table('{name}')` for the full list.)_")
+        return lines
+
     def _render_insights_section(self) -> str:
         """Inline ``analysis/insights.json`` (report-only).
 
@@ -1063,7 +1190,8 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         loaded_list = (
             "manifest.json, analysis/intent.md, "
             + ("analysis/insights.json, " if self.ARTIFACT_KIND == "report" else "")
-            + "analysis/subject_refs.json (when present), and every "
+            + "analysis/subject_refs.json (when present), "
+            "analysis/key_tables_schema.json (when present), and every "
             "`queries/*.brief.json` plus the inlined slice of "
             "`queries/*` data + SQL above"
         )
@@ -1090,6 +1218,7 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         lines.extend(
             [
                 "│   ├── subject_refs.json        # inlined above (if present)",
+                "│   ├── key_tables_schema.json   # inlined above (if present); snapshot only — describe_table() for live",
                 "│   └── suggested_questions.json # UI chips — DO NOT read",
                 "├── queries/                     # briefs always inlined; data + SQL inlined or sampled per catalog above",
                 "└── render/                     # presentation tier — DO NOT READ",
@@ -1111,16 +1240,19 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         lines.append(
             "1. **Answer from the inlined context first**. The header above "
             "already contains the manifest, the original intent, the "
-            "subject library scope, "
+            "subject library scope, the table schemas snapshot, "
             + ("confirmed insights, " if self.ARTIFACT_KIND == "report" else "")
             + "and a query catalog with hypothesis / caveats / columns / "
             "sample rows / SQL for every saved query. **Do NOT issue "
             "`glob` or `read_file` to pre-fetch anything already inlined "
-            "above.** Only re-read a file when the catalog explicitly "
-            "flagged its data as sampled or its SQL as truncated, OR "
-            "when the inlined summary genuinely doesn't address the "
-            "question — and when you do, briefly say which file and "
-            "why."
+            "above.** Re-read or re-fetch only when (a) the catalog "
+            "explicitly flagged a query's data as sampled or its SQL as "
+            "truncated, (b) the user asks about LIVE / CURRENT state "
+            "the snapshot can't answer — fresh schema after a DDL "
+            "change, live row counts, today's data (call "
+            "`describe_table` / `execute_sql` for those), or (c) the "
+            "inlined summary genuinely doesn't address the question. "
+            "When you do, briefly say which file or tool and why."
         )
         lines.append(
             "2. **Do NOT regenerate the artifact**. You are read-only. If "
