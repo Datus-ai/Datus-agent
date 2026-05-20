@@ -660,6 +660,43 @@ class TestValidateRender:
         assert "missing required" in (result.error or "")
         assert "month_floor" in (result.error or "")
 
+    def test_accepts_shorthand_param_keys(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        _seed_template(dashboard_tools)
+        app_shorthand = (
+            "import React from 'react';\n"
+            "import { useDatusArtifact } from '@datus/web-artifact';\n"
+            "export default function App() {\n"
+            "  const month_floor = '2026-01';\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            "  const { data } = useQuerySql('queries/revenue_by_region', { month_floor });\n"
+            "  return React.createElement('pre', null, JSON.stringify(data?.rows ?? []));\n"
+            "}\n"
+        )
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app_shorthand})
+        result = dashboard_tools.validate_render()
+        assert result.success == 1, result.error
+        assert "queries/revenue_by_region" in result.result["query_refs"]
+
+    def test_shorthand_does_not_capture_value_position_identifiers(
+        self, dashboard_tools: DashboardArtifactTools, project_root: Path
+    ):
+        # Regression: the shorthand handling must not treat the value side of
+        # `{ month_floor: someVar }` as a separate (unknown) key.
+        _seed_template(dashboard_tools)
+        app_explicit = (
+            "import React from 'react';\n"
+            "import { useDatusArtifact } from '@datus/web-artifact';\n"
+            "export default function App() {\n"
+            "  const some_var = '2026-01';\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            "  const { data } = useQuerySql('queries/revenue_by_region', { month_floor: some_var });\n"
+            "  return React.createElement('pre', null, JSON.stringify(data?.rows ?? []));\n"
+            "}\n"
+        )
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app_explicit})
+        result = dashboard_tools.validate_render()
+        assert result.success == 1, result.error
+
     def test_rejects_unknown_param_key(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
         _seed_template(dashboard_tools)
         app_extra_key = (

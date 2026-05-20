@@ -104,6 +104,21 @@ _PARAMS_KEY_RE = re.compile(
     re.VERBOSE | re.IGNORECASE,
 )
 
+# ES6 shorthand property names: { foo, bar } ≡ { foo: foo, bar: bar }. The
+# boundary intentionally excludes whitespace and the lookahead excludes `:`,
+# so identifiers sitting in value position (e.g. `bar` in `{ foo: bar }`) are
+# not captured.
+_PARAMS_SHORTHAND_KEY_RE = re.compile(
+    r"""
+    (?:^|[,{])                       # boundary: open brace or comma only
+    \s*
+    ([a-z_][a-z0-9_]*)               # 1: bare identifier
+    \s*
+    (?=[,}])                         # lookahead: , or } (never :)
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
 
 # --------------------------------------------------------------------------- #
 # Jinja2 sandbox + bind-value resolution                                      #
@@ -1017,6 +1032,8 @@ class DashboardArtifactTools:
                 literal_keys: Set[str] = set()
                 for key_match in _PARAMS_KEY_RE.finditer(params_literal):
                     literal_keys.add((key_match.group(1) or key_match.group(2)).lower())
+                for key_match in _PARAMS_SHORTHAND_KEY_RE.finditer(params_literal):
+                    literal_keys.add(key_match.group(1).lower())
 
                 # Spread / computed keys appear in the source but not in our
                 # capture group. Detect them so we can warn (and skip the
