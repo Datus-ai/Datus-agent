@@ -31,17 +31,28 @@ permissions, etc.) and add three things:
    filesystem traversal. The blob source uses :class:`MemoryFilesystemFuncTool` (no disk
    touched); the disk source uses :class:`FilesystemFuncTool`.
 3. **Artifact context injection** — load ``manifest.json`` plus
-   ``analysis/intent.md`` once at node startup, and surface them to
-   the prompt template so the LLM has a baseline grounding without
-   paying ``read_file`` tool calls every turn.
+   ``analysis/intent.md`` once at node startup, and render the full
+   artifact context preamble (manifest header, intent, subject scope,
+   confirmed insights for reports, and a per-query catalog with
+   brief + columns + sample/rows + SQL) into the system prompt.
+   Earlier iterations only preloaded the manifest + intent and left
+   everything else to ``read_file`` round-trips at turn time; the
+   observed failure mode was the LLM issuing 8–10+ serial
+   ``glob`` + ``read_file`` calls per follow-up before producing any
+   output, even when the prompt could carry every sidecar directly.
+   The renderer now inlines as much as fits under
+   :data:`INLINE_CATALOG_BYTES_CAP` and degrades the long tail
+   (sample rows instead of full, tighter SQL truncation) so the LLM
+   has a complete grounding without paying read round-trips for it.
 
-The earlier ``interpretation.json`` preload was removed along with the
-file itself — ``manifest.description`` covers framing and
-``analysis/insights.json`` (read on demand by the LLM) covers the
-substantive findings. Likewise, ``suggested_questions.json`` is **not**
-preloaded into the prompt: it's surfaced via the detail API as UI
-chips, but injecting it here would anchor the LLM toward a fixed
-question set whenever the user types an open-ended follow-up.
+``suggested_questions.json`` is the one analysis file still kept out
+of the inline preamble — it's surfaced via the detail API as UI
+chips, and injecting its contents here would anchor the LLM toward a
+fixed question set whenever the user types an open-ended follow-up.
+The filename does appear in the layout-tree section, but only on a
+``DO NOT read`` line so the original anti-anchor intent is enforced
+by explicit instruction. The earlier ``interpretation.json`` preload
+was removed along with the file itself.
 
 Per-kind specialization (``ARTIFACT_KIND`` / template name / whether
 ``insights.json`` is expected / whether ``BLOB_REQUIRED``) lives in the
@@ -52,7 +63,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, ClassVar, Dict, Literal, Optional
+from typing import Any, ClassVar, Dict, List, Literal, Optional, Tuple
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.configuration.agent_config import AgentConfig
@@ -62,6 +73,47 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+# ── Inline-rendering thresholds ──────────────────────────────────────────────
+# A query result's rows are inlined into the system prompt only when BOTH
+# conditions hold:
+#   1. row_count <= INLINE_ROW_LIMIT
+#   2. JSON-serialized rows fit in INLINE_ROW_BYTES_LIMIT bytes
+# Either threshold being exceeded triggers degraded mode: the catalog entry
+# keeps the columns + a 2-row sample, and the full payload stays read-only
+# behind ``read_file('queries/<slug>.json')``. The byte gate is what catches
+# a 20-row result whose rows each carry a multi-KB text field — row count
+# alone would let that through.
+INLINE_ROW_LIMIT = 20
+INLINE_ROW_BYTES_LIMIT = 4 * 1024
+
+# SQL bodies > this many lines are truncated to the first N lines with a
+# trailing "...(truncated)" marker. Report SQLs are typically <20 lines;
+# anything beyond 40 is exceptional and the LLM can pay one read_file
+# round-trip if it genuinely needs the full body.
+INLINE_SQL_LINE_LIMIT = 40
+
+# Soft cap on the total bytes the query-catalog section contributes to the
+# system prompt. When approached the renderer degrades remaining entries
+# (drop full rows -> drop caveats -> tighter SQL truncation). Header info
+# (slug + size + hypothesis + columns) always survives so the LLM still
+# knows what data exists; a follow-up ``read_file`` can fetch detail.
+INLINE_CATALOG_BYTES_CAP = 64 * 1024
+
+
+def _compact_row(row: Any) -> str:
+    """Render a single result row as one deterministic line.
+
+    Used in the inline ``rows`` / ``sample`` blocks of the query catalog
+    section. JSON-encodes scalars so units/quoting stay unambiguous (e.g.
+    ``aov=29.19`` vs ``aov="29.19"``) and joins key/value pairs with the
+    middle dot so the eye can scan a wide row without confusing commas
+    inside string values with row-level separators.
+    """
+    if isinstance(row, dict):
+        parts = [f"{k}={json.dumps(v, ensure_ascii=False, default=str)}" for k, v in row.items()]
+        return " · ".join(parts)
+    return json.dumps(row, ensure_ascii=False, default=str)
 
 
 class BaseArtifactAskAgenticNode(ChatAgenticNode):
@@ -512,19 +564,149 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
     def _render_artifact_context_block(self) -> str:
         """Build the artifact-context preamble prepended to the chat prompt.
 
-        Hand-rolls a small markdown block rather than a separate j2
-        template because the structure is dead simple, the inputs are
-        already in memory, and a 30-line template adds more indirection
-        than it saves.
+        Composes per-section helper methods so each concern (header,
+        intent, subject scope, insights, query catalog, layout, rules)
+        stays self-contained and individually testable. The catalog
+        section inlines as much of the artifact as fits under
+        :data:`INLINE_CATALOG_BYTES_CAP` so the LLM rarely needs to
+        ``read_file`` defensively — the trace this was tuned against
+        was paying 10+ serial tool round-trips before producing any
+        output, all loading content the prompt could carry directly.
+
+        Hand-rolls markdown rather than a j2 template because the
+        section helpers already encapsulate the structure and a
+        template here would add indirection without saving lines.
         """
         if self._artifact_files is None and self._artifact_root is None:
             return ""
 
+        # Sections produced in order; empty ones are silently dropped so
+        # the rendered prompt stays clean for artifacts that don't have
+        # insights / subject refs / queries (rare but real, e.g. a newly
+        # created report with no save_query calls yet).
+        sections: List[str] = [self._render_header_section()]
+        for render in (
+            self._render_intent_section,
+            self._render_subject_scope_section,
+            self._render_insights_section,
+            self._render_query_catalog_section,
+        ):
+            block = render()
+            if block:
+                sections.append(block)
+        sections.append(self._render_filesystem_layout_section())
+        sections.append(self._render_behavioral_rules_section())
+        return "\n\n".join(sections)
+
+    # ── Unified artifact-file access ────────────────────────────────────
+
+    def _read_artifact_file(self, rel_path: str) -> Optional[str]:
+        """Return the contents of a slug-relative artifact file.
+
+        Unifies blob mode (in-memory file map) and disk mode (rooted at
+        ``self._artifact_root``) so the section renderers below don't
+        each have to branch on the source. The path uses POSIX
+        separators — same shape the LLM passes to ``read_file``.
+
+        Returns ``None`` when the file is missing or unreadable so the
+        caller can skip a section rather than raise mid-render. We log
+        on disk-side ``OSError`` because it's the only signal an
+        operator gets that the artifact tree is corrupted; missing
+        files in blob mode are silently skipped (a degenerate blob is
+        already caught at init by ``_is_usable_blob``).
+        """
+        if self._artifact_files is not None:
+            return self._artifact_files.get(rel_path)
+        if self._artifact_root is None:
+            return None
+        full = self._artifact_root / rel_path
+        if not full.is_file():
+            return None
+        try:
+            return full.read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Failed to read %s during prompt render: %s", full, exc)
+            return None
+
+    def _query_slugs(self) -> List[str]:
+        """Return query slugs in deterministic alphabetical order.
+
+        Built from ``queries/*.brief.json`` because every saved query
+        has a brief sidecar (``save_query`` writes them atomically with
+        the SQL/result triple); SQL files without a brief shouldn't
+        exist in a well-formed artifact and surfacing them would just
+        clutter the catalog. Deterministic order is important for
+        prompt caching — the same artifact must render the same catalog
+        across turns.
+        """
+        prefix = "queries/"
+        suffix = ".brief.json"
+        slugs: List[str] = []
+        if self._artifact_files is not None:
+            for path in sorted(self._artifact_files):
+                if path.startswith(prefix) and path.endswith(suffix):
+                    slugs.append(path[len(prefix) : -len(suffix)])
+            return slugs
+        if self._artifact_root is None:
+            return []
+        queries_dir = self._artifact_root / "queries"
+        if not queries_dir.is_dir():
+            return []
+        for path in sorted(queries_dir.glob("*.brief.json")):
+            slugs.append(path.name[: -len(suffix)])
+        return slugs
+
+    def _load_query_bundle(self, slug: str) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], Optional[str]]:
+        """Return ``(brief, data, sql)`` for a query slug.
+
+        ``data`` is the result snapshot for reports (``<slug>.json``)
+        or the params declaration for dashboards (``<slug>.params.json``);
+        ``sql`` is the SQL text (``<slug>.sql``) or template
+        (``<slug>.sql.j2``). Any of the three may come back missing/
+        partial — the catalog renderer falls back to whatever pieces
+        are available so a single corrupt sidecar doesn't strand the
+        whole section.
+        """
+        brief: Dict[str, Any] = {}
+        brief_raw = self._read_artifact_file(f"queries/{slug}.brief.json")
+        if brief_raw:
+            try:
+                parsed = json.loads(brief_raw)
+                if isinstance(parsed, dict):
+                    brief = parsed
+            except json.JSONDecodeError as exc:
+                logger.warning("Catalog render: brief.json for %s unreadable: %s", slug, exc)
+
+        data: Optional[Dict[str, Any]] = None
+        data_path = f"queries/{slug}.json" if self.ARTIFACT_KIND == "report" else f"queries/{slug}.params.json"
+        data_raw = self._read_artifact_file(data_path)
+        if data_raw:
+            try:
+                parsed = json.loads(data_raw)
+                if isinstance(parsed, dict):
+                    data = parsed
+            except json.JSONDecodeError as exc:
+                logger.warning("Catalog render: %s unreadable: %s", data_path, exc)
+
+        sql_path = f"queries/{slug}.sql" if self.ARTIFACT_KIND == "report" else f"queries/{slug}.sql.j2"
+        sql = self._read_artifact_file(sql_path)
+        return brief, data, sql
+
+    # ── Section renderers ──────────────────────────────────────────────
+
+    def _render_header_section(self) -> str:
+        """Top metadata block — artifact identity, source, key tables.
+
+        Always rendered (caller already guarded against the "neither
+        blob nor disk" case). Mirrors the original preamble field
+        choices because downstream tests assert on specific labels
+        ("Slug", "Tables referenced", "in-memory snapshot", etc.).
+        """
         manifest = self._artifact_manifest or {}
         artifact_name = manifest.get("name") or self._artifact_slug
         artifact_description = manifest.get("description") or ""
 
-        lines: list[str] = []
+        lines: List[str] = []
         lines.append(f"## Bound Artifact — {self.ARTIFACT_KIND.title()}: {artifact_name}")
         lines.append("")
         lines.append(f"- **Slug**: `{self._artifact_slug}`")
@@ -540,111 +722,447 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         if manifest.get("datasources"):
             lines.append(f"- **Datasources**: {', '.join(manifest['datasources'])}")
         if manifest.get("key_tables"):
-            # Surface code-aggregated table list so the LLM can answer
-            # "which tables does this report touch" / plan a follow-up
-            # SQL without first ``list_tables`` / ``describe_table`` round-
-            # trips. Code-generated by finalize from the SQL bodies, not
-            # an LLM claim — trustworthy as long as it's present.
+            # Code-aggregated by finalize from the SQL bodies, not an
+            # LLM claim — trustworthy as long as it's present. Surfacing
+            # it here lets the LLM skip ``list_tables`` round-trips
+            # when planning follow-up SQL.
             lines.append(f"- **Tables referenced**: {', '.join(manifest['key_tables'])}")
-        lines.append("")
+        return "\n".join(lines)
 
-        if self._artifact_intent_md.strip():
-            lines.append("### User's Original Intent (`analysis/intent.md`)")
-            lines.append("")
-            lines.append(self._artifact_intent_md.strip())
-            lines.append("")
+    def _render_intent_section(self) -> str:
+        """User's original intent.md, verbatim.
 
-        # File-system layout & usage hints — kept brief because the chat
-        # template already documents the available tools; we just point
-        # the LLM at what's under the bound artifact. We deliberately
-        # do NOT list ``analysis/suggested_questions.json`` here — it
-        # exists as UI chip data and including it would anchor the LLM
-        # toward a fixed question set when the user asks something open.
-        # ``analysis/subject_refs.json`` is also omitted from the static
-        # tree because it's present-iff-non-empty; the LLM can ``glob``
-        # for it if it cares.
-        lines.append("### Artifact Filesystem Layout")
-        lines.append("")
-        layout_root_label = self._artifact_root.name if self._artifact_root is not None else self.ARTIFACT_ROOT_DIR_NAME
-        lines.append(
-            f"Your filesystem tools are anchored at the artifact root. "
-            f"Relative paths resolve under `{layout_root_label}/`:"
-        )
-        lines.append("")
-        lines.append("```")
-        lines.append(".")
-        lines.append("├── manifest.json")
-        lines.append("├── analysis/")
-        lines.append("│   ├── intent.md                 # raw user prompts (append-only)")
+        Returns "" when intent is empty so the section is skipped — a
+        missing intent.md degrades gracefully (the manifest description
+        already frames the artifact).
+        """
+        if not self._artifact_intent_md.strip():
+            return ""
+        return "### User's Original Intent (`analysis/intent.md`)\n\n" + self._artifact_intent_md.strip()
+
+    def _render_subject_scope_section(self) -> str:
+        """Subject-library assets the artifact was grounded in.
+
+        Walks ``analysis/subject_refs.json`` (the code-aggregated dedup
+        of every brief's ``uses`` block) and surfaces:
+
+        * per-asset: kind, full subject path, name
+        * reverse index: which query slugs reference each asset
+
+        The reverse index is built fresh from every brief rather than
+        from the subject_refs file itself because subject_refs only
+        carries the dedup'd asset list, not the back-pointers. This
+        lets the LLM answer "which queries use metric X?" without any
+        file reads.
+
+        Returns "" when subject_refs is missing/empty so a report that
+        didn't draw on the subject library doesn't get a stub heading.
+        """
+        raw = self._read_artifact_file("analysis/subject_refs.json")
+        if not raw:
+            return ""
+        try:
+            refs = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            logger.warning("Subject scope render: subject_refs.json unreadable: %s", exc)
+            return ""
+        if not isinstance(refs, dict):
+            return ""
+
+        # Reverse index: (kind, name) -> sorted list of query slugs.
+        usage_by_asset: Dict[Tuple[str, str], List[str]] = {}
+        for slug in self._query_slugs():
+            brief_raw = self._read_artifact_file(f"queries/{slug}.brief.json")
+            if not brief_raw:
+                continue
+            try:
+                brief = json.loads(brief_raw)
+            except json.JSONDecodeError:
+                continue
+            uses = brief.get("uses") if isinstance(brief, dict) else None
+            if not isinstance(uses, dict):
+                continue
+            for kind_key in ("metrics", "reference_sql", "ext_knowledge"):
+                for entry in uses.get(kind_key) or []:
+                    if isinstance(entry, dict):
+                        name = entry.get("name")
+                        if isinstance(name, str) and name:
+                            usage_by_asset.setdefault((kind_key, name), []).append(slug)
+
+        body_lines: List[str] = []
+        for kind_key, label in (
+            ("metrics", "metric"),
+            ("reference_sql", "sql"),
+            ("ext_knowledge", "knowledge"),
+        ):
+            entries = refs.get(kind_key) or []
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                name = entry.get("name") or ""
+                if not isinstance(name, str) or not name:
+                    continue
+                path = entry.get("path") or []
+                if isinstance(path, list) and all(isinstance(p, str) for p in path):
+                    path_str = " > ".join(path) if path else "(no path)"
+                else:
+                    path_str = "(no path)"
+                used_by = sorted(set(usage_by_asset.get((kind_key, name), [])))
+                line = f"- **{label}** `{path_str} > {name}`"
+                if used_by:
+                    line += f"\n  · used by: {', '.join(used_by)}"
+                body_lines.append(line)
+
+        if not body_lines:
+            return ""
+
+        header = [
+            "### Subject Library Scope (`analysis/subject_refs.json`)",
+            "",
+            (
+                "The artifact was grounded in the following subject-library "
+                "assets. To fetch a canonical definition, call "
+                "`get_metrics(path, name)` / `get_reference_sql(path, name)` "
+                "/ `get_ext_knowledge(path, name)`:"
+            ),
+            "",
+        ]
+        return "\n".join(header + body_lines)
+
+    def _render_insights_section(self) -> str:
+        """Inline ``analysis/insights.json`` (report-only).
+
+        Confirmed findings are authoritative for the artifact — the
+        LLM should be able to cite them by id without any file read.
+        Dashboards have no equivalent (their templates have no static
+        conclusions), so the section is empty for the dashboard kind
+        and gets dropped by the orchestrator.
+        """
+        if self.ARTIFACT_KIND != "report":
+            return ""
+        raw = self._read_artifact_file("analysis/insights.json")
+        if not raw:
+            return ""
+        try:
+            insights = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            logger.warning("Insights render: insights.json unreadable: %s", exc)
+            return ""
+        if not isinstance(insights, list) or not insights:
+            return ""
+
+        lines: List[str] = ["### Confirmed Findings (`analysis/insights.json`)", ""]
+        for idx, insight in enumerate(insights, start=1):
+            if not isinstance(insight, dict):
+                continue
+            iid = insight.get("id") or "?"
+            title = insight.get("title") or "(no title)"
+            confidence = insight.get("confidence")
+            conf_str = f" _(conf {confidence:.2f})_" if isinstance(confidence, (int, float)) else ""
+            summary = insight.get("summary") or ""
+            evidence = insight.get("evidence_queries") or []
+            lines.append(f"{idx}. **`{iid}`** — {title}{conf_str}")
+            if summary:
+                lines.append(f"   {summary}")
+            if isinstance(evidence, list) and evidence:
+                ev_strs = [f"`{e}`" for e in evidence if isinstance(e, str)]
+                if ev_strs:
+                    lines.append(f"   · evidence: {', '.join(ev_strs)}")
+        return "\n".join(lines)
+
+    def _render_query_catalog_section(self) -> str:
+        """Per-query entries: brief + columns + sample/rows + SQL.
+
+        Walks every query slug in deterministic order and produces a
+        compact catalog entry. Each entry's size is tracked against
+        :data:`INLINE_CATALOG_BYTES_CAP`; once the running total would
+        exceed the cap, remaining entries are rendered in degraded
+        mode (drop full rows, tighter SQL truncation, drop caveats)
+        so the LLM still knows what data exists for every query, just
+        with less detail for the long tail.
+
+        Row inlining for report queries uses TWO thresholds at once:
+        :data:`INLINE_ROW_LIMIT` (count) and :data:`INLINE_ROW_BYTES_LIMIT`
+        (serialized byte size). Either being exceeded triggers degraded
+        sampling (first 2 rows only). The byte gate matters when a
+        20-row result carries a multi-KB text column per row — row
+        count alone would silently inflate the prompt.
+        """
+        slugs = self._query_slugs()
+        if not slugs:
+            return ""
+
         if self.ARTIFACT_KIND == "report":
-            lines.append("│   └── insights.json             # confirmed findings (report only)")
-        lines.append("├── queries/")
-        if self.ARTIFACT_KIND == "report":
-            lines.append("│   ├── <name>.sql                # SQL text")
-            lines.append("│   ├── <name>.json               # query result snapshot")
+            data_label = "result snapshot"
+            data_suffix = ".json"
+            sql_suffix = ".sql"
+            sql_word = "SQL"
         else:
-            lines.append("│   ├── <name>.sql.j2             # Jinja2 SQL template (params header)")
-            lines.append("│   └── <name>.params.json        # declared params + sample columns")
-        lines.append("│   └── <name>.brief.json         # hypothesis / uses / caveats")
-        lines.append("└── render/                       # presentation tier — DO NOT READ")
-        lines.append("```")
-        lines.append("")
+            data_label = "params declaration"
+            data_suffix = ".params.json"
+            sql_suffix = ".sql.j2"
+            sql_word = "SQL template"
 
-        # Behavioral rules — these are the load-bearing rules that define
-        # the ask agent's role. They sit at the top of the prompt so the
-        # LLM internalizes them before reading the chat template's general
-        # tool documentation below.
-        lines.append("### Behavioral Rules (load-bearing)")
-        lines.append("")
+        intro = (
+            f"Each entry below summarizes one `queries/<slug>` triple "
+            f"(brief + {data_label} + {sql_word}). When a query's full rows "
+            f"or SQL body would blow the inline budget, only a small sample "
+            f"is shown and the full payload remains read-only behind "
+            f"`read_file('queries/<slug>{data_suffix}')` / "
+            f"`read_file('queries/<slug>{sql_suffix}')`."
+        )
+
+        header: List[str] = ["### Query Catalog", "", intro, ""]
+
+        body: List[str] = []
+        running_bytes = 0
+        degraded = False
+        for slug in slugs:
+            brief, data, sql = self._load_query_bundle(slug)
+            entry_lines = self._render_query_catalog_entry(slug, brief, data, sql, degraded=degraded)
+            entry_bytes = sum(len(line) + 1 for line in entry_lines)
+            if not degraded and running_bytes + entry_bytes > INLINE_CATALOG_BYTES_CAP:
+                degraded = True
+                entry_lines = self._render_query_catalog_entry(slug, brief, data, sql, degraded=True)
+                entry_bytes = sum(len(line) + 1 for line in entry_lines)
+            body.extend(entry_lines)
+            body.append("")
+            running_bytes += entry_bytes
+
+        return "\n".join(header + body).rstrip()
+
+    def _render_query_catalog_entry(
+        self,
+        slug: str,
+        brief: Dict[str, Any],
+        data: Optional[Dict[str, Any]],
+        sql: Optional[str],
+        *,
+        degraded: bool,
+    ) -> List[str]:
+        """Render one catalog entry. Caller stitches entries together.
+
+        Degraded mode skips full-row inlining (always sample) and
+        caveats, and tightens the SQL line cap. The header (slug + row
+        count + hypothesis + columns) always survives so the LLM keeps
+        a usable index of every query even when the catalog cap fires.
+        """
+        lines: List[str] = []
+
+        # Header: slug + size descriptor.
+        if self.ARTIFACT_KIND == "report" and isinstance(data, dict):
+            rows = data.get("rows") or []
+            row_count = data.get("row_count", len(rows))
+            size_desc = f"{row_count} rows"
+        elif self.ARTIFACT_KIND == "dashboard" and isinstance(data, dict):
+            sample_row_count = data.get("sample_row_count", 0)
+            size_desc = f"template · sample {sample_row_count} rows"
+        else:
+            size_desc = "no data file"
+        lines.append(f"#### `{slug}` — {size_desc}")
+
+        hypothesis = brief.get("hypothesis") or ""
+        if hypothesis:
+            lines.append(f"- **hypothesis**: {hypothesis}")
+
+        # Subjects: short labels only — full paths live in the global
+        # Subject Library Scope section so we don't repeat the path
+        # once per query.
+        uses = brief.get("uses") or {}
+        subject_parts: List[str] = []
+        if isinstance(uses, dict):
+            for kind_key, label in (
+                ("metrics", "metric"),
+                ("reference_sql", "sql"),
+                ("ext_knowledge", "knowledge"),
+            ):
+                for entry in uses.get(kind_key) or []:
+                    if isinstance(entry, dict):
+                        name = entry.get("name")
+                        if isinstance(name, str) and name:
+                            subject_parts.append(f"{label}:`{name}`")
+        if subject_parts:
+            lines.append(f"- **subjects**: {', '.join(subject_parts)}")
+
+        caveats = brief.get("caveats") or ""
+        if caveats and not degraded:
+            lines.append(f"- **caveats**: {caveats}")
+
+        # Columns block — always rendered when available since it's
+        # cheap and key to "what data does this query produce".
+        if isinstance(data, dict):
+            cols = data.get("columns") or []
+            col_strs: List[str] = []
+            for c in cols:
+                if isinstance(c, dict):
+                    cname = c.get("name", "?")
+                    ctype = c.get("type", "?")
+                    col_strs.append(f"{cname}:{ctype}")
+            if col_strs:
+                lines.append(f"- **columns**: {', '.join(col_strs)}")
+
+        # Rows (report) / sample params (dashboard).
+        if self.ARTIFACT_KIND == "report" and isinstance(data, dict):
+            rows = data.get("rows") or []
+            row_count = data.get("row_count", len(rows))
+            # Double-gate the inline: count AND serialized byte size.
+            full_inline = False
+            if rows and not degraded and row_count <= INLINE_ROW_LIMIT:
+                payload = json.dumps(rows, ensure_ascii=False, default=str)
+                if len(payload.encode("utf-8")) <= INLINE_ROW_BYTES_LIMIT:
+                    full_inline = True
+            if rows:
+                if full_inline:
+                    lines.append(f"- **rows** ({row_count}):")
+                    for row in rows:
+                        lines.append(f"    - {_compact_row(row)}")
+                else:
+                    show = min(2, len(rows))
+                    lines.append(
+                        f"- **sample** (first {show} of {row_count}; full data via `read_file('queries/{slug}.json')`):"
+                    )
+                    for row in rows[:show]:
+                        lines.append(f"    - {_compact_row(row)}")
+        elif self.ARTIFACT_KIND == "dashboard" and isinstance(data, dict):
+            sample_params = data.get("sample_params") or {}
+            if sample_params:
+                lines.append("- **sample_params**: " + json.dumps(sample_params, ensure_ascii=False, default=str))
+
+        # SQL body, truncated when long. Degraded mode tightens the cap
+        # so the long tail of queries stays compact under the catalog
+        # cap.
+        if sql:
+            lines.append("- **SQL**:")
+            lines.append("  ```sql")
+            sql_lines = sql.strip().splitlines()
+            max_lines = (INLINE_SQL_LINE_LIMIT // 2) if degraded else INLINE_SQL_LINE_LIMIT
+            if len(sql_lines) > max_lines:
+                for line in sql_lines[:max_lines]:
+                    lines.append(f"  {line}")
+                remaining = len(sql_lines) - max_lines
+                full_sql_suffix = ".sql" if self.ARTIFACT_KIND == "report" else ".sql.j2"
+                lines.append(f"  -- ... ({remaining} more lines; read queries/{slug}{full_sql_suffix} for full body)")
+            else:
+                for line in sql_lines:
+                    lines.append(f"  {line}")
+            lines.append("  ```")
+
+        return lines
+
+    def _render_filesystem_layout_section(self) -> str:
+        """Tell the LLM what's already inlined vs what still needs read_file.
+
+        The directory tree mirrors the on-disk artifact layout but
+        annotates each entry with "inlined above" vs "DO NOT read" vs
+        "read on demand" so a model trying to be helpful by pre-fetching
+        files immediately sees that defensive reads are not useful.
+        """
+        layout_root_label = self._artifact_root.name if self._artifact_root is not None else self.ARTIFACT_ROOT_DIR_NAME
+        loaded_list = (
+            "manifest.json, analysis/intent.md, "
+            + ("analysis/insights.json, " if self.ARTIFACT_KIND == "report" else "")
+            + "analysis/subject_refs.json (when present), and every "
+            "`queries/*.brief.json` plus the inlined slice of "
+            "`queries/*` data + SQL above"
+        )
+        lines: List[str] = [
+            "### Artifact Filesystem Layout",
+            "",
+            (
+                f"Filesystem tool anchored at the artifact root (relative paths "
+                f"resolve under `{layout_root_label}/`). **The following are "
+                f"already loaded into this prompt: {loaded_list}.** "
+                f"**Do NOT `read_file` / `glob` them defensively.** Read on "
+                f"demand only when the catalog above flags a query's data as "
+                f"sampled or its SQL as truncated."
+            ),
+            "",
+            "```",
+            ".",
+            "├── manifest.json                # inlined above",
+            "├── analysis/",
+            "│   ├── intent.md                # inlined above",
+        ]
+        if self.ARTIFACT_KIND == "report":
+            lines.append("│   ├── insights.json            # inlined above")
+        lines.extend(
+            [
+                "│   ├── subject_refs.json        # inlined above (if present)",
+                "│   └── suggested_questions.json # UI chips — DO NOT read",
+                "├── queries/                     # briefs always inlined; data + SQL inlined or sampled per catalog above",
+                "└── render/                     # presentation tier — DO NOT READ",
+                "```",
+            ]
+        )
+        return "\n".join(lines)
+
+    def _render_behavioral_rules_section(self) -> str:
+        """Load-bearing rules that define the ask agent's role.
+
+        Rule 1 is the load-bearing change in this rewrite: it forbids
+        defensive pre-fetching of files that are already inlined above.
+        Without this the LLM tends to ``glob`` + ``read_file`` every
+        sidecar at turn start out of habit, paying many serial tool
+        round-trips for content the prompt already carries.
+        """
+        lines: List[str] = ["### Behavioral Rules (load-bearing)", ""]
         lines.append(
-            "1. **Ground in existing analysis first**. Before running new SQL, "
-            "try to answer from the anchor context above and from on-disk "
-            "files via `read_file` / `glob` / `grep`. Only run new queries "
-            "when the existing data genuinely doesn't cover the question — "
-            "and when you do, briefly explain why."
+            "1. **Answer from the inlined context first**. The header above "
+            "already contains the manifest, the original intent, the "
+            "subject library scope, "
+            + ("confirmed insights, " if self.ARTIFACT_KIND == "report" else "")
+            + "and a query catalog with hypothesis / caveats / columns / "
+            "sample rows / SQL for every saved query. **Do NOT issue "
+            "`glob` or `read_file` to pre-fetch anything already inlined "
+            "above.** Only re-read a file when the catalog explicitly "
+            "flagged its data as sampled or its SQL as truncated, OR "
+            "when the inlined summary genuinely doesn't address the "
+            "question — and when you do, briefly say which file and "
+            "why."
         )
         lines.append(
-            "2. **Do NOT regenerate the artifact**. You are read-only. If the "
-            "user asks to add a chart, edit a panel, or rewrite the report, "
-            f"direct them to the `gen_visual_{self.ARTIFACT_KIND}` subagent."
+            "2. **Do NOT regenerate the artifact**. You are read-only. If "
+            "the user asks to add a chart, edit a panel, or rewrite the "
+            f"{self.ARTIFACT_KIND}, direct them to the "
+            f"`gen_visual_{self.ARTIFACT_KIND}` subagent."
         )
         lines.append(
-            "3. **Cite by slug**. Refer to queries as ``queries/<name>`` and "
-            "(report only) insights as ``insight:<id>`` so the UI can "
-            "highlight / jump to them."
+            "3. **Cite by slug**. Refer to queries as ``queries/<name>`` "
+            "and (report only) insights as ``insight:<id>`` so the UI "
+            "can highlight / jump to them."
         )
         lines.append(
-            "4. **Stay anchored to the original intent**. Re-read the user "
-            "prompts in `analysis/intent.md` before answering complex "
-            "follow-ups; flag when the user's new question genuinely "
-            "shifts scope from the original artifact's coverage."
+            "4. **Stay anchored to the original intent**. Flag when the "
+            "user's new question genuinely shifts scope from the "
+            f"original {self.ARTIFACT_KIND}'s coverage."
         )
         lines.append(
-            "5. **Respect the data scope**. If `analysis/subject_refs.json` "
-            "exists (it's present iff at least one query declared a "
-            "subject-library asset), it lists what the artifact originally "
-            "drew on. Exploring outside that scope is OK if the user "
-            "explicitly asks, but call it out in your answer."
+            "5. **Respect the data scope**. The Subject Library Scope "
+            "section above (when present) lists the authoritative "
+            "subject assets. Exploring outside that scope is OK if the "
+            "user explicitly asks, but call it out in your answer."
         )
         if self.ARTIFACT_KIND == "dashboard":
             lines.append(
                 "6. **Dashboard queries have no precomputed data**. The "
-                "`queries/<name>.sql.j2` files are templates; to answer "
-                "quantitative questions, run an equivalent ad-hoc SQL via "
-                "`execute_sql` within the dashboard's datasource scope, or "
-                "use the params declaration in `<name>.params.json` to "
-                "explain what user-controllable filters exist."
+                "`queries/<slug>.sql.j2` files (inlined above) are "
+                "templates; to answer quantitative questions, run an "
+                "equivalent ad-hoc SQL via `execute_sql` within the "
+                "dashboard's datasource scope, or use the params "
+                "declaration to explain what user-controllable filters "
+                "exist."
             )
         else:
             lines.append(
-                "6. **`insights.json` is the authoritative findings record**. "
-                "Read it when the user's question touches on confirmed "
-                "conclusions; each insight has `evidence_queries[]` that "
-                "you can cross-reference."
+                "6. **`insights.json` is the authoritative findings "
+                "record**. Already inlined above; each insight has "
+                "`evidence_queries[]` you can cross-reference."
             )
         lines.append(
-            "7. **No artifact mutations**. Filesystem write/edit/delete are "
-            "not available to you and will be rejected — do not attempt them."
+            "7. **No artifact mutations**. Filesystem write/edit/delete "
+            "are not available to you and will be rejected — do not "
+            "attempt them."
         )
-
         return "\n".join(lines)

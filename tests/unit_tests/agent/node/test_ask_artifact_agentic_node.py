@@ -13,12 +13,16 @@ Pins the node-level invariants we depend on at runtime:
   - blob source ⇒ :class:`MemoryFilesystemFuncTool` (no disk),
   - disk source ⇒ :class:`FilesystemFuncTool` rooted at the artifact dir.
 * The artifact-context preamble rendered into the system prompt includes
-  the manifest name, the intent.md body, the expected directory tree
-  (with kind-specific branches: ``insights.json`` only for reports),
-  and the seven load-bearing behavioral rules. ``interpretation.json``
-  and ``suggested_questions.json`` are intentionally NOT loaded into
-  the preamble (the first was removed; the second is reserved for UI
-  chips to avoid anchoring the LLM on a fixed question set).
+  the manifest header, the intent.md body, the subject-library scope
+  (when any subject refs exist), the confirmed insights (report only),
+  a per-query catalog (brief + columns + sample/rows + SQL with byte +
+  row gating and a catalog-level cap), the filesystem layout note, and
+  the seven load-bearing behavioral rules — rule 1 in particular
+  forbids defensive ``glob`` / ``read_file`` on anything already
+  inlined. ``interpretation.json`` (removed) is never mentioned;
+  ``suggested_questions.json`` only appears in the layout tree as a
+  ``DO NOT read`` annotation so its contents never anchor the LLM
+  toward a fixed question set.
 
 We instantiate the nodes directly (bypassing ``node_factory``) so the test
 focuses on the binding / context-injection layer without dragging in the
@@ -596,13 +600,18 @@ class TestArtifactContextBlock:
         assert "Demo Report" in block  # manifest name
         assert "demo_report" in block  # slug
         assert "Q3 anomalies" in block  # intent.md
-        # Directory tree branches on artifact_kind — report shows insights.
+        # Layout tree branches on artifact_kind — report flags insights as inlined.
         assert "insights.json" in block
-        # Brief sidecar replaced reasoning sidecar in the tree.
+        # Brief sidecar called out in the "already loaded" list as part of
+        # the inline-context contract; SQL summaries / reasoning sidecars
+        # don't exist anymore.
         assert "brief.json" in block
         assert "reasoning.json" not in block
-        # Behavioral rules are present and number 7.
-        assert "Ground in existing analysis first" in block
+        # Behavioral rule 1 is the load-bearing "answer from inlined context first"
+        # nudge added when the renderer started inlining briefs/insights/SQL.
+        # Rule 7 is the read-only mutation guard.
+        assert "Answer from the inlined context first" in block
+        assert "Do NOT issue `glob` or `read_file`" in block
         assert "No artifact mutations" in block
 
     def test_report_block_includes_key_tables(self, real_agent_config):
@@ -618,12 +627,30 @@ class TestArtifactContextBlock:
 
     def test_report_block_excludes_interpretation_and_suggested(self, real_agent_config):
         """interpretation.json was removed; suggested_questions.json is
-        UI-chip data and must not leak into the system prompt where it
-        would anchor the LLM toward a fixed question set."""
+        UI-chip data and must not leak its contents into the system
+        prompt where it would anchor the LLM toward a fixed question
+        set. The filename itself MAY appear in the layout tree but only
+        as a "DO NOT read" annotation — the original anti-anchor intent
+        is now enforced by explicit instruction rather than by omission.
+        """
         node = _make_ask_report_node(real_agent_config)
         block = node._render_artifact_context_block()
         assert "interpretation.json" not in block
-        assert "suggested_questions.json" not in block
+        # The filename always appears in the layout tree but must be
+        # paired with the "DO NOT read" annotation on every mentioning
+        # line. We pin on the literal rendered annotation rather than
+        # a loose substring search so a regression that silently inlines
+        # the file's questions (the original anti-anchor concern) still
+        # fails this test.
+        mentioning_lines = [line for line in block.splitlines() if "suggested_questions.json" in line]
+        assert mentioning_lines, (
+            "renderer must surface suggested_questions.json in the layout "
+            "tree (with a DO NOT read annotation) so the LLM knows the file "
+            "exists but is off-limits; missing entirely would invite the "
+            "LLM to `glob` for it"
+        )
+        for line in mentioning_lines:
+            assert "DO NOT read" in line, f"suggested_questions.json mentioned without DO NOT annotation: {line!r}"
 
     def test_dashboard_block_excludes_insights(self, real_agent_config):
         node = _make_ask_dashboard_node(real_agent_config)
@@ -662,3 +689,573 @@ class TestArtifactContextBlock:
         block = node._render_artifact_context_block()
         assert "**Root**" in block
         assert "in-memory snapshot" not in block
+
+
+# --------------------------------------------------------------------------- #
+# Inline-content rendering                                                    #
+# --------------------------------------------------------------------------- #
+
+
+def _seed_query_files(
+    artifact_root: Path,
+    kind: str,
+    queries: list[dict],
+) -> None:
+    """Drop per-query sidecars into an already-seeded artifact root.
+
+    Each ``queries`` entry is a dict like::
+
+        {
+            "slug": str,
+            "brief": dict,             # written to <slug>.brief.json
+            "result": dict | None,     # report-only: <slug>.json
+            "params": dict | None,     # dashboard-only: <slug>.params.json
+            "sql": str,                # <slug>.sql (report) or <slug>.sql.j2 (dashboard)
+        }
+
+    Built as an explicit fixture-driver rather than overloading
+    ``_seed_artifact`` (whose existing kwargs are load-bearing on a
+    dozen other tests) so the inline-rendering tests can dial in
+    exact row counts, byte sizes, and SQL lengths.
+    """
+    queries_dir = artifact_root / "queries"
+    queries_dir.mkdir(parents=True, exist_ok=True)
+    for q in queries:
+        slug = q["slug"]
+        (queries_dir / f"{slug}.brief.json").write_text(json.dumps(q.get("brief") or {}), encoding="utf-8")
+        if kind == "report" and q.get("result") is not None:
+            (queries_dir / f"{slug}.json").write_text(json.dumps(q["result"]), encoding="utf-8")
+        if kind == "dashboard" and q.get("params") is not None:
+            (queries_dir / f"{slug}.params.json").write_text(json.dumps(q["params"]), encoding="utf-8")
+        sql_suffix = ".sql" if kind == "report" else ".sql.j2"
+        (queries_dir / f"{slug}{sql_suffix}").write_text(q.get("sql") or "", encoding="utf-8")
+
+
+def _seed_analysis_extras(
+    artifact_root: Path,
+    *,
+    insights: list[dict] | None = None,
+    subject_refs: dict | None = None,
+    suggested_questions: list[dict] | None = None,
+) -> None:
+    """Drop optional analysis files into an already-seeded artifact root."""
+    analysis_dir = artifact_root / "analysis"
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    if insights is not None:
+        (analysis_dir / "insights.json").write_text(json.dumps(insights), encoding="utf-8")
+    if subject_refs is not None:
+        (analysis_dir / "subject_refs.json").write_text(json.dumps(subject_refs), encoding="utf-8")
+    if suggested_questions is not None:
+        (analysis_dir / "suggested_questions.json").write_text(json.dumps(suggested_questions), encoding="utf-8")
+
+
+def _make_dashboard_with_queries(agent_config, *, slug: str, queries: list[dict], subject_refs: dict | None = None):
+    """Build a dashboard node bound to a fully-seeded artifact.
+
+    Dashboards keep ``BLOB_REQUIRED = False`` so we test the disk path
+    here — the same renderer code runs in blob mode (see the parity
+    test) but disk mode is the production path for ``ask_dashboard``
+    until publish lands."""
+    _seed_artifact(agent_config.project_root, "dashboard", slug)
+    root = Path(agent_config.project_root) / "dashboards" / slug
+    _seed_query_files(root, "dashboard", queries)
+    if subject_refs is not None:
+        _seed_analysis_extras(root, subject_refs=subject_refs)
+    _register_ask_agent(agent_config, name=f"ask_{slug}", kind="dashboard", slug=slug)
+    return AskDashboardAgenticNode(
+        node_id=f"{slug}_test",
+        description="test ask_dashboard node",
+        node_type="chat",
+        agent_config=agent_config,
+        node_name=f"ask_{slug}",
+    )
+
+
+def _make_report_with_queries(
+    agent_config,
+    *,
+    slug: str,
+    queries: list[dict],
+    insights: list[dict] | None = None,
+    subject_refs: dict | None = None,
+    suggested_questions: list[dict] | None = None,
+):
+    """Build a report node from a fully-seeded artifact via the blob path.
+
+    Reports have ``BLOB_REQUIRED = True`` so the artifact must travel
+    through ``_blob_from_disk`` — the helper that mirrors the backend
+    publish wire shape. We seed disk first as a convenient construction
+    vehicle then snapshot it into the blob; the node never touches the
+    disk tree at runtime.
+    """
+    _seed_artifact(agent_config.project_root, "report", slug)
+    root = Path(agent_config.project_root) / "reports" / slug
+    _seed_query_files(root, "report", queries)
+    _seed_analysis_extras(
+        root,
+        insights=insights,
+        subject_refs=subject_refs,
+        suggested_questions=suggested_questions,
+    )
+    blob = _blob_from_disk(agent_config.project_root, "report", slug)
+    _register_ask_agent(agent_config, name=f"ask_{slug}", kind="report", slug=slug, blob=blob)
+    return AskReportAgenticNode(
+        node_id=f"{slug}_test",
+        description="test ask_report node",
+        node_type="chat",
+        agent_config=agent_config,
+        node_name=f"ask_{slug}",
+    )
+
+
+def _basic_query_result(
+    slug: str,
+    *,
+    columns: list[tuple[str, str]] | None = None,
+    rows: list[dict] | None = None,
+) -> dict:
+    cols = [{"name": n, "type": t} for n, t in (columns or [("v", "number")])]
+    rows = rows or [{"v": 1}, {"v": 2}]
+    return {
+        "executed_at": "2026-05-19T00:00:00Z",
+        "datasource": "test_ds",
+        "row_count": len(rows),
+        "columns": cols,
+        "rows": rows,
+    }
+
+
+class TestArtifactContextBlockInlining:
+    """Renderer inlines as much as fits and degrades the rest cleanly.
+
+    The runtime concern these tests pin: an ``ask_*`` follow-up should
+    not need to pre-fetch sidecars to answer the user. The renderer
+    accomplishes that by inlining insights / subject scope / per-query
+    brief + columns + sample rows + SQL into the system prompt, with
+    threshold-based degradation when individual queries or the catalog
+    as a whole would blow the prompt budget.
+    """
+
+    # --- Small-artifact happy path --------------------------------------
+
+    def test_small_report_inlines_all_query_rows(self, real_agent_config):
+        """Tiny artifact: 1 query with 3 rows should be inlined in full
+        (rows block, not sample). Pins the lower bound of the row+byte
+        gate so a regression that always degrades to ``sample`` is
+        visible immediately.
+        """
+        queries = [
+            {
+                "slug": "small_q",
+                "brief": {"name": "small_q", "hypothesis": "h1", "caveats": "c1", "uses": {}},
+                "result": _basic_query_result(
+                    "small_q",
+                    columns=[("day", "string"), ("v", "number")],
+                    rows=[{"day": "Mon", "v": 10}, {"day": "Tue", "v": 11}, {"day": "Wed", "v": 12}],
+                ),
+                "sql": "SELECT day, v FROM t",
+            }
+        ]
+        node = _make_report_with_queries(real_agent_config, slug="small_report", queries=queries)
+        block = node._render_artifact_context_block()
+        # Catalog header for the slug + the full-rows marker (NOT sample).
+        assert "#### `small_q`" in block
+        assert "**rows** (3):" in block
+        assert "**sample**" not in block
+        # Every row's value should appear verbatim.
+        assert 'day="Mon"' in block
+        assert "v=12" in block
+        # Hypothesis and caveats survive in non-degraded mode.
+        assert "**hypothesis**: h1" in block
+        assert "**caveats**: c1" in block
+
+    def test_row_count_above_limit_degrades_to_sample(self, real_agent_config):
+        """row_count > INLINE_ROW_LIMIT (20) ⇒ sample mode with the
+        ``read_file`` pointer so the LLM knows where the full data is.
+        """
+        rows = [{"v": i} for i in range(30)]
+        queries = [
+            {
+                "slug": "wide_q",
+                "brief": {"name": "wide_q", "uses": {}},
+                "result": _basic_query_result("wide_q", rows=rows),
+                "sql": "SELECT v FROM t",
+            }
+        ]
+        node = _make_report_with_queries(real_agent_config, slug="wide_report", queries=queries)
+        block = node._render_artifact_context_block()
+        assert "#### `wide_q` — 30 rows" in block
+        # Sample wording references the actual count + remediation path.
+        assert "**sample** (first 2 of 30" in block
+        assert "read_file('queries/wide_q.json')" in block
+        # Full rows block must NOT be emitted for a wide result.
+        assert "**rows** (30)" not in block
+        # The remaining 28 rows shouldn't all be in the prompt.
+        # Cheap proxy: the last row's value (29) shouldn't appear.
+        assert "v=29" not in block
+
+    def test_byte_size_above_limit_degrades_to_sample(self, real_agent_config):
+        """A 5-row result whose rows each carry a multi-KB text field
+        must degrade even though row_count is well under 20. This is the
+        gate that protects against fat text columns silently inflating
+        the prompt — the user-reported failure mode that originally
+        prompted the double-gate design.
+        """
+        fat = "x" * 2_000  # ~2KB per row, 5 rows = 10KB > 4KB byte limit
+        rows = [{"id": i, "blob": fat} for i in range(5)]
+        queries = [
+            {
+                "slug": "fat_q",
+                "brief": {"name": "fat_q", "uses": {}},
+                "result": _basic_query_result("fat_q", columns=[("id", "integer"), ("blob", "string")], rows=rows),
+                "sql": "SELECT id, blob FROM t",
+            }
+        ]
+        node = _make_report_with_queries(real_agent_config, slug="fat_report", queries=queries)
+        block = node._render_artifact_context_block()
+        # Header still says 5 rows; the degradation is on inline content, not the count.
+        assert "#### `fat_q` — 5 rows" in block
+        # Sample mode kicks in because of bytes, not count.
+        assert "**sample** (first 2 of 5" in block
+        # The fat blob should appear at most twice (the sample), not 5 times.
+        assert block.count("blob=") <= 2
+
+    # --- SQL truncation -------------------------------------------------
+
+    def test_long_sql_is_truncated_with_marker(self, real_agent_config):
+        """SQL > INLINE_SQL_LINE_LIMIT (40) ⇒ truncate to the first N
+        lines and append a marker telling the LLM where to find the full
+        body. The marker text is load-bearing — if it changes the rule-1
+        contract ("flag when the inlined summary doesn't address the
+        question") breaks because the LLM no longer knows the SQL was
+        elided.
+        """
+        long_sql = "\n".join([f"-- line {i}" for i in range(60)] + ["SELECT 1"])
+        queries = [
+            {
+                "slug": "long_sql_q",
+                "brief": {"name": "long_sql_q", "uses": {}},
+                "result": _basic_query_result("long_sql_q"),
+                "sql": long_sql,
+            }
+        ]
+        node = _make_report_with_queries(real_agent_config, slug="long_sql_report", queries=queries)
+        block = node._render_artifact_context_block()
+        assert "-- line 0" in block
+        # Line 50 is past the 40-line cap.
+        assert "-- line 50" not in block
+        # Truncation marker names the file so the LLM can read_file it
+        # explicitly when truly needed.
+        assert "more lines; read queries/long_sql_q.sql for full body" in block
+
+    # --- Catalog cap degradation ---------------------------------------
+
+    def test_catalog_cap_degrades_later_entries(self, real_agent_config, monkeypatch):
+        """When the catalog's running byte count would exceed
+        INLINE_CATALOG_BYTES_CAP, later entries drop caveats and fall
+        back to sample-mode (even when individually they'd fit the
+        per-row inline gate). Header info (slug + row count + columns)
+        always survives so the LLM still knows the long-tail queries
+        exist.
+
+        We monkeypatch the cap down to a tiny value so the test stays
+        fast and deterministic — the production cap (64KB) would need
+        an artificially large fixture to trip.
+        """
+        from datus.agent.node import base_artifact_ask_agentic_node as mod
+
+        # Cap chosen empirically: each non-degraded entry in this
+        # fixture renders to ~220 bytes (header + hypothesis + caveats
+        # + 3-row inline + SQL block). 400 fits the first entry only;
+        # the second entry's running total trips the cap and switches
+        # to degraded mode for the rest of the catalog.
+        monkeypatch.setattr(mod, "INLINE_CATALOG_BYTES_CAP", 400)
+
+        common_rows = [{"v": i} for i in range(3)]
+        queries = []
+        for slug in ("a_first", "b_second", "c_third"):
+            queries.append(
+                {
+                    "slug": slug,
+                    "brief": {
+                        "name": slug,
+                        "hypothesis": f"{slug} hypothesis",
+                        # Caveats are visible enough to assert on.
+                        "caveats": f"{slug}-CAVEAT-MARKER",
+                        "uses": {},
+                    },
+                    "result": _basic_query_result(slug, rows=list(common_rows)),
+                    "sql": f"SELECT v FROM {slug}",
+                }
+            )
+        node = _make_report_with_queries(real_agent_config, slug="capped_report", queries=queries)
+        block = node._render_artifact_context_block()
+        # All three slugs survive (header info always emits).
+        assert "#### `a_first`" in block
+        assert "#### `b_second`" in block
+        assert "#### `c_third`" in block
+        # First entry keeps its caveat (not degraded).
+        assert "a_first-CAVEAT-MARKER" in block
+        # At least one later entry has its caveat dropped (degraded mode).
+        # We don't assert which specific entry to keep the test resilient
+        # against minor rendering-size shifts.
+        late_caveats_dropped = "b_second-CAVEAT-MARKER" not in block or "c_third-CAVEAT-MARKER" not in block
+        assert late_caveats_dropped, "expected catalog cap to drop at least one later caveat"
+
+    # --- Subject scope --------------------------------------------------
+
+    def test_subject_scope_reverse_index_lists_referencing_queries(self, real_agent_config):
+        """One subject asset referenced by multiple queries → the
+        subject scope block lists all referencing slugs in alphabetical
+        order. This is the section that makes "which queries use metric
+        X?" answerable without a file scan.
+        """
+        subj = {
+            "path": ["Commerce", "Orders", "AOV"],
+            "name": "average_order_value",
+        }
+        queries = [
+            {
+                "slug": "q_alpha",
+                "brief": {"name": "q_alpha", "uses": {"metrics": [subj]}},
+                "result": _basic_query_result("q_alpha"),
+                "sql": "SELECT 1",
+            },
+            {
+                "slug": "q_beta",
+                "brief": {"name": "q_beta", "uses": {"metrics": [subj]}},
+                "result": _basic_query_result("q_beta"),
+                "sql": "SELECT 1",
+            },
+            # A query without the metric — must NOT appear in the
+            # reverse index even though it's in the catalog.
+            {
+                "slug": "q_orphan",
+                "brief": {"name": "q_orphan", "uses": {}},
+                "result": _basic_query_result("q_orphan"),
+                "sql": "SELECT 1",
+            },
+        ]
+        node = _make_report_with_queries(
+            real_agent_config,
+            slug="subj_report",
+            queries=queries,
+            subject_refs={
+                "metrics": [subj],
+                "reference_sql": [],
+                "ext_knowledge": [],
+            },
+        )
+        block = node._render_artifact_context_block()
+        # Path + name rendered together in the scope section.
+        assert "Commerce > Orders > AOV > average_order_value" in block
+        # Reverse index: both referencing slugs listed; orphan absent.
+        assert "used by: q_alpha, q_beta" in block
+        # Per-query "subjects" line shows up only on the referencing entries.
+        # Pin on a concrete substring that appears once per referencing
+        # query — confirms the catalog entry actually includes the tag.
+        assert block.count("metric:`average_order_value`") >= 2
+
+    # --- Skipped sections when files absent -----------------------------
+
+    def test_insights_section_renders_id_title_confidence_evidence(self, real_agent_config):
+        """When insights.json is present, the section renders one
+        numbered entry per insight with id (back-ticked), title,
+        optional confidence in 2-decimal form, summary, and an
+        ``evidence:`` line citing referenced query slugs. Locks in the
+        full set of fields the LLM relies on for ``insight:<id>``
+        citations and cross-references in answers.
+        """
+        insights = [
+            {
+                "id": "weekend_aov_spike",
+                "title": "Sunday AOV is nearly 3x weekday levels",
+                "summary": "Average order value on Sundays ($29.19) is significantly higher.",
+                "confidence": 0.95,
+                "evidence_queries": ["aov_by_day_of_week", "aov_daily_trend"],
+            },
+            {
+                # An insight with NO confidence and NO summary — must
+                # still render its title without crashing or emitting a
+                # stray confidence badge or an empty summary line.
+                "id": "qualitative_obs",
+                "title": "qualitative observation",
+                "evidence_queries": [],
+            },
+        ]
+        queries = [
+            {
+                "slug": "aov_by_day_of_week",
+                "brief": {"name": "aov_by_day_of_week", "uses": {}},
+                "result": _basic_query_result("aov_by_day_of_week"),
+                "sql": "SELECT 1",
+            }
+        ]
+        node = _make_report_with_queries(
+            real_agent_config,
+            slug="ins_report",
+            queries=queries,
+            insights=insights,
+        )
+        block = node._render_artifact_context_block()
+        assert "### Confirmed Findings (`analysis/insights.json`)" in block
+        # First insight: id, title, confidence in 2-decimal form, summary, evidence list.
+        assert "1. **`weekend_aov_spike`** — Sunday AOV is nearly 3x weekday levels _(conf 0.95)_" in block
+        assert "Average order value on Sundays" in block
+        assert "evidence: `aov_by_day_of_week`, `aov_daily_trend`" in block
+        # Second insight: id + title only, no confidence badge or evidence line.
+        # Pin on the exact rendered form so a regression that adds
+        # ``_(conf None)_`` or an empty evidence list ", " trips.
+        assert "2. **`qualitative_obs`** — qualitative observation" in block
+        # Sanity: the second entry must NOT emit a stray confidence badge
+        # (`_(conf ...)_` is the precise rendered form for the badge).
+        qual_line = next(line for line in block.splitlines() if "`qualitative_obs`" in line)
+        assert "_(conf" not in qual_line, f"unexpected conf badge: {qual_line!r}"
+
+    def test_missing_insights_skips_section(self, real_agent_config):
+        """No insights.json ⇒ no "Confirmed Findings" heading. The
+        renderer must not emit an empty stub section that confuses the
+        LLM into thinking the report has no conclusions.
+        """
+        queries = [
+            {
+                "slug": "q",
+                "brief": {"name": "q", "uses": {}},
+                "result": _basic_query_result("q"),
+                "sql": "SELECT 1",
+            }
+        ]
+        node = _make_report_with_queries(real_agent_config, slug="no_ins", queries=queries)
+        block = node._render_artifact_context_block()
+        assert "### Confirmed Findings" not in block
+
+    def test_missing_subject_refs_skips_section(self, real_agent_config):
+        """No subject_refs.json ⇒ no "Subject Library Scope" heading."""
+        queries = [
+            {
+                "slug": "q",
+                "brief": {"name": "q", "uses": {}},
+                "result": _basic_query_result("q"),
+                "sql": "SELECT 1",
+            }
+        ]
+        node = _make_report_with_queries(real_agent_config, slug="no_subj", queries=queries)
+        block = node._render_artifact_context_block()
+        assert "### Subject Library Scope" not in block
+
+    def test_no_queries_skips_catalog(self, real_agent_config):
+        """Artifact with no queries/ files ⇒ no catalog section. Avoids
+        emitting an empty heading or a misleading "no data" stub when a
+        bare-bones report binds to ask_report (e.g. freshly published
+        before save_query calls were issued — should never happen, but
+        the renderer must not crash if it does).
+        """
+        node = _make_ask_report_node(real_agent_config)  # no queries seeded
+        block = node._render_artifact_context_block()
+        assert "### Query Catalog" not in block
+        # Other sections still render normally.
+        assert "## Bound Artifact" in block
+
+    # --- Dashboard branching --------------------------------------------
+
+    def test_dashboard_catalog_uses_sample_params_not_rows(self, real_agent_config):
+        """Dashboard catalog renders ``sample_params`` from the .params
+        sidecar and labels the size as ``template`` — NOT rows. Locks
+        in the kind-branch in ``_render_query_catalog_entry`` so a
+        regression that always emits report shape on dashboards
+        (silently dropping params from the prompt) is visible.
+        """
+        queries = [
+            {
+                "slug": "dash_q",
+                "brief": {"name": "dash_q", "uses": {}},
+                "params": {
+                    "columns": [{"name": "v", "type": "number"}],
+                    "sample_params": {"start_date": "2026-01-01", "store_id": 42},
+                    "sample_row_count": 7,
+                },
+                "sql": "SELECT v FROM t WHERE store_id = {{ store_id }}",
+            }
+        ]
+        node = _make_dashboard_with_queries(real_agent_config, slug="dash_inline", queries=queries)
+        block = node._render_artifact_context_block()
+        assert "#### `dash_q` — template · sample 7 rows" in block
+        assert "**sample_params**:" in block
+        assert "start_date" in block and "store_id" in block
+        # Dashboard SQL appears under the .sql.j2 suffix.
+        assert "store_id = {{ store_id }}" in block
+        # Report-shape ("rows" inline) MUST NOT appear.
+        assert "**rows** (" not in block
+
+    # --- Disk ↔ blob parity ---------------------------------------------
+
+    def test_blob_and_disk_modes_render_identically(self, real_agent_config):
+        """Same artifact seeded once and read once via the disk path and
+        once via the blob path renders the same content block (modulo
+        the source-line: in-memory snapshot vs Root path). This is the
+        cross-component contract between the disk-backed
+        FilesystemFuncTool flow (CLI) and the MemoryFilesystemFuncTool flow (SaaS) —
+        if rendering drifts between the two, the same artifact would
+        answer differently depending on deployment.
+        """
+        slug = "parity"
+        queries = [
+            {
+                "slug": "parity_q",
+                "brief": {"name": "parity_q", "hypothesis": "h", "uses": {}},
+                "result": _basic_query_result("parity_q", rows=[{"v": 1}, {"v": 2}]),
+                "sql": "SELECT v FROM t",
+            }
+        ]
+
+        # Disk path via dashboard kind (BLOB_REQUIRED=False).
+        node_disk = _make_dashboard_with_queries(real_agent_config, slug=f"{slug}_d", queries=queries)
+        block_disk = node_disk._render_artifact_context_block()
+
+        # Blob path via report kind (BLOB_REQUIRED=True). Note: this is
+        # a different kind, so the test compares structural similarity
+        # rather than byte-identical rendering. We pin the load-bearing
+        # cross-mode behavior: the per-query data shows up the same way
+        # regardless of where the files came from.
+        node_blob = _make_report_with_queries(
+            real_agent_config,
+            slug=f"{slug}_r",
+            queries=queries,
+        )
+        block_blob = node_blob._render_artifact_context_block()
+
+        # Header per-mode differs (Root vs in-memory snapshot); verify
+        # the kind-agnostic per-query rendering matches structure.
+        assert "#### `parity_q`" in block_blob
+        # Dashboard renders sample_params if params present; since this
+        # fixture only seeded a report-shape result, the dashboard side
+        # has no params, so its entry header is "no data file".
+        assert "#### `parity_q` — no data file" in block_disk
+        # SQL appears in BOTH renderings.
+        assert "SELECT v FROM t" in block_disk
+        assert "SELECT v FROM t" in block_blob
+
+    # --- Rule 1 contract -----------------------------------------------
+
+    def test_rule_one_forbids_defensive_reads(self, real_agent_config):
+        """Behavioral rule 1 must explicitly forbid pre-fetching files
+        already inlined. This is the runtime behavior change the
+        rewrite was driven by; without an explicit prohibition the LLM
+        reverts to defensive ``glob`` + ``read_file`` even when the
+        prompt carries everything.
+        """
+        queries = [
+            {
+                "slug": "q",
+                "brief": {"name": "q", "uses": {}},
+                "result": _basic_query_result("q"),
+                "sql": "SELECT 1",
+            }
+        ]
+        node = _make_report_with_queries(real_agent_config, slug="rule1", queries=queries)
+        block = node._render_artifact_context_block()
+        # Find rule 1 specifically (it starts with a numbered "1. ").
+        # We pin on both the imperative wording and the explicit "DO
+        # NOT" so a future copy-edit that softens the rule trips.
+        assert "1. **Answer from the inlined context first**" in block
+        assert "Do NOT issue `glob` or `read_file`" in block
