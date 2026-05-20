@@ -384,8 +384,8 @@ class ReportArtifactTools:
                 }
 
             The activation also seeds ``analysis/intent.md`` with the
-            user's original prompt (append-only blockquote section) so
-            the follow-up subagent has the raw question to anchor on.
+            user's original prompt (append-only fenced-code-block section)
+            so the follow-up subagent has the raw question to anchor on.
         """
         if not slug or not REPORT_SLUG_RE.fullmatch(slug):
             return FuncToolResult(

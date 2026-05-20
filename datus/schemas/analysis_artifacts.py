@@ -9,8 +9,10 @@ The visual report / dashboard artifacts grow an ``analysis/`` subdirectory
 alongside ``queries/`` and ``render/``:
 
 * ``analysis/intent.md`` — raw user prompts, append-only. Plain markdown,
-  no Pydantic model — just a list of timestamped ``> ...`` blockquote
-  sections. Filtered at write time to drop renderer error reports and
+  no Pydantic model — just a list of timestamped sections, each wrapping
+  the prompt in a fenced code block (fence length adapts to content so
+  prompts containing ```` ``` ```` are still preserved losslessly).
+  Filtered at write time to drop renderer error reports and
   "continue / proceed" placeholders that aren't real intent.
 * ``analysis/insights.json`` — ``List[Insight]``. Confirmed findings.
   **Report only.** Dashboard data is materialized at runtime, so there

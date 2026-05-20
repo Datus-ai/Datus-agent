@@ -46,9 +46,8 @@ class TestAppendIntentSection:
         path = analysis_dir / "intent.md"
         assert path.is_file()
         text = path.read_text(encoding="utf-8")
-        assert text.startswith("### [2026-05-14T10:00:00Z] mode: new\n")
-        # User message lands as a blockquote line.
-        assert "> Please summarise Q1 east-region sales." in text
+        # Heading + standard 3-backtick fence wrapping the verbatim message.
+        assert text == ("### [2026-05-14T10:00:00Z] mode: new\n```\nPlease summarise Q1 east-region sales.\n```\n")
 
     def test_appends_second_section_preserving_first(self, tmp_path: Path):
         analysis_dir = tmp_path / "analysis"
@@ -70,8 +69,9 @@ class TestAppendIntentSection:
         first_idx = text.find("mode: new")
         second_idx = text.find("mode: edit")
         assert 0 <= first_idx < second_idx
-        assert "> initial prompt" in text
-        assert "> follow-up edit" in text
+        # Each prompt sits on its own line between fences.
+        assert "\ninitial prompt\n" in text
+        assert "\nfollow-up edit\n" in text
         # A blank line should separate the sections.
         assert "\n\n###" in text
 
@@ -147,7 +147,7 @@ class TestAppendIntentSection:
         text = (analysis_dir / "intent.md").read_text(encoding="utf-8")
         assert passthrough in text
 
-    def test_multiline_message_becomes_continuation_blockquote(self, tmp_path: Path):
+    def test_multiline_message_preserved_verbatim_inside_fence(self, tmp_path: Path):
         analysis_dir = tmp_path / "analysis"
         message = "first line\n\nthird line"
         append_intent_section(
@@ -158,11 +158,47 @@ class TestAppendIntentSection:
         )
         text = (analysis_dir / "intent.md").read_text(encoding="utf-8")
         lines = text.splitlines()
-        # Header + 3 content lines (the blank middle line becomes ">").
+        # Header + opening fence + 3 content lines (blank line preserved
+        # verbatim, no prefix) + closing fence.
         assert lines[0] == "### [2026-05-14T10:00:00Z] mode: new"
-        assert lines[1] == "> first line"
-        assert lines[2] == ">"
-        assert lines[3] == "> third line"
+        assert lines[1] == "```"
+        assert lines[2] == "first line"
+        assert lines[3] == ""
+        assert lines[4] == "third line"
+        assert lines[5] == "```"
+
+    def test_fence_grows_when_message_contains_triple_backticks(self, tmp_path: Path):
+        """If the user's prompt itself contains a ``` fence (or longer
+        run of backticks), the wrapper fence must be longer so the
+        section round-trips losslessly. CommonMark closes on the first
+        equal-or-longer same-character fence line."""
+        analysis_dir = tmp_path / "analysis"
+        message = "describe this snippet:\n```sql\nSELECT 1\n```\nplease"
+        append_intent_section(
+            analysis_dir,
+            user_message=message,
+            mode="new",
+            timestamp="2026-05-14T10:00:00Z",
+        )
+        text = (analysis_dir / "intent.md").read_text(encoding="utf-8")
+        # Wrapper must be 4+ backticks because the body contains a run of 3.
+        assert text == (
+            "### [2026-05-14T10:00:00Z] mode: new\n````\ndescribe this snippet:\n```sql\nSELECT 1\n```\nplease\n````\n"
+        )
+
+    def test_fence_grows_for_longer_internal_backtick_runs(self, tmp_path: Path):
+        """A six-backtick run inside the body forces a seven-backtick
+        wrapper. Guards against assuming "3 → 4 is enough"."""
+        analysis_dir = tmp_path / "analysis"
+        message = "weird: ``````"
+        append_intent_section(
+            analysis_dir,
+            user_message=message,
+            mode="new",
+            timestamp="2026-05-14T10:00:00Z",
+        )
+        text = (analysis_dir / "intent.md").read_text(encoding="utf-8")
+        assert text == ("### [2026-05-14T10:00:00Z] mode: new\n```````\nweird: ``````\n```````\n")
 
     def test_returns_error_string_on_oserror(self, tmp_path: Path, monkeypatch):
         analysis_dir = tmp_path / "analysis"

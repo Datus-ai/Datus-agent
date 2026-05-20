@@ -169,11 +169,20 @@ def append_intent_section(
     mode: str,
     timestamp: str,
 ) -> Optional[str]:
-    """Append a timestamped ``> ...`` blockquote section to ``analysis/intent.md``.
+    """Append a timestamped fenced-code-block section to ``analysis/intent.md``.
 
     The file is the raw record of every user prompt that drove a
     start_new / bind_existing call against this artifact — see
     ``docs/analysis_artifacts.md`` §3.3. Always append; never rewrite.
+
+    Each section is rendered as a fenced code block (not a blockquote)
+    so the prompt is preserved verbatim: any markdown the user typed
+    (``> ``, ``#``, ``*``, links) stays as plain text instead of being
+    re-rendered, multi-line prompts don't need per-line prefixes, and
+    program-side extraction is just "everything between the fences".
+    The fence length adapts to the user content (see
+    :func:`_pick_code_fence`) so a prompt that itself contains
+    ```` ``` ```` is wrapped in a longer fence without truncation.
 
     Returns an error string on failure (so the caller can include it in
     the FuncToolResult), ``None`` on success.
@@ -216,13 +225,36 @@ def append_intent_section(
         return f"Failed to append intent section: {exc}"
 
 
+def _pick_code_fence(text: str) -> str:
+    """Choose a backtick fence long enough to wrap ``text`` losslessly.
+
+    CommonMark closes a fenced code block on the first line that begins
+    with a backtick run of equal-or-greater length. To round-trip user
+    content verbatim, pick a fence longer than the longest backtick run
+    inside the content. Minimum length is 3 (the standard fence).
+    """
+    longest = 0
+    current = 0
+    for ch in text:
+        if ch == "`":
+            current += 1
+            if current > longest:
+                longest = current
+        else:
+            current = 0
+    return "`" * max(3, longest + 1)
+
+
 def _format_intent_section(*, user_message: str, mode: str, timestamp: str) -> str:
     """Format a single ``### [timestamp] mode: ...`` block with the user
-    message rendered as a blockquote. Leading / trailing whitespace on
-    the message is trimmed; internal newlines become continuation
-    blockquote lines so multi-paragraph prompts stay legible."""
-    body_lines = [f"> {line}" if line.strip() else ">" for line in user_message.strip().splitlines()]
-    return f"### [{timestamp}] mode: {mode}\n" + "\n".join(body_lines) + "\n"
+    message wrapped in a fenced code block. Leading / trailing whitespace
+    on the message is trimmed, but internal newlines are preserved so
+    multi-paragraph prompts stay readable. The fence length adapts to
+    the content so a prompt containing ```` ``` ```` is still wrapped
+    losslessly (see :func:`_pick_code_fence`)."""
+    body = user_message.strip()
+    fence = _pick_code_fence(body)
+    return f"### [{timestamp}] mode: {mode}\n{fence}\n{body}\n{fence}\n"
 
 
 def upsert_manifest_after_save(

@@ -966,10 +966,14 @@ class TestUpdateManifestKeyTables:
 
 _CURATED_BODY = (
     "### [2026-05-18T03:10:06Z] mode: new\n"
-    "> Generate a banking user account growth analysis report\n"
+    "```\n"
+    "Generate a banking user account growth analysis report\n"
+    "```\n"
     "\n"
     "### [2026-05-18T03:32:30Z] mode: edit\n"
-    "> Focus on risk control analysis\n"
+    "```\n"
+    "Focus on risk control analysis\n"
+    "```\n"
 )
 
 
@@ -981,11 +985,19 @@ class TestSanitizeCuratedIntentMd:
         assert "Focus on risk control" in out
 
     def test_strips_outer_triple_backtick_fence(self):
+        """Outer wrap stripped; per-section inner fences (which are now
+        part of the body) survive verbatim."""
         wrapped = f"```\n{_CURATED_BODY}\n```"
         out = _sanitize_curated_intent_md(wrapped)
         assert out.startswith("### ")
-        assert "```" not in out
+        # End-anchored regex picks the LAST closing fence as the wrapper close,
+        # so the body's inner fences are preserved.
         assert "Focus on risk control" in out
+        assert "```" in out  # inner section fences survived
+        # The wrapper added exactly one extra ``` pair (open + close); the body
+        # originally has one fence-pair per section.
+        section_count = _CURATED_BODY.count("###")
+        assert out.count("```") == 2 * section_count
 
     def test_strips_language_tagged_fence(self):
         """``` ```markdown``` ` and ``` ```md``` ` are common (DeepSeek / GPT)."""
@@ -993,7 +1005,10 @@ class TestSanitizeCuratedIntentMd:
             wrapped = f"```{tag}\n{_CURATED_BODY}\n```"
             out = _sanitize_curated_intent_md(wrapped)
             assert out.startswith("### "), f"failed for tag={tag!r}"
-            assert "```" not in out
+            # Inner per-section fences preserved; only the outer language-
+            # tagged wrapper is gone (the tag itself must not survive).
+            assert tag not in out
+            assert "Focus on risk control" in out
 
     def test_strips_leading_preface(self):
         """GPT-style 'Here is the cleaned version:' preface gone."""
@@ -1002,22 +1017,22 @@ class TestSanitizeCuratedIntentMd:
         assert out.startswith("### ")
         assert "Here is the cleaned version" not in out
 
-    def test_strips_preface_and_fence_combined(self):
-        """Worst case: preface + fence + trailing chatter all at once."""
-        composite = (
-            "Sure! Here is the curated intent.md:\n"
-            "\n"
-            f"```markdown\n{_CURATED_BODY}\n```\n"
-            "\n"
-            "Let me know if you'd like further edits."
-        )
+    def test_strips_preface_with_trailing_chatter_left_alone(self):
+        """Preface stripped; trailing chatter past the body is preserved.
+
+        Previously a third pass tried to trim a stray closing ``` line
+        after the last ``### `` heading, but per-section fenced code
+        blocks introduced by the verbatim-prompt format make that
+        heuristic ambiguous (every section legitimately ends with
+        ``\n``` ``). Sanitize now stops at "strip preface"; the
+        downstream length / no-heading safety checks pick up any LLM
+        slop that survives."""
+        composite = f"Sure! Here is the curated intent.md:\n\n{_CURATED_BODY}\nLet me know if you'd like further edits."
         out = _sanitize_curated_intent_md(composite)
         assert out.startswith("### ")
         assert "Sure!" not in out
-        assert "```" not in out
-        # Trailing chatter is intentionally NOT stripped — telling where
-        # a legitimate blockquote ends from where LLM chatter begins is
-        # a tough call. Downstream safety checks pick up the slack.
+        # Trailing chatter survives — that's the explicit trade-off.
+        assert "Let me know if you'd like further edits." in out
 
     def test_body_with_no_heading_returned_as_is(self):
         """If sanitize can't find a ``### `` heading the input is
@@ -1035,13 +1050,19 @@ class TestSanitizeCuratedIntentMd:
 
 _ORIGINAL_INTENT = (
     "### [2026-05-18T03:10:06Z] mode: new\n"
-    "> Generate a banking user account growth analysis report\n"
+    "```\n"
+    "Generate a banking user account growth analysis report\n"
+    "```\n"
     "\n"
     "### [2026-05-18T03:31:42Z] mode: edit\n"
-    "> continue\n"
+    "```\n"
+    "continue\n"
+    "```\n"
     "\n"
     "### [2026-05-18T03:32:30Z] mode: edit\n"
-    "> Focus on risk control analysis\n"
+    "```\n"
+    "Focus on risk control analysis\n"
+    "```\n"
 )
 
 
@@ -1078,22 +1099,30 @@ class TestRunIntentCuration:
         result = run_intent_curation(_curation_model(returns=_CURATED_BODY), path)
         assert result is None
         rewritten = path.read_text(encoding="utf-8")
-        assert "> continue" not in rewritten  # dropped
+        # The dropped "continue" section's content line is no longer present.
+        assert "\ncontinue\n" not in rewritten
         assert "Generate a banking" in rewritten  # kept
         assert "Focus on risk control" in rewritten  # kept
         # Trailing newline normalised.
         assert rewritten.endswith("\n")
 
     def test_fence_wrapped_output_sanitized_then_written(self, tmp_path: Path):
-        """LLM wraps output in ```markdown — sanitize strips before
-        the safety checks see it; write proceeds."""
+        """LLM wraps output in ```markdown — sanitize strips the outer
+        wrapper before safety checks; per-section inner fences (which
+        are now part of the curated body) survive verbatim."""
         path = tmp_path / "intent.md"
         path.write_text(_ORIGINAL_INTENT, encoding="utf-8")
         wrapped = f"```markdown\n{_CURATED_BODY}\n```"
         result = run_intent_curation(_curation_model(returns=wrapped), path)
         assert result is None
         rewritten = path.read_text(encoding="utf-8")
-        assert "```" not in rewritten
+        assert rewritten.startswith("### ")
+        # Outer wrapper's language tag must not have leaked into the file.
+        assert "markdown" not in rewritten
+        # Inner per-section fences (3-backtick) survived.
+        assert "```" in rewritten
+        assert "Generate a banking" in rewritten
+        assert "Focus on risk control" in rewritten
         assert rewritten.startswith("### ")
 
     def test_identical_output_skips_write(self, tmp_path: Path, monkeypatch):
@@ -1226,7 +1255,7 @@ class TestRunFinalizeAnalysis:
         assert model.generate.call_count == 1
         # intent.md was curated: placeholder dropped, real intents kept.
         curated = (analysis_dir / "intent.md").read_text(encoding="utf-8")
-        assert "> continue" not in curated
+        assert "\ncontinue\n" not in curated
         assert "Generate a banking" in curated
         assert "Focus on risk control" in curated
 

@@ -804,9 +804,11 @@ def write_subject_refs(analysis_dir: Path, refs: SubjectRefs) -> Optional[str]:
 #    decision per section: never rewrite a user's words.
 # 2. **Sanitize** — Python strips outer ```...``` fences (with or
 #    without language tag) and any preface text before the first
-#    ``### `` heading. Trailing chatter is left alone — easy to
-#    misjudge (a legitimate blockquote can extend past the last
-#    heading) and far less destructive than leading fence noise.
+#    ``### `` heading. Trailing chatter is left alone — the per-section
+#    fenced code blocks introduced for verbatim prompt capture mean a
+#    stray ``\n```\s*`` line after the last heading is now
+#    indistinguishable from a section's own closing fence, so heuristic
+#    trimming there would shred legitimate content.
 # 3. **Safety checks** — empty body, no ``### `` heading, or shrinking
 #    below 30% of original length all abort the rewrite. The original
 #    file survives unchanged; a warning surfaces in the finalize
@@ -904,8 +906,11 @@ def _build_intent_curation_prompt(intent_md: str) -> str:
         "   translate Chinese / Japanese / Korean prompts into English (or\n"
         "   any other language).\n"
         "2. **Preserve section structure.** Each surviving section keeps its\n"
-        "   `### [timestamp] mode: ...` heading line and its `> ...` blockquote\n"
-        "   body exactly as written, separated by one blank line from the next.\n"
+        "   `### [timestamp] mode: ...` heading line and its fenced code block\n"
+        "   body (opening fence, content, closing fence) exactly as written.\n"
+        "   The fence may be 3 or more backticks — preserve whatever length\n"
+        "   the original section used. Sections are separated by one blank\n"
+        "   line.\n"
         "3. **Order preserved.** Surviving sections appear in the original order.\n"
         "4. **No additions.** Do not insert notes, commentary, or new sections.\n"
         "5. **Binary decision per section.** Keep the whole section or delete\n"
@@ -914,7 +919,10 @@ def _build_intent_curation_prompt(intent_md: str) -> str:
         "## CRITICAL OUTPUT FORMAT\n"
         "\n"
         "- Output ONLY the curated markdown body.\n"
-        "- Do NOT wrap the output in code fences (no ```, no ```markdown).\n"
+        "- Do NOT wrap the WHOLE output in an extra outer code fence (no\n"
+        "  ```, no ```markdown around the entire response). The per-section\n"
+        "  fenced code blocks ARE the section bodies — keep them; just\n"
+        "  don't add a wrapping fence on top.\n"
         "- Do NOT add any preface text before the first `### ` heading\n"
         "  (no `Here is the cleaned version:` or similar lead-ins, in any\n"
         "  language).\n"
@@ -934,23 +942,20 @@ def _build_intent_curation_prompt(intent_md: str) -> str:
 def _sanitize_curated_intent_md(text: str) -> str:
     """Strip common LLM-output wrappers around the cleaned body.
 
-    Three passes, narrow on purpose:
+    Two passes, narrow on purpose:
 
       1. **Whole-body fence**: ``` ... ``` or ```markdown ... ``` —
          the fence wraps the entire response.
       2. **Leading preface**: ``Here is the cleaned version:\\n\\n###...``
          — everything before the first ``### `` heading is dropped.
-      3. **Trailing fence + chatter**: when preface stripping leaves a
-         stray closing ``` on its own line *after* the last ``### ``
-         section, trim from that line to end. This only triggers for
-         the specific "preface + fence + trailing chatter" composite
-         where the whole-body fence regex (pass 1) couldn't match.
 
-    Regular trailing commentary (without a stray ```) is intentionally
-    NOT stripped — telling a legitimate multi-line blockquote apart
-    from LLM chatter is genuinely ambiguous. The downstream safety
-    checks ("must contain ``###``", minimum length) plus the human-
-    readable structure of intent.md make residual chatter tolerable.
+    Trailing commentary is intentionally NOT stripped: now that each
+    legitimate section ends with its own fenced code block, a stray
+    ``\\n```\\s*`` line after the last ``### `` heading is
+    indistinguishable from the section's own closing fence. The
+    downstream safety checks ("must contain ``###``", minimum length)
+    plus the human-readable structure of intent.md make residual
+    chatter tolerable.
     """
     s = text.strip()
 
@@ -962,17 +967,6 @@ def _sanitize_curated_intent_md(text: str) -> str:
         first_heading = s.find("\n### ")
         if first_heading != -1:
             s = s[first_heading + 1 :].lstrip()
-
-    # Pass 3 — narrow, only post-preface stripping: a stray closing
-    # ``` on its own line after the last ``### `` heading is by
-    # construction LLM artifact, not user content. intent.md
-    # blockquotes always lead with ``> ``, so ``\\n```\\s*`` lines never
-    # appear inside legitimate sections.
-    last_heading = s.rfind("### ")
-    if last_heading >= 0:
-        trailing_fence = re.search(r"\n```[^\n]*(?:\n|$)", s[last_heading:])
-        if trailing_fence:
-            s = s[: last_heading + trailing_fence.start()].rstrip()
 
     return s.strip()
 
