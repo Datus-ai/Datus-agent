@@ -81,8 +81,14 @@ def _normalize_name_list(value) -> List[str]:
 
 def _serialize_validation_issue(issue) -> dict:
     if hasattr(issue, "model_dump"):
-        return issue.model_dump()
-    return {"severity": "error", "message": str(issue)}
+        issue_data = issue.model_dump(mode="json")
+    else:
+        issue_data = {"severity": "error", "message": str(issue)}
+
+    severity = issue_data.get("severity")
+    if severity is not None:
+        issue_data["severity"] = str(severity).lower()
+    return issue_data
 
 
 def _is_no_metrics_present_issue(issue: dict) -> bool:
@@ -91,7 +97,7 @@ def _is_no_metrics_present_issue(issue: dict) -> bool:
 
 
 def _validation_has_errors(issues: List[dict]) -> bool:
-    return any(issue.get("severity") == "error" for issue in issues)
+    return any(str(issue.get("severity") or "").lower() == "error" for issue in issues)
 
 
 def _format_validation_error(issues: List[dict]) -> str:

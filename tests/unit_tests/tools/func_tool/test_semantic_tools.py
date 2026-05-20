@@ -2,6 +2,7 @@
 Test cases for SemanticTools utility functions and query_metrics compression.
 """
 
+from enum import Enum
 from unittest.mock import Mock, patch
 
 import pytest
@@ -10,6 +11,10 @@ from datus.tools.func_tool.base import FuncToolResult, normalize_null
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.semantic_tools import _run_async
 from datus.tools.semantic_tools.models import QueryResult
+
+
+class _Severity(Enum):
+    ERROR = "error"
 
 
 class TestGenerationEvidence:
@@ -876,6 +881,32 @@ class TestValidateSemantic:
         assert result.result["ignored_issues"] == [{"severity": "error", "message": "No metrics present in the model."}]
         assert "1 validation errors" in result.error
         assert "Element ac_code" in result.error
+        assert evidence.validation_passed is False
+
+    def test_semantic_model_scope_treats_enum_severity_as_error(self, semantic_tools_with_adapter):
+        tool, mock_adapter = semantic_tools_with_adapter
+        evidence = GenerationEvidence()
+        tool.generation_evidence = evidence
+
+        mock_issue = Mock()
+        mock_issue.model_dump.return_value = {
+            "severity": _Severity.ERROR,
+            "message": "bad enum severity",
+        }
+        mock_issue.model_dump.side_effect = lambda mode=None: {
+            "severity": _Severity.ERROR.value if mode == "json" else _Severity.ERROR,
+            "message": "bad enum severity",
+        }
+        mock_validation = Mock()
+        mock_validation.valid = False
+        mock_validation.issues = [mock_issue]
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=mock_validation):
+            result = tool.validate_semantic(scope="semantic_model")
+
+        assert result.success == 0
+        assert result.result["issues"] == [{"severity": "error", "message": "bad enum severity"}]
+        assert result.result["ignored_issues"] == []
         assert evidence.validation_passed is False
 
     def test_invalid_scope_returns_error(self, semantic_tools_with_adapter):
