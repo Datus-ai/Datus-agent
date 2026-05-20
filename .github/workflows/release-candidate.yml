@@ -21,17 +21,18 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  RELEASE_CANDIDATE_WHEEL_ARTIFACT: datus-agent-release-candidate-wheel-${{ github.run_id }}-${{ github.run_attempt }}
+  RELEASE_CANDIDATE_DIST_ARTIFACT: datus-agent-release-candidate-dist-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
   package-smoke:
-    name: Package smoke
+    name: Package and docs smoke
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -39,20 +40,27 @@ jobs:
           python-version: "3.12"
 
       - name: Install build tooling
-        run: python -m pip install --upgrade pip build packaging
+        run: python -m pip install --upgrade pip build packaging twine
 
-      - name: Check source release metadata
+      - name: Check release version and dependency metadata
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
         run: |
           python ci/check_release_readiness.py \
-            --expected-version "${{ inputs.expected_version }}" \
+            --expected-version "$EXPECTED_VERSION" \
             --check-tag-available \
             --check-adapter-latest
 
-      - name: Build release candidate wheel
-        run: python -m build --wheel --outdir dist-release-candidate
+      - name: Build release candidate distributions
+        run: python -m build --outdir dist-release-candidate
+
+      - name: Validate release candidate distributions
+        run: python -m twine check dist-release-candidate/*
 
       - name: Install wheel in a clean environment
         shell: bash
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
         run: |
           python -m venv .release-smoke-venv
           source .release-smoke-venv/bin/activate
@@ -60,7 +68,7 @@ jobs:
           python -m pip install dist-release-candidate/*.whl
 
           python ci/check_release_readiness.py \
-            --expected-version "${{ inputs.expected_version }}" \
+            --expected-version "$EXPECTED_VERSION" \
             --check-installed-metadata \
             --check-console-versions
 
@@ -74,9 +82,14 @@ jobs:
           ArgumentParser()
           PY
 
-      - name: Upload release candidate wheel
+      - name: Build docs strictly
+        run: |
+          python -m pip install -r requirements-docs.txt
+          mkdocs build --strict
+
+      - name: Upload release candidate distributions
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.RELEASE_CANDIDATE_WHEEL_ARTIFACT }}
-          path: dist-release-candidate/*.whl
+          name: ${{ env.RELEASE_CANDIDATE_DIST_ARTIFACT }}
+          path: dist-release-candidate/*
           retention-days: 7

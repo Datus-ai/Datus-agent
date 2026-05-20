@@ -1,0 +1,221 @@
+name: "Publish Release Package"
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Stable datus-agent version to publish, for example 0.3.8"
+        required: true
+        type: string
+      ref:
+        description: "Release branch, tag, or SHA to publish. Defaults to the selected workflow ref."
+        required: false
+        default: ""
+        type: string
+      repository:
+        description: "Package index target"
+        required: true
+        default: "pypi"
+        type: choice
+        options:
+          - pypi
+          - testpypi
+      check_adapter_latest:
+        description: "Require adapter core lower bounds to match latest PyPI releases"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-release-${{ inputs.repository }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build and publish package
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.repository }}
+    env:
+      RELEASE_REF: ${{ inputs.ref || github.ref_name }}
+      DIST_ARTIFACT_NAME: datus-agent-release-dist-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout release ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install publish tooling
+        run: python -m pip install --upgrade pip build packaging twine
+
+      - name: Check release readiness
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          CHECK_ADAPTER_LATEST: ${{ inputs.check_adapter_latest }}
+        run: |
+          set -euo pipefail
+          args=(
+            --expected-version "${VERSION}"
+            --check-tag-available
+          )
+          if [[ "${CHECK_ADAPTER_LATEST}" == "true" ]]; then
+            args+=(--check-adapter-latest)
+          fi
+          python ci/check_release_readiness.py "${args[@]}"
+
+      - name: Build release distributions
+        run: python -m build --outdir dist-release
+
+      - name: Validate release distributions
+        run: python -m twine check dist-release/*
+
+      - name: Upload release distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DIST_ARTIFACT_NAME }}
+          path: dist-release/*
+          retention-days: 30
+
+      - name: Publish release distributions
+        shell: bash
+        env:
+          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+          TEST_PYPI_API_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN }}
+          TARGET_REPOSITORY: ${{ inputs.repository }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ "${TARGET_REPOSITORY}" == "testpypi" ]]; then
+            repository_url="https://test.pypi.org/legacy/"
+            package_json_url="https://test.pypi.org/pypi/datus-agent/${VERSION}/json"
+            token="${TEST_PYPI_API_TOKEN}"
+          else
+            repository_url="https://upload.pypi.org/legacy/"
+            package_json_url="https://pypi.org/pypi/datus-agent/${VERSION}/json"
+            token="${PYPI_API_TOKEN}"
+          fi
+
+          if [[ -z "${token}" ]]; then
+            echo "::error::Missing PyPI token for ${TARGET_REPOSITORY}"
+            exit 1
+          fi
+
+          echo "::add-mask::${token}"
+          upload_required=true
+          set +e
+          python - "$package_json_url" "$VERSION" dist-release <<'PY'
+          import hashlib
+          import json
+          import sys
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+
+          MATCHED_EXISTING_RELEASE = 42
+          url, version, dist_dir = sys.argv[1:]
+          try:
+              with urllib.request.urlopen(url, timeout=20) as response:
+                  payload = json.load(response)
+          except urllib.error.HTTPError as exc:
+              if exc.code == 404:
+                  raise SystemExit(0)
+              raise
+          except urllib.error.URLError as exc:
+              print(f"::error::Failed to inspect existing package release: {exc}")
+              raise SystemExit(1)
+
+          if payload.get("info", {}).get("version") != version:
+              print("::error::Package index returned unexpected version metadata")
+              raise SystemExit(1)
+
+          remote_hashes = {
+              file["filename"]: file.get("digests", {}).get("sha256")
+              for file in payload.get("urls", [])
+              if file.get("filename")
+          }
+          local_hashes = {}
+          for path in sorted(Path(dist_dir).glob("*")):
+              if path.is_file():
+                  local_hashes[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
+
+          if remote_hashes == local_hashes:
+              print(f"datus-agent {version} already exists and matches local distributions")
+              raise SystemExit(MATCHED_EXISTING_RELEASE)
+
+          print(
+              "::error::datus-agent "
+              f"{version} already exists, but uploaded files do not match local distributions"
+          )
+          print(f"Remote files: {sorted(remote_hashes)}")
+          print(f"Local files: {sorted(local_hashes)}")
+          raise SystemExit(1)
+          PY
+          package_check_status=$?
+          set -e
+          if [[ "${package_check_status}" -eq 42 ]]; then
+            upload_required=false
+          elif [[ "${package_check_status}" -ne 0 ]]; then
+            exit "${package_check_status}"
+          fi
+
+          if [[ "${upload_required}" == "false" ]]; then
+            echo "datus-agent ${VERSION} already exists on ${TARGET_REPOSITORY} with matching file hashes; skipping upload"
+            exit 0
+          fi
+
+          python -m twine upload \
+            --non-interactive \
+            --repository-url "${repository_url}" \
+            --username "__token__" \
+            --password "${token}" \
+            dist-release/*
+
+      - name: Verify published package is visible
+        env:
+          TARGET_REPOSITORY: ${{ inputs.repository }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+
+          version = os.environ["VERSION"]
+          repository = os.environ["TARGET_REPOSITORY"]
+          host = "test.pypi.org" if repository == "testpypi" else "pypi.org"
+          url = f"https://{host}/pypi/datus-agent/{version}/json"
+
+          for attempt in range(1, 11):
+              try:
+                  with urllib.request.urlopen(url, timeout=20) as response:
+                      payload = json.load(response)
+                  if payload.get("info", {}).get("version") == version:
+                      print(f"datus-agent {version} is visible on {repository}")
+                      raise SystemExit(0)
+              except (urllib.error.URLError, TimeoutError) as exc:
+                  print(f"Package visibility check attempt {attempt} failed: {exc}")
+              time.sleep(6)
+
+          raise SystemExit(f"datus-agent {version} is not visible on {repository} after upload")
+          PY
+
+      - name: Record published commit SHA
+        run: |
+          {
+            echo "### Release source"
+            echo
+            echo "Published commit SHA: \`$(git rev-parse HEAD)\`"
+          } >> "$GITHUB_STEP_SUMMARY"

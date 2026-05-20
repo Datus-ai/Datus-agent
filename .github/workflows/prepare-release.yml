@@ -1,0 +1,194 @@
+name: "Prepare Release"
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Canonical datus-agent version, for example 0.3.8 or 0.3.8rc1"
+        required: true
+        type: string
+      release_branch:
+        description: "Release branch to create or update. Defaults to release/<version>."
+        required: false
+        default: ""
+        type: string
+      base_ref:
+        description: "Base branch/ref used when the release branch does not exist"
+        required: false
+        default: "main"
+        type: string
+      update_adapter_bounds:
+        description: "Update adapter core lower bounds to latest PyPI releases"
+        required: false
+        default: true
+        type: boolean
+      create_tracking_pr:
+        description: "Create or update a tracking PR from the release branch back to main"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: prepare-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-release:
+    name: Prepare release branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.base_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install release tooling
+        run: pip install packaging
+
+      - name: Resolve release branch
+        id: release
+        shell: bash
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+          RELEASE_BRANCH_INPUT: ${{ inputs.release_branch }}
+        run: |
+          set -euo pipefail
+          version="${VERSION_INPUT}"
+          release_branch="${RELEASE_BRANCH_INPUT}"
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$ ]]; then
+            echo "::error::Invalid release version: ${version}"
+            exit 1
+          fi
+          if [[ -z "${release_branch}" ]]; then
+            release_branch="release/${version}"
+          fi
+          echo "branch=${release_branch}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Resolved release branch: ${release_branch}"
+
+      - name: Checkout or create release branch
+        id: checkout_release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || secrets.GITHUB_TOKEN }}
+          RELEASE_BRANCH: ${{ steps.release.outputs.branch }}
+          BASE_REF: ${{ inputs.base_ref }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch origin --prune --tags
+
+          if git ls-remote --exit-code --heads origin "${RELEASE_BRANCH}" >/dev/null 2>&1; then
+            git checkout -B "${RELEASE_BRANCH}" "origin/${RELEASE_BRANCH}"
+            echo "branch_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            git checkout -B "${RELEASE_BRANCH}" HEAD
+            echo "branch_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prepare release metadata
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          UPDATE_ADAPTER_BOUNDS: ${{ inputs.update_adapter_bounds }}
+        run: |
+          set -euo pipefail
+          args=(
+            --version "${VERSION}"
+            --allow-current-version
+            --allow-no-changes
+          )
+          if [[ "${UPDATE_ADAPTER_BOUNDS}" == "true" ]]; then
+            args+=(--update-adapter-bounds)
+          else
+            args+=(--no-update-adapter-bounds)
+          fi
+          python3 ci/prepare_release.py "${args[@]}"
+
+      - name: Check release readiness
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          python3 ci/check_release_readiness.py \
+            --expected-version "$VERSION" \
+            --check-tag-available \
+            --check-adapter-latest
+
+      - name: Check generated diff
+        run: git diff --check
+
+      - name: Commit and push release branch
+        shell: bash
+        env:
+          RELEASE_BRANCH: ${{ steps.release.outputs.branch }}
+          VERSION: ${{ steps.release.outputs.version }}
+          BRANCH_EXISTS: ${{ steps.checkout_release.outputs.branch_exists }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "Release branch already contains prepared metadata for ${VERSION}"
+            if [[ "${BRANCH_EXISTS}" != "true" ]]; then
+              git push --set-upstream origin "${RELEASE_BRANCH}"
+            fi
+            exit 0
+          fi
+
+          git add pyproject.toml requirements.txt
+          git commit -m "chore: prepare datus-agent ${VERSION} release"
+          git push --set-upstream origin "${RELEASE_BRANCH}"
+
+      - name: Create or update tracking PR
+        if: ${{ inputs.create_tracking_pr }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || secrets.GITHUB_TOKEN }}
+          RELEASE_BRANCH: ${{ steps.release.outputs.branch }}
+          VERSION: ${{ steps.release.outputs.version }}
+          UPDATE_ADAPTER_BOUNDS: ${{ inputs.update_adapter_bounds }}
+        run: |
+          set -euo pipefail
+          title="[Tool] Prepare datus-agent ${VERSION}"
+          body_file="$(mktemp)"
+          cat > "${body_file}" <<EOF
+          ## Why
+
+          Prepare datus-agent ${VERSION} with consistent source version metadata and adapter dependency bounds.
+
+          ## Solution
+
+          - update source version metadata in pyproject.toml
+          - update adapter core dependency lower bounds to latest PyPI releases: ${UPDATE_ADAPTER_BOUNDS}
+
+          ## Test Cases
+
+          - generated by \`python3 ci/prepare_release.py --version ${VERSION} --allow-current-version --allow-no-changes\`
+          - validated by \`python3 ci/check_release_readiness.py --expected-version ${VERSION} --check-tag-available --check-adapter-latest\`
+          - validated by \`git diff --check\`
+
+          EOF
+
+          if gh pr view "${RELEASE_BRANCH}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh pr edit "${RELEASE_BRANCH}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "${title}" \
+              --body-file "${body_file}"
+          else
+            gh pr create \
+              --repo "${GITHUB_REPOSITORY}" \
+              --base main \
+              --head "${RELEASE_BRANCH}" \
+              --title "${title}" \
+              --body-file "${body_file}"
+          fi

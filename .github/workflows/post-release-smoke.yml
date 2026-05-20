@@ -1,0 +1,112 @@
+name: "Post Release Smoke"
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Published datus-agent version to validate, for example 0.3.8"
+        required: true
+        type: string
+      provider_model:
+        description: "Optional model name for provider smoke on the self-hosted runner"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: post-release-smoke-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  package-smoke:
+    name: Clean install and CLI smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install released package
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          python -m venv .post-release-smoke
+          source .post-release-smoke/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install "datus-agent==${VERSION}"
+
+      - name: Validate package and CLI entrypoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          source .post-release-smoke/bin/activate
+          python - <<'PY'
+          import datus
+          print(f"datus import smoke passed: {datus.__version__}")
+          PY
+          datus --version
+          datus-agent --version
+          datus-api --version
+          datus-gateway --version
+          datus bootstrap-kb --help >/dev/null
+          datus platform-doc --help >/dev/null
+          datus probe-llm --help >/dev/null
+
+  provider-smoke:
+    name: Optional provider smoke
+    if: ${{ inputs.provider_model != '' }}
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install released package
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          python -m venv .post-release-provider-smoke
+          source .post-release-provider-smoke/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install "datus-agent==${VERSION}"
+
+      - name: Load CI environment template
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f /home/datus_ci/ci_template/ci.env ]]; then
+            while IFS= read -r line || [[ -n "$line" ]]; do
+              if [[ -n "$line" && ! "$line" =~ ^[[:space:]]*# && "$line" == *=* ]]; then
+                var_value="${line#*=}"
+                if [[ -n "$var_value" ]]; then
+                  echo "::add-mask::$var_value"
+                fi
+                echo "$line" >> "$GITHUB_ENV"
+              fi
+            done < /home/datus_ci/ci_template/ci.env
+          fi
+          if [[ -f /home/datus_ci/ci_template/agent.yml ]]; then
+            mkdir -p conf
+            cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
+            echo "DATUS_PROVIDER_SMOKE_CONFIG=conf/agent.yml" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run provider smoke
+        shell: bash
+        env:
+          PROVIDER_MODEL: ${{ inputs.provider_model }}
+        run: |
+          set -euo pipefail
+          source .post-release-provider-smoke/bin/activate
+          config_args=()
+          if [[ -n "${DATUS_PROVIDER_SMOKE_CONFIG:-}" ]]; then
+            config_args=(--config "${DATUS_PROVIDER_SMOKE_CONFIG}")
+          fi
+          datus "${config_args[@]}" probe-llm --model "${PROVIDER_MODEL}"

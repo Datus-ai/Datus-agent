@@ -1,0 +1,108 @@
+name: "Finalize Release"
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Stable datus-agent version to finalize, for example 0.3.8"
+        required: true
+        type: string
+      published_sha:
+        description: "Full commit SHA that produced the published package"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: finalize-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    name: Verify package and tag release commit
+    runs-on: ubuntu-latest
+    env:
+      PUBLISHED_SHA: ${{ inputs.published_sha }}
+      VERSION: ${{ inputs.version }}
+      TAG_NAME: v${{ inputs.version }}
+    steps:
+      - name: Validate published commit SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "${PUBLISHED_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::published_sha must be a full 40-character commit SHA"
+            exit 1
+          fi
+
+      - name: Checkout published commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PUBLISHED_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install release tooling
+        run: python3 -m pip install --upgrade packaging
+
+      - name: Verify release source metadata
+        run: python3 ci/check_release_readiness.py --expected-version "$VERSION"
+
+      - name: Verify published package exists on PyPI
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+
+          version = os.environ["VERSION"]
+          url = f"https://pypi.org/pypi/datus-agent/{version}/json"
+          delay = 5
+          for attempt in range(1, 6):
+              try:
+                  with urllib.request.urlopen(url, timeout=30) as response:
+                      payload = json.load(response)
+                  if payload.get("info", {}).get("version") == version:
+                      print(f"datus-agent {version} is visible on PyPI")
+                      raise SystemExit(0)
+                  print(f"PyPI returned an unexpected version payload on attempt {attempt}")
+              except (TimeoutError, urllib.error.URLError, urllib.error.HTTPError) as exc:
+                  print(f"PyPI visibility check attempt {attempt} failed: {exc}")
+              if attempt < 5:
+                  time.sleep(delay)
+                  delay *= 2
+          raise SystemExit(f"datus-agent {version} is not visible on PyPI")
+          PY
+
+      - name: Create or verify release tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch origin --tags
+
+          release_sha="$(git rev-parse HEAD)"
+          expected_sha="$(printf '%s' "${PUBLISHED_SHA}" | tr '[:upper:]' '[:lower:]')"
+          if [[ "${release_sha}" != "${expected_sha}" ]]; then
+            echo "::error::Checked out ${release_sha}, expected published commit ${expected_sha}"
+            exit 1
+          fi
+          if git rev-parse --verify --quiet "refs/tags/${TAG_NAME}" >/dev/null; then
+            tag_sha="$(git rev-list -n 1 "${TAG_NAME}")"
+            if [[ "${tag_sha}" != "${release_sha}" ]]; then
+              echo "::error::Tag ${TAG_NAME} already points to ${tag_sha}, expected ${release_sha}"
+              exit 1
+            fi
+            echo "Tag ${TAG_NAME} already points to the release commit"
+          else
+            git tag -a "${TAG_NAME}" -m "datus-agent ${VERSION}"
+            git push origin "${TAG_NAME}"
+          fi
