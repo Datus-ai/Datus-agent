@@ -360,7 +360,7 @@ class TestInitSuccessStorySemanticModelAsyncLLMPath:
             async def execute_stream(self, action_history_manager):
                 action = SimpleNamespace(
                     status=ActionStatus.SUCCESS,
-                    action_type="semantic_response",
+                    action_type="gen_semantic_model_response",
                     output={"semantic_models": ["model1.yaml", "model2.yaml"]},
                     messages="Generated models",
                 )
@@ -402,7 +402,7 @@ class TestInitSuccessStorySemanticModelAsyncLLMPath:
             async def execute_stream(self, action_history_manager):
                 action = SimpleNamespace(
                     status=ActionStatus.SUCCESS,
-                    action_type="semantic_response",
+                    action_type="gen_semantic_model_response",
                     output={"semantic_models": ["model.yaml"]},
                     messages="Generated model",
                 )
@@ -450,7 +450,7 @@ class TestInitSuccessStorySemanticModelAsyncLLMPath:
                 # single string instead of list
                 action = SimpleNamespace(
                     status=ActionStatus.SUCCESS,
-                    action_type="semantic_response",
+                    action_type="gen_semantic_model_response",
                     output={"semantic_models": "single_model.yaml"},
                     messages="Generated",
                 )
@@ -497,7 +497,7 @@ class TestInitSuccessStorySemanticModelAsyncLLMPath:
                 )
                 yield SimpleNamespace(
                     status=ActionStatus.SUCCESS,
-                    action_type="semantic_response",
+                    action_type="gen_semantic_model_response",
                     output={"semantic_models": ["model.yaml"]},
                     messages="Generated",
                 )
@@ -578,7 +578,7 @@ class TestInitSuccessStorySemanticModelAsyncLLMPath:
                 # Yields an action with SUCCESS but no semantic_models key
                 action = SimpleNamespace(
                     status=ActionStatus.SUCCESS,
-                    action_type="semantic_response",
+                    action_type="gen_semantic_model_response",
                     output={"other_key": "value"},
                     messages="Nothing useful",
                 )
@@ -620,7 +620,7 @@ class TestInitSuccessStorySemanticModelAsyncLLMPath:
             async def execute_stream(self, action_history_manager):
                 action = SimpleNamespace(
                     status=ActionStatus.SUCCESS,
-                    action_type="semantic_response",
+                    action_type="gen_semantic_model_response",
                     output={},
                     messages="",
                 )
@@ -738,7 +738,7 @@ class TestInitSuccessStorySemanticModelAsyncLLMPath:
             async def execute_stream(self, action_history_manager):
                 action = SimpleNamespace(
                     status=ActionStatus.SUCCESS,
-                    action_type="semantic_response",
+                    action_type="gen_semantic_model_response",
                     output=None,
                     messages="",
                 )
@@ -793,7 +793,7 @@ class TestInitSuccessStorySemanticModelAsyncOverwriteTruncate:
             async def execute_stream(self, action_history_manager):
                 yield SimpleNamespace(
                     status=ActionStatus.SUCCESS,
-                    action_type="semantic_response",
+                    action_type="gen_semantic_model_response",
                     output={"semantic_models": ["m.yaml"]},
                     messages="ok",
                 )
@@ -840,7 +840,7 @@ class TestInitSuccessStorySemanticModelAsyncOverwriteTruncate:
             async def execute_stream(self, action_history_manager):
                 yield SimpleNamespace(
                     status=ActionStatus.SUCCESS,
-                    action_type="semantic_response",
+                    action_type="gen_semantic_model_response",
                     output={"semantic_models": ["m.yaml"]},
                     messages="ok",
                 )

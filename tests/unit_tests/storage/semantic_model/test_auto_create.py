@@ -339,7 +339,9 @@ class TestCreateSemanticModelForTable:
                     action_type="tool_call",
                     messages="Tool call: validate_semantic('{}...')",
                 )
-                yield SimpleNamespace(status=ActionStatus.SUCCESS, action_type="semantic_response", messages="ok")
+                yield SimpleNamespace(
+                    status=ActionStatus.SUCCESS, action_type="gen_semantic_model_response", messages="ok"
+                )
 
         with (
             patch(

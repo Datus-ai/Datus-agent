@@ -35,6 +35,7 @@ def _action_status_value(action: Any) -> Optional[str]:
 
 
 DEFAULT_METRICS_BATCH_SIZE = 1
+METRICS_RESPONSE_ACTION_TYPE = f"{GenMetricsAgenticNode.NODE_NAME}_response"
 
 
 async def _generate_metrics_batch(
@@ -98,7 +99,11 @@ async def _generate_metrics_batch(
                 terminal_error = action.messages or "Metrics extraction failed"
                 logger.error(terminal_error)
                 continue
-            if action.status == ActionStatus.SUCCESS and action_type == "metrics_response" and action.output:
+            if action.status == ActionStatus.FAILED and action_type == METRICS_RESPONSE_ACTION_TYPE:
+                terminal_error = action.messages or "Metrics extraction failed"
+                logger.error(terminal_error)
+                continue
+            if action.status == ActionStatus.SUCCESS and action_type == METRICS_RESPONSE_ACTION_TYPE and action.output:
                 final_result = action.output
                 logger.debug(f"Metrics generation action (batch {batch_idx}): {action.messages}")
         if terminal_error:
