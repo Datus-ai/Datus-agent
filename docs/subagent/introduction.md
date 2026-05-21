@@ -34,7 +34,8 @@ The current built-in set comes from `SYS_SUB_AGENTS` in code:
 9. `gen_job`: data pipeline jobs (single-database ETL AND cross-database migration)
 10. `gen_skill`: skill creation and optimization
 11. `gen_dashboard`: BI dashboard creation and management
-12. `scheduler`: Airflow job lifecycle management
+12. `gen_visual_report`: Self-contained visual report under `reports/<slug>/`
+13. `scheduler`: Airflow job lifecycle management
 
 See [Built-in subagents](./builtin_subagents.md) for details.
 
@@ -149,5 +150,6 @@ Important behavior:
 | `gen_job` | Build data pipeline jobs (single-database ETL or cross-database migration) |
 | `gen_skill` | Create or optimize skills |
 | `gen_dashboard` | Create or manage BI dashboards |
+| `gen_visual_report` | Produce a self-contained visual report under `reports/<slug>/` |
 | `scheduler` | Submit or operate Airflow jobs |
 | Custom names | Any discoverable custom subagent defined in `agent.yml` |

@@ -2,6 +2,25 @@
 
 ## 0.3
 
+### 0.3.1
+
+**新功能**
+
+- **HTML 报告生成** - 新增 `gen_visual_report` subagent，把一个问题、一个指标引用或一条 SQL 直接变成自包含的 HTML 报告（KPI 卡片、图表、表格、叙事段落齐全），并支持按章节单独修改，可针对单个图表微调而无需重写整篇报告。[#783](https://github.com/Datus-ai/Datus-agent/pull/783) [#821](https://github.com/Datus-ai/Datus-agent/pull/821) [文档](subagent/gen_visual_report.zh.md)
+- **Plan Mode 持久化** - Plan Mode 现在会把 `plan.md` 落盘并在会话恢复时一并恢复，CLI 中途关闭也不会丢失正在制定的计划。[#772](https://github.com/Datus-ai/Datus-agent/pull/772) [文档](cli/plan_mode.zh.md)
+- **CLI / TUI 体验升级** - 新增实时 todo sidebar 直观跟踪任务进度，配合内联命令向导、滚动回查搜索、鼠标拖选复制和可拖拽 scrollbar，使终端交互更接近原生体验。[#772](https://github.com/Datus-ai/Datus-agent/pull/772)
+
+**增强**
+
+- **`/permission` 命令** - 将 `/profile` 更名为 `/permission`，支持 `normal` / `auto` / `dangerous` 三档模式，适配不同的开发场景。[#769](https://github.com/Datus-ai/Datus-agent/pull/769) [文档](cli/reference.zh.md)
+- **自定义 Subagent 管理** - 自定义 subagent 支持通过 API 或 TUI 删除；不同 agent 类型的可用工具改由后端统一返回，SaaS 与 standalone UI 创建和编辑 subagent 的行为保持一致。[#807](https://github.com/Datus-ai/Datus-agent/pull/807) [#812](https://github.com/Datus-ai/Datus-agent/pull/812) [文档](subagent/customized_subagent.zh.md)
+- **按次指定权限模式** - Chat 请求支持按次指定 `normal` / `auto` / `dangerous` 权限模式，多租户 SaaS 部署中不会再互相污染共享默认配置。[#822](https://github.com/Datus-ai/Datus-agent/pull/822) [文档](integration/skills.zh.md)
+
+**Bug 修复**
+
+- **Claude / Anthropic 参数冲突** - 修复 Claude / Anthropic 路由下同时传递 `temperature` 与 `top_p` 时请求失败的问题。[#817](https://github.com/Datus-ai/Datus-agent/pull/817)
+- **缺少 Subject Path 时的 Metric ID 冲突** - 修复 metric id 未包含 `subject_path` 时，不同 subject 树下同名 metric 出现冲突的问题。[#819](https://github.com/Datus-ai/Datus-agent/pull/819)
+
 ### 0.3.0
 
 **新功能**

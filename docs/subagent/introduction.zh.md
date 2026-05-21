@@ -34,7 +34,8 @@ Subagent 可以是：
 9. `gen_job`：数据管道作业（单库 ETL 和跨库迁移）
 10. `gen_skill`：skill 创建与优化
 11. `gen_dashboard`：BI 仪表盘创建与管理
-12. `scheduler`：Airflow 作业生命周期管理
+12. `gen_visual_report`：在 `reports/<slug>/` 下产出自包含的可视化报告
+13. `scheduler`：Airflow 作业生命周期管理
 
 详细说明见 [内置 subagent](./builtin_subagents.zh.md)。
 
@@ -149,5 +150,6 @@ graph LR
 | `gen_job` | 构建数据管道作业（单库 ETL 或跨库迁移） |
 | `gen_skill` | 创建或优化 skill |
 | `gen_dashboard` | 创建或管理 BI 仪表盘 |
+| `gen_visual_report` | 在 `reports/<slug>/` 下产出自包含的可视化报告 |
 | `scheduler` | 提交或操作 Airflow 作业 |
 | 自定义名称 | `agent.yml` 中可发现的任意自定义 subagent |
