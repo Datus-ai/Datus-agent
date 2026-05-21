@@ -3840,8 +3840,26 @@ class TestDropIfMatchesFinal:
         assert result is None
         assert incremental == [pending]
 
-    def test_non_dict_pending_output_is_dropped(self):
-        """Non-dict pending output has no extractable text — drop it."""
+    def test_non_dict_pending_output_with_no_messages_is_dropped(self):
+        """Non-dict output and empty messages — nothing to extract, drop it."""
+        from datus.cli.chat_commands import _drop_if_matches_final
+
+        incremental: list = []
+        pending = ActionHistory(
+            action_id="a2",
+            role=ActionRole.ASSISTANT,
+            messages="",
+            action_type="response",
+            input={},
+            output="not a dict",
+            status=ActionStatus.SUCCESS,
+        )
+        final = self._final("anything")
+        _drop_if_matches_final(pending, final, incremental)
+        assert incremental == []
+
+    def test_non_dict_pending_output_with_messages_is_flushed(self):
+        """Non-dict output but non-empty messages — preserve via messages fallback."""
         from datus.cli.chat_commands import _drop_if_matches_final
 
         incremental: list = []
@@ -3854,9 +3872,10 @@ class TestDropIfMatchesFinal:
             output="not a dict",
             status=ActionStatus.SUCCESS,
         )
-        final = self._final("anything")
+        final = self._final("different final")
         _drop_if_matches_final(pending, final, incremental)
-        assert incremental == []
+        # _action_response_text falls back to messages, so "raw" is preserved.
+        assert incremental == [pending]
 
     def test_empty_pending_text_is_dropped(self):
         """Empty pending text has nothing to contribute — drop it."""

@@ -13,9 +13,10 @@ import re
 from datetime import datetime
 from typing import List, Optional, Sequence, Union
 
-from rich.console import Console
+from rich.console import Console, RenderableType
 from rich.markdown import Markdown
 from rich.markup import escape as rich_escape
+from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.text import Text
 
@@ -734,7 +735,7 @@ class ActionRenderer:
 
     # -- main agent primitives ----------------------------------------------
 
-    def render_main_action(self, action: ActionHistory, verbose: bool) -> List[Union[Text, Markdown, Syntax]]:
+    def render_main_action(self, action: ActionHistory, verbose: bool) -> List[RenderableType]:
         """Render a depth=0 completed action directly as Rich objects."""
         # Task tool -> render as subagent
         if action.role == ActionRole.TOOL:
@@ -755,7 +756,7 @@ class ActionRenderer:
 
         # USER -> styled Text
         if action.role == ActionRole.USER:
-            msg = action.messages
+            msg = action.messages or ""
             if msg.startswith("User: "):
                 msg = msg[6:]
             return [render_user_scrollback_text(msg)]
@@ -883,7 +884,7 @@ class ActionRenderer:
 
     # -- utility renderables ------------------------------------------------
 
-    def render_user_header(self, message: str) -> Text:
+    def render_user_header(self, message: str) -> Panel:
         """Render a restored/reprinted user message header."""
         return render_user_scrollback_text(message)
 
@@ -894,7 +895,7 @@ class ActionRenderer:
     # -- convenience --------------------------------------------------------
 
     @staticmethod
-    def print_renderables(console: Console, renderables: Sequence[Union[Text, Markdown, Syntax]]) -> None:
+    def print_renderables(console: Console, renderables: Sequence[RenderableType]) -> None:
         """Print a list of renderables to a console."""
         for r in renderables:
             console.print(r)

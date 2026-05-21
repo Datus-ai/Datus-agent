@@ -3859,8 +3859,8 @@ class TestInlineStreamingContextProcess:
 
         assert ctx._processed_index == 1
 
-    def test_print_completed_action_skips_task_tool(self):
-        """_print_completed_action skips 'task' function tool calls."""
+    def test_print_completed_action_skips_grouped_task_tool(self):
+        """task tool actions already represented by a subagent group are skipped."""
         buf = StringIO()
         console = Console(file=buf, no_color=True)
         display = ActionHistoryDisplay(console)
@@ -3869,10 +3869,31 @@ class TestInlineStreamingContextProcess:
         action = _make_action(
             ActionRole.TOOL,
             ActionStatus.SUCCESS,
+            action_id="call1",
+            input_data={"function_name": "task", "type": "gen_sql", "prompt": "x"},
+        )
+        # Anchor input (resolvable subagent_type) whose id matches an
+        # already-completed subagent group is the only case the guard skips.
+        ctx._completed_group_ids.add("call1")
+        ctx._print_completed_action(action)
+        assert buf.getvalue() == ""
+
+    def test_print_completed_action_renders_standalone_task_tool(self):
+        """Standalone (non-anchor, non-grouped) task tool output still renders."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        ctx = InlineStreamingContext([], display)
+
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            messages="__no_task_anchor__",
             input_data={"function_name": "task"},
         )
         ctx._print_completed_action(action)
-        assert buf.getvalue() == ""
+        # Not skipped — falls through to normal tool rendering.
+        assert buf.getvalue() != ""
 
     def test_print_completed_action_assistant(self):
         """_print_completed_action renders ASSISTANT with Markdown."""

@@ -23,7 +23,7 @@ from rich.syntax import Syntax
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.cli.action_display.display import ActionHistoryDisplay
 from datus.cli.action_display.renderers import render_assistant_response_markdown
-from datus.cli.cli_styles import CODE_THEME, print_warning
+from datus.cli.cli_styles import CODE_THEME, print_error, print_success, print_warning
 from datus.cli.execution_state import ExecutionInterrupted, PendingInputQueue, auto_submit_interaction
 from datus.cli.list_selector_app import ListItem, ListSelectorApp
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
@@ -87,12 +87,11 @@ def _drop_if_matches_final(
     """
     if pending is None:
         return None
-    pending_text = ""
-    if isinstance(pending.output, dict):
-        pending_text = (pending.output.get("raw_output") or "").strip()
-    final_text = ""
-    if isinstance(final_action.output, dict):
-        final_text = (final_action.output.get("response") or "").strip()
+    # Reuse ChatCommands._action_response_text so both sides extract the body
+    # through the same string-guarded helper (response | raw_output) instead
+    # of comparing raw_output vs response asymmetrically.
+    pending_text = ChatCommands._action_response_text(pending)
+    final_text = ChatCommands._action_response_text(final_action)
     # Drop the pending entry when it has nothing to contribute (empty text)
     # or when its body duplicates the final response exactly.
     if not pending_text or pending_text == final_text:
@@ -1595,17 +1594,19 @@ class ChatCommands:
             self.all_turn_actions = []
             if messages:
                 self._clear_scrollback()
-                self.console.print(f"\n[green]Session resumed![/] Showing {len(messages)} message(s):\n")
+                self.console.print()
+                print_success(self.console, f"Session resumed! Showing {len(messages)} message(s):")
+                self.console.print()
                 last_assistant_actions = self._render_restored_messages(messages)
                 if last_assistant_actions:
                     self.last_actions = last_assistant_actions
                     self._trace_verbose = False
 
-            self.console.print("[green]You can now continue the conversation.[/]")
+            print_success(self.console, "You can now continue the conversation.")
 
         except Exception as e:
             logger.error(f"Error resuming session: {e}")
-            self.console.print(f"[red]Error:[/] {str(e)}")
+            print_error(self.console, str(e))
 
     def cmd_rewind(self, args: str) -> Optional[str]:
         """Rewind the current session to before a specific user turn.
@@ -1693,10 +1694,10 @@ class ChatCommands:
                 self.all_turn_actions = []
                 self.last_actions = []
                 self._clear_scrollback()
-                self.console.print(
-                    f"\n[green]Rewound to before turn 1.[/] New session: [cyan]{new_node.session_id}[/]\n"
-                )
-                self.console.print("[green]Selected message placed in input buffer.[/]")
+                self.console.print()
+                self.console.print(f"[green]Rewound to before turn 1.[/] New session: [cyan]{new_node.session_id}[/]")
+                self.console.print()
+                print_success(self.console, "Selected message placed in input buffer.")
                 return rewind_user_message
 
             new_session_id = session_manager.rewind_session(
@@ -1717,14 +1718,16 @@ class ChatCommands:
             new_messages = session_manager.get_session_messages(new_session_id)
             if new_messages:
                 self._clear_scrollback()
+                self.console.print()
                 self.console.print(
-                    f"\n[green]Rewound to before turn {turn_num}.[/] "
-                    f"New session: [cyan]{new_session_id}[/] ({len(new_messages)} messages)\n"
+                    f"[green]Rewound to before turn {turn_num}.[/] "
+                    f"New session: [cyan]{new_session_id}[/] ({len(new_messages)} messages)"
                 )
+                self.console.print()
                 self.all_turn_actions = []
                 self._render_restored_messages(new_messages)
 
-            self.console.print("[green]Selected message placed in input buffer.[/]")
+            print_success(self.console, "Selected message placed in input buffer.")
             return rewind_user_message
 
         except Exception as e:

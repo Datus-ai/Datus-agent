@@ -295,13 +295,13 @@ Start the cli, first use `/subject` to browse the generated knowledge entries, t
 datus-cli --datasource california_schools
 ```
 
-```
+```text
 # Browse the knowledge tree and entries
 > /subject
 # Should show Education/SAT/Administrators and Education/SAT/Scores with the generated knowledge entries
 ```
 
-```
+```text
 # Test with the original question
 > Under whose administration is the school with the highest number of students scoring 1500 or more on the SAT? Indicate their full names.
 ```
@@ -326,7 +326,7 @@ datus-cli --datasource california_schools
 
 Use the `/gen_ext_knowledge` slash command, pasting the question and reference SQL together in the message:
 
-```
+```text
 > /gen_ext_knowledge Under whose administration is the school with the highest number of students scoring 1500 or more on the SAT? Indicate their full names. Reference SQL: SELECT T2.AdmFName1, T2.AdmLName1, T2.AdmFName2, T2.AdmLName2, T2.AdmFName3, T2.AdmLName3 FROM satscores AS T1 INNER JOIN schools AS T2 ON T1.cds = T2.CDSCode ORDER BY T1.NumGE1500 DESC LIMIT 1
 ```
 

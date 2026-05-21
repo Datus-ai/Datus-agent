@@ -295,13 +295,13 @@ created_at: "2025-01-15T10:00:00Z"
 datus-cli --datasource california_schools
 ```
 
-```
+```text
 # 浏览知识树和条目
 > /subject
 # 应显示 Education/SAT/Administrators 和 Education/SAT/Scores 及其生成的知识条目
 ```
 
-```
+```text
 # 用原始问题测试
 > Under whose administration is the school with the highest number of students scoring 1500 or more on the SAT? Indicate their full names.
 ```
@@ -326,7 +326,7 @@ datus-cli --datasource california_schools
 
 使用 `/gen_ext_knowledge` 斜杠命令，将问题和参考 SQL 一起粘贴到消息中：
 
-```
+```text
 > /gen_ext_knowledge Under whose administration is the school with the highest number of students scoring 1500 or more on the SAT? Indicate their full names. Reference SQL: SELECT T2.AdmFName1, T2.AdmLName1, T2.AdmFName2, T2.AdmLName2, T2.AdmFName3, T2.AdmLName3 FROM satscores AS T1 INNER JOIN schools AS T2 ON T1.cds = T2.CDSCode ORDER BY T1.NumGE1500 DESC LIMIT 1
 ```
 

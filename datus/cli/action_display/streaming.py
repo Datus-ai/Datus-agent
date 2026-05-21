@@ -1478,9 +1478,13 @@ class InlineStreamingContext:
                 normalized_id = action.action_id
                 if normalized_id and normalized_id.startswith("complete_"):
                     normalized_id = normalized_id[len("complete_") :]
-                if normalized_id in self._completed_group_ids or normalized_id in self._subagent_groups:
-                    return
-                if not is_task_anchor_input(action.input):
+                # Only skip when this task action belongs to a subagent group
+                # we already rendered (anchor inputs spawn subagents). Standalone
+                # task tool actions that are not anchors fall through to normal
+                # rendering so their completed output is not dropped.
+                if is_task_anchor_input(action.input) and (
+                    normalized_id in self._completed_group_ids or normalized_id in self._subagent_groups
+                ):
                     return
         # Streaming-markdown de-dup: once this turn has emitted any
         # thinking_delta, the next main-agent ASSISTANT SUCCESS action is
