@@ -238,7 +238,11 @@ class DatusApp:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._exit_code: int = 0
         self._last_ctrl_c_time: float = 0.0
-        self._ctrl_c_hint: str = ""
+        # Single-line transient hint above the input area (Ctrl+C confirm,
+        # "Copied to clipboard", etc.). Each show_hint call replaces the
+        # previous text and resets the auto-clear timer.
+        self._hint_text: str = ""
+        self._hint_clear_handle: Optional[asyncio.TimerHandle] = None
 
         self._stored_paste: Optional[str] = None
         self._paste_collapsed: bool = False
@@ -299,11 +303,11 @@ class DatusApp:
 
         self._hint_window = ConditionalContainer(
             content=Window(
-                content=FormattedTextControl(lambda: [("class:hint", self._ctrl_c_hint)]),
+                content=FormattedTextControl(lambda: [("class:hint", self._hint_text)]),
                 height=1,
                 wrap_lines=False,
             ),
-            filter=Condition(lambda: bool(self._ctrl_c_hint)),
+            filter=Condition(lambda: bool(self._hint_text)),
         )
 
         self._search_bar = self._build_search_bar()
@@ -955,8 +959,8 @@ class DatusApp:
                 self._selection_autoscroll.disarm()
                 if not self._selection.is_empty() and self._output_buffer is not None:
                     text = extract_selection_text(self._output_buffer, self._selection)
-                    if text:
-                        copy_to_clipboard(text)
+                    if text and copy_to_clipboard(text):
+                        self.show_hint("✓ Copied to clipboard")
                 self._app.invalidate()
                 return None
             return NotImplemented
@@ -1009,16 +1013,18 @@ class DatusApp:
         by :meth:`_status_mouse_handler` because prompt_toolkit clamps
         past-bottom y coordinates to the last rendered row, making
         equality-based detection ambiguous on that side.
+
+        Any motion landing inside the body also clears a previously
+        armed autoscroll in *either* direction: returning from the
+        status bar (which arms +1) needs an explicit disarm here
+        because that handler never sees the pointer leaving.
         """
         top = self._get_output_scroll(self._output_window)
         row = int(event.position.y)
         if row <= top and top > 0:
             self._selection_autoscroll.arm(-1)
-        else:
-            # Cancel any prior up-arm — covers the case where the user
-            # dragged onto the top edge then back into the body.
-            if self._selection_autoscroll.direction < 0:
-                self._selection_autoscroll.disarm()
+        elif self._selection_autoscroll.is_active():
+            self._selection_autoscroll.disarm()
 
     def _status_mouse_handler(self, event: MouseEvent):  # noqa: ANN201
         """Mouse handler attached to the status bar window.
@@ -1058,8 +1064,8 @@ class DatusApp:
             self._selection_autoscroll.disarm()
             if not self._selection.is_empty() and self._output_buffer is not None:
                 text = extract_selection_text(self._output_buffer, self._selection)
-                if text:
-                    copy_to_clipboard(text)
+                if text and copy_to_clipboard(text):
+                    self.show_hint("✓ Copied to clipboard")
             self._app.invalidate()
             return None
         return NotImplemented
@@ -1341,14 +1347,27 @@ class DatusApp:
             total += max(1, -(-line_width // usable))
         return max(total, 1)
 
-    def show_ctrl_c_hint(self) -> None:
-        self._ctrl_c_hint = "Press Ctrl+C again to exit"
-        self._app.invalidate()
-        if self._loop is not None:
-            self._loop.call_later(1.0, self._clear_ctrl_c_hint)
+    def show_hint(self, text: str, duration: float = 1.0) -> None:
+        """Show a transient one-line hint above the input area.
 
-    def _clear_ctrl_c_hint(self) -> None:
-        self._ctrl_c_hint = ""
+        A second call replaces the previous text and restarts the timer,
+        so back-to-back events (e.g. Ctrl+C then a mouse copy) don't get
+        their hints cut short by an earlier countdown.
+        """
+        if self._hint_clear_handle is not None:
+            self._hint_clear_handle.cancel()
+            self._hint_clear_handle = None
+        self._hint_text = text
+        self._app.invalidate()
+        if self._loop is not None and duration > 0:
+            self._hint_clear_handle = self._loop.call_later(duration, self._clear_hint)
+
+    def show_ctrl_c_hint(self) -> None:
+        self.show_hint("Press Ctrl+C again to exit", 1.0)
+
+    def _clear_hint(self) -> None:
+        self._hint_text = ""
+        self._hint_clear_handle = None
         self._app.invalidate()
 
     # -- public API --------------------------------------------------------

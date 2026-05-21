@@ -97,6 +97,37 @@ def test_mouse_up_with_empty_selection_does_not_write_clipboard(tui_app: DatusAp
     assert captured_clipboard == []
 
 
+def test_mouse_up_shows_copied_hint(tui_app: DatusApp, captured_clipboard: list[str]):
+    """Successful copy on output pane release surfaces a transient hint."""
+    tui_app._output_mouse_handler(_click(MouseEventType.MOUSE_DOWN, x=0, y=0))
+    tui_app._output_mouse_handler(_click(MouseEventType.MOUSE_MOVE, x=5, y=0))
+    tui_app._output_mouse_handler(_click(MouseEventType.MOUSE_UP, x=5, y=0))
+    assert captured_clipboard == ["alpha"]
+    assert "Copied to clipboard" in tui_app._hint_text
+
+
+def test_mouse_up_with_empty_selection_does_not_show_hint(tui_app: DatusApp):
+    tui_app._output_mouse_handler(_click(MouseEventType.MOUSE_DOWN, x=0, y=0))
+    tui_app._output_mouse_handler(_click(MouseEventType.MOUSE_UP, x=0, y=0))
+    assert tui_app._hint_text == ""
+
+
+def test_status_bar_release_shows_copied_hint(tui_app: DatusApp, captured_clipboard: list[str]):
+    """Copy via status-bar MOUSE_UP also surfaces the hint."""
+    tui_app._output_mouse_handler(_click(MouseEventType.MOUSE_DOWN, x=0, y=0))
+    tui_app._output_mouse_handler(_click(MouseEventType.MOUSE_MOVE, x=5, y=1))
+    tui_app._status_mouse_handler(_click(MouseEventType.MOUSE_UP, x=0, y=0))
+    assert captured_clipboard != []
+    assert "Copied to clipboard" in tui_app._hint_text
+
+
+def test_show_hint_replaces_previous_text(tui_app: DatusApp):
+    """A new hint replaces an older one rather than queuing."""
+    tui_app.show_hint("first", duration=0)
+    tui_app.show_hint("second", duration=0)
+    assert tui_app._hint_text == "second"
+
+
 def test_scrollbar_drag_suppresses_mouse_events_on_output_pane(tui_app: DatusApp):
     """While the scrollbar widget is mid-drag, output-pane events are ignored."""
     tui_app._scrollbar_controller._dragging = True
@@ -202,6 +233,31 @@ def test_status_bar_arms_scroll_down_during_drag(tui_app: DatusApp):
     tui_app._output_mouse_handler(_click(MouseEventType.MOUSE_DOWN, x=0, y=0))
     tui_app._status_mouse_handler(_click(MouseEventType.MOUSE_MOVE, x=0, y=0))
     assert tui_app._selection_autoscroll.direction == 1
+
+
+def test_move_back_into_body_disarms_downward_autoscroll(tui_app: DatusApp, monkeypatch: pytest.MonkeyPatch):
+    """Returning the cursor to the output body must cancel a status-bar-armed
+    downward autoscroll.
+
+    Regression: a drag that wandered onto the status bar armed +1, but the
+    body's MOUSE_MOVE handler only disarmed -1, so scrolling continued
+    indefinitely after the user moved the pointer back over the text.
+    """
+    for _ in range(20):
+        tui_app._output_buffer.write("line\n")
+    monkeypatch.setattr(tui_app, "_output_viewport_rows", lambda: 5)
+    tui_app._output_at_bottom = False
+    tui_app._output_scroll_offset = 2
+
+    tui_app._output_mouse_handler(_click(MouseEventType.MOUSE_DOWN, x=0, y=2))
+    # Status bar arms downward scroll.
+    tui_app._status_mouse_handler(_click(MouseEventType.MOUSE_MOVE, x=0, y=0))
+    assert tui_app._selection_autoscroll.direction == 1
+
+    # Move back into the body (not on the top edge): must disarm.
+    top_row = tui_app._get_output_scroll(tui_app._output_window)
+    tui_app._output_mouse_handler(_click(MouseEventType.MOUSE_MOVE, x=3, y=top_row + 2))
+    assert tui_app._selection_autoscroll.direction == 0
 
 
 def test_status_bar_finishes_drag_on_release(tui_app: DatusApp, captured_clipboard: list[str]):
