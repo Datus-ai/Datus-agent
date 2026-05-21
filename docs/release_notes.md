@@ -2,6 +2,25 @@
 
 ## 0.3
 
+### 0.3.1
+
+**New Features**
+
+- **HTML Report Generation** - New `gen_visual_report` subagent turns a question, a metric reference, or your own SQL into a self-contained HTML report (KPI cards, charts, tables, narrative) with section-by-section editing so you can refine a single chart without rewriting the whole report. [#783](https://github.com/Datus-ai/Datus-agent/pull/783) [#821](https://github.com/Datus-ai/Datus-agent/pull/821) [docs](subagent/gen_visual_report.md)
+- **Persistent Plan Mode** - Plan Mode now writes `plan.md` to disk and restores it on session resume, so closing the CLI mid-plan no longer loses your work. [#772](https://github.com/Datus-ai/Datus-agent/pull/772) [docs](cli/plan_mode.md)
+- **CLI / TUI Polish** - Live todo sidebar tracks task progress at a glance, plus an inline command wizard, scroll-back search, mouse-drag selection copy, and a draggable scrollbar for a more native terminal feel. [#772](https://github.com/Datus-ai/Datus-agent/pull/772)
+
+**Enhancements**
+
+- **`/permission` Command** - Renamed `/profile` to `/permission`, with `normal` / `auto` / `dangerous` modes for matching different development workflows. [#769](https://github.com/Datus-ai/Datus-agent/pull/769) [docs](cli/reference.md)
+- **Custom Subagent Management** - Custom subagents can now be deleted via API or TUI, and the available-tools list per agent type is returned by a single backend source so SaaS and standalone UIs build and edit subagents consistently. [#807](https://github.com/Datus-ai/Datus-agent/pull/807) [#812](https://github.com/Datus-ai/Datus-agent/pull/812) [docs](subagent/customized_subagent.md)
+- **Per-Request Permission Mode** - Chat requests can pick `normal` / `auto` / `dangerous` per call, so multi-tenant SaaS deployments stop polluting a shared default. [#822](https://github.com/Datus-ai/Datus-agent/pull/822) [docs](integration/skills.md)
+
+**Bug Fixes**
+
+- **Claude / Anthropic Parameter Conflict** - Requests on the Claude / Anthropic route no longer fail when both `temperature` and `top_p` are sent in the same call. [#817](https://github.com/Datus-ai/Datus-agent/pull/817)
+- **Metric ID Collision Under Missing Subject Path** - Same-named metrics across different subject trees now stay distinct when `subject_path` was previously absent from the metric id. [#819](https://github.com/Datus-ai/Datus-agent/pull/819)
+
 ### 0.3.0
 
 **New Features**

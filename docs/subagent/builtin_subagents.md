@@ -17,7 +17,8 @@ This document covers thirteen core subagents:
 9. **[gen_job](gen_job.md)** — Data pipeline execution (single-database ETL AND cross-database migration with reconciliation)
 10. **[gen_skill](#gen_skill)** — Skill creation and optimization
 11. **[gen_dashboard](#gen_dashboard)** — BI dashboard CRUD for Superset and Grafana
-12. **[scheduler](#scheduler)** — Airflow job lifecycle management
+12. **[gen_visual_report](gen_visual_report.md)** — Self-contained visual report under `reports/<slug>/`
+13. **[scheduler](#scheduler)** — Airflow job lifecycle management
 
 ## Configuration
 
@@ -68,6 +69,11 @@ agent:
       model: claude     # Optional: defaults to configured model
       max_turns: 30     # Optional: defaults to 30
       bi_platform: superset  # Optional: explicit platform (auto-detected when only one BI platform is configured)
+
+    gen_visual_report:
+      model: claude            # Optional: defaults to configured model
+      max_turns: 30            # Optional: defaults to 30
+      report_dist: ~/report_dist  # Optional: local dist path for offline HTML compilation
 
     scheduler:
       model: claude     # Optional: defaults to configured model
@@ -1150,6 +1156,7 @@ agent:
 | `gen_job` | Data pipeline jobs (intra-DB ETL + cross-DB transfer) | Job / transfer result | Source + target databases | DDL/DML execution, cross-dialect type mapping via MigrationTargetMixin, `transfer_query_result`, lightweight reconciliation when source != target |
 | `gen_skill` | Create or optimize skills | Skill path | Skills directory | Interactive authoring, validation, skill loading |
 | `gen_dashboard` | BI dashboard CRUD (Superset, Grafana) | Dashboard result | BI platform | Dynamic tool exposure, existing serving data, multi-platform |
+| `gen_visual_report` | Self-contained visual report (narrative, pre-baked queries) | `reports/<slug>/` (executable SQL + executed results + report components) | Project root | Modular section-by-section edits, generate from metrics or your own SQL, CLI auto-opens the report in your browser |
 | `scheduler` | Airflow job lifecycle management | Scheduler result | Airflow | Submit, monitor, update, and troubleshoot jobs |
 
 **Built-in Features Across All Subagents:**
