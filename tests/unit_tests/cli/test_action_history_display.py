@@ -31,6 +31,7 @@ from unittest.mock import patch
 import pytest
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
@@ -823,6 +824,13 @@ class TestRenderActionHistory:
             display.render_action_history(actions, verbose=verbose)
         return printed
 
+    def _collect_print_args(self, display, actions, verbose=False):
+        """Helper: capture raw first positional arg passed to console.print."""
+        printed = []
+        with patch.object(display.console, "print", side_effect=lambda *a, **kw: printed.append(a[0])):
+            display.render_action_history(actions, verbose=verbose)
+        return printed
+
     # -- empty / skip tests --
 
     def test_empty_actions(self):
@@ -859,7 +867,7 @@ class TestRenderActionHistory:
     # -- user prompt rendering --
 
     def test_user_action_rendered(self):
-        """USER action at depth=0 renders user prompt with > prefix."""
+        """USER action at depth=0 renders user prompt as a bordered Panel with > prefix."""
         display = ActionHistoryDisplay()
         actions = [
             _make_action(
@@ -869,14 +877,17 @@ class TestRenderActionHistory:
                 action_type="chat_interaction",
             ),
         ]
-        printed = self._collect_prints(display, actions)
+        printed = self._collect_print_args(display, actions)
         assert len(printed) == 2
-        assert printed[0].startswith("> ")
-        assert "how many tables are there?" in printed[0]
-        assert printed[1] == ""
+        assert isinstance(printed[0], Panel)
+        inner = printed[0].renderable
+        assert isinstance(inner, Text)
+        assert inner.plain.startswith("> ")
+        assert "how many tables are there?" in inner.plain
+        assert isinstance(printed[1], Text) and printed[1].plain == ""
 
     def test_user_action_rendered_without_prefix(self):
-        """USER action without 'User: ' prefix still renders correctly."""
+        """USER action without 'User: ' prefix still renders correctly inside the Panel."""
         display = ActionHistoryDisplay()
         actions = [
             _make_action(
@@ -886,11 +897,14 @@ class TestRenderActionHistory:
                 action_type="chat_interaction",
             ),
         ]
-        printed = self._collect_prints(display, actions)
+        printed = self._collect_print_args(display, actions)
         assert len(printed) == 2
-        assert printed[0].startswith("> ")
-        assert "some direct message" in printed[0]
-        assert printed[1] == ""
+        assert isinstance(printed[0], Panel)
+        inner = printed[0].renderable
+        assert isinstance(inner, Text)
+        assert inner.plain.startswith("> ")
+        assert "some direct message" in inner.plain
+        assert isinstance(printed[1], Text) and printed[1].plain == ""
 
     # -- main agent rendering --
 

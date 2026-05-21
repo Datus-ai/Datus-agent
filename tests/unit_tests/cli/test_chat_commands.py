@@ -2185,10 +2185,13 @@ class TestCmdCompactWithSession:
         cmds.execute_chat_command("First question")
         cmds.execute_chat_command("Second question")
 
-        # Verify pre-compact state has accumulated data
+        # Verify pre-compact state has accumulated data.
+        # last_actions captures the latest turn's incremental actions plus the
+        # node final action: USER chat_request + ASSISTANT response + ASSISTANT
+        # chat_response = 3.
         assert len(cmds.all_turn_actions) == 2
         assert len(cmds.chat_history) == 2
-        assert len(cmds.last_actions) == 2
+        assert len(cmds.last_actions) == 3
 
         console.file = io.StringIO()
         cmds.cmd_compact("")
