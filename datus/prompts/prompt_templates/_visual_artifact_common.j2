@@ -234,6 +234,27 @@ SELECT COUNT(*) FROM <parent_table> JOIN <child_table> ON <fk> /* same WHERE */;
 
 Fan-out is a **bug to be fixed**, not a caveat to disclose. Do NOT save a query that has the bug and then declare it in `caveats` — the caveats field is for legitimate semantic choices the reader needs to know about (LEFT JOIN keeping zero-child parents, NULL-handling, time-window assumptions, etc.), not for known wrong arithmetic.
 
+### Unit conventions — probe; don't guess; ask when ambiguous
+
+Schemas almost never label the **unit** of a numeric column. The same `revenue` column can hold dollars, cents, basis points, or thousands; `latency` can be ms or s; `rate` can be 0.05 or 5.0. Guessing wrong silently propagates a 10× / 100× / 1000× error through every downstream KPI and chart, and no validator catches it because the SQL is syntactically perfect.
+
+**Mandatory probe** for any money / ratio / duration / count column whose name does **not** explicitly declare its unit (no `_cents` / `_usd` / `_pct` / `_bps` / `_ms` suffix, no schema comment, no enclosing semantic-model definition): run `read_query` to inspect the value range before authoring any aggregate over it.
+
+```sql
+SELECT MIN(<col>) AS lo, MAX(<col>) AS hi, AVG(<col>) AS mid FROM <table>;
+-- optionally sample a few rows for full context:
+SELECT <col> FROM <table> ORDER BY RANDOM() LIMIT 10;
+```
+
+Cross-check the result against **business plausibility** for the domain:
+- An AOV at a sandwich shop of `1250` is almost certainly cents-stored. An AOV of `12.50` is plausibly dollars-stored.
+- A `latency` median of `420` is almost certainly milliseconds. `0.42` is plausibly seconds.
+- A `tax_rate` of `0.06` is a fraction. `6.0` is a percent-as-integer. `600` is basis points.
+
+When the probe range disambiguates the unit, commit to that interpretation and **state it inline** as a SQL comment near the cast / arithmetic (`-- order_total is cents; divide by 100 for USD`) so a reader doesn't have to re-derive your reasoning.
+
+When the probe range does **not** disambiguate (e.g. all values are integers between 100 and 10000 — could be cents-USD or dollars-thousands), do not silently pick the convention your training data is most familiar with. Two coexisting LLMs on the same prompt + same dataset have been observed to pick opposite units (one cents, one dollars), producing dashboards whose grand totals differ by 100×. This is **exactly the case** the `ask_user` tool exists for — surface the ambiguity to the human, even though the prompt's general guidance leans against asking when you can infer.
+
 ### Visual design
 
 Treat each output as a polished deliverable — a small **branded analytics product** for dashboards, a **research-style document** for reports. Quality bar:
