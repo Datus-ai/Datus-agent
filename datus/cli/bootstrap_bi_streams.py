@@ -247,12 +247,14 @@ async def stream_bi_reference_sql(
 # ─────────────────────────────────────────────────────────────────────
 
 
-def _validate_semantic_model_sync(agent_config: AgentConfig) -> tuple[bool, Optional[str]]:
+def _validate_semantic_model_sync(agent_config: AgentConfig, *, scope: str = "all") -> tuple[bool, Optional[str]]:
     """Run :class:`SemanticTools.validate_semantic` synchronously.
 
     Returns ``(ok, error_message)``. Adapter-loading or runtime errors are
     captured and surfaced as ``error_message`` rather than propagating, so
     the coordinator can yield a single failure message and gate metrics.
+    Use ``scope="semantic_model"`` before metric generation so the expected
+    no-metrics validation issue does not block the metrics step.
     """
     try:
         from datus.tools.func_tool.semantic_tools import SemanticTools
@@ -270,7 +272,7 @@ def _validate_semantic_model_sync(agent_config: AgentConfig) -> tuple[bool, Opti
         tools = SemanticTools(agent_config=agent_config, adapter_type=adapter_type)
         if not tools.adapter:
             return False, "Semantic adapter not available. Install with: pip install datus-semantic-metricflow"
-        result = tools.validate_semantic()
+        result = tools.validate_semantic(scope=scope)
         if not result.success:
             return False, result.error or "Semantic validation failed"
         return True, None
@@ -326,7 +328,7 @@ async def stream_bi_semantic_model(
     ):
         yield action
 
-    ok, err = await asyncio.to_thread(_validate_semantic_model_sync, agent_config)
+    ok, err = await asyncio.to_thread(_validate_semantic_model_sync, agent_config, scope="semantic_model")
     state.semantic_ok = ok
     if ok:
         yield message_action("Semantic model validated.")

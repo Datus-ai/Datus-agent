@@ -25,6 +25,7 @@ from datus.cli.bootstrap_bi_streams import (
     BiBuildState,
     _collect_metrics_from_semantic_models,
     _collect_ref_sqls_from_summary_files,
+    _validate_semantic_model_sync,
     stream_bi_metadata,
     stream_bi_metrics,
     stream_bi_reference_sql,
@@ -238,6 +239,12 @@ async def test_stream_bi_semantic_model_sets_semantic_ok_on_validation_success(a
     async def _ok_async(*_a, **_k):
         return True, ""
 
+    validation_scopes: list[str] = []
+
+    def _validate(_agent_config, *, scope: str = "all"):
+        validation_scopes.append(scope)
+        return True, None
+
     with (
         patch(
             "datus.storage.semantic_model.semantic_model_init.init_success_story_semantic_model_async",
@@ -245,7 +252,7 @@ async def test_stream_bi_semantic_model_sets_semantic_ok_on_validation_success(a
         ),
         patch(
             "datus.cli.bootstrap_bi_streams._validate_semantic_model_sync",
-            return_value=(True, None),
+            side_effect=_validate,
         ),
     ):
         actions = await _consume(
@@ -259,6 +266,7 @@ async def test_stream_bi_semantic_model_sets_semantic_ok_on_validation_success(a
         )
 
     assert state.semantic_ok is True
+    assert validation_scopes == ["semantic_model"]
     assert any("validated" in a.messages.lower() for a in actions)
 
 
@@ -331,6 +339,12 @@ async def test_stream_bi_metrics_collects_metric_identifiers(agent_config, state
     async def _ok_metrics(*_a, **_k):
         return True, "", {"semantic_models": ["semantic_models/metrics/orders.yml"]}
 
+    validation_scopes: list[str] = []
+
+    def _validate(_agent_config, *, scope: str = "all"):
+        validation_scopes.append(scope)
+        return True, None
+
     with (
         patch(
             "datus.storage.metric.metric_init.init_success_story_metrics_async",
@@ -338,7 +352,7 @@ async def test_stream_bi_metrics_collects_metric_identifiers(agent_config, state
         ),
         patch(
             "datus.cli.bootstrap_bi_streams._validate_semantic_model_sync",
-            return_value=(True, None),
+            side_effect=_validate,
         ),
         patch(
             "datus.cli.generation_hooks.resolve_kb_sandbox_path",
@@ -356,7 +370,28 @@ async def test_stream_bi_metrics_collects_metric_identifiers(agent_config, state
         )
 
     assert state.metrics == ["superset.sales.total_orders"]
+    assert validation_scopes == ["all"]
     assert any("Collected 1 metric" in a.messages for a in actions)
+
+
+def test_validate_semantic_model_sync_passes_requested_scope(agent_config, monkeypatch) -> None:
+    validation_scopes: list[str] = []
+
+    class FakeSemanticTools:
+        def __init__(self, *_a, **_k):
+            self.adapter = object()
+
+        def validate_semantic(self, scope: str = "all"):
+            validation_scopes.append(scope)
+            return SimpleNamespace(success=1, error=None)
+
+    monkeypatch.setattr("datus.tools.func_tool.semantic_tools.SemanticTools", FakeSemanticTools)
+
+    ok, err = _validate_semantic_model_sync(agent_config, scope="semantic_model")
+
+    assert ok is True
+    assert err is None
+    assert validation_scopes == ["semantic_model"]
 
 
 @pytest.mark.asyncio
