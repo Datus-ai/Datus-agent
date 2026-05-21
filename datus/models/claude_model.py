@@ -220,14 +220,22 @@ class ClaudeModel(OpenAICompatibleModel):
                 default_headers=extra_headers or None,
             )
 
-        # Wrap with LangSmith if available
+        # Wrap with LangSmith if available. Wrap sync and async clients
+        # independently so a failure on the async wrap (e.g. older langsmith
+        # without AsyncAnthropic support) does not also drop sync tracing.
         try:
             from langsmith.wrappers import wrap_anthropic
-
-            self.anthropic_client = wrap_anthropic(self.anthropic_client)
-            self.async_anthropic_client = wrap_anthropic(self.async_anthropic_client)
         except ImportError:
             logger.debug("No langsmith wrapper available")
+        else:
+            try:
+                self.anthropic_client = wrap_anthropic(self.anthropic_client)
+            except Exception as e:
+                logger.warning(f"Failed to wrap sync anthropic client with langsmith: {e}")
+            try:
+                self.async_anthropic_client = wrap_anthropic(self.async_anthropic_client)
+            except Exception as e:
+                logger.warning(f"Failed to wrap async anthropic client with langsmith: {e}")
 
         logger.debug(f"Initialized Claude model: {self.model_name}, use_native_api={self.use_native_api}")
 
@@ -270,6 +278,7 @@ class ClaudeModel(OpenAICompatibleModel):
             return self.anthropic_client.beta.messages.create(**kwargs)
         return self.anthropic_client.messages.create(**kwargs)
 
+    @optional_traceable(name="anthropic_messages_stream", run_type="llm")
     def _anthropic_messages_stream(self, **kwargs):
         """Return an async context manager that streams Anthropic Messages events.
 
@@ -277,6 +286,12 @@ class ClaudeModel(OpenAICompatibleModel):
         require the OAuth beta headers and Bearer auth) and to
         ``messages.stream`` for standard API-key auth. Caller enters via
         ``async with self._anthropic_messages_stream(...) as stream:``.
+
+        Note: ``optional_traceable`` here records the call returning the
+        context manager. For ``messages.stream`` langsmith's ``wrap_anthropic``
+        additionally instruments per-event iteration; ``beta.messages.stream``
+        is not wrapped upstream, so this decorator is the only tracing the
+        OAuth path gets.
         """
         if self.async_anthropic_client is None:
             raise DatusException(
@@ -1019,6 +1034,11 @@ class ClaudeModel(OpenAICompatibleModel):
                 self.anthropic_client.close()
             except Exception as e:
                 logger.warning(f"Error closing anthropic client: {e}")
+
+        # Async resources can't be awaited from sync ``close()``; warn so callers
+        # know to invoke ``aclose()`` instead of leaking connections/threads.
+        if getattr(self, "async_anthropic_client", None) is not None or getattr(self, "async_proxy_client", None):
+            logger.debug("Async anthropic/proxy clients require aclose(); sync close() cannot release them")
 
     def __del__(self):
         """Destructor to ensure cleanup on garbage collection."""
