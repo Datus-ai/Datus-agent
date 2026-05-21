@@ -74,11 +74,17 @@ class TestParseDatusParamsHeader:
         with pytest.raises(ValueError, match="not a ``-- @datus-params"):
             parse_datus_params_header("-- description\n-- @datus-params x:string\nSELECT 1")
 
-    def test_empty_param_list_rejected(self):
-        # ``-- @datus-params ,`` matches the header regex (non-empty body)
-        # but split-on-comma yields no params after stripping.
-        with pytest.raises(ValueError, match="lists no parameters"):
-            parse_datus_params_header("-- @datus-params ,\nSELECT 1")
+    def test_empty_header_accepted_as_no_params(self):
+        # ``-- @datus-params`` with no body is the canonical way to declare
+        # "this template takes no parameters" — required so the agent can
+        # save a genuinely static query (e.g. a catalog rollup) without
+        # tripping the "every declared param must be bound in the SQL body"
+        # check in save_query_template.
+        assert parse_datus_params_header("-- @datus-params\nSELECT 1") == []
+        # Stray comma in the body is equivalent — still zero declared params.
+        assert parse_datus_params_header("-- @datus-params ,\nSELECT 1") == []
+        # Trailing whitespace tolerated.
+        assert parse_datus_params_header("-- @datus-params   \nSELECT 1") == []
 
     def test_malformed_declaration_rejected(self):
         with pytest.raises(ValueError, match="malformed"):

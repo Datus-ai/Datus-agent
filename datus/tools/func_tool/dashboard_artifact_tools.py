@@ -750,12 +750,16 @@ class DashboardArtifactTools:
                     f"as ':name' in the SQL body: {unbound}. The runtime would "
                     f"forward filter values that the SQL never reads, producing "
                     f"a static snapshot that silently ignores the dashboard's "
-                    f"filter controls. Fix one of two ways: "
+                    f"filter controls. Fix one of three ways: "
                     f"(a) reference each via ':{sample}' in the SQL body (e.g. "
-                    f"`WHERE ordered_at >= :{sample}`); or "
-                    f"(b) drop the unused entries from the -- @datus-params "
+                    f"`WHERE ordered_at >= :{sample}`); "
+                    f"(b) drop just the unused entries from the -- @datus-params "
                     f"header so the runtime contract reflects what the query "
-                    f"actually consumes."
+                    f"actually consumes; or "
+                    f"(c) if the query takes no parameters at all (e.g. a static "
+                    f"catalog rollup), shrink the header to the bare line "
+                    f"`-- @datus-params` with nothing after it — that's the "
+                    f"canonical way to declare zero parameters."
                 ),
             )
 

@@ -36,7 +36,7 @@ DASHBOARD_SLUG_RE = re.compile(r"^[a-z0-9_]{1,80}$")
 
 # Header line that declares the params a template body references. The
 # first non-blank line of a saved template must begin with this prefix.
-DATUS_PARAMS_HEADER_RE = re.compile(r"^\s*--\s*@datus-params\s+(.+?)\s*$", re.MULTILINE)
+DATUS_PARAMS_HEADER_RE = re.compile(r"^\s*--\s*@datus-params\s*(.*?)\s*$", re.MULTILINE)
 
 # Single param declaration syntax: ``name:type[:optional]`` where type is
 # one of the scalar types or its array variant (``string[]``, ``date[]``…).
@@ -207,8 +207,16 @@ def parse_datus_params_header(sql_template: str) -> List[TemplateParamDecl]:
 
     body = match.group(1).strip()
     parts = [p.strip() for p in body.split(",") if p.strip()]
+    # ``-- @datus-params`` with no body (or only a stray comma) is the
+    # canonical way to declare "this template takes no parameters" — the
+    # header is still mandatory so the runtime contract stays explicit, but
+    # an empty body means there is nothing to bind. The save_query_template
+    # validator's "every declared param must appear as :name in the body"
+    # check is then vacuously satisfied for genuinely static queries (e.g.
+    # a catalog-level supply-cost rollup that doesn't depend on date or
+    # store filters).
     if not parts:
-        raise ValueError("``-- @datus-params`` header declared but lists no parameters.")
+        return []
 
     seen: set[str] = set()
     decls: List[TemplateParamDecl] = []

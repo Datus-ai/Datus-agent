@@ -688,6 +688,34 @@ class TestSaveQueryTemplate:
         assert result.success == 0
         assert "JSON object" in (result.error or "")
 
+    def test_empty_header_accepted_for_static_query(
+        self,
+        dashboard_tools: DashboardArtifactTools,
+        project_root: Path,
+    ):
+        # Regression for the deadlock the agent ran into when authoring a
+        # genuinely time-invariant template (catalog rollup): the old chain
+        # of guards meant the agent could neither (a) declare time params
+        # it doesn't use (rejected by the unbound-param validator), (b)
+        # drop the header entirely (rejected by parse_datus_params_header),
+        # nor (c) write ``-- @datus-params`` with an empty body (used to be
+        # rejected as "lists no parameters"). The bare empty header is now
+        # the canonical way to declare zero parameters; the unbound-param
+        # check is trivially satisfied when no params are declared.
+        result = dashboard_tools.save_query_template(
+            name="supply_perishable_split",
+            sql_template=("-- @datus-params\nSELECT COUNT(*) AS n FROM sales"),
+            sample_params={},
+            goal="static catalog rollup — perishable vs non-perishable",
+            hypothesis="no time/store filter applies because the catalog is static",
+        )
+        assert result.success == 1, result.error
+        # The params.json sidecar should record zero declared params.
+        dash_slug = dashboard_tools.dashboard_slug or ""
+        params_path = project_root / "dashboards" / dash_slug / "queries" / "supply_perishable_split.params.json"
+        meta = json.loads(params_path.read_text())
+        assert meta["params"] == []
+
 
 # ----------------------------------------------------------------------------- #
 # validate_render                                                               #
