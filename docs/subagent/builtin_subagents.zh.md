@@ -17,7 +17,8 @@
 9. **[gen_job](gen_job.zh.md)** — 数据管道执行（单库 ETL 和跨库迁移，含对数校验）
 10. **[gen_skill](#gen_skill)** — skill 创建与优化
 11. **[gen_dashboard](#gen_dashboard)** — Superset 和 Grafana 的 BI 仪表盘 CRUD
-12. **[scheduler](#scheduler)** — Airflow 作业生命周期管理
+12. **[gen_visual_report](gen_visual_report.zh.md)** — 在 `reports/<slug>/` 下产出自包含的可视化报告
+13. **[scheduler](#scheduler)** — Airflow 作业生命周期管理
 
 ## 配置
 
@@ -68,6 +69,11 @@ agent:
       model: claude     # 可选：默认使用已配置的模型
       max_turns: 30     # 可选：默认为 30
       bi_platform: superset  # 可选：显式指定平台（仅配置一个 BI 平台时可自动检测）
+
+    gen_visual_report:
+      model: claude            # 可选：默认使用已配置的模型
+      max_turns: 30            # 可选：默认为 30
+      report_dist: ~/report_dist  # 可选：HTML 离线编译时使用的本地 dist 目录
 
     scheduler:
       model: claude     # 可选：默认使用已配置的模型
@@ -1148,6 +1154,7 @@ agent:
 | `gen_job` | 数据管道作业（单库 ETL + 跨库传输） | 作业 / 传输结果 | 源库 + 目标库 | DDL/DML 执行、通过 MigrationTargetMixin 做跨方言类型映射、`transfer_query_result`、源目标不同库时做轻量对账校验 |
 | `gen_skill` | 创建或优化 skill | skill 路径 | skills 目录 | 交互式编写、校验、加载现有 skill |
 | `gen_dashboard` | BI 仪表盘 CRUD（Superset、Grafana） | 仪表盘结果 | BI 平台 | 动态工具暴露、基于已就位 serving 数据、多平台支持 |
+| `gen_visual_report` | 自包含的可视化报告（叙事文档，查询提前烘焙） | `reports/<slug>/`（可执行 SQL + 执行结果 + 报告组件） | 项目根目录 | 按模块独立修改、可基于 metric 或自定义 SQL 生成、CLI 模式直接在浏览器中打开 |
 | `scheduler` | Airflow 作业生命周期管理 | 调度结果 | Airflow | 提交、监控、更新和排障 |
 
 **所有 subagent 的内置特性：**
