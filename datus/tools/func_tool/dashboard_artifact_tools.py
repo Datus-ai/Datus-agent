@@ -160,6 +160,13 @@ def sql_quote_scalar(value: Any) -> str:
 _sql_quote_scalar = sql_quote_scalar
 
 
+# ``:name`` placeholder lexer — avoid matching things like ``::cast`` and
+# quoted strings. We intentionally do not parse SQL here; the double-colon
+# dodge keeps PostgreSQL casts working, and a single colon inside a quoted
+# literal is rare and out-of-scope for the trial render.
+_BIND_PLACEHOLDER_RE = re.compile(r"(?<![:'\w]):([a-z_][a-z0-9_]*)\b")
+
+
 def resolve_bind_placeholders(rendered_sql: str, params_decl: List[TemplateParamDecl], values: Dict[str, Any]) -> str:
     """Replace ``:name`` bind placeholders with quoted literal values.
 
@@ -190,11 +197,25 @@ def resolve_bind_placeholders(rendered_sql: str, params_decl: List[TemplateParam
             return "(" + ", ".join(_sql_quote_scalar(item) for item in raw) + ")"
         return _sql_quote_scalar(raw)
 
-    # ``:name`` placeholder lexer — avoid matching things like ``::cast`` and
-    # quoted strings. We intentionally do not parse SQL here; the
-    # double-colon dodge keeps PostgreSQL casts working, and a single colon
-    # inside a quoted literal is rare and out-of-scope for the trial render.
-    return re.sub(r"(?<![:'\w]):([a-z_][a-z0-9_]*)\b", replace, rendered_sql)
+    return _BIND_PLACEHOLDER_RE.sub(replace, rendered_sql)
+
+
+def extract_bind_names(sql_template: str) -> Set[str]:
+    """Return the set of ``:name`` placeholders referenced by the SQL body.
+
+    Comments (``-- ...`` and ``/* ... */``) are stripped first so the
+    ``-- @datus-params`` header — whose ``name:type`` tokens look like binds
+    to the lexer — is excluded from the scan. The same lookbehind regex as
+    :func:`resolve_bind_placeholders` is used, so ``::cast`` does not
+    false-match and string-literal boundaries behave identically.
+
+    Operates on the **pre-Jinja2** template body. Names referenced only
+    inside a ``{% if %}`` / ``{% for %}`` block via ``:name`` still count
+    because the block's literal text contains the placeholder regardless of
+    whether Jinja2 ultimately includes it at render time.
+    """
+    body = strip_sql_comments(sql_template)
+    return {m.group(1) for m in _BIND_PLACEHOLDER_RE.finditer(body)}
 
 
 _resolve_bind_placeholders = resolve_bind_placeholders
@@ -709,6 +730,34 @@ class DashboardArtifactTools:
             params_decl = parse_datus_params_header(sql_template)
         except ValueError as exc:
             return FuncToolResult(success=0, error=str(exc))
+
+        # 1b. Every declared param MUST appear as ``:name`` somewhere in the
+        # SQL body. Without this check, a template like the one DeepSeek
+        # produced for ``supply_perishable_pie`` — declaring ``start_date`` /
+        # ``end_date`` in the header but never binding either in the body —
+        # silently renders a static snapshot while the dashboard UI still
+        # exposes a time picker, so the user changes filters and the chart
+        # doesn't move. ``validate_render`` only enforces the render-tree
+        # ``params`` keys vs. the header; body usage is on us.
+        bind_names = extract_bind_names(sql_template)
+        unbound = [p.name for p in params_decl if p.name not in bind_names]
+        if unbound:
+            sample = unbound[0]
+            return FuncToolResult(
+                success=0,
+                error=(
+                    f"Parameters declared in -- @datus-params but never bound "
+                    f"as ':name' in the SQL body: {unbound}. The runtime would "
+                    f"forward filter values that the SQL never reads, producing "
+                    f"a static snapshot that silently ignores the dashboard's "
+                    f"filter controls. Fix one of two ways: "
+                    f"(a) reference each via ':{sample}' in the SQL body (e.g. "
+                    f"`WHERE ordered_at >= :{sample}`); or "
+                    f"(b) drop the unused entries from the -- @datus-params "
+                    f"header so the runtime contract reflects what the query "
+                    f"actually consumes."
+                ),
+            )
 
         # 2. Validate sample_params against declared params
         decl_names = {p.name for p in params_decl}

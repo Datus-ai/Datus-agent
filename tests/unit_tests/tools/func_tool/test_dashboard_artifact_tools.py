@@ -37,6 +37,7 @@ import pytest
 from datus.schemas.gen_visual_dashboard_models import TemplateParamDecl
 from datus.tools.func_tool import DashboardArtifactTools, DashboardFilesystemFuncTool, DBFuncTool
 from datus.tools.func_tool.dashboard_artifact_tools import (
+    extract_bind_names,
     render_dashboard_template,
     resolve_bind_placeholders,
     sql_quote_scalar,
@@ -266,6 +267,56 @@ class TestStripSqlComments:
 
     def test_line_comment_at_eof_without_newline(self):
         assert strip_sql_comments("SELECT 1 -- tail") == "SELECT 1 "
+
+
+class TestExtractBindNames:
+    """``extract_bind_names`` underpins the declared-but-never-bound guard
+    inside ``save_query_template``. The cases below pin down the behavior
+    the guard relies on — header tokens excluded, comment binds excluded,
+    binds inside Jinja2 blocks counted, ``::`` casts not false-matched."""
+
+    def test_excludes_datus_params_header_tokens(self):
+        # The header's ``start_date:date`` token must NOT be picked up as a
+        # bind reference — otherwise every header-only template would pass
+        # the guard for free.
+        sql = (
+            "-- @datus-params start_date:date, end_date:date\nSELECT 1 FROM t WHERE c >= :start_date AND c < :end_date"
+        )
+        assert extract_bind_names(sql) == {"start_date", "end_date"}
+
+    def test_binds_only_in_header_returns_empty(self):
+        # The DeepSeek supply_perishable_pie failure mode: header declares
+        # params, body never binds them. After stripping the comment line
+        # the body has no ``:name`` references.
+        sql = "-- @datus-params start_date:date, end_date:date\nSELECT 1 FROM raw_supplies"
+        assert extract_bind_names(sql) == set()
+
+    def test_bind_inside_jinja_if_block_is_found(self):
+        sql = (
+            "-- @datus-params start_date:date, regions:string[]:optional\n"
+            "SELECT * FROM t WHERE day >= :start_date\n"
+            "{% if regions %}AND region IN :regions{% endif %}"
+        )
+        assert extract_bind_names(sql) == {"start_date", "regions"}
+
+    def test_postgres_double_colon_cast_not_a_bind(self):
+        sql = "-- @datus-params start_date:date\nSELECT CAST(c AS DATE) AS d, x::int FROM t WHERE day >= :start_date"
+        # ``::int`` must not be lexed as a bind named ``int``; only
+        # ``:start_date`` survives.
+        assert extract_bind_names(sql) == {"start_date"}
+
+    def test_colon_inside_line_comment_does_not_count(self):
+        sql = "-- @datus-params start_date:date\nSELECT 1 FROM t  -- TODO: bind :start_date here later"
+        # Stripping comments first means the body has no ``:name`` left.
+        assert extract_bind_names(sql) == set()
+
+    def test_colon_inside_block_comment_does_not_count(self):
+        sql = "-- @datus-params x:date\nSELECT 1 FROM t /* :x will be added next sprint */"
+        assert extract_bind_names(sql) == set()
+
+    def test_multiple_binds_on_same_line(self):
+        sql = "-- @datus-params a:integer, b:integer\nSELECT :a + :b AS total FROM t"
+        assert extract_bind_names(sql) == {"a", "b"}
 
 
 # ----------------------------------------------------------------------------- #
@@ -554,6 +605,66 @@ class TestSaveQueryTemplate:
         )
         assert result.success == 0
         assert "@datus-params" in (result.error or "")
+
+    def test_declared_param_never_bound_rejected(self, dashboard_tools: DashboardArtifactTools):
+        # Reproduces the live failure mode from the jeff_shop_business_analysis
+        # ``supply_perishable_pie`` template — header declares ``start_date`` /
+        # ``end_date`` but the SQL body ignores both. Without the guard the
+        # tool persists a template that silently produces a static snapshot
+        # while the dashboard UI still hands it date values.
+        result = dashboard_tools.save_query_template(
+            name="ignored_dates",
+            sql_template=("-- @datus-params start_date:string, end_date:string\nSELECT COUNT(*) AS n FROM sales"),
+            sample_params={"start_date": "2026-01", "end_date": "2026-12"},
+            goal="aggregate over all rows ignoring the supplied window",
+            hypothesis="header should have dropped these params or used them",
+        )
+        assert result.success == 0
+        err = result.error or ""
+        assert "never bound" in err
+        assert "start_date" in err
+        assert "end_date" in err
+
+    def test_partial_unbound_param_rejected(self, dashboard_tools: DashboardArtifactTools):
+        # Only one of two declared params is bound — the other still trips
+        # the guard, and the error names just the unbound one.
+        result = dashboard_tools.save_query_template(
+            name="half_used",
+            sql_template=(
+                "-- @datus-params start_date:string, end_date:string\n"
+                "SELECT COUNT(*) AS n FROM sales WHERE month >= :start_date"
+            ),
+            sample_params={"start_date": "2026-01", "end_date": "2026-12"},
+            goal="half-bound template",
+            hypothesis="end_date is ignored",
+        )
+        assert result.success == 0
+        err = result.error or ""
+        assert "['end_date']" in err
+        assert "start_date" not in err.split("never bound")[1].split(".")[0]
+
+    def test_param_bound_inside_jinja_block_accepted(
+        self,
+        dashboard_tools: DashboardArtifactTools,
+        project_root: Path,
+    ):
+        # An optional param referenced only inside ``{% if %}`` still counts
+        # as bound — the placeholder text exists in the template body whether
+        # or not Jinja2 ultimately includes that branch at render time.
+        result = dashboard_tools.save_query_template(
+            name="jinja_bound_optional",
+            sql_template=(
+                "-- @datus-params month_floor:string, regions:string[]:optional\n"
+                "SELECT region, SUM(revenue) AS revenue FROM sales\n"
+                "WHERE month >= :month_floor\n"
+                "{% if regions %}AND region IN :regions{% endif %}\n"
+                "GROUP BY region"
+            ),
+            sample_params={"month_floor": "2026-01"},
+            goal="optional regions filter exercised at render time",
+            hypothesis="trial without regions still produces NA + EU + APAC rows",
+        )
+        assert result.success == 1, result.error
 
     def test_write_operations_rejected(self, dashboard_tools: DashboardArtifactTools):
         result = dashboard_tools.save_query_template(
