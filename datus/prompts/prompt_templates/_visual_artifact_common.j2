@@ -198,6 +198,42 @@ function YoYSummary() {
 }
 ```
 
+### Aggregation correctness — fan-out is the bug; MAX/MIN are safe
+
+Whenever a query both **JOINs a "header" table to a "detail" / "line-item" child table** (1:N relationship — one row in the parent can match many rows in the child) **and** aggregates a column from the header side, you have a high probability of a silent fan-out bug. This rule is schema-agnostic: it applies whether the tables are `orders`/`order_items`, `sessions`/`events`, `accounts`/`transactions`, `posts`/`comments`, or any other parent-detail pair.
+
+| Aggregate over header column under 1:N JOIN | Behavior | Verdict |
+|---|---|---|
+| `SUM(parent.col)` | Inflated by child cardinality — each parent row counted once per child | **Wrong** |
+| `COUNT(parent.col)` (non-null) | Same inflation | **Wrong** |
+| `COUNT(*)` | Counts joined rows, not parents | **Wrong** |
+| `AVG(parent.col)` | Numerator and denominator both inflate; for **uniform** fan-out the mean is unchanged, but for **non-uniform** fan-out (parents have differing child counts) it silently becomes a child-weighted mean rather than a parent-equal-weight mean | **Silently biased — treat as wrong** |
+| `STDDEV` / `VAR` / `PERCENTILE` over `parent.col` | Distribution re-weighted by child counts | **Wrong** |
+| `MAX(parent.col)` / `MIN(parent.col)` | Idempotent under row duplication — value unchanged | **Safe** |
+| `COUNT(DISTINCT parent.pk)` | DISTINCT collapses duplicates | **Safe** |
+
+Detection signals — applicable regardless of domain or table names:
+
+1. The SELECT/HAVING aggregates a column from the "1" side of a 1:N relationship that the FROM clause also reaches into via JOIN.
+2. Two-level chains: `JOIN A → B → C` where the metric is on A and B is the detail of A — fan-out multiplies through every intermediate detail table, so each A.row gets attributed to every C-grouping it transitively touches.
+3. The same query both produces a header aggregate (e.g. `SUM(parent.amount)`) and reads a detail column (e.g. `child.sku`, `child.qty`) — the JOIN serves the detail-side need but breaks the aggregate.
+
+Mandatory fix paths — pick the one that matches your intent:
+
+- **(a) Drop the child JOIN** if you don't need any column from it. This is the right fix for KPI-style aggregates that should run against the header table alone.
+- **(b) Pre-aggregate the child in a CTE** so the post-CTE JOIN is 1:1. Right when you genuinely need per-parent rollups of child data.
+- **(c) `SUM(DISTINCT parent.col)`** is rarely correct — only valid when `parent.pk` is in the SELECT/GROUP BY and the SUM target is unique per parent. Do not reach for it as a shortcut.
+
+When uncertain about cardinality, verify with `read_query` before saving:
+
+```sql
+-- compare these two — if joined_rows >> parent_rows, every header aggregate is wrong by that ratio
+SELECT COUNT(*) FROM <parent_table>   /* with the same WHERE the final query uses */;
+SELECT COUNT(*) FROM <parent_table> JOIN <child_table> ON <fk> /* same WHERE */;
+```
+
+Fan-out is a **bug to be fixed**, not a caveat to disclose. Do NOT save a query that has the bug and then declare it in `caveats` — the caveats field is for legitimate semantic choices the reader needs to know about (LEFT JOIN keeping zero-child parents, NULL-handling, time-window assumptions, etc.), not for known wrong arithmetic.
+
 ### Visual design
 
 Treat each output as a polished deliverable — a small **branded analytics product** for dashboards, a **research-style document** for reports. Quality bar:
