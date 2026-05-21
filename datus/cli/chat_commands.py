@@ -13,7 +13,6 @@ import json
 import platform
 import re
 import subprocess
-import sys
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 
@@ -1326,8 +1325,8 @@ class ChatCommands:
             tui_output_buffer.clear()
         else:
             self.console.clear()
-            sys.stdout.write("\033[3J")
-            sys.stdout.flush()
+            self.console.file.write("\033[3J")
+            self.console.file.flush()
 
     def _full_screen_reprint(
         self,
@@ -1592,6 +1591,9 @@ class ChatCommands:
 
             messages = session_manager.get_session_messages(target_session_id)
             self.all_turn_actions = []
+            self.last_actions = []
+            self.chat_history = []
+            self._trace_verbose = False
             if messages:
                 self._clear_scrollback()
                 self.console.print()
@@ -1600,7 +1602,6 @@ class ChatCommands:
                 last_assistant_actions = self._render_restored_messages(messages)
                 if last_assistant_actions:
                     self.last_actions = last_assistant_actions
-                    self._trace_verbose = False
 
             print_success(self.console, "You can now continue the conversation.")
 
@@ -1725,7 +1726,12 @@ class ChatCommands:
                 )
                 self.console.print()
                 self.all_turn_actions = []
-                self._render_restored_messages(new_messages)
+                self.last_actions = []
+                self.chat_history = []
+                self._trace_verbose = False
+                last_assistant_actions = self._render_restored_messages(new_messages)
+                if last_assistant_actions:
+                    self.last_actions = last_assistant_actions
 
             print_success(self.console, "Selected message placed in input buffer.")
             return rewind_user_message
