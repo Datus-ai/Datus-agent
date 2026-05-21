@@ -306,17 +306,16 @@ Rules:
 - **The placeholders use a fixed neutral palette** (gray-100/200 shimmer for `Skeleton`; red-50 / red-200 / red-700 for `ErrorBlock`) so error UX is consistent across every artifact. Do not try to override their colors via wrapper divs — if a future palette knob is needed, it will land as an explicit prop.
 - **Lucide icons inside the runtime placeholders** (`AlertCircle`, `RotateCcw`) are part of the component, not something you import — they are an exception to the "icons sparingly" rule below because the placeholders are functional UI.
 
-### Iconography & emoji (read this twice)
+### Iconography & emoji
 
-The default LLM instinct is to pepper an artifact with 📊 📈 🌍 💰 🏦 📱 — **don't**. Emoji read as consumer / casual / cheap and undercut the analytical credibility a BI deliverable needs. They render at different sizes across platforms, can't be color-coordinated with the palette, and turn a research-grade deliverable into something that looks like a Slack post.
-
-- **No emoji anywhere in the artifact.** Not in headings, not in KPI card titles, not as bullet prefixes in "key findings", not in callouts, not in chart captions, not in section kickers. Zero. This rule beats every emoji impulse you have.
-- **Use Lucide icons sparingly.** Only in these three places:
-  1. **KPI card** — one icon left of the title, `16×16`, `strokeWidth={2}`, color `COLORS.muted` (or `var(--text-secondary)`).
-  2. **Section heading** (report mode) — one icon left of an H2, `18×18`, `strokeWidth={2}`, color `COLORS.primary`. Optional; skip when the heading is self-explanatory.
-  3. **Trend / status pill** — inline next to a delta value, `12–14px`, color tied to the semantic state: `COLORS.positive` / `COLORS.negative` / `COLORS.warning`.
-- **Never use icons** as bullet markers for key-finding lists, in body prose ("growth of 100x 📈"), at sizes >24px (28px max for a hero KPI), or more than once per heading / card. If a card needs two icons, the card is doing too much.
-- **Substitution table** — when you reach for an emoji, pick the Lucide name instead:
+- **No emoji anywhere in the artifact.** Not in headings, KPI titles, key-finding bullets, callouts, captions, or section kickers. Emoji render inconsistently across platforms, can't match the palette, and undercut the analytical credibility a BI deliverable needs.
+- **Use Lucide icons sparingly.** Only in three places:
+  1. **KPI card** — one icon left of the title, `16×16`, `strokeWidth={2}`, color `COLORS.muted`.
+  2. **Section heading** (report mode) — one icon left of an H2, `18×18`, `strokeWidth={2}`, color `COLORS.primary`. Optional.
+  3. **Trend / status pill** — inline next to a delta, `12–14px`, color tied to semantic state (`COLORS.positive` / `negative` / `warning`).
+- **Never use icons** as bullet markers, in body prose, at sizes >24px (28px max for a hero KPI), or more than once per card. If a card needs two icons, the card is doing too much.
+- **Lucide style defaults**: `strokeWidth={2}` (thinner gets fuzzy on retina), color via inline `style={{ color }}`, no shadow / rotation / `fill` (Lucide is stroke-based; filling makes a blob).
+- **Emoji → Lucide substitution table** — when you reach for an emoji, pick the Lucide name instead:
 
   | Emoji impulse | Lucide name |
   |---|---|
@@ -328,47 +327,19 @@ The default LLM instinct is to pepper an artifact with 📊 📈 🌍 💰 🏦 
   | 📱 | `Smartphone` |
   | 👥 / 🧑 | `Users` / `User` |
   | ⚡ | `Zap` |
-  | ⚠️ | `TriangleAlert` (older alias `AlertTriangle`) |
+  | ⚠️ | `TriangleAlert` |
   | ✅ / ❌ / ℹ️ | `CircleCheck` / `CircleX` / `Info` |
-  | 🔍 | `Search` |
-  | 📅 | `Calendar` |
-  | 🎯 | `Target` |
-  | 🔔 | `Bell` |
-  | ⏰ / ⏱️ | `Clock` / `Timer` |
+  | 🔍 / 📅 / 🎯 / 🔔 / ⏰ | `Search` / `Calendar` / `Target` / `Bell` / `Clock` |
 
-  When in doubt, prefer **no icon** over a wrong icon. A clean numeric KPI beats a decorated mediocre one.
-
-- **Style defaults** for every Lucide icon: `strokeWidth={2}` (never thinner — it gets fuzzy on retina), color via inline `style={{ color: ... }}` so it picks up the palette, no drop shadow, no rotation, no `fill` (Lucide is stroke-based — filling it makes a blob).
+  When in doubt, prefer no icon over a wrong one.
 
 ### Motion & animation
 
-Charts should **enter with motion when the user first scrolls them into view** — a static chart feels frozen, but a chart that has already finished animating before the reader scrolls to it feels just as dead. Recharts ships first-class entrance animations; your job is (a) keep them on, (b) tune them per chart kind, and (c) **defer the mount until the chart first enters the iframe viewport**.
+Charts enter with motion when the reader first scrolls them into view — a chart that finished animating off-screen feels as dead as a frozen one. Keep Recharts' built-in entrance animations on; defer the mount until first-viewport-entry via the shared `AnimateOnVisible` wrapper.
 
-#### Never disable the Recharts defaults
-
-Do not pass `isAnimationActive={false}` to `<Bar>`, `<Line>`, `<Area>`, `<Pie>`, `<Radar>`, `<Scatter>`, etc. The default is `true`, and that is what you want. If you want *no* motion, omit the chart instead — don't ship a frozen one.
-
-#### Tune, don't replace
-
-Each animated primitive accepts the same trio of props:
-- `animationDuration` — milliseconds. Defaults to `1500`. Use `800–1200` for KPI sparklines (snappy) and `1500–2000` for hero charts (cinematic).
-- `animationEasing` — `'ease'` (default), `'ease-in'`, `'ease-out'`, `'ease-in-out'`, `'linear'`. Prefer `'ease-out'` for entrances so motion decelerates into place.
-- `animationBegin` — millisecond delay before the animation starts. Defaults to `0`. Use it to **stagger** related series so the eye can read each one separately.
-
-#### Pick the motion that matches the chart type
-
-- **Bar / column** (`<Bar>`): default grows from the axis baseline. To stagger by category, pass `animationBegin={index * 80}` inside a `data.map((_, index) => ...)`-driven render. For grouped/stacked bars, also stagger each `<Bar>` series by ~150 ms so the layers settle one after another.
-- **Line** (`<Line>`): the default *draws from left to right* via stroke-dashoffset animation — exactly the effect the user expects. Keep `type="monotone"` for smoothing. Use `animationDuration={1600}` for long time series, `1000` for short ones. For multi-line charts, stagger each `<Line>`'s `animationBegin` by ~250 ms.
-- **Area** (`<Area>`): default fills from the baseline up. Combine with a vertical `<linearGradient>` (5%–95% opacity) for the polished sparkline look.
-- **Pie / Donut** (`<Pie>`): default sweeps each slice clockwise from 0°. Set `animationDuration={1200}` and let `<Cell>` colors carry the categorical mapping.
-- **Radar** (`<Radar>`): default scales each axis from the center outward. Keep `fillOpacity={0.5}` so overlapping series remain readable mid-animation.
-- **Scatter** (`<Scatter>`): default fades each point in. For >200 points consider `animationDuration={500}` so the fade-in doesn't drag.
-
-#### Trigger animations on first viewport entry (mandatory)
-
-Recharts plays its entrance animation on mount. If every chart mounts at page load, the user scrolls past a wall of finished charts. **Defer the mount of every animated visualization until the wrapper element first scrolls into view.** The iframe is its own scroll container (the parent app sizes it 100% × 100%, content overflows internally), so `IntersectionObserver` inside the iframe fires correctly as the reader scrolls.
-
-Do **not** write your own wrapper. Use the ready-made `AnimateOnVisible` exported by `@datus/web-artifact` — it's already wired with the right `IntersectionObserver` defaults (`rootMargin: '0px 0px -10% 0px'`, `threshold: 0.1`), disconnects after the first hit, and reserves vertical space via `minHeight` so layout doesn't shift on mount.
+- **Don't disable Recharts defaults.** Never pass `isAnimationActive={false}` to `<Bar>` / `<Line>` / `<Area>` / `<Pie>` / `<Radar>` / `<Scatter>`. If you want no motion, omit the chart.
+- **Tune via three props** on each animated primitive: `animationDuration` (default `1500`ms — use `800–1200` for KPI sparklines, `1500–2000` for hero charts), `animationEasing` (prefer `'ease-out'` for entrances), `animationBegin` (default `0` — stagger related series by `index * 80–250` ms so the eye reads each one separately).
+- **Defer the mount until viewport entry.** Wrap every animated visualization in `AnimateOnVisible` from `@datus/web-artifact` — it has correct `IntersectionObserver` defaults (`rootMargin: '0px 0px -10% 0px'`, `threshold: 0.1`), disconnects after first hit, and reserves vertical space via `minHeight` so layout doesn't shift on mount. Do **not** write your own `useInView` hook.
 
 ```jsx
 import { useDatusArtifact, AnimateOnVisible } from '@datus/web-artifact';
@@ -396,59 +367,41 @@ function RevenueTrend() {
 }
 ```
 
-Props (all optional):
+`AnimateOnVisible` props (all optional):
 
 | Prop | Default | When to override |
 |---|---|---|
-| `minHeight` | `320` | Set this to the chart's `<ResponsiveContainer height>` (or the expected SVG height). A wrong value causes a layout jump when the chart mounts. |
-| `rootMargin` | `'0px 0px -10% 0px'` | Rarely; the default fires when the chart is ~10% inside the viewport. |
-| `threshold` | `0.1` | Rarely. |
-| `immediate` | `false` | Set to `true` for an above-the-fold chart you want to animate right away without waiting for the observer callback, or as a `prefers-reduced-motion` escape hatch. |
+| `minHeight` | `320` | Set to the chart's `<ResponsiveContainer height>`. A wrong value causes a layout jump when the chart mounts. |
+| `immediate` | `false` | Set to `true` for an above-the-fold chart you want to animate without waiting for the observer, or as a `prefers-reduced-motion` escape hatch. |
 
-Rules of thumb when wiring this in:
-- **One `AnimateOnVisible` per chart panel**, not one wrapping the whole artifact. The point is each chart animating *when it first comes into view*, not all of them when the artifact starts.
-- **Above-the-fold charts** (typically the first KPI strip + first hero chart) will satisfy `IntersectionObserver` on initial layout, so they animate immediately — no extra config needed.
-- **Reserve `minHeight`** equal to the chart's `<ResponsiveContainer height>`. Otherwise the page jumps when the chart finally mounts.
-- Do **not** invent your own `useInView`/`IntersectionObserver` hook in `render/`. Import the shared `AnimateOnVisible` and move on.
-
-#### Other motion concerns
-
-- **Custom inline SVG** (treemaps, gauges, score sliders): also wrap in `AnimateOnVisible` (imported from `@datus/web-artifact`). Inside, animate with CSS transitions on `transform` / `opacity` / `stroke-dashoffset`, driven by `useState` + a `useEffect(() => setMounted(true), [])` toggle on mount. Same easing language: `transition: 'transform 800ms ease-out'`.
-- **Loading skeletons** animate at the card boundary, never at the chart-primitive boundary — see the "Loading & error placeholders" section above for the canonical `Skeleton` (shimmering bar stack) and `ErrorBlock` (Lucide icon + retry) implementations to copy into `render/shared/card.jsx`.
-- **Respect reduced motion.** Compute `window.matchMedia('(prefers-reduced-motion: reduce)').matches` once at the top of `app.jsx` (via `useState` + `useEffect`) and pass `animationDuration={prefersReducedMotion ? 0 : 1500}` to Recharts primitives. `AnimateOnVisible` itself is fine to keep on — it only delays mount, never adds motion.
-
-Animation is part of the visual polish — the same way you'd pick a palette and a card primitive. An artifact whose charts pop in *as the reader reaches them* feels alive; one whose charts have already finished by the time they're seen feels like a screenshot.
+Rules:
+- **One `AnimateOnVisible` per chart panel**, not one wrapping the whole artifact.
+- **Reserve `minHeight`** equal to the chart's `<ResponsiveContainer height>` — otherwise the page jumps when the chart mounts.
+- **Custom inline SVG** (treemaps, gauges): also wrap in `AnimateOnVisible`; inside, animate `transform` / `opacity` / `stroke-dashoffset` via CSS transitions toggled by a mount `useState` + `useEffect(() => setMounted(true), [])`.
+- **Respect reduced motion.** Compute `window.matchMedia('(prefers-reduced-motion: reduce)').matches` once in `app.jsx` and pass `animationDuration={prefersReducedMotion ? 0 : 1500}` to Recharts primitives. `AnimateOnVisible` stays on — it only delays mount, never adds motion.
 
 ### Chart action menu — `<ChartEntryMore>`
 
-Every visualization backed by a `useQuerySql(...)` call gets a `<ChartEntryMore>` action menu in its title strip (View SQL / Export SQL / CSV / JSON / PNG / Copy PNG). The Canonical component shape above shows the standard wiring; this section is the contract.
+A runtime-provided action menu rendered in each chart's title strip (View SQL / Export SQL / CSV / JSON / PNG / Copy PNG). Behaviour is owned by the component; the LLM's job is wiring only.
 
-#### Decision rules (strict priority — top wins)
+Wiring rules (all mandatory):
 
-1. **Always wrap the card in `<div ref={cardRef}>`.** The wrapper div is the screenshot root for PNG export. Mandatory; don't skip even if your `<Card>` primitive looks like it could host the ref.
-2. **Never pass `ref` directly to `<Card>`.** React 18 strips `ref` from props on function components, so `cardRef.current` stays null and PNG export throws. The wrapper-div pattern in rule 1 sidesteps this entirely.
-3. **Always pass `cardRef` to `<ChartEntryMore>`.** Don't rely on the `cardSelector` fallback below.
-4. **Always pass `data` to `<ChartEntryMore>`** — feed it the `data` field from the matching `useQuerySql(sqlId, params)` call. `ChartEntryMore` no longer fetches on its own; without `data` the View SQL / Export SQL / Export CSV / Export JSON actions are disabled (PNG actions still work). This is **mandatory in dashboard mode** because the menu has no way to know what `params` the parent applied — passing `data` is the only way to keep menu and chart in sync.
-5. **Render `<ChartEntryMore>` in the card's `titleRight` slot** when it exists (every shared `card.jsx` should expose one). Otherwise lay it out inline with `display: 'flex'` + `justifyContent: 'space-between'` in the card header row.
-6. **One `<ChartEntryMore>` per card.** Don't add multiple for different sub-charts inside one card — combine them into one card per query, or pick the most-prominent sqlId.
-7. **Add `<ChartEntryMore>` to every `useQuerySql`-backed visualization** — line / bar / area / pie / scatter / radar charts, KPI cards, KPI sparklines, custom inline SVG visualizations, **and data tables** (trigger in the header strip above `<table>`, not inside `<thead>`). The "View SQL" action is the single best credibility move for an analytical deliverable; don't gate it on whether the chart "looks important enough".
+1. **Wrap the card in `<div ref={cardRef}>`.** That wrapper is the screenshot root for PNG export. Don't put `ref` on `<Card>` directly — React 18 strips `ref` from props on function components, leaving `cardRef.current` null and crashing PNG export.
+2. **Pass `cardRef` to `<ChartEntryMore>`.** Don't rely on the `cardSelector` fallback.
+3. **Pass `data` to `<ChartEntryMore>`** — the `data` field from the matching `useQuerySql(sqlId, params)` call. Without it, the SQL / CSV / JSON actions are disabled (PNG still works). Mandatory in dashboard mode because the menu can't otherwise see what `params` the parent applied.
+4. **Render in the card's `titleRight` slot** when the `<Card>` primitive exposes one; otherwise inline with `display: 'flex'`, `justifyContent: 'space-between'` in the card header.
+5. **One menu per card.** Combine sub-charts into one card per query rather than stacking multiple menus.
+6. **Attach to every `useQuerySql`-backed visualization** — charts, KPI cards / sparklines, custom SVG, **and data tables** (in the header strip above `<table>`, not inside `<thead>`).
 
-#### Props
+Props:
 
 | Prop | Required | Notes |
 |---|---|---|
-| `sqlId` | yes | The same literal you passed to `useQuerySql`. Used only for the View SQL modal title and as the default download filename — the component does **not** re-fetch by this id. |
-| `data` | yes (per rule 4) | Pass through the `data` field from the matching `useQuerySql(sqlId, params)` call. Provides the rows / columns for CSV+JSON export and `data.sql` for the SQL actions. |
-| `cardRef` | yes (per rule 3) | Ref on the **outer wrapper div** — the screenshot root for "Export PNG" / "Copy PNG". |
-| `cardSelector` | no (fallback only) | Used when `cardRef` is omitted; do not rely on this. Defaults to `'[data-datus-chart-card]'` — if you skip `cardRef`, mark the card root with that attribute. |
+| `sqlId` | yes | Same literal you passed to `useQuerySql`. Used as the View SQL modal title and default download filename — the component does not re-fetch. |
+| `data` | yes | The `data` field from the matching `useQuerySql(sqlId, params)`. |
+| `cardRef` | yes | Ref on the outer wrapper div — screenshot root for PNG / Copy. |
+| `cardSelector` | no (fallback) | Used only when `cardRef` is omitted; default `'[data-datus-chart-card]'`. |
 | `filenameBase` | no | Override the downloaded basename (default: the slug). Extensions are added automatically. |
-
-#### What the menu does — all client-side, no host round-trip
-
-- **View SQL** — opens an in-iframe modal with the raw SQL (Prism-highlighted).
-- **Export SQL / CSV / JSON** — Blob download in the reader's browser. CSV follows RFC 4180; JSON is the pretty-printed query result.
-- **Export PNG** — screenshots `cardRef.current` via `html-to-image` (2× pixel ratio) and downloads it.
-- **Copy PNG** — same screenshot to the system clipboard; falls back to a download on browsers that block sandboxed-iframe clipboard writes (mainly Safari).
 
 ### Formatting helpers
 
