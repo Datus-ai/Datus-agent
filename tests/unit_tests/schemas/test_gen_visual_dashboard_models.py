@@ -86,6 +86,20 @@ class TestParseDatusParamsHeader:
         # Trailing whitespace tolerated.
         assert parse_datus_params_header("-- @datus-params   \nSELECT 1") == []
 
+    def test_glued_header_rejected(self):
+        # The ``\s+(...)`` separator between ``@datus-params`` and its body
+        # is mandatory when a body is present — ``-- @datus-paramsx:date``
+        # is not a legal header. Without this guard the regex would treat
+        # the keyword as a prefix of an identifier and silently parse the
+        # rest as a declaration. Falls through to the "not a -- @datus-params
+        # declaration" branch (a malformed header looks like a non-header
+        # comment to the parser).
+        with pytest.raises(ValueError, match="not a ``-- @datus-params"):
+            parse_datus_params_header("-- @datus-paramsstart_date:date\nSELECT :start_date")
+        # Tab also counts as the separator (Python ``\s`` matches tabs).
+        decls = parse_datus_params_header("-- @datus-params\tstart_date:date\nSELECT :start_date")
+        assert decls[0].name == "start_date"
+
     def test_malformed_declaration_rejected(self):
         with pytest.raises(ValueError, match="malformed"):
             parse_datus_params_header("-- @datus-params bad:hex\nSELECT 1")

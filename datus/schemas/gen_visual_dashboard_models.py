@@ -36,7 +36,7 @@ DASHBOARD_SLUG_RE = re.compile(r"^[a-z0-9_]{1,80}$")
 
 # Header line that declares the params a template body references. The
 # first non-blank line of a saved template must begin with this prefix.
-DATUS_PARAMS_HEADER_RE = re.compile(r"^\s*--\s*@datus-params\s*(.*?)\s*$", re.MULTILINE)
+DATUS_PARAMS_HEADER_RE = re.compile(r"^\s*--\s*@datus-params(?:\s+(.*?))?\s*$", re.MULTILINE)
 
 # Single param declaration syntax: ``name:type[:optional]`` where type is
 # one of the scalar types or its array variant (``string[]``, ``date[]``…).
@@ -205,7 +205,9 @@ def parse_datus_params_header(sql_template: str) -> List[TemplateParamDecl]:
             "Move any other leading comments below the declaration."
         )
 
-    body = match.group(1).strip()
+    # group(1) is None when the optional ``\s+(.*?)`` is absent — i.e. the
+    # bare-keyword empty-header form ``-- @datus-params``.
+    body = (match.group(1) or "").strip()
     parts = [p.strip() for p in body.split(",") if p.strip()]
     # ``-- @datus-params`` with no body (or only a stray comma) is the
     # canonical way to declare "this template takes no parameters" — the
