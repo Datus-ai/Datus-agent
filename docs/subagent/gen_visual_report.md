@@ -1,12 +1,14 @@
-# Visual Report Generation Guide
+# HTML Report Generation Guide
 
 ## Overview
 
-`gen_visual_report` turns a question — *"how did Q4 revenue do?"*, *"explain merchant churn in H2"* — into a self-contained **visual report**: a scrollable web page with an executive summary, KPI cards, charts, tables, and narrative paragraphs. In Datus-CLI mode the page opens in your browser automatically; in Datus-SaaS it shows up inline in the chat.
+`gen_visual_report` turns a question — *"how did Q4 revenue do?"*, *"explain merchant churn in H2"* — into a self-contained **HTML report**: a scrollable web page with an executive summary, KPI cards, charts, tables, and narrative paragraphs. In Datus-CLI mode the page opens in your browser automatically; in Datus-SaaS it shows up inline in the chat.
 
-![Sample visual report — KPI strip, headline metrics, and a monthly growth trend chart](../assets/gen_visual_report_preview.png)
+![Sample HTML report — KPI strip, headline metrics, and a monthly growth trend chart](../assets/gen_visual_report_preview.png)
 
-A visual report is a long-form, narrative answer with the data baked in at build time. There are no filters and no live re-querying once the report is built. For interactive BI dashboards on Superset / Grafana, use `gen_dashboard` instead.
+An HTML report is a long-form, narrative answer with the data baked in at build time. There are no filters and no live re-querying once the report is built. For interactive BI dashboards on Superset / Grafana, use `gen_dashboard` instead.
+
+If you'd rather have a plain-text **Markdown report** (no HTML rendering, no charts), use `/gen_report` instead.
 
 ## Quick Start
 
@@ -34,9 +36,9 @@ To edit an existing report, reference it by display name or by its short id:
 
 `gen_visual_report` accepts two equally valid starting points:
 
-- **From metrics** — name the metrics you want the report to be about, and the agent will pull dimensions, time windows, and breakdowns from your semantic layer. Best when your project has a curated metric registry.
+- **From metrics** — reference an existing metric with `@Metrics <subject>.<group>.<metric>` (three segments — subject tree path + metric name). The agent will pull its definition, dimensions, and time windows from your semantic layer. Best when your project already has a curated metric registry (see [Generate Metrics](gen_metrics.md) for how to create them).
   ```bash
-  /gen_visual_report Build a Q4 2025 report around metrics revenue.daily and conversion.weekly, broken down by region.
+  /gen_visual_report Build a Q4 2025 report around @Metrics revenue.daily.dau and @Metrics conversion.weekly.signup_rate, broken down by region.
   ```
 
 - **From SQL** — paste the SQL you want the report built on. The agent treats your query as the data source, executes it, and assembles the narrative + charts around the result. Best for one-off analyses or when the metric you need doesn't exist yet.
@@ -59,7 +61,7 @@ graph LR
     D --> E[Open in your browser]
 ```
 
-The agent reads your question, looks up the metrics and tables that are most relevant, runs the SQL it needs, then composes the executive summary, KPI cards, charts, tables, and recommendations into a single visual report. You can re-invoke `gen_visual_report` later to edit the same report in place.
+The agent reads your question, looks up the metrics and tables that are most relevant, runs the SQL it needs, then composes the executive summary, KPI cards, charts, tables, and recommendations into a single HTML report. You can re-invoke `gen_visual_report` later to edit the same report in place.
 
 ## Edit Section by Section
 

@@ -31,7 +31,7 @@ nav:
       - Generate SQL Summary: subagent/gen_sql_summary.md
       - Table Generation: subagent/gen_table.md
       - Data Pipeline (ETL + Migration): subagent/gen_job.md
-      - Visual Report Generation: subagent/gen_visual_report.md
+      - HTML Report Generation: subagent/gen_visual_report.md
     - Chatbot: web_chatbot/introduction.md
     - IM Gateway:
       - Introduction: gateway/introduction.md

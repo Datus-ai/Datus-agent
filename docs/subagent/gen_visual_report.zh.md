@@ -1,12 +1,14 @@
-# 可视化报告生成指南
+# HTML 报告生成指南
 
 ## 概览
 
-`gen_visual_report` 把一个问题——*"Q4 营收怎么样？"*、*"分析一下 H2 商户流失"*——直接变成一份自包含的 **可视化报告**：一个可上下滚动浏览的网页，包含执行摘要、KPI 卡片、图表、表格和叙事段落。Datus-CLI 模式下，页面会自动在浏览器中打开；Datus-SaaS 模式下，直接在 chat 中内联展示。
+`gen_visual_report` 把一个问题——*"Q4 营收怎么样？"*、*"分析一下 H2 商户流失"*——直接变成一份自包含的 **HTML 报告**：一个可上下滚动浏览的网页，包含执行摘要、KPI 卡片、图表、表格和叙事段落。Datus-CLI 模式下，页面会自动在浏览器中打开；Datus-SaaS 模式下，直接在 chat 中内联展示。
 
-![可视化报告示例——KPI 横幅、关键指标、月度增长趋势图](../assets/gen_visual_report_preview.png)
+![HTML 报告示例——KPI 横幅、关键指标、月度增长趋势图](../assets/gen_visual_report_preview.png)
 
-可视化报告是一份长篇叙事，数据在生成时就固化下来。页面上没有筛选器，也不会再次访问数据库。如果你要的是接 Superset / Grafana 的 BI 平台仪表盘，请使用 `gen_dashboard`。
+HTML 报告是一份长篇叙事，数据在生成时就固化下来。页面上没有筛选器，也不会再次访问数据库。如果你要的是接 Superset / Grafana 的 BI 平台仪表盘，请使用 `gen_dashboard`。
+
+如果你想要的是纯文本的 **Markdown 报告**（不带 HTML 渲染、不带图表），请改用 `/gen_report`。
 
 ## 快速开始
 
@@ -34,9 +36,9 @@
 
 `gen_visual_report` 接受两种同样合法的起点：
 
-- **从 metric 出发** —— 直接告诉 agent 要围绕哪些 metric 出报告，它会从语义层里拉维度、时间窗、切分方式。项目里已经沉淀了 metric 注册表时最适用。
+- **从 metric 出发** —— 用 `@Metrics <subject>.<group>.<metric>` 三段式直接引用已经生成的指标（subject 树路径 + 指标名），agent 会自动从语义层加载定义、维度和时间窗。项目里已经沉淀了 metric 注册表时最适用（如何生成指标见 [Generate Metrics](gen_metrics.zh.md)）。
   ```bash
-  /gen_visual_report 围绕 metric revenue.daily 和 conversion.weekly 做一份 Q4 2025 报告，按地区拆分
+  /gen_visual_report 围绕 @Metrics revenue.daily.dau 和 @Metrics conversion.weekly.signup_rate 做一份 Q4 2025 报告，按地区拆分
   ```
 
 - **从 SQL 出发** —— 把你想要的 SQL 贴进 prompt，agent 会把这条查询当作数据源执行，再围绕结果组织叙事 + 图表。适合一次性分析，或者还没有现成 metric 的场景。
@@ -59,7 +61,7 @@ graph LR
     D --> E[在浏览器中打开]
 ```
 
-agent 会先理解你的问题，找到最相关的 metric 和数据表，跑必要的 SQL，然后把执行摘要、KPI、图表、表格、建议组合成一份完整的可视化报告。如果之后要修改，再次调用 `gen_visual_report` 即可原地编辑同一份报告。
+agent 会先理解你的问题，找到最相关的 metric 和数据表，跑必要的 SQL，然后把执行摘要、KPI、图表、表格、建议组合成一份完整的 HTML 报告。如果之后要修改，再次调用 `gen_visual_report` 即可原地编辑同一份报告。
 
 ## 按模块独立修改
 
