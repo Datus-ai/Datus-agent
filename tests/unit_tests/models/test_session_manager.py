@@ -1292,6 +1292,40 @@ class TestGetSessionMessages:
         assert success_by_call_id[call_id_a].input["arguments"] == args_a
         assert success_by_call_id[call_id_b].input["arguments"] == args_b
 
+    def test_anthropic_native_text_blocks_resume_show_content(self, sm):
+        """Claude OAuth/native path persists assistant turns as ``type=text``.
+
+        Regression: ``get_session_messages`` previously only matched
+        ``type=output_text`` for assistant content. Anthropic-format text
+        blocks were silently skipped, so resuming a Claude OAuth chat showed
+        only the user's own messages — the assistant's reply was invisible.
+        """
+        session_id = f"test_anthropic_resume_{uuid.uuid4().hex[:8]}"
+        sm.get_session(session_id)
+        db_path = os.path.join(sm.session_dir, f"{session_id}.db")
+
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)", (session_id,))
+            user_msg = {"role": "user", "content": [{"type": "text", "text": "hi"}]}
+            assistant_msg = {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "Hi! 👋 Welcome to Datus."}],
+            }
+            conn.execute(
+                "INSERT INTO agent_messages (session_id, message_data, created_at) VALUES (?, ?, ?)",
+                (session_id, json.dumps(user_msg), "2026-05-21T00:00:00"),
+            )
+            conn.execute(
+                "INSERT INTO agent_messages (session_id, message_data, created_at) VALUES (?, ?, ?)",
+                (session_id, json.dumps(assistant_msg), "2026-05-21T00:00:01"),
+            )
+            conn.commit()
+
+        messages = sm.get_session_messages(session_id)
+        assistant_groups = [m for m in messages if m["role"] == "assistant"]
+        assert assistant_groups, "Anthropic-format assistant turn missing from resume payload"
+        assert assistant_groups[0]["content"] == "Hi! 👋 Welcome to Datus."
+
 
 # ===========================================================================
 # TestParseOutputFromAction (migrated from test_session_loader.py)

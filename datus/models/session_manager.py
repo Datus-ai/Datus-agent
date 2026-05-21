@@ -1044,7 +1044,17 @@ class SessionManager:
                                 item_type = item.get("type", "")
                                 text = item.get("text", "")
 
-                                if item_type == "output_text" and text:
+                                # Accept both OpenAI-style ``output_text`` and
+                                # Anthropic-style ``text`` blocks. ClaudeModel's
+                                # native OAuth path persists assistant turns as
+                                # ``[{"type": "text", "text": ...}]`` (Anthropic's
+                                # wire format, needed so ``session.get_items()``
+                                # replays back into the API verbatim). Without
+                                # ``"text"`` here, Claude assistant turns are
+                                # silently skipped on resume — no group gets
+                                # initialised, no content lands in ``messages``,
+                                # and the user sees only their own input.
+                                if item_type in ("output_text", "text") and text:
                                     # Initialize assistant group if needed
                                     if not current_assistant_group:
                                         current_assistant_group = {
