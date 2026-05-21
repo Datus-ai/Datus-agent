@@ -119,11 +119,11 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         self.execution_mode = execution_mode
         self.configured_node_name = node_name
 
-        self.max_turns = 40
+        self.max_turns = 80
         if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
             cfg = agent_config.agentic_nodes[node_name]
             if isinstance(cfg, dict):
-                self.max_turns = cfg.get("max_turns", 40)
+                self.max_turns = cfg.get("max_turns", 80)
 
         # Tool attributes must exist before the parent constructor calls
         # ``_get_system_prompt`` indirectly via skill setup.
