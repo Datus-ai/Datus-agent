@@ -171,10 +171,15 @@ class ClaudeModel(OpenAICompatibleModel):
         # Optional proxy configuration
         proxy_url = os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
         self.proxy_client = None
+        self.async_proxy_client = None
 
         if proxy_url:
             self.proxy_client = httpx.Client(
                 transport=httpx.HTTPTransport(proxy=httpx.Proxy(url=proxy_url)),
+                timeout=60.0,
+            )
+            self.async_proxy_client = httpx.AsyncClient(
+                transport=httpx.AsyncHTTPTransport(proxy=httpx.Proxy(url=proxy_url)),
                 timeout=60.0,
             )
 
@@ -194,11 +199,24 @@ class ClaudeModel(OpenAICompatibleModel):
                 http_client=self.proxy_client,
                 default_headers=extra_headers or None,
             )
+            self.async_anthropic_client = anthropic.AsyncAnthropic(
+                auth_token=self.api_key,
+                api_key=None,
+                base_url=self.base_url if self.base_url else None,
+                http_client=self.async_proxy_client,
+                default_headers=extra_headers or None,
+            )
         else:
             self.anthropic_client = anthropic.Anthropic(
                 api_key=self.api_key,
                 base_url=self.base_url if self.base_url else None,
                 http_client=self.proxy_client,
+                default_headers=extra_headers or None,
+            )
+            self.async_anthropic_client = anthropic.AsyncAnthropic(
+                api_key=self.api_key,
+                base_url=self.base_url if self.base_url else None,
+                http_client=self.async_proxy_client,
                 default_headers=extra_headers or None,
             )
 
@@ -207,6 +225,7 @@ class ClaudeModel(OpenAICompatibleModel):
             from langsmith.wrappers import wrap_anthropic
 
             self.anthropic_client = wrap_anthropic(self.anthropic_client)
+            self.async_anthropic_client = wrap_anthropic(self.async_anthropic_client)
         except ImportError:
             logger.debug("No langsmith wrapper available")
 
@@ -250,6 +269,23 @@ class ClaudeModel(OpenAICompatibleModel):
         if self._is_oauth_token:
             return self.anthropic_client.beta.messages.create(**kwargs)
         return self.anthropic_client.messages.create(**kwargs)
+
+    def _anthropic_messages_stream(self, **kwargs):
+        """Return an async context manager that streams Anthropic Messages events.
+
+        Routes to ``beta.messages.stream`` for OAuth subscription tokens (which
+        require the OAuth beta headers and Bearer auth) and to
+        ``messages.stream`` for standard API-key auth. Caller enters via
+        ``async with self._anthropic_messages_stream(...) as stream:``.
+        """
+        if self.async_anthropic_client is None:
+            raise DatusException(
+                ErrorCode.MODEL_AUTHENTICATION_ERROR,
+                "Async Anthropic client is not initialized; streaming unavailable",
+            )
+        if self._is_oauth_token:
+            return self.async_anthropic_client.beta.messages.stream(**kwargs)
+        return self.async_anthropic_client.messages.stream(**kwargs)
 
     def _diagnose_oauth_401(self, original_error: Exception) -> None:
         """Diagnose a 401 error for OAuth subscription tokens and raise a specific exception.
@@ -472,7 +508,7 @@ class ClaudeModel(OpenAICompatibleModel):
 
                     logger.debug(f"Turn {turn + 1}/{max_turns}")
 
-                    response = self._anthropic_messages_create(
+                    request_kwargs = dict(
                         model=self.model_name,
                         system=self._build_system_param(instruction),
                         messages=wrap_prompt_cache(messages),
@@ -480,6 +516,79 @@ class ClaudeModel(OpenAICompatibleModel):
                         max_tokens=kwargs.get("max_tokens") or self.max_tokens() or 20480,
                         temperature=kwargs.get("temperature", anthropic.NOT_GIVEN),
                     )
+
+                    if self.async_anthropic_client is not None:
+                        # Streaming path: yield text deltas as ``thinking_delta``
+                        # ActionHistory in real time (parity with
+                        # OpenAICompatibleModel.generate_with_tools_stream), then
+                        # rehydrate the final ``Message`` to reuse the existing
+                        # tool-use / usage / session logic below unchanged.
+                        thinking_stream_id: Optional[str] = None
+                        thinking_accumulated = ""
+                        async with self._anthropic_messages_stream(**request_kwargs) as stream:
+                            async for event in stream:
+                                if interrupt_controller and interrupt_controller.is_interrupted:
+                                    from datus.cli.execution_state import ExecutionInterrupted
+
+                                    raise ExecutionInterrupted("Interrupted by user")
+
+                                event_type = getattr(event, "type", None)
+                                if event_type == "content_block_start":
+                                    block_start = getattr(event, "content_block", None)
+                                    if block_start is not None and getattr(block_start, "type", None) == "text":
+                                        thinking_stream_id = f"thinking_stream_{uuid.uuid4().hex[:8]}"
+                                        thinking_accumulated = ""
+                                elif event_type == "content_block_delta":
+                                    delta = getattr(event, "delta", None)
+                                    if delta is None or getattr(delta, "type", None) != "text_delta":
+                                        continue
+                                    delta_text = getattr(delta, "text", "") or ""
+                                    if not delta_text:
+                                        continue
+                                    if thinking_stream_id is None:
+                                        thinking_stream_id = f"thinking_stream_{uuid.uuid4().hex[:8]}"
+                                    thinking_accumulated += delta_text
+                                    delta_action = ActionHistory(
+                                        action_id=thinking_stream_id,
+                                        role=ActionRole.ASSISTANT,
+                                        messages="",
+                                        action_type="thinking_delta",
+                                        input={},
+                                        output={"delta": delta_text, "accumulated": thinking_accumulated},
+                                        status=ActionStatus.PROCESSING,
+                                    )
+                                    yield delta_action
+                                elif event_type == "content_block_stop":
+                                    # Mirror OpenAICompatibleModel / codex_model: when
+                                    # a text block ends, emit a paired terminal
+                                    # ``response`` SUCCESS action sharing the delta
+                                    # stream id. Without it the CLI's
+                                    # ``_print_completed_action`` dedup path never
+                                    # runs, so ``_finalize_markdown_stream`` never
+                                    # clears the pinned live region — the last
+                                    # paragraph stays visible while ``__exit__``
+                                    # also flushes it to scrollback, producing a
+                                    # visible duplicate of the closing paragraph.
+                                    if thinking_accumulated.strip():
+                                        full_text = thinking_accumulated.strip()
+                                        text_preview = full_text if len(full_text) <= 200 else f"{full_text[:200]}..."
+                                        yield ActionHistory(
+                                            action_id=thinking_stream_id or f"assistant_{uuid.uuid4().hex[:8]}",
+                                            role=ActionRole.ASSISTANT,
+                                            messages=f"Thinking: {text_preview}",
+                                            action_type="response",
+                                            input={},
+                                            output={"raw_output": full_text, "is_thinking": False},
+                                            status=ActionStatus.SUCCESS,
+                                        )
+                                    thinking_stream_id = None
+                                    thinking_accumulated = ""
+                            response = await stream.get_final_message()
+                    else:
+                        # Fallback non-streaming path (kept so existing tests that
+                        # mock ``anthropic_client.messages.create`` still work, and
+                        # for environments where the async client failed to init).
+                        response = self._anthropic_messages_create(**request_kwargs)
 
                     # Track token usage from this turn
                     if hasattr(response, "usage") and response.usage:
@@ -876,12 +985,26 @@ class ClaudeModel(OpenAICompatibleModel):
             except Exception as e:
                 logger.warning(f"Error closing proxy client: {e}")
 
+        if hasattr(self, "async_proxy_client") and self.async_proxy_client:
+            try:
+                await self.async_proxy_client.aclose()
+                logger.debug("Async proxy client closed successfully")
+            except Exception as e:
+                logger.warning(f"Error closing async proxy client: {e}")
+
         if hasattr(self, "anthropic_client") and hasattr(self.anthropic_client, "close"):
             try:
                 self.anthropic_client.close()
                 logger.debug("Anthropic client closed successfully")
             except Exception as e:
                 logger.warning(f"Error closing anthropic client: {e}")
+
+        if hasattr(self, "async_anthropic_client") and self.async_anthropic_client is not None:
+            try:
+                await self.async_anthropic_client.close()
+                logger.debug("Async anthropic client closed successfully")
+            except Exception as e:
+                logger.warning(f"Error closing async anthropic client: {e}")
 
     def close(self):
         """Synchronous close for backward compatibility."""

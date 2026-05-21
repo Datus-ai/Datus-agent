@@ -72,6 +72,12 @@ def _make_claude_model(model_config=None):
         model = ClaudeModel(model_config)
         model.litellm_adapter = mock_litellm_adapter
         model.anthropic_client = mock_anthropic_client
+        # Existing tests mock the sync ``anthropic_client.messages.create`` API.
+        # Disabling the async streaming client routes those tests through the
+        # non-streaming fallback in ``_generate_with_mcp_stream`` so they keep
+        # working without rewriting every mock; the streaming code path has
+        # dedicated tests in ``TestGenerateWithMcpStreamTextDeltas``.
+        model.async_anthropic_client = None
         return model
 
 
@@ -1463,3 +1469,140 @@ class TestGenerateWithMcpToolRouting:
         passed_args = call_args[1]["arguments"]
         assert passed_args == {"query": "SELECT 1"}
         assert passed_args is not original_input  # must be a different object
+
+
+# ---------------------------------------------------------------------------
+# Streaming text deltas (native Anthropic ``messages.stream`` path)
+# ---------------------------------------------------------------------------
+
+
+class _FakeStreamEvent:
+    """Lightweight stand-in for the SDK's stream event objects."""
+
+    def __init__(self, type_, delta=None, content_block=None):
+        self.type = type_
+        if delta is not None:
+            self.delta = delta
+        if content_block is not None:
+            self.content_block = content_block
+
+
+class _FakeAsyncStreamManager:
+    """Async context manager that replays a fixed sequence of stream events.
+
+    Mirrors the shape of ``anthropic.lib.streaming._messages.AsyncMessageStreamManager``
+    just enough for ``_generate_with_mcp_stream``: ``async with`` enters, the
+    body iterates via ``async for event in stream``, then awaits
+    ``stream.get_final_message()`` to retrieve the assembled ``Message``.
+    """
+
+    def __init__(self, events, final_message):
+        self._events = events
+        self._final_message = final_message
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def __aiter__(self):
+        events = list(self._events)
+
+        async def gen():
+            for ev in events:
+                yield ev
+
+        return gen()
+
+    async def get_final_message(self):
+        return self._final_message
+
+
+class TestGenerateWithMcpStreamTextDeltas:
+    @pytest.mark.asyncio
+    async def test_streams_text_deltas_as_thinking_delta_actions(self):
+        """When async_anthropic_client is set, yield thinking_delta per text_delta event."""
+        from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        # Build a fake stream: start text block, two text deltas, stop text block.
+        text_block_start = MagicMock()
+        text_block_start.type = "text"
+        delta1 = MagicMock()
+        delta1.type = "text_delta"
+        delta1.text = "Hello, "
+        delta2 = MagicMock()
+        delta2.type = "text_delta"
+        delta2.text = "world!"
+        events = [
+            _FakeStreamEvent("content_block_start", content_block=text_block_start),
+            _FakeStreamEvent("content_block_delta", delta=delta1),
+            _FakeStreamEvent("content_block_delta", delta=delta2),
+            _FakeStreamEvent("content_block_stop"),
+        ]
+        final_msg = _make_response([_make_text_block("Hello, world!")])
+
+        stream_manager = _FakeAsyncStreamManager(events, final_msg)
+
+        async_client = MagicMock()
+        async_client.messages.stream = MagicMock(return_value=stream_manager)
+        model.async_anthropic_client = async_client
+
+        ahm = ActionHistoryManager()
+        actions = []
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for action in model._generate_with_mcp_stream(
+                prompt="test",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                action_history_manager=ahm,
+            ):
+                actions.append(action)
+
+        # Stream invoked once
+        async_client.messages.stream.assert_called_once()
+
+        # Exactly two thinking_delta events with incremental accumulation, both transient.
+        delta_actions = [a for a in actions if a.action_type == "thinking_delta"]
+        assert len(delta_actions) == 2
+        assert all(a.role == ActionRole.ASSISTANT for a in delta_actions)
+        assert all(a.status == ActionStatus.PROCESSING for a in delta_actions)
+        assert delta_actions[0].output == {"delta": "Hello, ", "accumulated": "Hello, "}
+        assert delta_actions[1].output == {"delta": "world!", "accumulated": "Hello, world!"}
+        # Delta actions share one stream id (incremental display in CLI groups them).
+        assert delta_actions[0].action_id == delta_actions[1].action_id
+
+        # Paired terminal ``response`` SUCCESS emitted at content_block_stop —
+        # CLI ``_print_completed_action`` consumes this to finalize the
+        # markdown stream and clear the pinned live region. Without it the
+        # tail paragraph stays visible AND gets reflushed via ``__exit__``,
+        # producing a visible duplicate.
+        responses = [a for a in actions if a.action_type == "response"]
+        assert len(responses) == 1
+        assert responses[0].role == ActionRole.ASSISTANT
+        assert responses[0].status == ActionStatus.SUCCESS
+        assert responses[0].output["raw_output"] == "Hello, world!"
+        # Shares stream id with deltas so CLI dedup matches the paired turn.
+        assert responses[0].action_id == delta_actions[0].action_id
+        assert responses[0].output["is_thinking"] is False
+
+        # Final assistant action carries the assembled text.
+        finals = [a for a in actions if a.action_type == "final_response"]
+        assert len(finals) == 1
+        assert finals[0].output["raw_output"] == "Hello, world!"
+        assert finals[0].status == ActionStatus.SUCCESS
+
+        # Transient deltas are NOT persisted into the action history manager;
+        # only the final_response should land there. The paired ``response``
+        # action is also transient (yield-only, like delta) so it should not
+        # land in the manager either.
+        persisted_types = {a.action_type for a in ahm.actions}
+        assert "thinking_delta" not in persisted_types
+        assert "response" not in persisted_types
+        assert "final_response" in persisted_types
