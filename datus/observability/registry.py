@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import ClassVar
 
 from datus.observability.adapters.base import ObservabilityAdapter
@@ -20,6 +21,7 @@ logger = get_logger(__name__)
 class ObservabilityAdapterRegistry:
     _adapters: ClassVar[dict[str, type[ObservabilityAdapter]]] = {}
     _initialized: ClassVar[bool] = False
+    _lock: ClassVar[threading.RLock] = threading.RLock()
 
     @classmethod
     def register(cls, adapter_type: str, adapter_cls: type[ObservabilityAdapter]) -> None:
@@ -27,24 +29,27 @@ class ObservabilityAdapterRegistry:
         if not key:
             logger.warning("Skipped registering observability adapter with empty type")
             return
-        cls._adapters[key] = adapter_cls
+        with cls._lock:
+            cls._adapters[key] = adapter_cls
 
     @classmethod
     def get(cls, adapter_type: str) -> type[ObservabilityAdapter] | None:
         cls.discover_adapters()
-        return cls._adapters.get((adapter_type or "").strip().lower())
+        with cls._lock:
+            return cls._adapters.get((adapter_type or "").strip().lower())
 
     @classmethod
     def discover_adapters(cls) -> None:
-        if cls._initialized:
-            return
-        cls._initialized = True
-        cls.register("otlp", OtlpAdapter)
-        cls.register("langfuse", LangfuseAdapter)
-        cls.register("langsmith", LangSmithAdapter)
-        cls.register("braintrust", BraintrustAdapter)
-        cls.register("datadog", DatadogAdapter)
-        cls._discover_plugins()
+        with cls._lock:
+            if cls._initialized:
+                return
+            cls._initialized = True
+            cls.register("otlp", OtlpAdapter)
+            cls.register("langfuse", LangfuseAdapter)
+            cls.register("langsmith", LangSmithAdapter)
+            cls.register("braintrust", BraintrustAdapter)
+            cls.register("datadog", DatadogAdapter)
+            cls._discover_plugins()
 
     @classmethod
     def _discover_plugins(cls) -> None:
@@ -70,7 +75,8 @@ class ObservabilityAdapterRegistry:
     @classmethod
     def list_adapters(cls) -> dict[str, type[ObservabilityAdapter]]:
         cls.discover_adapters()
-        return cls._adapters.copy()
+        with cls._lock:
+            return cls._adapters.copy()
 
 
 adapter_registry = ObservabilityAdapterRegistry()

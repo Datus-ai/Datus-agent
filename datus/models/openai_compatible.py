@@ -128,6 +128,12 @@ def _agents_trace_baggage(agent_name: Optional[str]):
     return get_observability_manager().trace_baggage(str(trace_name), attrs)
 
 
+async def _stream_events_with_trace_baggage(result, agent_name: Optional[str]):
+    with _agents_trace_baggage(agent_name):
+        async for event in result.stream_events():
+            yield event
+
+
 def classify_openai_compatible_error(error: Exception) -> tuple[ErrorCode, bool]:
     """Classify OpenAI-compatible API errors and return error code and whether it's retryable."""
     error_msg = str(error).lower()
@@ -1173,7 +1179,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                         from datus.cli.execution_state import ExecutionInterrupted
 
                         raise ExecutionInterrupted("Interrupted by user")
-                    async for event in result.stream_events():
+                    async for event in _stream_events_with_trace_baggage(result, agent_name):
                         if interrupt_controller and interrupt_controller.is_interrupted:
                             from datus.cli.execution_state import ExecutionInterrupted
 

@@ -2,7 +2,10 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from datus.observability.config import ObservabilityConfig
+import pytest
+
+from datus.observability.config import ObservabilityAdapterConfig, ObservabilityConfig
+from datus.utils.exceptions import DatusException
 
 
 def test_observability_absent_is_disabled_by_default():
@@ -68,6 +71,19 @@ def test_explicit_empty_adapters_are_respected():
 
     assert cfg.tracing.enabled is True
     assert cfg.tracing.adapters == []
+
+
+def test_adapter_timeout_normalizes_blank_and_missing_placeholders():
+    blank = ObservabilityAdapterConfig.from_dict({"type": "otlp", "timeout": " "})
+    missing = ObservabilityAdapterConfig.from_dict({"type": "otlp", "timeout": "<MISSING:OTLP_TIMEOUT>"})
+
+    assert blank.timeout is None
+    assert missing.timeout is None
+
+
+def test_adapter_timeout_invalid_value_uses_datus_exception():
+    with pytest.raises(DatusException, match="timeout"):
+        ObservabilityAdapterConfig.from_dict({"type": "otlp", "timeout": "soon"})
 
 
 def test_capture_content_false_disables_content_fields_by_default():

@@ -26,6 +26,10 @@ _CURRENT_TRACE_REFERENCE: contextvars.ContextVar[TraceReference | None] = contex
     "datus_observability_trace_reference",
     default=None,
 )
+_LAST_TRACE_REFERENCE: contextvars.ContextVar[TraceReference | None] = contextvars.ContextVar(
+    "datus_observability_last_trace_reference",
+    default=None,
+)
 
 
 class ObservabilityManager:
@@ -34,7 +38,6 @@ class ObservabilityManager:
         self._initialized = False
         self._adapters: list[ObservabilityAdapter] = []
         self._tracing_config: TracingConfig | None = None
-        self._last_trace_reference: TraceReference | None = None
 
     @property
     def initialized(self) -> bool:
@@ -49,7 +52,6 @@ class ObservabilityManager:
             _suppress_noisy_otel_warnings()
             if self._initialized:
                 return bool(self._adapters)
-            self._initialized = True
 
             tracing = config.tracing if config is not None else None
             if tracing is None or not tracing.enabled:
@@ -70,7 +72,11 @@ class ObservabilityManager:
                 except Exception as exc:
                     logger.warning("Failed to initialize observability adapter %s: %s", adapter_config.type, exc)
 
-            return bool(self._adapters)
+            if self._adapters:
+                self._initialized = True
+                return True
+            self._tracing_config = None
+            return False
 
     def content_enabled(self, field_name: str) -> bool:
         if self._tracing_config is None:
@@ -87,9 +93,11 @@ class ObservabilityManager:
     @contextmanager
     def span(self, name: str, attributes: dict[str, Any] | None = None, *, run_id: str | None = None):
         if not self.adapters:
+            _LAST_TRACE_REFERENCE.set(None)
             yield None
             return
         attributes = attributes or {}
+        _LAST_TRACE_REFERENCE.set(None)
         baggage_token = _attach_trace_baggage(name, attributes)
         try:
             from opentelemetry import context, trace
@@ -114,7 +122,7 @@ class ObservabilityManager:
                 ref = self._trace_reference_from_span(span, run_id=run_id)
                 token = None
                 if ref is not None:
-                    self._last_trace_reference = ref
+                    _LAST_TRACE_REFERENCE.set(ref)
                     _set_span_attributes(
                         span,
                         {
@@ -159,14 +167,14 @@ class ObservabilityManager:
             try:
                 adapter.record_event(event)
             except Exception as exc:
-                logger.debug("Observability adapter %s failed to record event: %s", adapter.name, exc)
+                logger.debug("Observability adapter %s failed to record event: %s", getattr(adapter, "name", ""), exc)
 
     def flush(self) -> None:
         for adapter in self.adapters:
             try:
                 adapter.flush()
             except Exception as exc:
-                logger.debug("Observability adapter %s failed to flush: %s", adapter.name, exc)
+                logger.debug("Observability adapter %s failed to flush: %s", getattr(adapter, "name", ""), exc)
 
     def shutdown(self) -> None:
         with self._lock:
@@ -174,22 +182,22 @@ class ObservabilityManager:
                 try:
                     adapter.shutdown()
                 except Exception as exc:
-                    logger.debug("Observability adapter %s failed to shutdown: %s", adapter.name, exc)
+                    logger.debug("Observability adapter %s failed to shutdown: %s", getattr(adapter, "name", ""), exc)
             self._adapters = []
             self._tracing_config = None
             self._initialized = False
-            self._last_trace_reference = None
+            _LAST_TRACE_REFERENCE.set(None)
 
     def get_trace_reference(self) -> TraceReference | None:
         ref = self._current_otel_trace_reference()
         if ref is not None:
-            self._last_trace_reference = ref
+            _LAST_TRACE_REFERENCE.set(ref)
             return ref
 
         ref = _CURRENT_TRACE_REFERENCE.get()
         if ref is not None:
             return ref
-        return self._last_trace_reference
+        return _LAST_TRACE_REFERENCE.get()
 
     def _current_otel_trace_reference(self) -> TraceReference | None:
         try:

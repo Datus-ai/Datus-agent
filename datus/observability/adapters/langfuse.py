@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import base64
 import os
+import threading
 from collections import OrderedDict
 from dataclasses import replace
 from typing import Any
 
 from datus.observability.adapters.otlp import OtlpAdapter
 from datus.observability.config import ObservabilityAdapterConfig
+from datus.utils.exceptions import DatusException, ErrorCode
 
 try:
     from opentelemetry.sdk.trace import SpanProcessor
@@ -43,7 +45,10 @@ class LangfuseAdapter(OtlpAdapter):
             public_key = _option_or_env(adapter_config, "public_key", "LANGFUSE_PUBLIC_KEY")
             secret_key = _option_or_env(adapter_config, "secret_key", "LANGFUSE_SECRET_KEY")
             if not public_key or not secret_key:
-                raise ValueError("Langfuse adapter requires LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY")
+                raise DatusException(
+                    ErrorCode.COMMON_FIELD_REQUIRED,
+                    message="Langfuse adapter requires LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY",
+                )
             auth_string = base64.b64encode(f"{public_key}:{secret_key}".encode()).decode()
 
         headers = {
@@ -64,6 +69,7 @@ class _LangfuseBaggageSpanProcessor(SpanProcessor):
 
     def __init__(self) -> None:
         self._trace_attributes: OrderedDict[str, dict[str, str]] = OrderedDict()
+        self._trace_lock = threading.RLock()
 
     def on_start(self, span: Any, parent_context: Any | None = None) -> None:
         try:
@@ -75,10 +81,12 @@ class _LangfuseBaggageSpanProcessor(SpanProcessor):
 
         langfuse_attrs = _langfuse_attributes_from_baggage(baggage_attrs)
         trace_id = _span_trace_id(span)
-        if langfuse_attrs and trace_id:
-            self._remember_trace_attributes(trace_id, langfuse_attrs)
-        elif trace_id:
-            langfuse_attrs = self._trace_attributes.get(trace_id, {})
+        with self._trace_lock:
+            if langfuse_attrs and trace_id:
+                self._remember_trace_attributes(trace_id, langfuse_attrs)
+            elif trace_id:
+                langfuse_attrs = self._trace_attributes.get(trace_id, {})
+            langfuse_attrs = dict(langfuse_attrs)
 
         for key, value in langfuse_attrs.items():
             _set_span_attribute(span, key, value)
@@ -87,17 +95,19 @@ class _LangfuseBaggageSpanProcessor(SpanProcessor):
         return None
 
     def shutdown(self) -> None:
-        self._trace_attributes.clear()
+        with self._trace_lock:
+            self._trace_attributes.clear()
         return None
 
     def force_flush(self, timeout_millis: int = 30000) -> bool:
         return True
 
     def _remember_trace_attributes(self, trace_id: str, attributes: dict[str, str]) -> None:
-        self._trace_attributes[trace_id] = attributes
-        self._trace_attributes.move_to_end(trace_id)
-        while len(self._trace_attributes) > self._MAX_TRACE_CACHE_SIZE:
-            self._trace_attributes.popitem(last=False)
+        with self._trace_lock:
+            self._trace_attributes[trace_id] = attributes
+            self._trace_attributes.move_to_end(trace_id)
+            while len(self._trace_attributes) > self._MAX_TRACE_CACHE_SIZE:
+                self._trace_attributes.popitem(last=False)
 
 
 def _langfuse_attributes_from_baggage(baggage_attrs: dict[str, Any]) -> dict[str, str]:
@@ -151,7 +161,10 @@ def _clean_string(value: Any) -> str | None:
 
 def _join_url(base_url: str | None, path: str) -> str:
     if not base_url:
-        raise ValueError("Langfuse adapter requires a base URL or endpoint")
+        raise DatusException(
+            ErrorCode.COMMON_FIELD_REQUIRED,
+            message="Langfuse adapter requires a base URL or endpoint",
+        )
     return base_url.rstrip("/") + "/" + path.lstrip("/")
 
 

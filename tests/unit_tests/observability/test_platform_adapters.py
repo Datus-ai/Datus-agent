@@ -17,6 +17,7 @@ from datus.observability.adapters.langfuse import (
 from datus.observability.adapters.platforms import BraintrustAdapter, DatadogAdapter, LangSmithAdapter
 from datus.observability.config import ObservabilityAdapterConfig
 from datus.observability.registry import ObservabilityAdapterRegistry
+from datus.utils.exceptions import DatusException
 
 
 class DummySpan:
@@ -91,6 +92,21 @@ def test_langfuse_baggage_processor_reuses_trace_attributes_when_child_context_l
     assert child.attributes["langfuse.session.id"] == "session-1"
 
 
+def test_langfuse_baggage_processor_shutdown_clears_cached_trace_attributes():
+    processor = _LangfuseBaggageSpanProcessor()
+    parent_context = context.get_current()
+    parent_context = baggage.set_baggage("datus.trace.name", "agent/chat", context=parent_context)
+    parent_context = baggage.set_baggage("session.id", "session-1", context=parent_context)
+    root = DummySpan(trace_id=0xABC)
+    child = DummySpan(trace_id=0xABC)
+
+    processor.on_start(root, parent_context)
+    processor.shutdown()
+    processor.on_start(child, context.get_current())
+
+    assert "langfuse.session.id" not in child.attributes
+
+
 def test_langfuse_baggage_processor_works_with_real_span_lifecycle():
     provider = TracerProvider()
     provider.add_span_processor(_LangfuseBaggageSpanProcessor())
@@ -116,7 +132,7 @@ def test_langfuse_adapter_requires_key_pair(monkeypatch):
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
     config = ObservabilityAdapterConfig.from_dict({"type": "langfuse"})
 
-    with pytest.raises(ValueError, match="LANGFUSE_PUBLIC_KEY"):
+    with pytest.raises(DatusException, match="LANGFUSE_PUBLIC_KEY"):
         LangfuseAdapter().resolve_adapter_config(config)
 
 
@@ -142,6 +158,15 @@ def test_langsmith_adapter_accepts_langchain_api_key(monkeypatch):
     assert resolved.headers["x-api-key"] == "lc-key"
 
 
+def test_langsmith_adapter_requires_api_key(monkeypatch):
+    monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
+    monkeypatch.delenv("LANGCHAIN_API_KEY", raising=False)
+    config = ObservabilityAdapterConfig.from_dict({"type": "langsmith"})
+
+    with pytest.raises(DatusException, match="LANGSMITH_API_KEY"):
+        LangSmithAdapter().resolve_adapter_config(config)
+
+
 def test_braintrust_adapter_builds_parent_header(monkeypatch):
     monkeypatch.setenv("BRAINTRUST_API_KEY", "bt-key")
     monkeypatch.setenv("BRAINTRUST_PROJECT_ID", "proj-123")
@@ -151,6 +176,17 @@ def test_braintrust_adapter_builds_parent_header(monkeypatch):
 
     assert resolved.endpoint == "https://api.braintrust.dev/otel/v1/traces"
     assert resolved.headers == {"Authorization": "Bearer bt-key", "x-bt-parent": "project_id:proj-123"}
+
+
+def test_braintrust_adapter_requires_parent(monkeypatch):
+    monkeypatch.setenv("BRAINTRUST_API_KEY", "bt-key")
+    monkeypatch.delenv("BRAINTRUST_PARENT", raising=False)
+    monkeypatch.delenv("BRAINTRUST_PROJECT_ID", raising=False)
+    monkeypatch.delenv("BRAINTRUST_PROJECT_NAME", raising=False)
+    config = ObservabilityAdapterConfig.from_dict({"type": "braintrust"})
+
+    with pytest.raises(DatusException, match="parent"):
+        BraintrustAdapter().resolve_adapter_config(config)
 
 
 def test_datadog_adapter_defaults_to_local_agent(monkeypatch):

@@ -5,6 +5,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+import pytest
 from opentelemetry import baggage, context
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -76,9 +77,9 @@ def test_openai_agents_processor_merges_first_agent_span_into_trace_root():
     finally:
         context.detach(token)
         processor.shutdown()
-        provider.shutdown()
 
     spans = exporter.get_finished_spans()
+    provider.shutdown()
     span_by_name = {span.name: span for span in spans}
 
     assert sorted(span_by_name) == ["agent/chat", "describe_table"]
@@ -90,3 +91,12 @@ def test_openai_agents_processor_merges_first_agent_span_into_trace_root():
     assert root.attributes["langfuse.session.id"] == "session-1"
     assert child.parent is not None
     assert child.parent.span_id == root.context.span_id
+
+
+def test_openai_agents_processor_fails_lazily_when_dependency_missing(monkeypatch):
+    import datus.observability.openai_agents as module
+
+    monkeypatch.setattr(module, "_oi_processor", None)
+
+    with pytest.raises(RuntimeError, match="openinference"):
+        module.DatusOpenInferenceTracingProcessor(object())

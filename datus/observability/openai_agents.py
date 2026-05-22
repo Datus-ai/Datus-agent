@@ -41,7 +41,12 @@ except Exception:  # pragma: no cover - import availability is checked during ad
     _oi_processor = None  # type: ignore[assignment]
 
 
-class DatusOpenInferenceTracingProcessor(_oi_processor.OpenInferenceTracingProcessor):  # type: ignore[union-attr]
+_OpenInferenceTracingProcessorBase = (
+    object if _oi_processor is None else _oi_processor.OpenInferenceTracingProcessor  # type: ignore[union-attr]
+)
+
+
+class DatusOpenInferenceTracingProcessor(_OpenInferenceTracingProcessorBase):  # type: ignore[misc]
     """OpenInference processor that avoids a duplicate root agent in Langfuse.
 
     The upstream processor emits one OpenTelemetry span for the Agents SDK trace and
@@ -52,6 +57,8 @@ class DatusOpenInferenceTracingProcessor(_oi_processor.OpenInferenceTracingProce
     """
 
     def __init__(self, tracer: Any) -> None:
+        if _oi_processor is None:
+            raise RuntimeError("openinference.instrumentation.openai_agents is required")
         super().__init__(tracer)
         self._merged_root_agent_span_ids: set[str] = set()
         self._merged_root_trace_ids: set[str] = set()

@@ -11,6 +11,7 @@ from collections import OrderedDict
 from typing import Any
 
 from datus.observability.config import ObservabilityAdapterConfig, TracingConfig
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -34,7 +35,7 @@ class OtlpAdapter:
 
     def resolve_adapter_config(self, adapter_config: ObservabilityAdapterConfig) -> ObservabilityAdapterConfig:
         if not adapter_config.endpoint:
-            raise ValueError("OTLP adapter requires an endpoint")
+            raise DatusException(ErrorCode.COMMON_FIELD_REQUIRED, message="OTLP adapter requires an endpoint")
         return adapter_config
 
     def _setup_otlp_exporter(self, adapter_config: ObservabilityAdapterConfig, tracing_config: TracingConfig) -> None:
@@ -75,6 +76,8 @@ class OtlpAdapter:
         baggage_processors = self.build_baggage_span_processors()
 
         with OtlpAdapter._lock:
+            if self._processor is not None and OtlpAdapter._tracer_provider is not None and not OtlpAdapter._shutdown:
+                return
             if OtlpAdapter._tracer_provider is None or OtlpAdapter._shutdown:
                 tracer_provider = TracerProvider(resource=Resource.create(resource_attrs))
                 tracer_provider.add_span_processor(_BaggageAttributeSpanProcessor())
@@ -140,6 +143,7 @@ class _BaggageAttributeSpanProcessor(SpanProcessor):
 
     def __init__(self) -> None:
         self._trace_attributes: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._trace_lock = threading.RLock()
 
     def on_start(self, span: Any, parent_context: Any | None = None) -> None:
         try:
@@ -151,10 +155,12 @@ class _BaggageAttributeSpanProcessor(SpanProcessor):
 
         trace_attrs = _provider_neutral_attributes_from_baggage(baggage_attrs)
         trace_id = _span_trace_id(span)
-        if trace_attrs and trace_id:
-            self._remember_trace_attributes(trace_id, trace_attrs)
-        elif trace_id:
-            trace_attrs = self._trace_attributes.get(trace_id, {})
+        with self._trace_lock:
+            if trace_attrs and trace_id:
+                self._remember_trace_attributes(trace_id, trace_attrs)
+            elif trace_id:
+                trace_attrs = self._trace_attributes.get(trace_id, {})
+            trace_attrs = dict(trace_attrs)
 
         for key, value in trace_attrs.items():
             _set_span_attribute(span, str(key), value)
@@ -163,17 +169,19 @@ class _BaggageAttributeSpanProcessor(SpanProcessor):
         return None
 
     def shutdown(self) -> None:
-        self._trace_attributes.clear()
+        with self._trace_lock:
+            self._trace_attributes.clear()
         return None
 
     def force_flush(self, timeout_millis: int = 30000) -> bool:
         return True
 
     def _remember_trace_attributes(self, trace_id: str, attributes: dict[str, Any]) -> None:
-        self._trace_attributes[trace_id] = attributes
-        self._trace_attributes.move_to_end(trace_id)
-        while len(self._trace_attributes) > self._MAX_TRACE_CACHE_SIZE:
-            self._trace_attributes.popitem(last=False)
+        with self._trace_lock:
+            self._trace_attributes[trace_id] = attributes
+            self._trace_attributes.move_to_end(trace_id)
+            while len(self._trace_attributes) > self._MAX_TRACE_CACHE_SIZE:
+                self._trace_attributes.popitem(last=False)
 
 
 def _is_trace_baggage_key(key: str) -> bool:

@@ -153,3 +153,16 @@ def test_trace_span_attributes_include_provider_neutral_identity():
     assert attrs["datus.user_id"] == "user-1"
     assert attrs["datus.run_id"] == "run-1"
     assert attrs["datus.metadata.service_session_id"] == "gen_sql_summary_session_ab12cd34"
+
+
+def test_trace_span_attributes_normalize_complex_metadata_values():
+    ctx = build_chat_trace_context(
+        session_id="chat_session_ab12cd34",
+        node_name="chat",
+        extra={"payload": {"tables": ["schools"]}, "attempt": 2},
+    )
+
+    attrs = build_trace_span_attributes(operation="chat", run_type="llm", ctx=ctx)
+
+    assert attrs["datus.metadata.payload"] == '{"tables": ["schools"]}'
+    assert attrs["datus.metadata.attempt"] == 2

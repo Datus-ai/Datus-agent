@@ -160,10 +160,13 @@ def setup_tracing(observability_config=None):
     if _tracing_initialized:
         return
 
-    _tracing_initialized = True
     if _setup_configured_observability(observability_config):
+        _tracing_initialized = True
         return
     _disable_sdk_tracing("observability tracing not configured")
+    tracing = getattr(observability_config, "tracing", None)
+    if tracing is not None and getattr(tracing, "explicit", False):
+        _tracing_initialized = True
 
 
 def _setup_configured_observability(observability_config) -> bool | None:

@@ -41,7 +41,7 @@ class TestSetupTracing:
             setup_tracing()
 
         mock_disable.assert_called_once_with("observability tracing not configured")
-        assert module._tracing_initialized is True
+        assert module._tracing_initialized is False
 
     def test_setup_tracing_ignores_legacy_env_auto_detection(self, monkeypatch):
         import datus.utils.traceable_utils as module
@@ -121,19 +121,31 @@ class TestSetupTracing:
 
         mock_set_processors.assert_not_called()
         mock_disable.assert_called_once_with("observability tracing not configured")
-        assert module._tracing_initialized is True
+        assert module._tracing_initialized is False
 
-    def test_setup_tracing_idempotent(self, monkeypatch):
+    def test_setup_tracing_without_config_does_not_block_later_config(self, monkeypatch):
         import datus.utils.traceable_utils as module
 
         _clear_all_tracing_envvars(monkeypatch)
         monkeypatch.setattr(module, "_tracing_initialized", False)
+        cfg = ObservabilityConfig.from_dict(
+            {
+                "tracing": {
+                    "enabled": True,
+                    "adapters": [{"type": "otlp", "endpoint": "http://collector/v1/traces"}],
+                }
+            }
+        )
 
-        with patch.object(module, "_disable_sdk_tracing") as mock_disable:
+        with (
+            patch.object(module, "_disable_sdk_tracing") as mock_disable,
+            patch("datus.observability.manager.configure_observability", return_value=True) as mock_configure,
+        ):
             setup_tracing()
-            setup_tracing()
+            setup_tracing(cfg)
 
         mock_disable.assert_called_once()
+        mock_configure.assert_called_once_with(cfg)
         assert module._tracing_initialized is True
 
     def test_setup_tracing_suppresses_noisy_otel_span_warnings(self, monkeypatch):

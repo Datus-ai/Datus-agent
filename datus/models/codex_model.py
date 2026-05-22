@@ -41,6 +41,12 @@ def _agents_trace_baggage(agent_name: Optional[str]):
     return get_observability_manager().trace_baggage(str(trace_name), attrs)
 
 
+async def _stream_events_with_trace_baggage(result, agent_name: Optional[str]):
+    with _agents_trace_baggage(agent_name):
+        async for event in result.stream_events():
+            yield event
+
+
 class _CodexResponsesModel(OpenAIResponsesModel):
     """OpenAIResponsesModel subclass that fixes Codex returning output:[] in response.completed.
 
@@ -431,7 +437,7 @@ class CodexModel(LLMBaseModel):
 
                         raise ExecutionInterrupted("Interrupted by user")
 
-                    async for event in result.stream_events():
+                    async for event in _stream_events_with_trace_baggage(result, agent_kwargs["name"]):
                         if interrupt_controller and interrupt_controller.is_interrupted:
                             from datus.cli.execution_state import ExecutionInterrupted
 

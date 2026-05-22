@@ -43,5 +43,34 @@ def _redact(value: Any, config: RedactConfig) -> Any:
 
 
 def _is_sensitive_field(key: str, fields: list[str]) -> bool:
-    normalized = key.lower()
-    return any(field.lower() in normalized for field in fields)
+    key_parts = set(_field_parts(key))
+    key_part_list = _field_parts(key)
+    key_normalized = _normalize_field(key)
+    for field in fields:
+        field_normalized = _normalize_field(field)
+        if not field_normalized:
+            continue
+        if key_normalized == field_normalized:
+            return True
+        field_parts = _field_parts(field)
+        if len(field_parts) > 1 and _contains_part_sequence(key_part_list, field_parts):
+            return True
+        if field_normalized in key_parts:
+            return True
+    return False
+
+
+def _field_parts(value: str) -> list[str]:
+    camel_spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", value)
+    return [part for part in re.split(r"[^A-Za-z0-9]+", camel_spaced.lower()) if part]
+
+
+def _normalize_field(value: str) -> str:
+    return "_".join(_field_parts(value))
+
+
+def _contains_part_sequence(parts: list[str], target: list[str]) -> bool:
+    if not target or len(target) > len(parts):
+        return False
+    size = len(target)
+    return any(parts[index : index + size] == target for index in range(len(parts) - size + 1))

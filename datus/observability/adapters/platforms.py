@@ -12,6 +12,7 @@ from typing import Any
 
 from datus.observability.adapters.otlp import OtlpAdapter
 from datus.observability.config import ObservabilityAdapterConfig
+from datus.utils.exceptions import DatusException, ErrorCode
 
 
 class LangSmithAdapter(OtlpAdapter):
@@ -32,7 +33,10 @@ class LangSmithAdapter(OtlpAdapter):
 
         api_key = _option_or_env(adapter_config, "api_key", "LANGSMITH_API_KEY", "LANGCHAIN_API_KEY")
         if not api_key:
-            raise ValueError("LangSmith adapter requires LANGSMITH_API_KEY or LANGCHAIN_API_KEY")
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_REQUIRED,
+                message="LangSmith adapter requires LANGSMITH_API_KEY or LANGCHAIN_API_KEY",
+            )
 
         headers = {"x-api-key": api_key}
         project = _option_or_env(adapter_config, "project", "LANGSMITH_PROJECT", "LANGCHAIN_PROJECT")
@@ -59,7 +63,9 @@ class BraintrustAdapter(OtlpAdapter):
 
         api_key = _option_or_env(adapter_config, "api_key", "BRAINTRUST_API_KEY")
         if not api_key:
-            raise ValueError("Braintrust adapter requires BRAINTRUST_API_KEY")
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_REQUIRED, message="Braintrust adapter requires BRAINTRUST_API_KEY"
+            )
 
         parent = _option_or_env(adapter_config, "parent", "BRAINTRUST_PARENT")
         if not parent:
@@ -70,7 +76,10 @@ class BraintrustAdapter(OtlpAdapter):
             elif project_name:
                 parent = f"project_name:{project_name}"
         if not parent:
-            raise ValueError("Braintrust adapter requires parent, project_id, or project_name")
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_REQUIRED,
+                message="Braintrust adapter requires parent, project_id, or project_name",
+            )
 
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -132,13 +141,19 @@ def _clean_string(value: Any) -> str | None:
 
 def _join_url(base_url: str | None, path: str) -> str:
     if not base_url:
-        raise ValueError("OTLP platform adapter requires a base URL or endpoint")
+        raise DatusException(
+            ErrorCode.COMMON_FIELD_REQUIRED,
+            message="OTLP platform adapter requires a base URL or endpoint",
+        )
     return base_url.rstrip("/") + "/" + path.lstrip("/")
 
 
 def _with_otel_trace_path(base_url: str | None) -> str:
     if not base_url:
-        raise ValueError("OTLP platform adapter requires a base URL or endpoint")
+        raise DatusException(
+            ErrorCode.COMMON_FIELD_REQUIRED,
+            message="OTLP platform adapter requires a base URL or endpoint",
+        )
     normalized = base_url.rstrip("/")
     if normalized.endswith("/v1/traces"):
         return normalized

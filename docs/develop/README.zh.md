@@ -330,7 +330,7 @@ Trace YAML 会写入 `{agent.home}/trajectory/...`。Workflow checkpoint 也保�
 
 外部 trace export 只通过 `agent.observability.tracing.enabled: true` 启用。只设置 provider API key 不会自动打开 tracing。
 
-`adapters` 可省略，默认使用 `langfuse`。内置的 `otlp`、`langsmith`、`langfuse`、`braintrust`、`datadog` adapter 都发送 OpenTelemetry trace。平台 adapter 是薄 preset：负责解析平台 endpoint 和鉴权，然后复用共享 OTLP exporter。基础 trace export 不需要安装平台 SDK。
+`adapters` 可省略，默认使用 `langfuse`。内置的 `otlp`、`langsmith`、`langfuse`、`braintrust`、`datadog` adapter 都发送 OpenTelemetry trace。平台 adapter 是轻量 preset：负责解析平台 endpoint 和鉴权，然后复用共享 OTLP exporter。基础 trace export 不需要安装平台 SDK。
 
 ```yaml
 agent:

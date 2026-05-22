@@ -2,6 +2,8 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import contextvars
+
 import pytest
 from opentelemetry import baggage
 
@@ -40,6 +42,22 @@ class ExplodingAdapter(FakeAdapter):
         raise RuntimeError("record failed")
 
 
+class ExplodingSetupAdapter(FakeAdapter):
+    def setup(self, adapter_config, tracing_config):
+        raise RuntimeError("setup failed")
+
+
+class NoNameExplodingAdapter:
+    def record_event(self, event):
+        raise RuntimeError("record failed")
+
+    def flush(self):
+        raise RuntimeError("flush failed")
+
+    def shutdown(self):
+        raise RuntimeError("shutdown failed")
+
+
 def test_manager_initializes_registered_adapters(monkeypatch):
     from datus.observability import manager as manager_module
 
@@ -54,6 +72,36 @@ def test_manager_initializes_registered_adapters(monkeypatch):
         }
     )
 
+    assert manager.configure(config) is True
+    assert len(manager.adapters) == 1
+
+
+def test_manager_can_configure_after_initial_disabled_call(monkeypatch):
+    from datus.observability import manager as manager_module
+
+    manager = ObservabilityManager()
+    assert manager.configure(None) is False
+    assert manager.initialized is False
+
+    monkeypatch.setattr(manager_module.adapter_registry, "get", lambda adapter_type: FakeAdapter)
+    config = ObservabilityConfig.from_dict({"tracing": {"enabled": True, "adapters": [{"type": "fake"}]}})
+
+    assert manager.configure(config) is True
+    assert manager.initialized is True
+    assert len(manager.adapters) == 1
+
+
+def test_manager_can_retry_after_all_adapters_fail(monkeypatch):
+    from datus.observability import manager as manager_module
+
+    config = ObservabilityConfig.from_dict({"tracing": {"enabled": True, "adapters": [{"type": "fake"}]}})
+    manager = ObservabilityManager()
+    monkeypatch.setattr(manager_module.adapter_registry, "get", lambda adapter_type: ExplodingSetupAdapter)
+
+    assert manager.configure(config) is False
+    assert manager.initialized is False
+
+    monkeypatch.setattr(manager_module.adapter_registry, "get", lambda adapter_type: FakeAdapter)
     assert manager.configure(config) is True
     assert len(manager.adapters) == 1
 
@@ -74,6 +122,17 @@ def test_manager_isolates_adapter_record_failures(monkeypatch):
 
     assert manager.configure(config) is True
     manager.record_event({"kind": "llm"})
+
+
+def test_manager_exception_handlers_tolerate_adapters_without_name():
+    manager = ObservabilityManager()
+    manager._adapters = [NoNameExplodingAdapter()]
+
+    manager.record_event({"kind": "llm"})
+    manager.flush()
+    manager.shutdown()
+
+    assert manager.adapters == []
 
 
 def test_span_propagates_body_exceptions():
@@ -99,6 +158,23 @@ def test_trace_reference_metadata_shape():
         "trace_run_id": "run1",
         "trace_provider": "otlp",
     }
+
+
+def test_last_trace_reference_is_context_local(monkeypatch):
+    ref = TraceReference(
+        trace_id="4bf92f3577b34da6a3ce929d0e0e4736",
+        span_id="00f067aa0ba902b7",
+        run_id="run1",
+        provider="otlp",
+    )
+    manager = ObservabilityManager()
+
+    monkeypatch.setattr(manager, "_current_otel_trace_reference", lambda: ref)
+    assert manager.get_trace_reference() == ref
+
+    monkeypatch.setattr(manager, "_current_otel_trace_reference", lambda: None)
+    assert manager.get_trace_reference() == ref
+    assert contextvars.Context().run(manager.get_trace_reference) is None
 
 
 def test_trace_baggage_attributes_are_provider_neutral():

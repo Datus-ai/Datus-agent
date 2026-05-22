@@ -167,7 +167,10 @@ def build_trace_span_attributes(
     for key, value in (trace_ctx.metadata or {}).items():
         if value is None:
             continue
-        attrs[f"datus.metadata.{key}"] = value
+        if isinstance(value, (str, bool, int, float)):
+            attrs[f"datus.metadata.{key}"] = value
+        else:
+            attrs[f"datus.metadata.{key}"] = _string_metadata_value(value)
     run_id = (trace_ctx.metadata or {}).get("run_id") or (trace_ctx.metadata or {}).get("benchmark_run_id")
     if run_id:
         attrs["datus.run_id"] = run_id

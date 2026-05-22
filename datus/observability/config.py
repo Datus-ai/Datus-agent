@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
+from datus.utils.exceptions import DatusException, ErrorCode
+
 CONTENT_CAPTURE_FIELDS = (
     "prompts",
     "responses",
@@ -83,7 +85,7 @@ class ObservabilityAdapterConfig:
             endpoint=_clean_string(raw.get("endpoint")),
             protocol=_clean_string(raw.get("protocol")) or "http/protobuf",
             headers=_parse_headers(raw.get("headers")),
-            timeout=float(timeout) if timeout is not None else None,
+            timeout=_parse_optional_float(timeout, "timeout"),
             features=dict(raw.get("features") or {}) if isinstance(raw.get("features"), Mapping) else {},
             options={str(key): value for key, value in raw.items() if key not in known},
         )
@@ -162,6 +164,19 @@ def _clean_string(value: Any) -> str | None:
     if not text or text.startswith("<MISSING:"):
         return None
     return text
+
+
+def _parse_optional_float(value: Any, field_name: str) -> float | None:
+    text = _clean_string(value)
+    if text is None:
+        return None
+    try:
+        return float(text)
+    except (TypeError, ValueError) as exc:
+        raise DatusException(
+            ErrorCode.COMMON_FIELD_INVALID,
+            message_args={"field_name": field_name, "except_values": "number", "your_value": value},
+        ) from exc
 
 
 def _parse_headers(value: Any) -> dict[str, str]:
