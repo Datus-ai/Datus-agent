@@ -20,8 +20,9 @@ from datus.observability.registry import ObservabilityAdapterRegistry
 
 
 class DummySpan:
-    def __init__(self, trace_id=0x123):
-        self.attributes = {}
+    def __init__(self, trace_id=0x123, name="span", attributes=None):
+        self.name = name
+        self.attributes = dict(attributes or {})
         self.trace_id = trace_id
 
     def set_attribute(self, key, value):
@@ -108,6 +109,49 @@ def test_langfuse_baggage_processor_works_with_real_span_lifecycle():
 
     assert span.attributes["langfuse.trace.name"] == "agent/chat"
     assert span.attributes["langfuse.session.id"] == "session-1"
+
+
+def test_langfuse_baggage_processor_marks_datus_trace_container_as_chain():
+    processor = _LangfuseBaggageSpanProcessor()
+    parent_context = context.get_current()
+    parent_context = baggage.set_baggage("datus.trace.name", "agent/chat", context=parent_context)
+    span = DummySpan(name="agent/chat", attributes={"openinference.span.kind": "AGENT"})
+
+    processor.on_start(span, parent_context)
+
+    assert span.attributes["openinference.span.kind"] == "CHAIN"
+    assert span.attributes["langfuse.trace.name"] == "agent/chat"
+
+
+def test_langfuse_baggage_processor_marks_appended_trace_container_as_chain():
+    processor = _LangfuseBaggageSpanProcessor()
+    parent_context = context.get_current()
+    parent_context = baggage.set_baggage(
+        "datus.trace.name",
+        "bootstrap-kb/starrocks/metrics",
+        context=parent_context,
+    )
+    span = DummySpan(
+        name="bootstrap-kb/starrocks/metrics/gen_metrics",
+        attributes={"openinference.span.kind": "AGENT"},
+    )
+
+    processor.on_start(span, parent_context)
+
+    assert span.attributes["openinference.span.kind"] == "CHAIN"
+    assert span.attributes["langfuse.trace.name"] == "bootstrap-kb/starrocks/metrics"
+
+
+def test_langfuse_baggage_processor_keeps_actual_agent_span_as_agent():
+    processor = _LangfuseBaggageSpanProcessor()
+    parent_context = context.get_current()
+    parent_context = baggage.set_baggage("datus.trace.name", "agent/chat", context=parent_context)
+    span = DummySpan(name="chat", attributes={"openinference.span.kind": "AGENT"})
+
+    processor.on_start(span, parent_context)
+
+    assert span.attributes["openinference.span.kind"] == "AGENT"
+    assert span.attributes["langfuse.trace.name"] == "agent/chat"
 
 
 def test_langfuse_adapter_requires_key_pair(monkeypatch):
