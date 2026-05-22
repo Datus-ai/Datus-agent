@@ -66,7 +66,7 @@ Before saving a file, scan its body and JSX for every capitalized component (Rec
 
 ### Canonical component shape
 
-Every chart / table / KPI component in `render/` is one `<ChartCard>` from `@datus/web-artifact` wrapping the chart body. **Copy this skeleton when you author a new component.** ChartCard owns the card chrome (white surface, 12-radius, asymmetric padding, flex-column stretch), the chart-actions menu (View SQL / Export CSV / JSON / PNG / etc.), and the "Modify this chart" edit hook. You only author the data layer and the chart body inside.
+Every chart / table / KPI component in `render/` is one `<ChartCard>` from `@datus/web-artifact` wrapping the chart body. **Copy this skeleton when you author a new component.** ChartCard owns the card chrome (white surface, 12-radius, asymmetric padding, flex-column stretch) and the chart-actions menu (View SQL / Export CSV / JSON / PNG / etc.). You only author the data layer and the chart body inside.
 
 ```jsx
 import { useMemo } from 'react';
@@ -126,7 +126,7 @@ The four sections are not optional ordering — they are the only ordering React
 
 ### Card props
 
-`<ChartCard>` requires three declarative props on every chart card. They are read at render time by the chart-actions menu and also stamped into the "Modify this chart" edit-intent message that the host shell uses to route follow-up edits back to this exact card.
+`<ChartCard>` requires three declarative props on every chart card. They are read at render time by the chart-actions menu and also act as the stable identifier the runtime uses if a follow-up turn pins an edit to this specific card (see "Targeted single-card edits" in the dashboard prompt).
 
 | Prop | Required | Notes |
 |---|---|---|
@@ -401,7 +401,7 @@ Rules:
 
 ### Chart action menu
 
-ChartCard embeds the chart-actions menu (View SQL / Export SQL / CSV / JSON / PNG / Copy PNG, plus "Modify this chart" when the host shell supports it) — you don't import or wire `ChartEntryMore` yourself. ChartCard reads `sqlId` + `data` straight from its own props and owns the screenshot root, so PNG export captures the title + chart together with no `cardRef` plumbing on your side.
+ChartCard embeds the chart-actions menu (View SQL / Export SQL / CSV / JSON / PNG / Copy PNG) — you don't import or wire `ChartEntryMore` yourself. ChartCard reads `sqlId` + `data` straight from its own props and owns the screenshot root, so PNG export captures the title + chart together with no `cardRef` plumbing on your side.
 
 **One ChartCard per card.** When a card visualizes more than one sub-view (e.g. two side-by-side pies sharing one query), wrap them in a single `<ChartCard>` whose body is a 2-column grid — not two adjacent ChartCards.
 

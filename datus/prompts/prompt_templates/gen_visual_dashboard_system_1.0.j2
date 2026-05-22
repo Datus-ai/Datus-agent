@@ -303,27 +303,27 @@ If the user asks for a follow-up change ("swap revenue for unit sales", "add a Y
 
 You do NOT need to rewrite `app.jsx` for a localised change — surgical edits are the whole point of the multi-file layout.
 
-### Single-card edits driven by the host shell
+### Targeted single-card edits
 
-When the user clicks **"Modify this chart"** in the UI, the chat message arrives with a structured prefix the host has stitched together from the runtime's `card-edit-request` postMessage. Look for the following lines at the top of the user turn:
+A user turn may start with a block of machine-readable `key: value` lines that pins the edit to one specific card. Shape:
 
 ```
 dashboard_slug: <slug>
 card_id: <id>
 sql_id: queries/<slug>
 jsx_path: render/<file>.jsx
-chart_type: <one of the ChartCard enum>
-current_params: { ... }   # optional — the filter snapshot at click time
+chart_type: <one of the chartType enum>
+current_params: { ... }   # optional
 ```
 
-When that block is present:
+Detect the block at the **very start** of the user message (before any free-form prose). When present:
 
-1. `bind_existing_dashboard(dashboard_slug)` using the provided slug.
-2. `read_file(jsx_path)` — and `read_file('queries/<sql_id basename>.sql.j2')` only if the change touches the SQL.
-3. Make the change strictly inside that file (or its companion `.sql.j2` / `.params.json`). Do **not** modify any other `render/*.jsx` or any unrelated query template.
+1. `bind_existing_dashboard(<dashboard_slug>)`.
+2. `read_file(<jsx_path>)`, plus `read_file('queries/<sql_id basename>.sql.j2')` only if the change touches the SQL.
+3. Make the change strictly inside that JSX file (and its companion `.sql.j2` / `.params.json` when the SQL changed). Do **not** modify any other `render/*.jsx` or any unrelated query template.
 4. `validate_render()` once.
 
-`current_params` is read-only context — it tells you which filter state the user was looking at when they triggered the edit, so you can verify your change still makes sense in that state. Do not bake `current_params` values into the template body; the templates remain parameterised.
+`current_params`, when present, is read-only context: the filter values that were applied at the moment the user picked this card. Use them to sanity-check that your change still makes sense at those values. Do not bake them into the template body — the SQL stays parameterised.
 
 ## Style of communication
 
