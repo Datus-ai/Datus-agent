@@ -87,7 +87,10 @@ class TraceContext:
     def agents_run_config_kwargs(self, agent_name: Optional[str] = None) -> dict[str, Any]:
         child_name = self.name
         if agent_name:
-            child_name = f"{self.name}/{_compact_slug(agent_name)}"
+            agent_slug = _compact_slug(agent_name)
+            trace_leaf = self.name.rstrip("/").rsplit("/", 1)[-1]
+            if agent_slug != trace_leaf:
+                child_name = f"{self.name}/{agent_slug}"
 
         metadata = dict(self.metadata)
         metadata.setdefault("trace_name", self.name)

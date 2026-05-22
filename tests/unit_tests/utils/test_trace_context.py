@@ -72,6 +72,41 @@ def test_chat_context_uses_chat_session_as_group_not_name():
     assert ctx.metadata["service_session_id"] == "gen_sql_summary_session_ab12cd34"
 
 
+def test_agents_run_config_does_not_repeat_trace_leaf_agent_name():
+    cases = [
+        ("chat", "chat/chat"),
+        ("chatbot", "chat/chatbot"),
+    ]
+    for agent_name, expected_name in cases:
+        ctx = build_chat_trace_context(
+            session_id=f"{agent_name}_session_ab12cd34",
+            llm_session_id=f"{agent_name}_session_ab12cd34",
+            node_name=agent_name,
+        )
+
+        kwargs = ctx.agents_run_config_kwargs(agent_name=agent_name)
+
+        assert ctx.name == expected_name
+        assert kwargs["workflow_name"] == expected_name
+        assert kwargs["group_id"] == f"{agent_name}_session_ab12cd34"
+        assert kwargs["trace_metadata"]["agent_name"] == agent_name
+
+
+def test_agents_run_config_appends_distinct_agent_name():
+    ctx = build_benchmark_trace_context(
+        benchmark="baisheng",
+        run_id="semantic_model_20260520_054027",
+        task_id="1",
+        workflow="baisheng_semantic_model",
+    )
+
+    kwargs = ctx.agents_run_config_kwargs(agent_name="gen_sql")
+
+    assert kwargs["workflow_name"] == "benchmark/baisheng/semantic_model/task-1/gen_sql"
+    assert kwargs["group_id"] == "benchmark:semantic_model_20260520_054027"
+    assert kwargs["trace_metadata"]["agent_name"] == "gen_sql"
+
+
 def test_trace_span_attributes_include_provider_neutral_identity():
     ctx = build_chat_trace_context(
         session_id="gen_sql_summary_session_ab12cd34",
