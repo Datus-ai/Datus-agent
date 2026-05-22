@@ -24,6 +24,7 @@ import json
 import os
 import sqlite3
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -283,6 +284,28 @@ class TestSessionManagerExecution:
         """delete_session raises ValueError for invalid session IDs."""
         with pytest.raises(ValueError, match="Invalid session ID"):
             sm.delete_session("bad/session")
+
+    def test_delete_session_removes_compact_archive_dir(self, sm):
+        """The compact subsystem writes archives to ``{session_dir}/{sid}/``
+        next to the ``.db`` file. Deleting the session must rmtree that
+        directory too — otherwise abandoned history dumps and tool I/O
+        archives would accumulate indefinitely as sessions are recycled.
+        """
+        session_id = "with-archive"
+        sm.get_session(session_id)  # forces ``.db`` creation
+        # Simulate what ``path_manager.session_data_dir`` would create:
+        # ``{session_dir}/{sid}/data/`` plus a file inside.
+        archive_dir = Path(sm.session_dir) / session_id / "data"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        archived = archive_dir / "000001_args_test.json"
+        archived.write_text('{"_archived": true}')
+        assert archived.exists()
+
+        sm.delete_session(session_id)
+
+        # The whole ``{sid}/`` directory must be gone — not just the .db.
+        assert not (Path(sm.session_dir) / session_id).exists()
+        assert not archived.exists()
 
     # -- list_sessions --
 

@@ -263,3 +263,87 @@ class TestBuildWalkPatterns:
         excludes, re_includes = build_walk_patterns(root_path=project, current_node="chat")
         for pattern in excludes + re_includes:
             assert "\\" not in pattern
+
+
+class TestSessionDataAnchor:
+    """``session_data_dir`` is the compact-archive read-only anchor.
+
+    Without this anchor LLMs would hit a permission prompt every time they
+    tried to ``read_file`` an archived tool output — defeating the whole
+    "zero information loss" property of the minor compact pass. These tests
+    pin the contract: archived path → WHITELIST + read_only; cross-session
+    paths → EXTERNAL even though they share the ``sessions/`` root.
+    """
+
+    def test_archived_path_is_whitelist_readonly(self, project, fake_home):
+        sdd = fake_home / "sessions" / "proj" / "sid42" / "data"
+        sdd.mkdir(parents=True)
+        archived = sdd / "000001_args_abc.json"
+        archived.write_text("{}")
+
+        r = classify_path(
+            str(archived),
+            root_path=project,
+            current_node="chat",
+            datus_home=fake_home,
+            session_data_dir=sdd,
+        )
+        assert r.zone == PathZone.WHITELIST
+        # MUST be read-only — the compact pass owns archive contents; LLM
+        # writes would corrupt hashes and audit trails.
+        assert r.read_only is True
+        # Display uses the canonical ``~/.datus/...`` form so the LLM can
+        # feed it back unambiguously, just like other whitelist entries.
+        assert r.display.startswith("~/.datus/sessions/")
+
+    def test_other_session_data_dir_stays_external(self, project, fake_home):
+        sessions_root = fake_home / "sessions" / "proj"
+        sdd = sessions_root / "sid42" / "data"
+        sdd.mkdir(parents=True)
+        other_sdd = sessions_root / "sid99" / "data"
+        other_sdd.mkdir(parents=True)
+        # Cross-session leak guard: even with the *current* session's anchor
+        # registered, another session's data dir must NOT be readable.
+        r = classify_path(
+            str(other_sdd / "foo.txt"),
+            root_path=project,
+            current_node="chat",
+            datus_home=fake_home,
+            session_data_dir=sdd,
+        )
+        assert r.zone == PathZone.EXTERNAL
+
+    def test_archive_path_without_anchor_is_external(self, project, fake_home):
+        sdd = fake_home / "sessions" / "proj" / "sid42" / "data"
+        sdd.mkdir(parents=True)
+        # Caller did not pass session_data_dir → the archive directory has
+        # no whitelist anchor, so the path is EXTERNAL (broker will ASK).
+        r = classify_path(
+            str(sdd / "x.json"),
+            root_path=project,
+            current_node="chat",
+            datus_home=fake_home,
+        )
+        assert r.zone == PathZone.EXTERNAL
+
+    def test_whitelist_anchors_includes_session_data_when_provided(self, project, fake_home):
+        sdd = fake_home / "sessions" / "proj" / "sid42" / "data"
+        sdd.mkdir(parents=True)
+        anchors = whitelist_anchors(
+            root_path=project,
+            current_node="chat",
+            datus_home=fake_home,
+            session_data_dir=sdd,
+        )
+        assert sdd.resolve() in anchors
+
+    def test_whitelist_anchors_omits_session_data_when_absent(self, project, fake_home):
+        anchors = whitelist_anchors(
+            root_path=project,
+            current_node="chat",
+            datus_home=fake_home,
+        )
+        # No session anchor expected; the list must contain only the
+        # project-side anchors + the global ``skills`` dir.
+        for anchor in anchors:
+            assert "sessions" not in anchor.parts

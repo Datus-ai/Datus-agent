@@ -12,18 +12,22 @@ streaming interactions with tool integration and action history management.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional, Set
 
 from agents import Tool
 from agents.extensions.memory import AdvancedSQLiteSession
 from agents.mcp import MCPServerStdio
 
+from datus.agent.node.compact_archive import ToolArchive, maybe_truncate_item
+from datus.agent.node.compact_prompts import build_continuation_message, render_major_compact_prompt
 from datus.agent.node.node import Node
 from datus.cli.execution_state import ExecutionInterrupted, InteractionBroker, InterruptController, PendingInputQueue
-from datus.configuration.agent_config import AgentConfig
+from datus.configuration.agent_config import AgentConfig, CompactConfig
 from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
@@ -273,6 +277,22 @@ class AgenticNode(Node):
             self.restore_plan_mode_state()
         except Exception as exc:  # noqa: BLE001 — restore must never crash construction
             logger.warning("Failed to restore plan-mode state for %s: %s", self.session_id, exc)
+
+        # ── Compact subsystem state ─────────────────────────────────────
+        # ``_compacted_until`` is a same-process scan-start hint for the
+        # next minor pass; it is not persisted because correctness already
+        # comes from the in-message ``[DATUS_ARCHIVED]`` marker, so an API
+        # resume just rescans the archived prefix once and skips items via
+        # marker detection. ``_archive`` and ``_compact_lock`` are lazy
+        # because they depend on path_manager / asyncio.get_running_loop()
+        # — both may not be ready at construction time (e.g. SaaS bootstrap).
+        self._compact_cfg: CompactConfig = (
+            getattr(agent_config, "compact", None) if agent_config else None
+        ) or CompactConfig()
+        self._compacted_until: int = 0
+        self._archive: Optional[ToolArchive] = None
+        self._compact_lock: Optional[asyncio.Lock] = None
+        self._overflow_retry_done: bool = False
 
     @property
     def model(self) -> Optional[LLMBaseModel]:
@@ -1037,132 +1057,447 @@ class AgenticNode(Node):
 
         return 0
 
-    async def _manual_compact(self) -> dict:
-        """
-        Manually compact the session by summarizing conversation history.
+    # ── Compact subsystem ──────────────────────────────────────────────
+    # Public entry: ``compact(mode, reason)``. CLI, RunHooks, and model-layer
+    # overflow fallbacks all go through this so the orchestration stays in
+    # the node. Private helpers below cover (a) the LLM-driven major pass
+    # that summarizes the entire history into a structured 10-section
+    # recap, and (b) the rule-based minor pass that walks the
+    # ``[_compacted_until, user-turn-cutoff)`` slice (everything older than
+    # the most recent ``keep_recent_user_turns`` user turns) and offloads
+    # any arguments/output over ``archive_threshold`` to disk.
 
-        Generates an LLM summary of the current session, clears the session's
-        history, then writes a `user marker + assistant summary` pair back
-        into the SAME session so subsequent LLM requests and UI history reads
-        see the summary as the new visible turn. The session_id / .db file
-        are preserved; no new session is created.
+    async def compact(
+        self,
+        mode: Literal["major", "minor", "auto"] = "auto",
+        reason: str = "manual",
+    ) -> Dict[str, Any]:
+        """Run a compact pass on the current session.
+
+        Args:
+            mode: ``"major"`` summarizes the entire session via the LLM;
+                ``"minor"`` runs the rule-based archive of long tool I/O;
+                ``"auto"`` picks one based on token usage and minor triggers,
+                or returns a no-op when neither threshold is met.
+            reason: Free-text label recorded on the result for observability
+                (e.g. ``"cli_manual"``, ``"hook_major"``, ``"overflow"``).
 
         Returns:
-            Dict with success, summary, and summary_token count
+            Dict with at least ``mode`` (the mode actually run, ``"noop"`` if
+            nothing was triggered), ``reason``, ``success`` (bool), and
+            mode-specific fields. Major also returns ``summary`` and
+            ``history_jsonl``; minor returns ``window`` (the [lo, hi) range
+            it processed) and ``archived_count``.
         """
+        self._ensure_compact_state()
+        lock = self._get_compact_lock()
+        async with lock:
+            resolved_mode = mode if mode != "auto" else self._decide_compact_mode()
+            if resolved_mode == "noop":
+                return {"mode": "noop", "reason": reason, "success": True}
+            if resolved_mode == "major":
+                return await self._major_compact(reason=reason)
+            return await self._minor_compact(reason=reason)
+
+    def _ensure_compact_state(self) -> None:
+        """Lazy-init the compact subsystem attributes.
+
+        Test harnesses that bypass ``AgenticNode.__init__`` (a common pattern
+        in the existing unit test suite) don't have these fields populated.
+        Production constructions set them eagerly, so this is a no-op there.
+        Each attribute keeps the same default it would get from ``__init__``.
+        """
+        if not hasattr(self, "_compact_cfg") or self._compact_cfg is None:
+            self._compact_cfg = (
+                getattr(self.agent_config, "compact", None) if getattr(self, "agent_config", None) else None
+            ) or CompactConfig()
+        if not hasattr(self, "_compacted_until"):
+            self._compacted_until = 0
+        if not hasattr(self, "_archive"):
+            self._archive = None
+        if not hasattr(self, "_compact_lock"):
+            self._compact_lock = None
+        if not hasattr(self, "_overflow_retry_done"):
+            self._overflow_retry_done = False
+
+    def _decide_compact_mode(self) -> Literal["major", "minor", "noop"]:
+        """Choose major / minor / noop synchronously from cheap signals.
+
+        Priority order:
+        1. Token usage above ``major.token_threshold`` → major. The session
+           is in danger of overflowing context, so a full LLM summary is
+           the only safe response.
+        2. User-turn count above ``minor.keep_recent_user_turns`` → minor.
+           There is at least one user turn old enough to fall out of the
+           preserved window, so the rule-based archive has something to do.
+           The user-turn boundary alone gates both throttling (sessions
+           under the threshold short-circuit to noop) and cache freshness
+           (the preserved window covers all recent history that would
+           still be in the model's cache).
+        3. Otherwise → noop.
+        """
+        cfg = self._compact_cfg
+        if not (cfg.major.enabled or cfg.minor.enabled):
+            return "noop"
+        try:
+            ratio = self._history_token_ratio_sync()
+        except Exception:
+            ratio = 0.0
+        if cfg.major.enabled and ratio >= cfg.major.token_threshold:
+            return "major"
+        if cfg.minor.enabled and self._user_turn_count_estimate() > cfg.minor.keep_recent_user_turns:
+            return "minor"
+        return "noop"
+
+    def _user_turn_count_estimate(self) -> int:
+        """Cheap synchronous estimate of user turns in the active session.
+
+        Counts ``role == USER, depth == 0`` entries in ``self.actions``, which
+        tracks the active run. Used as the gate before scheduling a minor
+        compact; the authoritative count (from session items) is recomputed
+        inside ``_minor_compact``, which will self-noop if the estimate
+        over-counted.
+        """
+        return sum(1 for a in self.actions if a.role == ActionRole.USER and a.depth == 0)
+
+    def _history_token_ratio_sync(self) -> float:
+        """Synchronous estimate of context window usage as a fraction.
+
+        Uses the last cached input-token count surfaced by ``_count_session_tokens``
+        via the most recent action. We avoid awaiting the session here because
+        the trigger check has to be cheap enough to call from
+        ``on_tool_end`` without stalling the run loop. Returns 0.0 when no
+        usage signal is available or no ``context_length`` is known.
+        """
+        if not self.context_length:
+            return 0.0
+        for action in reversed(self.actions):
+            if action.role == ActionRole.USER and action.depth == 0:
+                break
+            if (
+                action.role == ActionRole.ASSISTANT
+                and action.depth == 0
+                and isinstance(action.output, dict)
+                and isinstance(action.output.get("usage"), dict)
+            ):
+                usage = action.output["usage"]
+                tok = usage.get("last_call_input_tokens") or usage.get("input_tokens") or 0
+                if tok > 0:
+                    return tok / float(self.context_length)
+                break
+        return 0.0
+
+    def _get_compact_lock(self) -> asyncio.Lock:
+        """Lazily allocate the per-node compact lock.
+
+        Initialized on first use so the lock binds to the active event loop —
+        constructing it in ``__init__`` would attach it to whatever loop ran
+        the construction (often none), and asyncio.Lock would then refuse to
+        cross loops on TUI/CLI hand-off.
+        """
+        if self._compact_lock is None:
+            self._compact_lock = asyncio.Lock()
+        return self._compact_lock
+
+    def _get_archive(self) -> Optional[ToolArchive]:
+        """Lazily build the on-disk tool I/O archive for this session.
+
+        Path resolution is fully delegated to :class:`DatusPathManager` —
+        archives always land under ``session_data_dir(session_id)``.
+        """
+        if self._archive is not None:
+            return self._archive
+        if not self.session_id:
+            return None
+        cfg = self._compact_cfg.minor
+        path_manager = None
+        if self.agent_config is not None:
+            path_manager = getattr(self.agent_config, "path_manager", None)
+        try:
+            project_name = path_manager.project_name if path_manager else ""
+            self._archive = ToolArchive(
+                project_name=project_name,
+                session_id=self.session_id,
+                preview_chars=cfg.archive_preview_chars,
+                path_manager=path_manager,
+            )
+        except Exception as exc:
+            logger.warning("Failed to construct ToolArchive for session %s: %s", self.session_id, exc)
+            return None
+        return self._archive
+
+    @staticmethod
+    def _is_tool_io_item(item: Dict[str, Any]) -> bool:
+        """Whether an item counts as one half of a tool-call/output round."""
+        return item.get("type") in ("function_call", "function_call_output")
+
+    def _resolve_user_turn_cutoff(self, items: List[Dict[str, Any]]) -> int:
+        """Return the items index that bounds the eligible compact region.
+
+        ``items[0:cutoff)`` is eligible for archiving; ``items[cutoff:]`` is
+        the most recent ``keep_recent_user_turns`` user turns plus everything
+        that follows them, all kept intact so the model never loses fine
+        detail from the active conversation window.
+
+        The cutoff is the position of the ``keep_recent_user_turns``-th
+        most-recent user message (``role == "user"``). When the session has
+        ``<= keep_recent_user_turns`` user messages there is nothing older
+        than the kept window and we return ``-1`` to signal no-op.
+        """
+        n = self._compact_cfg.minor.keep_recent_user_turns
+        if n <= 0:
+            return -1
+        user_indices = [i for i, it in enumerate(items) if isinstance(it, dict) and it.get("role") == "user"]
+        if len(user_indices) <= n:
+            return -1
+        return user_indices[-n]
+
+    async def _dump_session_history_jsonl(self) -> Optional[Path]:
+        """Write the full session history to a JSONL file before major compact.
+
+        One item per line, written verbatim. Lets the LLM ``read_file`` any
+        original item by offset after the summary is in place — the structured
+        summary covers the common case, the JSONL covers the long tail.
+        Returns ``None`` when the archive directory is unavailable; the major
+        compact still runs but without a recovery pointer.
+        """
+        archive = self._get_archive()
+        if archive is None or self._session is None:
+            return None
+        try:
+            items = await self._session.get_items()
+        except Exception as exc:
+            logger.warning("session.get_items() failed during history dump: %s", exc)
+            return None
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        path = archive.dir / f"history_{ts}.jsonl"
+        try:
+            with path.open("w", encoding="utf-8") as f:
+                for it in items:
+                    f.write(json.dumps(it, ensure_ascii=False, default=str) + "\n")
+        except OSError as exc:
+            logger.warning("history JSONL dump failed: %s", exc)
+            return None
+        return path
+
+    async def _major_compact(self, *, reason: str) -> Dict[str, Any]:
+        """LLM-driven full-history compact pass.
+
+        Pipeline: (1) dump the full session as JSONL so any detail dropped by
+        the summary stays recoverable, (2) render the structured 10-section
+        prompt with the j2 template (passing the JSONL and archive paths so
+        the recovery pointers section is filled in), (3) run a single-turn
+        generation with the node's own system instruction so the summary
+        stays grounded in this node's identity, (4) clear the session and
+        seed a continuation user message that tells the next turn the chat
+        is resumed and where to find original content.
+        """
+        self._ensure_compact_state()
         try:
             model = self.model
         except Exception as exc:
-            logger.warning("Cannot compact: model resolution failed: %s", exc)
-            return {"success": False, "summary": "", "summary_token": 0}
+            logger.warning("Cannot major-compact: model resolution failed: %s", exc)
+            return {"mode": "major", "reason": reason, "success": False, "summary": "", "summary_token": 0}
         if not model:
-            logger.warning("Cannot compact: no model available")
-            return {"success": False, "summary": "", "summary_token": 0}
+            logger.warning("Cannot major-compact: no model available")
+            return {"mode": "major", "reason": reason, "success": False, "summary": "", "summary_token": 0}
 
-        # Lazily materialize the SQLite session when only session_id is known.
-        # This happens after .resume, which sets self.session_id but leaves
-        # self._session as None until the first execute call.
         if self._session is None and self.session_id:
             self._get_or_create_session()
-
         if not self._session:
-            logger.warning("Cannot compact: no session available")
-            return {"success": False, "summary": "", "summary_token": 0}
+            logger.warning("Cannot major-compact: no session available")
+            return {"mode": "major", "reason": reason, "success": False, "summary": "", "summary_token": 0}
+
+        logger.info("Starting major compact for session %s (reason=%s)", self.session_id, reason)
+        history_jsonl_path = await self._dump_session_history_jsonl()
+        archive = self._get_archive()
+        archive_dir_str = str(archive.dir) if archive is not None else ""
+
+        sys_prompt = self._get_system_prompt(conversation_summary=None)
+        summarization_prompt = render_major_compact_prompt(
+            node_role=self.get_node_name(),
+            history_jsonl_path=str(history_jsonl_path) if history_jsonl_path else "",
+            archive_dir=archive_dir_str,
+        )
 
         try:
-            logger.info(f"Starting manual compacting for session {self.session_id}")
-
-            # 1. Generate summary using LLM with existing session
-            summarization_prompt = (
-                "Summarize our conversation up to this point. The summary should be a concise yet comprehensive "
-                "overview of all key topics, questions, answers, and important details discussed. This summary "
-                "will replace the current chat history to conserve tokens, so it must capture everything "
-                "essential to understand the context and continue our conversation effectively as if no "
-                "information was lost."
+            result = await self.model.generate_with_tools(
+                prompt=summarization_prompt,
+                instruction=sys_prompt,
+                session=self._session,
+                max_turns=1,
+                temperature=0.3,
+                max_tokens=4000,
+                agent_name=self.get_node_name(),
             )
+            summary = result.get("content", "") if isinstance(result, dict) else getattr(result, "content", "") or ""
+            usage = result.get("usage", {}) if isinstance(result, dict) else {}
+            summary_token = usage.get("output_tokens", 0) if isinstance(usage, dict) else 0
+        except Exception as exc:
+            logger.error("Failed to generate major-compact summary: %s", exc)
+            return {"mode": "major", "reason": reason, "success": False, "summary": "", "summary_token": 0}
 
-            try:
-                result = await self.model.generate_with_tools(
-                    prompt=summarization_prompt,
-                    session=self._session,
-                    max_turns=1,
-                    temperature=0.3,
-                    max_tokens=2000,
-                    agent_name=self.get_node_name(),
-                )
-                summary = result.get("content", "")
-                summary_token = result.get("usage", {}).get("output_tokens", 0)
-                logger.debug(f"Generated summary: {len(summary)} characters, {summary_token} tokens")
-            except Exception as e:
-                logger.error(f"Failed to generate summary with LLM: {e}")
-                return {"success": False, "summary": "", "summary_token": 0}
-
-            # 2. Persist summary back into the session: clear the existing history
-            #    and append a user/assistant pair so the summary becomes the new
-            #    visible turn. Subsequent LLM requests will pick it up as context
-            #    via the OpenAI Agents SDK session, and UI history reads will
-            #    surface the summary instead of an empty session.
-            try:
-                await self._session.clear_session()
-                await self._session.add_items(
-                    [
-                        {
-                            "type": "message",
-                            "role": "user",
-                            "content": "[Previous conversation was compacted to save context. Summary below.]",
-                        },
-                        {
-                            "type": "message",
-                            "role": "assistant",
-                            "content": [{"type": "output_text", "text": summary}],
-                        },
-                    ]
-                )
-            except Exception as persist_err:
-                logger.error(f"Failed to persist compact summary: {persist_err}")
-                return {"success": False, "summary": "", "summary_token": 0}
-
-            logger.info(
-                f"Manual compacting completed. Session {self.session_id} cleared and "
-                f"summary persisted ({len(summary)} chars, {summary_token} output tokens)"
+        continuation = build_continuation_message(
+            summary or "(empty summary)",
+            str(history_jsonl_path) if history_jsonl_path else "(unavailable)",
+            archive_dir_str or "(unavailable)",
+        )
+        try:
+            await self._session.clear_session()
+            await self._session.add_items(
+                [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": continuation,
+                    },
+                ]
             )
-            return {"success": True, "summary": summary, "summary_token": summary_token}
+        except Exception as persist_err:
+            logger.error("Failed to persist major-compact continuation: %s", persist_err)
+            return {
+                "mode": "major",
+                "reason": reason,
+                "success": False,
+                "summary": summary,
+                "summary_token": summary_token,
+            }
 
-        except Exception as e:
-            logger.error(f"Manual compacting failed: {e}")
-            return {"success": False, "summary": "", "summary_token": 0}
+        # Reset the high-water mark — the prior history is now collapsed into
+        # a single continuation user message, so the next minor pass starts
+        # scanning from the top of the rewritten session.
+        self._compacted_until = 0
+
+        logger.info(
+            "Major compact complete: %d chars summary, %d output tokens, history=%s",
+            len(summary),
+            summary_token,
+            history_jsonl_path,
+        )
+        return {
+            "mode": "major",
+            "reason": reason,
+            "success": True,
+            "summary": summary,
+            "summary_token": summary_token,
+            "history_jsonl": str(history_jsonl_path) if history_jsonl_path else "",
+            "archive_dir": archive_dir_str,
+        }
+
+    async def _minor_compact(self, *, reason: str) -> Dict[str, Any]:
+        """Rule-based user-turn-bounded compact pass.
+
+        Walks ``items[lo:cutoff)`` (everything older than the most recent
+        ``keep_recent_user_turns`` user turns) and replaces any
+        ``function_call.arguments`` / ``function_call_output.output`` that
+        exceeds ``archive_threshold`` with a single-line text marker pointing
+        to a disk-backed archive file. The kept window
+        (``items[cutoff:]``) and the already-compacted prefix
+        (``items[:lo]``) are untouched, preserving cache for stable sections
+        of the prompt.
+
+        Idempotency: items whose text field already begins with the
+        ``[DATUS_ARCHIVED]`` marker are skipped by ``maybe_truncate_item`` —
+        the high-water mark ``_compacted_until`` is therefore a pure
+        same-process performance hint, not persisted across rebuilds. After
+        an API resume the next minor pass rescans the archived prefix once,
+        skipping each item via marker detection, and recomputes the cutoff
+        with no duplicate archives written.
+        """
+        self._ensure_compact_state()
+        cfg = self._compact_cfg.minor
+        if not cfg.enabled:
+            return {"mode": "minor", "reason": reason, "success": True, "archived_count": 0, "window": None}
+        if self._session is None and self.session_id:
+            self._get_or_create_session()
+        if not self._session:
+            return {"mode": "minor", "reason": reason, "success": False, "archived_count": 0, "window": None}
+        archive = self._get_archive()
+        if archive is None:
+            logger.warning("Minor compact skipped: archive unavailable for session %s", self.session_id)
+            return {"mode": "minor", "reason": reason, "success": False, "archived_count": 0, "window": None}
+
+        try:
+            items = await self._session.get_items()
+        except Exception as exc:
+            logger.warning("session.get_items() failed during minor compact: %s", exc)
+            return {"mode": "minor", "reason": reason, "success": False, "archived_count": 0, "window": None}
+
+        cutoff = self._resolve_user_turn_cutoff(items)
+        if cutoff < 0:
+            return {"mode": "minor", "reason": reason, "success": True, "archived_count": 0, "window": None}
+
+        lo = max(self._compacted_until, 0)
+        if cutoff <= lo:
+            return {
+                "mode": "minor",
+                "reason": reason,
+                "success": True,
+                "archived_count": 0,
+                "window": [lo, cutoff],
+            }
+
+        rewritten: List[Dict[str, Any]] = []
+        archived_count = 0
+        for idx, it in enumerate(items):
+            if lo <= idx < cutoff:
+                new_it = maybe_truncate_item(it, archive, cfg.archive_threshold, idx)
+                if new_it is not it:
+                    archived_count += 1
+                rewritten.append(new_it)
+            else:
+                rewritten.append(it)
+        if archived_count == 0:
+            # Nothing crossed the threshold or everything was already archived
+            # — advance the high-water mark anyway so we don't keep re-scanning
+            # the same region every turn within this process.
+            self._compacted_until = cutoff
+            return {
+                "mode": "minor",
+                "reason": reason,
+                "success": True,
+                "archived_count": 0,
+                "window": [lo, cutoff],
+            }
+
+        try:
+            await self._session.clear_session()
+            await self._session.add_items(rewritten)
+        except Exception as exc:
+            logger.error("Failed to persist minor-compact rewrite: %s", exc)
+            return {
+                "mode": "minor",
+                "reason": reason,
+                "success": False,
+                "archived_count": archived_count,
+                "window": [lo, cutoff],
+            }
+
+        self._compacted_until = cutoff
+        logger.info(
+            "Minor compact done: window=[%d,%d) archived=%d reason=%s",
+            lo,
+            cutoff,
+            archived_count,
+            reason,
+        )
+        return {
+            "mode": "minor",
+            "reason": reason,
+            "success": True,
+            "archived_count": archived_count,
+            "window": [lo, cutoff],
+        }
 
     async def _auto_compact(self) -> bool:
+        """Backward-compatible wrapper kept for callers outside this class.
+
+        Delegates to :meth:`compact` with ``mode="auto"`` and translates the
+        dict return to the legacy ``bool`` (True iff a non-noop pass ran
+        successfully). New code should call :meth:`compact` directly.
         """
-        Automatically compact when session approaches token limit (~90%).
-
-        Returns:
-            True if compacting was triggered and successful, False otherwise
-        """
-        try:
-            model = self.model
-        except Exception:
-            return False
-        if not model or not self.context_length:
-            return False
-
-        try:
-            current_tokens = await self._count_session_tokens()
-
-            if current_tokens > (self.context_length * 0.9):
-                logger.info(f"Auto-compacting triggered: {current_tokens}/{self.context_length} tokens")
-                try:
-                    result = await self._manual_compact()
-                    return result.get("success", False)
-                except Exception as e:
-                    logger.error(f"Auto-compact manual compaction failed: {e}")
-                    return False
-
-            return False
-
-        except Exception as e:
-            logger.error(f"Auto-compact check failed: {e}")
-            return False
+        result = await self.compact(mode="auto", reason="pre_user_turn")
+        return result.get("mode") != "noop" and result.get("success", False)
 
     def _parse_node_config(self, agent_config: Optional[AgentConfig], node_name: str) -> dict:
         """
@@ -2362,14 +2697,37 @@ class AgenticNode(Node):
         inherited_memory_node = kwargs.pop("inherited_memory_node", None)
         if inherited_memory_node is None:
             inherited_memory_node = get_inherited_memory(current_node)
+        session_data_dir = kwargs.pop("session_data_dir", None) or self._resolve_session_data_dir()
         return FilesystemFuncTool(
             root_path=root_path,
             current_node=current_node,
             datus_home=datus_home,
             strict=strict,
             inherited_memory_node=inherited_memory_node,
+            session_data_dir=session_data_dir,
             **kwargs,
         )
+
+    def _resolve_session_data_dir(self) -> Optional[str]:
+        """Resolve the compact-archive data dir for this node's current session.
+
+        Returns ``None`` when the node has no agent_config / path_manager (used
+        by lightweight bootstrap tests), no session_id yet, or when the
+        path manager rejects the segment (e.g. missing project_name). The
+        caller falls back to leaving the FS policy without a session anchor,
+        which keeps archived paths EXTERNAL — safe but the LLM will be
+        prompted before it can ``read_file`` them.
+        """
+        if not self.agent_config:
+            return None
+        path_manager = getattr(self.agent_config, "path_manager", None)
+        if path_manager is None or not getattr(self, "session_id", ""):
+            return None
+        try:
+            return str(path_manager.session_data_dir(self.session_id))
+        except Exception as exc:
+            logger.debug("Failed to resolve session_data_dir for fs policy: %s", exc)
+            return None
 
     def _make_filesystem_policy(self):
         """Build a :class:`FilesystemPolicy` for ``PermissionHooks`` construction.
@@ -2388,11 +2746,14 @@ class AgenticNode(Node):
 
             from datus.tools.permission.permission_hooks import FilesystemPolicy
 
+            session_data_dir_str = self._resolve_session_data_dir()
+            session_data_dir = _Path(session_data_dir_str) if session_data_dir_str else None
             return FilesystemPolicy(
                 root_path=_Path(self._resolve_workspace_root()).resolve(strict=False),
                 current_node=self.get_node_name(),
                 datus_home=_Path(path_manager.datus_home),
                 strict=self._resolve_filesystem_strict(),
+                session_data_dir=session_data_dir,
             )
         except Exception as e:
             logger.debug(f"Failed to build FilesystemPolicy: {e}")
@@ -2559,14 +2920,58 @@ class AgenticNode(Node):
 
         ``extra`` is typically ``self.hooks`` for workflow nodes
         (``feedback``, ``sql_summary``, …) that have their own todo/plan
-        hooks. Returns a :class:`CompositeHooks` when both are present,
-        a single hook when only one is present, or ``None`` when neither
-        exists. Callers pass the result directly into
+        hooks. Returns a :class:`CompositeHooks` when multiple hooks are
+        active, a single hook when only one is present, or ``None`` when
+        none exist. Callers pass the result directly into
         ``generate_with_tools_stream(hooks=...)``.
+
+        Always wires the ``CompactHook`` in so ``on_tool_end`` increments
+        the rolling-window counter and dispatches major / minor compacts
+        from inside the Runner loop. The hook is cheap to construct (just
+        holds a reference to this node) so we always include it — its
+        ``_decide_compact_mode`` will return ``noop`` when no compact is
+        needed, which is the common case.
         """
         self._ensure_permission_hooks()
-        if self.permission_hooks and extra:
-            from datus.tools.permission.permission_hooks import CompositeHooks
+        compact_hook = self._get_or_create_compact_hook()
 
-            return CompositeHooks([extra, self.permission_hooks])
-        return self.permission_hooks or extra
+        active = [h for h in (extra, self.permission_hooks, compact_hook) if h is not None]
+        if not active:
+            return None
+        if len(active) == 1:
+            return active[0]
+        from datus.tools.permission.permission_hooks import CompositeHooks
+
+        return CompositeHooks(active)
+
+    def _get_or_create_compact_hook(self) -> Any:
+        """Lazily build the ``CompactHook`` for this node.
+
+        Construction is deferred to first SDK call so test harnesses that
+        bypass ``__init__`` don't trip on a missing attribute, and so the
+        hook is only created in the loop where it will actually be used.
+
+        Returns ``None`` when:
+        - the compact subsystem is disabled in config (both ``major.enabled``
+          and ``minor.enabled`` off), or
+        - the node is running in non-interactive mode (workflow / single-shot
+          subagent). Those nodes don't loop with the user, so the rolling-
+          window minor compact has nothing to accumulate and the in-loop
+          major trigger has no observer — the legacy behavior (let the run
+          fail with ``MaxTurnsExceeded`` and rely on the model-layer
+          overflow callback) is the right answer there.
+        """
+        if getattr(self, "execution_mode", None) != "interactive":
+            return None
+        self._ensure_compact_state()
+        cfg = self._compact_cfg
+        if not (cfg.major.enabled or cfg.minor.enabled):
+            return None
+        existing = getattr(self, "_compact_hook_instance", None)
+        if existing is not None:
+            return existing
+        from datus.agent.node.compact_hook import CompactHook
+
+        hook = CompactHook(self)
+        self._compact_hook_instance = hook
+        return hook

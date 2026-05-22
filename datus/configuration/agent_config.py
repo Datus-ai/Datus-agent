@@ -122,6 +122,65 @@ def _coerce_bool(value: Any, default: bool) -> bool:
 
 
 @dataclass
+class MajorCompactConfig:
+    """Settings controlling the LLM-driven full-history summarization pass."""
+
+    enabled: bool = True
+    # Fraction of the model's context window above which a major compact is
+    # forced (overrides minor compact selection in the auto dispatcher).
+    token_threshold: float = 0.9
+
+
+@dataclass
+class MinorCompactConfig:
+    """Settings controlling the rule-based user-turn-bounded compact pass.
+
+    Minor compact fires unconditionally once a session has more than
+    ``keep_recent_user_turns`` user-message turns: everything older than that
+    sliding window is eligible for archiving. There is no token-ratio or
+    cache-TTL gate — the user-turn boundary alone provides both the throttle
+    (a session below the threshold returns early as a no-op) and the
+    correctness boundary (the active conversation window is never touched).
+    """
+
+    enabled: bool = True
+    # Keep the original tool I/O of the most recent ``keep_recent_user_turns``
+    # user-message turns intact; anything older is eligible for archiving.
+    # Counted by ``role == 'user'`` items in the session — robust against
+    # variable tool-call cadence within a single turn.
+    keep_recent_user_turns: int = 4
+    # Tool-call arguments / output longer than this many characters are
+    # offloaded to disk during compaction.
+    archive_threshold: int = 1000
+    # Preview text length retained inline in the archive marker. Error
+    # outputs automatically get a 2× preview so the LLM can read the failure
+    # context without round-tripping to read_file.
+    archive_preview_chars: int = 1000
+
+
+@dataclass
+class CompactConfig:
+    """Top-level ``agent.compact`` config grouping major + minor settings."""
+
+    major: MajorCompactConfig = field(default_factory=MajorCompactConfig)
+    minor: MinorCompactConfig = field(default_factory=MinorCompactConfig)
+
+    @classmethod
+    def from_dict(cls, raw: Optional[Dict[str, Any]]) -> "CompactConfig":
+        if not raw or not isinstance(raw, dict):
+            return cls()
+        major_raw = raw.get("major") or {}
+        minor_raw = raw.get("minor") or {}
+        major_kwargs = {f.name: major_raw[f.name] for f in fields(MajorCompactConfig) if f.name in major_raw}
+        minor_kwargs = {f.name: minor_raw[f.name] for f in fields(MinorCompactConfig) if f.name in minor_raw}
+        if "enabled" in major_kwargs:
+            major_kwargs["enabled"] = _coerce_bool(major_kwargs["enabled"], True)
+        if "enabled" in minor_kwargs:
+            minor_kwargs["enabled"] = _coerce_bool(minor_kwargs["enabled"], True)
+        return cls(major=MajorCompactConfig(**major_kwargs), minor=MinorCompactConfig(**minor_kwargs))
+
+
+@dataclass
 class DbConfig:
     path_pattern: str = field(default="", init=True)
     type: str = field(default="", init=True)
@@ -591,6 +650,7 @@ class AgentConfig:
     services: ServicesConfig
     scheduler_services: Dict[str, Dict[str, Any]]
     semantic_layer_configs: Dict[str, Dict[str, Any]]
+    compact: "CompactConfig"
     # Free-form sidecar metadata for ``agent.models`` entries, keyed by
     # the same name used in ``models``. Lets hosts attach extra context
     # to a model without extending the strongly-typed ``ModelConfig``.
@@ -684,6 +744,11 @@ class AgentConfig:
         if not isinstance(bash_raw, dict):
             bash_raw = {}
         self._bash_tool_enabled = _coerce_bool(bash_raw.get("enabled"), True)
+        # ``compact`` controls the AgenticNode session summarization /
+        # archiving subsystem. Defaults preserve the legacy 90% major-compact
+        # threshold while enabling the new rule-based minor compact + on-disk
+        # archive of long tool I/O.
+        self.compact = CompactConfig.from_dict(kwargs.get("compact"))
         self._current_datasource = ""
         self.nodes = nodes
         self.export_config: Dict[str, Any] = kwargs.get("export", {})

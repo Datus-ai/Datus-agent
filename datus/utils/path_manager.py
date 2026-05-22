@@ -343,6 +343,59 @@ class DatusPathManager:
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         return self.sessions_dir / f"{session_id}.db"
 
+    def session_dir(self, session_id: str) -> Path:
+        """Per-session container directory.
+
+        Holds non-db session artifacts (compact archives, history dumps). Sits
+        alongside the session db file so cleanup can ``rmtree`` this directory
+        when the db is deleted.
+
+        Returns:
+            Path: ``{sessions_dir}/{session_id}``
+        """
+        self._validate_session_id(session_id)
+        path = self.sessions_dir / session_id
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def session_data_dir(self, session_id: str) -> Path:
+        """Per-session data directory used by the compact archive.
+
+        Returns:
+            Path: ``{sessions_dir}/{session_id}/data``
+        """
+        path = self.session_dir(session_id) / "data"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def relpath_for_display(self, target: PathLike) -> str:
+        """Render ``target`` with the most informative shortened prefix.
+
+        Resolution order:
+        1. Under ``project_root`` → project-relative posix string.
+        2. Under ``datus_home`` → ``~/.datus/<rel>``.
+        3. Under ``$HOME`` → ``~/<rel>``.
+        4. Otherwise → absolute posix string.
+
+        Symlinks are resolved on the input first so anchors match canonical
+        prefixes even when the caller passed an un-resolved path.
+        """
+        resolved = Path(target).expanduser().resolve(strict=False)
+        for anchor, prefix in (
+            (self._project_root, ""),
+            (self._datus_home, "~/.datus/"),
+            (Path.home(), "~/"),
+        ):
+            try:
+                rel = resolved.relative_to(anchor)
+            except ValueError:
+                continue
+            rel_posix = rel.as_posix()
+            if not prefix:
+                return rel_posix or "."
+            return f"{prefix}{rel_posix}".rstrip("/") if rel_posix else prefix.rstrip("/")
+        return resolved.as_posix()
+
     @staticmethod
     def _validate_session_id(session_id: str) -> None:
         """Reject session_ids that could escape the project data directory."""

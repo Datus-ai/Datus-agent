@@ -42,11 +42,16 @@ class TestPlanModeStateRoundTrip:
         path = tmp_path / "a" / "b" / "c" / "state.json"
         PlanModeState(plan_mode_active=True).save(path)
         assert path.exists()
-        # On-disk JSON contains the expected schema
+        # On-disk JSON uses the nested ``plan_mode`` layout so future readers
+        # can tell apart a missing section from a falsy-valued one.
         data = json.loads(path.read_text(encoding="utf-8"))
-        assert data["plan_mode_active"] is True
-        assert data["plan_file_path"] is None
-        assert data["workflow_prompt_sent"] is False
+        assert data == {
+            "plan_mode": {
+                "plan_mode_active": True,
+                "plan_file_path": None,
+                "workflow_prompt_sent": False,
+            }
+        }
 
     def test_default_values(self):
         state = PlanModeState()
@@ -77,3 +82,54 @@ class TestPlanModeStateRoundTrip:
         path.write_text(json.dumps(raw), encoding="utf-8")
         loaded = PlanModeState.load(path)
         assert (loaded.plan_mode_active, loaded.plan_file_path, loaded.workflow_prompt_sent) == expected
+
+
+class TestLegacyCompactSectionIgnored:
+    """Legacy state files written by older code carried a ``compact`` section
+    alongside ``plan_mode``. The compact subsystem no longer persists state —
+    idempotency is guaranteed by the in-message ``[DATUS_ARCHIVED]`` marker —
+    so the loader must ignore the legacy key without crashing.
+    """
+
+    def test_loader_ignores_compact_section(self, tmp_path):
+        path = tmp_path / "legacy.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "plan_mode": {
+                        "plan_mode_active": True,
+                        "plan_file_path": "p.md",
+                        "workflow_prompt_sent": False,
+                    },
+                    "compact": {"compacted_until": 14},
+                }
+            ),
+            encoding="utf-8",
+        )
+        loaded = PlanModeState.load(path)
+        # Plan-mode section restored verbatim; compact section silently dropped.
+        assert loaded.plan_mode_active is True
+        assert loaded.plan_file_path == "p.md"
+        assert loaded.workflow_prompt_sent is False
+
+    def test_save_does_not_emit_compact_key(self, tmp_path):
+        """Even if a legacy file with a ``compact`` section is loaded and
+        re-saved, the new write must NOT round-trip the dropped section —
+        otherwise stale state would linger on disk forever.
+        """
+        path = tmp_path / "legacy.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "plan_mode": {"plan_mode_active": False, "plan_file_path": None, "workflow_prompt_sent": False},
+                    "compact": {"compacted_until": 7},
+                }
+            ),
+            encoding="utf-8",
+        )
+        loaded = PlanModeState.load(path)
+        loaded.plan_mode_active = True
+        loaded.save(path)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert "compact" not in data
+        assert data == {"plan_mode": {"plan_mode_active": True, "plan_file_path": None, "workflow_prompt_sent": False}}

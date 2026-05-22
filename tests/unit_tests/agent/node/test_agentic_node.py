@@ -547,55 +547,73 @@ class TestGetAvailableSkillsContext:
 
 
 # ---------------------------------------------------------------------------
-# TestAutoCompact
+# TestCompactDispatch (was TestAutoCompact)
+# Exercises the public ``compact()`` API and the legacy ``_auto_compact()``
+# wrapper kept for backward compatibility.
 # ---------------------------------------------------------------------------
 
 
-class TestAutoCompact:
+class TestCompactDispatch:
     @pytest.mark.asyncio
-    async def test_auto_compact_skips_when_no_model(self):
+    async def test_auto_compact_returns_false_when_no_signal(self):
+        # With no model + no actions, ``_history_token_ratio_sync`` returns 0
+        # and ``_user_turn_count_estimate`` is 0, so ``compact("auto")`` is a
+        # noop and the legacy wrapper reports False.
         node = _make_node()
         node.model = None
-
         result = await node._auto_compact()
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_auto_compact_skips_when_no_context_length(self):
-        mock_model = MagicMock()
-        mock_model.context_length.return_value = None
+    async def test_compact_auto_picks_major_when_token_ratio_high(self):
         node = _make_node()
-        node._pinned_model = mock_model
-
-        result = await node._auto_compact()
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_auto_compact_triggers_when_over_limit(self):
-        mock_model = MagicMock()
-        mock_model.context_length.return_value = 1000
-        node = _make_node()
-        node._pinned_model = mock_model
+        node.session_id = "sid"
         node._session = MagicMock()
-
-        with patch.object(node, "_count_session_tokens", return_value=950):
-            with patch.object(node, "_manual_compact", return_value={"success": True}) as mock_compact:
-                result = await node._auto_compact()
-
-        mock_compact.assert_called_once()
-        assert result is True
+        # Make the sync ratio exceed major threshold (0.9 default).
+        with patch.object(_ConcreteAgenticNode, "_history_token_ratio_sync", return_value=0.95):
+            with patch.object(
+                node, "_major_compact", new=AsyncMock(return_value={"mode": "major", "success": True})
+            ) as m:
+                result = await node.compact(mode="auto", reason="ratio_test")
+        m.assert_awaited_once_with(reason="ratio_test")
+        assert result["mode"] == "major"
 
     @pytest.mark.asyncio
-    async def test_auto_compact_skips_when_under_limit(self):
-        mock_model = MagicMock()
-        mock_model.context_length.return_value = 1000
+    async def test_compact_auto_picks_minor_when_user_turns_exceed_keep_window(self):
         node = _make_node()
-        node._pinned_model = mock_model
+        node.session_id = "sid"
+        node._session = MagicMock()
+        with patch.object(_ConcreteAgenticNode, "_history_token_ratio_sync", return_value=0.1):
+            with patch.object(_ConcreteAgenticNode, "_user_turn_count_estimate", return_value=99):
+                with patch.object(
+                    node, "_minor_compact", new=AsyncMock(return_value={"mode": "minor", "success": True})
+                ) as m:
+                    result = await node.compact(mode="auto", reason="ratio_test")
+        m.assert_awaited_once_with(reason="ratio_test")
+        assert result["mode"] == "minor"
 
-        with patch.object(node, "_count_session_tokens", return_value=500):
-            result = await node._auto_compact()
+    @pytest.mark.asyncio
+    async def test_compact_auto_returns_noop_when_no_conditions(self):
+        node = _make_node()
+        node._session = MagicMock()
+        with patch.object(_ConcreteAgenticNode, "_history_token_ratio_sync", return_value=0.1):
+            with patch.object(_ConcreteAgenticNode, "_user_turn_count_estimate", return_value=0):
+                result = await node.compact(mode="auto", reason="noop_test")
+        assert result["mode"] == "noop"
+        assert result["success"] is True
 
-        assert result is False
+    @pytest.mark.asyncio
+    async def test_compact_explicit_major_skips_dispatch(self):
+        node = _make_node()
+        node.session_id = "sid"
+        node._session = MagicMock()
+        # Even at 0% ratio, explicit mode="major" goes straight to _major_compact.
+        with patch.object(_ConcreteAgenticNode, "_history_token_ratio_sync", return_value=0.0):
+            with patch.object(
+                node, "_major_compact", new=AsyncMock(return_value={"mode": "major", "success": True})
+            ) as m:
+                await node.compact(mode="major", reason="cli_manual")
+        m.assert_awaited_once_with(reason="cli_manual")
 
 
 # ---------------------------------------------------------------------------
@@ -633,24 +651,33 @@ class TestGetSessionInfo:
 
 
 class TestManualCompact:
+    """Behavioral tests for ``_major_compact`` (the LLM-driven summarization pass).
+
+    Renamed from ``TestManualCompact`` for historical reasons. Class kept under
+    the same name so the test count stays comparable across the refactor.
+    """
+
     @pytest.mark.asyncio
-    async def test_manual_compact_no_model_returns_failure(self):
+    async def test_major_compact_no_model_returns_failure(self):
         node = _make_node()
         node.model = None
         node._session = MagicMock()
-        result = await node._manual_compact()
+        node.session_id = "sid"
+        result = await node._major_compact(reason="t")
         assert result["success"] is False
+        assert result["mode"] == "major"
 
     @pytest.mark.asyncio
-    async def test_manual_compact_no_session_returns_failure(self):
+    async def test_major_compact_no_session_returns_failure(self):
         node = _make_node()
         node.model = MagicMock()
         node._session = None
-        result = await node._manual_compact()
+        node.session_id = ""
+        result = await node._major_compact(reason="t")
         assert result["success"] is False
 
     @pytest.mark.asyncio
-    async def test_manual_compact_success(self):
+    async def test_major_compact_success_persists_continuation_message(self):
         node = _make_node()
         node.session_id = "compact_test"
         mock_session = _make_async_session_mock()
@@ -659,30 +686,35 @@ class TestManualCompact:
         node._session_manager = mock_sm
         mock_model = MagicMock()
         mock_model.generate_with_tools = AsyncMock(
-            return_value={"content": "Summary of conversation", "usage": {"output_tokens": 100}}
+            return_value={"content": "## 1. Primary user request\nMy goal", "usage": {"output_tokens": 100}}
         )
         node.model = mock_model
-
-        result = await node._manual_compact()
+        # Bypass the disk dump so the test stays hermetic; we only care the
+        # continuation message gets persisted with the summary embedded.
+        with patch.object(_ConcreteAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value=None)):
+            with patch.object(_ConcreteAgenticNode, "_get_archive", return_value=None):
+                with patch.object(_ConcreteAgenticNode, "_get_system_prompt", return_value="sys"):
+                    result = await node._major_compact(reason="cli_manual")
 
         assert result["success"] is True
-        assert "Summary" in result["summary"]
-        # Session is preserved — summary is persisted into the same session,
-        # not a new one. The .db file (and session_id) must remain alive.
-        assert node._session is mock_session
-        assert node.session_id == "compact_test"
+        assert result["mode"] == "major"
+        assert "Primary user request" in result["summary"]
         mock_session.clear_session.assert_awaited_once()
         mock_session.add_items.assert_awaited_once()
-        # Manual compact preserves the session — no delete on the session_manager.
+        items = mock_session.add_items.await_args.args[0]
+        assert len(items) == 1
+        assert items[0]["role"] == "user"
+        # Continuation message must reference the session-continuation language
+        # so the LLM knows it's resuming, plus embed the summary verbatim.
+        assert "continued from a previous conversation" in items[0]["content"]
+        assert "Primary user request" in items[0]["content"]
+        # Major compact preserves the session — no delete on the session_manager.
         mock_sm.delete_session.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_manual_compact_lazy_loads_session_after_resume(self):
-        """After .resume sets session_id but leaves _session None, compact must still work.
-
-        Regression: previously _manual_compact aborted with
-        "Cannot compact: no model or session available" because resume does not
-        eagerly open the SQLite session.
+    async def test_major_compact_lazy_loads_session_after_resume(self):
+        """After .resume sets session_id but leaves _session None, major compact
+        must still materialize the session before attempting summary persistence.
         """
         node = _make_node()
         node.session_id = "resumed_session"
@@ -692,57 +724,21 @@ class TestManualCompact:
             return_value={"content": "Resumed summary", "usage": {"output_tokens": 50}}
         )
         node.model = mock_model
-        # create_session is what _get_or_create_session will call via the
-        # node-owned session_manager. Return a session whose async methods can
-        # be awaited by the persist step.
         mock_sm = MagicMock()
         mock_sm.create_session = MagicMock(return_value=_make_async_session_mock())
         node._session_manager = mock_sm
-
-        result = await node._manual_compact()
-
-        # _get_or_create_session should have been invoked to materialize the session.
+        with patch.object(_ConcreteAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value=None)):
+            with patch.object(_ConcreteAgenticNode, "_get_archive", return_value=None):
+                with patch.object(_ConcreteAgenticNode, "_get_system_prompt", return_value="sys"):
+                    result = await node._major_compact(reason="resume_test")
         mock_sm.create_session.assert_called_once_with("resumed_session")
         assert result["success"] is True
-        assert result["summary"] == "Resumed summary"
-        # Session id is preserved so the same .db keeps holding the summary.
+        assert "Resumed summary" in result["summary"]
         assert node.session_id == "resumed_session"
 
     @pytest.mark.asyncio
-    async def test_manual_compact_persists_summary_pair(self):
-        """After summary generation, a user marker + assistant summary pair
-        must be appended to the SAME session via add_items so subsequent LLM
-        turns and history reads see the summary."""
-        node = _make_node()
-        node.session_id = "persist_test"
-        mock_session = _make_async_session_mock()
-        node._session = mock_session
-        mock_model = MagicMock()
-        mock_model.generate_with_tools = AsyncMock(
-            return_value={"content": "summary text", "usage": {"output_tokens": 100}}
-        )
-        node.model = mock_model
-
-        result = await node._manual_compact()
-
-        assert result["success"] is True
-        # clear_session must run before add_items (no rollback if add fails).
-        mock_session.clear_session.assert_awaited_once()
-        mock_session.add_items.assert_awaited_once()
-        items = mock_session.add_items.await_args.args[0]
-        assert len(items) == 2
-        assert items[0]["role"] == "user"
-        assert "compacted" in items[0]["content"].lower()
-        assert items[1]["type"] == "message"
-        assert items[1]["role"] == "assistant"
-        assert isinstance(items[1]["content"], list)
-        assert items[1]["content"][0]["type"] == "output_text"
-        assert items[1]["content"][0]["text"] == "summary text"
-
-    @pytest.mark.asyncio
-    async def test_manual_compact_add_items_failure_returns_failure(self):
-        """If add_items raises after clear_session succeeds, surface a
-        failure result without rolling back (simple-fail strategy)."""
+    async def test_major_compact_add_items_failure_returns_failure(self):
+        """If add_items raises, surface a failure result and don't crash."""
         node = _make_node()
         node.session_id = "fail_test"
         mock_session = _make_async_session_mock()
@@ -751,12 +747,12 @@ class TestManualCompact:
         mock_model = MagicMock()
         mock_model.generate_with_tools = AsyncMock(return_value={"content": "summary", "usage": {"output_tokens": 10}})
         node.model = mock_model
-
-        result = await node._manual_compact()
-
+        with patch.object(_ConcreteAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value=None)):
+            with patch.object(_ConcreteAgenticNode, "_get_archive", return_value=None):
+                with patch.object(_ConcreteAgenticNode, "_get_system_prompt", return_value="sys"):
+                    result = await node._major_compact(reason="fail_test")
         assert result["success"] is False
-        assert result["summary"] == ""
-        assert result["summary_token"] == 0
+        assert result["mode"] == "major"
         mock_session.clear_session.assert_awaited_once()
         mock_session.add_items.assert_awaited_once()
 
@@ -1361,7 +1357,7 @@ class TestExecuteSync:
 class TestManualCompactExtended:
     def test_no_model_returns_failure(self):
         node = _make_simple_node()
-        result = asyncio.run(node._manual_compact())
+        result = asyncio.run(node._major_compact(reason="t"))
         assert result["success"] is False
 
     def test_success_stores_summary(self):
@@ -1376,9 +1372,12 @@ class TestManualCompactExtended:
             return_value={"content": "summary text", "usage": {"output_tokens": 100}}
         )
 
-        result = asyncio.run(node._manual_compact())
+        with patch.object(_SimpleAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value=None)):
+            with patch.object(_SimpleAgenticNode, "_get_archive", return_value=None):
+                with patch.object(_SimpleAgenticNode, "_get_system_prompt", return_value="sys"):
+                    result = asyncio.run(node._major_compact(reason="t"))
         assert result["success"] is True
-        assert result["summary"] == "summary text"
+        assert "summary text" in result["summary"]
         # Session must be preserved — summary now lives inside the session.
         assert node._session is mock_session
         assert node.session_id == "sess_compact"
@@ -1440,7 +1439,10 @@ class TestAutoCompactExtended:
         )
         node.session_id = "sess_auto"
 
-        result = asyncio.run(node._auto_compact())
+        with patch.object(_SimpleAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value=None)):
+            with patch.object(_SimpleAgenticNode, "_get_archive", return_value=None):
+                with patch.object(_SimpleAgenticNode, "_get_system_prompt", return_value="sys"):
+                    result = asyncio.run(node._auto_compact())
         assert result is True
 
 

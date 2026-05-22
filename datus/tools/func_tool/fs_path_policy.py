@@ -86,6 +86,7 @@ def classify_path(
     current_node: Optional[str],
     datus_home: Optional[Path] = None,
     inherited_memory_node: Optional[str] = None,
+    session_data_dir: Optional[Path] = None,
 ) -> ResolvedPath:
     """Classify ``path`` into a ``PathZone`` relative to ``root_path``.
 
@@ -108,6 +109,13 @@ def classify_path(
             ``{root_path}/.datus/memory/{inherited_memory_node}/**`` subtree
             also qualifies as ``WHITELIST``, but the resulting ``ResolvedPath``
             carries ``read_only=True`` so the tool layer can deny writes.
+        session_data_dir: When provided, the current session's compact-archive
+            directory (``path_manager.session_data_dir(session_id)``) qualifies
+            as a read-only ``WHITELIST`` anchor. Lets the model ``read_file``
+            archived tool I/O without prompting; writes are denied so the
+            compact pass owns the directory contents. Other session_ids'
+            directories stay ``EXTERNAL`` even though they live under the
+            same ``sessions/`` root.
 
     Returns:
         A ``ResolvedPath`` with the computed zone and display form. Never
@@ -152,6 +160,10 @@ def classify_path(
         writable_whitelist.append(project_memory_node)
     writable_whitelist.append(global_skills)
 
+    session_data_anchor: Optional[Path] = None
+    if session_data_dir is not None:
+        session_data_anchor = Path(session_data_dir).expanduser().resolve(strict=False)
+
     zone: PathZone
     display: str
     read_only = False
@@ -162,6 +174,7 @@ def classify_path(
     # silently reject valid writes.
     matched_writable = any(_is_relative_to(resolved, anchor) for anchor in writable_whitelist)
     matched_inherited = inherited_memory_dir is not None and _is_relative_to(resolved, inherited_memory_dir)
+    matched_session_data = session_data_anchor is not None and _is_relative_to(resolved, session_data_anchor)
     if matched_writable or matched_inherited:
         zone = PathZone.WHITELIST
         # Owned matches always win; the read-only flag is only set when the
@@ -174,6 +187,17 @@ def classify_path(
             # rebuild the display with the canonical ``~/.datus/`` prefix the
             # LLM can feed back unambiguously. Without this we would show
             # ``~/skills/foo`` and lose which home we meant.
+            display = "~/.datus/" + resolved.relative_to(home_resolved).as_posix()
+        else:
+            display = str(resolved)
+    elif matched_session_data:
+        # Compact archive: read-only access for the current session only.
+        # ``session_data_anchor`` lives under ``home_resolved`` (which is
+        # ``~/.datus``), so render it with the ``~/.datus/`` prefix the LLM
+        # already understands instead of a raw absolute path.
+        zone = PathZone.WHITELIST
+        read_only = True
+        if _is_relative_to(resolved, home_resolved):
             display = "~/.datus/" + resolved.relative_to(home_resolved).as_posix()
         else:
             display = str(resolved)
@@ -199,6 +223,7 @@ def whitelist_anchors(
     current_node: Optional[str],
     datus_home: Optional[Path] = None,
     inherited_memory_node: Optional[str] = None,
+    session_data_dir: Optional[Path] = None,
 ) -> list[Path]:
     """Return the resolved whitelist anchor directories for a given node.
 
@@ -221,6 +246,8 @@ def whitelist_anchors(
     if inherited_memory_node and inherited_memory_node != current_node:
         anchors.append((project_dot_datus / "memory" / inherited_memory_node).resolve(strict=False))
     anchors.append((home_resolved / "skills").resolve(strict=False))
+    if session_data_dir is not None:
+        anchors.append(Path(session_data_dir).expanduser().resolve(strict=False))
     return anchors
 
 

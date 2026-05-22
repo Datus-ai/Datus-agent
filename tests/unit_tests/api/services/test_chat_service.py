@@ -330,17 +330,16 @@ class TestChatServiceCompactSession:
         verify_session = verify_sm.get_session(session_id)
         items = await verify_session.get_items()
 
-        # After compact, the session must contain exactly the user-marker
-        # and assistant-summary pair we wrote in _manual_compact.
-        assert len(items) == 2
+        # After the compact refactor, the session contains a single user
+        # message carrying the continuation summary + recovery pointers.
+        # (Previously it was a user-marker + assistant-summary pair.) The
+        # continuation message must embed the LLM summary verbatim and
+        # announce the resume so the next turn doesn't greet/recap.
+        assert len(items) == 1
         assert items[0]["role"] == "user"
-        assert "compacted" in items[0]["content"].lower()
-        assert items[1]["role"] == "assistant"
-        # Assistant content is a list of typed parts; the first part is the summary text.
-        content = items[1]["content"]
-        assert isinstance(content, list)
-        assert content[0]["type"] == "output_text"
-        assert content[0]["text"] == "Summary of conversation"
+        body = items[0]["content"]
+        assert "Summary of conversation" in body
+        assert "continued from a previous conversation" in body
 
 
 @pytest.mark.asyncio

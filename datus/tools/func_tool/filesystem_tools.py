@@ -76,6 +76,7 @@ class FilesystemFuncTool(BaseTool):
         datus_home: Optional[str] = None,
         strict: bool = False,
         inherited_memory_node: Optional[str] = None,
+        session_data_dir: Optional[str] = None,
         **kwargs,
     ):
         """
@@ -93,6 +94,11 @@ class FilesystemFuncTool(BaseTool):
                 whitelisted subtree so the calling node can ``Read``/``Glob``
                 its parent's memory. Writes/edits to that subtree are rejected
                 at the tool layer with a clear error message.
+            session_data_dir: When set, the compact-archive directory for the
+                current session (``path_manager.session_data_dir(session_id)``)
+                qualifies as a read-only WHITELIST anchor so the LLM can
+                ``read_file`` archived tool I/O without triggering a permission
+                prompt. Other sessions' archive directories stay EXTERNAL.
         """
         super().__init__(**kwargs)
         self.root_path = root_path or os.getcwd()
@@ -102,6 +108,7 @@ class FilesystemFuncTool(BaseTool):
         self._root_resolved = Path(self.root_path).expanduser().resolve(strict=False)
         self._strict = strict
         self._inherited_memory_node = inherited_memory_node
+        self._session_data_dir = Path(session_data_dir).expanduser().resolve(strict=False) if session_data_dir else None
 
     @property
     def strict(self) -> bool:
@@ -157,6 +164,7 @@ class FilesystemFuncTool(BaseTool):
             current_node=self._current_node,
             datus_home=self._datus_home,
             inherited_memory_node=self._inherited_memory_node,
+            session_data_dir=self._session_data_dir,
         )
 
     def _read_only_reject(self, resolved: ResolvedPath) -> FuncToolResult:
@@ -546,6 +554,7 @@ class FilesystemFuncTool(BaseTool):
             current_node=self._current_node,
             datus_home=self._datus_home,
             inherited_memory_node=self._inherited_memory_node,
+            session_data_dir=self._session_data_dir,
         )
 
         def has_whitelisted_descendant(directory: Path) -> bool:
@@ -612,6 +621,7 @@ class FilesystemFuncTool(BaseTool):
                                 current_node=self._current_node,
                                 datus_home=self._datus_home,
                                 inherited_memory_node=self._inherited_memory_node,
+                                session_data_dir=self._session_data_dir,
                             ).zone
                             if item_zone == PathZone.EXTERNAL:
                                 # Symlink escape from project tree; skip.
@@ -821,6 +831,7 @@ def filesystem_function_tools(
     current_node: Optional[str] = None,
     strict: bool = False,
     inherited_memory_node: Optional[str] = None,
+    session_data_dir: Optional[str] = None,
 ) -> List[Tool]:
     """Get filesystem function tools"""
     return FilesystemFuncTool(
@@ -828,4 +839,5 @@ def filesystem_function_tools(
         current_node=current_node,
         strict=strict,
         inherited_memory_node=inherited_memory_node,
+        session_data_dir=session_data_dir,
     ).available_tools()

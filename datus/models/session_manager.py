@@ -196,6 +196,22 @@ class SessionManager:
         else:
             logger.warning(f"Attempted to delete non-existent session: {session_id}")
 
+        # Compact archive directory lives alongside the db file as
+        # ``{session_dir}/{session_id}/`` (auto-created by
+        # ``path_manager.session_data_dir``). Drop it on session delete so
+        # JSONL history dumps and archived tool I/O don't outlive the
+        # session they belong to. Best-effort: a permission error or stale
+        # file lock should not block the db cleanup.
+        archive_root = os.path.join(self.session_dir, session_id)
+        if os.path.isdir(archive_root):
+            try:
+                import shutil
+
+                shutil.rmtree(archive_root)
+                logger.debug(f"Deleted session archive dir: {archive_root}")
+            except OSError as exc:
+                logger.warning("Failed to remove session archive dir %s: %s", archive_root, exc)
+
     def copy_session(self, source_session_id: str, target_node_name: str) -> str:
         """Copy a session to a new one with a different node-name prefix.
 

@@ -1422,7 +1422,14 @@ class ChatCommands:
         self.cli.console.print("[bold bright_black]Press Ctrl+O to toggle trace details.[/]")
 
     def cmd_compact(self, args: str):
-        """Manually compact the current session by summarizing conversation history."""
+        """Manually trigger a major compact on the current session.
+
+        ``/compact`` always runs the LLM-driven major summarization pass.
+        Minor compact is driven by the rolling-window trigger inside the
+        agent loop and has no useful manual variant — if its conditions
+        aren't met, the call would be a no-op; if they are, it has already
+        run automatically. So the CLI only exposes ``major``.
+        """
         if not self.current_node:
             self.console.print("[yellow]No active session to compact.[/]")
             return
@@ -1442,18 +1449,17 @@ class ChatCommands:
             self.console.print(f"  Current Token Count: {session_info['token_count']}")
             self.console.print(f"  Current Action Count: {session_info['action_count']}")
 
-            # Call the manual compact method asynchronously
             async def run_compact():
-                return await self.current_node._manual_compact()
+                return await self.current_node.compact(mode="major", reason="cli_manual")
 
-            # Run the compact operation
             result = asyncio.run(run_compact())
 
             if result.get("success"):
-                self.console.print("[green]✓ Session compacted successfully![/]")
-                self.console.print(f"  New Token Count: {result.get('new_token_count', 'N/A')}")
-                self.console.print(f"  Tokens Saved: {result.get('tokens_saved', 'N/A')}")
-                self.console.print(f"  Compression Ratio: {result.get('compression_ratio', 'N/A')}")
+                self.console.print(f"[green]✓ Session compacted ({result.get('mode')})![/]")
+                if result.get("history_jsonl"):
+                    self.console.print(f"  History dump: {result['history_jsonl']}")
+                if result.get("archive_dir"):
+                    self.console.print(f"  Archive dir:  {result['archive_dir']}")
 
                 # Reload in-memory state from the compacted session
                 self._reload_state_from_session()

@@ -2163,7 +2163,7 @@ class TestCmdCompactWithSession:
         cmds.cmd_compact("")
 
         output = _get_console_output(console)
-        assert "compacted successfully" in output.lower()
+        assert "session compacted" in output.lower()
 
     def test_compact_resets_in_memory_state(self, real_agent_config, mock_llm_create):
         """After successful compact, in-memory state is reset via _reload_state_from_session."""
@@ -2200,7 +2200,7 @@ class TestCmdCompactWithSession:
         # Compact must succeed; this is the precondition for the reload behavior
         # under test. A silent failure here would have previously made the
         # remaining assertions vacuous.
-        assert "compacted successfully" in output.lower(), f"compact did not succeed; output={output!r}"
+        assert "session compacted" in output.lower(), f"compact did not succeed; output={output!r}"  # noqa: E501
         # After successful compact, _reload_state_from_session rebuilds from
         # the compacted session (which contains only the summary pair), so
         # pre-compact accumulated turn actions must be cleared.

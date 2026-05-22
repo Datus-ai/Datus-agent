@@ -1027,6 +1027,8 @@ class OpenAICompatibleModel(LLMBaseModel):
                 run_config = self._build_run_config(agent_name=agent_name)
 
                 # OpenAI Agents SDK tracing is configured by observability adapters.
+                compact_callback = kwargs.get("compact_callback")
+                overflow_retried = False
                 try:
                     with _agents_trace_baggage(agent_name):
                         result = await Runner.run(
@@ -1037,10 +1039,40 @@ class OpenAICompatibleModel(LLMBaseModel):
                             run_config=run_config,
                         )
                 except MaxTurnsExceeded as e:
-                    logger.error(f"Max turns exceeded: {str(e)}")
-                    raise DatusException(
-                        ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}
-                    ) from e
+                    # Overflow fallback: when a compact_callback is wired in,
+                    # ask the caller to run a major compact (so the session
+                    # is short enough to retry) and try the run exactly once
+                    # more. The single-retry guard prevents a degenerate loop
+                    # if the compact itself fails to shrink the session
+                    # below max_turns.
+                    if compact_callback is not None and not overflow_retried:
+                        overflow_retried = True
+                        logger.warning("MaxTurnsExceeded — invoking compact_callback and retrying once.")
+                        try:
+                            await compact_callback(mode="major", reason="overflow")
+                        except Exception as compact_exc:  # noqa: BLE001
+                            logger.error("Overflow compact_callback failed: %s", compact_exc)
+                            raise DatusException(
+                                ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}
+                            ) from e
+                        try:
+                            result = await Runner.run(
+                                agent,
+                                input=prompt,
+                                max_turns=max_turns,
+                                session=session,
+                                run_config=run_config,
+                            )
+                        except MaxTurnsExceeded as retry_e:
+                            logger.error(f"Max turns exceeded after overflow compact: {retry_e}")
+                            raise DatusException(
+                                ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}
+                            ) from retry_e
+                    else:
+                        logger.error(f"Max turns exceeded: {str(e)}")
+                        raise DatusException(
+                            ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}
+                        ) from e
 
                 # Save LLM trace if method exists (for models that support it like DeepSeekModel)
                 if hasattr(self, "_save_llm_trace"):

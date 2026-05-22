@@ -1,0 +1,340 @@
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+
+"""Targeted unit tests for AgenticNode compact helpers.
+
+These cover the dispatch / trigger / cutoff / history-dump methods that the
+end-to-end ``compact()`` tests in test_compact_minor exercise indirectly.
+Splitting them out keeps each test focused on a single branch — the
+``_decide_compact_mode`` priority order, the ``_user_turn_count_estimate``
+synchronous gate, and the user-turn cutoff resolver.
+"""
+
+import json
+from typing import AsyncGenerator, Optional
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from datus.agent.node.agentic_node import AgenticNode
+from datus.agent.node.compact_archive import ToolArchive
+from datus.configuration.agent_config import CompactConfig
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+
+USER_ACTION_KW = {
+    "action_type": "chat",
+    "messages": "u",
+    "input_data": {},
+    "output_data": {},
+    "status": ActionStatus.SUCCESS,
+}
+
+
+class _Node(AgenticNode):
+    async def execute_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        yield  # pragma: no cover
+
+    def get_node_name(self) -> str:
+        return "test_chat"
+
+
+def _build_node(tmp_path):
+    with patch.object(AgenticNode, "__init__", lambda self, *a, **kw: None):
+        node = _Node.__new__(_Node)
+    node.agent_config = None
+    node._agent_config_ref = None
+    node._pinned_model = None
+    node._node_model_name = None
+    node.session_id = "sid_test"
+    node.actions = []
+    node._compact_cfg = CompactConfig()
+    node._compacted_until = 0
+    node._archive = ToolArchive(project_name="proj", session_id="sid_test", base_dir=tmp_path / "data")
+    node._compact_lock = None
+    node._overflow_retry_done = False
+    node._session = None
+    return node
+
+
+class TestEnsureCompactState:
+    """Lazy attr init for test harnesses that bypass __init__."""
+
+    def test_populates_defaults_when_missing(self):
+        with patch.object(AgenticNode, "__init__", lambda self, *a, **kw: None):
+            node = _Node.__new__(_Node)
+        node.agent_config = None
+        # NONE of the compact attrs exist.
+        assert not hasattr(node, "_compact_cfg")
+        node._ensure_compact_state()
+        assert isinstance(node._compact_cfg, CompactConfig)
+        assert node._compacted_until == 0
+        assert node._archive is None
+        assert node._compact_lock is None
+        assert node._overflow_retry_done is False
+
+    def test_preserves_existing_values(self):
+        with patch.object(AgenticNode, "__init__", lambda self, *a, **kw: None):
+            node = _Node.__new__(_Node)
+        node.agent_config = None
+        node._compact_cfg = CompactConfig()
+        node._compacted_until = 7
+        node._archive = None
+        node._compact_lock = None
+        node._overflow_retry_done = True
+        # Should NOT clobber existing values.
+        node._ensure_compact_state()
+        assert node._compacted_until == 7
+        assert node._overflow_retry_done is True
+
+
+class TestDecideCompactMode:
+    def test_returns_noop_when_both_disabled(self, tmp_path):
+        node = _build_node(tmp_path)
+        node._compact_cfg.major.enabled = False
+        node._compact_cfg.minor.enabled = False
+        assert node._decide_compact_mode() == "noop"
+
+    def test_picks_major_when_token_ratio_exceeds_threshold(self, tmp_path):
+        node = _build_node(tmp_path)
+        with patch.object(_Node, "_history_token_ratio_sync", return_value=0.95):
+            assert node._decide_compact_mode() == "major"
+
+    def test_picks_minor_when_user_turns_exceed_keep_window(self, tmp_path):
+        node = _build_node(tmp_path)
+        node._compact_cfg.minor.keep_recent_user_turns = 2
+        with patch.object(_Node, "_history_token_ratio_sync", return_value=0.1):
+            with patch.object(_Node, "_user_turn_count_estimate", return_value=5):
+                assert node._decide_compact_mode() == "minor"
+
+    def test_returns_noop_when_user_turn_count_below_window(self, tmp_path):
+        node = _build_node(tmp_path)
+        node._compact_cfg.minor.keep_recent_user_turns = 5
+        with patch.object(_Node, "_history_token_ratio_sync", return_value=0.1):
+            with patch.object(_Node, "_user_turn_count_estimate", return_value=3):
+                assert node._decide_compact_mode() == "noop"
+
+    def test_returns_noop_when_user_turn_count_equals_window(self, tmp_path):
+        """``count == N`` means nothing is older than the kept window — no-op."""
+        node = _build_node(tmp_path)
+        node._compact_cfg.minor.keep_recent_user_turns = 4
+        with patch.object(_Node, "_history_token_ratio_sync", return_value=0.1):
+            with patch.object(_Node, "_user_turn_count_estimate", return_value=4):
+                assert node._decide_compact_mode() == "noop"
+
+    def test_ratio_exception_falls_back_to_zero(self, tmp_path):
+        """A buggy ratio calc must not crash the dispatcher — minor / noop
+        branches still get a fair shot.
+        """
+        node = _build_node(tmp_path)
+        with patch.object(_Node, "_history_token_ratio_sync", side_effect=RuntimeError("boom")):
+            with patch.object(_Node, "_user_turn_count_estimate", return_value=0):
+                # Ratio defaults to 0.0 → below major threshold → noop.
+                assert node._decide_compact_mode() == "noop"
+
+
+class TestUserTurnCountEstimate:
+    """``_user_turn_count_estimate`` walks ``self.actions`` once and counts
+    ``ActionRole.USER, depth == 0`` entries. The depth filter is what keeps
+    nested sub-agent activity from inflating the count.
+    """
+
+    def _user_action(self, depth=0):
+        action = ActionHistory.create_action(role=ActionRole.USER, **USER_ACTION_KW)
+        action.depth = depth
+        return action
+
+    def _assistant_action(self):
+        return ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="chat",
+            messages="a",
+            input_data={},
+            output_data={},
+            status=ActionStatus.SUCCESS,
+        )
+
+    def test_empty_actions_returns_zero(self, tmp_path):
+        node = _build_node(tmp_path)
+        assert node._user_turn_count_estimate() == 0
+
+    def test_counts_only_top_level_user_actions(self, tmp_path):
+        node = _build_node(tmp_path)
+        node.actions = [
+            self._user_action(),
+            self._assistant_action(),
+            self._user_action(),
+            self._user_action(depth=1),  # nested — must NOT count
+            self._user_action(),
+        ]
+        assert node._user_turn_count_estimate() == 3
+
+
+class TestHistoryTokenRatioSync:
+    def test_zero_when_no_context_length(self, tmp_path):
+        node = _build_node(tmp_path)
+        assert node._history_token_ratio_sync() == 0.0
+
+    def test_zero_when_no_actions(self, tmp_path):
+        node = _build_node(tmp_path)
+        node._pinned_model = MagicMock()
+        node._pinned_model.context_length.return_value = 1000
+        assert node._history_token_ratio_sync() == 0.0
+
+    def test_reads_last_call_input_tokens(self, tmp_path):
+        node = _build_node(tmp_path)
+        node._pinned_model = MagicMock()
+        node._pinned_model.context_length.return_value = 1000
+        action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="chat",
+            messages="ok",
+            input_data={},
+            output_data={"usage": {"last_call_input_tokens": 700, "input_tokens": 500}},
+            status=ActionStatus.SUCCESS,
+        )
+        node.actions.append(action)
+        # 700/1000 = 0.7 — prefer last_call_input_tokens over input_tokens.
+        assert node._history_token_ratio_sync() == 0.7
+
+    def test_falls_back_to_input_tokens(self, tmp_path):
+        node = _build_node(tmp_path)
+        node._pinned_model = MagicMock()
+        node._pinned_model.context_length.return_value = 1000
+        action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="chat",
+            messages="ok",
+            input_data={},
+            output_data={"usage": {"input_tokens": 400}},
+            status=ActionStatus.SUCCESS,
+        )
+        node.actions.append(action)
+        assert node._history_token_ratio_sync() == 0.4
+
+    def test_stops_at_user_action_boundary(self, tmp_path):
+        """The scan walks back from the latest action and stops at the
+        previous user action — so an old usage record before the current
+        turn never bleeds into the ratio.
+        """
+        node = _build_node(tmp_path)
+        node._pinned_model = MagicMock()
+        node._pinned_model.context_length.return_value = 1000
+        old_assistant = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="chat",
+            messages="old",
+            input_data={},
+            output_data={"usage": {"input_tokens": 999}},
+            status=ActionStatus.SUCCESS,
+        )
+        user = ActionHistory.create_action(
+            role=ActionRole.USER,
+            action_type="chat",
+            messages="hi",
+            input_data={},
+            output_data={},
+            status=ActionStatus.SUCCESS,
+        )
+        node.actions.extend([old_assistant, user])
+        assert node._history_token_ratio_sync() == 0.0
+
+
+class TestResolveUserTurnCutoff:
+    """The cutoff is the item-index that separates the eligible-to-archive
+    region from the kept window. It is anchored on the position of the
+    ``keep_recent_user_turns``-th most-recent ``role == "user"`` message.
+    """
+
+    def _u(self):
+        return {"type": "message", "role": "user", "content": "q"}
+
+    def _fc(self):
+        return {"type": "function_call", "name": "f", "arguments": "x", "call_id": "c"}
+
+    def _fco(self):
+        return {"type": "function_call_output", "output": "y", "call_id": "c"}
+
+    def test_returns_minus_one_when_too_few_user_turns(self, tmp_path):
+        """With ``keep_recent_user_turns=3`` and 2 user messages there is
+        nothing older than the kept window — no-op signal is ``-1``.
+        """
+        node = _build_node(tmp_path)
+        node._compact_cfg.minor.keep_recent_user_turns = 3
+        items = [self._u(), self._fc(), self._fco(), self._u(), self._fc(), self._fco()]
+        assert node._resolve_user_turn_cutoff(items) == -1
+
+    def test_returns_minus_one_when_exactly_n_user_turns(self, tmp_path):
+        """``len(user_indices) == N`` is still "nothing older than the kept
+        window" — strictly greater is required to produce a cutoff.
+        """
+        node = _build_node(tmp_path)
+        node._compact_cfg.minor.keep_recent_user_turns = 2
+        items = [self._u(), self._fc(), self._u(), self._fc()]  # 2 user turns
+        assert node._resolve_user_turn_cutoff(items) == -1
+
+    def test_returns_nth_user_turn_index_when_enough(self, tmp_path):
+        """With 4 user turns and ``N=2``, the cutoff is the index of the
+        2nd-most-recent user message — i.e. the 3rd user message overall.
+        Items before that index belong to user turns 0 and 1, both stale.
+        """
+        node = _build_node(tmp_path)
+        node._compact_cfg.minor.keep_recent_user_turns = 2
+        items = []
+        for _ in range(4):
+            items.append(self._u())
+            items.extend([self._fc(), self._fco()])
+        # User-message positions: 0, 3, 6, 9 → cutoff = items[-2] of those = 6.
+        cutoff = node._resolve_user_turn_cutoff(items)
+        assert cutoff == 6
+        # Sanity: items[cutoff:] still contains exactly N user messages.
+        assert sum(1 for it in items[cutoff:] if it.get("role") == "user") == 2
+
+    def test_returns_minus_one_when_n_is_zero_or_negative(self, tmp_path):
+        """A misconfigured ``N <= 0`` is treated as "disabled" — no items
+        ever pass the cutoff, which matches the safe-fail intent.
+        """
+        node = _build_node(tmp_path)
+        node._compact_cfg.minor.keep_recent_user_turns = 0
+        assert node._resolve_user_turn_cutoff([self._u(), self._fc(), self._fco()]) == -1
+
+    def test_robust_against_non_dict_items(self, tmp_path):
+        """Items must be dicts to be considered for the user-role check;
+        defensive coding because old session schemas occasionally carried
+        non-dict entries.
+        """
+        node = _build_node(tmp_path)
+        node._compact_cfg.minor.keep_recent_user_turns = 1
+        items = ["not a dict", None, self._u(), self._fc(), self._u(), self._fc()]
+        # 2 user turns present → cutoff is the latest user index (4).
+        assert node._resolve_user_turn_cutoff(items) == 4
+
+
+class TestDumpSessionHistoryJsonl:
+    @pytest.mark.asyncio
+    async def test_writes_one_item_per_line(self, tmp_path):
+        node = _build_node(tmp_path)
+        items = [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]
+        node._session = MagicMock()
+        node._session.get_items = AsyncMock(return_value=items)
+        path = await node._dump_session_history_jsonl()
+        assert path is not None and path.exists()
+        lines = path.read_text().splitlines()
+        assert len(lines) == 2
+        assert json.loads(lines[0]) == items[0]
+        assert json.loads(lines[1]) == items[1]
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_session(self, tmp_path):
+        node = _build_node(tmp_path)
+        node._session = None
+        assert await node._dump_session_history_jsonl() is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_get_items_fails(self, tmp_path):
+        node = _build_node(tmp_path)
+        node._session = MagicMock()
+        node._session.get_items = AsyncMock(side_effect=RuntimeError("db broke"))
+        # Should swallow the error rather than break the whole major pass.
+        assert await node._dump_session_history_jsonl() is None

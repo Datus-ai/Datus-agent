@@ -450,3 +450,72 @@ class TestResetPathManager:
             assert retrieved.sessions_dir == pm.datus_home / "sessions" / "-tmp-proj"
         finally:
             reset_path_manager(token)
+
+
+# ---------------------------------------------------------------------------
+# Session data directory and display helpers (compact subsystem support).
+# ---------------------------------------------------------------------------
+
+
+class TestSessionDataDir:
+    """`session_data_dir` is the single source of truth for the compact archive
+    layout. Tests here pin the layout (``sessions/<project>/<sid>/data``) so
+    any future move requires intentional updates here AND in
+    ``session_manager.delete_session`` (which rmtrees the parent dir).
+    """
+
+    def test_session_data_dir_layout(self, tmp_path):
+        pm = DatusPathManager(datus_home=str(tmp_path / "home"), project_name="proj1")
+        result = pm.session_data_dir("sid_abc")
+        assert result == tmp_path / "home" / "sessions" / "proj1" / "sid_abc" / "data"
+        assert result.exists()
+        # session_db_path and session_data_dir share the same grandparent
+        # (``sessions/<project>``) but with disjoint names — db is a file
+        # ``<sid>.db``, data is nested under ``<sid>/data``. They MUST not collide.
+        db_path = pm.session_db_path("sid_abc")
+        assert db_path.parent == result.parent.parent
+        assert db_path.name == "sid_abc.db"
+        # The data dir is nested under ``<sid>/``: the cleanup hook expects
+        # ``rmtree(<sessions_dir>/<sid>)`` to drop only this session's data.
+        assert result.parent.name == "sid_abc"
+
+    def test_session_data_dir_rejects_invalid_session_id(self, tmp_path):
+        from datus.utils.exceptions import DatusException
+
+        pm = DatusPathManager(datus_home=str(tmp_path / "home"), project_name="proj1")
+        # Path-traversal segments must be rejected — otherwise an attacker
+        # who controlled session_id could escape the project shard.
+        for bad in ("", "../escape", "with/slash", ".hidden"):
+            with pytest.raises((DatusException, ValueError)):
+                pm.session_data_dir(bad)
+
+
+class TestRelpathForDisplay:
+    """``relpath_for_display`` is used by ``fs_path_policy`` to render archive
+    paths back to the LLM in a shortened form. The mapping order matters:
+    project > datus_home > $HOME > absolute. Without that priority a project
+    that happens to live under ``~/.datus`` would render as ``~/.datus/...``
+    instead of the project-relative path, breaking copy-paste back into tools.
+    """
+
+    def test_under_project_renders_relative(self, tmp_path):
+        project = tmp_path / "proj"
+        project.mkdir()
+        pm = DatusPathManager(datus_home=str(tmp_path / "home"), project_name="p", project_root=str(project))
+        assert pm.relpath_for_display(project / "subject" / "a.md") == "subject/a.md"
+
+    def test_under_datus_home_renders_tilde_datus(self, tmp_path):
+        home = tmp_path / "home_datus"
+        home.mkdir()
+        # project_root deliberately disjoint from home so the project anchor
+        # cannot match.
+        pm = DatusPathManager(datus_home=str(home), project_name="p", project_root=str(tmp_path / "elsewhere"))
+        target = home / "sessions" / "p" / "sid" / "data" / "x.json"
+        assert pm.relpath_for_display(target) == "~/.datus/sessions/p/sid/data/x.json"
+
+    def test_outside_known_anchors_renders_absolute(self, tmp_path):
+        pm = DatusPathManager(datus_home=str(tmp_path / "home"), project_name="p", project_root=str(tmp_path / "proj"))
+        # ``totally_other/`` is neither under project_root nor datus_home; absolute
+        # is the correct fallback (LLM can still feed it back, just no shortening).
+        target = tmp_path / "totally_other" / "file.txt"
+        assert pm.relpath_for_display(target).startswith(str(tmp_path / "totally_other"))

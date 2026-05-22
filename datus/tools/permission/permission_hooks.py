@@ -91,6 +91,12 @@ class FilesystemPolicy:
     current_node: Optional[str]
     datus_home: Optional[Path] = None
     strict: bool = False
+    # Per-session compact archive directory. When set, ``classify_path`` treats
+    # this subtree of ``~/.datus/sessions/{project}/{session_id}/data`` as a
+    # read-only WHITELIST anchor so the LLM can ``read_file`` archived tool I/O
+    # without prompting. Stays ``None`` outside of agentic sessions (e.g. SaaS
+    # request-scoped tools) — those paths then remain EXTERNAL.
+    session_data_dir: Optional[Path] = None
 
 
 class CompositeHooks(AgentHooks):
@@ -422,6 +428,7 @@ class PermissionHooks(AgentHooks):
                 root_path=policy.root_path,
                 current_node=policy.current_node,
                 datus_home=policy.datus_home,
+                session_data_dir=policy.session_data_dir,
             )
         except Exception as e:
             logger.debug(f"classify_path failed for {tool_name} path={path_arg!r}: {e}")
