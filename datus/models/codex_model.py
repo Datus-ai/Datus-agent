@@ -12,6 +12,7 @@ import uuid
 from contextlib import nullcontext
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
+import json_repair
 from agents import Agent, ModelSettings, Runner, SQLiteSession, Tool
 from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
@@ -649,7 +650,33 @@ class CodexModel(LLMBaseModel):
                                     arguments = getattr(raw_item, "arguments", "{}")
                                 if not call_id:
                                     call_id = f"tool_{uuid.uuid4().hex[:8]}"
-                                args_str = str(arguments)[:80]
+
+                                # Validate and repair malformed JSON arguments
+                                try:
+                                    json.loads(arguments)
+                                    args_str = str(arguments)[:80]
+                                except (json.JSONDecodeError, TypeError, ValueError):
+                                    try:
+                                        repaired = json_repair.loads(arguments)
+                                        repaired_str = json.dumps(repaired, ensure_ascii=False)
+                                        logger.warning(
+                                            f"Repaired malformed tool call arguments for '{tool_name}' "
+                                            f"in session history: {arguments[:200]}"
+                                        )
+                                        if isinstance(raw_item, dict):
+                                            raw_item["arguments"] = repaired_str
+                                        else:
+                                            event.item.raw_item = raw_item.model_copy(
+                                                update={"arguments": repaired_str}
+                                            )
+                                            raw_item = event.item.raw_item
+                                        arguments = repaired_str
+                                        args_str = repaired_str[:80]
+                                    except Exception:
+                                        logger.error(
+                                            f"Cannot repair tool call arguments for '{tool_name}': {arguments[:200]}"
+                                        )
+                                        args_str = str(arguments)[:80]
 
                                 temp_tool_calls[call_id] = {
                                     "tool_name": tool_name,

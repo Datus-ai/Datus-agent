@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 import httpx
+import json_repair
 import litellm
 import yaml
 from agents import Agent, ModelSettings, Runner, Tool
@@ -1338,7 +1339,22 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     args_dict = json.loads(arguments) if arguments else {}
                                     args_str = to_str(args_dict)[:80]
                                 except Exception:
-                                    args_str = str(arguments)[:80]
+                                    try:
+                                        repaired = json_repair.loads(arguments)
+                                        repaired_str = json.dumps(repaired, ensure_ascii=False)
+                                        logger.warning(
+                                            f"Repaired malformed tool call arguments for '{tool_name}' "
+                                            f"in session history: {arguments[:200]}"
+                                        )
+                                        event.item.raw_item = raw_item.model_copy(update={"arguments": repaired_str})
+                                        raw_item = event.item.raw_item
+                                        arguments = repaired_str
+                                        args_str = repaired_str[:80]
+                                    except Exception:
+                                        logger.error(
+                                            f"Cannot repair tool call arguments for '{tool_name}': {arguments[:200]}"
+                                        )
+                                        args_str = str(arguments)[:80]
 
                                 # Store tool call info for matching with result
                                 temp_tool_calls[call_id] = {
