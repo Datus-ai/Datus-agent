@@ -129,17 +129,17 @@ _CHART_CARD_OPEN_RE = re.compile(r"<ChartCard\b([^>]*?)/?\s*>", re.DOTALL)
 
 # Per-attribute extraction inside a ``<ChartCard ... >`` opening tag. Captures
 # only the three required string-literal props the validator audits
-# (``cardId``, ``sqlId``, ``chartType``); other props are ignored here and
+# (``chartId``, ``sqlId``, ``chartType``); other props are ignored here and
 # checked by the runtime / typescript at viewer time.
 _CHART_CARD_STR_ATTR_RE = re.compile(
-    r"""\b(cardId|sqlId|chartType)\s*=\s*['"]([^'"]+)['"]""",
+    r"""\b(chartId|sqlId|chartType)\s*=\s*['"]([^'"]+)['"]""",
 )
 
 
-# ``cardId`` shape — same slug grammar used elsewhere in the artifact path
-# (dashboard slug, query slug). Caps at 64 to keep the cards.json snapshots /
-# postMessage payloads compact.
-_CARD_ID_RE = re.compile(r"^[a-z0-9_]{1,64}$")
+# ``chartId`` shape — same slug grammar used elsewhere in the artifact path
+# (dashboard slug, query slug). Caps at 64 to keep the validate_render
+# cards-registry payload compact.
+_CHART_ID_RE = re.compile(r"^[a-z0-9_]{1,64}$")
 
 
 # ChartCard's chartType enum. Keep in lockstep with
@@ -1089,10 +1089,11 @@ class DashboardArtifactTools:
         issues: List[str] = []
         warnings: List[str] = []
         query_refs: Set[str] = set()
-        # cardId → render-file rel-path of its first declaration. Used to
-        # detect duplicates across the whole render/ tree (cards.json snapshots
-        # and the runtime postMessage payload both require global uniqueness).
-        card_ids_seen: Dict[str, str] = {}
+        # chartId → render-file rel-path of its first declaration. Used to
+        # detect duplicates across the whole render/ tree; the validate_render
+        # result also exposes this as the cards-registry for downstream
+        # consumers, and both require global uniqueness.
+        chart_ids_seen: Dict[str, str] = {}
 
         for key, mod in modules.items():
             source = mod["source"]
@@ -1108,35 +1109,35 @@ class DashboardArtifactTools:
                 if "{..." in attrs:
                     warnings.append(
                         f"render/{mod['rel']}: <ChartCard> uses spread props — static "
-                        "validation of cardId / sqlId / chartType is deferred to runtime."
+                        "validation of chartId / sqlId / chartType is deferred to runtime."
                     )
                     continue
 
-                missing = [k for k in ("cardId", "sqlId", "chartType") if k not in attr_values]
+                missing = [k for k in ("chartId", "sqlId", "chartType") if k not in attr_values]
                 if missing:
                     issues.append(
                         f"render/{mod['rel']}: <ChartCard> is missing required string-literal "
-                        f"props: {missing}. Each ChartCard must declare cardId, sqlId, and "
+                        f"props: {missing}. Each ChartCard must declare chartId, sqlId, and "
                         "chartType up front."
                     )
                     continue
 
-                card_id = attr_values["cardId"]
+                chart_id = attr_values["chartId"]
                 sql_id = attr_values["sqlId"]
                 chart_type = attr_values["chartType"]
 
-                if not _CARD_ID_RE.fullmatch(card_id):
+                if not _CHART_ID_RE.fullmatch(chart_id):
                     issues.append(
-                        f"render/{mod['rel']}: <ChartCard cardId={card_id!r}> must match {_CARD_ID_RE.pattern}."
+                        f"render/{mod['rel']}: <ChartCard chartId={chart_id!r}> must match {_CHART_ID_RE.pattern}."
                     )
-                elif card_id in card_ids_seen:
+                elif chart_id in chart_ids_seen:
                     issues.append(
-                        f"render/{mod['rel']}: <ChartCard cardId={card_id!r}> duplicates the "
-                        f"cardId already declared in render/{card_ids_seen[card_id]}. cardId "
+                        f"render/{mod['rel']}: <ChartCard chartId={chart_id!r}> duplicates the "
+                        f"chartId already declared in render/{chart_ids_seen[chart_id]}. chartId "
                         "must be globally unique across the dashboard."
                     )
                 else:
-                    card_ids_seen[card_id] = mod["rel"]
+                    chart_ids_seen[chart_id] = mod["rel"]
 
                 slug = extract_query_slug(sql_id)
                 if slug is None:
@@ -1267,10 +1268,10 @@ class DashboardArtifactTools:
         )
 
         # Cards registry derived from the validated <ChartCard> instances.
-        # Sorted by cardId for stable wire output. Downstream consumers
+        # Sorted by chartId for stable wire output. Downstream consumers
         # (publish wire payload, future static-edit APIs) read this off the
         # validate_render result rather than re-walking the AST.
-        cards_registry = [{"card_id": cid, "jsx_path": f"render/{rel}"} for cid, rel in sorted(card_ids_seen.items())]
+        cards_registry = [{"chart_id": cid, "jsx_path": f"render/{rel}"} for cid, rel in sorted(chart_ids_seen.items())]
 
         return FuncToolResult(
             result={

@@ -305,29 +305,29 @@ You do NOT need to rewrite `app.jsx` for a localised change — surgical edits a
 
 ### Targeted single-card edits
 
-A user turn may carry a self-closing `<artifact-chart-card />` XML tag that pins the edit to one specific card. Shape:
+A user turn may carry a self-closing `<artifact-chart-card />` XML tag that pins the edit to one specific chart. Shape:
 
 ```
 <artifact-chart-card
-  kind="dashboard"
-  slug="<dashboard_slug>"
-  card-id="<id>"
+  dashboard-slug="<dashboard_slug>"
+  chart-id="<id>"
   sql-id="queries/<slug>"
   jsx-path="render/<file>.jsx"
-  chart-type="<one of the chartType enum>"
-  name="<human-readable card label>"
+  chart-name="<human-readable chart label>"
   params="<JSON-encoded filter snapshot>"   <!-- optional -->
 />
 ```
 
 When the user message contains this tag (typically introduced by a `修改下面这个 Chart：` prefix line above it):
 
-1. `bind_existing_dashboard(<slug>)`.
+1. `bind_existing_dashboard(<dashboard-slug>)`.
 2. `read_file(<jsx-path>)`, plus `read_file('queries/<sql-id basename>.sql.j2')` only if the change touches the SQL.
 3. Make the change strictly inside that JSX file (and its companion `.sql.j2` / `.params.json` when the SQL changed). Do **not** modify any other `render/*.jsx` or any unrelated query template.
 4. `validate_render()` once.
 
-`params`, when present, is read-only context: the filter values that were applied at the moment the user picked this card. Use them to sanity-check that your change still makes sense at those values. Do not bake them into the template body — the SQL stays parameterised.
+The artifact kind is encoded in the slug attribute name — `dashboard-slug` ⇒ this is a dashboard edit; `report-slug` ⇒ it's a report edit (and you'll see this tag in the report subagent's prompt instead). If you ever see both slug variants on the same tag, treat the envelope as malformed and ask the user to confirm.
+
+`params`, when present, is read-only context: the filter values that were applied at the moment the user picked this chart. Use them to sanity-check that your change still makes sense at those values. Do not bake them into the template body — the SQL stays parameterised.
 
 Attribute values are HTML-entity-encoded (`&amp;` / `&quot;` / etc.); decode them before substituting into tool-call arguments.
 

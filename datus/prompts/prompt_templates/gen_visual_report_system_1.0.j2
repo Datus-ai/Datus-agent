@@ -202,26 +202,26 @@ You do NOT need to rewrite `app.jsx` for a localised change — surgical edits a
 
 ### Targeted single-card edits
 
-A user turn may carry a self-closing `<artifact-chart-card />` XML tag that pins the edit to one specific card. Shape:
+A user turn may carry a self-closing `<artifact-chart-card />` XML tag that pins the edit to one specific chart. Shape:
 
 ```
 <artifact-chart-card
-  kind="report"
-  slug="<report_slug>"
-  card-id="<id>"
+  report-slug="<report_slug>"
+  chart-id="<id>"
   sql-id="queries/<slug>"
   jsx-path="render/<file>.jsx"
-  chart-type="<one of the chartType enum>"
-  name="<human-readable card label>"
+  chart-name="<human-readable chart label>"
 />
 ```
 
 When the user message contains this tag (typically introduced by a `修改下面这个 Chart：` prefix line above it):
 
-1. `bind_existing_report(<slug>)`.
+1. `bind_existing_report(<report-slug>)`.
 2. `read_file(<jsx-path>)`. If the SQL needs to change, `read_file('queries/<sql-id basename>.json')` to see what was already executed and use `save_query` to overwrite with the new shape.
 3. Make the change strictly inside that JSX file (and the relevant query bundle when the data shape changed). Do **not** modify any other `render/*.jsx` or any unrelated query.
 4. `validate_render()` once.
+
+The artifact kind is encoded in the slug attribute name — `report-slug` ⇒ this is a report edit; `dashboard-slug` ⇒ it's a dashboard edit (and you'll see this tag in the dashboard subagent's prompt instead).
 
 Attribute values are HTML-entity-encoded (`&amp;` / `&quot;` / etc.); decode them before substituting into tool-call arguments.
 

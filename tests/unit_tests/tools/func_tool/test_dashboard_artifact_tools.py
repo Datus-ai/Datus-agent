@@ -955,7 +955,7 @@ export default function App() {
   const { data } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });
   return (
     <ChartCard
-      cardId="revenue_by_region"
+      chartId="revenue_by_region"
       sqlId="queries/revenue_by_region"
       chartType="bar"
       title="Revenue"
@@ -978,7 +978,7 @@ class TestValidateRenderChartCard:
         _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": _CHART_CARD_APP_JSX})
         result = dashboard_tools.validate_render()
         assert result.success == 1, result.error
-        assert result.result["cards"] == [{"card_id": "revenue_by_region", "jsx_path": "render/app.jsx"}]
+        assert result.result["cards"] == [{"chart_id": "revenue_by_region", "jsx_path": "render/app.jsx"}]
         # ChartCard's sqlId joins the query-ref set even when the validator
         # has already seen the same slug from useQuerySql.
         assert "queries/revenue_by_region" in result.result["query_refs"]
@@ -987,7 +987,7 @@ class TestValidateRenderChartCard:
         self, dashboard_tools: DashboardArtifactTools, project_root: Path
     ):
         _seed_template(dashboard_tools)
-        # cardId omitted on purpose — validator must surface it.
+        # chartId omitted on purpose — validator must surface it.
         app = (
             "import React from 'react';\n"
             "import { useDatusArtifact, ChartCard } from '@datus/web-artifact';\n"
@@ -1005,7 +1005,7 @@ class TestValidateRenderChartCard:
         result = dashboard_tools.validate_render()
         assert result.success == 0
         assert "missing required" in (result.error or "")
-        assert "cardId" in (result.error or "")
+        assert "chartId" in (result.error or "")
 
     def test_chart_card_invalid_chart_type_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
         _seed_template(dashboard_tools)
@@ -1016,10 +1016,10 @@ class TestValidateRenderChartCard:
         assert "'donut'" in (result.error or "")
         assert "chartType" in (result.error or "")
 
-    def test_chart_card_invalid_card_id_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+    def test_chart_card_invalid_chart_id_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
         _seed_template(dashboard_tools)
         # Mixed case / hyphen violates `^[a-z0-9_]{1,64}$`.
-        app = _CHART_CARD_APP_JSX.replace('cardId="revenue_by_region"', 'cardId="Revenue-1"')
+        app = _CHART_CARD_APP_JSX.replace('chartId="revenue_by_region"', 'chartId="Revenue-1"')
         _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
         result = dashboard_tools.validate_render()
         assert result.success == 0
@@ -1039,9 +1039,9 @@ class TestValidateRenderChartCard:
         assert "orphaned_slug" in (result.error or "")
         assert "save_query_template" in (result.error or "")
 
-    def test_chart_card_duplicate_card_id_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+    def test_chart_card_duplicate_chart_id_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
         _seed_template(dashboard_tools)
-        # Two files declaring the same cardId — duplicate must be caught
+        # Two files declaring the same chartId — duplicate must be caught
         # across the whole render/ tree, not just within one file.
         second_file = (
             "import React from 'react';\n"
@@ -1050,7 +1050,7 @@ class TestValidateRenderChartCard:
             "  const { useQuerySql } = useDatusArtifact();\n"
             "  const { data } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });\n"
             "  return (\n"
-            '    <ChartCard cardId="revenue_by_region" sqlId="queries/revenue_by_region" '
+            '    <ChartCard chartId="revenue_by_region" sqlId="queries/revenue_by_region" '
             'chartType="line" data={data}>\n'
             "      <pre />\n"
             "    </ChartCard>\n"
@@ -1081,7 +1081,7 @@ class TestValidateRenderChartCard:
             "  const { useQuerySql } = useDatusArtifact();\n"
             "  const { data } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });\n"
             "  const cardProps = {\n"
-            "    cardId: 'revenue_by_region',\n"
+            "    chartId: 'revenue_by_region',\n"
             "    sqlId: 'queries/revenue_by_region',\n"
             "    chartType: 'bar',\n"
             "  };\n"
