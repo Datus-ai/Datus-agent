@@ -183,9 +183,9 @@ class TestOptionalTraceable:
         @optional_traceable(
             name="test_op",
             context_builder=lambda *_args, **_kwargs: TraceContext(
-                name="cli/run/test",
-                session_id="cli:run:test",
-                tags=("cli", "run"),
+                name="workflow/test",
+                session_id="workflow:run:test",
+                tags=("workflow",),
                 metadata={"workflow": "test"},
             ),
         )
@@ -194,7 +194,7 @@ class TestOptionalTraceable:
             return "ok"
 
         assert op() == "ok"
-        assert seen["ctx"].name == "cli/run/test"
+        assert seen["ctx"].name == "workflow/test"
         assert get_trace_context() is None
 
     @pytest.mark.asyncio
@@ -218,8 +218,8 @@ class TestOptionalTraceable:
         @optional_traceable(
             name="stream_op",
             context_builder=lambda *_args, **_kwargs: TraceContext(
-                name="cli/run/stream",
-                session_id="cli:run:stream",
+                name="workflow/stream",
+                session_id="workflow:run:stream",
                 tags=("stream",),
                 metadata={"run_id": "run-123"},
             ),
@@ -240,8 +240,8 @@ class TestOptionalTraceable:
             items = [item async for item in generator]
 
         assert items == [
-            {"active": True, "ctx": "cli:run:stream"},
-            {"active": True, "ctx": "cli:run:stream"},
+            {"active": True, "ctx": "workflow:run:stream"},
+            {"active": True, "ctx": "workflow:run:stream"},
         ]
         assert observability.active is False
         assert observability.span_calls == [
@@ -250,8 +250,8 @@ class TestOptionalTraceable:
                 {
                     "datus.operation": "stream_op",
                     "datus.run_type": "chain",
-                    "datus.trace.name": "cli/run/stream",
-                    "datus.session_id": "cli:run:stream",
+                    "datus.trace.name": "workflow/stream",
+                    "datus.session_id": "workflow:run:stream",
                     "datus.tags": "stream",
                     "datus.metadata.run_id": "run-123",
                     "datus.run_id": "run-123",

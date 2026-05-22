@@ -395,10 +395,10 @@ uv run datus-agent benchmark \
 
 | 操作 | Trace 名称形态 |
 | --- | --- |
-| Workflow run | `cli/run/<workflow>` |
+| Workflow run | `workflow/<workflow>` |
 | Benchmark task | `benchmark/<benchmark>/<context>/task-<id>` |
 | 知识库初始化 | `bootstrap-kb/<datasource>/<components>` |
-| Chat/API session | `chat/<agent>` |
+| Agent session | `agent/<node>` |
 
 Tag 与 metadata 会包含 datasource、workflow、benchmark、task id、run id，以及可用时的 `agent.home`。
 

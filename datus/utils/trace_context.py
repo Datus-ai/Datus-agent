@@ -56,8 +56,8 @@ def _timestamped_id() -> str:
     return f"{timestamp}:{uuid.uuid4().hex[:8]}"
 
 
-def create_cli_run_id(action: str) -> str:
-    return f"cli:{_compact_slug(action)}:{_timestamped_id()}"
+def create_workflow_run_id(action: str) -> str:
+    return f"workflow:{_compact_slug(action)}:{_timestamped_id()}"
 
 
 @dataclass(frozen=True)
@@ -207,23 +207,23 @@ def build_workflow_trace_context_from_runner(runner: Any, *args: Any, **kwargs: 
 
     runner_args = getattr(runner, "args", None)
     config = getattr(runner, "global_config", None)
-    workflow = getattr(runner_args, "workflow", None) or "workflow"
+    workflow = getattr(runner_args, "workflow", None) or "default"
     datasource = getattr(config, "current_datasource", None) or getattr(runner_args, "datasource", None)
     run_id = getattr(runner, "run_id", None) or getattr(runner_args, "run_id", None)
     task_id = getattr(sql_task, "id", None)
-    session_id = f"cli:run:{run_id}" if run_id else create_cli_run_id("run")
+    session_id = f"workflow:run:{run_id}" if run_id else create_workflow_run_id("run")
     workflow_slug = _compact_slug(workflow)
 
-    tags = ["cli", "run", f"workflow:{workflow_slug}"]
+    tags = ["workflow", f"workflow:{workflow_slug}"]
     if datasource:
         tags.append(f"datasource:{_compact_slug(datasource)}")
 
     return TraceContext(
-        name=f"cli/run/{workflow_slug}",
+        name=f"workflow/{workflow_slug}",
         session_id=session_id,
         tags=tuple(tags),
         metadata=_metadata_base(
-            component="cli_run",
+            component="workflow_run",
             datasource=datasource,
             workflow=workflow,
             run_id=run_id,
@@ -389,7 +389,7 @@ def build_chat_trace_context(
         },
     )
     return TraceContext(
-        name=f"chat/{display_slug}",
+        name=f"agent/{display_slug}",
         session_id=session_id,
         user_id=user_id,
         tags=tuple(tags),

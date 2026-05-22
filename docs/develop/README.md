@@ -395,10 +395,10 @@ Open the configured provider project to view traces. Traces are named by operati
 
 | Operation | Trace name shape |
 | --- | --- |
-| Workflow run | `cli/run/<workflow>` |
+| Workflow run | `workflow/<workflow>` |
 | Benchmark task | `benchmark/<benchmark>/<context>/task-<id>` |
 | Knowledge bootstrap | `bootstrap-kb/<datasource>/<components>` |
-| Chat/API session | `chat/<agent>` |
+| Agent session | `agent/<node>` |
 
 Tags and metadata include datasource, workflow, benchmark, task id, run id, and `agent.home` when available.
 

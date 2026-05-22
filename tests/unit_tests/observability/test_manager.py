@@ -105,7 +105,7 @@ def test_trace_baggage_attributes_are_provider_neutral():
     attrs = _trace_baggage_attributes(
         "chat",
         {
-            "datus.trace.name": "chat/session",
+            "datus.trace.name": "agent/chat",
             "datus.session_id": "session-1",
             "datus.user_id": "user-1",
             "datus.run_id": "run-1",
@@ -113,7 +113,7 @@ def test_trace_baggage_attributes_are_provider_neutral():
     )
 
     assert attrs == {
-        "datus.trace.name": "chat/session",
+        "datus.trace.name": "agent/chat",
         "session.id": "session-1",
         "user.id": "user-1",
         "datus.run_id": "run-1",
@@ -128,12 +128,12 @@ def test_trace_baggage_attaches_provider_neutral_context():
     with manager.trace_baggage(
         "chat",
         {
-            "datus.trace.name": "chat/session",
+            "datus.trace.name": "agent/chat",
             "datus.session_id": "session-1",
             "datus.user_id": "user-1",
         },
     ):
-        assert baggage.get_baggage("datus.trace.name") == "chat/session"
+        assert baggage.get_baggage("datus.trace.name") == "agent/chat"
         assert baggage.get_baggage("session.id") == "session-1"
         assert baggage.get_baggage("user.id") == "user-1"
 

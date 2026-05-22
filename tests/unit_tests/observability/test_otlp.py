@@ -43,7 +43,7 @@ def test_baggage_span_processor_copies_only_provider_neutral_attributes():
     parent_context = context.get_current()
     parent_context = baggage.set_baggage("session.id", "session-1", context=parent_context)
     parent_context = baggage.set_baggage("user.id", "user-1", context=parent_context)
-    parent_context = baggage.set_baggage("datus.trace.name", "chat/session", context=parent_context)
+    parent_context = baggage.set_baggage("datus.trace.name", "agent/chat", context=parent_context)
     parent_context = baggage.set_baggage("datus.run_id", "run-1", context=parent_context)
     parent_context = baggage.set_baggage("langfuse.session.id", "session-1", context=parent_context)
     span = DummySpan()
@@ -53,7 +53,7 @@ def test_baggage_span_processor_copies_only_provider_neutral_attributes():
     assert span.attributes == {
         "session.id": "session-1",
         "user.id": "user-1",
-        "datus.trace.name": "chat/session",
+        "datus.trace.name": "agent/chat",
         "datus.run_id": "run-1",
     }
 
@@ -62,7 +62,7 @@ def test_baggage_span_processor_reuses_trace_attributes_when_child_context_loses
     processor = _BaggageAttributeSpanProcessor()
     parent_context = context.get_current()
     parent_context = baggage.set_baggage("session.id", "session-1", context=parent_context)
-    parent_context = baggage.set_baggage("datus.trace.name", "chat/session", context=parent_context)
+    parent_context = baggage.set_baggage("datus.trace.name", "agent/chat", context=parent_context)
     root = DummySpan(trace_id=0xABC)
     child = DummySpan(trace_id=0xABC)
 
@@ -70,7 +70,7 @@ def test_baggage_span_processor_reuses_trace_attributes_when_child_context_loses
     processor.on_start(child, context.get_current())
 
     assert child.attributes["session.id"] == "session-1"
-    assert child.attributes["datus.trace.name"] == "chat/session"
+    assert child.attributes["datus.trace.name"] == "agent/chat"
 
 
 def test_baggage_span_processor_works_with_real_span_lifecycle():

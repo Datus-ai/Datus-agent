@@ -2095,7 +2095,7 @@ class TestBuildRunConfigInputFilter:
         """Agents SDK traces should receive OTel baggage for exporter processors."""
         observability = _FakeObservabilityManager()
         ctx = TraceContext(
-            name="chat/gen_sql_summary",
+            name="agent/gen_sql_summary",
             session_id="gen_sql_summary_session_ab12cd34",
             user_id="user-1",
             metadata={"source": "cli"},
@@ -2110,11 +2110,11 @@ class TestBuildRunConfigInputFilter:
 
         assert observability.trace_baggage_calls == [
             (
-                "chat/gen_sql_summary",
+                "agent/gen_sql_summary",
                 {
                     "datus.operation": "gen_sql_summary",
                     "datus.run_type": "llm",
-                    "datus.trace.name": "chat/gen_sql_summary",
+                    "datus.trace.name": "agent/gen_sql_summary",
                     "datus.session_id": "gen_sql_summary_session_ab12cd34",
                     "datus.user_id": "user-1",
                     "datus.metadata.source": "cli",

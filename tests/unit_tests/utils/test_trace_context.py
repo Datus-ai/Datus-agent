@@ -7,6 +7,7 @@ from datus.utils.trace_context import (
     build_bootstrap_trace_context,
     build_chat_trace_context,
     build_trace_span_attributes,
+    build_workflow_trace_context_from_runner,
     trace_context,
 )
 
@@ -58,6 +59,31 @@ def test_generated_session_ids_keep_operation_prefixes():
     assert not bootstrap_ctx.session_id.startswith("bootstrap:cli:")
 
 
+def test_workflow_context_uses_workflow_operation_prefix():
+    class Args:
+        workflow = None
+        datasource = "starrocks"
+
+    class Config:
+        current_datasource = "mysql"
+        home = "/tmp/datus"
+
+    class Runner:
+        args = Args()
+        global_config = Config()
+        run_id = "run-1"
+
+    ctx = build_workflow_trace_context_from_runner(Runner())
+
+    assert ctx.name == "workflow/default"
+    assert ctx.session_id == "workflow:run:run-1"
+    assert "workflow" in ctx.tags
+    assert "workflow:default" in ctx.tags
+    assert "cli" not in ctx.tags
+    assert ctx.metadata["datus_component"] == "workflow_run"
+    assert ctx.metadata["workflow"] == "default"
+
+
 def test_chat_context_uses_chat_session_as_group_not_name():
     ctx = build_chat_trace_context(
         session_id="gen_sql_summary_session_ab12cd34",
@@ -66,7 +92,7 @@ def test_chat_context_uses_chat_session_as_group_not_name():
         datasource="starrocks",
     )
 
-    assert ctx.name == "chat/gen_sql_summary"
+    assert ctx.name == "agent/gen_sql_summary"
     assert ctx.session_id == "gen_sql_summary_session_ab12cd34"
     assert "gen_sql_summary_session_ab12cd34" not in ctx.name
     assert ctx.metadata["service_session_id"] == "gen_sql_summary_session_ab12cd34"
@@ -74,8 +100,8 @@ def test_chat_context_uses_chat_session_as_group_not_name():
 
 def test_agents_run_config_does_not_repeat_trace_leaf_agent_name():
     cases = [
-        ("chat", "chat/chat"),
-        ("chatbot", "chat/chatbot"),
+        ("chat", "agent/chat"),
+        ("chatbot", "agent/chatbot"),
     ]
     for agent_name, expected_name in cases:
         ctx = build_chat_trace_context(
@@ -122,7 +148,7 @@ def test_trace_span_attributes_include_provider_neutral_identity():
 
     assert attrs["datus.operation"] == "gen_sql_summary"
     assert attrs["datus.run_type"] == "llm"
-    assert attrs["datus.trace.name"] == "chat/gen_sql_summary"
+    assert attrs["datus.trace.name"] == "agent/gen_sql_summary"
     assert attrs["datus.session_id"] == "gen_sql_summary_session_ab12cd34"
     assert attrs["datus.user_id"] == "user-1"
     assert attrs["datus.run_id"] == "run-1"
