@@ -40,6 +40,9 @@ jobs:
   prepare-release:
     name: Prepare release branch
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      branch: ${{ steps.release.outputs.branch }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -192,3 +195,11 @@ jobs:
               --title "${title}" \
               --body-file "${body_file}"
           fi
+
+  release-candidate-validation:
+    name: Validate prepared release candidate
+    needs: prepare-release
+    uses: ./.github/workflows/release-candidate.yml
+    with:
+      expected_version: ${{ needs.prepare-release.outputs.version }}
+      ref: ${{ needs.prepare-release.outputs.branch }}
