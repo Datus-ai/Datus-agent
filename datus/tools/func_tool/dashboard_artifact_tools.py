@@ -121,10 +121,36 @@ _PARAMS_SHORTHAND_KEY_RE = re.compile(
 
 
 # ``<ChartCard ... >`` opening tag, including the self-closing form
-# ``<ChartCard ... />``. Captures the prop block (group 1) for per-attribute
-# extraction below. ``DOTALL`` so multi-line attribute lists (the common shape
-# the LLM writes) are captured in one match.
-_CHART_CARD_OPEN_RE = re.compile(r"<ChartCard\b([^>]*?)/?\s*>", re.DOTALL)
+# ``<ChartCard ... />``. Group 1 captures the prop block. The attribute
+# block is matched as a sequence of "atom" tokens (plain non-special
+# chars, quoted strings, balanced brace expressions) so attributes whose
+# values contain ``>`` — ``title={<Icon />}`` or
+# ``titleRight={<span>a > b</span>}`` — are not truncated at the first
+# stray angle bracket. Brace expressions are recognised up to depth 3,
+# enough for ``style={{ color: '#fff' }}`` / nested JSX expressions.
+_CHART_CARD_OPEN_RE = re.compile(
+    r"""
+    <ChartCard\b
+    (
+      (?:
+        [^'"{}<>]                                          # plain char
+        | '[^'\\]*(?:\\.[^'\\]*)*'                         # 'single-quoted'
+        | "[^"\\]*(?:\\.[^"\\]*)*"                         # "double-quoted"
+        | \{ (?: [^{}] | \{ (?: [^{}] | \{[^{}]*\} )* \} )* \}   # {balanced braces, depth ≤ 3}
+      )*
+    )
+    /?\s*>
+    """,
+    re.VERBOSE | re.DOTALL,
+)
+
+
+# Top-level JSX spread attribute: ``{...rest}`` sitting between other
+# attributes. The match is anchored on a whitespace boundary so nested
+# spreads inside JSX expressions (e.g. ``style={{...defaults}}``) — where
+# the inner ``{`` is preceded by another ``{``, not whitespace — do not
+# false-positive into "ChartCard uses spread props".
+_CHART_CARD_SPREAD_RE = re.compile(r"(?<=\s)\{\s*\.{3}")
 
 
 # Per-attribute extraction inside a ``<ChartCard ... >`` opening tag. Captures
@@ -1123,7 +1149,7 @@ class DashboardArtifactTools:
                 # Spread props (``<ChartCard {...rest}>``) hide attributes from
                 # static inspection. Surface as a warning, then bail on the
                 # rest of the checks for this match to avoid false positives.
-                if "{..." in attrs:
+                if _CHART_CARD_SPREAD_RE.search(attrs):
                     warnings.append(
                         f"render/{mod['rel']}: <ChartCard> uses spread props — static "
                         "validation of chartId / sqlId / chartType is deferred to runtime."

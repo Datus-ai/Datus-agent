@@ -1087,6 +1087,77 @@ class TestValidateRenderChartCard:
         assert "duplicates" in (result.error or "")
         assert "revenue_by_region" in (result.error or "")
 
+    def test_chart_card_attr_value_with_angle_bracket_not_truncated(
+        self, dashboard_tools: DashboardArtifactTools, project_root: Path
+    ):
+        """A JSX expression containing ``>`` must not truncate the attribute scan.
+
+        ``titleRight={<span>a > b</span>}`` previously caused the opening-tag
+        regex to stop at the first inner ``>``; required props sitting AFTER
+        the offending attribute would then look "missing".
+        """
+        _seed_template(dashboard_tools)
+        app = (
+            "import React from 'react';\n"
+            "import { useDatusArtifact, ChartCard } from '@datus/web-artifact';\n"
+            "export default function App() {\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            "  const { data } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });\n"
+            "  return (\n"
+            "    <ChartCard\n"
+            "      titleRight={<span>a > b</span>}\n"
+            '      chartId="revenue_by_region"\n'
+            '      sqlId="queries/revenue_by_region"\n'
+            '      chartType="bar"\n'
+            "      data={data}\n"
+            "    >\n"
+            "      <pre />\n"
+            "    </ChartCard>\n"
+            "  );\n"
+            "}\n"
+        )
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 1, result.error
+
+    def test_chart_card_nested_object_literal_not_confused_for_spread(
+        self, dashboard_tools: DashboardArtifactTools, project_root: Path
+    ):
+        """``style={{...defaults}}`` is a nested object spread, not a JSX prop spread.
+
+        The spread-detection regex must only fire on top-level
+        ``{...rest}`` attributes — the chartId / sqlId / chartType
+        right next to the nested literal are perfectly visible to the
+        static check.
+        """
+        _seed_template(dashboard_tools)
+        app = (
+            "import React from 'react';\n"
+            "import { useDatusArtifact, ChartCard } from '@datus/web-artifact';\n"
+            "const defaults = { padding: 4 };\n"
+            "export default function App() {\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            "  const { data } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });\n"
+            "  return (\n"
+            "    <ChartCard\n"
+            "      style={{...defaults, background: '#fff'}}\n"
+            '      chartId="revenue_by_region"\n'
+            '      sqlId="queries/revenue_by_region"\n'
+            '      chartType="bar"\n'
+            "      data={data}\n"
+            "    >\n"
+            "      <pre />\n"
+            "    </ChartCard>\n"
+            "  );\n"
+            "}\n"
+        )
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 1, result.error
+        warnings = result.result.get("warnings", [])
+        # Crucially: NO "spread props" warning when only nested literal spread is present.
+        assert not any("spread props" in w for w in warnings)
+
     def test_chart_card_spread_props_warning_not_error(
         self, dashboard_tools: DashboardArtifactTools, project_root: Path
     ):
