@@ -111,49 +111,6 @@ def test_langfuse_baggage_processor_works_with_real_span_lifecycle():
     assert span.attributes["langfuse.session.id"] == "session-1"
 
 
-def test_langfuse_baggage_processor_marks_datus_trace_container_as_chain():
-    processor = _LangfuseBaggageSpanProcessor()
-    parent_context = context.get_current()
-    parent_context = baggage.set_baggage("datus.trace.name", "agent/chat", context=parent_context)
-    span = DummySpan(name="agent/chat", attributes={"openinference.span.kind": "AGENT"})
-
-    processor.on_start(span, parent_context)
-
-    assert span.attributes["openinference.span.kind"] == "CHAIN"
-    assert span.attributes["langfuse.trace.name"] == "agent/chat"
-
-
-def test_langfuse_baggage_processor_marks_appended_trace_container_as_chain():
-    processor = _LangfuseBaggageSpanProcessor()
-    parent_context = context.get_current()
-    parent_context = baggage.set_baggage(
-        "datus.trace.name",
-        "bootstrap-kb/starrocks/metrics",
-        context=parent_context,
-    )
-    span = DummySpan(
-        name="bootstrap-kb/starrocks/metrics/gen_metrics",
-        attributes={"openinference.span.kind": "AGENT"},
-    )
-
-    processor.on_start(span, parent_context)
-
-    assert span.attributes["openinference.span.kind"] == "CHAIN"
-    assert span.attributes["langfuse.trace.name"] == "bootstrap-kb/starrocks/metrics"
-
-
-def test_langfuse_baggage_processor_keeps_actual_agent_span_as_agent():
-    processor = _LangfuseBaggageSpanProcessor()
-    parent_context = context.get_current()
-    parent_context = baggage.set_baggage("datus.trace.name", "agent/chat", context=parent_context)
-    span = DummySpan(name="chat", attributes={"openinference.span.kind": "AGENT"})
-
-    processor.on_start(span, parent_context)
-
-    assert span.attributes["openinference.span.kind"] == "AGENT"
-    assert span.attributes["langfuse.trace.name"] == "agent/chat"
-
-
 def test_langfuse_adapter_requires_key_pair(monkeypatch):
     monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)

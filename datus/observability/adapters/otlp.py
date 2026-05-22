@@ -40,12 +40,13 @@ class OtlpAdapter:
     def _setup_otlp_exporter(self, adapter_config: ObservabilityAdapterConfig, tracing_config: TracingConfig) -> None:
         try:
             from openinference.instrumentation import TraceConfig
-            from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
             from opentelemetry import trace
             from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
             from opentelemetry.sdk.resources import SERVICE_NAME, Resource
             from opentelemetry.sdk.trace import TracerProvider
             from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+            from datus.observability.openai_agents import instrument_openai_agents
         except ImportError as exc:
             raise RuntimeError(
                 "OTLP tracing requires opentelemetry-exporter-otlp and "
@@ -79,12 +80,9 @@ class OtlpAdapter:
                 tracer_provider.add_span_processor(_BaggageAttributeSpanProcessor())
                 trace.set_tracer_provider(tracer_provider)
 
-                # Use exclusive_processor=True for explicitly configured OTLP so
-                # traces do not also go to the OpenAI Agents SDK default exporter.
-                instrumentor = OpenAIAgentsInstrumentor()
-                instrumentor.instrument(
+                # Replace the Agents SDK default exporter with Datus OTLP tracing.
+                instrumentor = instrument_openai_agents(
                     tracer_provider=tracer_provider,
-                    exclusive_processor=True,
                     config=_build_openinference_trace_config(TraceConfig, tracing_config),
                 )
 

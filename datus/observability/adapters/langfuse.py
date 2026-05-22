@@ -20,10 +20,6 @@ try:
 except Exception:  # pragma: no cover - import availability is already checked during adapter setup.
     SpanProcessor = object  # type: ignore[assignment,misc]
 
-_OPENINFERENCE_SPAN_KIND = "openinference.span.kind"
-_OPENINFERENCE_AGENT_KIND = "AGENT"
-_OPENINFERENCE_CHAIN_KIND = "CHAIN"
-
 
 class LangfuseAdapter(OtlpAdapter):
     name = "langfuse"
@@ -84,7 +80,6 @@ class _LangfuseBaggageSpanProcessor(SpanProcessor):
         elif trace_id:
             langfuse_attrs = self._trace_attributes.get(trace_id, {})
 
-        _apply_langfuse_span_overrides(span, langfuse_attrs)
         for key, value in langfuse_attrs.items():
             _set_span_attribute(span, key, value)
 
@@ -129,21 +124,6 @@ def _langfuse_attributes_from_baggage(baggage_attrs: dict[str, Any]) -> dict[str
     return attributes
 
 
-def _apply_langfuse_span_overrides(span: Any, langfuse_attrs: dict[str, str]) -> None:
-    if _is_datus_trace_container_span(span, langfuse_attrs):
-        _set_span_attribute(span, _OPENINFERENCE_SPAN_KIND, _OPENINFERENCE_CHAIN_KIND)
-
-
-def _is_datus_trace_container_span(span: Any, langfuse_attrs: dict[str, str]) -> bool:
-    trace_name = langfuse_attrs.get("langfuse.trace.name")
-    span_name = _span_name(span)
-    if not trace_name or not span_name:
-        return False
-    if _span_attribute(span, _OPENINFERENCE_SPAN_KIND) != _OPENINFERENCE_AGENT_KIND:
-        return False
-    return span_name == trace_name or span_name.startswith(f"{trace_name}/")
-
-
 def _option_or_env(
     adapter_config: ObservabilityAdapterConfig,
     option_key: str,
@@ -184,21 +164,6 @@ def _span_trace_id(span: Any) -> str | None:
     if not trace_id:
         return None
     return f"{trace_id:032x}"
-
-
-def _span_name(span: Any) -> str | None:
-    try:
-        value = getattr(span, "name", None)
-    except Exception:
-        return None
-    return _clean_string(value)
-
-
-def _span_attribute(span: Any, key: str) -> Any:
-    try:
-        return (getattr(span, "attributes", None) or {}).get(key)
-    except Exception:
-        return None
 
 
 def _set_span_attribute(span: Any, key: str, value: Any) -> None:
