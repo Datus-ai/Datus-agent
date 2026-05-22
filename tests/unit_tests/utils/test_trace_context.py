@@ -6,6 +6,8 @@ from datus.utils.trace_context import (
     build_benchmark_trace_context,
     build_bootstrap_trace_context,
     build_chat_trace_context,
+    build_trace_span_attributes,
+    trace_context,
 )
 
 
@@ -68,3 +70,25 @@ def test_chat_context_uses_chat_session_as_group_not_name():
     assert ctx.session_id == "gen_sql_summary_session_ab12cd34"
     assert "gen_sql_summary_session_ab12cd34" not in ctx.name
     assert ctx.metadata["service_session_id"] == "gen_sql_summary_session_ab12cd34"
+
+
+def test_trace_span_attributes_include_provider_neutral_identity():
+    ctx = build_chat_trace_context(
+        session_id="gen_sql_summary_session_ab12cd34",
+        llm_session_id="gen_sql_summary_session_ab12cd34",
+        node_name="gen_sql_summary",
+        user_id="user-1",
+        datasource="starrocks",
+        extra={"run_id": "run-1"},
+    )
+
+    with trace_context(ctx, replace=True):
+        attrs = build_trace_span_attributes(operation="gen_sql_summary", run_type="llm")
+
+    assert attrs["datus.operation"] == "gen_sql_summary"
+    assert attrs["datus.run_type"] == "llm"
+    assert attrs["datus.trace.name"] == "chat/gen_sql_summary"
+    assert attrs["datus.session_id"] == "gen_sql_summary_session_ab12cd34"
+    assert attrs["datus.user_id"] == "user-1"
+    assert attrs["datus.run_id"] == "run-1"
+    assert attrs["datus.metadata.service_session_id"] == "gen_sql_summary_session_ab12cd34"

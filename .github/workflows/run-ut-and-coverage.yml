@@ -42,7 +42,7 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-test.txt
           pip install --upgrade --no-cache-dir datus-semantic-metricflow
-          pip install pytest-cov diff-cover packaging
+          pip install pytest-cov 'chardet<6' diff-cover packaging
 
       - name: Check release metadata
         run: python3 ci/check_release_readiness.py

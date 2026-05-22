@@ -60,7 +60,6 @@ def _make_claude_model(model_config=None):
     mock_anthropic_client = MagicMock()
 
     with (
-        patch("datus.models.openai_compatible.setup_tracing"),
         patch("datus.models.openai_compatible.LiteLLMAdapter", return_value=mock_litellm_adapter),
         patch("anthropic.Anthropic", return_value=mock_anthropic_client),
         patch("langsmith.wrappers.wrap_anthropic", side_effect=lambda c: c),
@@ -171,7 +170,6 @@ class TestClaudeModelInit:
 
     def test_anthropic_client_initialized(self):
         with (
-            patch("datus.models.openai_compatible.setup_tracing"),
             patch("datus.models.openai_compatible.LiteLLMAdapter"),
             patch("anthropic.Anthropic") as mock_anthropic_cls,
             patch("langsmith.wrappers.wrap_anthropic", side_effect=lambda c: c),
@@ -213,7 +211,6 @@ class TestGetApiKey:
         from datus.utils.exceptions import DatusException
 
         with (
-            patch("datus.models.openai_compatible.setup_tracing"),
             patch("datus.models.openai_compatible.LiteLLMAdapter"),
             patch("anthropic.Anthropic"),
             patch.dict("os.environ", {}, clear=True),
@@ -444,7 +441,6 @@ class TestClaudeModelSubscriptionAuth:
         cfg.auth_type = "subscription"
 
         with (
-            patch("datus.models.openai_compatible.setup_tracing"),
             patch("datus.models.openai_compatible.LiteLLMAdapter") as mock_adapter_cls,
             patch("anthropic.Anthropic"),
             patch(
@@ -468,7 +464,6 @@ class TestClaudeModelSubscriptionAuth:
         cfg.auth_type = "subscription"
 
         with (
-            patch("datus.models.openai_compatible.setup_tracing"),
             patch("datus.models.openai_compatible.LiteLLMAdapter") as mock_adapter_cls,
             patch("anthropic.Anthropic"),
             patch(
@@ -514,7 +509,6 @@ class TestClaudeModelOAuthHeaders:
         cfg.auth_type = "subscription"
 
         with (
-            patch("datus.models.openai_compatible.setup_tracing"),
             patch("datus.models.openai_compatible.LiteLLMAdapter") as mock_adapter_cls,
             patch("anthropic.Anthropic") as mock_anthropic_cls,
         ):
@@ -538,7 +532,6 @@ class TestClaudeModelOAuthHeaders:
         cfg.auth_type = "subscription"
 
         with (
-            patch("datus.models.openai_compatible.setup_tracing"),
             patch("datus.models.openai_compatible.LiteLLMAdapter") as mock_adapter_cls,
             patch("anthropic.Anthropic") as mock_anthropic_cls,
         ):
@@ -572,7 +565,6 @@ class TestClaudeModelOAuthHeaders:
         cfg.auth_type = "api_key"
 
         with (
-            patch("datus.models.openai_compatible.setup_tracing"),
             patch("datus.models.openai_compatible.LiteLLMAdapter") as mock_adapter_cls,
             patch("anthropic.Anthropic") as mock_anthropic_cls,
         ):
@@ -1802,7 +1794,6 @@ class TestProxyClientInit:
         """
         cfg = _make_model_config(api_key="sk-ant-test")
         with (
-            patch("datus.models.openai_compatible.setup_tracing"),
             patch("datus.models.openai_compatible.LiteLLMAdapter") as mock_adapter_cls,
             patch("anthropic.Anthropic"),
             patch("anthropic.AsyncAnthropic"),

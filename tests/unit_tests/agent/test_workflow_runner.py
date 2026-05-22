@@ -275,7 +275,7 @@ class TestFinalizeWorkflow:
         mock_wf.get_final_result.return_value = {"status": "completed"}
         runner.workflow = mock_wf
 
-        with patch("datus.agent.workflow_runner.get_trace_url", return_value=None):
+        with patch("datus.agent.workflow_runner.get_trace_reference", return_value=None):
             result = runner._finalize_workflow(3)
 
         assert result["steps"] == 3
@@ -283,7 +283,9 @@ class TestFinalizeWorkflow:
         assert "save_path" in result
         mock_wf.save.assert_called_once()
 
-    def test_trace_url_stored_in_metadata(self, tmp_path):
+    def test_trace_reference_stored_in_metadata(self, tmp_path):
+        from datus.observability.reference import TraceReference
+
         runner = _make_runner()
         runner.global_config.get_trajectory_run_dir.return_value = str(tmp_path)
 
@@ -293,10 +295,14 @@ class TestFinalizeWorkflow:
         mock_wf.get_final_result.return_value = {}
         runner.workflow = mock_wf
 
-        with patch("datus.agent.workflow_runner.get_trace_url", return_value="http://trace.url/123"):
-            runner._finalize_workflow(1)
+        ref = TraceReference(trace_id="4bf92f3577b34da6a3ce929d0e0e4736", span_id="00f067aa0ba902b7", run_id="run1")
+        with patch("datus.agent.workflow_runner.get_trace_reference", return_value=ref):
+            result = runner._finalize_workflow(1)
 
-        assert mock_wf.metadata.get("trace_url") == "http://trace.url/123"
+        assert mock_wf.metadata.get("trace_id") == "4bf92f3577b34da6a3ce929d0e0e4736"
+        assert mock_wf.metadata.get("trace_span_id") == "00f067aa0ba902b7"
+        assert mock_wf.metadata.get("trace_run_id") == "run1"
+        assert result["trace_reference"]["trace_id"] == "4bf92f3577b34da6a3ce929d0e0e4736"
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +335,7 @@ class TestWorkflowRunnerRun:
         mock_wf.advance_to_next_node.return_value = None
 
         with patch("datus.agent.workflow_runner.generate_workflow", return_value=mock_wf):
-            with patch("datus.agent.workflow_runner.get_trace_url", return_value=None):
+            with patch("datus.agent.workflow_runner.get_trace_reference", return_value=None):
                 with patch("datus.agent.workflow_runner.setup_node_input"):
                     result = runner.run(sql_task=_make_sql_task(), check_storage=False)
 
@@ -369,7 +375,7 @@ class TestWorkflowRunnerRun:
 
         with patch("datus.agent.workflow_runner.generate_workflow", return_value=mock_wf):
             with patch("datus.agent.workflow_runner.evaluate_result", return_value={"success": True}):
-                with patch("datus.agent.workflow_runner.get_trace_url", return_value=None):
+                with patch("datus.agent.workflow_runner.get_trace_reference", return_value=None):
                     with patch("datus.agent.workflow_runner.setup_node_input"):
                         result = runner.run(sql_task=_make_sql_task(), check_storage=False)
 
@@ -409,7 +415,7 @@ class TestWorkflowRunnerRun:
         mock_wf.advance_to_next_node.return_value = None
 
         with patch("datus.agent.workflow_runner.generate_workflow", return_value=mock_wf):
-            with patch("datus.agent.workflow_runner.get_trace_url", return_value=None):
+            with patch("datus.agent.workflow_runner.get_trace_reference", return_value=None):
                 with patch("datus.agent.workflow_runner.setup_node_input"):
                     result = runner.run(sql_task=_make_sql_task(), check_storage=False)
 
@@ -430,7 +436,7 @@ class TestWorkflowRunnerRun:
         mock_wf.advance_to_next_node.return_value = None
 
         with patch("datus.agent.workflow_runner.generate_workflow", return_value=mock_wf):
-            with patch("datus.agent.workflow_runner.get_trace_url", return_value=None):
+            with patch("datus.agent.workflow_runner.get_trace_reference", return_value=None):
                 with patch("datus.agent.workflow_runner.setup_node_input"):
                     runner.run(sql_task=_make_sql_task(), check_storage=False)
 
@@ -472,7 +478,7 @@ class TestWorkflowRunnerRunStream:
         mock_wf.advance_to_next_node.return_value = None
 
         with patch("datus.agent.workflow_runner.generate_workflow", return_value=mock_wf):
-            with patch("datus.agent.workflow_runner.get_trace_url", return_value=None):
+            with patch("datus.agent.workflow_runner.get_trace_reference", return_value=None):
                 with patch("datus.agent.workflow_runner.setup_node_input"):
                     actions = []
                     async for action in runner.run_stream(sql_task=_make_sql_task()):
@@ -551,7 +557,7 @@ class TestWorkflowRunnerRunStream:
 
         with patch("datus.agent.workflow_runner.generate_workflow", return_value=mock_wf):
             with patch("datus.agent.workflow_runner.evaluate_result", return_value={"success": True}):
-                with patch("datus.agent.workflow_runner.get_trace_url", return_value=None):
+                with patch("datus.agent.workflow_runner.get_trace_reference", return_value=None):
                     with patch("datus.agent.workflow_runner.setup_node_input"):
                         actions = []
                         async for action in runner.run_stream(sql_task=_make_sql_task()):

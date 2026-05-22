@@ -324,30 +324,62 @@ agent:
       save_llm_trace: true
 ```
 
-Trace YAML files are written under `{agent.home}/trajectory/...`. Workflow checkpoints are saved in the same trajectory tree and may include a `trace_url` metadata field when LangSmith or Langfuse is enabled.
+Trace YAML files are written under `{agent.home}/trajectory/...`. Workflow checkpoints are saved in the same trajectory tree and, when external observability is configured, may include stable trace reference fields such as `trace_id`, `trace_span_id`, `trace_run_id`, and `trace_provider`.
 
-### LangSmith
+### External Observability
 
-LangSmith tracing is enabled only when tracing is explicitly switched on and an API key is available.
+External trace export is enabled only through `agent.observability.tracing.enabled: true`. Setting provider API keys alone does not turn tracing on.
 
-For source development, `uv sync --dev` installs the LangSmith packages. In a minimal environment, install them into the active Datus environment:
+`adapters` can be omitted and defaults to `langfuse`. The built-in `otlp`, `langsmith`, `langfuse`, `braintrust`, and `datadog` adapters all emit OpenTelemetry traces. Provider adapters are thin presets: they resolve provider-specific endpoints and authentication, then use the shared OTLP exporter. They do not require the provider SDK for basic trace export.
 
-```bash
-uv pip install langsmith langsmith-fetch
+```yaml
+agent:
+  observability:
+    tracing:
+      enabled: true
+      capture_content: true
 ```
 
-Set environment variables before starting `datus` or `datus-agent`:
+The configuration above is equivalent to:
 
-```bash
-export LANGSMITH_TRACING=true
-export LANGSMITH_API_KEY=<your-langsmith-key>
-export LANGSMITH_PROJECT=datus-agent-dev
-
-# Optional, for self-hosted LangSmith:
-export LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+```yaml
+agent:
+  observability:
+    tracing:
+      enabled: true
+      adapters:
+        - type: langfuse
 ```
 
-`LANGCHAIN_TRACING_V2=true` and `LANGCHAIN_API_KEY` are also accepted for compatibility.
+LangSmith uses `LANGSMITH_API_KEY` or `LANGCHAIN_API_KEY`; `LANGSMITH_PROJECT` is optional. Langfuse uses `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`; `LANGFUSE_HOST` is optional and defaults to Langfuse Cloud US. Datus generates the Langfuse Basic Auth header internally.
+
+Configure multiple adapters explicitly when you need to send traces to more than one backend:
+
+```yaml
+agent:
+  observability:
+    tracing:
+      enabled: true
+      adapters:
+        - type: langsmith
+        - type: langfuse
+```
+
+Generic OTLP remains available when you want full control:
+
+```yaml
+agent:
+  observability:
+    tracing:
+      enabled: true
+      adapters:
+        - type: otlp
+          endpoint: https://collector.example/v1/traces
+          headers:
+            x-api-key: ${OTLP_API_KEY}
+```
+
+Braintrust accepts `BRAINTRUST_API_KEY` plus one of `BRAINTRUST_PARENT`, `BRAINTRUST_PROJECT_ID`, or `BRAINTRUST_PROJECT_NAME`. Datadog defaults to a local OTLP agent endpoint at `http://localhost:4318/v1/traces`; set `endpoint` and `DD_API_KEY` for other deployments.
 
 Run any traced path:
 
@@ -359,38 +391,7 @@ uv run datus-agent benchmark \
   --benchmark_task_ids 14
 ```
 
-View traces in the LangSmith project named by `LANGSMITH_PROJECT`. Workflow runs log the LangSmith trace URL when the trace ends and persist it in the saved workflow metadata when available.
-
-### Langfuse
-
-Langfuse requires both public and secret keys. For complete agent/tool spans, keep the OpenInference and OpenTelemetry packages installed; they are included by `uv sync --dev`.
-
-In a minimal environment:
-
-```bash
-uv pip install langfuse openinference-instrumentation-openai-agents opentelemetry-exporter-otlp
-```
-
-Set environment variables before starting Datus:
-
-```bash
-export LANGFUSE_PUBLIC_KEY=<your-langfuse-public-key>
-export LANGFUSE_SECRET_KEY=<your-langfuse-secret-key>
-export LANGFUSE_HOST=https://us.cloud.langfuse.com
-```
-
-For self-hosted Langfuse, point `LANGFUSE_HOST` at your instance. If your OTLP ingestion endpoint differs from the UI/API host, set `LANGFUSE_OTEL_HOST` explicitly. Otherwise Datus derives it from `LANGFUSE_HOST` or `LANGFUSE_BASE_URL`.
-
-Run a command:
-
-```bash
-uv run datus-agent bootstrap-kb \
-  --config conf/agent.yml \
-  --datasource local_duckdb \
-  --components metadata
-```
-
-Open the Langfuse project for the key pair you configured. Traces are named by operation, for example:
+Open the configured provider project to view traces. Traces are named by operation, for example:
 
 | Operation | Trace name shape |
 | --- | --- |
@@ -401,11 +402,11 @@ Open the Langfuse project for the key pair you configured. Traces are named by o
 
 Tags and metadata include datasource, workflow, benchmark, task id, run id, and `agent.home` when available.
 
-### Running LangSmith and Langfuse Together
+### Running Multiple Backends
 
-Both backends can be enabled in the same process. LangSmith handles SDK tracing through its tracing processor; Langfuse receives LiteLLM callbacks and, when OpenInference is installed, OpenAI Agents SDK spans as well.
+Multiple adapters can be enabled in the same process. Datus creates one OpenTelemetry provider and attaches one exporter/span processor per adapter, so the same spans can be sent to LangSmith, Langfuse, Braintrust, Datadog, and generic OTLP collectors.
 
-Only one `trace_url` is stored in workflow metadata. If both systems are enabled and LangSmith has produced a URL, that LangSmith URL takes precedence; Langfuse still receives traces.
+Datus does not persist backend-specific UI URLs in workflow metadata. Use the stable `trace_id`, `trace_span_id`, `trace_run_id`, and `trace_provider` metadata to correlate a workflow checkpoint with the corresponding backend trace.
 
 After changing tracing environment variables, restart the Datus process. Tracing setup is initialized once per process.
 

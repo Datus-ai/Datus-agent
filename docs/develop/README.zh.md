@@ -324,30 +324,62 @@ agent:
       save_llm_trace: true
 ```
 
-Trace YAML 会写入 `{agent.home}/trajectory/...`。Workflow checkpoint 也保存在同一棵 trajectory 目录下；启用 LangSmith 或 Langfuse 时，保存的 workflow metadata 中可能包含 `trace_url`。
+Trace YAML 会写入 `{agent.home}/trajectory/...`。Workflow checkpoint 也保存在同一棵 trajectory 目录下；配置外部 observability 后，保存的 workflow metadata 中可能包含 `trace_id`、`trace_span_id`、`trace_run_id`、`trace_provider` 等稳定 trace 引用字段。
 
-### LangSmith
+### 外部 Observability
 
-LangSmith 只有在显式开启 tracing 且存在 API Key 时才会启用。
+外部 trace export 只通过 `agent.observability.tracing.enabled: true` 启用。只设置 provider API key 不会自动打开 tracing。
 
-源码开发环境中，`uv sync --dev` 会安装 LangSmith 相关包。最小环境中可安装到当前 Datus 环境：
+`adapters` 可省略，默认使用 `langfuse`。内置的 `otlp`、`langsmith`、`langfuse`、`braintrust`、`datadog` adapter 都发送 OpenTelemetry trace。平台 adapter 是薄 preset：负责解析平台 endpoint 和鉴权，然后复用共享 OTLP exporter。基础 trace export 不需要安装平台 SDK。
 
-```bash
-uv pip install langsmith langsmith-fetch
+```yaml
+agent:
+  observability:
+    tracing:
+      enabled: true
+      capture_content: true
 ```
 
-启动 `datus` 或 `datus-agent` 前设置环境变量：
+上面的配置等价于：
 
-```bash
-export LANGSMITH_TRACING=true
-export LANGSMITH_API_KEY=<your-langsmith-key>
-export LANGSMITH_PROJECT=datus-agent-dev
-
-# 自托管 LangSmith 可选：
-export LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+```yaml
+agent:
+  observability:
+    tracing:
+      enabled: true
+      adapters:
+        - type: langfuse
 ```
 
-兼容写法 `LANGCHAIN_TRACING_V2=true` 与 `LANGCHAIN_API_KEY` 也可使用。
+LangSmith 使用 `LANGSMITH_API_KEY` 或 `LANGCHAIN_API_KEY`；`LANGSMITH_PROJECT` 可选。Langfuse 使用 `LANGFUSE_PUBLIC_KEY` 与 `LANGFUSE_SECRET_KEY`；`LANGFUSE_HOST` 可选，默认使用 Langfuse Cloud US。Datus 会在内部生成 Langfuse Basic Auth header。
+
+需要同时发送到多个后端时，显式配置多个 adapter：
+
+```yaml
+agent:
+  observability:
+    tracing:
+      enabled: true
+      adapters:
+        - type: langsmith
+        - type: langfuse
+```
+
+需要完全控制 endpoint/header 时，继续使用通用 OTLP：
+
+```yaml
+agent:
+  observability:
+    tracing:
+      enabled: true
+      adapters:
+        - type: otlp
+          endpoint: https://collector.example/v1/traces
+          headers:
+            x-api-key: ${OTLP_API_KEY}
+```
+
+Braintrust 使用 `BRAINTRUST_API_KEY`，并需要 `BRAINTRUST_PARENT`、`BRAINTRUST_PROJECT_ID` 或 `BRAINTRUST_PROJECT_NAME` 之一。Datadog 默认发到本地 OTLP agent endpoint `http://localhost:4318/v1/traces`；其他部署可设置 `endpoint` 和 `DD_API_KEY`。
 
 运行任意被 trace 的路径：
 
@@ -359,38 +391,7 @@ uv run datus-agent benchmark \
   --benchmark_task_ids 14
 ```
 
-在 `LANGSMITH_PROJECT` 指定的 LangSmith project 中查看 trace。Workflow trace 结束时会在日志中打印 LangSmith trace URL；可用时也会持久化到保存的 workflow metadata。
-
-### Langfuse
-
-Langfuse 需要同时配置 public key 和 secret key。为了获得完整的 agent/tool span，保留 OpenInference 与 OpenTelemetry 依赖；它们包含在 `uv sync --dev` 中。
-
-最小环境中可安装：
-
-```bash
-uv pip install langfuse openinference-instrumentation-openai-agents opentelemetry-exporter-otlp
-```
-
-启动 Datus 前设置环境变量：
-
-```bash
-export LANGFUSE_PUBLIC_KEY=<your-langfuse-public-key>
-export LANGFUSE_SECRET_KEY=<your-langfuse-secret-key>
-export LANGFUSE_HOST=https://us.cloud.langfuse.com
-```
-
-自托管 Langfuse 时，把 `LANGFUSE_HOST` 指向你的实例。如果 OTLP ingestion endpoint 与 UI/API host 不同，显式设置 `LANGFUSE_OTEL_HOST`。否则 Datus 会从 `LANGFUSE_HOST` 或 `LANGFUSE_BASE_URL` 推导。
-
-运行一个命令：
-
-```bash
-uv run datus-agent bootstrap-kb \
-  --config conf/agent.yml \
-  --datasource local_duckdb \
-  --components metadata
-```
-
-在对应 key pair 所属的 Langfuse project 中查看 trace。Trace 名称按操作组织，例如：
+在配置的 provider project 中查看 trace。Trace 名称按操作组织，例如：
 
 | 操作 | Trace 名称形态 |
 | --- | --- |
@@ -401,11 +402,11 @@ uv run datus-agent bootstrap-kb \
 
 Tag 与 metadata 会包含 datasource、workflow、benchmark、task id、run id，以及可用时的 `agent.home`。
 
-### 同时使用 LangSmith 和 Langfuse
+### 同时使用多个后端
 
-两个 backend 可以在同一进程中同时启用。LangSmith 通过 tracing processor 处理 SDK tracing；Langfuse 接收 LiteLLM callback，并在安装 OpenInference 时接收 OpenAI Agents SDK span。
+多个 adapter 可以在同一进程中同时启用。Datus 会创建一个 OpenTelemetry provider，并为每个 adapter 挂一个 exporter/span processor，因此同一批 span 可以同时发送到 LangSmith、Langfuse、Braintrust、Datadog 和通用 OTLP collector。
 
-Workflow metadata 只保存一个 `trace_url`。如果两个系统都启用且 LangSmith 已生成 URL，LangSmith URL 优先；Langfuse 仍会收到 trace。
+Datus 不会在 workflow metadata 中持久化后端特有的 UI URL。使用 `trace_id`、`trace_span_id`、`trace_run_id`、`trace_provider` 等稳定 metadata 字段，将 workflow checkpoint 关联到对应 backend trace。
 
 修改 tracing 环境变量后，需要重启 Datus 进程。Tracing setup 每个进程只初始化一次。
 

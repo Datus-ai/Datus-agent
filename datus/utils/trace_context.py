@@ -139,6 +139,38 @@ def build_agents_run_config_kwargs(agent_name: Optional[str] = None) -> dict[str
     return ctx.agents_run_config_kwargs(agent_name=agent_name)
 
 
+def build_trace_span_attributes(
+    *,
+    operation: str,
+    run_type: str = "chain",
+    ctx: Optional[TraceContext] = None,
+) -> dict[str, Any]:
+    """Build provider-neutral attributes for Datus observability propagation."""
+    trace_ctx = get_trace_context() if ctx is None else ctx
+    attrs: dict[str, Any] = {
+        "datus.operation": operation,
+        "datus.run_type": str(run_type),
+    }
+    if trace_ctx is None:
+        return attrs
+
+    attrs["datus.trace.name"] = trace_ctx.name
+    if trace_ctx.session_id:
+        attrs["datus.session_id"] = trace_ctx.session_id
+    if trace_ctx.user_id:
+        attrs["datus.user_id"] = trace_ctx.user_id
+    if trace_ctx.tags:
+        attrs["datus.tags"] = ",".join(trace_ctx.tags)
+    for key, value in (trace_ctx.metadata or {}).items():
+        if value is None:
+            continue
+        attrs[f"datus.metadata.{key}"] = value
+    run_id = (trace_ctx.metadata or {}).get("run_id") or (trace_ctx.metadata or {}).get("benchmark_run_id")
+    if run_id:
+        attrs["datus.run_id"] = run_id
+    return attrs
+
+
 def _metadata_base(
     *,
     component: str,
