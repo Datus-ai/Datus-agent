@@ -2,6 +2,9 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+from dataclasses import dataclass
+from datetime import datetime, timezone
+
 from opentelemetry import baggage, context
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -12,9 +15,29 @@ from datus.observability.adapters.otlp import _BaggageAttributeSpanProcessor
 from datus.observability.openai_agents import DatusOpenInferenceTracingProcessor
 
 
+@dataclass
+class FakeTrace:
+    name: str = "agent/chat"
+    trace_id: str = "trace_test"
+
+
+@dataclass
+class FakeSpan:
+    span_data: object
+    span_id: str
+    trace_id: str = "trace_test"
+    parent_id: str | None = None
+    started_at: str = ""
+    ended_at: str = ""
+    error: dict | None = None
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 def test_openai_agents_processor_merges_first_agent_span_into_trace_root():
-    from agents import set_trace_processors
-    from agents.tracing import agent_span, function_span, trace
+    from agents.tracing.span_data import AgentSpanData, FunctionSpanData
     from openinference.instrumentation import OITracer, TraceConfig
 
     provider = TracerProvider()
@@ -27,16 +50,32 @@ def test_openai_agents_processor_merges_first_agent_span_into_trace_root():
     parent_context = baggage.set_baggage("datus.trace.name", "agent/chat", context=parent_context)
     parent_context = baggage.set_baggage("session.id", "session-1", context=parent_context)
     token = context.attach(parent_context)
+    processor = DatusOpenInferenceTracingProcessor(tracer)
+    trace = FakeTrace()
+    root_agent_span = FakeSpan(
+        span_data=AgentSpanData(name="chat", tools=["describe_table"], output_type="str"),
+        span_id="span_agent",
+        started_at=_now_iso(),
+    )
+    tool_span = FakeSpan(
+        span_data=FunctionSpanData(name="describe_table", input="schools", output='{"columns": 49}'),
+        span_id="span_tool",
+        parent_id=root_agent_span.span_id,
+        started_at=_now_iso(),
+    )
 
     try:
-        set_trace_processors([DatusOpenInferenceTracingProcessor(tracer)])
-        with trace("agent/chat", group_id="session-1"):
-            with agent_span("chat"):
-                with function_span("describe_table"):
-                    pass
+        processor.on_trace_start(trace)
+        processor.on_span_start(root_agent_span)
+        processor.on_span_start(tool_span)
+        tool_span.ended_at = _now_iso()
+        processor.on_span_end(tool_span)
+        root_agent_span.ended_at = _now_iso()
+        processor.on_span_end(root_agent_span)
+        processor.on_trace_end(trace)
     finally:
         context.detach(token)
-        set_trace_processors([])
+        processor.shutdown()
         provider.shutdown()
 
     spans = exporter.get_finished_spans()
