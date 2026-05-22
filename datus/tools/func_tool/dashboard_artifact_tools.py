@@ -120,6 +120,53 @@ _PARAMS_SHORTHAND_KEY_RE = re.compile(
 )
 
 
+# ``<ChartCard ... >`` opening tag, including the self-closing form
+# ``<ChartCard ... />``. Captures the prop block (group 1) for per-attribute
+# extraction below. ``DOTALL`` so multi-line attribute lists (the common shape
+# the LLM writes) are captured in one match.
+_CHART_CARD_OPEN_RE = re.compile(r"<ChartCard\b([^>]*?)/?\s*>", re.DOTALL)
+
+
+# Per-attribute extraction inside a ``<ChartCard ... >`` opening tag. Captures
+# only the three required string-literal props the validator audits
+# (``cardId``, ``sqlId``, ``chartType``); other props are ignored here and
+# checked by the runtime / typescript at viewer time.
+_CHART_CARD_STR_ATTR_RE = re.compile(
+    r"""\b(cardId|sqlId|chartType)\s*=\s*['"]([^'"]+)['"]""",
+)
+
+
+# ``cardId`` shape — same slug grammar used elsewhere in the artifact path
+# (dashboard slug, query slug). Caps at 64 to keep the cards.json snapshots /
+# postMessage payloads compact.
+_CARD_ID_RE = re.compile(r"^[a-z0-9_]{1,64}$")
+
+
+# ChartCard's chartType enum. Keep in lockstep with
+# ``packages/web-artifact/src/components/chart-card/index.tsx`` (the ``ChartType``
+# union type) and the dashboard prompt's ``Card props`` table.
+_VALID_CHART_TYPES: Set[str] = {
+    "bar",
+    "line",
+    "area",
+    "pie",
+    "scatter",
+    "radar",
+    "composed",
+    "table",
+    "kpi",
+    "custom",
+}
+
+
+# ``__sourcePath`` is auto-injected at module-load time by the saas iframe
+# sandbox (see ``packages/web-artifact/src/sandbox/module-loader.ts``). Source
+# files must never reference it directly — a literal occurrence either
+# collides with the injected value or signals the LLM tried to spoof the
+# edit-context payload.
+_SOURCE_PATH_RE = re.compile(r"\b__sourcePath\b")
+
+
 # --------------------------------------------------------------------------- #
 # Jinja2 sandbox + bind-value resolution                                      #
 # --------------------------------------------------------------------------- #
@@ -1050,9 +1097,82 @@ class DashboardArtifactTools:
         issues: List[str] = []
         warnings: List[str] = []
         query_refs: Set[str] = set()
+        # cardId → render-file rel-path of its first declaration. Used to
+        # detect duplicates across the whole render/ tree (cards.json snapshots
+        # and the runtime postMessage payload both require global uniqueness).
+        card_ids_seen: Dict[str, str] = {}
 
         for key, mod in modules.items():
             source = mod["source"]
+
+            # ---- __sourcePath is reserved for the sandbox ModuleLoader's
+            # ----   React proxy. LLM source files must NEVER reference it.
+            if _SOURCE_PATH_RE.search(source):
+                issues.append(
+                    f"render/{mod['rel']}: contains a literal '__sourcePath' reference. "
+                    "This prop is auto-injected by the artifact runtime and must not appear "
+                    "in source. Remove every occurrence."
+                )
+
+            # ---- <ChartCard ... > opening tags — required props + enums.
+            for cc_match in _CHART_CARD_OPEN_RE.finditer(source):
+                attrs = cc_match.group(1) or ""
+                attr_values: Dict[str, str] = {name: value for name, value in _CHART_CARD_STR_ATTR_RE.findall(attrs)}
+
+                # Spread props (``<ChartCard {...rest}>``) hide attributes from
+                # static inspection. Surface as a warning, then bail on the
+                # rest of the checks for this match to avoid false positives.
+                if "{..." in attrs:
+                    warnings.append(
+                        f"render/{mod['rel']}: <ChartCard> uses spread props — static "
+                        "validation of cardId / sqlId / chartType is deferred to runtime."
+                    )
+                    continue
+
+                missing = [k for k in ("cardId", "sqlId", "chartType") if k not in attr_values]
+                if missing:
+                    issues.append(
+                        f"render/{mod['rel']}: <ChartCard> is missing required string-literal "
+                        f"props: {missing}. Each ChartCard must declare cardId, sqlId, and "
+                        "chartType up front."
+                    )
+                    continue
+
+                card_id = attr_values["cardId"]
+                sql_id = attr_values["sqlId"]
+                chart_type = attr_values["chartType"]
+
+                if not _CARD_ID_RE.fullmatch(card_id):
+                    issues.append(
+                        f"render/{mod['rel']}: <ChartCard cardId={card_id!r}> must match {_CARD_ID_RE.pattern}."
+                    )
+                elif card_id in card_ids_seen:
+                    issues.append(
+                        f"render/{mod['rel']}: <ChartCard cardId={card_id!r}> duplicates the "
+                        f"cardId already declared in render/{card_ids_seen[card_id]}. cardId "
+                        "must be globally unique across the dashboard."
+                    )
+                else:
+                    card_ids_seen[card_id] = mod["rel"]
+
+                slug = extract_query_slug(sql_id)
+                if slug is None:
+                    issues.append(
+                        f"render/{mod['rel']}: <ChartCard sqlId={sql_id!r}> is not a valid queries/<slug> reference."
+                    )
+                else:
+                    query_refs.add(f"queries/{slug}")
+                    if slug not in templates:
+                        issues.append(
+                            f"render/{mod['rel']}: <ChartCard sqlId='queries/{slug}'> points to a "
+                            "template not produced via save_query_template."
+                        )
+
+                if chart_type not in _VALID_CHART_TYPES:
+                    issues.append(
+                        f"render/{mod['rel']}: <ChartCard chartType={chart_type!r}> is not one of "
+                        f"{sorted(_VALID_CHART_TYPES)}."
+                    )
 
             # ---- 1-arg useQuerySql calls (no params) — always rejected.
             for match in _USE_QUERY_SQL_NO_PARAMS_RE.finditer(source):
@@ -1163,12 +1283,19 @@ class DashboardArtifactTools:
             for k in unreferenced
         )
 
+        # Cards registry derived from the validated <ChartCard> instances.
+        # Sorted by cardId for stable wire output. Downstream consumers
+        # (publish wire payload, future static-edit APIs) read this off the
+        # validate_render result rather than re-walking the AST.
+        cards_registry = [{"card_id": cid, "jsx_path": f"render/{rel}"} for cid, rel in sorted(card_ids_seen.items())]
+
         return FuncToolResult(
             result={
                 "app_jsx_path": app_jsx_path.relative_to(self._project_root).as_posix(),
                 "manifest_path": manifest_path.relative_to(self._project_root).as_posix(),
                 "render_files": [f"render/{modules[k]['rel']}" for k in sorted(modules.keys())],
                 "query_refs": sorted(query_refs),
+                "cards": cards_registry,
                 "warnings": warnings,
             }
         )

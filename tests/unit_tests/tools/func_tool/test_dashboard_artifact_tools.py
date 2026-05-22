@@ -942,6 +942,178 @@ class TestValidateRender:
 
 
 # ----------------------------------------------------------------------------- #
+# validate_render — <ChartCard> static checks                                   #
+# ----------------------------------------------------------------------------- #
+
+
+_CHART_CARD_APP_JSX = """\
+import React from 'react';
+import { useDatusArtifact, ChartCard } from '@datus/web-artifact';
+
+export default function App() {
+  const { useQuerySql } = useDatusArtifact();
+  const { data } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });
+  return (
+    <ChartCard
+      cardId="revenue_by_region"
+      sqlId="queries/revenue_by_region"
+      chartType="bar"
+      title="Revenue"
+      data={data}
+    >
+      <pre />
+    </ChartCard>
+  );
+}
+"""
+
+
+class TestValidateRenderChartCard:
+    """Static validation around the runtime-provided ``<ChartCard>``."""
+
+    def test_chart_card_happy_path_emits_cards_registry(
+        self, dashboard_tools: DashboardArtifactTools, project_root: Path
+    ):
+        _seed_template(dashboard_tools)
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": _CHART_CARD_APP_JSX})
+        result = dashboard_tools.validate_render()
+        assert result.success == 1, result.error
+        assert result.result["cards"] == [{"card_id": "revenue_by_region", "jsx_path": "render/app.jsx"}]
+        # ChartCard's sqlId joins the query-ref set even when the validator
+        # has already seen the same slug from useQuerySql.
+        assert "queries/revenue_by_region" in result.result["query_refs"]
+
+    def test_chart_card_missing_required_prop_is_rejected(
+        self, dashboard_tools: DashboardArtifactTools, project_root: Path
+    ):
+        _seed_template(dashboard_tools)
+        # cardId omitted on purpose — validator must surface it.
+        app = (
+            "import React from 'react';\n"
+            "import { useDatusArtifact, ChartCard } from '@datus/web-artifact';\n"
+            "export default function App() {\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            "  const { data } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });\n"
+            "  return (\n"
+            '    <ChartCard sqlId="queries/revenue_by_region" chartType="bar" data={data}>\n'
+            "      <pre />\n"
+            "    </ChartCard>\n"
+            "  );\n"
+            "}\n"
+        )
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "missing required" in (result.error or "")
+        assert "cardId" in (result.error or "")
+
+    def test_chart_card_invalid_chart_type_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        _seed_template(dashboard_tools)
+        app = _CHART_CARD_APP_JSX.replace('chartType="bar"', 'chartType="donut"')
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "'donut'" in (result.error or "")
+        assert "chartType" in (result.error or "")
+
+    def test_chart_card_invalid_card_id_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        _seed_template(dashboard_tools)
+        # Mixed case / hyphen violates `^[a-z0-9_]{1,64}$`.
+        app = _CHART_CARD_APP_JSX.replace('cardId="revenue_by_region"', 'cardId="Revenue-1"')
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "Revenue-1" in (result.error or "")
+
+    def test_chart_card_dangling_sql_id_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        _seed_template(dashboard_tools)
+        # ChartCard references a sqlId never produced by save_query_template.
+        # useQuerySql still uses the saved one so the import / params checks pass.
+        app = _CHART_CARD_APP_JSX.replace(
+            'sqlId="queries/revenue_by_region"',
+            'sqlId="queries/orphaned_slug"',
+        )
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "orphaned_slug" in (result.error or "")
+        assert "save_query_template" in (result.error or "")
+
+    def test_chart_card_duplicate_card_id_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        _seed_template(dashboard_tools)
+        # Two files declaring the same cardId — duplicate must be caught
+        # across the whole render/ tree, not just within one file.
+        second_file = (
+            "import React from 'react';\n"
+            "import { useDatusArtifact, ChartCard } from '@datus/web-artifact';\n"
+            "export function SecondCard() {\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            "  const { data } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });\n"
+            "  return (\n"
+            '    <ChartCard cardId="revenue_by_region" sqlId="queries/revenue_by_region" '
+            'chartType="line" data={data}>\n'
+            "      <pre />\n"
+            "    </ChartCard>\n"
+            "  );\n"
+            "}\n"
+        )
+        _write_render(
+            project_root,
+            dashboard_tools.dashboard_slug,
+            {"app.jsx": _CHART_CARD_APP_JSX, "second.jsx": second_file},
+        )
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "duplicates" in (result.error or "")
+        assert "revenue_by_region" in (result.error or "")
+
+    def test_chart_card_spread_props_warning_not_error(
+        self, dashboard_tools: DashboardArtifactTools, project_root: Path
+    ):
+        _seed_template(dashboard_tools)
+        # Spread props hide attributes from the regex scanner. The validator
+        # downgrades to a warning + skips the per-prop checks rather than
+        # raising — the LLM occasionally wraps Card props in a helper.
+        app = (
+            "import React from 'react';\n"
+            "import { useDatusArtifact, ChartCard } from '@datus/web-artifact';\n"
+            "export default function App() {\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            "  const { data } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });\n"
+            "  const cardProps = {\n"
+            "    cardId: 'revenue_by_region',\n"
+            "    sqlId: 'queries/revenue_by_region',\n"
+            "    chartType: 'bar',\n"
+            "  };\n"
+            "  return (\n"
+            "    <ChartCard {...cardProps} data={data}>\n"
+            "      <pre />\n"
+            "    </ChartCard>\n"
+            "  );\n"
+            "}\n"
+        )
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 1, result.error
+        warnings = result.result.get("warnings", [])
+        assert any("spread props" in w for w in warnings)
+
+    def test_literal_source_path_in_source_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        _seed_template(dashboard_tools)
+        # __sourcePath is reserved for the runtime injection layer; any
+        # literal occurrence in LLM source is a hard error so the edit
+        # context can't be spoofed.
+        app = _CHART_CARD_APP_JSX.replace(
+            'chartType="bar"',
+            'chartType="bar" __sourcePath="render/app.jsx"',
+        )
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "__sourcePath" in (result.error or "")
+
+
+# ----------------------------------------------------------------------------- #
 # DashboardFilesystemFuncTool deny / allow rules                                #
 # ----------------------------------------------------------------------------- #
 

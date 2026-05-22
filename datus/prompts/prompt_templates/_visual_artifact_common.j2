@@ -47,7 +47,7 @@ The optional `/** @datus-title ... */` annotation at the top is used by the stan
 | Module | Notes |
 |---|---|
 | `react` | `useState`, `useEffect`, `useRef`, `useMemo`, `useCallback`, `useContext`, `createContext`, plus the default `React` namespace |
-| `@datus/web-artifact` | `useDatusArtifact`, `AnimateOnVisible` (see "Motion & animation"), `ChartEntryMore` (see "Chart action menu"), `Skeleton`, `ErrorBlock` (see "Loading & error placeholders") |
+| `@datus/web-artifact` | `useDatusArtifact`, `AnimateOnVisible` (see "Motion & animation"), `ChartCard` (see "Canonical component shape" + "Card props"), `ChartEntryMore` (escape hatch — `ChartCard` already embeds it), `Skeleton`, `ErrorBlock` (see "Loading & error placeholders") |
 | `recharts` | any named export (`AreaChart`, `LineChart`, `BarChart`, `RadarChart`, `PieChart`, `ResponsiveContainer`, `Tooltip`, `XAxis`, `YAxis`, `CartesianGrid`, `Area`, `Line`, `Bar`, `Radar`, `Pie`, `Cell`, etc.) |
 | `lucide-react` | any icon component (`User`, `TrendingUp`, `Banknote`, `Globe`, `Landmark`, …). **Use these instead of emoji** — see the "Iconography & emoji" section below. |
 | `d3-format` | `format` — build numeric / currency / percent / SI-prefix formatters |
@@ -66,70 +66,81 @@ Before saving a file, scan its body and JSX for every capitalized component (Rec
 
 ### Canonical component shape
 
-Every chart / table / KPI component in `render/` follows the same five-section shape. **Copy this skeleton when you author a new component.** Data flow, hook ordering, ref handling, AnimateOnVisible wiring, and the ChartEntryMore action menu are all here — if your component structurally matches this shape, you cannot trip the most common rendering errors.
+Every chart / table / KPI component in `render/` is one `<ChartCard>` from `@datus/web-artifact` wrapping the chart body. **Copy this skeleton when you author a new component.** ChartCard owns the card chrome (white surface, 12-radius, asymmetric padding, flex-column stretch), the chart-actions menu (View SQL / Export CSV / JSON / PNG / etc.), and the "Modify this chart" edit hook. You only author the data layer and the chart body inside.
 
 ```jsx
-import { useMemo, useRef } from 'react';
-import { useDatusArtifact, AnimateOnVisible, ChartEntryMore, Skeleton, ErrorBlock } from '@datus/web-artifact';
+import { useMemo } from 'react';
+import { useDatusArtifact, ChartCard, AnimateOnVisible, Skeleton, ErrorBlock } from '@datus/web-artifact';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip } from 'recharts';
-import Card from './shared/card';
 import { N } from './shared/formatters';
 
 function RevenueTrendCard() {
-  // 1. Refs / state — one named ref per `<div ref>` site in the JSX below.
-  //    Never write `<div ref={useRef(null)}>`: a hook called inline from JSX
-  //    is reached only on some renders and crashes with React error #310.
-  const cardRef = useRef(null);
-
-  // 2. Data hooks — every `useQuerySql` at the top, before any early return.
+  // 1. Data hooks — every `useQuerySql` at the top, before any early return.
   const { useQuerySql } = useDatusArtifact();
   const { isLoading, errorMessage, data, refetch } = useQuerySql('queries/revenue_by_month');
 
-  // 3. Derived data — `useMemo` with stable deps; coerce numerics with N().
+  // 2. Derived data — `useMemo` with stable deps; coerce numerics with N().
   const rows = useMemo(
     () => (data?.rows ?? []).map(r => ({ ...r, revenue: N(r.revenue) })),
     [data],
   );
 
-  // 4. Early returns — only AFTER every hook above. Render loading / error
-  //    placeholders here; never inline a hook into the skeleton below.
+  // 3. Early returns — only AFTER every hook above. Render loading / error
+  //    placeholders here; never inline a hook into the JSX below.
   if (isLoading) return <Skeleton minHeight={300} />;
   if (errorMessage) return <ErrorBlock msg={errorMessage} onRetry={refetch} />;
 
-  // 5. JSX — wrapper `<div ref={cardRef}>` is the screenshot root for
-  //    ChartEntryMore. `titleRight` hosts the action menu so `<Card>` itself
-  //    doesn't need to forward refs.
+  // 4. JSX — ChartCard owns the wrapper, header strip, and menu. You just
+  //    pass cardId / sqlId / chartType + data (for the export menu).
   return (
-    <div ref={cardRef}>
-      <Card
-        title="Revenue trend"
-        titleRight={<ChartEntryMore sqlId="queries/revenue_by_month" data={data} cardRef={cardRef} />}
-      >
-        <AnimateOnVisible minHeight={300}>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={rows}>
-              <XAxis dataKey="month" />
-              <YAxis />
-              <Tooltip />
-              <Line type="monotone" dataKey="revenue" stroke="#6051F5" />
-            </LineChart>
-          </ResponsiveContainer>
-        </AnimateOnVisible>
-      </Card>
-    </div>
+    <ChartCard
+      cardId="revenue_by_month"
+      sqlId="queries/revenue_by_month"
+      chartType="line"
+      title="Revenue trend"
+      data={data}
+    >
+      <AnimateOnVisible minHeight={300}>
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={rows}>
+            <XAxis dataKey="month" />
+            <YAxis />
+            <Tooltip />
+            <Line type="monotone" dataKey="revenue" stroke="#6051F5" />
+          </LineChart>
+        </ResponsiveContainer>
+      </AnimateOnVisible>
+    </ChartCard>
   );
 }
 ```
 
-The five sections are not optional ordering — they are the only ordering React permits:
+The four sections are not optional ordering — they are the only ordering React permits:
 
-1. **Refs / `useState` / state hooks** — always first.
-2. **Data hooks (`useQuerySql`)** — never inside a conditional.
-3. **Derived data (`useMemo` / `useCallback`)** — also hooks; same constraint.
-4. **Early returns (`if (isLoading) return …`)** — only after every hook.
-5. **JSX** — references refs / state / derived data by name. No hook calls inside JSX.
+1. **Data hooks (`useQuerySql`)** — first, never inside a conditional.
+2. **Derived data (`useMemo` / `useCallback`)** — also hooks; same constraint.
+3. **Early returns (`if (isLoading) return …`)** — only after every hook.
+4. **JSX** — references derived data by name. No hook calls inside JSX.
 
-`AnimateOnVisible`, `FigureCaption`, `<Card>`'s `titleRight` slot, and `<ChartEntryMore>` are normal JSX — they all live in section 5.
+`AnimateOnVisible` and the chart primitives are normal JSX — they live inside `<ChartCard>` in section 4. **Do not write `useRef(null)` or wrap the card in your own `<div ref={cardRef}>`** — ChartCard owns the screenshot root and the chart-actions menu internally.
+
+### Card props
+
+`<ChartCard>` requires three declarative props on every chart card. They are read at render time by the chart-actions menu and also stamped into the "Modify this chart" edit-intent message that the host shell uses to route follow-up edits back to this exact card.
+
+| Prop | Required | Notes |
+|---|---|---|
+| `cardId` | yes | Stable id, unique across `render/*.jsx`. Convention: matches the sqlId basename (`queries/revenue_by_month` → `cardId="revenue_by_month"`). Must match `^[a-z0-9_]{1,64}$`. |
+| `sqlId` | yes | Same literal you passed to `useQuerySql`, in `queries/<slug>` form. ChartCard forwards it to the inner chart-actions menu for View SQL / Export. |
+| `chartType` | yes | One of: `'bar' \| 'line' \| 'area' \| 'pie' \| 'scatter' \| 'radar' \| 'composed' \| 'table' \| 'kpi' \| 'custom'`. Picks the value that matches the chart primitive you render below. Use `'custom'` for hand-rolled SVG / treemap / gauge cards that don't fit the enum. |
+| `data` | recommended | The `data` field from the matching `useQuerySql(sqlId, params)`. Required if the chart-actions menu needs to expose View SQL / Export CSV / Export JSON; PNG export still works without it. |
+| `params` | recommended in dashboard mode | The same params object you passed to `useQuerySql`. ChartCard does not consume it — it gets snapshotted into the edit-intent payload so the follow-up LLM call sees the filter state the user was looking at. |
+| `title` | optional | `string` or `ReactNode` (icon + text). Renders as the card heading. |
+| `titleRight` | optional | Extra title-strip content rendered to the LEFT of the built-in chart-actions menu. Use sparingly — most cards don't need it. |
+| `hideMenu` | optional | Set on pure-presentation cards that shouldn't show the chart-actions menu. |
+| `style` / `className` | optional | Standard passthroughs. |
+
+**Do not pass `__sourcePath`.** It is auto-injected by the artifact runtime at module-load time. Any source-level occurrence of `__sourcePath` is rejected by `validate_render`.
 
 ### Data layer — `useDatusArtifact`
 
@@ -174,27 +185,29 @@ Always read rows as `data?.rows ?? []` and columns as `data?.columns ?? []`. Coe
 
   The validator only static-checks **literal** spec strings. Template strings resolve at runtime; the iframe will surface unknown slugs as `errorMessage`.
 
-- One `useQuerySql` declaration per query, in the data-hooks block (section 2 of the Canonical component shape).
-- Render a skeleton placeholder when `isLoading`; an inline error block when `errorMessage`; the chart/table otherwise. Those `return` statements live in section 4 — after the full hook block, never between hooks.
+- One `useQuerySql` declaration per query, in the data-hooks block (section 1 of the Canonical component shape).
+- Render a skeleton placeholder when `isLoading`; an inline error block when `errorMessage`; the chart/table otherwise. Those `return` statements live in section 3 — after the full hook block, never between hooks.
 
 #### Hook safety
 
 All hook-related rules collapse to a single invariant — the React rule that breaks the most artifacts. Read it twice.
 
-- **Every `use*` hook is called unconditionally, in the same order, at the top of the function body.** That includes `useRef`, `useMemo`, `useState`, `useCallback`, `useEffect`, `useContext`, `useQuerySql`, and every custom hook.
-- **No hook call may appear inside JSX.** `<div ref={useRef(null)}>` is forbidden — declare a named ref above and reference it by name from JSX. Allocate **one named ref per `<div ref>` site**; never reuse `cardRef` across multiple wrappers; never invent a fresh ref at the call site.
+- **Every `use*` hook is called unconditionally, in the same order, at the top of the function body.** That includes `useMemo`, `useState`, `useCallback`, `useEffect`, `useContext`, `useQuerySql`, and every custom hook.
+- **No hook call may appear inside JSX.** Declare derived values above and reference them by name from the JSX below.
 - **No hook call may appear after an early return.** Place `if (isLoading) return …`, `if (errorMessage) return …`, `if (rows.length === 0) return null` *after* every hook — never between two hooks.
 
 Violating any of these surfaces as `Minified React error #310` ("Rendered more hooks than during the previous render") and crashes the whole artifact. **The Canonical component shape above is the proof shape — if your code structurally matches it, you cannot trip #310.**
 
-Anti-pattern most often emitted by lower-tier models — hook reached only on the data-non-empty render, crashes the *next* render once data arrives:
+Anti-pattern most often emitted by lower-tier models — second hook reached only on the data-non-empty render, crashes the *next* render once data arrives:
 
 ```jsx
 function YoYSummary() {
+  const { useQuerySql } = useDatusArtifact();
   const { data } = useQuerySql('queries/yoy_summary');
   const rows = data?.rows ?? [];
   if (rows.length === 0) return null;
-  return <div ref={useRef(null)}>…</div>;   // ✗ #310: hook count differs between the two renders
+  const total = useMemo(() => rows.reduce((s, r) => s + r.value, 0), [rows]);  // ✗ #310: useMemo reached only after the early return
+  return <span>{total}</span>;
 }
 ```
 
@@ -262,8 +275,8 @@ Treat each output as a polished deliverable — a small **branded analytics prod
 - **Cohesive palette** at the top of a shared module (`render/shared/colors.js` or inline in `app.jsx`) as a `COLORS` const (primary, secondary, accent, navy/heading, background, text, muted, positive, negative). Pick a palette that fits the domain.
 - **Map categorical dimensions to consistent colors** via dedicated constants (`REGION_COLORS`, `SEGMENT_COLORS`, `STATUS_COLORS`, …). Reuse the same color for the same category across every chart.
 - **Inline styles only** for layout and chrome — no Tailwind utility classes for layout, no external stylesheets. Use `style={{ ... }}` objects for everything visual.
-- **Card primitive** as a reusable component (`render/shared/card.jsx`): white background, 12px border-radius, **asymmetric padding `padding: '20px 20px 16px'`** (20px top, 20px horizontal, 16px bottom — note this is NOT a uniform 20px on all sides; the trimmed bottom keeps the chart axis closer to the card edge), subtle shadow `0 1px 3px rgba(0,0,0,0.08)`. Wrap every chart panel in it. The wrapper element MUST be a flex column with full height AND border-box sizing — `display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box'` — so each card stretches to its grid cell (see "Responsive grid" below) **without overflowing it**. `boxSizing: 'border-box'` is mandatory: with the default `content-box`, `height: 100%` resolves to the content area only, then the 20+16px vertical padding adds on top, so the card's outer box ends up ~36px taller than its grid row. Cards overflow downward into the next section's header (visible as a few pixels of the previous card cutting into the next "Section N" badge). The chart body slot keeps its fixed `height={N}` from the canonical shape; any extra vertical space lands as bottom padding inside the card, which is the intended look.
-- **Responsive grid**: `display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gridAutoRows: '1fr', gap: 16`. `gridAutoRows: '1fr'` is mandatory: without it, each row's height tracks every card's own content, so a row that mixes a chart with `<Legend>` (or with an extra footer / pagination row) against one without will visibly misalign at the bottom. Combined with the flex-column `Card` primitive above, every card in a row stretches to the tallest card's height and bottoms line up across the row.
+- **Card primitive** comes from `@datus/web-artifact` as `<ChartCard>` — the same surface every dashboard uses (white background, 12px border-radius, asymmetric `padding: '20px 20px 16px'`, subtle shadow, flex-column stretch + border-box sizing). Wrap every chart panel in it; do **not** re-implement the surface in `render/shared/card.jsx`. ChartCard already lays out the title strip + chart-actions menu and exposes `style` / `className` for the rare cases you need to nudge dimensions.
+- **Responsive grid**: `display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gridAutoRows: '1fr', gap: 16`. `gridAutoRows: '1fr'` is mandatory: without it, each row's height tracks every card's own content, so a row that mixes a chart with `<Legend>` (or with an extra footer / pagination row) against one without will visibly misalign at the bottom. Combined with the flex-column ChartCard primitive, every card in a row stretches to the tallest card's height and bottoms line up across the row.
 - **Typography**: 22px/700 H1, 14px/600 card titles, 24px/700 KPI numbers, 11–13px secondary text.
 - **KPI sparklines** (dashboard mode): small `<Sparkline>` component using `AreaChart` with vertical gradient fill (5%–95% opacity stops) and 2-px stroke in the primary color.
 - **Comparison badges** (dashboard mode): pill-shaped `▲ 12%` / `▼ 8%` chips next to KPIs using positive/negative semantic colors.
@@ -276,7 +289,7 @@ Treat each output as a polished deliverable — a small **branded analytics prod
 
 ### Loading & error placeholders — `Skeleton` / `ErrorBlock`
 
-`Skeleton` and `ErrorBlock` are runtime-provided primitives — **import them directly from `@datus/web-artifact`**. Do not re-implement them in `render/shared/card.jsx`; every artifact shares one canonical look and gets free upgrades when the runtime ships new versions, exactly like `AnimateOnVisible` and `ChartEntryMore`.
+`Skeleton` and `ErrorBlock` are runtime-provided primitives — **import them directly from `@datus/web-artifact`**. Do not re-implement them; every artifact shares one canonical look and gets free upgrades when the runtime ships new versions, exactly like `ChartCard` and `AnimateOnVisible`.
 
 ```jsx
 import { useDatusArtifact, Skeleton, ErrorBlock } from '@datus/web-artifact';
@@ -342,7 +355,7 @@ Charts enter with motion when the reader first scrolls them into view — a char
 - **Defer the mount until viewport entry.** Wrap every animated visualization in `AnimateOnVisible` from `@datus/web-artifact` — it has correct `IntersectionObserver` defaults (`rootMargin: '0px 0px -10% 0px'`, `threshold: 0.1`), disconnects after first hit, and reserves vertical space via `minHeight` so layout doesn't shift on mount. Do **not** write your own `useInView` hook.
 
 ```jsx
-import { useDatusArtifact, AnimateOnVisible } from '@datus/web-artifact';
+import { useDatusArtifact, ChartCard, AnimateOnVisible } from '@datus/web-artifact';
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
 
 function RevenueTrend() {
@@ -351,7 +364,13 @@ function RevenueTrend() {
   const rows = data?.rows ?? [];
 
   return (
-    <Card title="Revenue trend">
+    <ChartCard
+      cardId="revenue_by_month"
+      sqlId="queries/revenue_by_month"
+      chartType="line"
+      title="Revenue trend"
+      data={data}
+    >
       <AnimateOnVisible minHeight={300}>
         <ResponsiveContainer width="100%" height={300}>
           <LineChart data={rows}>
@@ -362,7 +381,7 @@ function RevenueTrend() {
           </LineChart>
         </ResponsiveContainer>
       </AnimateOnVisible>
-    </Card>
+    </ChartCard>
   );
 }
 ```
@@ -380,28 +399,15 @@ Rules:
 - **Custom inline SVG** (treemaps, gauges): also wrap in `AnimateOnVisible`; inside, animate `transform` / `opacity` / `stroke-dashoffset` via CSS transitions toggled by a mount `useState` + `useEffect(() => setMounted(true), [])`.
 - **Respect reduced motion.** Compute `window.matchMedia('(prefers-reduced-motion: reduce)').matches` once in `app.jsx` and pass `animationDuration={prefersReducedMotion ? 0 : 1500}` to Recharts primitives. `AnimateOnVisible` stays on — it only delays mount, never adds motion.
 
-### Chart action menu — `<ChartEntryMore>`
+### Chart action menu
 
-A runtime-provided action menu rendered in each chart's title strip (View SQL / Export SQL / CSV / JSON / PNG / Copy PNG). Behaviour is owned by the component; the LLM's job is wiring only.
+ChartCard embeds the chart-actions menu (View SQL / Export SQL / CSV / JSON / PNG / Copy PNG, plus "Modify this chart" when the host shell supports it) — you don't import or wire `ChartEntryMore` yourself. ChartCard reads `sqlId` + `data` straight from its own props and owns the screenshot root, so PNG export captures the title + chart together with no `cardRef` plumbing on your side.
 
-Wiring rules (all mandatory):
+**One ChartCard per card.** When a card visualizes more than one sub-view (e.g. two side-by-side pies sharing one query), wrap them in a single `<ChartCard>` whose body is a 2-column grid — not two adjacent ChartCards.
 
-1. **Wrap the card in `<div ref={cardRef}>`.** That wrapper is the screenshot root for PNG export. Don't put `ref` on `<Card>` directly — React 18 strips `ref` from props on function components, leaving `cardRef.current` null and crashing PNG export.
-2. **Pass `cardRef` to `<ChartEntryMore>`.** Don't rely on the `cardSelector` fallback.
-3. **Pass `data` to `<ChartEntryMore>`** — the `data` field from the matching `useQuerySql(sqlId, params)` call. Without it, the SQL / CSV / JSON actions are disabled (PNG still works). Mandatory in dashboard mode because the menu can't otherwise see what `params` the parent applied.
-4. **Render in the card's `titleRight` slot** when the `<Card>` primitive exposes one; otherwise inline with `display: 'flex'`, `justifyContent: 'space-between'` in the card header.
-5. **One menu per card.** Combine sub-charts into one card per query rather than stacking multiple menus.
-6. **Attach to every `useQuerySql`-backed visualization** — charts, KPI cards / sparklines, custom SVG, **and data tables** (in the header strip above `<table>`, not inside `<thead>`).
+**Attach a ChartCard to every `useQuerySql`-backed visualization** — charts, KPI cards, custom SVG, **and data tables** (the table goes inside the ChartCard body, including the header strip; the chart-actions menu lives in the ChartCard's title strip above it).
 
-Props:
-
-| Prop | Required | Notes |
-|---|---|---|
-| `sqlId` | yes | Same literal you passed to `useQuerySql`. Used as the View SQL modal title and default download filename — the component does not re-fetch. |
-| `data` | yes | The `data` field from the matching `useQuerySql(sqlId, params)`. |
-| `cardRef` | yes | Ref on the outer wrapper div — screenshot root for PNG / Copy. |
-| `cardSelector` | no (fallback) | Used only when `cardRef` is omitted; default `'[data-datus-chart-card]'`. |
-| `filenameBase` | no | Override the downloaded basename (default: the slug). Extensions are added automatically. |
+If you genuinely need to render a card without the chart-actions menu (filter strip, decorative banner, etc.), set `hideMenu` on the ChartCard. Direct use of the standalone `ChartEntryMore` import is reserved for the rare custom case where ChartCard's chrome doesn't fit — almost never required.
 
 ### Formatting helpers
 
