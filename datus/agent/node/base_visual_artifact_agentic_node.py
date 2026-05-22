@@ -28,13 +28,15 @@ Anything that's *byte-identical* between the two node files lives here.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Dict, Generic, List, Literal, Optional, Type, TypeVar
+from typing import TYPE_CHECKING, Any, AsyncGenerator, ClassVar, Dict, Generic, List, Literal, Optional, Type, TypeVar
 
 from pydantic import BaseModel
 
-from datus.agent.node._visual_artifact_finalize import run_finalize_analysis
+from datus.agent.node._visual_artifact_finalize import FINALIZE_STAGE_TEXT, run_finalize_analysis
 from datus.agent.node.agentic_node import AgenticNode
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
@@ -457,12 +459,22 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
 
     # ── Finalize stage ────────────────────────────────────────────────────
 
-    def _run_finalize(self, artifact_slug: str, actions: List[ActionHistory]) -> Dict[str, Any]:
+    def _run_finalize(
+        self,
+        artifact_slug: str,
+        actions: List[ActionHistory],
+        on_progress: Optional[Any] = None,
+    ) -> Dict[str, Any]:
         """Run the finalize analysis stage for the just-completed artifact.
 
         Wraps :func:`run_finalize_analysis` so the orchestrator can stay
         UI-agnostic (no node-specific paths in the helper module).
         Failures are logged and returned as a dict; never re-raised.
+
+        ``on_progress`` is a callable ``int -> None`` invoked at each
+        stage boundary (1=insights LLM, 2=intent curation, 3=schema bake)
+        so the streaming hook can surface stage transitions to the user
+        without waiting for the artifact SSE event 10-15 s later.
         """
         try:
             project_root = Path(self.agent_config.project_root).resolve()
@@ -483,6 +495,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                 # so finalize still runs when this is None (e.g. node was
                 # configured without db tools — unusual but supported).
                 db_func_tool=self.db_func_tool,
+                on_progress=on_progress,
             )
         except Exception as exc:
             logger.warning("Finalize stage crashed for %s/%s: %s", self.ARTIFACT_KIND, artifact_slug, exc)
@@ -719,25 +732,15 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             # template's final action emits SUCCESS=False status.
             if hasattr(result, "success"):
                 result.success = False  # type: ignore[attr-defined]
-        elif self._active_artifact_slug:
-            # Finalize stage: produce insights / suggested_questions /
-            # subject_refs (present iff non-empty) under analysis/. Runs
-            # before _post_validate_hook so the HTML compile step (CLI
-            # mode) can pick up the freshly-written analysis files if
-            # it ever wants to. Finalize failures are surfaced via
-            # ``result.finalize_warnings`` but never block the main
-            # artifact — the SQL+render bundle is already on disk.
-            finalize_summary = self._run_finalize(self._active_artifact_slug, all_actions)
-            if hasattr(result, "finalize_warnings") and finalize_summary.get("warnings"):
-                result.finalize_warnings = finalize_summary["warnings"]  # type: ignore[attr-defined]
-            if hasattr(result, "finalize_error") and finalize_summary.get("error"):
-                result.finalize_error = finalize_summary["error"]  # type: ignore[attr-defined]
-            self._post_validate_hook(self._active_artifact_slug, result)
 
         # Stash artifact summary so ``_final_summary_for_action`` (used by the
         # base template's final action emit) can render the right message.
+        # Finalize itself runs inside :meth:`_stream_post_build` so the
+        # per-stage progress messages can be streamed back to the chat panel
+        # while the LLM + describe_table work is in flight.
         ctx.extras["artifact_app_jsx_rel_path"] = app_jsx_rel_path
         ctx.extras["artifact_slug"] = self._active_artifact_slug
+        ctx.extras["artifact_all_actions"] = all_actions
         return result
 
     def _build_error_result(self, exc: BaseException, ctx: "StreamRunContext") -> ResultT:
@@ -750,3 +753,68 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         if picked:
             self._active_artifact_slug = picked
         return self._finalize_artifact_error(exc)
+
+    async def _stream_post_build(self, ctx: "StreamRunContext", result: ResultT) -> AsyncGenerator[ActionHistory, None]:
+        """Run finalize + post-validate hook with per-stage progress streaming.
+
+        The previous design ran finalize synchronously inside
+        ``_build_success_result``, which froze the SSE stream for the
+        full 10-15 s of post-validate LLM work. Splitting it into a
+        streaming hook lets us emit a ``finalize_progress`` action at
+        each stage boundary so the chat bubble's text swaps stage-to-
+        stage while the heavy work runs on a worker thread.
+
+        All progress actions share a single ``action_id`` so the SSE
+        converter emits CREATE_MESSAGE for the first and UPDATE_MESSAGE
+        for stages 2 / 3 — the user sees one bubble whose contents
+        change three times.
+        """
+        slug = self._active_artifact_slug
+        app_jsx_rel_path = ctx.extras.get("artifact_app_jsx_rel_path")
+        all_actions = ctx.extras.get("artifact_all_actions") or []
+
+        if not slug or not app_jsx_rel_path:
+            return
+
+        progress_queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+        sentinel = object()
+
+        def _on_progress(stage: int) -> None:
+            # Called from the worker thread; hop back onto the event loop
+            # before touching the asyncio.Queue.
+            loop.call_soon_threadsafe(progress_queue.put_nowait, stage)
+
+        async def _run_finalize_off_thread() -> Dict[str, Any]:
+            try:
+                return await asyncio.to_thread(self._run_finalize, slug, all_actions, _on_progress)
+            finally:
+                loop.call_soon_threadsafe(progress_queue.put_nowait, sentinel)
+
+        finalize_task = asyncio.create_task(_run_finalize_off_thread())
+
+        progress_action_id = str(uuid.uuid4())
+        while True:
+            item = await progress_queue.get()
+            if item is sentinel:
+                break
+            stage = int(item) if isinstance(item, int) else 0
+            text = FINALIZE_STAGE_TEXT.get(stage)
+            if not text:
+                continue
+            yield ActionHistory(
+                action_id=progress_action_id,
+                role=ActionRole.ASSISTANT,
+                action_type="finalize_progress",
+                messages="",
+                input={"stage": stage},
+                output={"stage": stage, "text": text},
+                status=ActionStatus.SUCCESS,
+            )
+
+        finalize_summary = await finalize_task
+        if hasattr(result, "finalize_warnings") and finalize_summary.get("warnings"):
+            result.finalize_warnings = finalize_summary["warnings"]  # type: ignore[attr-defined]
+        if hasattr(result, "finalize_error") and finalize_summary.get("error"):
+            result.finalize_error = finalize_summary["error"]  # type: ignore[attr-defined]
+        self._post_validate_hook(slug, result)

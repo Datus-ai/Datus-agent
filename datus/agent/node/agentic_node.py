@@ -1921,6 +1921,17 @@ class AgenticNode(Node):
             self.result = result
             self.actions.extend(ahm.get_actions())
 
+            # Optional post-build streaming hook. Visual-artifact subagents
+            # override this to interleave finalize-progress messages around
+            # their 10-15 s of post-validate LLM work; default is a no-op.
+            # The hook may mutate ``result`` in place (e.g. populate
+            # ``finalize_warnings``) and those mutations land in the
+            # ``final_action`` dump below because ``model_dump()`` runs
+            # after the hook is fully consumed.
+            async for progress_action in self._stream_post_build(ctx, result):
+                ahm.add_action(progress_action)
+                yield progress_action
+
             final_action = ActionHistory.create_action(
                 role=ActionRole.ASSISTANT,
                 action_type=f"{node_name}_response",
@@ -2100,6 +2111,26 @@ class AgenticNode(Node):
         of ``self.result_class``.
         """
         raise NotImplementedError(f"{type(self).__name__} must override _build_success_result(ctx)")
+
+    async def _stream_post_build(
+        self, ctx: "StreamRunContext", result: BaseResult
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Optional async-generator hook invoked after :meth:`_build_success_result`
+        and before the final wrapper action is yielded.
+
+        Visual-artifact subagents override this to interleave finalize-
+        progress messages around their post-validate LLM work, so the
+        chat panel doesn't sit silent through the 10-15 s finalize. The
+        hook may mutate ``result`` in place (e.g. populate
+        ``finalize_warnings`` / ``finalize_error``); those mutations
+        flow into the final wrapper action's ``output_data``.
+
+        Default: yield nothing.
+        """
+        # ``if False: yield`` keeps this an async-generator function (so
+        # callers can ``async for``) while emitting zero items by default.
+        if False:  # pragma: no cover - documented sentinel
+            yield  # type: ignore[unreachable]
 
     def _build_error_result(self, exc: BaseException, ctx: "StreamRunContext") -> BaseResult:
         """Construct a uniform error NodeResult — base implementation final.
