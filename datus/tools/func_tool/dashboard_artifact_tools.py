@@ -144,6 +144,7 @@ _CHART_ID_RE = re.compile(r"^[a-z0-9_]{1,64}$")
 
 # ChartCard's chartType enum.
 _VALID_CHART_TYPES: Set[str] = {
+    # recharts native chart components
     "bar",
     "line",
     "area",
@@ -151,8 +152,20 @@ _VALID_CHART_TYPES: Set[str] = {
     "scatter",
     "radar",
     "composed",
+    "radial-bar",
+    "treemap",
+    "funnel",
+    # Not recharts-native but common in BI dashboards; rendered via
+    # custom SVG / RadialBarChart subsets. Declaring the type lets the
+    # edit-time LLM see the intent without forcing every BI chart into
+    # the catch-all ``custom`` bucket.
+    "gauge",
+    "heatmap",
+    "waterfall",
+    # Tabular + single-value cards.
     "table",
     "kpi",
+    # Escape hatch for hand-rolled visuals that don't match any of the above.
     "custom",
 }
 

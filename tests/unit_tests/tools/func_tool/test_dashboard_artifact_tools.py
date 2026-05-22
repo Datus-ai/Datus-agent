@@ -1019,6 +1019,23 @@ class TestValidateRenderChartCard:
         assert "'donut'" in (result.error or "")
         assert "chartType" in (result.error or "")
 
+    @pytest.mark.parametrize(
+        "chart_type",
+        ["radial-bar", "treemap", "funnel", "gauge", "heatmap", "waterfall"],
+    )
+    def test_chart_card_extended_chart_types_accepted(
+        self,
+        dashboard_tools: DashboardArtifactTools,
+        project_root: Path,
+        chart_type: str,
+    ):
+        """The BI-extended chart types (3 recharts-native + 3 custom-rendered) validate cleanly."""
+        _seed_template(dashboard_tools)
+        app = _CHART_CARD_APP_JSX.replace('chartType="bar"', f'chartType="{chart_type}"')
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 1, result.error
+
     def test_chart_card_invalid_chart_id_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
         _seed_template(dashboard_tools)
         # Mixed case / hyphen violates `^[a-z0-9_]{1,64}$`.
