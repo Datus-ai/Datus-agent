@@ -142,9 +142,7 @@ _CHART_CARD_STR_ATTR_RE = re.compile(
 _CHART_ID_RE = re.compile(r"^[a-z0-9_]{1,64}$")
 
 
-# ChartCard's chartType enum. Keep in lockstep with
-# ``packages/web-artifact/src/components/chart-card/index.tsx`` (the ``ChartType``
-# union type) and the dashboard prompt's ``Card props`` table.
+# ChartCard's chartType enum.
 _VALID_CHART_TYPES: Set[str] = {
     "bar",
     "line",

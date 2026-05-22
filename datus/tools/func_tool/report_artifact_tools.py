@@ -90,7 +90,6 @@ _DEFAULT_EXPORT_RE = re.compile(r"(?m)^\s*export\s+default\b")
 
 # Bare specifiers an authored render module is allowed to import. Keep in
 # lockstep with the module map inside the iframe runtime
-# (`packages/web-common/src/modules/report/dynamic-artifact/iframe-runtime.ts`).
 ALLOWED_BARE_MODULES: frozenset[str] = frozenset(
     {
         "react",
