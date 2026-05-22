@@ -765,6 +765,9 @@ class TestValidateRender:
         assert result.success == 1, result.error
         assert result.result["app_jsx_path"].endswith("render/app.jsx")
         assert "queries/revenue_by_region" in result.result["query_refs"]
+        # Kind + slug let the frontend refresh the preview immediately.
+        assert result.result["artifact_kind"] == "dashboard"
+        assert result.result["artifact_slug"] == dashboard_tools.dashboard_slug
 
     def test_rejects_useQuerySql_without_params_arg(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
         _seed_template(dashboard_tools)

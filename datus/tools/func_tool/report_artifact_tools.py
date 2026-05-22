@@ -817,11 +817,17 @@ class ReportArtifactTools:
             FuncToolResult.result on success::
 
                 {
+                    "artifact_kind": "report",
+                    "artifact_slug": "<id>",
                     "app_jsx_path": "reports/<id>/render/app.jsx",
                     "render_files": ["render/app.jsx", "render/kpi-banner.jsx", ...],
                     "query_refs": ["queries/foo", "queries/bar"],
                     "warnings": ["render/legacy.jsx is unreachable from app.jsx"],
                 }
+
+            ``artifact_kind`` / ``artifact_slug`` let the frontend refresh the
+            live preview as soon as the validator passes, without waiting for
+            the (multi-second) post-validate finalize LLM calls.
 
             On failure, ``success=0`` and ``error`` lists every issue found.
             Warnings (e.g. unreferenced files) are non-fatal — fix or ignore.
@@ -975,6 +981,8 @@ class ReportArtifactTools:
 
         return FuncToolResult(
             result={
+                "artifact_kind": "report",
+                "artifact_slug": self.report_slug,
                 "app_jsx_path": app_jsx_path.relative_to(self._project_root).as_posix(),
                 "manifest_path": manifest_path.relative_to(self._project_root).as_posix(),
                 "render_files": [f"render/{modules[k]['rel']}" for k in sorted(modules.keys())],
