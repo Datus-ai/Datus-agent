@@ -159,14 +159,6 @@ _VALID_CHART_TYPES: Set[str] = {
 }
 
 
-# ``__sourcePath`` is auto-injected at module-load time by the saas iframe
-# sandbox (see ``packages/web-artifact/src/sandbox/module-loader.ts``). Source
-# files must never reference it directly — a literal occurrence either
-# collides with the injected value or signals the LLM tried to spoof the
-# edit-context payload.
-_SOURCE_PATH_RE = re.compile(r"\b__sourcePath\b")
-
-
 # --------------------------------------------------------------------------- #
 # Jinja2 sandbox + bind-value resolution                                      #
 # --------------------------------------------------------------------------- #
@@ -1104,15 +1096,6 @@ class DashboardArtifactTools:
 
         for key, mod in modules.items():
             source = mod["source"]
-
-            # ---- __sourcePath is reserved for the sandbox ModuleLoader's
-            # ----   React proxy. LLM source files must NEVER reference it.
-            if _SOURCE_PATH_RE.search(source):
-                issues.append(
-                    f"render/{mod['rel']}: contains a literal '__sourcePath' reference. "
-                    "This prop is auto-injected by the artifact runtime and must not appear "
-                    "in source. Remove every occurrence."
-                )
 
             # ---- <ChartCard ... > opening tags — required props + enums.
             for cc_match in _CHART_CARD_OPEN_RE.finditer(source):

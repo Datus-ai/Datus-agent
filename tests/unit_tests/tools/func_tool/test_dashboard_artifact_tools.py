@@ -1098,20 +1098,6 @@ class TestValidateRenderChartCard:
         warnings = result.result.get("warnings", [])
         assert any("spread props" in w for w in warnings)
 
-    def test_literal_source_path_in_source_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
-        _seed_template(dashboard_tools)
-        # __sourcePath is reserved for the runtime injection layer; any
-        # literal occurrence in LLM source is a hard error so the edit
-        # context can't be spoofed.
-        app = _CHART_CARD_APP_JSX.replace(
-            'chartType="bar"',
-            'chartType="bar" __sourcePath="render/app.jsx"',
-        )
-        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
-        result = dashboard_tools.validate_render()
-        assert result.success == 0
-        assert "__sourcePath" in (result.error or "")
-
 
 # ----------------------------------------------------------------------------- #
 # DashboardFilesystemFuncTool deny / allow rules                                #

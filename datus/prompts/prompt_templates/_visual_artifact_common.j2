@@ -140,7 +140,7 @@ The four sections are not optional ordering — they are the only ordering React
 | `hideMenu` | optional | Set on pure-presentation cards that shouldn't show the chart-actions menu. |
 | `style` / `className` | optional | Standard passthroughs. |
 
-**Do not pass `__sourcePath`.** It is auto-injected by the artifact runtime at module-load time. Any source-level occurrence of `__sourcePath` is rejected by `validate_render`.
+**Do not pass `__sourcePath`.** It is auto-injected by the artifact runtime at module-load time; any value you set is overwritten.
 
 ### Data layer — `useDatusArtifact`
 
