@@ -61,7 +61,8 @@ def _is_sensitive_field(key: str, fields: list[str]) -> bool:
 
 
 def _field_parts(value: str) -> list[str]:
-    camel_spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", value)
+    acronym_spaced = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", value)
+    camel_spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", acronym_spaced)
     return [part for part in re.split(r"[^A-Za-z0-9]+", camel_spaced.lower()) if part]
 
 

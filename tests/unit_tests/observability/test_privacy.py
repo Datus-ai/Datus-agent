@@ -33,6 +33,21 @@ def test_redaction_preserves_token_usage_metrics():
     assert redacted["nested"]["secretKey"] == "[REDACTED]"
 
 
+def test_redaction_handles_acronym_camel_case_field_boundaries():
+    redacted = redact_value(
+        {
+            "APIKey": "secret",
+            "openaiAPIKey": "secret",
+            "notebook": "safe",
+        },
+        RedactConfig(fields=["api_key", "key"]),
+    )
+
+    assert redacted["APIKey"] == "[REDACTED]"
+    assert redacted["openaiAPIKey"] == "[REDACTED]"
+    assert redacted["notebook"] == "safe"
+
+
 def test_redaction_applies_patterns_and_nested_sequences():
     redacted = redact_value(
         {
