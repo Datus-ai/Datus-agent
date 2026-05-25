@@ -84,6 +84,14 @@ class TestGenVisualDashboardInit:
         assert node.dashboard_artifact_tools is None
         assert node._active_dashboard_slug is None
 
+    def test_session_id_is_honored(self, real_agent_config, mock_llm_create):
+        # Regression: BaseVisualArtifactAgenticNode must accept session_id and
+        # forward it to the base node. When dropped, the node mints a fresh
+        # random session id each turn, so the SQLite history never matches the
+        # chat session and multi-turn context is silently lost.
+        node = _make_node(real_agent_config, session_id="vd_session_fixed")
+        assert node.session_id == "vd_session_fixed"
+
     def test_tools_include_filesystem_and_db(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config)
         tool_names = {t.name for t in node.tools}
@@ -369,6 +377,32 @@ class TestNodeFactoryDashboardBranch:
         )
         assert isinstance(node, GenVisualReportAgenticNode)
         assert node.get_node_name() == "gen_visual_report"
+
+    def test_factory_forwards_session_id_to_dashboard(self, real_agent_config, mock_llm_create):
+        # Regression: the API path passes the HTTP session id as both node_id
+        # and session_id so the node's SQLite history matches the chat session.
+        # The gen_visual_* branches previously dropped session_id, breaking
+        # multi-turn history for dashboards/reports.
+        from datus.agent.node.node_factory import create_interactive_node
+
+        node = create_interactive_node(
+            subagent_name="gen_visual_dashboard",
+            agent_config=real_agent_config,
+            node_id="api_session_42",
+            session_id="api_session_42",
+        )
+        assert node.session_id == "api_session_42"
+
+    def test_factory_forwards_session_id_to_report(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.node_factory import create_interactive_node
+
+        node = create_interactive_node(
+            subagent_name="gen_visual_report",
+            agent_config=real_agent_config,
+            node_id="api_session_99",
+            session_id="api_session_99",
+        )
+        assert node.session_id == "api_session_99"
 
     def test_create_node_input_returns_dashboard_input(self, real_agent_config, mock_llm_create):
         from datus.agent.node.node_factory import create_node_input

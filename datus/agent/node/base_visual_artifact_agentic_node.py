@@ -117,6 +117,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         execution_mode: Literal["interactive", "workflow"] = "interactive",
         scope: Optional[str] = None,
         is_subagent: bool = False,
+        session_id: Optional[str] = None,
     ):
         self.execution_mode = execution_mode
         self.configured_node_name = node_name
@@ -153,6 +154,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             mcp_servers={},
             scope=scope,
             is_subagent=is_subagent,
+            session_id=session_id,
         )
 
         self.setup_tools()
