@@ -156,6 +156,13 @@ class ToolArchive:
         payload is not valid JSON do we fall back to substring matching,
         which catches things like raw tracebacks or partial JSON written by a
         crashing tool.
+
+        The substring fallback can false-positive on legitimate non-JSON tool
+        output that happens to contain ``"Traceback"`` or ``"error":`` as data
+        (e.g. a SQL string literal, a log-mining query result). The only
+        consequence is a wider preview for that one entry; correctness of the
+        archived content is unaffected, so we accept the false positive in
+        exchange for not missing real tracebacks emitted by crashing tools.
         """
         try:
             obj = json.loads(output_text)

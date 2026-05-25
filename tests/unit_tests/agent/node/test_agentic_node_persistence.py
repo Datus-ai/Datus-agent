@@ -144,8 +144,6 @@ class TestCompactStateNotPersisted:
         # Fresh process → fresh scan; in-memory state is intentionally NOT
         # round-tripped because the archive marker covers correctness.
         assert rebuilt._compacted_until == 0
-        # ``_overflow_retry_done`` is similarly per-process, never persisted.
-        assert rebuilt._overflow_retry_done is False
 
     def test_legacy_compact_section_is_ignored_on_load(self, chdir_tmp, real_agent_config):
         """Files written by older code carry a ``compact`` section. The loader

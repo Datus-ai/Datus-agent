@@ -54,7 +54,6 @@ def _build_node(tmp_path, *, keep_recent_user_turns=2, archive_threshold=100):
         preview_chars=50,
     )
     node._compact_lock = None
-    node._overflow_retry_done = False
     return node
 
 

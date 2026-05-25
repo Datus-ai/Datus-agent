@@ -556,9 +556,9 @@ class TestGetAvailableSkillsContext:
 class TestCompactDispatch:
     @pytest.mark.asyncio
     async def test_auto_compact_returns_false_when_no_signal(self):
-        # With no model + no actions, ``_history_token_ratio_sync`` returns 0
-        # and ``_user_turn_count_estimate`` is 0, so ``compact("auto")`` is a
-        # noop and the legacy wrapper reports False.
+        # With no model + no session, ``_history_token_ratio_sync`` returns 0
+        # and ``_user_turn_count_from_session`` returns 0, so ``compact("auto")``
+        # is a noop and the legacy wrapper reports False.
         node = _make_node()
         node.model = None
         result = await node._auto_compact()
@@ -584,7 +584,11 @@ class TestCompactDispatch:
         node.session_id = "sid"
         node._session = MagicMock()
         with patch.object(_ConcreteAgenticNode, "_history_token_ratio_sync", return_value=0.1):
-            with patch.object(_ConcreteAgenticNode, "_user_turn_count_estimate", return_value=99):
+            with patch.object(
+                _ConcreteAgenticNode,
+                "_user_turn_count_from_session",
+                new=AsyncMock(return_value=99),
+            ):
                 with patch.object(
                     node, "_minor_compact", new=AsyncMock(return_value={"mode": "minor", "success": True})
                 ) as m:
@@ -597,7 +601,11 @@ class TestCompactDispatch:
         node = _make_node()
         node._session = MagicMock()
         with patch.object(_ConcreteAgenticNode, "_history_token_ratio_sync", return_value=0.1):
-            with patch.object(_ConcreteAgenticNode, "_user_turn_count_estimate", return_value=0):
+            with patch.object(
+                _ConcreteAgenticNode,
+                "_user_turn_count_from_session",
+                new=AsyncMock(return_value=0),
+            ):
                 result = await node.compact(mode="auto", reason="noop_test")
         assert result["mode"] == "noop"
         assert result["success"] is True

@@ -292,7 +292,12 @@ class AgenticNode(Node):
         self._compacted_until: int = 0
         self._archive: Optional[ToolArchive] = None
         self._compact_lock: Optional[asyncio.Lock] = None
-        self._overflow_retry_done: bool = False
+        # Strong refs for background minor-compact tasks. Without this the
+        # task created via ``asyncio.create_task`` in ``CompactHook`` can be
+        # GC'd before it runs because asyncio only weakly references scheduled
+        # tasks. The hook adds the task here and registers a ``discard``
+        # done-callback so the set never grows unbounded.
+        self._pending_compact_tasks: Set[asyncio.Task] = set()
 
     @property
     def model(self) -> Optional[LLMBaseModel]:
@@ -1092,7 +1097,7 @@ class AgenticNode(Node):
         self._ensure_compact_state()
         lock = self._get_compact_lock()
         async with lock:
-            resolved_mode = mode if mode != "auto" else self._decide_compact_mode()
+            resolved_mode = mode if mode != "auto" else await self._decide_compact_mode()
             if resolved_mode == "noop":
                 return {"mode": "noop", "reason": reason, "success": True}
             if resolved_mode == "major":
@@ -1117,11 +1122,11 @@ class AgenticNode(Node):
             self._archive = None
         if not hasattr(self, "_compact_lock"):
             self._compact_lock = None
-        if not hasattr(self, "_overflow_retry_done"):
-            self._overflow_retry_done = False
+        if not hasattr(self, "_pending_compact_tasks"):
+            self._pending_compact_tasks = set()
 
-    def _decide_compact_mode(self) -> Literal["major", "minor", "noop"]:
-        """Choose major / minor / noop synchronously from cheap signals.
+    async def _decide_compact_mode(self) -> Literal["major", "minor", "noop"]:
+        """Choose major / minor / noop from token-ratio + session item counts.
 
         Priority order:
         1. Token usage above ``major.token_threshold`` → major. The session
@@ -1135,6 +1140,11 @@ class AgenticNode(Node):
            (the preserved window covers all recent history that would
            still be in the model's cache).
         3. Otherwise → noop.
+
+        The user-turn count is read from session items (the same source
+        ``_resolve_user_turn_cutoff`` uses) rather than ``self.actions``, so a
+        rebuilt node on resume — whose ``self.actions`` is empty but whose
+        session already holds many turns — still triggers minor compact.
         """
         cfg = self._compact_cfg
         if not (cfg.major.enabled or cfg.minor.enabled):
@@ -1145,20 +1155,38 @@ class AgenticNode(Node):
             ratio = 0.0
         if cfg.major.enabled and ratio >= cfg.major.token_threshold:
             return "major"
-        if cfg.minor.enabled and self._user_turn_count_estimate() > cfg.minor.keep_recent_user_turns:
-            return "minor"
+        if cfg.minor.enabled:
+            count = await self._user_turn_count_from_session()
+            if count > cfg.minor.keep_recent_user_turns:
+                return "minor"
         return "noop"
 
-    def _user_turn_count_estimate(self) -> int:
-        """Cheap synchronous estimate of user turns in the active session.
+    async def _user_turn_count_from_session(self) -> int:
+        """Count ``role == "user"`` items in the active session.
 
-        Counts ``role == USER, depth == 0`` entries in ``self.actions``, which
-        tracks the active run. Used as the gate before scheduling a minor
-        compact; the authoritative count (from session items) is recomputed
-        inside ``_minor_compact``, which will self-noop if the estimate
-        over-counted.
+        Authoritative source for the minor-compact gate: ``self.actions`` is
+        wiped on rebuild (resume / new process) while the session items
+        survive, so reading from the session is the only way the dispatcher
+        agrees with ``_resolve_user_turn_cutoff``'s view of the world.
+
+        Returns 0 when the session is unavailable or ``get_items`` fails — a
+        conservative default that lets the dispatcher fall through to noop
+        rather than firing spuriously on a half-initialized node.
         """
-        return sum(1 for a in self.actions if a.role == ActionRole.USER and a.depth == 0)
+        if self._session is None and self.session_id:
+            try:
+                self._get_or_create_session()
+            except Exception as exc:
+                logger.debug("session materialize failed in dispatcher: %s", exc)
+                return 0
+        if self._session is None:
+            return 0
+        try:
+            items = await self._session.get_items()
+        except Exception as exc:
+            logger.debug("session.get_items() failed in dispatcher: %s", exc)
+            return 0
+        return sum(1 for it in items if isinstance(it, dict) and it.get("role") == "user")
 
     def _history_token_ratio_sync(self) -> float:
         """Synchronous estimate of context window usage as a fraction.

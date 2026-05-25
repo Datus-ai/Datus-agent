@@ -14,10 +14,16 @@ from datus.agent.node.compact_hook import CompactHook
 
 
 def _fake_node(*, mode_choice: str) -> MagicMock:
-    """Build a stand-in for AgenticNode exposing only the surface CompactHook touches."""
+    """Build a stand-in for AgenticNode exposing only the surface CompactHook touches.
+
+    ``_decide_compact_mode`` is async (it reads session items), so the mock
+    uses ``AsyncMock``; tests that need ``mode_choice`` to vary just rebuild
+    the stub.
+    """
     node = MagicMock()
-    node._decide_compact_mode = MagicMock(return_value=mode_choice)
+    node._decide_compact_mode = AsyncMock(return_value=mode_choice)
     node.compact = AsyncMock(return_value={"mode": mode_choice, "success": True})
+    node._pending_compact_tasks = set()
     return node
 
 
@@ -59,13 +65,48 @@ async def test_on_tool_end_schedules_minor_asynchronously():
 
 
 @pytest.mark.asyncio
+async def test_on_tool_end_minor_task_kept_strongly_referenced():
+    """The background minor task must be added to ``_pending_compact_tasks``
+    so asyncio's weak-ref scheduler does not GC it before it runs. A done
+    callback then removes it so the set never grows unbounded.
+
+    Regression: relying on ``asyncio.create_task`` without a strong ref means
+    the task can be collected mid-flight in low-load scenarios — silently
+    dropping the minor compact.
+    """
+    node = _fake_node(mode_choice="minor")
+    # Slow compact so the task is still pending when we inspect the set.
+    started = asyncio.Event()
+    proceed = asyncio.Event()
+
+    async def slow_compact(*, mode, reason):
+        started.set()
+        await proceed.wait()
+        return {"mode": mode, "success": True}
+
+    node.compact = AsyncMock(side_effect=slow_compact)
+    hook = CompactHook(node)
+
+    await hook.on_tool_end(context=None, agent=None, tool=None, result="ok")
+    await started.wait()
+    # Task must be registered while still running.
+    assert len(node._pending_compact_tasks) == 1
+    proceed.set()
+    # Let the task complete and the done-callback fire.
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert node._pending_compact_tasks == set()
+
+
+@pytest.mark.asyncio
 async def test_decide_failure_does_not_break_run_loop():
     """A buggy dispatcher must NEVER crash the SDK run loop; the worst case
     is we miss one compact opportunity and recover next round.
     """
     node = MagicMock()
-    node._decide_compact_mode = MagicMock(side_effect=RuntimeError("decide blew up"))
+    node._decide_compact_mode = AsyncMock(side_effect=RuntimeError("decide blew up"))
     node.compact = AsyncMock()
+    node._pending_compact_tasks = set()
     hook = CompactHook(node)
     # Should NOT raise.
     await hook.on_tool_end(context=None, agent=None, tool=None, result="ok")

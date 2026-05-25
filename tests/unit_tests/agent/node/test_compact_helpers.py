@@ -6,8 +6,9 @@
 These cover the dispatch / trigger / cutoff / history-dump methods that the
 end-to-end ``compact()`` tests in test_compact_minor exercise indirectly.
 Splitting them out keeps each test focused on a single branch — the
-``_decide_compact_mode`` priority order, the ``_user_turn_count_estimate``
-synchronous gate, and the user-turn cutoff resolver.
+``_decide_compact_mode`` priority order, the ``_user_turn_count_from_session``
+gate (reads session items so the resume case is handled), and the user-turn
+cutoff resolver.
 """
 
 import json
@@ -20,14 +21,6 @@ from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.compact_archive import ToolArchive
 from datus.configuration.agent_config import CompactConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
-
-USER_ACTION_KW = {
-    "action_type": "chat",
-    "messages": "u",
-    "input_data": {},
-    "output_data": {},
-    "status": ActionStatus.SUCCESS,
-}
 
 
 class _Node(AgenticNode):
@@ -53,7 +46,6 @@ def _build_node(tmp_path):
     node._compacted_until = 0
     node._archive = ToolArchive(project_name="proj", session_id="sid_test", base_dir=tmp_path / "data")
     node._compact_lock = None
-    node._overflow_retry_done = False
     node._session = None
     return node
 
@@ -72,7 +64,6 @@ class TestEnsureCompactState:
         assert node._compacted_until == 0
         assert node._archive is None
         assert node._compact_lock is None
-        assert node._overflow_retry_done is False
 
     def test_preserves_existing_values(self):
         with patch.object(AgenticNode, "__init__", lambda self, *a, **kw: None):
@@ -82,93 +73,118 @@ class TestEnsureCompactState:
         node._compacted_until = 7
         node._archive = None
         node._compact_lock = None
-        node._overflow_retry_done = True
         # Should NOT clobber existing values.
         node._ensure_compact_state()
         assert node._compacted_until == 7
-        assert node._overflow_retry_done is True
 
 
 class TestDecideCompactMode:
-    def test_returns_noop_when_both_disabled(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_returns_noop_when_both_disabled(self, tmp_path):
         node = _build_node(tmp_path)
         node._compact_cfg.major.enabled = False
         node._compact_cfg.minor.enabled = False
-        assert node._decide_compact_mode() == "noop"
+        assert await node._decide_compact_mode() == "noop"
 
-    def test_picks_major_when_token_ratio_exceeds_threshold(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_picks_major_when_token_ratio_exceeds_threshold(self, tmp_path):
         node = _build_node(tmp_path)
         with patch.object(_Node, "_history_token_ratio_sync", return_value=0.95):
-            assert node._decide_compact_mode() == "major"
+            assert await node._decide_compact_mode() == "major"
 
-    def test_picks_minor_when_user_turns_exceed_keep_window(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_picks_minor_when_user_turns_exceed_keep_window(self, tmp_path):
         node = _build_node(tmp_path)
         node._compact_cfg.minor.keep_recent_user_turns = 2
         with patch.object(_Node, "_history_token_ratio_sync", return_value=0.1):
-            with patch.object(_Node, "_user_turn_count_estimate", return_value=5):
-                assert node._decide_compact_mode() == "minor"
+            with patch.object(_Node, "_user_turn_count_from_session", new=AsyncMock(return_value=5)):
+                assert await node._decide_compact_mode() == "minor"
 
-    def test_returns_noop_when_user_turn_count_below_window(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_returns_noop_when_user_turn_count_below_window(self, tmp_path):
         node = _build_node(tmp_path)
         node._compact_cfg.minor.keep_recent_user_turns = 5
         with patch.object(_Node, "_history_token_ratio_sync", return_value=0.1):
-            with patch.object(_Node, "_user_turn_count_estimate", return_value=3):
-                assert node._decide_compact_mode() == "noop"
+            with patch.object(_Node, "_user_turn_count_from_session", new=AsyncMock(return_value=3)):
+                assert await node._decide_compact_mode() == "noop"
 
-    def test_returns_noop_when_user_turn_count_equals_window(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_returns_noop_when_user_turn_count_equals_window(self, tmp_path):
         """``count == N`` means nothing is older than the kept window — no-op."""
         node = _build_node(tmp_path)
         node._compact_cfg.minor.keep_recent_user_turns = 4
         with patch.object(_Node, "_history_token_ratio_sync", return_value=0.1):
-            with patch.object(_Node, "_user_turn_count_estimate", return_value=4):
-                assert node._decide_compact_mode() == "noop"
+            with patch.object(_Node, "_user_turn_count_from_session", new=AsyncMock(return_value=4)):
+                assert await node._decide_compact_mode() == "noop"
 
-    def test_ratio_exception_falls_back_to_zero(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_ratio_exception_falls_back_to_zero(self, tmp_path):
         """A buggy ratio calc must not crash the dispatcher — minor / noop
         branches still get a fair shot.
         """
         node = _build_node(tmp_path)
         with patch.object(_Node, "_history_token_ratio_sync", side_effect=RuntimeError("boom")):
-            with patch.object(_Node, "_user_turn_count_estimate", return_value=0):
+            with patch.object(_Node, "_user_turn_count_from_session", new=AsyncMock(return_value=0)):
                 # Ratio defaults to 0.0 → below major threshold → noop.
-                assert node._decide_compact_mode() == "noop"
+                assert await node._decide_compact_mode() == "noop"
 
 
-class TestUserTurnCountEstimate:
-    """``_user_turn_count_estimate`` walks ``self.actions`` once and counts
-    ``ActionRole.USER, depth == 0`` entries. The depth filter is what keeps
-    nested sub-agent activity from inflating the count.
+class TestUserTurnCountFromSession:
+    """``_user_turn_count_from_session`` counts ``role == "user"`` items in
+    the active session — same source as ``_resolve_user_turn_cutoff`` so the
+    dispatcher and the worker agree on the eligibility window even after a
+    resume that left ``self.actions`` empty.
     """
 
-    def _user_action(self, depth=0):
-        action = ActionHistory.create_action(role=ActionRole.USER, **USER_ACTION_KW)
-        action.depth = depth
-        return action
+    @pytest.mark.asyncio
+    async def test_returns_zero_when_no_session(self, tmp_path):
+        node = _build_node(tmp_path)
+        node._session = None
+        node.session_id = ""
+        assert await node._user_turn_count_from_session() == 0
 
-    def _assistant_action(self):
-        return ActionHistory.create_action(
-            role=ActionRole.ASSISTANT,
-            action_type="chat",
-            messages="a",
-            input_data={},
-            output_data={},
-            status=ActionStatus.SUCCESS,
+    @pytest.mark.asyncio
+    async def test_returns_zero_when_get_items_fails(self, tmp_path):
+        node = _build_node(tmp_path)
+        node._session = MagicMock()
+        node._session.get_items = AsyncMock(side_effect=RuntimeError("db locked"))
+        assert await node._user_turn_count_from_session() == 0
+
+    @pytest.mark.asyncio
+    async def test_counts_user_role_items(self, tmp_path):
+        node = _build_node(tmp_path)
+        node._session = MagicMock()
+        node._session.get_items = AsyncMock(
+            return_value=[
+                {"type": "message", "role": "user", "content": "q1"},
+                {"type": "function_call", "name": "f"},
+                {"type": "message", "role": "user", "content": "q2"},
+                {"type": "message", "role": "assistant", "content": "a"},
+                "non-dict-item",  # robustness: skipped
+                {"type": "message", "role": "user", "content": "q3"},
+            ]
         )
+        assert await node._user_turn_count_from_session() == 3
 
-    def test_empty_actions_returns_zero(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_materializes_session_when_id_set(self, tmp_path):
+        """Resume path: ``session_id`` is set but ``_session`` is None until
+        ``_get_or_create_session`` runs. The dispatcher must trigger the
+        materialization itself so the gate doesn't miss user turns held in
+        the on-disk session before the first execute call.
+        """
         node = _build_node(tmp_path)
-        assert node._user_turn_count_estimate() == 0
+        node._session = None
+        node.session_id = "sid_resume"
+        materialized = MagicMock()
+        materialized.get_items = AsyncMock(return_value=[{"role": "user", "content": "q"}])
 
-    def test_counts_only_top_level_user_actions(self, tmp_path):
-        node = _build_node(tmp_path)
-        node.actions = [
-            self._user_action(),
-            self._assistant_action(),
-            self._user_action(),
-            self._user_action(depth=1),  # nested — must NOT count
-            self._user_action(),
-        ]
-        assert node._user_turn_count_estimate() == 3
+        def _create():
+            node._session = materialized
+
+        node._get_or_create_session = MagicMock(side_effect=_create)
+        assert await node._user_turn_count_from_session() == 1
+        node._get_or_create_session.assert_called_once()
 
 
 class TestHistoryTokenRatioSync:

@@ -48,7 +48,7 @@ class CompactHook(RunHooks):
         # so the hook does not need to mutate any per-tool counter. It just
         # dispatches the decide-and-act pipeline once per tool completion.
         try:
-            mode = node._decide_compact_mode()
+            mode = await node._decide_compact_mode()
         except Exception as exc:  # noqa: BLE001 — never crash the run loop
             logger.debug("compact mode decision failed in on_tool_end: %s", exc)
             return
@@ -63,9 +63,12 @@ class CompactHook(RunHooks):
                 logger.warning("Hook-triggered major compact failed: %s", exc)
             return
         # Minor: fire-and-forget. The lock inside ``compact`` ensures any
-        # concurrent CLI / overflow trigger serializes correctly.
+        # concurrent CLI / overflow trigger serializes correctly. The task
+        # is registered on the node so asyncio's weak-ref scheduler does not
+        # GC it before it runs; the done-callback discards the entry so the
+        # set never grows unbounded.
         try:
-            asyncio.create_task(node.compact(mode="minor", reason="hook_minor"))
+            task = asyncio.create_task(node.compact(mode="minor", reason="hook_minor"))
         except RuntimeError as exc:
             # No running loop (unusual — on_tool_end runs inside the SDK
             # event loop). Fall back to inline await rather than dropping
@@ -75,3 +78,10 @@ class CompactHook(RunHooks):
                 await node.compact(mode="minor", reason="hook_minor")
             except Exception as exc2:
                 logger.warning("Hook-triggered minor compact failed: %s", exc2)
+            return
+        pending = getattr(node, "_pending_compact_tasks", None)
+        if pending is None:
+            pending = set()
+            node._pending_compact_tasks = pending
+        pending.add(task)
+        task.add_done_callback(pending.discard)
