@@ -85,6 +85,7 @@ nav:
       - LLM Trace Usage: training/llm_trace_usage.md
     - Develop:
       - Overview: develop/README.md
+      - Observability: develop/observability.md
     - VSCode Extension: vscode_extension/introduction.md
 
   - Release Notes: release_notes.md
@@ -165,6 +166,7 @@ plugins:
             Validation: 校验
             Auto Memory: 自动记忆
             Develop: 开发
+            Observability: 可观测性
             VSCode Extension: VSCode 插件
             Release Notes: 发布说明
 
