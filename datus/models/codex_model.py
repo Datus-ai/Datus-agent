@@ -5,6 +5,7 @@
 """Codex model implementation using OAuth authentication and Responses API."""
 
 import uuid
+from contextlib import nullcontext
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 from agents import Agent, ModelSettings, Runner, SQLiteSession, Tool
@@ -19,16 +20,31 @@ from datus.configuration.agent_config import ModelConfig
 from datus.models.base import LLMBaseModel
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
+from datus.observability.manager import get_observability_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
-from datus.utils.trace_context import build_agents_run_config_kwargs
+from datus.utils.trace_context import build_agents_run_config_kwargs, build_trace_span_attributes
 
 logger = get_logger(__name__)
 
 # Fallback values when providers.yml / OpenRouter cache do not cover a codex slug.
 _CODEX_DEFAULT_CONTEXT_LENGTH = 192000
 _CODEX_DEFAULT_MAX_TOKENS = 16384
+
+
+def _agents_trace_baggage(agent_name: Optional[str]):
+    attrs = build_trace_span_attributes(operation=agent_name or "codex_agent", run_type="llm")
+    trace_name = attrs.get("datus.trace.name")
+    if not trace_name:
+        return nullcontext()
+    return get_observability_manager().trace_baggage(str(trace_name), attrs)
+
+
+async def _stream_events_with_trace_baggage(result, agent_name: Optional[str]):
+    with _agents_trace_baggage(agent_name):
+        async for event in result.stream_events():
+            yield event
 
 
 class _CodexResponsesModel(OpenAIResponsesModel):
@@ -319,10 +335,13 @@ class CodexModel(LLMBaseModel):
 
             async def _run_streamed_to_completion(a, p):
                 """Run agent via streaming (Codex API requires stream=True) and return the result."""
-                result = Runner.run_streamed(a, input=p, max_turns=max_turns, session=session, run_config=run_config)
-                while not result.is_complete:
-                    async for _ in result.stream_events():
-                        pass
+                with _agents_trace_baggage(agent_kwargs["name"]):
+                    result = Runner.run_streamed(
+                        a, input=p, max_turns=max_turns, session=session, run_config=run_config
+                    )
+                    while not result.is_complete:
+                        async for _ in result.stream_events():
+                            pass
                 return result
 
             try:
@@ -400,9 +419,10 @@ class CodexModel(LLMBaseModel):
 
             run_config_kwargs = build_agents_run_config_kwargs(agent_name=agent_kwargs["name"])
             run_config = RunConfig(**run_config_kwargs) if run_config_kwargs else None
-            result = Runner.run_streamed(
-                agent, input=prompt, max_turns=max_turns, session=session, run_config=run_config
-            )
+            with _agents_trace_baggage(agent_kwargs["name"]):
+                result = Runner.run_streamed(
+                    agent, input=prompt, max_turns=max_turns, session=session, run_config=run_config
+                )
 
             # Stream events and yield ActionHistory objects
             temp_tool_calls = {}  # {call_id: {"tool_name": ..., "arguments": ...}}
@@ -417,7 +437,7 @@ class CodexModel(LLMBaseModel):
 
                         raise ExecutionInterrupted("Interrupted by user")
 
-                    async for event in result.stream_events():
+                    async for event in _stream_events_with_trace_baggage(result, agent_kwargs["name"]):
                         if interrupt_controller and interrupt_controller.is_interrupted:
                             from datus.cli.execution_state import ExecutionInterrupted
 

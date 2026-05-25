@@ -1,0 +1,37 @@
+name: "Release Branch Guard"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches:
+      - "release/**"
+
+permissions:
+  contents: read
+
+jobs:
+  finalized-release-guard:
+    name: Prevent changes after stable tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check release branch is not finalized
+        shell: bash
+        env:
+          RELEASE_BRANCH: ${{ github.base_ref }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${RELEASE_BRANCH}" =~ ^release/([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "Release branch ${RELEASE_BRANCH} does not map to a stable patch tag; skipping guard."
+            exit 0
+          fi
+
+          version="${BASH_REMATCH[1]}"
+          tag_name="v${version}"
+          repo_url="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --exit-code --tags "${repo_url}" "refs/tags/${tag_name}" >/dev/null 2>&1; then
+            echo "::error::${RELEASE_BRANCH} is already finalized by ${tag_name}. Create the next patch release branch instead."
+            exit 1
+          fi
+
+          echo "${RELEASE_BRANCH} is not finalized yet; release branch changes are allowed."

@@ -765,6 +765,9 @@ class TestValidateRender:
         assert result.success == 1, result.error
         assert result.result["app_jsx_path"].endswith("render/app.jsx")
         assert "queries/revenue_by_region" in result.result["query_refs"]
+        # Kind + slug let the frontend refresh the preview immediately.
+        assert result.result["artifact_kind"] == "dashboard"
+        assert result.result["artifact_slug"] == dashboard_tools.dashboard_slug
 
     def test_rejects_useQuerySql_without_params_arg(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
         _seed_template(dashboard_tools)
@@ -939,6 +942,252 @@ class TestValidateRender:
         result = dashboard_tools.validate_render()
         assert result.success == 0
         assert "no .jsx" in (result.error or "")
+
+
+# ----------------------------------------------------------------------------- #
+# validate_render — <ChartCard> static checks                                   #
+# ----------------------------------------------------------------------------- #
+
+
+_CHART_CARD_APP_JSX = """\
+import React from 'react';
+import { useDatusArtifact, ChartCard } from '@datus/web-artifact';
+
+export default function App() {
+  const { useQuerySql } = useDatusArtifact();
+  const { data } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });
+  return (
+    <ChartCard
+      chartId="revenue_by_region"
+      sqlId="queries/revenue_by_region"
+      chartType="bar"
+      title="Revenue"
+      data={data}
+    >
+      <pre />
+    </ChartCard>
+  );
+}
+"""
+
+
+class TestValidateRenderChartCard:
+    """Static validation around the runtime-provided ``<ChartCard>``."""
+
+    def test_chart_card_happy_path_emits_cards_registry(
+        self, dashboard_tools: DashboardArtifactTools, project_root: Path
+    ):
+        _seed_template(dashboard_tools)
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": _CHART_CARD_APP_JSX})
+        result = dashboard_tools.validate_render()
+        assert result.success == 1, result.error
+        assert result.result["cards"] == [{"chart_id": "revenue_by_region", "jsx_path": "render/app.jsx"}]
+        # ChartCard's sqlId joins the query-ref set even when the validator
+        # has already seen the same slug from useQuerySql.
+        assert "queries/revenue_by_region" in result.result["query_refs"]
+
+    def test_chart_card_missing_required_prop_is_rejected(
+        self, dashboard_tools: DashboardArtifactTools, project_root: Path
+    ):
+        _seed_template(dashboard_tools)
+        # chartId omitted on purpose — validator must surface it.
+        app = (
+            "import React from 'react';\n"
+            "import { useDatusArtifact, ChartCard } from '@datus/web-artifact';\n"
+            "export default function App() {\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            "  const { data } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });\n"
+            "  return (\n"
+            '    <ChartCard sqlId="queries/revenue_by_region" chartType="bar" data={data}>\n'
+            "      <pre />\n"
+            "    </ChartCard>\n"
+            "  );\n"
+            "}\n"
+        )
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "missing required" in (result.error or "")
+        assert "chartId" in (result.error or "")
+
+    def test_chart_card_invalid_chart_type_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        _seed_template(dashboard_tools)
+        app = _CHART_CARD_APP_JSX.replace('chartType="bar"', 'chartType="donut"')
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "'donut'" in (result.error or "")
+        assert "chartType" in (result.error or "")
+
+    @pytest.mark.parametrize(
+        "chart_type",
+        ["radial-bar", "treemap", "funnel", "gauge", "heatmap", "waterfall"],
+    )
+    def test_chart_card_extended_chart_types_accepted(
+        self,
+        dashboard_tools: DashboardArtifactTools,
+        project_root: Path,
+        chart_type: str,
+    ):
+        """The BI-extended chart types (3 recharts-native + 3 custom-rendered) validate cleanly."""
+        _seed_template(dashboard_tools)
+        app = _CHART_CARD_APP_JSX.replace('chartType="bar"', f'chartType="{chart_type}"')
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 1, result.error
+
+    def test_chart_card_invalid_chart_id_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        _seed_template(dashboard_tools)
+        # Mixed case / hyphen violates `^[a-z0-9_]{1,64}$`.
+        app = _CHART_CARD_APP_JSX.replace('chartId="revenue_by_region"', 'chartId="Revenue-1"')
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "Revenue-1" in (result.error or "")
+
+    def test_chart_card_dangling_sql_id_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        _seed_template(dashboard_tools)
+        # ChartCard references a sqlId never produced by save_query_template.
+        # useQuerySql still uses the saved one so the import / params checks pass.
+        app = _CHART_CARD_APP_JSX.replace(
+            'sqlId="queries/revenue_by_region"',
+            'sqlId="queries/orphaned_slug"',
+        )
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "orphaned_slug" in (result.error or "")
+        assert "save_query_template" in (result.error or "")
+
+    def test_chart_card_duplicate_chart_id_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        _seed_template(dashboard_tools)
+        # Two files declaring the same chartId — duplicate must be caught
+        # across the whole render/ tree, not just within one file.
+        second_file = (
+            "import React from 'react';\n"
+            "import { useDatusArtifact, ChartCard } from '@datus/web-artifact';\n"
+            "export function SecondCard() {\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            "  const { data } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });\n"
+            "  return (\n"
+            '    <ChartCard chartId="revenue_by_region" sqlId="queries/revenue_by_region" '
+            'chartType="line" data={data}>\n'
+            "      <pre />\n"
+            "    </ChartCard>\n"
+            "  );\n"
+            "}\n"
+        )
+        _write_render(
+            project_root,
+            dashboard_tools.dashboard_slug,
+            {"app.jsx": _CHART_CARD_APP_JSX, "second.jsx": second_file},
+        )
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "duplicates" in (result.error or "")
+        assert "revenue_by_region" in (result.error or "")
+
+    def test_chart_card_attr_value_with_angle_bracket_not_truncated(
+        self, dashboard_tools: DashboardArtifactTools, project_root: Path
+    ):
+        """A JSX expression containing ``>`` must not truncate the attribute scan.
+
+        ``titleRight={<span>a > b</span>}`` previously caused the opening-tag
+        regex to stop at the first inner ``>``; required props sitting AFTER
+        the offending attribute would then look "missing".
+        """
+        _seed_template(dashboard_tools)
+        app = (
+            "import React from 'react';\n"
+            "import { useDatusArtifact, ChartCard } from '@datus/web-artifact';\n"
+            "export default function App() {\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            "  const { data } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });\n"
+            "  return (\n"
+            "    <ChartCard\n"
+            "      titleRight={<span>a > b</span>}\n"
+            '      chartId="revenue_by_region"\n'
+            '      sqlId="queries/revenue_by_region"\n'
+            '      chartType="bar"\n'
+            "      data={data}\n"
+            "    >\n"
+            "      <pre />\n"
+            "    </ChartCard>\n"
+            "  );\n"
+            "}\n"
+        )
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 1, result.error
+
+    def test_chart_card_nested_object_literal_not_confused_for_spread(
+        self, dashboard_tools: DashboardArtifactTools, project_root: Path
+    ):
+        """``style={{...defaults}}`` is a nested object spread, not a JSX prop spread.
+
+        The spread-detection regex must only fire on top-level
+        ``{...rest}`` attributes — the chartId / sqlId / chartType
+        right next to the nested literal are perfectly visible to the
+        static check.
+        """
+        _seed_template(dashboard_tools)
+        app = (
+            "import React from 'react';\n"
+            "import { useDatusArtifact, ChartCard } from '@datus/web-artifact';\n"
+            "const defaults = { padding: 4 };\n"
+            "export default function App() {\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            "  const { data } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });\n"
+            "  return (\n"
+            "    <ChartCard\n"
+            "      style={{...defaults, background: '#fff'}}\n"
+            '      chartId="revenue_by_region"\n'
+            '      sqlId="queries/revenue_by_region"\n'
+            '      chartType="bar"\n'
+            "      data={data}\n"
+            "    >\n"
+            "      <pre />\n"
+            "    </ChartCard>\n"
+            "  );\n"
+            "}\n"
+        )
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 1, result.error
+        warnings = result.result.get("warnings", [])
+        # Crucially: NO "spread props" warning when only nested literal spread is present.
+        assert not any("spread props" in w for w in warnings)
+
+    def test_chart_card_spread_props_warning_not_error(
+        self, dashboard_tools: DashboardArtifactTools, project_root: Path
+    ):
+        _seed_template(dashboard_tools)
+        # Spread props hide attributes from the regex scanner. The validator
+        # downgrades to a warning + skips the per-prop checks rather than
+        # raising — the LLM occasionally wraps Card props in a helper.
+        app = (
+            "import React from 'react';\n"
+            "import { useDatusArtifact, ChartCard } from '@datus/web-artifact';\n"
+            "export default function App() {\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            "  const { data } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });\n"
+            "  const cardProps = {\n"
+            "    chartId: 'revenue_by_region',\n"
+            "    sqlId: 'queries/revenue_by_region',\n"
+            "    chartType: 'bar',\n"
+            "  };\n"
+            "  return (\n"
+            "    <ChartCard {...cardProps} data={data}>\n"
+            "      <pre />\n"
+            "    </ChartCard>\n"
+            "  );\n"
+            "}\n"
+        )
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 1, result.error
+        warnings = result.result.get("warnings", [])
+        assert any("spread props" in w for w in warnings)
 
 
 # ----------------------------------------------------------------------------- #

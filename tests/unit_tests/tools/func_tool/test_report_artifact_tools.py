@@ -476,6 +476,9 @@ class TestValidateRender:
         assert "queries/sales_by_store" in result.result["query_refs"]
         # All files reachable from app.jsx → no warnings.
         assert result.result["warnings"] == []
+        # Kind + slug let the frontend refresh the preview immediately.
+        assert result.result["artifact_kind"] == "report"
+        assert result.result["artifact_slug"] == report_tools.report_slug
 
     def test_rejects_missing_app_jsx(self, report_tools: ReportArtifactTools, project_root: Path):
         _write_render(project_root, report_tools.report_slug, {"kpi-banner.jsx": _VALID_KPI_BANNER_JSX})

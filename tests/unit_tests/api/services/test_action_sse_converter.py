@@ -1316,6 +1316,48 @@ class TestActionToSSEEvent:
         event = _assert_sse_event(event)
         assert event.data.type == SSEDataType.CREATE_MESSAGE
 
+    def test_finalize_progress_first_emit_is_create_message(self):
+        """Stage 1 finalize_progress arrives before the bubble exists → CREATE_MESSAGE."""
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            action_type="finalize_progress",
+            output={"stage": 1, "text": "Generating insights and follow-up questions..."},
+        )
+        event = action_to_sse_event(action, event_id=40, message_id="msg-40", is_update=False)
+        event = _assert_sse_event(event)
+        assert event.data.type == SSEDataType.CREATE_MESSAGE
+        content = event.data.payload.content[0]
+        assert content.type == "markdown"
+        assert content.payload["content"] == "Generating insights and follow-up questions..."
+
+    def test_finalize_progress_subsequent_emit_is_update_message(self):
+        """Stages 2 and 3 reuse the same action_id → caller passes is_update=True → UPDATE_MESSAGE."""
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            action_type="finalize_progress",
+            output={"stage": 2, "text": "Refining analysis intent..."},
+        )
+        event = action_to_sse_event(action, event_id=41, message_id="msg-40", is_update=True)
+        event = _assert_sse_event(event)
+        # Same message_id as the stage-1 emission, but UPDATE so the chat
+        # panel replaces the bubble's body in place.
+        assert event.data.type == SSEDataType.UPDATE_MESSAGE
+        assert event.data.payload.message_id == "msg-40"
+        assert event.data.payload.content[0].payload["content"] == "Refining analysis intent..."
+
+    def test_finalize_progress_empty_text_skipped(self):
+        """Defensive: a finalize_progress with no text drops the event rather than emitting a blank bubble."""
+        action = _make_action(
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            action_type="finalize_progress",
+            output={"stage": 1, "text": ""},
+        )
+        event = action_to_sse_event(action, event_id=42, message_id="msg-42")
+        assert event is None
+
     def test_subagent_complete_failed_produces_subagent_complete_with_error(self):
         """subagent_complete + FAILED stays on the subagent-complete channel and adds an error field.
 

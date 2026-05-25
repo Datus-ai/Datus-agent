@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from datus.configuration.node_type import NodeType
+from datus.observability.config import ObservabilityConfig
 from datus.schemas.base import BaseInput
 from datus.schemas.node_models import StrategyType
 from datus.storage.embedding_models import init_embedding_models
@@ -594,6 +595,7 @@ class AgentConfig:
     # the same name used in ``models``. Lets hosts attach extra context
     # to a model without extending the strongly-typed ``ModelConfig``.
     model_extras: Dict[str, Dict[str, Any]]
+    observability: ObservabilityConfig
 
     def __init__(self, nodes: Dict[str, NodeConfig], **kwargs):
         """
@@ -686,6 +688,7 @@ class AgentConfig:
         self.nodes = nodes
         self.export_config: Dict[str, Any] = kwargs.get("export", {})
         self.api_config: Dict[str, Any] = kwargs.get("api", {}) or {}
+        self.observability = ObservabilityConfig.from_dict(_resolve_nested_value(kwargs.get("observability")))
         self.agentic_nodes = kwargs.get("agentic_nodes", {})
         self.dashboard_config: Dict[str, DashboardConfig] = {}
         self.scheduler_services = {}

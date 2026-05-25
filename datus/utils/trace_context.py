@@ -56,8 +56,8 @@ def _timestamped_id() -> str:
     return f"{timestamp}:{uuid.uuid4().hex[:8]}"
 
 
-def create_cli_run_id(action: str) -> str:
-    return f"cli:{_compact_slug(action)}:{_timestamped_id()}"
+def create_workflow_run_id(action: str) -> str:
+    return f"workflow:{_compact_slug(action)}:{_timestamped_id()}"
 
 
 @dataclass(frozen=True)
@@ -87,7 +87,10 @@ class TraceContext:
     def agents_run_config_kwargs(self, agent_name: Optional[str] = None) -> dict[str, Any]:
         child_name = self.name
         if agent_name:
-            child_name = f"{self.name}/{_compact_slug(agent_name)}"
+            agent_slug = _compact_slug(agent_name)
+            trace_leaf = self.name.rstrip("/").rsplit("/", 1)[-1]
+            if agent_slug != trace_leaf:
+                child_name = f"{self.name}/{agent_slug}"
 
         metadata = dict(self.metadata)
         metadata.setdefault("trace_name", self.name)
@@ -139,6 +142,41 @@ def build_agents_run_config_kwargs(agent_name: Optional[str] = None) -> dict[str
     return ctx.agents_run_config_kwargs(agent_name=agent_name)
 
 
+def build_trace_span_attributes(
+    *,
+    operation: str,
+    run_type: str = "chain",
+    ctx: Optional[TraceContext] = None,
+) -> dict[str, Any]:
+    """Build provider-neutral attributes for Datus observability propagation."""
+    trace_ctx = get_trace_context() if ctx is None else ctx
+    attrs: dict[str, Any] = {
+        "datus.operation": operation,
+        "datus.run_type": str(run_type),
+    }
+    if trace_ctx is None:
+        return attrs
+
+    attrs["datus.trace.name"] = trace_ctx.name
+    if trace_ctx.session_id:
+        attrs["datus.session_id"] = trace_ctx.session_id
+    if trace_ctx.user_id:
+        attrs["datus.user_id"] = trace_ctx.user_id
+    if trace_ctx.tags:
+        attrs["datus.tags"] = ",".join(trace_ctx.tags)
+    for key, value in (trace_ctx.metadata or {}).items():
+        if value is None:
+            continue
+        if isinstance(value, (str, bool, int, float)):
+            attrs[f"datus.metadata.{key}"] = value
+        else:
+            attrs[f"datus.metadata.{key}"] = _string_metadata_value(value)
+    run_id = (trace_ctx.metadata or {}).get("run_id") or (trace_ctx.metadata or {}).get("benchmark_run_id")
+    if run_id:
+        attrs["datus.run_id"] = run_id
+    return attrs
+
+
 def _metadata_base(
     *,
     component: str,
@@ -172,23 +210,23 @@ def build_workflow_trace_context_from_runner(runner: Any, *args: Any, **kwargs: 
 
     runner_args = getattr(runner, "args", None)
     config = getattr(runner, "global_config", None)
-    workflow = getattr(runner_args, "workflow", None) or "workflow"
+    workflow = getattr(runner_args, "workflow", None) or "default"
     datasource = getattr(config, "current_datasource", None) or getattr(runner_args, "datasource", None)
     run_id = getattr(runner, "run_id", None) or getattr(runner_args, "run_id", None)
     task_id = getattr(sql_task, "id", None)
-    session_id = f"cli:run:{run_id}" if run_id else create_cli_run_id("run")
+    session_id = f"workflow:run:{run_id}" if run_id else create_workflow_run_id("run")
     workflow_slug = _compact_slug(workflow)
 
-    tags = ["cli", "run", f"workflow:{workflow_slug}"]
+    tags = ["workflow", f"workflow:{workflow_slug}"]
     if datasource:
         tags.append(f"datasource:{_compact_slug(datasource)}")
 
     return TraceContext(
-        name=f"cli/run/{workflow_slug}",
+        name=f"workflow/{workflow_slug}",
         session_id=session_id,
         tags=tuple(tags),
         metadata=_metadata_base(
-            component="cli_run",
+            component="workflow_run",
             datasource=datasource,
             workflow=workflow,
             run_id=run_id,
@@ -354,7 +392,7 @@ def build_chat_trace_context(
         },
     )
     return TraceContext(
-        name=f"chat/{display_slug}",
+        name=f"agent/{display_slug}",
         session_id=session_id,
         user_id=user_id,
         tags=tuple(tags),

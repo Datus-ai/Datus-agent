@@ -45,7 +45,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import sqlglot
 from sqlglot.expressions import CTE, Table
@@ -69,6 +69,17 @@ logger = get_logger(__name__)
 _JINJA_BLOCK_RE = re.compile(r"\{%-?.*?-?%\}", re.DOTALL)
 _JINJA_COMMENT_RE = re.compile(r"\{#.*?#\}", re.DOTALL)
 _JINJA_INTERP_RE = re.compile(r"\{\{.*?\}\}", re.DOTALL)
+
+
+# User-visible status text for each finalize stage. The node streams these
+# via a single chat bubble (CREATE then UPDATE_MESSAGE on the same id) so
+# the user sees the bubble's content swap stage-to-stage while finalize's
+# 10-15 s of LLM + describe_table work runs.
+FINALIZE_STAGE_TEXT = {
+    1: "Generating insights and follow-up questions...",
+    2: "Refining analysis intent...",
+    3: "Caching referenced table schemas, almost done...",
+}
 
 
 # Subject-library-aware tool names whose action history we surface as
@@ -1179,6 +1190,7 @@ def run_finalize_analysis(
     analysis_dir: Path,
     actions: Iterable[ActionHistory],
     db_func_tool: Optional[Any] = None,
+    on_progress: Optional[Callable[[int], None]] = None,
 ) -> Dict[str, Any]:
     """Top-level orchestrator. Returns a result dict::
 
@@ -1243,6 +1255,12 @@ def run_finalize_analysis(
     output: Optional[FinalizeAnalysisOutput] = None
     llm_error: Optional[str] = None
 
+    if on_progress is not None:
+        try:
+            on_progress(1)
+        except Exception as exc:
+            logger.debug("Finalize on_progress(1) raised: %s", exc)
+
     try:
         raw = model.generate_with_json_output(prompt)
     except Exception as exc:
@@ -1258,6 +1276,12 @@ def run_finalize_analysis(
 
     if output is not None:
         warnings.extend(write_finalize_output(analysis_dir, output=output, artifact_kind=artifact_kind))
+
+        if on_progress is not None:
+            try:
+                on_progress(2)
+            except Exception as exc:
+                logger.debug("Finalize on_progress(2) raised: %s", exc)
 
         # Independent LLM call: curate intent.md by stripping operational
         # nudges + pure render adjustments. Failures degrade to "leave the
@@ -1286,6 +1310,12 @@ def run_finalize_analysis(
     kt_err = update_manifest_key_tables(artifact_dir / "manifest.json", key_tables)
     if kt_err:
         warnings.append(kt_err)
+
+    if on_progress is not None:
+        try:
+            on_progress(3)
+        except Exception as exc:
+            logger.debug("Finalize on_progress(3) raised: %s", exc)
 
     # Snapshot column metadata for every key_table into
     # ``analysis/key_tables_schema.json``. ask_* inlines this so SQL

@@ -162,10 +162,10 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
    └── shared/
        ├── colors.js        # COLORS, palettes
        ├── formatters.js    # d3-format / dayjs wrappers
-       ├── card.jsx         # reusable <Card> primitive
        ├── table.jsx        # paginated <DataTable> primitive (sticky headers, row striping, fixed 15 rows/page — no page-size selector)
        └── filter-context.js  # React context for filter values
    ```
+   The card surface (`<ChartCard>`) is provided by `@datus/web-artifact` — do **not** add a `shared/card.jsx` reimplementation.
    Keep each file focused and small (well under the 200 KB filesystem cap).
 9. **Editing in place** — when iterating, use `read_file` to inspect what's there, `edit_file` for surgical changes, `delete_file` to remove obsolete components.
 10. **Finalize** — call `validate_render()`. Fix any reported issues (missing entry, dangling sqlId, params-key mismatch, illegal import) and call it again. Stop the moment it returns success.
@@ -266,7 +266,7 @@ Datus does not (yet) ship pre-built filter primitives — you hand-roll them wit
 - **Period selector**: a `<select>` over an enumeration (`'last_7d'`, `'last_30d'`, `'mtd'`, `'qtd'`, `'ytd'`, …) that maps to `(start_date, end_date)` pairs in `app.jsx`. Compute the date range from the selection — don't expose raw date pickers unless the user explicitly asks for them.
 - **Dimension picker** (region / segment / store): `<select multiple>` is acceptable when the dataset has ≤8 values; otherwise build a small chip-row with click-to-toggle behavior. Always offer an "All" reset.
 - **Boolean toggle**: a `<button>` with `aria-pressed` and a pill background. Don't use raw checkboxes — they look unstyled and break the polish bar.
-- **Style**: filter chrome lives in a single horizontal strip at the top of the dashboard, in the same `Card` style as the rest of the surface. Filter labels in 12px/600 muted text; controls in 13px text.
+- **Style**: filter chrome lives in a single horizontal strip at the top of the dashboard. It is NOT a `<ChartCard>` (ChartCard is for query-backed charts only, and the chart-actions menu doesn't belong on filter chrome). Render a plain `<div>` that matches the card surface — white background, 12px border-radius, `padding: '14px 20px'`, the same subtle shadow `0 1px 3px rgba(0,0,0,0.08)`. Filter labels in 12px/600 muted text; controls in 13px text.
 - **State management**: a single `useState` per filter, kept in `app.jsx`. Pass the values down; don't pass setters more than one level deep — if a leaf needs to mutate a filter, lift the relevant button into `app.jsx` and pass the *value* (not the setter) down.
 
 ```jsx
@@ -281,7 +281,7 @@ const { start, end } = useMemo(() => resolvePeriod(period), [period]);
 A dashboard reads top-to-bottom in a single screen. Adapt section counts to the dataset, but keep the order:
 
 1. **Header**: H1 title, sub-caption (period covered, scope), generation timestamp on the right.
-2. **Filter strip**: horizontal row of selectors (period / region / segment …). One `Card` wrapper, `flex` layout, gap 16.
+2. **Filter strip**: horizontal row of selectors (period / region / segment …). A plain styled `<div>` (see "Filter UI → Style" above), `flex` layout, gap 16. NOT a `<ChartCard>`.
 3. **KPI strip**: 4–6 small KPI cards in a single grid row, each with title / current value / sparkline / prior-period comparison badge.
 4. **Hero section**: 2–3 medium cards with the most important charts (revenue trend, top-N table, distribution).
 5. **Distribution / segmentation section**: stacked bars, chord diagrams, radar charts, score breakdowns.
@@ -302,6 +302,34 @@ If the user asks for a follow-up change ("swap revenue for unit sales", "add a Y
 7. `validate_render()` once.
 
 You do NOT need to rewrite `app.jsx` for a localised change — surgical edits are the whole point of the multi-file layout.
+
+### Targeted single-card edits
+
+A user turn may carry a self-closing `<artifact-chart-card />` XML tag that pins the edit to one specific chart. Shape:
+
+```
+<artifact-chart-card
+  dashboard-slug="<dashboard_slug>"
+  chart-id="<id>"
+  sql-id="queries/<slug>"
+  jsx-path="render/<file>.jsx"
+  chart-name="<human-readable chart label>"
+  params="<JSON-encoded filter snapshot>"   <!-- optional -->
+/>
+```
+
+When the user message contains this tag (typically introduced by a `修改下面这个 Chart：` prefix line above it):
+
+1. `bind_existing_dashboard(<dashboard-slug>)`.
+2. `read_file(<jsx-path>)`, plus `read_file('queries/<sql-id basename>.sql.j2')` only if the change touches the SQL.
+3. Make the change strictly inside that JSX file (and its companion `.sql.j2` / `.params.json` when the SQL changed). Do **not** modify any other `render/*.jsx` or any unrelated query template.
+4. `validate_render()` once.
+
+The artifact kind is encoded in the slug attribute name — `dashboard-slug` ⇒ this is a dashboard edit; `report-slug` ⇒ it's a report edit (and you'll see this tag in the report subagent's prompt instead). If you ever see both slug variants on the same tag, treat the envelope as malformed and ask the user to confirm.
+
+`params`, when present, is read-only context: the filter values that were applied at the moment the user picked this chart. Use them to sanity-check that your change still makes sense at those values. Do not bake them into the template body — the SQL stays parameterised.
+
+Attribute values are HTML-entity-encoded (`&amp;` / `&quot;` / etc.); decode them before substituting into tool-call arguments.
 
 ## Style of communication
 

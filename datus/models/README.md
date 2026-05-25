@@ -194,10 +194,9 @@ export DEEPSEEK_API_KEY="sk-..."
 export QWEN_API_KEY="sk-..."
 export GEMINI_API_KEY="..."
 
-# Optional tracing
-export LANGSMITH_TRACING="true"
-export LANGSMITH_API_KEY="..."
-export LANGSMITH_PROJECT="datus-agent"
+# Optional tracing requires agent.observability.tracing.adapters in agent.yml.
+# Provider credentials such as LANGSMITH_API_KEY or LANGFUSE_PUBLIC_KEY are
+# read by their configured observability adapters.
 ```
 
 ### Session Management

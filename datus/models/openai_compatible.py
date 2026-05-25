@@ -9,6 +9,7 @@ import hashlib
 import json
 import threading
 import time
+from contextlib import nullcontext
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
@@ -30,6 +31,7 @@ from datus.models.base import LLMBaseModel
 from datus.models.litellm_adapter import LiteLLMAdapter, is_known_non_thinking_model, is_official_openai_endpoint
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
+from datus.observability.manager import get_observability_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.tool_summary import TOOL_SUMMARY_REGISTRY, looks_like_failure
 from datus.utils.constants import LLMProvider
@@ -38,8 +40,7 @@ from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
 from datus.utils.resource_utils import read_data_file_text
 from datus.utils.text_utils import LitellmPlaceholderStreamFilter, strip_litellm_placeholder
-from datus.utils.trace_context import build_agents_run_config_kwargs
-from datus.utils.traceable_utils import setup_tracing
+from datus.utils.trace_context import build_agents_run_config_kwargs, build_trace_span_attributes
 
 logger = get_logger(__name__)
 
@@ -55,8 +56,6 @@ litellm.set_verbose = False
 # Suppress "Provider List: ..." debug prints to stdout when LiteLLM encounters
 # model names not in its built-in list (e.g. Coding Plan models like kimi-for-coding)
 litellm.suppress_debug_info = True
-
-setup_tracing()
 
 # Module-level cache for model specs loaded from conf/providers.yml
 _MODEL_SPECS_CACHE: Optional[Dict[str, Dict[str, int]]] = None
@@ -108,6 +107,31 @@ def _load_model_specs() -> Dict[str, Dict[str, int]]:
 
             _MODEL_SPECS_CACHE = specs
     return _MODEL_SPECS_CACHE
+
+
+def _set_observability_span_attribute(span: Any, key: str, value: Any) -> None:
+    if span is None or value is None:
+        return
+    try:
+        if not isinstance(value, (str, bool, int, float)):
+            value = to_str(value)
+        span.set_attribute(key, value)
+    except Exception:
+        return
+
+
+def _agents_trace_baggage(agent_name: Optional[str]):
+    attrs = build_trace_span_attributes(operation=agent_name or "agent", run_type="llm")
+    trace_name = attrs.get("datus.trace.name")
+    if not trace_name:
+        return nullcontext()
+    return get_observability_manager().trace_baggage(str(trace_name), attrs)
+
+
+async def _stream_events_with_trace_baggage(result, agent_name: Optional[str]):
+    with _agents_trace_baggage(agent_name):
+        async for event in result.stream_events():
+            yield event
 
 
 def classify_openai_compatible_error(error: Exception) -> tuple[ErrorCode, bool]:
@@ -560,46 +584,74 @@ class OpenAICompatibleModel(LLMBaseModel):
             else:
                 messages = [{"role": "user", "content": str(prompt)}]
 
-            # Use LiteLLM for unified provider support
-            response = litellm.completion(messages=messages, **params)
-            message = response.choices[0].message
-            content = strip_litellm_placeholder(message.content)
-
-            # Handle reasoning content for reasoning models (DeepSeek R1, OpenAI O-series)
-            reasoning_content = None
-            if enable_thinking:
-                if hasattr(message, "reasoning_content") and message.reasoning_content:
-                    reasoning_content = message.reasoning_content
-                    # If main content is empty but reasoning_content exists, use reasoning_content
-                    if not content or content.strip() == "":
-                        content = reasoning_content
-                    logger.debug(f"Found reasoning_content: {reasoning_content[:100]}...")
-
-            final_content = content or ""
-
-            if hasattr(self, "_save_llm_trace"):
-                self._save_llm_trace(messages, final_content, reasoning_content)
-
-            # Extract usage information for LangSmith tracking
-            usage_info = {}
-            if hasattr(response, "usage") and response.usage:
-                usage_info = {
-                    "input_tokens": getattr(response.usage, "prompt_tokens", 0),
-                    "output_tokens": getattr(response.usage, "completion_tokens", 0),
-                    "total_tokens": getattr(response.usage, "total_tokens", 0),
-                }
-                logger.debug(f"Token usage: {usage_info}")
-
-            # Return structured data for LangSmith to capture
-            return {
-                "content": final_content or "",
-                "usage": usage_info,
-                "model": self.model_name,
-                "response_metadata": {
-                    "finish_reason": response.choices[0].finish_reason if response.choices else None,
-                    "model": response.model if hasattr(response, "model") else self.model_name,
-                },
+            observability = get_observability_manager()
+            span_attributes = {
+                "datus.operation": "llm.generate",
+                "gen_ai.request.model": self.model_name,
+                "gen_ai.request.provider": str(routed_provider) if routed_provider else None,
+                "gen_ai.system": str(routed_provider) if routed_provider else None,
+                "datus.model.litellm_name": params["model"],
             }
+            if observability.content_enabled("prompts"):
+                span_attributes["datus.llm.prompt"] = to_str(observability.redact(messages))
+
+            with observability.span("llm.generate", span_attributes) as span:
+                # Use LiteLLM for unified provider support
+                response = litellm.completion(messages=messages, **params)
+                message = response.choices[0].message
+                content = strip_litellm_placeholder(message.content)
+
+                # Handle reasoning content for reasoning models (DeepSeek R1, OpenAI O-series)
+                reasoning_content = None
+                if enable_thinking:
+                    if hasattr(message, "reasoning_content") and message.reasoning_content:
+                        reasoning_content = message.reasoning_content
+                        # If main content is empty but reasoning_content exists, use reasoning_content
+                        if not content or content.strip() == "":
+                            content = reasoning_content
+                        logger.debug(f"Found reasoning_content: {reasoning_content[:100]}...")
+
+                final_content = content or ""
+
+                if hasattr(self, "_save_llm_trace"):
+                    self._save_llm_trace(messages, final_content, reasoning_content)
+
+                # Extract usage information for LangSmith tracking
+                usage_info = {}
+                if hasattr(response, "usage") and response.usage:
+                    usage_info = {
+                        "input_tokens": getattr(response.usage, "prompt_tokens", 0),
+                        "output_tokens": getattr(response.usage, "completion_tokens", 0),
+                        "total_tokens": getattr(response.usage, "total_tokens", 0),
+                    }
+                    logger.debug(f"Token usage: {usage_info}")
+
+                finish_reason = response.choices[0].finish_reason if response.choices else None
+                response_model = response.model if hasattr(response, "model") else self.model_name
+                _set_observability_span_attribute(span, "gen_ai.response.finish_reason", finish_reason)
+                _set_observability_span_attribute(span, "gen_ai.response.model", response_model)
+                _set_observability_span_attribute(span, "gen_ai.usage.input_tokens", usage_info.get("input_tokens"))
+                _set_observability_span_attribute(span, "gen_ai.usage.output_tokens", usage_info.get("output_tokens"))
+                _set_observability_span_attribute(span, "gen_ai.usage.total_tokens", usage_info.get("total_tokens"))
+                if observability.content_enabled("responses"):
+                    _set_observability_span_attribute(
+                        span, "datus.llm.response", to_str(observability.redact(final_content))
+                    )
+                if reasoning_content and observability.content_enabled("reasoning"):
+                    _set_observability_span_attribute(
+                        span, "datus.llm.reasoning", to_str(observability.redact(reasoning_content))
+                    )
+
+                # Return structured data for LangSmith to capture
+                return {
+                    "content": final_content or "",
+                    "usage": usage_info,
+                    "model": self.model_name,
+                    "response_metadata": {
+                        "finish_reason": finish_reason,
+                        "model": response_model,
+                    },
+                }
 
         result = self._with_retry(_generate_operation, "text generation")
 
@@ -974,16 +1026,16 @@ class OpenAICompatibleModel(LLMBaseModel):
                 )
                 run_config = self._build_run_config(agent_name=agent_name)
 
-                # Run agent with LangSmith tracing via OpenAIAgentsTracingProcessor
-                # (configured at module level, captures all SDK traces automatically)
+                # OpenAI Agents SDK tracing is configured by observability adapters.
                 try:
-                    result = await Runner.run(
-                        agent,
-                        input=prompt,
-                        max_turns=max_turns,
-                        session=session,
-                        run_config=run_config,
-                    )
+                    with _agents_trace_baggage(agent_name):
+                        result = await Runner.run(
+                            agent,
+                            input=prompt,
+                            max_turns=max_turns,
+                            session=session,
+                            run_config=run_config,
+                        )
                 except MaxTurnsExceeded as e:
                     logger.error(f"Max turns exceeded: {str(e)}")
                     raise DatusException(
@@ -1082,13 +1134,14 @@ class OpenAICompatibleModel(LLMBaseModel):
                     agent_name=agent_name,
                 )
                 try:
-                    result = Runner.run_streamed(
-                        agent,
-                        input=prompt,
-                        max_turns=max_turns,
-                        session=session,
-                        run_config=run_config,
-                    )
+                    with _agents_trace_baggage(agent_name):
+                        result = Runner.run_streamed(
+                            agent,
+                            input=prompt,
+                            max_turns=max_turns,
+                            session=session,
+                            run_config=run_config,
+                        )
                 except MaxTurnsExceeded as e:
                     logger.error(f"Max turns exceeded in streaming: {str(e)}")
                     raise DatusException(
@@ -1126,7 +1179,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                         from datus.cli.execution_state import ExecutionInterrupted
 
                         raise ExecutionInterrupted("Interrupted by user")
-                    async for event in result.stream_events():
+                    async for event in _stream_events_with_trace_baggage(result, agent_name):
                         if interrupt_controller and interrupt_controller.is_interrupted:
                             from datus.cli.execution_state import ExecutionInterrupted
 

@@ -128,6 +128,7 @@ def create_interactive_node(
                 node_name=subagent_name,
                 scope=scope,
                 execution_mode=execution_mode,
+                session_id=session_id,
             )
 
         elif subagent_name == "gen_visual_dashboard" or node_class_type == "gen_visual_dashboard":
@@ -143,6 +144,7 @@ def create_interactive_node(
                 node_name=subagent_name,
                 scope=scope,
                 execution_mode=execution_mode,
+                session_id=session_id,
             )
 
         elif subagent_name == "explore" or node_class_type == "explore":

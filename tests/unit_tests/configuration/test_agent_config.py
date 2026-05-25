@@ -1078,6 +1078,74 @@ class TestAgentConfigChannels:
         assert extra["bot_token"] == "xoxb-test"
 
 
+class TestAgentConfigObservability:
+    def _make(self, tmp_path, observability=None):
+        kwargs = dict(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={
+                "mock": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "m",
+                    "base_url": "http://localhost:0",
+                }
+            },
+            skip_init_dirs=True,
+        )
+        if observability is not None:
+            kwargs["observability"] = observability
+        return AgentConfig(**kwargs)
+
+    def test_default_observability_is_not_explicit(self, tmp_path):
+        cfg = self._make(tmp_path)
+
+        assert cfg.observability.explicit is False
+        assert cfg.observability.tracing.enabled is False
+
+    def test_empty_observability_does_not_make_tracing_explicit(self, tmp_path):
+        cfg = self._make(tmp_path, observability={})
+
+        assert cfg.observability.explicit is False
+        assert cfg.observability.tracing.explicit is False
+        assert cfg.observability.tracing.enabled is False
+
+    def test_tracing_enabled_defaults_to_langfuse_adapter(self, tmp_path):
+        cfg = self._make(tmp_path, observability={"tracing": {"enabled": True}})
+
+        assert cfg.observability.tracing.enabled is True
+        assert len(cfg.observability.tracing.adapters) == 1
+        assert cfg.observability.tracing.adapters[0].type == "langfuse"
+
+    def test_observability_config_resolves_env_values(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OTLP_ENDPOINT", "https://collector.example/v1/traces")
+        monkeypatch.setenv("OTLP_HEADERS", "x-api-key=secret")
+
+        cfg = self._make(
+            tmp_path,
+            observability={
+                "tracing": {
+                    "enabled": True,
+                    "capture_content": True,
+                    "capture": {"tool_results": False},
+                    "adapters": [
+                        {
+                            "type": "otlp",
+                            "endpoint": "${OTLP_ENDPOINT}",
+                            "headers": "${OTLP_HEADERS}",
+                        }
+                    ],
+                }
+            },
+        )
+
+        assert cfg.observability.tracing.enabled is True
+        assert cfg.observability.tracing.capture.tool_results is False
+        assert cfg.observability.tracing.adapters[0].endpoint == "https://collector.example/v1/traces"
+        assert cfg.observability.tracing.adapters[0].headers == {"x-api-key": "secret"}
+
+
 class TestNormalizeProjectName:
     """Tests for the _normalize_project_name helper."""
 

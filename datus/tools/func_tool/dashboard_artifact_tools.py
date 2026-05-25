@@ -120,6 +120,82 @@ _PARAMS_SHORTHAND_KEY_RE = re.compile(
 )
 
 
+# ``<ChartCard ... >`` opening tag, including the self-closing form
+# ``<ChartCard ... />``. Group 1 captures the prop block. The attribute
+# block is matched as a sequence of "atom" tokens (plain non-special
+# chars, quoted strings, balanced brace expressions) so attributes whose
+# values contain ``>`` — ``title={<Icon />}`` or
+# ``titleRight={<span>a > b</span>}`` — are not truncated at the first
+# stray angle bracket. Brace expressions are recognised up to depth 3,
+# enough for ``style={{ color: '#fff' }}`` / nested JSX expressions.
+_CHART_CARD_OPEN_RE = re.compile(
+    r"""
+    <ChartCard\b
+    (
+      (?:
+        [^'"{}<>]                                          # plain char
+        | '[^'\\]*(?:\\.[^'\\]*)*'                         # 'single-quoted'
+        | "[^"\\]*(?:\\.[^"\\]*)*"                         # "double-quoted"
+        | \{ (?: [^{}] | \{ (?: [^{}] | \{[^{}]*\} )* \} )* \}   # {balanced braces, depth ≤ 3}
+      )*
+    )
+    /?\s*>
+    """,
+    re.VERBOSE | re.DOTALL,
+)
+
+
+# Top-level JSX spread attribute: ``{...rest}`` sitting between other
+# attributes. The match is anchored on a whitespace boundary so nested
+# spreads inside JSX expressions (e.g. ``style={{...defaults}}``) — where
+# the inner ``{`` is preceded by another ``{``, not whitespace — do not
+# false-positive into "ChartCard uses spread props".
+_CHART_CARD_SPREAD_RE = re.compile(r"(?<=\s)\{\s*\.{3}")
+
+
+# Per-attribute extraction inside a ``<ChartCard ... >`` opening tag. Captures
+# only the three required string-literal props the validator audits
+# (``chartId``, ``sqlId``, ``chartType``); other props are ignored here and
+# checked by the runtime / typescript at viewer time.
+_CHART_CARD_STR_ATTR_RE = re.compile(
+    r"""\b(chartId|sqlId|chartType)\s*=\s*['"]([^'"]+)['"]""",
+)
+
+
+# ``chartId`` shape — same slug grammar used elsewhere in the artifact path
+# (dashboard slug, query slug). Caps at 64 to keep the validate_render
+# cards-registry payload compact.
+_CHART_ID_RE = re.compile(r"^[a-z0-9_]{1,64}$")
+
+
+# ChartCard's chartType enum.
+_VALID_CHART_TYPES: Set[str] = {
+    # recharts native chart components
+    "bar",
+    "line",
+    "area",
+    "pie",
+    "scatter",
+    "radar",
+    "composed",
+    "radial-bar",
+    "treemap",
+    "funnel",
+    # Not recharts-native but common in BI dashboards; rendered via
+    # custom SVG / RadialBarChart subsets. Declaring the type lets the
+    # edit-time LLM see the intent without forcing every BI chart into
+    # the catch-all ``custom`` bucket.
+    "gauge",
+    "heatmap",
+    "waterfall",
+    # Tabular + single-value cards.
+    "table",
+    "kpi",
+    # Escape hatch for hand-rolled visuals that don't match any of the above.
+    "custom",
+}
+
+
 # --------------------------------------------------------------------------- #
 # Jinja2 sandbox + bind-value resolution                                      #
 # --------------------------------------------------------------------------- #
@@ -951,11 +1027,17 @@ class DashboardArtifactTools:
             FuncToolResult.result on success::
 
                 {
+                    "artifact_kind": "dashboard",
+                    "artifact_slug": "<id>",
                     "app_jsx_path": "dashboards/<id>/render/app.jsx",
                     "render_files": ["render/app.jsx", "render/filters.jsx", ...],
                     "query_refs": ["queries/foo", "queries/bar"],
                     "warnings": ["render/legacy.jsx is unreachable from app.jsx"],
                 }
+
+            ``artifact_kind`` / ``artifact_slug`` let the frontend refresh the
+            live preview as soon as the validator passes, without waiting for
+            the (multi-second) post-validate finalize LLM calls.
         """
         not_bound = self._require_active("validate_render")
         if not_bound is not None:
@@ -1050,9 +1132,74 @@ class DashboardArtifactTools:
         issues: List[str] = []
         warnings: List[str] = []
         query_refs: Set[str] = set()
+        # chartId → render-file rel-path of its first declaration. Used to
+        # detect duplicates across the whole render/ tree; the validate_render
+        # result also exposes this as the cards-registry for downstream
+        # consumers, and both require global uniqueness.
+        chart_ids_seen: Dict[str, str] = {}
 
         for key, mod in modules.items():
             source = mod["source"]
+
+            # ---- <ChartCard ... > opening tags — required props + enums.
+            for cc_match in _CHART_CARD_OPEN_RE.finditer(source):
+                attrs = cc_match.group(1) or ""
+                attr_values: Dict[str, str] = {name: value for name, value in _CHART_CARD_STR_ATTR_RE.findall(attrs)}
+
+                # Spread props (``<ChartCard {...rest}>``) hide attributes from
+                # static inspection. Surface as a warning, then bail on the
+                # rest of the checks for this match to avoid false positives.
+                if _CHART_CARD_SPREAD_RE.search(attrs):
+                    warnings.append(
+                        f"render/{mod['rel']}: <ChartCard> uses spread props — static "
+                        "validation of chartId / sqlId / chartType is deferred to runtime."
+                    )
+                    continue
+
+                missing = [k for k in ("chartId", "sqlId", "chartType") if k not in attr_values]
+                if missing:
+                    issues.append(
+                        f"render/{mod['rel']}: <ChartCard> is missing required string-literal "
+                        f"props: {missing}. Each ChartCard must declare chartId, sqlId, and "
+                        "chartType up front."
+                    )
+                    continue
+
+                chart_id = attr_values["chartId"]
+                sql_id = attr_values["sqlId"]
+                chart_type = attr_values["chartType"]
+
+                if not _CHART_ID_RE.fullmatch(chart_id):
+                    issues.append(
+                        f"render/{mod['rel']}: <ChartCard chartId={chart_id!r}> must match {_CHART_ID_RE.pattern}."
+                    )
+                elif chart_id in chart_ids_seen:
+                    issues.append(
+                        f"render/{mod['rel']}: <ChartCard chartId={chart_id!r}> duplicates the "
+                        f"chartId already declared in render/{chart_ids_seen[chart_id]}. chartId "
+                        "must be globally unique across the dashboard."
+                    )
+                else:
+                    chart_ids_seen[chart_id] = mod["rel"]
+
+                slug = extract_query_slug(sql_id)
+                if slug is None:
+                    issues.append(
+                        f"render/{mod['rel']}: <ChartCard sqlId={sql_id!r}> is not a valid queries/<slug> reference."
+                    )
+                else:
+                    query_refs.add(f"queries/{slug}")
+                    if slug not in templates:
+                        issues.append(
+                            f"render/{mod['rel']}: <ChartCard sqlId='queries/{slug}'> points to a "
+                            "template not produced via save_query_template."
+                        )
+
+                if chart_type not in _VALID_CHART_TYPES:
+                    issues.append(
+                        f"render/{mod['rel']}: <ChartCard chartType={chart_type!r}> is not one of "
+                        f"{sorted(_VALID_CHART_TYPES)}."
+                    )
 
             # ---- 1-arg useQuerySql calls (no params) — always rejected.
             for match in _USE_QUERY_SQL_NO_PARAMS_RE.finditer(source):
@@ -1163,12 +1310,21 @@ class DashboardArtifactTools:
             for k in unreferenced
         )
 
+        # Cards registry derived from the validated <ChartCard> instances.
+        # Sorted by chartId for stable wire output. Downstream consumers
+        # (publish wire payload, future static-edit APIs) read this off the
+        # validate_render result rather than re-walking the AST.
+        cards_registry = [{"chart_id": cid, "jsx_path": f"render/{rel}"} for cid, rel in sorted(chart_ids_seen.items())]
+
         return FuncToolResult(
             result={
+                "artifact_kind": "dashboard",
+                "artifact_slug": self.dashboard_slug,
                 "app_jsx_path": app_jsx_path.relative_to(self._project_root).as_posix(),
                 "manifest_path": manifest_path.relative_to(self._project_root).as_posix(),
                 "render_files": [f"render/{modules[k]['rel']}" for k in sorted(modules.keys())],
                 "query_refs": sorted(query_refs),
+                "cards": cards_registry,
                 "warnings": warnings,
             }
         )

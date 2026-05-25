@@ -1,4 +1,4 @@
-name: "Publish Release Package"
+name: "Publish And Finalize Release"
 
 on:
   workflow_dispatch:
@@ -25,9 +25,16 @@ on:
         required: false
         default: true
         type: boolean
+      create_main_metadata_pr:
+        description: "Create or update a main metadata sync PR after a stable PyPI publish"
+        required: false
+        default: true
+        type: boolean
 
 permissions:
-  contents: read
+  actions: write
+  contents: write
+  pull-requests: write
 
 concurrency:
   group: publish-release-${{ inputs.repository }}-${{ inputs.version }}
@@ -35,12 +42,15 @@ concurrency:
 
 jobs:
   publish:
-    name: Build and publish package
+    name: Build, publish, tag, and sync metadata
     runs-on: ubuntu-latest
     environment:
       name: ${{ inputs.repository }}
     env:
       RELEASE_REF: ${{ inputs.ref || github.ref_name }}
+      VERSION: ${{ inputs.version }}
+      TAG_NAME: v${{ inputs.version }}
+      TARGET_REPOSITORY: ${{ inputs.repository }}
       DIST_ARTIFACT_NAME: datus-agent-release-dist-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout release ref
@@ -61,18 +71,47 @@ jobs:
       - name: Check release readiness
         shell: bash
         env:
-          VERSION: ${{ inputs.version }}
           CHECK_ADAPTER_LATEST: ${{ inputs.check_adapter_latest }}
         run: |
           set -euo pipefail
-          args=(
-            --expected-version "${VERSION}"
-            --check-tag-available
-          )
+          args=(--expected-version "${VERSION}")
           if [[ "${CHECK_ADAPTER_LATEST}" == "true" ]]; then
             args+=(--check-adapter-latest)
           fi
           python ci/check_release_readiness.py "${args[@]}"
+
+      - name: Check release source and tag state
+        id: source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch origin --prune --tags main
+
+          release_sha="$(git rev-parse HEAD)"
+          echo "release_sha=${release_sha}" >> "$GITHUB_OUTPUT"
+
+          remote_branch_sha="$(git ls-remote --heads origin "${RELEASE_REF}" | awk '{print $1}')"
+          if [[ -n "${remote_branch_sha}" && "${remote_branch_sha}" != "${release_sha}" ]]; then
+            echo "::error::Release ref ${RELEASE_REF} is at ${remote_branch_sha}, but checked out ${release_sha}"
+            exit 1
+          fi
+
+          if [[ "${TARGET_REPOSITORY}" != "pypi" ]]; then
+            echo "Skipping stable tag validation for ${TARGET_REPOSITORY}"
+            exit 0
+          fi
+
+          if git rev-parse --verify --quiet "refs/tags/${TAG_NAME}" >/dev/null; then
+            tag_sha="$(git rev-list -n 1 "${TAG_NAME}")"
+            if [[ "${tag_sha}" != "${release_sha}" ]]; then
+              echo "::error::Tag ${TAG_NAME} already points to ${tag_sha}, expected ${release_sha}"
+              exit 1
+            fi
+            echo "Tag ${TAG_NAME} already points to the release commit"
+          fi
 
       - name: Build release distributions
         run: python -m build --outdir dist-release
@@ -92,8 +131,6 @@ jobs:
         env:
           PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
           TEST_PYPI_API_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN }}
-          TARGET_REPOSITORY: ${{ inputs.repository }}
-          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           if [[ "${TARGET_REPOSITORY}" == "testpypi" ]]; then
@@ -182,9 +219,6 @@ jobs:
             dist-release/*
 
       - name: Verify published package is visible
-        env:
-          TARGET_REPOSITORY: ${{ inputs.repository }}
-          VERSION: ${{ inputs.version }}
         run: |
           python - <<'PY'
           import json
@@ -231,10 +265,148 @@ jobs:
           )
           PY
 
-      - name: Record published commit SHA
+      - name: Clean install published package smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv .published-package-smoke
+          source .published-package-smoke/bin/activate
+          python -m pip install --upgrade pip
+          if [[ "${TARGET_REPOSITORY}" == "testpypi" ]]; then
+            python -m pip install \
+              --index-url https://test.pypi.org/simple/ \
+              --extra-index-url https://pypi.org/simple \
+              "datus-agent==${VERSION}"
+          else
+            python -m pip install "datus-agent==${VERSION}"
+          fi
+
+          python - <<'PY'
+          import datus
+
+          print(f"datus import smoke passed: {datus.__version__}")
+          PY
+          datus --version
+          datus-agent --version
+          datus-api --version
+          datus-gateway --version
+          datus bootstrap-kb --help >/dev/null
+          datus platform-doc --help >/dev/null
+          datus probe-llm --help >/dev/null
+
+      - name: Create or verify release tag
+        if: ${{ inputs.repository == 'pypi' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch origin --tags
+
+          release_sha="$(git rev-parse HEAD)"
+          if git rev-parse --verify --quiet "refs/tags/${TAG_NAME}" >/dev/null; then
+            tag_sha="$(git rev-list -n 1 "${TAG_NAME}")"
+            if [[ "${tag_sha}" != "${release_sha}" ]]; then
+              echo "::error::Tag ${TAG_NAME} already points to ${tag_sha}, expected ${release_sha}"
+              exit 1
+            fi
+            echo "Tag ${TAG_NAME} already points to the release commit"
+          else
+            git tag -a "${TAG_NAME}" -m "datus-agent ${VERSION}"
+            git push origin "${TAG_NAME}"
+          fi
+
+      - name: Dispatch docs deploy
+        if: ${{ inputs.repository == 'pypi' }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run deploy-docs.yml \
+            --repo "${GITHUB_REPOSITORY}" \
+            --ref main \
+            -f version="${TAG_NAME}"
+
+      - name: Create or update main metadata sync PR
+        if: ${{ inputs.repository == 'pypi' && inputs.create_main_metadata_pr }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN || secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ steps.source.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch origin --prune main
+
+          sync_branch="sync/release-${VERSION}-metadata-to-main"
+          existing_sync_sha="$(git ls-remote --heads origin "${sync_branch}" | awk '{print $1}')"
+          if [[ -n "${existing_sync_sha}" ]]; then
+            git fetch origin "refs/heads/${sync_branch}:refs/remotes/origin/${sync_branch}"
+          fi
+
+          git checkout -B "${sync_branch}" origin/main
+          git checkout "${SOURCE_SHA}" -- pyproject.toml requirements.txt
+          if git diff --quiet; then
+            echo "Main already has release ${VERSION} metadata"
+            exit 0
+          fi
+
+          git add pyproject.toml requirements.txt
+          git commit -m "chore: sync main release metadata to ${VERSION}"
+          if [[ -n "${existing_sync_sha}" ]]; then
+            git push \
+              --force-with-lease="refs/heads/${sync_branch}:${existing_sync_sha}" \
+              --set-upstream origin "${sync_branch}"
+          else
+            git push --set-upstream origin "${sync_branch}"
+          fi
+
+          title="[Tool] Sync main release metadata to ${VERSION}"
+          body_file="$(mktemp)"
+          cat > "${body_file}" <<EOF
+          ## Summary
+
+          Sync main release metadata after publishing datus-agent ${VERSION}.
+
+          ## Changes
+
+          - copy release source metadata from ${SOURCE_SHA}
+          - update pyproject.toml and requirements.txt on main
+
+          ## Validation
+
+          - generated by the Publish And Finalize Release workflow after PyPI visibility and package smoke checks
+          EOF
+
+          if gh pr view "${sync_branch}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh pr edit "${sync_branch}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "${title}" \
+              --body-file "${body_file}"
+          else
+            gh pr create \
+              --repo "${GITHUB_REPOSITORY}" \
+              --base main \
+              --head "${sync_branch}" \
+              --title "${title}" \
+              --body-file "${body_file}"
+          fi
+
+      - name: Record release summary
         run: |
           {
-            echo "### Release source"
+            echo "### Release"
             echo
-            echo "Published commit SHA: \`$(git rev-parse HEAD)\`"
+            echo "- Version: \`${VERSION}\`"
+            echo "- Repository: \`${TARGET_REPOSITORY}\`"
+            echo "- Source ref: \`${RELEASE_REF}\`"
+            echo "- Source SHA: \`${{ steps.source.outputs.release_sha }}\`"
+            if [[ "${TARGET_REPOSITORY}" == "pypi" ]]; then
+              echo "- Tag: \`${TAG_NAME}\`"
+              echo "- Docs deploy: dispatched for \`${TAG_NAME}\`"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

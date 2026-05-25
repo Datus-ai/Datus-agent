@@ -41,6 +41,9 @@ class TestFilesystemConfig:
         assert ".py" in cfg.allowed_extensions
         assert ".txt" in cfg.allowed_extensions
         assert ".json" in cfg.allowed_extensions
+        # Dashboard artifact templates land as ``<slug>.sql.j2`` — Path.suffix
+        # returns ``.j2`` only, so the bare ``.j2`` entry is what gates them.
+        assert ".j2" in cfg.allowed_extensions
 
     def test_custom_allowed_extensions(self):
         cfg = FilesystemConfig(allowed_extensions=[".py"])

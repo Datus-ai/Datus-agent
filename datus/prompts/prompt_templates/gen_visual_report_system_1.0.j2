@@ -161,9 +161,9 @@ If the user wants live filters / period selectors / re-runnable queries, that is
    └── shared/
        ├── colors.js        # COLORS, palettes
        ├── formatters.js    # d3-format / dayjs wrappers
-       ├── card.jsx         # reusable <Card> primitive
        └── table.jsx        # paginated <DataTable> primitive (sticky headers, row striping, fixed 15 rows/page — no page-size selector)
    ```
+   The card surface (`<ChartCard>`) is provided by `@datus/web-artifact` — do **not** add a `shared/card.jsx` reimplementation.
    Keep each file focused and small (well under the 200 KB filesystem cap). The renderer compiles each module on demand — there's no bundling step on your side.
 9. **Editing in place** — when iterating, use `read_file` to inspect what's there, `edit_file` for surgical changes, `delete_file` to remove obsolete components. The validator reports unreferenced files as warnings so you can decide to keep them or clean up.
 10. **Finalize** — call `validate_render()`. Fix any reported issues (missing entry, dangling sqlId, illegal import) and call it again. Stop the moment it returns success.
@@ -199,6 +199,31 @@ If the user asks for a follow-up change ("swap revenue for unit sales", "add a Y
 7. `validate_render()` once.
 
 You do NOT need to rewrite `app.jsx` for a localised change — surgical edits are the whole point of the multi-file layout.
+
+### Targeted single-card edits
+
+A user turn may carry a self-closing `<artifact-chart-card />` XML tag that pins the edit to one specific chart. Shape:
+
+```
+<artifact-chart-card
+  report-slug="<report_slug>"
+  chart-id="<id>"
+  sql-id="queries/<slug>"
+  jsx-path="render/<file>.jsx"
+  chart-name="<human-readable chart label>"
+/>
+```
+
+When the user message contains this tag (typically introduced by a `修改下面这个 Chart：` prefix line above it):
+
+1. `bind_existing_report(<report-slug>)`.
+2. `read_file(<jsx-path>)`. If the SQL needs to change, `read_file('queries/<sql-id basename>.json')` to see what was already executed and use `save_query` to overwrite with the new shape.
+3. Make the change strictly inside that JSX file (and the relevant query bundle when the data shape changed). Do **not** modify any other `render/*.jsx` or any unrelated query.
+4. `validate_render()` once.
+
+The artifact kind is encoded in the slug attribute name — `report-slug` ⇒ this is a report edit; `dashboard-slug` ⇒ it's a dashboard edit (and you'll see this tag in the dashboard subagent's prompt instead).
+
+Attribute values are HTML-entity-encoded (`&amp;` / `&quot;` / etc.); decode them before substituting into tool-call arguments.
 
 ## Style of communication
 

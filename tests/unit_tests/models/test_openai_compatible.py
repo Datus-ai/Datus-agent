@@ -9,6 +9,7 @@ CI-level: zero external dependencies. All LiteLLM / OpenAI SDK calls mocked.
 """
 
 import json
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,6 +18,7 @@ from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
 
 from datus.models.openai_compatible import (
     OpenAICompatibleModel,
+    _agents_trace_baggage,
     _detect_tool_failure,
     classify_openai_compatible_error,
 )
@@ -69,7 +71,6 @@ def _make_model(model_config=None):
     mock_litellm_adapter.get_agents_sdk_model.return_value = MagicMock()
 
     with (
-        patch("datus.models.openai_compatible.setup_tracing"),
         patch("datus.models.openai_compatible.LiteLLMAdapter", return_value=mock_litellm_adapter),
     ):
         # Subclass to implement the abstract _get_api_key
@@ -80,6 +81,38 @@ def _make_model(model_config=None):
         model = _ConcreteModel(model_config)
         model.litellm_adapter = mock_litellm_adapter
         return model
+
+
+class _FakeObservabilitySpan:
+    def __init__(self):
+        self.attributes = {}
+
+    def set_attribute(self, key, value):
+        self.attributes[key] = value
+
+
+class _FakeObservabilityManager:
+    def __init__(self, enabled_fields=None):
+        self.enabled_fields = set(enabled_fields or [])
+        self.span_calls = []
+        self.trace_baggage_calls = []
+        self.span_obj = _FakeObservabilitySpan()
+
+    def content_enabled(self, field_name):
+        return field_name in self.enabled_fields
+
+    def redact(self, value):
+        return value
+
+    @contextmanager
+    def span(self, name, attributes=None):
+        self.span_calls.append((name, attributes or {}))
+        yield self.span_obj
+
+    @contextmanager
+    def trace_baggage(self, name, attributes=None):
+        self.trace_baggage_calls.append((name, attributes or {}))
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -487,6 +520,49 @@ class TestGenerate:
         with patch("datus.models.openai_compatible.litellm.completion", return_value=mock_resp):
             result = model.generate("prompt")
         assert result == "step by step reasoning"
+
+    def test_observability_span_records_content_when_capture_enabled(self):
+        model = _make_model()
+        mock_resp = self._mock_litellm_response("")
+        mock_resp.choices[0].message.content = ""
+        mock_resp.choices[0].message.reasoning_content = "step by step reasoning"
+        observability = _FakeObservabilityManager({"prompts", "responses", "reasoning"})
+
+        with (
+            patch("datus.models.openai_compatible.get_observability_manager", return_value=observability),
+            patch("datus.models.openai_compatible.litellm.completion", return_value=mock_resp),
+        ):
+            result = model.generate("Explain", enable_thinking=True)
+
+        assert result == "step by step reasoning"
+        span_name, start_attrs = observability.span_calls[0]
+        assert span_name == "llm.generate"
+        assert start_attrs["gen_ai.request.model"] == "gpt-4"
+        assert start_attrs["datus.model.litellm_name"] == "openai/gpt-4"
+        assert "Explain" in start_attrs["datus.llm.prompt"]
+        assert observability.span_obj.attributes["datus.llm.response"] == "step by step reasoning"
+        assert observability.span_obj.attributes["datus.llm.reasoning"] == "step by step reasoning"
+        assert observability.span_obj.attributes["gen_ai.usage.input_tokens"] == 10
+        assert observability.span_obj.attributes["gen_ai.usage.output_tokens"] == 5
+        assert observability.span_obj.attributes["gen_ai.usage.total_tokens"] == 15
+
+    def test_observability_span_omits_content_when_capture_disabled(self):
+        model = _make_model()
+        mock_resp = self._mock_litellm_response("secret answer")
+        observability = _FakeObservabilityManager()
+
+        with (
+            patch("datus.models.openai_compatible.get_observability_manager", return_value=observability),
+            patch("datus.models.openai_compatible.litellm.completion", return_value=mock_resp),
+        ):
+            result = model.generate("secret prompt")
+
+        assert result == "secret answer"
+        _, start_attrs = observability.span_calls[0]
+        assert "datus.llm.prompt" not in start_attrs
+        assert "datus.llm.response" not in observability.span_obj.attributes
+        assert observability.span_obj.attributes["gen_ai.response.finish_reason"] == "stop"
+        assert observability.span_obj.attributes["gen_ai.response.model"] == "gpt-4"
 
 
 # ---------------------------------------------------------------------------
@@ -2014,6 +2090,37 @@ class TestBuildRunConfigInputFilter:
         assert rc.group_id == "benchmark:semantic_model_20260520_054027"
         assert rc.trace_metadata["task_id"] == "1"
         assert rc.trace_metadata["agent_name"] == "gen_sql"
+
+    def test_agents_trace_baggage_uses_current_trace_context(self):
+        """Agents SDK traces should receive OTel baggage for exporter processors."""
+        observability = _FakeObservabilityManager()
+        ctx = TraceContext(
+            name="agent/gen_sql_summary",
+            session_id="gen_sql_summary_session_ab12cd34",
+            user_id="user-1",
+            metadata={"source": "cli"},
+        )
+
+        with (
+            patch("datus.models.openai_compatible.get_observability_manager", return_value=observability),
+            trace_context(ctx, replace=True),
+            _agents_trace_baggage("gen_sql_summary"),
+        ):
+            pass
+
+        assert observability.trace_baggage_calls == [
+            (
+                "agent/gen_sql_summary",
+                {
+                    "datus.operation": "gen_sql_summary",
+                    "datus.run_type": "llm",
+                    "datus.trace.name": "agent/gen_sql_summary",
+                    "datus.session_id": "gen_sql_summary_session_ab12cd34",
+                    "datus.user_id": "user-1",
+                    "datus.metadata.source": "cli",
+                },
+            )
+        ]
 
     @pytest.mark.asyncio
     async def test_filter_appends_queued_items_and_persists_to_session(self):

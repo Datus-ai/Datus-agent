@@ -46,6 +46,7 @@ class FilesystemConfig:
             ".yml",
             ".csv",
             ".sql",
+            ".j2",
             ".html",
             ".css",
             ".xml",

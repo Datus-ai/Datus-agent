@@ -405,6 +405,17 @@ class ChatCommands:
                 message, current_node, at_tables, at_metrics, at_sqls, plan_mode
             )
             current_node.input = node_input
+            from datus.utils.trace_context import build_chat_trace_context
+
+            trace_ctx = build_chat_trace_context(
+                session_id=current_node.session_id,
+                llm_session_id=current_node.session_id,
+                node_name=current_node.get_node_name() if hasattr(current_node, "get_node_name") else None,
+                subagent_id=subagent_name,
+                datasource=getattr(self.cli.agent_config, "current_datasource", None),
+                source="cli",
+                agent_home=getattr(self.cli.agent_config, "home", None),
+            )
 
             # Initialize action history display
             action_display = ActionHistoryDisplay(self.console, live_state=getattr(self.cli, "live_state", None))
@@ -442,70 +453,74 @@ class ChatCommands:
 
                 async def run_chat_stream():
                     """Run chat stream — INTERACTION actions flow into incremental_actions."""
+                    from datus.utils.trace_context import trace_context
+
                     nonlocal node_final_action, pending_non_thinking
                     streaming_ctx.set_event_loop(asyncio.get_running_loop())
-                    async for action in current_node.execute_stream_with_interactions(
-                        action_history_manager=self.cli.actions
-                    ):
-                        # Streaming text deltas go to their own queue. Sub-agent
-                        # deltas (depth > 0) are ignored here — they'd pollute
-                        # the main-agent accumulator; sub-agents have their own
-                        # pinned-region path.
-                        if action.action_type == "thinking_delta":
-                            if action.depth == 0 and action.action_id:
-                                streaming_deltas.setdefault(action.action_id, []).append(action)
-                            continue
-                        # Node final actions (e.g. chat_response) — keep for
-                        # final response rendering but skip streaming trace.
-                        # Only capture depth-0 (main node) responses; sub-agent
-                        # responses (depth=1) should flow into incremental_actions
-                        # so they are not mistakenly rendered as the final answer
-                        # when the user interrupts execution via ESC.
-                        if (
-                            action.role == ActionRole.ASSISTANT
-                            and action.action_type
-                            and action.action_type.endswith("_response")
-                            and action.depth == 0
-                        ):
-                            node_final_action = action
-                            pending_non_thinking = _drop_if_matches_final(
-                                pending_non_thinking, action, incremental_actions
-                            )
-                            continue
-                        # Plain "response" from the model layer (openai_compatible /
-                        # codex) is the paired terminal action for the delta
-                        # stream. Push it to the trace list; the consumer drops
-                        # the matching delta bucket when it processes this
-                        # action via ``_print_completed_action``.
-                        if (
-                            action.role == ActionRole.ASSISTANT
-                            and action.depth == 0
-                            and action.action_type == "response"
-                            and action.status == ActionStatus.SUCCESS
-                        ):
+                    with trace_context(trace_ctx, replace=True):
+                        action_stream = current_node.execute_stream_with_interactions(
+                            action_history_manager=self.cli.actions
+                        )
+                        async for action in action_stream:
+                            # Streaming text deltas go to their own queue. Sub-agent
+                            # deltas (depth > 0) are ignored here — they'd pollute
+                            # the main-agent accumulator; sub-agents have their own
+                            # pinned-region path.
+                            if action.action_type == "thinking_delta":
+                                if action.depth == 0 and action.action_id:
+                                    streaming_deltas.setdefault(action.action_id, []).append(action)
+                                continue
+                            # Node final actions (e.g. chat_response) — keep for
+                            # final response rendering but skip streaming trace.
+                            # Only capture depth-0 (main node) responses; sub-agent
+                            # responses (depth=1) should flow into incremental_actions
+                            # so they are not mistakenly rendered as the final answer
+                            # when the user interrupts execution via ESC.
+                            if (
+                                action.role == ActionRole.ASSISTANT
+                                and action.action_type
+                                and action.action_type.endswith("_response")
+                                and action.depth == 0
+                            ):
+                                node_final_action = action
+                                pending_non_thinking = _drop_if_matches_final(
+                                    pending_non_thinking, action, incremental_actions
+                                )
+                                continue
+                            # Plain "response" from the model layer (openai_compatible /
+                            # codex) is the paired terminal action for the delta
+                            # stream. Push it to the trace list; the consumer drops
+                            # the matching delta bucket when it processes this
+                            # action via ``_print_completed_action``.
+                            if (
+                                action.role == ActionRole.ASSISTANT
+                                and action.depth == 0
+                                and action.action_type == "response"
+                                and action.status == ActionStatus.SUCCESS
+                            ):
+                                if pending_non_thinking is not None:
+                                    incremental_actions.append(pending_non_thinking)
+                                    pending_non_thinking = None
+                                incremental_actions.append(action)
+                                continue
+                            # Defer ASSISTANT text flagged as non-thinking — it may
+                            # be the tail text that duplicates the upcoming *_response.
+                            # If a previous pending is still buffered, flush it first
+                            # so back-to-back non-thinking chunks are not dropped.
+                            if (
+                                action.role == ActionRole.ASSISTANT
+                                and isinstance(action.output, dict)
+                                and not action.output.get("is_thinking", True)
+                            ):
+                                if pending_non_thinking is not None:
+                                    incremental_actions.append(pending_non_thinking)
+                                pending_non_thinking = action
+                                continue
+                            # Any other action: flush pending first to preserve order.
                             if pending_non_thinking is not None:
                                 incremental_actions.append(pending_non_thinking)
                                 pending_non_thinking = None
                             incremental_actions.append(action)
-                            continue
-                        # Defer ASSISTANT text flagged as non-thinking — it may
-                        # be the tail text that duplicates the upcoming *_response.
-                        # If a previous pending is still buffered, flush it first
-                        # so back-to-back non-thinking chunks are not dropped.
-                        if (
-                            action.role == ActionRole.ASSISTANT
-                            and isinstance(action.output, dict)
-                            and not action.output.get("is_thinking", True)
-                        ):
-                            if pending_non_thinking is not None:
-                                incremental_actions.append(pending_non_thinking)
-                            pending_non_thinking = action
-                            continue
-                        # Any other action: flush pending first to preserve order.
-                        if pending_non_thinking is not None:
-                            incremental_actions.append(pending_non_thinking)
-                            pending_non_thinking = None
-                        incremental_actions.append(action)
                     # Stream ended: flush remaining pending only when no node
                     # final action captured it (otherwise it was already handled).
                     if pending_non_thinking is not None and node_final_action is None:
@@ -567,67 +582,71 @@ class ChatCommands:
             else:
 
                 async def run_stream():
+                    from datus.utils.trace_context import trace_context
+
                     nonlocal node_final_action, pending_non_thinking
-                    async for action in current_node.execute_stream_with_interactions(
-                        action_history_manager=self.cli.actions
-                    ):
-                        if action.role == ActionRole.INTERACTION:
-                            # In non-interactive mode, auto-submit default choice for
-                            # PROCESSING interactions so the node is not left hanging.
-                            if action.status == ActionStatus.PROCESSING:
-                                broker = current_node.interaction_broker
-                                if broker:
-                                    await auto_submit_interaction(broker, action)
-                            continue
-                        if action.action_type == "thinking_delta":
-                            if action.depth == 0 and action.action_id:
-                                streaming_deltas.setdefault(action.action_id, []).append(action)
-                            continue
-                        # Node final actions (e.g. chat_response) — keep for
-                        # final response rendering but skip streaming trace.
-                        # Only capture depth-0 (main node) responses; sub-agent
-                        # responses (depth=1) should flow into incremental_actions
-                        # so they are not mistakenly rendered as the final answer
-                        # when the user interrupts execution via ESC.
-                        if (
-                            action.role == ActionRole.ASSISTANT
-                            and action.action_type
-                            and action.action_type.endswith("_response")
-                            and action.depth == 0
-                        ):
-                            node_final_action = action
-                            pending_non_thinking = _drop_if_matches_final(
-                                pending_non_thinking, action, incremental_actions
-                            )
-                            continue
-                        if (
-                            action.role == ActionRole.ASSISTANT
-                            and action.depth == 0
-                            and action.action_type == "response"
-                            and action.status == ActionStatus.SUCCESS
-                        ):
+                    with trace_context(trace_ctx, replace=True):
+                        action_stream = current_node.execute_stream_with_interactions(
+                            action_history_manager=self.cli.actions
+                        )
+                        async for action in action_stream:
+                            if action.role == ActionRole.INTERACTION:
+                                # In non-interactive mode, auto-submit default choice for
+                                # PROCESSING interactions so the node is not left hanging.
+                                if action.status == ActionStatus.PROCESSING:
+                                    broker = current_node.interaction_broker
+                                    if broker:
+                                        await auto_submit_interaction(broker, action)
+                                continue
+                            if action.action_type == "thinking_delta":
+                                if action.depth == 0 and action.action_id:
+                                    streaming_deltas.setdefault(action.action_id, []).append(action)
+                                continue
+                            # Node final actions (e.g. chat_response) — keep for
+                            # final response rendering but skip streaming trace.
+                            # Only capture depth-0 (main node) responses; sub-agent
+                            # responses (depth=1) should flow into incremental_actions
+                            # so they are not mistakenly rendered as the final answer
+                            # when the user interrupts execution via ESC.
+                            if (
+                                action.role == ActionRole.ASSISTANT
+                                and action.action_type
+                                and action.action_type.endswith("_response")
+                                and action.depth == 0
+                            ):
+                                node_final_action = action
+                                pending_non_thinking = _drop_if_matches_final(
+                                    pending_non_thinking, action, incremental_actions
+                                )
+                                continue
+                            if (
+                                action.role == ActionRole.ASSISTANT
+                                and action.depth == 0
+                                and action.action_type == "response"
+                                and action.status == ActionStatus.SUCCESS
+                            ):
+                                if pending_non_thinking is not None:
+                                    incremental_actions.append(pending_non_thinking)
+                                    pending_non_thinking = None
+                                incremental_actions.append(action)
+                                continue
+                            # Defer ASSISTANT text flagged as non-thinking — it may
+                            # be the tail text that duplicates the upcoming *_response.
+                            # If a previous pending is still buffered, flush it first
+                            # so back-to-back non-thinking chunks are not dropped.
+                            if (
+                                action.role == ActionRole.ASSISTANT
+                                and isinstance(action.output, dict)
+                                and not action.output.get("is_thinking", True)
+                            ):
+                                if pending_non_thinking is not None:
+                                    incremental_actions.append(pending_non_thinking)
+                                pending_non_thinking = action
+                                continue
                             if pending_non_thinking is not None:
                                 incremental_actions.append(pending_non_thinking)
                                 pending_non_thinking = None
                             incremental_actions.append(action)
-                            continue
-                        # Defer ASSISTANT text flagged as non-thinking — it may
-                        # be the tail text that duplicates the upcoming *_response.
-                        # If a previous pending is still buffered, flush it first
-                        # so back-to-back non-thinking chunks are not dropped.
-                        if (
-                            action.role == ActionRole.ASSISTANT
-                            and isinstance(action.output, dict)
-                            and not action.output.get("is_thinking", True)
-                        ):
-                            if pending_non_thinking is not None:
-                                incremental_actions.append(pending_non_thinking)
-                            pending_non_thinking = action
-                            continue
-                        if pending_non_thinking is not None:
-                            incremental_actions.append(pending_non_thinking)
-                            pending_non_thinking = None
-                        incremental_actions.append(action)
                     if pending_non_thinking is not None and node_final_action is None:
                         incremental_actions.append(pending_non_thinking)
                         pending_non_thinking = None

@@ -13,7 +13,7 @@ from datus.schemas.base import BaseResult
 from datus.schemas.node_models import SqlTask
 from datus.utils.loggings import get_logger
 from datus.utils.trace_context import build_workflow_trace_context_from_runner
-from datus.utils.traceable_utils import get_trace_url, optional_traceable
+from datus.utils.traceable_utils import get_trace_reference, optional_traceable
 
 logger = get_logger(__name__)
 
@@ -114,9 +114,15 @@ class WorkflowRunner:
         trajectory_dir = self.global_config.get_trajectory_run_dir(self.run_id)
         os.makedirs(trajectory_dir, exist_ok=True)
 
-        trace_url = get_trace_url()
-        if trace_url:
-            self.workflow.metadata["trace_url"] = trace_url
+        trace_reference = get_trace_reference()
+        trace_metadata = {}
+        if trace_reference:
+            trace_metadata = trace_reference.to_metadata()
+            self.workflow.metadata.update(trace_metadata)
+            logger.info(
+                f"Trace reference: trace_id={trace_reference.trace_id} "
+                f"span_id={trace_reference.span_id} provider={trace_reference.provider}"
+            )
 
         save_path = f"{trajectory_dir}/{file_name}_{timestamp}.yaml"
         self.workflow.save(save_path)
@@ -124,12 +130,15 @@ class WorkflowRunner:
         final_result = self.workflow.get_final_result()
         logger.info(f"Workflow execution completed. Steps:{step_count}")
 
-        return {
+        result = {
             "final_result": final_result,
             "save_path": save_path,
             "steps": step_count,
             "run_id": self.run_id,
         }
+        if trace_metadata:
+            result["trace_reference"] = trace_metadata
+        return result
 
     def _ensure_prerequisites(self, sql_task: Optional[SqlTask], check_storage: bool) -> bool:
         if check_storage:

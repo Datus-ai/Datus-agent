@@ -5,19 +5,36 @@ on:
     inputs:
       expected_version:
         description: "Expected datus-agent version on this branch, for example 0.3.1 or 0.3.1rc1"
-        required: true
+        required: false
+        default: ""
+        type: string
+      ref:
+        description: "Release branch, tag, or SHA to validate. Defaults to the selected workflow ref."
+        required: false
+        default: ""
         type: string
   workflow_call:
     inputs:
       expected_version:
-        required: true
+        required: false
+        default: ""
         type: string
+      ref:
+        required: false
+        default: ""
+        type: string
+  pull_request:
+    branches:
+      - "release/**"
+  push:
+    branches:
+      - "release/**"
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-candidate-${{ github.ref }}-${{ inputs.expected_version }}
+  group: release-candidate-${{ inputs.ref || github.ref }}-${{ inputs.expected_version || github.sha }}
   cancel-in-progress: false
 
 env:
@@ -31,6 +48,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -42,9 +60,31 @@ jobs:
       - name: Install build tooling
         run: python -m pip install --upgrade pip build packaging twine
 
+      - name: Resolve expected version
+        id: release
+        shell: bash
+        env:
+          EXPECTED_VERSION_INPUT: ${{ inputs.expected_version || '' }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${EXPECTED_VERSION_INPUT}" ]]; then
+            version="${EXPECTED_VERSION_INPUT}"
+          else
+            version="$(python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          print(pyproject["project"]["version"])
+          PY
+          )"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Resolved release candidate version: ${version}"
+
       - name: Check release version and dependency metadata
         env:
-          EXPECTED_VERSION: ${{ inputs.expected_version }}
+          EXPECTED_VERSION: ${{ steps.release.outputs.version }}
         run: |
           python ci/check_release_readiness.py \
             --expected-version "$EXPECTED_VERSION" \
@@ -60,7 +100,7 @@ jobs:
       - name: Install wheel in a clean environment
         shell: bash
         env:
-          EXPECTED_VERSION: ${{ inputs.expected_version }}
+          EXPECTED_VERSION: ${{ steps.release.outputs.version }}
         run: |
           python -m venv .release-smoke-venv
           source .release-smoke-venv/bin/activate

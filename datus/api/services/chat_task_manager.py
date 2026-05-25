@@ -583,7 +583,15 @@ class ChatTaskManager:
                     is_first_delta = action.action_id not in seen_delta_action_ids
                     seen_delta_action_ids.add(action.action_id)
 
-                is_update = (
+                # finalize_progress actions reuse the same id across stages
+                # so the SSE wire emits CREATE then UPDATE_MESSAGE; we mark
+                # everything past the first emission as an update.
+                is_finalize_progress_update = False
+                if action.action_type == "finalize_progress":
+                    is_finalize_progress_update = action.action_id in seen_delta_action_ids
+                    seen_delta_action_ids.add(action.action_id)
+
+                is_update = is_finalize_progress_update or (
                     effective_stream
                     and action.action_type == "response"
                     and isinstance(action.output, dict)

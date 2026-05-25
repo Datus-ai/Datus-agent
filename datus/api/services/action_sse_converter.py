@@ -409,6 +409,19 @@ def action_to_sse_event(
             if not is_first_delta:
                 sse_type = SSEDataType.APPEND_MESSAGE
             contents = [IMessageContent(type="thinking", payload={"content": delta_text})]
+        elif action.action_type == "finalize_progress":
+            # Visual-artifact finalize streams 3 stage transitions through
+            # a single bubble. All 3 actions share an action_id (= wire
+            # message_id) so the chat panel finds the existing message and
+            # the SSE converter alternates CREATE_MESSAGE -> UPDATE_MESSAGE
+            # -> UPDATE_MESSAGE. ``is_update`` is set by the task_manager
+            # loop after the first emission with this action_id.
+            output = action.output if isinstance(action.output, dict) else {}
+            text = output.get("text", "")
+            if not text:
+                return None
+            contents = [IMessageContent(type="markdown", payload={"content": text})]
+            sse_type = SSEDataType.UPDATE_MESSAGE if is_update else SSEDataType.CREATE_MESSAGE
         elif action.action_type == SUBAGENT_COMPLETE_ACTION_TYPE:
             contents = _build_subagent_complete_content(action)
         elif role == ActionRole.TOOL and status == ActionStatus.PROCESSING:

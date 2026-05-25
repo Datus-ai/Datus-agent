@@ -343,7 +343,7 @@ class TestChatTaskManagerBehavior:
 
         await manager._run_loop(task, real_agent_config, StreamChatInput(message="tables", session_id="s-final"))
 
-        assert captured["trace_context"].name == "chat/chat"
+        assert captured["trace_context"].name == "agent/chat"
         assert captured["trace_context"].session_id == "s-final"
         message_events = [event for event in task.events if event.event == "message"]
         assert len(message_events) == 1

@@ -442,6 +442,13 @@ def load_agent_config(reload: bool = False, create_if_missing: bool = False, **k
             first_key = next(iter(datasources))
             agent_config.current_datasource = first_key
 
+    try:
+        from datus.utils.traceable_utils import setup_tracing
+
+        setup_tracing(agent_config.observability)
+    except Exception as e:
+        logger.warning(f"Failed to initialize tracing: {e}")
+
     return agent_config
 
 
