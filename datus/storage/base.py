@@ -178,10 +178,12 @@ class BaseEmbeddingStore(StorageBase):
         table = self._open_existing_table_for_read()
         if table is None:
             return self._empty_result(select_fields)
-        if limit:
+        if limit is not None:
             row_limit = limit
         else:
             row_limit = table.count_rows(where) if where else table.count_rows()
+        if row_limit == 0:
+            return self._empty_result(select_fields)
         result = table.search_all(where=where, select_fields=select_fields, limit=row_limit)
         if self.vector_column_name in result.column_names:
             result = result.drop([self.vector_column_name])

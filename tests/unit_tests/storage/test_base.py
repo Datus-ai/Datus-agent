@@ -1009,3 +1009,12 @@ class TestSearchAll:
 
         result = store._search_all(limit=2)
         assert result.num_rows == 2
+
+    def test_search_all_with_zero_limit_returns_no_rows(self, tmp_path):
+        """_search_all preserves an explicit zero limit."""
+        store = self._make_store(tmp_path)
+        data = [self._make_row(i) for i in range(5)]
+        store.store_batch(data)
+
+        result = store._search_all(limit=0)
+        assert result.num_rows == 0
