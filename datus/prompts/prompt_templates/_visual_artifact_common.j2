@@ -44,15 +44,15 @@ The optional `/** @datus-title ... */` annotation at the top is used by the stan
 
 ### Allowed imports
 
-| Module | Notes |
-|---|---|
-| `react` | `useState`, `useEffect`, `useRef`, `useMemo`, `useCallback`, `useContext`, `createContext`, plus the default `React` namespace |
-| `@datus/web-artifact` | `useDatusArtifact`, `AnimateOnVisible` (see "Motion & animation"), `ChartCard` (see "Canonical component shape" + "Card props"), `ChartEntryMore` (escape hatch — `ChartCard` already embeds it), `Skeleton`, `ErrorBlock` (see "Loading & error placeholders") |
-| `recharts` | any named export (`AreaChart`, `LineChart`, `BarChart`, `RadarChart`, `PieChart`, `ResponsiveContainer`, `Tooltip`, `XAxis`, `YAxis`, `CartesianGrid`, `Area`, `Line`, `Bar`, `Radar`, `Pie`, `Cell`, etc.) |
-| `lucide-react` | any icon component (`User`, `TrendingUp`, `Banknote`, `Globe`, `Landmark`, …). **Use these instead of emoji** — see the "Iconography & emoji" section below. |
-| `d3-format` | `format` — build numeric / currency / percent / SI-prefix formatters |
-| `dayjs` | default `dayjs` factory + `.format(pattern)` |
-| `'./<sibling>'` or `'../<path>'` | resolves to a file under `render/`. `./kpi-banner` → `render/kpi-banner.jsx`; `./charts/trend` → `render/charts/trend.jsx`. Extensions optional; `/index.jsx` fallback supported. |
+| Module | Version | Notes |
+|---|---|---|
+| `react` | `^18.2.0` | `useState`, `useEffect`, `useRef`, `useMemo`, `useCallback`, `useContext`, `createContext`, plus the default `React` namespace |
+| `@datus/web-artifact` | runtime-provided | `useDatusArtifact`, `AnimateOnVisible` (see "Motion & animation"), `ChartCard` (see "Canonical component shape" + "Card props"), `ChartEntryMore` (escape hatch — `ChartCard` already embeds it), `Skeleton`, `ErrorBlock` (see "Loading & error placeholders") |
+| `recharts` | `^3.8.1` | any named export (`AreaChart`, `LineChart`, `BarChart`, `RadarChart`, `PieChart`, `ResponsiveContainer`, `Tooltip`, `XAxis`, `YAxis`, `CartesianGrid`, `Area`, `Line`, `Bar`, `Radar`, `Pie`, `Cell`, etc.). **v3 API** — not v2. |
+| `lucide-react` | `^0.563.0` | any icon component (`User`, `TrendingUp`, `Banknote`, `Globe`, `Landmark`, …). **Use these instead of emoji** — see the "Iconography & emoji" section below. |
+| `d3-format` | `^3.1.2` | `format` — build numeric / currency / percent / SI-prefix formatters |
+| `dayjs` | `^1.11.20` | default `dayjs` factory + `.format(pattern)` |
+| `'./<sibling>'` or `'../<path>'` | — | resolves to a file under `render/`. `./kpi-banner` → `render/kpi-banner.jsx`; `./charts/trend` → `render/charts/trend.jsx`. Extensions optional; `/index.jsx` fallback supported. |
 
 Do **not** import from: `react-dom`, `next/*`, `react-router*`, state-management (`zustand`, `redux`, `jotai`), CSS-in-JS (`styled-components`, `emotion`), data-fetching (`swr`, `react-query`), or utility libraries (`lodash`, `date-fns`, `moment`). Reimplement what you need inline. The validator rejects every other bare specifier; the iframe runtime would also throw.
 
