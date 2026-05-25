@@ -313,6 +313,11 @@ class _StubCompleter(DynamicAtReferenceCompleter):
         return self._stub_data, flatten, 2
 
 
+class _FailingCompleter(DynamicAtReferenceCompleter):
+    def _build_snapshot(self):
+        raise RuntimeError("storage unavailable")
+
+
 class TestDynamicAtReferenceCompleterInit:
     def test_init_defaults(self):
         c = _StubCompleter()
@@ -360,6 +365,17 @@ class TestDynamicAtReferenceCompleterEnsureLoaded:
         c._ensure_loaded()
         c._ensure_loaded()
         assert call_count == 1
+
+    def test_ensure_loaded_failure_marks_completer_unavailable(self):
+        c = _FailingCompleter()
+
+        c._ensure_loaded()
+
+        assert c._loaded is True
+        assert c._data == {}
+        assert c.flatten_data == {}
+        assert c.max_level == 0
+        assert c.last_error == "storage unavailable"
 
 
 class TestDynamicAtReferenceCompleterReloadData:
@@ -453,6 +469,15 @@ class TestDynamicAtReferenceCompleterReloadData:
         assert "key_a" in captured and "key_b" not in captured
         assert c.flatten_data is not captured
         assert "key_b" in c.flatten_data
+
+    def test_reload_failure_marks_completer_unavailable(self):
+        c = _FailingCompleter()
+
+        c.reload_data()
+
+        assert c._loaded is True
+        assert c.flatten_data == {}
+        assert c.last_error == "storage unavailable"
 
 
 class TestDynamicAtReferenceCompleterGetData:
@@ -772,6 +797,39 @@ class TestAtReferenceCompleterParseAtContext:
         assert completer.table_completer._loaded is False
         completer.parse_at_context("@Table users")
         assert completer.table_completer._loaded is True
+
+    def test_reload_data_isolates_reference_type_failures(self, real_agent_config):
+        completer = AtReferenceCompleter(real_agent_config)
+        completer.table_completer._build_snapshot = lambda: (_ for _ in ()).throw(
+            RuntimeError("table storage unavailable")
+        )
+        completer.metric_completer._build_snapshot = lambda: ({}, {"Finance.revenue": {"name": "revenue"}}, 2)
+        completer.sql_completer._build_snapshot = lambda: ({}, {"Finance.sql": {"name": "sql", "sql": "select 1"}}, 2)
+
+        completer.reload_data()
+
+        assert completer.table_completer.last_error == "table storage unavailable"
+        assert completer.metric_completer.flatten_data == {"Finance.revenue": {"name": "revenue"}}
+        assert completer.sql_completer.flatten_data == {"Finance.sql": {"name": "sql", "sql": "select 1"}}
+
+    def test_parse_at_context_skips_unavailable_type_and_returns_available(self, real_agent_config):
+        completer = AtReferenceCompleter(real_agent_config)
+        completer.table_completer._build_snapshot = lambda: (_ for _ in ()).throw(
+            RuntimeError("table storage unavailable")
+        )
+        completer.metric_completer._build_snapshot = lambda: (
+            {},
+            {"Finance.revenue": {"name": "revenue", "description": "Revenue metric"}},
+            2,
+        )
+
+        tables, metrics, sqls, agent = completer.parse_at_context("@Table users @Metrics Finance.revenue")
+
+        assert tables == []
+        assert [metric.name for metric in metrics] == ["revenue"]
+        assert sqls == []
+        assert agent is None
+        assert completer.table_completer.last_error == "table storage unavailable"
 
     def test_parse_unknown_agent_drops_silently(self, real_agent_config):
         """A misspelt agent name must NOT be returned as a routing hint —

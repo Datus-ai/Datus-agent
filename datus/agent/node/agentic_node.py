@@ -142,6 +142,8 @@ class AgenticNode(Node):
         self.scope = scope
         self.mcp_servers = mcp_servers or {}
         self.actions: List[ActionHistory] = []
+        if not hasattr(self, "degraded_capabilities"):
+            self.degraded_capabilities: Dict[str, str] = {}
         # Resume target (or freshly generated id when caller passes ``None``).
         # ``session_id`` is set once below — after ``get_node_name()`` is wired
         # up — and is treated as immutable for the node's lifetime: resume /
@@ -326,6 +328,17 @@ class AgenticNode(Node):
         self._status_dirty_callback: Optional[Callable[[], None]] = None
         # Lazy single-instance handle — see ``_get_or_create_token_usage_hook``.
         self._token_usage_hook_instance: Optional[Any] = None
+
+    def _record_degraded_capability(self, key: str, message: str) -> None:
+        """Record a non-fatal capability degradation for API/CLI surfaces."""
+        self.degraded_capabilities[key] = message
+
+    def _record_context_search_degraded(self, error: BaseException | str) -> str:
+        from datus.storage.embedding_diagnostics import format_context_degraded_warning
+
+        message = format_context_degraded_warning(error)
+        self._record_degraded_capability("context_search_tools", message)
+        return message
 
     @property
     def model(self) -> Optional[LLMBaseModel]:

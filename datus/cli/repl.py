@@ -74,6 +74,7 @@ from datus.cli.tui.live_display_state import LiveDisplayState
 from datus.configuration.agent_config_loader import configuration_manager, load_agent_config
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
+from datus.storage.embedding_diagnostics import format_context_degraded_warning
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS, DBType, SQLType
 from datus.utils.exceptions import setup_exception_handler
@@ -153,6 +154,7 @@ class DatusCLI:
         self.agent_initializing = False
         self.agent_ready = False
         self._workflow_runner: WorkflowRunner | None = None
+        self.startup_warnings: List[str] = []
 
         # Plan mode support
         self.plan_mode_active = False
@@ -1144,7 +1146,27 @@ class DatusCLI:
     def _pre_load_storage(self):
         """Preload rag to avoid unnecessary printing"""
         if self.at_completer:
-            self.at_completer.reload_data()
+            try:
+                self.at_completer.reload_data()
+                errors = [
+                    error
+                    for error in (
+                        getattr(self.at_completer.table_completer, "last_error", None),
+                        getattr(self.at_completer.metric_completer, "last_error", None),
+                        getattr(self.at_completer.sql_completer, "last_error", None),
+                    )
+                    if error
+                ]
+                if errors:
+                    warning = format_context_degraded_warning("; ".join(errors))
+                    self.startup_warnings.append(warning)
+                    logger.warning("REPL context autocomplete preload degraded: %s", warning)
+                    print_warning(self.console, warning)
+            except Exception as exc:
+                warning = format_context_degraded_warning(exc)
+                self.startup_warnings.append(warning)
+                logger.warning("REPL context autocomplete preload failed: %s", warning)
+                print_warning(self.console, warning)
 
     def _maybe_schedule_startup_sync(self) -> None:
         """Kick off a one-shot background metadata sync for the default

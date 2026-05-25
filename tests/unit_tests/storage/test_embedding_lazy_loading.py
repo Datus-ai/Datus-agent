@@ -5,8 +5,10 @@
 from unittest.mock import MagicMock
 
 import pandas as pd
+import pytest
 
 from datus.storage.base import BaseEmbeddingStore
+from datus.storage.embedding_diagnostics import format_fastembed_download_error
 from datus.storage.embedding_models import EmbeddingModel
 from datus.utils.exceptions import DatusException
 
@@ -96,7 +98,61 @@ def test_silent_initialization_records_failure(monkeypatch):
     assert model.model_error_message == "download unavailable"
 
 
-def test_storage_defers_failed_model_error_until_first_use():
+def test_model_property_failed_initialization_raises_and_repeats(monkeypatch):
+    def fail_init_model(self):
+        raise RuntimeError("download unavailable")
+
+    monkeypatch.setattr(EmbeddingModel, "init_model", fail_init_model)
+    model = EmbeddingModel(model_name="missing-model", dim_size=2)
+
+    with pytest.raises(DatusException) as first_exc:
+        _ = model.model
+
+    assert "missing-model" in str(first_exc.value)
+    assert "download unavailable" in str(first_exc.value)
+    assert model.model_initialization_attempted is True
+    assert model.is_model_failed is True
+
+    with pytest.raises(DatusException) as second_exc:
+        _ = model.model
+
+    assert "missing-model" in str(second_exc.value)
+    assert "download unavailable" in str(second_exc.value)
+
+
+def test_model_property_init_without_model_fails(monkeypatch):
+    def empty_init_model(self):
+        return None
+
+    monkeypatch.setattr(EmbeddingModel, "init_model", empty_init_model)
+    model = EmbeddingModel(model_name="empty-model", dim_size=2)
+
+    with pytest.raises(DatusException) as exc_info:
+        _ = model.model
+
+    assert "initialization produced no model" in str(exc_info.value)
+    assert model.is_model_failed is True
+
+
+def test_storage_read_only_size_ignores_failed_model_for_missing_table():
+    failed_model = EmbeddingModel(model_name="missing-model", dim_size=2)
+    failed_model.is_model_failed = True
+    failed_model.model_error_message = "download unavailable"
+    db = MagicMock()
+    db.table_exists.return_value = False
+
+    storage = BaseEmbeddingStore(table_name="test_table", embedding_model=failed_model, db=db)
+
+    assert storage._shared.initialized is False
+    db.create_table.assert_not_called()
+
+    assert storage.table_size() == 0
+
+    assert storage._shared.initialized is False
+    db.create_table.assert_not_called()
+
+
+def test_storage_write_fails_closed_when_embedding_model_unavailable():
     failed_model = EmbeddingModel(model_name="missing-model", dim_size=2)
     failed_model.is_model_failed = True
     failed_model.model_error_message = "download unavailable"
@@ -104,19 +160,32 @@ def test_storage_defers_failed_model_error_until_first_use():
 
     storage = BaseEmbeddingStore(table_name="test_table", embedding_model=failed_model, db=db)
 
-    assert storage._shared.initialized is False
-    db.create_table.assert_not_called()
+    with pytest.raises(DatusException) as exc_info:
+        storage.store([{"definition": "test data"}])
 
-    try:
-        storage.table_size()
-    except DatusException as exc:
-        assert "missing-model" in str(exc)
-        assert "download unavailable" in str(exc)
-    else:
-        raise AssertionError("table_size should fail when the embedding model is unavailable")
-
-    assert storage._shared.initialized is False
+    assert "missing-model" in str(exc_info.value)
+    assert "download unavailable" in str(exc_info.value)
     db.create_table.assert_not_called()
+    assert storage._shared.initialized is False
+
+
+def test_fastembed_download_error_includes_cache_and_remediation(monkeypatch):
+    monkeypatch.setenv("HF_HOME", "/tmp/hf-home")
+    monkeypatch.setenv("FASTEMBED_CACHE_PATH", "/tmp/fastembed-cache")
+
+    message = format_fastembed_download_error(
+        model_name="sentence-transformers/all-MiniLM-L6-v2",
+        repo_id="qdrant/all-MiniLM-L6-v2-onnx",
+        cache_dir="/tmp/fastembed-cache",
+        cause=RuntimeError("connection refused"),
+    )
+
+    assert "Embedding model cache is missing" in message
+    assert "qdrant/all-MiniLM-L6-v2-onnx" in message
+    assert "HF_HOME=/tmp/hf-home" in message
+    assert "FASTEMBED_CACHE_PATH=/tmp/fastembed-cache" in message
+    assert "pre-cache the model artifacts" in message
+    assert "OpenAI-compatible embedding provider" in message
 
 
 def test_store_initializes_table_with_loaded_model():

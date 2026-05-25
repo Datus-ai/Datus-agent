@@ -58,6 +58,14 @@ class TestToolRegistry:
         tools = tool_service.registered_tools
         assert tools == sorted(tools)
 
+    def test_context_tool_initialization_failure_builds_empty_registry(self, mock_agent_config):
+        """ToolService should construct even when embedding-backed context tools fail."""
+        with patch("datus.api.services.tool_service.ContextSearchTools", side_effect=RuntimeError("hf offline")):
+            service = ToolService(mock_agent_config)
+
+        assert service.registered_tools == []
+        assert "hf offline" in service.context_warning
+
 
 class TestToolServiceExecute:
     """Tests for execute() dispatch."""
@@ -87,6 +95,17 @@ class TestToolServiceExecute:
         assert result.success is False
         assert result.errorCode == "TOOL_NOT_FOUND"
         assert "nonexistent_tool" in result.errorMessage
+
+    def test_execute_context_tool_returns_controlled_failure_when_unavailable(self, mock_agent_config):
+        with patch("datus.api.services.tool_service.ContextSearchTools", side_effect=RuntimeError("hf offline")):
+            service = ToolService(mock_agent_config)
+
+        result = service.execute("search_metrics", {"query_text": "revenue"})
+
+        assert result.success is False
+        assert result.errorCode == "TOOL_EXECUTION_ERROR"
+        assert "Context search and @ references are disabled" in result.errorMessage
+        assert "hf offline" in result.errorMessage
 
     def test_execute_invalid_params_returns_error(self, tool_service):
         """execute with wrong params returns INVALID_PARAMETERS error."""

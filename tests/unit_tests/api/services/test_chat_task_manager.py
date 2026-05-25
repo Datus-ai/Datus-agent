@@ -3,7 +3,8 @@
 import asyncio
 import re
 from datetime import datetime
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -321,6 +322,30 @@ class TestChatTaskManagerBehavior:
         await manager._push_event(task, event)
         assert len(task.events) == 1
         assert task.events[0] is event
+
+    @pytest.mark.asyncio
+    async def test_degraded_context_warning_emits_nonfatal_message(self):
+        """Context degradation should be a normal assistant message, not an error event."""
+        manager = ChatTaskManager()
+        task = ChatTask(session_id="s-degraded", asyncio_task=MagicMock())
+        node = SimpleNamespace(
+            degraded_capabilities={
+                "context_search_tools": "Context search and @ references are disabled; DB tools remain available."
+            }
+        )
+
+        next_id = await manager._push_degraded_capability_warnings(task, node, 7)
+
+        assert next_id == 8
+        assert len(task.events) == 1
+        event = task.events[0]
+        assert event.id == 7
+        assert event.event == "message"
+        assert isinstance(event.data, SSEMessageData)
+        assert event.data.type == SSEDataType.CREATE_MESSAGE
+        assert event.data.payload.role == "assistant"
+        assert event.data.payload.content[0].type == "markdown"
+        assert "DB tools remain available" in event.data.payload.content[0].payload["content"]
 
     @pytest.mark.asyncio
     async def test_run_loop_emits_final_response_when_no_plain_assistant_response(self, real_agent_config):
@@ -808,6 +833,21 @@ class TestResolveAtContext:
         assert isinstance(tables, list)
         assert isinstance(metrics, list)
         assert isinstance(sqls, list)
+
+    def test_resolve_at_context_returns_empty_when_completer_fails(self, real_agent_config):
+        manager = ChatTaskManager()
+
+        with patch("datus.api.services.chat_task_manager.AtReferenceCompleter", side_effect=RuntimeError("hf offline")):
+            tables, metrics, sqls = manager._resolve_at_context(
+                real_agent_config,
+                ["db.schema.table"],
+                ["Finance.revenue"],
+                ["Finance.sql"],
+            )
+
+        assert tables == []
+        assert metrics == []
+        assert sqls == []
 
 
 class TestCreateNode:

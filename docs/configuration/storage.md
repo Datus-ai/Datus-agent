@@ -122,7 +122,7 @@ database:
 
 ### Sentence Transformers (Local)
 
-For local embedding models without external API calls:
+For local embedding models:
 
 ```yaml
 database:
@@ -130,6 +130,29 @@ database:
   model_name: all-MiniLM-L6-v2          # Lightweight option
   dim_size: 384
 ```
+
+!!! warning "Offline and intranet environments"
+    The default local provider uses FastEmbed. If the model is not already cached,
+    FastEmbed may download `qdrant/all-MiniLM-L6-v2-onnx` from Hugging Face for
+    the default `all-MiniLM-L6-v2` model. In offline, intranet, or Hugging
+    Face-blocked environments, pre-cache the model artifacts or configure a
+    Hugging Face proxy/mirror before enabling embedding-backed features.
+
+    Relevant cache locations:
+
+    - `FASTEMBED_CACHE_PATH` when set
+    - `HF_HOME/fastembed` when `HF_HOME` is set
+    - `~/.cache/huggingface/fastembed` by default
+
+    If the embedding model is unavailable, Datus keeps database tools and normal
+    chat available, but disables embedding-dependent features such as context
+    search, semantic search, external knowledge search, reference SQL search,
+    and `@Table` / `@Metrics` / `@Sql` references. CLI and Web sessions show a
+    non-fatal warning with the cache path and remediation guidance.
+
+    To avoid Hugging Face access entirely, configure `registry_name: openai` for
+    each embedding-backed storage section and point `target_model` at an
+    OpenAI-compatible embedding provider.
 
 !!! info "Alternative Local Models"
     Consider these high-quality alternatives:

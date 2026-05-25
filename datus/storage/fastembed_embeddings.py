@@ -1,7 +1,6 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
-import os.path
 from functools import lru_cache
 from typing import Any, List, Optional, Union
 
@@ -12,7 +11,9 @@ from fastembed.text.text_embedding_base import TextEmbeddingBase
 from huggingface_hub.errors import LocalEntryNotFoundError
 from pydantic import BaseModel, Field
 
+from datus.storage.embedding_diagnostics import format_fastembed_download_error, resolve_fastembed_cache_dir
 from datus.storage.embedding_models import get_embedding_device
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -127,9 +128,17 @@ class FastEmbedEmbeddings(BaseModel, EmbeddingFunction):
 
         try:
             return TextEmbedding(**model_kwargs)
-        except Exception as exc:  # pragma: no cover - delegated to caller
-            logger.error(f"Failed to initialize fastembed model '{self.name}': {exc}")
+        except DatusException:
             raise
+        except Exception as exc:  # pragma: no cover - delegated to caller
+            message = format_fastembed_download_error(
+                model_name=self.name,
+                repo_id=None,
+                cache_dir=self.cache_dir,
+                cause=exc,
+            )
+            logger.error("Failed to initialize fastembed model '%s': %s", self.name, message)
+            raise DatusException(ErrorCode.MODEL_EMBEDDING_ERROR, message=message) from exc
 
     def __hash__(self):
         return hash((self.name, self.device, self.batch_size))
@@ -137,15 +146,9 @@ class FastEmbedEmbeddings(BaseModel, EmbeddingFunction):
 
 def _resolve_cache_dir() -> str:
     """Define the cache directory for fastembed."""
-    from pathlib import Path
-
-    if cache_path := os.getenv("FASTEMBED_CACHE_PATH"):
-        cache_path = Path(cache_path)
-    else:
-        home = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface"))
-        cache_path = (home / "fastembed").resolve()
+    cache_path = resolve_fastembed_cache_dir()
     logger.debug(f"Final fastembed cache_dir is: {cache_path}")
-    return str(cache_path)
+    return cache_path
 
 
 def check_snapshot(model_name: str, cache_dir: str) -> None:
@@ -183,5 +186,15 @@ def check_snapshot(model_name: str, cache_dir: str) -> None:
         snapshot_download(repo_id, cache_dir=cache_dir, local_files_only=True)
     except LocalEntryNotFoundError:
         logger.info(f"Downloading {repo_id} to {cache_dir} via huggingface_hub")
-        snapshot_download(repo_id, cache_dir=cache_dir, local_files_only=False)
-        logger.info(f"Model {repo_id} has been downloaded via huggingface_hub to {cache_dir}.")
+        try:
+            snapshot_download(repo_id, cache_dir=cache_dir, local_files_only=False)
+            logger.info(f"Model {repo_id} has been downloaded via huggingface_hub to {cache_dir}.")
+        except Exception as exc:
+            message = format_fastembed_download_error(
+                model_name=model_name,
+                repo_id=repo_id,
+                cache_dir=cache_dir,
+                cause=exc,
+            )
+            logger.error(message)
+            raise DatusException(ErrorCode.MODEL_EMBEDDING_ERROR, message=message) from exc

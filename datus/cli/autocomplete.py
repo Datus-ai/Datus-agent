@@ -428,6 +428,7 @@ class DynamicAtReferenceCompleter(Completer):
         self.max_completions = max_completions
         self.quote_leaf = quote_leaf
         self._loaded = False
+        self.last_error: Optional[str] = None
         # Serializes atomic swaps between reader threads (prompt_toolkit main
         # thread calling get_completions / fuzzy_match) and writer threads
         # (BackgroundSchemaSyncManager invoking reload_data on the bg event
@@ -440,18 +441,43 @@ class DynamicAtReferenceCompleter(Completer):
             self.flatten_data = {}
             self._loaded = False
             self.max_level = 0
+            self.last_error = None
 
-    def _ensure_loaded(self):
-        if self._loaded:
-            return
-        data, flatten, max_level = self._build_snapshot()
+    def _mark_unavailable(self, exc: Exception) -> None:
+        error = str(exc)
+        logger.warning("Autocomplete data unavailable for %s: %s", type(self).__name__, error)
         with self._lock:
-            if self._loaded:
-                return
+            self._data = {}
+            self.flatten_data = {}
+            self.max_level = 0
+            self._loaded = True
+            self.last_error = error
+
+    def _apply_snapshot(
+        self,
+        data: Union[List[str], Dict[str, Any]],
+        flatten: Dict[str, Any],
+        max_level: int,
+    ) -> None:
+        with self._lock:
             self._data = data
             self.flatten_data = flatten
             self.max_level = max_level
             self._loaded = True
+            self.last_error = None
+
+    def _ensure_loaded(self):
+        if self._loaded:
+            return
+        try:
+            data, flatten, max_level = self._build_snapshot()
+        except Exception as exc:
+            self._mark_unavailable(exc)
+            return
+        with self._lock:
+            if self._loaded:
+                return
+        self._apply_snapshot(data, flatten, max_level)
 
     def fuzzy_match(self, text: str, limit: Optional[int] = None) -> List[str]:
         """Return flatten-path keys whose lower-cased form contains ``text``.
@@ -488,22 +514,23 @@ class DynamicAtReferenceCompleter(Completer):
         """Back-compat shim: delegate to :meth:`_build_snapshot` and apply the
         result in-place.
         """
-        data, flatten, max_level = self._build_snapshot()
-        with self._lock:
-            self._data = data
-            self.flatten_data = flatten
-            self.max_level = max_level
+        try:
+            data, flatten, max_level = self._build_snapshot()
+        except Exception as exc:
+            self._mark_unavailable(exc)
+            return {}
+        self._apply_snapshot(data, flatten, max_level)
         return data
 
     def reload_data(self):
         # Build outside the lock so readers are only blocked for the atomic
         # reference swap, not the heavy LanceDB scan.
-        data, flatten, max_level = self._build_snapshot()
-        with self._lock:
-            self._data = data
-            self.flatten_data = flatten
-            self.max_level = max_level
-            self._loaded = True
+        try:
+            data, flatten, max_level = self._build_snapshot()
+        except Exception as exc:
+            self._mark_unavailable(exc)
+            return
+        self._apply_snapshot(data, flatten, max_level)
 
     def get_data(self):
         self._ensure_loaded()
@@ -1116,9 +1143,15 @@ class AtReferenceCompleter(Completer):
         self.sql_completer.clear()
 
     def reload_data(self):
-        self.table_completer.reload_data()
-        self.metric_completer.reload_data()
-        self.sql_completer.reload_data()
+        for name, completer in (
+            ("Table", self.table_completer),
+            ("Metrics", self.metric_completer),
+            ("Sql", self.sql_completer),
+        ):
+            try:
+                completer.reload_data()
+            except Exception as exc:  # pragma: no cover - defensive; DynamicAtReferenceCompleter catches
+                logger.warning("Failed to reload @%s autocomplete data: %s", name, exc)
 
     def parse_at_context(
         self, user_input: str
@@ -1130,9 +1163,6 @@ class AtReferenceCompleter(Completer):
         flips routing. Subsequent ``@Agent`` mentions are ignored on purpose
         to keep the dispatch hint deterministic.
         """
-        self.table_completer._ensure_loaded()
-        self.metric_completer._ensure_loaded()
-        self.sql_completer._ensure_loaded()
         user_input = user_input.strip()
         if not user_input:
             return ([], [], [], None)
@@ -1141,15 +1171,18 @@ class AtReferenceCompleter(Completer):
         metrics = []
         sqls = []
         if parse_result["tables"]:
+            self.table_completer._ensure_loaded()
             for key in parse_result["tables"]:
                 if key in self.table_completer.flatten_data:
                     tables.append(TableSchema.from_dict(self.table_completer.flatten_data[key]))
 
         if parse_result["metrics"]:
+            self.metric_completer._ensure_loaded()
             for key in parse_result["metrics"]:
                 if key in self.metric_completer.flatten_data:
                     metrics.append(Metric.from_dict(self.metric_completer.flatten_data[key]))
         if parse_result["sqls"]:
+            self.sql_completer._ensure_loaded()
             for key in parse_result["sqls"]:
                 if key in self.sql_completer.flatten_data:
                     sqls.append(ReferenceSql.from_dict(self.sql_completer.flatten_data[key]))

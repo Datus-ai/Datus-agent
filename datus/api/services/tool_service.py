@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict
 from datus.api.models.base_models import Result
 from datus.api.models.config_models import ErrorCode
 from datus.configuration.agent_config import AgentConfig
+from datus.storage.embedding_diagnostics import format_context_degraded_warning
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.utils.loggings import get_logger
@@ -16,9 +17,26 @@ logger = get_logger(__name__)
 class ToolService:
     """Registry-based tool dispatch: tool_name -> bound method."""
 
+    CONTEXT_TOOL_NAMES = {
+        "list_subject_tree",
+        "search_metrics",
+        "get_metrics",
+        "search_reference_sql",
+        "get_reference_sql",
+        "search_semantic_objects",
+        "search_knowledge",
+        "get_knowledge",
+    }
+
     def __init__(self, agent_config: AgentConfig):
         self._agent_config = agent_config
-        self._context_search_tools = ContextSearchTools(agent_config)
+        self.context_warning = ""
+        try:
+            self._context_search_tools = ContextSearchTools(agent_config)
+        except Exception as exc:
+            self._context_search_tools = None
+            self.context_warning = format_context_degraded_warning(exc)
+            logger.warning("Context search tool registry disabled: %s", self.context_warning)
         self._registry: Dict[str, Callable[..., FuncToolResult]] = self._build_registry()
 
     def _build_registry(self) -> Dict[str, Callable[..., FuncToolResult]]:
@@ -26,17 +44,10 @@ class ToolService:
         registry: Dict[str, Callable[..., FuncToolResult]] = {}
 
         # ContextSearchTools methods
-        context_tool_names = [
-            "list_subject_tree",
-            "search_metrics",
-            "get_metrics",
-            "search_reference_sql",
-            "get_reference_sql",
-            "search_semantic_objects",
-            "search_knowledge",
-            "get_knowledge",
-        ]
-        for name in context_tool_names:
+        if self._context_search_tools is None:
+            return registry
+
+        for name in self.CONTEXT_TOOL_NAMES:
             method = getattr(self._context_search_tools, name, None)
             if method and callable(method):
                 registry[name] = method
@@ -52,6 +63,12 @@ class ToolService:
         """Dispatch tool_name with params and return wrapped Result."""
         method = self._registry.get(tool_name)
         if method is None:
+            if self.context_warning and tool_name in self.CONTEXT_TOOL_NAMES:
+                return Result(
+                    success=False,
+                    errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
+                    errorMessage=self.context_warning,
+                )
             return Result(
                 success=False,
                 errorCode=ErrorCode.TOOL_NOT_FOUND,

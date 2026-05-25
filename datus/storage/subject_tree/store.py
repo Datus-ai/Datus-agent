@@ -815,9 +815,6 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         Returns:
             List of matching items with subject_path enriched
         """
-        # Ensure table is ready before direct table access
-        self._ensure_table_ready()
-
         # Set up path filters for both exact path and parent+name matching
         path_filter = [(subject_path, "")]
         if subject_path and len(subject_path) > 1:

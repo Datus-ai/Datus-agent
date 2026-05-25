@@ -19,6 +19,7 @@ threading side effects.
 """
 
 import io
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -45,6 +46,7 @@ def _make_cli(agent_config, available_subagents=None):
     cli.agent = None
     cli.agent_ready = False
     cli.agent_initializing = False
+    cli.startup_warnings = []
     cli.plan_mode_active = False
     cli.default_agent = ""
     cli.at_completer = MagicMock()
@@ -198,6 +200,50 @@ class TestAutoResumeIfRequested:
         cli._run_prompt_session()
 
         cli._auto_resume_if_requested.assert_called_once_with()
+
+
+class TestPreLoadStorage:
+    def test_pre_load_storage_records_warning_when_completer_raises(self, cli):
+        cli.at_completer.reload_data.side_effect = RuntimeError("download unavailable")
+
+        cli._pre_load_storage()
+
+        assert len(cli.startup_warnings) == 1
+        assert "Context search and @ references are disabled" in cli.startup_warnings[0]
+        assert "download unavailable" in cli.startup_warnings[0]
+        assert cli.agent is None
+        assert cli.agent_ready is False
+
+    def test_pre_load_storage_records_warning_from_degraded_completer(self, cli):
+        cli.at_completer = SimpleNamespace(
+            reload_data=MagicMock(),
+            table_completer=SimpleNamespace(last_error="table cache unavailable"),
+            metric_completer=SimpleNamespace(last_error=None),
+            sql_completer=SimpleNamespace(last_error=None),
+        )
+
+        cli._pre_load_storage()
+
+        assert cli.at_completer.reload_data.call_count == 1
+        assert len(cli.startup_warnings) == 1
+        assert "table cache unavailable" in cli.startup_warnings[0]
+
+    def test_background_init_keeps_agent_ready_after_preload_failure(self, cli):
+        agent = object()
+        cli.args = SimpleNamespace(debug=False)
+        cli.agent_initializing = True
+        cli.at_completer.reload_data.side_effect = RuntimeError("download unavailable")
+        cli._create_workflow_runner = MagicMock(return_value="runner")
+        cli._maybe_schedule_startup_sync = MagicMock()
+
+        with patch("datus.agent.agent.Agent", return_value=agent):
+            cli._background_init_agent()
+
+        assert cli.agent is agent
+        assert cli.agent_ready is True
+        assert cli.agent_initializing is False
+        assert cli._workflow_runner == "runner"
+        assert "download unavailable" in cli.startup_warnings[0]
 
 
 class TestCmdExitShutsDownBgSync:

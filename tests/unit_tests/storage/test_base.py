@@ -6,7 +6,9 @@
 
 import re
 from datetime import datetime
+from unittest.mock import MagicMock
 
+import pyarrow as pa
 import pytest
 from datus_storage_base.conditions import eq
 
@@ -14,6 +16,51 @@ from datus.storage.base import BaseEmbeddingStore, StorageBase
 from datus.storage.embedding_models import EmbeddingModel, get_db_embedding_model
 from datus.storage.schema_metadata import SchemaStorage
 from datus.utils.exceptions import DatusException
+
+
+class _UnavailableEmbeddingModel:
+    batch_size = 64
+    device = "cpu"
+    is_model_failed = True
+    model_error_message = "download unavailable"
+    model_name = "missing-model"
+
+    @property
+    def model(self):  # pragma: no cover - failure path assertion
+        raise AssertionError("read-only storage path touched the embedding model")
+
+    @property
+    def dim_size(self):
+        return 2
+
+
+class _ReadOnlyTable:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def count_rows(self, where=None):
+        return len(self.rows)
+
+    def search_all(self, where=None, select_fields=None, limit=None):
+        rows = self.rows[:limit] if limit is not None else list(self.rows)
+        if select_fields is not None:
+            rows = [{field: row.get(field) for field in select_fields if field in row} for row in rows]
+        return pa.Table.from_pylist(rows)
+
+
+class _ReadOnlyVectorDb:
+    def __init__(self, *, exists: bool, table=None):
+        self.exists = exists
+        self.table = table
+        self.open_table_calls = []
+
+    def table_exists(self, table_name):
+        return self.exists
+
+    def open_table(self, table_name, **kwargs):
+        self.open_table_calls.append((table_name, kwargs))
+        return self.table
+
 
 # ---------------------------------------------------------------------------
 # StorageBase._get_current_timestamp
@@ -234,6 +281,85 @@ class TestCheckEmbeddingModelReady:
             store._check_embedding_model_ready()
         assert "not available" in str(exc_info.value)
         assert "Download failed" in str(exc_info.value)
+
+    def test_check_embedding_model_ready_raises_when_model_property_returns_none(self):
+        """A failed lazy init that leaves no model must fail closed."""
+        model = MagicMock()
+        model.is_model_failed = False
+        model.model_name = "empty-model"
+        model.model = None
+
+        store = BaseEmbeddingStore(table_name="test_table", embedding_model=model)
+
+        with pytest.raises(DatusException) as exc_info:
+            store._check_embedding_model_ready()
+
+        assert "initialization produced no model" in str(exc_info.value)
+
+
+class TestReadOnlyPathsWithoutEmbedding:
+    """Read-only storage paths should not initialize embedding models."""
+
+    def _make_store(self, db):
+        schema = pa.schema(
+            [
+                pa.field("name", pa.string()),
+                pa.field("definition", pa.string()),
+                pa.field("vector", pa.list_(pa.float32(), list_size=2)),
+            ]
+        )
+        return BaseEmbeddingStore(
+            table_name="test_table",
+            embedding_model=_UnavailableEmbeddingModel(),
+            db=db,
+            schema=schema,
+        )
+
+    def test_missing_table_count_returns_zero_without_embedding(self):
+        db = _ReadOnlyVectorDb(exists=False)
+        store = self._make_store(db)
+
+        assert store._count_rows() == 0
+        assert store.table_size() == 0
+        assert db.open_table_calls == []
+        assert store._shared.initialized is False
+
+    def test_missing_table_search_returns_empty_schema_without_embedding(self):
+        db = _ReadOnlyVectorDb(exists=False)
+        store = self._make_store(db)
+
+        result = store._search_all()
+
+        assert result.num_rows == 0
+        assert result.column_names == ["name", "definition", "datasource_id"]
+        assert db.open_table_calls == []
+        assert store._shared.initialized is False
+
+    def test_missing_table_query_with_filter_returns_selected_empty_schema(self):
+        db = _ReadOnlyVectorDb(exists=False)
+        store = self._make_store(db)
+
+        result = store.query_with_filter(select_fields=["name"])
+
+        assert result.num_rows == 0
+        assert result.column_names == ["name"]
+        assert db.open_table_calls == []
+        assert store._shared.initialized is False
+
+    def test_existing_table_read_path_opens_without_embedding_function(self):
+        table = _ReadOnlyTable(
+            [
+                {"name": "orders", "definition": "CREATE TABLE orders(id int)", "vector": [0.1, 0.2]},
+            ]
+        )
+        db = _ReadOnlyVectorDb(exists=True, table=table)
+        store = self._make_store(db)
+
+        result = store._search_all(select_fields=["name", "vector"])
+
+        assert result.to_pylist() == [{"name": "orders"}]
+        assert db.open_table_calls == [("test_table", {})]
+        assert store._shared.initialized is False
 
 
 # ---------------------------------------------------------------------------

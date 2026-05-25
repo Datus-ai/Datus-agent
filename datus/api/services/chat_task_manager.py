@@ -15,11 +15,13 @@ from typing import AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.api.models.cli_models import (
+    IMessageContent,
     SSEDataType,
     SSEEndData,
     SSEErrorData,
     SSEEvent,
     SSEMessageData,
+    SSEMessagePayload,
     SSEPingData,
     SSESessionData,
     SSEUsageData,
@@ -544,6 +546,7 @@ class ChatTaskManager:
                 ),
             )
             event_id += 1
+            event_id = await self._push_degraded_capability_warnings(task, node, event_id)
 
             # 3. Resolve @-references
             at_tables, at_metrics, at_sqls = self._resolve_at_context(
@@ -928,6 +931,35 @@ class ChatTaskManager:
     # @ reference resolution
     # ------------------------------------------------------------------
 
+    async def _push_degraded_capability_warnings(self, task: ChatTask, node: AgenticNode, event_id: int) -> int:
+        degraded = getattr(node, "degraded_capabilities", {}) or {}
+        context_warning = degraded.get("context_search_tools")
+        if not context_warning:
+            return event_id
+
+        await self._push_event(
+            task,
+            SSEEvent(
+                id=event_id,
+                event="message",
+                data=SSEMessageData(
+                    type=SSEDataType.CREATE_MESSAGE,
+                    payload=SSEMessagePayload(
+                        message_id=f"context-degraded-{uuid.uuid4().hex[:8]}",
+                        role="assistant",
+                        content=[
+                            IMessageContent(
+                                type="markdown",
+                                payload={"content": context_warning},
+                            )
+                        ],
+                    ),
+                ),
+                timestamp=now_utc_iso(),
+            ),
+        )
+        return event_id + 1
+
     def _resolve_at_context(
         self,
         agent_config: AgentConfig,
@@ -936,8 +968,12 @@ class ChatTaskManager:
         sql_paths: Optional[List[str]],
     ) -> tuple[List[TableSchema], List[Metric], List[ReferenceSql]]:
         """Resolve @-reference paths to typed objects using a fresh completer."""
-        completer = AtReferenceCompleter(agent_config)
-        completer.reload_data()
+        try:
+            completer = AtReferenceCompleter(agent_config)
+            completer.reload_data()
+        except Exception as exc:
+            logger.warning("Failed to resolve @ references; continuing without context references: %s", exc)
+            return [], [], []
 
         tables: List[TableSchema] = []
         for path in table_paths or []:
