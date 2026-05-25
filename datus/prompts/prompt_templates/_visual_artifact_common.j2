@@ -48,7 +48,7 @@ The optional `/** @datus-title ... */` annotation at the top is used by the stan
 |---|---|---|
 | `react` | `^18.2.0` | `useState`, `useEffect`, `useRef`, `useMemo`, `useCallback`, `useContext`, `createContext`, plus the default `React` namespace |
 | `@datus/web-artifact` | runtime-provided | `useDatusArtifact`, `AnimateOnVisible` (see "Motion & animation"), `ChartCard` (see "Canonical component shape" + "Card props"), `ChartEntryMore` (escape hatch — `ChartCard` already embeds it), `Skeleton`, `ErrorBlock` (see "Loading & error placeholders") |
-| `recharts` | `^3.8.1` | any named export (`AreaChart`, `LineChart`, `BarChart`, `RadarChart`, `PieChart`, `ResponsiveContainer`, `Tooltip`, `XAxis`, `YAxis`, `CartesianGrid`, `Area`, `Line`, `Bar`, `Radar`, `Pie`, `Cell`, etc.). **v3 API** — not v2. |
+| `recharts` | `^3.8.1` | any named export (`AreaChart`, `LineChart`, `BarChart`, `RadarChart`, `PieChart`, `ResponsiveContainer`, `Tooltip`, `XAxis`, `YAxis`, `CartesianGrid`, `Area`, `Line`, `Bar`, `Radar`, `Pie`, `Cell`, etc.). **v3, not v2** — see the v3 notes below. |
 | `lucide-react` | `^0.563.0` | any icon component (`User`, `TrendingUp`, `Banknote`, `Globe`, `Landmark`, …). **Use these instead of emoji** — see the "Iconography & emoji" section below. |
 | `d3-format` | `^3.1.2` | `format` — build numeric / currency / percent / SI-prefix formatters |
 | `dayjs` | `^1.11.20` | default `dayjs` factory + `.format(pattern)` |
@@ -57,6 +57,12 @@ The optional `/** @datus-title ... */` annotation at the top is used by the stan
 Do **not** import from: `react-dom`, `next/*`, `react-router*`, state-management (`zustand`, `redux`, `jotai`), CSS-in-JS (`styled-components`, `emotion`), data-fetching (`swr`, `react-query`), or utility libraries (`lodash`, `date-fns`, `moment`). Reimplement what you need inline. The validator rejects every other bare specifier; the iframe runtime would also throw.
 
 Relative paths must stay under `render/` — `../../../escape` is rejected.
+
+**recharts is v3, not v2** — avoid these v2-only patterns the model tends to reach for:
+
+- No `activeIndex` / `activeShape` on `<Pie>` / `<Bar>` / `<Scatter>` (removed in v3). To emphasize a slice/bar, drive its color from data via `<Cell fill>` instead.
+- `<Pie blendStroke>` removed → use `stroke="none"`.
+- SVG has no z-index; paint order follows JSX order. Put `<Tooltip>` **after** `<Legend>` in JSX so the tooltip renders on top.
 
 ### Import every name you reference
 
