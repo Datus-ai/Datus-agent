@@ -58,13 +58,12 @@ class PendingInputQueue:
 
     Producer side (TUI Enter handler, API ``/insert`` route) calls
     :meth:`push`. Consumer side (``call_model_input_filter`` closure,
-    chat-layer auto-continuation) calls :meth:`drain`. The queue is
-    bounded per-turn by :attr:`MAX_DRAIN_PER_TURN`; overflow naturally
-    flushes on subsequent turns so spammed input cannot blow the
-    context window in a single LLM call.
+    chat-layer auto-continuation) calls :meth:`drain`, which empties the
+    queue in one shot — every staged message is delivered to the next
+    LLM turn. A hard ceiling of :attr:`MAX_PENDING_ITEMS` protects
+    against runaway producers.
     """
 
-    MAX_DRAIN_PER_TURN = 3
     MAX_PENDING_ITEMS = 200
 
     def __init__(self) -> None:
@@ -78,15 +77,7 @@ class PendingInputQueue:
             self._items.append(text)
 
     def drain(self) -> List[str]:
-        """Pop up to ``MAX_DRAIN_PER_TURN`` items in FIFO order."""
-        result: List[str] = []
-        with self._lock:
-            while self._items and len(result) < self.MAX_DRAIN_PER_TURN:
-                result.append(self._items.popleft())
-        return result
-
-    def drain_all(self) -> List[str]:
-        """Pop every queued item. Used by final-turn auto-continuation."""
+        """Pop every queued item in FIFO order."""
         with self._lock:
             result = list(self._items)
             self._items.clear()

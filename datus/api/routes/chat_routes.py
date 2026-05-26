@@ -336,8 +336,7 @@ async def submit_user_interaction(
         "Append a free-text user message to the agent's pending input queue. The message "
         "is delivered to the model before its next LLM turn within the same run via the "
         "OpenAI Agents SDK ``call_model_input_filter`` hook. If the run has already entered "
-        "its final turn, the message will auto-continue the conversation in a follow-up run "
-        "(up to a small cap on consecutive continuations)."
+        "its final turn, the message will auto-continue the conversation in a follow-up run."
     ),
 )
 async def insert_message(
