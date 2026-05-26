@@ -66,6 +66,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Literal, Optional, Tuple
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
+from datus.agent.node.gen_sql_agentic_node import prepare_template_context
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.artifact_manifest import ARTIFACT_SLUG_RE
 from datus.schemas.chat_agentic_node_models import ChatNodeInput
@@ -426,6 +427,55 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         except Exception:
             return False
 
+    def _group_whitelisted(self, group: str) -> bool:
+        """True if the configured ``tools`` grants any tool in ``group``.
+
+        Group-level membership test (does the whitelist mention this group at
+        all, via ``group`` / ``group.*`` / ``group.<method>``). Used to gate
+        the lazy bash / skill re-injection :class:`AgenticNode` performs on
+        every prompt build — see :meth:`_ensure_bash_tool_in_tools`.
+        """
+        patterns = self._parse_tool_whitelist(self.node_config.get("tools"))
+        return any(p == group or p.startswith(f"{group}.") for p in patterns)
+
+    # ── Lazy-injection gates (honor the whitelist post-setup_tools) ─────
+
+    def _ensure_bash_tool_in_tools(self) -> None:
+        """Gate :class:`AgenticNode`'s lazy bash re-injection on the whitelist.
+
+        ``_finalize_system_prompt`` re-adds ``execute_command`` to
+        ``self.tools`` on every prompt build — AFTER ``setup_tools()`` already
+        pruned it — which silently re-exposes bash on an ask_* agent whose
+        ``tools`` never granted ``bash_tools`` (the model then sees it in its
+        SDK tool list and offers/runs shell commands). Skip the re-injection
+        unless the whitelist actually grants the group.
+        """
+        if not self._group_whitelisted("bash_tools"):
+            return
+        super()._ensure_bash_tool_in_tools()
+
+    def _ensure_skill_tools_in_tools(self) -> None:
+        """Gate :class:`AgenticNode`'s lazy skill-tool re-injection on the whitelist.
+
+        Same prompt-build bypass as bash (see :meth:`_ensure_bash_tool_in_tools`):
+        the skill loader tools are re-added regardless of the prune. Skip
+        unless ``skills`` is whitelisted.
+        """
+        if not self._group_whitelisted("skills"):
+            return
+        super()._ensure_skill_tools_in_tools()
+
+    def _get_available_skills_context(self) -> str:
+        """Suppress the skills XML when ``skills`` isn't whitelisted.
+
+        The skill loader tools are gated in :meth:`_ensure_skill_tools_in_tools`;
+        advertising skills in the prompt while their loader tool is absent would
+        just offer the model a capability it has no tool to invoke.
+        """
+        if not self._group_whitelisted("skills"):
+            return ""
+        return super()._get_available_skills_context()
+
     # ── Artifact binding resolution ─────────────────────────────────────
 
     def _resolve_artifact_binding_early(self, agent_config: Optional[AgentConfig]) -> None:
@@ -743,28 +793,22 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         conversation_summary: Optional[str] = None,
         prompt_version: Optional[str] = None,
     ) -> str:
-        """Render the ask-* system prompt with artifact context added.
+        """Render a SELF-CONTAINED ask-* system prompt.
 
-        Delegates to ``ChatAgenticNode._get_system_prompt`` for the
-        heavy lifting (template lookup, skill XML injection, memory,
-        language directive) and then prepends a markdown header block
-        with the artifact's manifest fields and raw intent.md so the
-        chat template's general copy ("You are the follow-up
-        consultant…") already knows what it's talking about by the
-        time the user's first message arrives.
+        Two parts, both ask-owned: the artifact-context header (node-rendered
+        manifest / intent / schema snapshot / query catalog / behavioral rules)
+        followed by the purpose-built ask tool catalogue
+        (``_render_ask_base_prompt``).
+
+        Deliberately does NOT chain into ``ChatAgenticNode._get_system_prompt``.
+        That path renders ``{system_prompt or node_name}_system`` and SILENTLY
+        FALLS BACK to ``chat_system`` when the per-subagent template file is
+        absent (the SaaS case) — dumping the entire chat tool catalogue, the
+        ``task()`` subagent-routing rubric, and write/SQL capabilities into a
+        read-only consultant's prompt. ``_render_ask_base_prompt`` resolves
+        only the ask template (builtin fallback), never chat.
         """
-        # We can't simply override the template context dict the base
-        # builds — ``prepare_template_context`` returns a fresh dict per
-        # call. Instead, hook ``_finalize_system_prompt`` style: render
-        # via parent, then prepend our artifact-context block so the
-        # template-specific copy ("You are the follow-up consultant…")
-        # already knows what it's talking about by the time the user's
-        # first message arrives.
-        #
-        # The cleaner long-term fix is to let ``_get_system_prompt`` take
-        # an extra context dict; for now this two-step approach keeps the
-        # base class untouched.
-        base_prompt = super()._get_system_prompt(conversation_summary, prompt_version)
+        base_prompt = self._render_ask_base_prompt(conversation_summary, prompt_version)
         artifact_header = self._render_artifact_context_block()
         final_prompt = (artifact_header + "\n\n" + base_prompt) if artifact_header else base_prompt
         # Observability hook: real-world prompt growth after the
@@ -790,6 +834,99 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             base_bytes,
         )
         return final_prompt
+
+    def _render_ask_base_prompt(
+        self,
+        conversation_summary: Optional[str],
+        prompt_version: Optional[str],
+    ) -> str:
+        """Render the ask tool catalogue from the purpose-built ask template.
+
+        Mirrors the context-building of ``ChatAgenticNode._get_system_prompt``
+        (the ``has_*`` flags keyed off the *exposed* tool surface) but resolves
+        the template independently: the per-subagent ``{name}_system`` first,
+        then the BUILTIN ask template (``ask_report_system`` /
+        ``ask_dashboard_system``) which always ships in the package. It NEVER
+        falls back to ``chat_system`` — that fallback is exactly what polluted
+        the consultant with the full chat tool/task-routing surface.
+        """
+        exposed = self._exposed_tool_names()
+        context = prepare_template_context(
+            node_config=self.node_config,
+            has_db_tools=self._tool_group_exposed(self.db_func_tool, exposed),
+            has_filesystem_tools=self._tool_group_exposed(self.filesystem_func_tool, exposed),
+            has_mf_tools=False,
+            has_context_search_tools=self._tool_group_exposed(self.context_search_tools, exposed),
+            has_reference_template_tools=(
+                self._tool_group_exposed(self.reference_template_tools, exposed)
+                and bool(self.reference_template_tools and self.reference_template_tools.has_reference_templates)
+            ),
+            has_parsing_tools=self._tool_group_exposed(self.date_parsing_tools, exposed),
+            has_platform_doc_tools=self._tool_group_exposed(self._platform_doc_tool, exposed),
+            has_semantic_tools=self._tool_group_exposed(getattr(self, "semantic_tools", None), exposed),
+            agent_config=self.agent_config,
+            workspace_root=self._resolve_workspace_root(),
+        )
+        context["conversation_summary"] = conversation_summary
+        # Ask consultants never carry the task() delegation tool; set it
+        # explicitly so a shared partial can't advertise a tool they lack.
+        context["has_task_tool"] = False
+        context["active_profile"] = getattr(self.agent_config, "active_profile_name", None) or "normal"
+        from datus.utils.time_utils import get_default_current_date
+
+        context["current_date"] = get_default_current_date(None)
+
+        from datus.prompts.prompt_manager import get_prompt_manager
+
+        pm = get_prompt_manager(agent_config=self.agent_config)
+        prompt_version = prompt_version or self.node_config.get("prompt_version")
+        configured_name = self.node_config.get("system_prompt") or self.get_node_name()
+        # (template_name, version) attempts in priority order; the final entry
+        # — builtin ask template at latest version — is guaranteed to exist, so
+        # the loop terminates without ever reaching chat_system.
+        attempts: List[Tuple[str, Optional[str]]] = [(f"{configured_name}_system", prompt_version)]
+        attempts.append((f"{self.NODE_NAME}_system", prompt_version))
+        attempts.append((f"{self.NODE_NAME}_system", None))
+        seen: set = set()
+        last_error: Optional[Exception] = None
+        for template_name, version in attempts:
+            if (template_name, version) in seen:
+                continue
+            seen.add((template_name, version))
+            try:
+                base = pm.render_template(template_name=template_name, version=version, **context)
+                return self._finalize_system_prompt(base)
+            except FileNotFoundError as exc:
+                last_error = exc
+                continue
+        # The builtin ask template is part of the package; reaching here is a
+        # genuine packaging error. Fail loudly rather than degrade to chat.
+        raise DatusException(
+            code=ErrorCode.COMMON_TEMPLATE_NOT_FOUND,
+            message_args={"template_name": f"{self.NODE_NAME}_system", "version": prompt_version or "latest"},
+        ) from last_error
+
+    def _finalize_system_prompt(self, base_prompt: str, memory_node_name_override: Optional[str] = None) -> str:
+        """Lean finalize for a read-only artifact consultant.
+
+        Drops the chat-agent extras :meth:`AgenticNode._finalize_system_prompt`
+        appends — the project ``AGENTS.md`` block and the persistent-memory
+        instructions — which are noise for an agent scoped to one artifact and
+        only widen the capability surface the model believes it has. Keeps the
+        whitelisted tool injections (gated to the configured ``tools``; no-op
+        otherwise), the skills XML (suppressed unless ``skills`` is
+        whitelisted), and the response-language directive.
+        """
+        # Re-inject whitelisted bash / skill tools (gated; no-op when the
+        # whitelist didn't grant them). These add to ``self.tools``, not prompt
+        # text — needed so a whitelist that DID grant them still works.
+        self._ensure_skill_tools_in_tools()
+        self._ensure_bash_tool_in_tools()
+        if self.skill_func_tool:
+            skills_xml = self._get_available_skills_context()
+            if skills_xml:
+                base_prompt = base_prompt + "\n\n" + skills_xml
+        return self._inject_response_language(base_prompt)
 
     def _render_artifact_context_block(self) -> str:
         """Build the artifact-context preamble prepended to the chat prompt.
@@ -1600,6 +1737,22 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             "from the snapshot and say plainly when something cannot be verified live)"
         )
         lines: List[str] = ["### Behavioral Rules (load-bearing)", ""]
+        if not db_exposed:
+            # The artifact context is dense with SQL bodies + table schemas,
+            # which tempts the model to claim live DB/SQL capability it does
+            # not have and then fail at call time ("Tool ... not found"). The
+            # has_db_tools template flag already suppresses the tool catalogue,
+            # but a positive boundary statement is what actually stops the
+            # model from offering to run queries. State it up front.
+            lines.append(
+                "**This agent has NO live database access.** You cannot query "
+                "the database or introspect schema live (no `read_query`, "
+                "`list_tables`, or `describe_table`). Do NOT offer to run SQL "
+                "or fetch fresh data — answer only from the inlined data + "
+                "artifact files above, and say plainly when a question would "
+                "require a live query you can't run."
+            )
+            lines.append("")
         lines.append(
             "1. **Answer from the inlined context first**. The header above "
             "already contains the manifest, the original intent, the "
