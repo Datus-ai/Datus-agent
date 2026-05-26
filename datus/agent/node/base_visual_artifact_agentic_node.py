@@ -466,6 +466,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         artifact_slug: str,
         actions: List[ActionHistory],
         on_progress: Optional[Any] = None,
+        skip_narrative: bool = False,
     ) -> Dict[str, Any]:
         """Run the finalize analysis stage for the just-completed artifact.
 
@@ -477,6 +478,10 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         stage boundary (1=insights LLM, 2=intent curation, 3=schema bake)
         so the streaming hook can surface stage transitions to the user
         without waiting for the artifact SSE event 10-15 s later.
+
+        ``skip_narrative`` skips the two LLM stages (insights /
+        suggested_questions + intent curation) for render-only edits where
+        the data is unchanged; the deterministic aggregations still run.
         """
         try:
             project_root = Path(self.agent_config.project_root).resolve()
@@ -490,6 +495,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                 queries_dir=queries_dir,
                 analysis_dir=analysis_dir,
                 actions=actions,
+                skip_narrative=skip_narrative,
                 # ``db_func_tool`` is wired by ``setup_tools`` early in
                 # the run. Passing it through enables the finalize-time
                 # ``key_tables_schema.json`` bake (describe_table snapshot
@@ -743,6 +749,11 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         ctx.extras["artifact_app_jsx_rel_path"] = app_jsx_rel_path
         ctx.extras["artifact_slug"] = self._active_artifact_slug
         ctx.extras["artifact_all_actions"] = all_actions
+        # save_query[_template] is the only path that mutates queries/ during a
+        # run, so "no query saved this run" ⟺ underlying data unchanged (a
+        # render-only edit like a chart-type swap). Insights / suggested
+        # questions stay valid in that case — let finalize skip its LLM stage.
+        ctx.extras["artifact_data_changed"] = len(query_actions) > 0
         return result
 
     def _build_error_result(self, exc: BaseException, ctx: "StreamRunContext") -> ResultT:
@@ -778,6 +789,11 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         if not slug or not app_jsx_rel_path:
             return
 
+        # Render-only edit (no query saved this run): skip the finalize LLM
+        # stage and its per-stage progress bubbles — the only work left is the
+        # deterministic schema/key_tables refresh, which needs no narration.
+        skip_narrative = not ctx.extras.get("artifact_data_changed", True)
+
         progress_queue: asyncio.Queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
         sentinel = object()
@@ -787,9 +803,11 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             # before touching the asyncio.Queue.
             loop.call_soon_threadsafe(progress_queue.put_nowait, stage)
 
+        progress_cb = None if skip_narrative else _on_progress
+
         async def _run_finalize_off_thread() -> Dict[str, Any]:
             try:
-                return await asyncio.to_thread(self._run_finalize, slug, all_actions, _on_progress)
+                return await asyncio.to_thread(self._run_finalize, slug, all_actions, progress_cb, skip_narrative)
             finally:
                 loop.call_soon_threadsafe(progress_queue.put_nowait, sentinel)
 

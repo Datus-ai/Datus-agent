@@ -1934,3 +1934,133 @@ class TestRunFinalizeAnalysis:
         # ``model.generate`` is the intent curation entry point — it must
         # not have been called when the primary finalize LLM blew up.
         assert model.generate.call_count == 0
+
+    def test_on_progress_fires_for_each_narrative_stage(self, tmp_path: Path):
+        """The streaming hook drives stage bubbles off ``on_progress``;
+        the narrative path must signal stage 1 (insights LLM), 2 (intent
+        curation) and 3 (schema bake) in order."""
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+        (analysis_dir / "intent.md").write_text(_ORIGINAL_INTENT, encoding="utf-8")
+
+        model = Mock(spec=["generate_with_json_output", "generate"])
+        model.generate_with_json_output.return_value = _full_finalize_response()
+        model.generate.return_value = _CURATED_BODY
+
+        stages: list[int] = []
+        result = run_finalize_analysis(
+            model=model,
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+            on_progress=stages.append,
+        )
+
+        assert result["ok"] is True
+        assert stages == [1, 2, 3]
+
+    def test_on_progress_callback_error_does_not_break_finalize(self, tmp_path: Path):
+        """A throwing ``on_progress`` must not abort finalize — the stage
+        callbacks are best-effort UI nudges."""
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+
+        model = Mock(spec=["generate_with_json_output", "generate"])
+        model.generate_with_json_output.return_value = _full_finalize_response()
+
+        def _boom(_stage: int) -> None:
+            raise RuntimeError("queue closed")
+
+        result = run_finalize_analysis(
+            model=model,
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+            on_progress=_boom,
+        )
+
+        assert result["ok"] is True
+        assert (analysis_dir / "insights.json").is_file()
+
+
+class TestRunFinalizeSkipNarrative:
+    """``skip_narrative=True`` (render-only edit): no LLM call, existing
+    narrative files untouched, deterministic aggregations still run."""
+
+    def _seed_existing_narrative(self, analysis_dir: Path) -> tuple[str, str]:
+        insights = json.dumps([{"id": "i1", "title": "t", "summary": "s"}]) + "\n"
+        sq = json.dumps([{"question": "q?", "kind": "quick"}]) + "\n"
+        (analysis_dir / "insights.json").write_text(insights, encoding="utf-8")
+        (analysis_dir / "suggested_questions.json").write_text(sq, encoding="utf-8")
+        return insights, sq
+
+    def test_skips_llm_and_preserves_existing_files(self, tmp_path: Path):
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+        insights, sq = self._seed_existing_narrative(analysis_dir)
+        (analysis_dir / "intent.md").write_text(_ORIGINAL_INTENT, encoding="utf-8")
+
+        model = Mock(spec=["generate_with_json_output", "generate"])
+
+        result = run_finalize_analysis(
+            model=model,
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+            skip_narrative=True,
+        )
+
+        assert result["ok"] is True
+        assert result["skipped_narrative"] is True
+        # Neither LLM entry point fired.
+        assert model.generate_with_json_output.call_count == 0
+        assert model.generate.call_count == 0
+        # Prior narrative files + intent.md left exactly as they were.
+        assert (analysis_dir / "insights.json").read_text(encoding="utf-8") == insights
+        assert (analysis_dir / "suggested_questions.json").read_text(encoding="utf-8") == sq
+        assert (analysis_dir / "intent.md").read_text(encoding="utf-8") == _ORIGINAL_INTENT
+
+    def test_still_refreshes_subject_refs_and_key_tables(self, tmp_path: Path):
+        # A real FROM clause so key_tables aggregation has something to record.
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(
+            tmp_path, sql_body="SELECT region FROM finbench.main.Account"
+        )
+
+        result = run_finalize_analysis(
+            model=Mock(spec=["generate_with_json_output", "generate"]),
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+            skip_narrative=True,
+        )
+
+        assert result["ok"] is True
+        # Deterministic outputs still produced from on-disk briefs/SQL.
+        assert (analysis_dir / "subject_refs.json").is_file()
+        assert result["subject_refs_count"]["metrics"] == 1
+        assert "finbench.main.Account" in result["key_tables"]
+        manifest = json.loads((artifact_dir / "manifest.json").read_text(encoding="utf-8"))
+        assert "finbench.main.Account" in manifest["key_tables"]
+
+    def test_does_not_create_narrative_files_when_absent(self, tmp_path: Path):
+        # No prior insights/suggested_questions on disk: skip must not mint them.
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+
+        result = run_finalize_analysis(
+            model=Mock(spec=["generate_with_json_output", "generate"]),
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+            skip_narrative=True,
+        )
+
+        assert result["ok"] is True
+        assert not (analysis_dir / "insights.json").exists()
+        assert not (analysis_dir / "suggested_questions.json").exists()

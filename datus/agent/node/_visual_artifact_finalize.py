@@ -1191,6 +1191,7 @@ def run_finalize_analysis(
     actions: Iterable[ActionHistory],
     db_func_tool: Optional[Any] = None,
     on_progress: Optional[Callable[[int], None]] = None,
+    skip_narrative: bool = False,
 ) -> Dict[str, Any]:
     """Top-level orchestrator. Returns a result dict::
 
@@ -1233,65 +1234,73 @@ def run_finalize_analysis(
       second LLM call when the first one is already broken.
     * ``analysis/subject_refs.json`` — present iff non-empty. LLM-free.
     * ``manifest.json`` — ``key_tables`` field refreshed. LLM-free.
+
+    ``skip_narrative`` short-circuits the two LLM stages (insights /
+    suggested_questions + intent curation) for render-only edits where the
+    underlying data is unchanged. The existing ``insights.json`` /
+    ``suggested_questions.json`` are left in place (NOT deleted — they're
+    still valid), and the deterministic aggregations below still run so the
+    ask_* consultant's indices stay fresh. The result carries
+    ``skipped_narrative: True`` and ``ok: True``.
     """
     warnings: List[str] = []
-
-    intent_md = load_intent_md(analysis_dir)
-    query_briefs = collect_query_briefs(queries_dir)
-    query_previews = collect_query_previews(queries_dir)
-    action_hints = collect_action_history_hints(actions)
-    existing_insights, existing_sq = load_existing_finalize_output(analysis_dir)
-
-    prompt = build_finalize_prompt(
-        artifact_kind=artifact_kind,
-        intent_md=intent_md,
-        query_briefs=query_briefs,
-        query_previews=query_previews,
-        action_history_hints=action_hints,
-        existing_insights=existing_insights,
-        existing_suggested_questions=existing_sq,
-    )
-
     output: Optional[FinalizeAnalysisOutput] = None
     llm_error: Optional[str] = None
 
-    if on_progress is not None:
-        try:
-            on_progress(1)
-        except Exception as exc:
-            logger.debug("Finalize on_progress(1) raised: %s", exc)
+    if not skip_narrative:
+        intent_md = load_intent_md(analysis_dir)
+        query_briefs = collect_query_briefs(queries_dir)
+        query_previews = collect_query_previews(queries_dir)
+        action_hints = collect_action_history_hints(actions)
+        existing_insights, existing_sq = load_existing_finalize_output(analysis_dir)
 
-    try:
-        raw = model.generate_with_json_output(prompt)
-    except Exception as exc:
-        logger.warning("Finalize LLM call failed: %s", exc)
-        llm_error = f"finalize llm call failed: {exc}"
-
-    if llm_error is None:
-        try:
-            output = parse_finalize_output(raw, artifact_kind=artifact_kind)
-        except Exception as exc:
-            logger.warning("Finalize output validation failed: %s", exc)
-            llm_error = f"finalize output invalid: {exc}"
-
-    if output is not None:
-        warnings.extend(write_finalize_output(analysis_dir, output=output, artifact_kind=artifact_kind))
+        prompt = build_finalize_prompt(
+            artifact_kind=artifact_kind,
+            intent_md=intent_md,
+            query_briefs=query_briefs,
+            query_previews=query_previews,
+            action_history_hints=action_hints,
+            existing_insights=existing_insights,
+            existing_suggested_questions=existing_sq,
+        )
 
         if on_progress is not None:
             try:
-                on_progress(2)
+                on_progress(1)
             except Exception as exc:
-                logger.debug("Finalize on_progress(2) raised: %s", exc)
+                logger.debug("Finalize on_progress(1) raised: %s", exc)
 
-        # Independent LLM call: curate intent.md by stripping operational
-        # nudges + pure render adjustments. Failures degrade to "leave the
-        # original file unchanged + record a warning" — never blocks the
-        # main artifact (which is already on disk by now). Gated on the
-        # main finalize LLM succeeding so we don't keep hammering the
-        # model when it's already returned us nothing usable.
-        curation_warning = run_intent_curation(model, analysis_dir / "intent.md")
-        if curation_warning:
-            warnings.append(curation_warning)
+        try:
+            raw = model.generate_with_json_output(prompt)
+        except Exception as exc:
+            logger.warning("Finalize LLM call failed: %s", exc)
+            llm_error = f"finalize llm call failed: {exc}"
+
+        if llm_error is None:
+            try:
+                output = parse_finalize_output(raw, artifact_kind=artifact_kind)
+            except Exception as exc:
+                logger.warning("Finalize output validation failed: %s", exc)
+                llm_error = f"finalize output invalid: {exc}"
+
+        if output is not None:
+            warnings.extend(write_finalize_output(analysis_dir, output=output, artifact_kind=artifact_kind))
+
+            if on_progress is not None:
+                try:
+                    on_progress(2)
+                except Exception as exc:
+                    logger.debug("Finalize on_progress(2) raised: %s", exc)
+
+            # Independent LLM call: curate intent.md by stripping operational
+            # nudges + pure render adjustments. Failures degrade to "leave the
+            # original file unchanged + record a warning" — never blocks the
+            # main artifact (which is already on disk by now). Gated on the
+            # main finalize LLM succeeding so we don't keep hammering the
+            # model when it's already returned us nothing usable.
+            curation_warning = run_intent_curation(model, analysis_dir / "intent.md")
+            if curation_warning:
+                warnings.append(curation_warning)
 
     # Deterministic aggregations below — these only read files on disk
     # and never call the LLM, so they run regardless of LLM success.
@@ -1336,6 +1345,18 @@ def run_finalize_analysis(
         "reference_sql": len(refs.reference_sql),
         "ext_knowledge": len(refs.ext_knowledge),
     }
+
+    if skip_narrative:
+        # Render-only edit: narrative outputs were intentionally not
+        # regenerated and the prior insights / suggested_questions stay on
+        # disk untouched. No consistency_check (no fresh ``output`` to check).
+        return {
+            "ok": True,
+            "skipped_narrative": True,
+            "warnings": warnings,
+            "key_tables": key_tables,
+            "subject_refs_count": subject_refs_count,
+        }
 
     if llm_error is not None:
         # LLM failed but the deterministic outputs are already on disk.
