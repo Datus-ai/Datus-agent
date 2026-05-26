@@ -97,16 +97,12 @@ agent:
     gen_visual_report:
       model: claude              # Optional: defaults to the configured model
       max_turns: 30              # Optional: defaults to 30
-      report_dist: ~/report_dist # Optional: local renderer assets for offline HTML compilation
 ```
 
 | Parameter | Required | Description | Default |
 |-----------|----------|-------------|---------|
 | `model` | No | LLM model to use | Configured default |
 | `max_turns` | No | Maximum agent iterations before the run stops | 30 |
-| `report_dist` | No | Local directory with pre-built renderer assets. When set, the compiled report references these local files instead of loading from a CDN — useful for offline / air-gapped use. | Empty (CDN mode) |
-
-`report_dist` can also come from the `--report-dist` CLI flag.
 
 ## Tips for Better Prompts
 

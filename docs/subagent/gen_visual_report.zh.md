@@ -97,16 +97,12 @@ agent:
     gen_visual_report:
       model: claude              # 可选，默认使用当前配置的模型
       max_turns: 30              # 可选，默认 30
-      report_dist: ~/report_dist # 可选，HTML 离线编译时使用的本地渲染器资源目录
 ```
 
 | 参数 | 必填 | 说明 | 默认值 |
 |------|------|------|--------|
 | `model` | 否 | 使用的 LLM 模型 | 当前配置的默认模型 |
 | `max_turns` | 否 | agent 最多迭代多少轮后强制结束 | 30 |
-| `report_dist` | 否 | 本地预构建渲染器资源目录。设置后，编译出的报告会引用本地文件，而不是从 CDN 加载——适合离线 / 内网环境。 | 空（走 CDN） |
-
-`report_dist` 也可以通过 CLI 参数 `--report-dist` 传入。
 
 ## 怎么让 prompt 更有效
 
