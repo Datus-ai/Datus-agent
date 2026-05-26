@@ -1783,3 +1783,207 @@ class TestTableSchemasSection:
         # "snapshot only" contract visible from the tree itself.
         assert any("inlined above" in line for line in tree_lines)
         assert any("describe_table" in line for line in tree_lines)
+
+
+# --------------------------------------------------------------------------- #
+# Tool whitelist enforcement (honor SubAgent.tools)                           #
+# --------------------------------------------------------------------------- #
+
+
+def _register_ask_agent_with_tools(
+    agent_config,
+    *,
+    name: str,
+    kind: str,
+    slug: str,
+    tools,
+    blob: dict | None = None,
+) -> None:
+    """Register an ask_* agentic_nodes entry with an explicit ``tools`` value.
+
+    The shared :func:`_register_ask_agent` hardcodes ``tools`` to a db-tools
+    whitelist; these tests need to drive the whitelist directly (including the
+    empty / absent cases), so we register the entry by hand. ``tools=None``
+    omits the key entirely (the "never configured" path).
+    """
+    agent_type = "ask_report" if kind == "report" else "ask_dashboard"
+    if not hasattr(agent_config, "agentic_nodes") or agent_config.agentic_nodes is None:
+        agent_config.agentic_nodes = {}
+    entry = {
+        "type": agent_type,
+        "artifact_slug": slug,
+        "agent_description": f"Ask consultant for {slug}",
+        "rules": [],
+        "max_turns": 5,
+    }
+    if tools is not None:
+        entry["tools"] = tools
+    if blob is not None:
+        entry["artifact_blob"] = blob
+    agent_config.agentic_nodes[name] = entry
+
+
+def _make_ask_report_with_tools(agent_config, tools, *, name: str = "ask_wl_report", slug: str = "wl_report"):
+    """Build an AskReportAgenticNode whose ``tools`` whitelist is ``tools``."""
+    _seed_artifact(agent_config.project_root, "report", slug)
+    blob = _blob_from_disk(agent_config.project_root, "report", slug)
+    _register_ask_agent_with_tools(agent_config, name=name, kind="report", slug=slug, tools=tools, blob=blob)
+    return AskReportAgenticNode(
+        node_id=f"{name}_t",
+        description="d",
+        node_type="chat",
+        agent_config=agent_config,
+        node_name=name,
+    )
+
+
+def _make_ask_dashboard_with_tools(agent_config, tools, *, name: str = "ask_wl_dash", slug: str = "wl_dash"):
+    """Build an AskDashboardAgenticNode (disk path) with ``tools`` whitelist."""
+    _seed_artifact(agent_config.project_root, "dashboard", slug)
+    _register_ask_agent_with_tools(agent_config, name=name, kind="dashboard", slug=slug, tools=tools)
+    return AskDashboardAgenticNode(
+        node_id=f"{name}_t",
+        description="d",
+        node_type="chat",
+        agent_config=agent_config,
+        node_name=name,
+    )
+
+
+def _tool_names(node) -> set:
+    return {t.name for t in node.tools}
+
+
+def _fs_tool_names(node) -> set:
+    return {t.name for t in node.filesystem_func_tool.available_tools()}
+
+
+# Mirrors the real ``customer_retention_analysis`` subagent: semantic-heavy,
+# a few specific context_search methods, all date parsing — and crucially NO
+# db_tools, so ``read_query`` must not leak in.
+_NO_DB_WHITELIST = (
+    "context_search_tools.get_metrics,context_search_tools.list_subject_tree,"
+    "context_search_tools.search_metrics,date_parsing_tools.*,"
+    "semantic_tools.attribution_analyze,semantic_tools.get_dimensions,"
+    "semantic_tools.list_metrics,semantic_tools.query_metrics"
+)
+
+
+class TestToolsWhitelist:
+    """A configured ``tools`` whitelist is a hard cap on the LLM-facing surface.
+
+    Pins the fix for the leak where ask_* nodes (ChatAgenticNode subclasses)
+    ignored ``tools`` and always wired db_tools, leaving ``read_query``
+    callable for a subagent that only whitelisted semantic/context tools.
+    """
+
+    def test_db_tools_dropped_when_not_whitelisted(self, real_agent_config):
+        """The core regression: ``read_query`` (and siblings) must be gone
+        when the whitelist omits ``db_tools``."""
+        node = _make_ask_report_with_tools(real_agent_config, _NO_DB_WHITELIST)
+        names = _tool_names(node)
+        for db_tool in ("read_query", "list_tables", "describe_table", "get_table_ddl"):
+            assert db_tool not in names, f"{db_tool} leaked despite not being whitelisted"
+
+    def test_whitelisted_tools_are_exposed(self, real_agent_config):
+        """Whitelisted tools the runtime actually builds are present — including
+        semantic tools the chat base never builds (proving on-demand build).
+
+        ``attribution_analyze`` and the context_search tools are gated on
+        optional adapters / subject-KB content absent from the CI fixture, so
+        we assert on the adapter-independent semantic wrappers + date parsing,
+        all of which are reliably built here.
+        """
+        node = _make_ask_report_with_tools(real_agent_config, _NO_DB_WHITELIST)
+        names = _tool_names(node)
+        expected = {"query_metrics", "get_dimensions", "list_metrics", "parse_temporal_expressions"}
+        missing = expected - names
+        assert not missing, f"whitelisted tools missing from node surface: {sorted(missing)}"
+
+    def test_method_level_whitelist_is_precise(self, real_agent_config):
+        """``db_tools.read_query`` grants exactly that method — sibling db
+        methods that weren't listed stay dropped."""
+        node = _make_ask_report_with_tools(real_agent_config, "db_tools.read_query")
+        names = _tool_names(node)
+        # Listed → present.
+        assert "read_query" in names
+        # Not listed (other DBFuncTool methods) → absent.
+        for other in ("list_tables", "describe_table", "get_table_ddl"):
+            assert other not in names, f"{other} should not be exposed by a method-level whitelist"
+
+    def test_infrastructure_tools_always_survive(self, real_agent_config):
+        """Filesystem tools anchor the consultant to its artifact and must
+        survive even though the whitelist never lists them."""
+        node = _make_ask_report_with_tools(real_agent_config, _NO_DB_WHITELIST)
+        names = _tool_names(node)
+        fs_names = _fs_tool_names(node)
+        assert fs_names, "filesystem tool exposes no tools — fixture broken"
+        assert fs_names <= names, f"infrastructure filesystem tools were pruned: {sorted(fs_names - names)}"
+
+    def test_wildcard_group_keeps_all_group_methods(self, real_agent_config):
+        """``date_parsing_tools.*`` keeps every method of that group."""
+        node = _make_ask_report_with_tools(real_agent_config, "date_parsing_tools.*")
+        names = _tool_names(node)
+        assert "parse_temporal_expressions" in names
+        # db_tools omitted from this whitelist → still dropped.
+        assert "read_query" not in names
+
+    def test_db_tools_wildcard_keeps_read_query(self, real_agent_config):
+        """Sanity check the other direction: whitelisting ``db_tools.*``
+        keeps ``read_query`` so the prune isn't unconditionally stripping db."""
+        node = _make_ask_report_with_tools(real_agent_config, "db_tools.*")
+        names = _tool_names(node)
+        assert "read_query" in names
+        assert "list_tables" in names
+
+    def test_empty_whitelist_keeps_full_surface(self, real_agent_config):
+        """An empty ``tools`` string is back-compat: keep the inherited full
+        chat surface (db_tools included) rather than stripping to nothing."""
+        node = _make_ask_report_with_tools(real_agent_config, "")
+        assert "read_query" in _tool_names(node)
+
+    def test_absent_tools_key_keeps_full_surface(self, real_agent_config):
+        """``tools`` key absent entirely (subagent created before scoping) →
+        same back-compat full surface."""
+        node = _make_ask_report_with_tools(real_agent_config, None)
+        assert "read_query" in _tool_names(node)
+
+    def test_dashboard_honors_whitelist(self, real_agent_config):
+        """The fix lives on the shared base, so ask_dashboard enforces the
+        whitelist too (disk-bound path)."""
+        node = _make_ask_dashboard_with_tools(real_agent_config, _NO_DB_WHITELIST)
+        names = _tool_names(node)
+        assert "read_query" not in names
+        assert "query_metrics" in names
+
+    def test_semantic_build_failure_degrades_gracefully(self, real_agent_config, monkeypatch):
+        """If building the whitelisted semantic group raises (e.g. a broken
+        adapter import), node init must not crash: the db prune still holds
+        and the node simply lacks the semantic tools it couldn't build."""
+        import datus.tools.func_tool.semantic_tools as sem_mod
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("semantic adapter exploded")
+
+        monkeypatch.setattr(sem_mod, "SemanticTools", _boom)
+        node = _make_ask_report_with_tools(real_agent_config, _NO_DB_WHITELIST, name="ask_sem_fail", slug="sem_fail")
+        names = _tool_names(node)
+        # Whitelist still enforced (db dropped); semantic absent but no crash.
+        assert "read_query" not in names
+        assert "query_metrics" not in names
+        # Infrastructure (artifact filesystem) survives so the node still works.
+        assert "read_file" in names
+
+    def test_rebuild_tools_re_applies_whitelist(self, real_agent_config):
+        """A mid-session datasource switch routes through ``_rebuild_tools``,
+        which repopulates from the full instance set. The whitelist must be
+        re-applied so pruned capabilities don't silently come back."""
+        node = _make_ask_report_with_tools(real_agent_config, _NO_DB_WHITELIST)
+        assert "read_query" not in _tool_names(node)
+        # Force the path a `/database` switch would take.
+        node._rebuild_tools()
+        names = _tool_names(node)
+        assert "read_query" not in names, "whitelist not re-enforced after _rebuild_tools"
+        # Whitelisted semantic tool also survives the rebuild (it isn't
+        # re-added by the base _rebuild_tools, so the override must re-surface it).
+        assert "query_metrics" in names
