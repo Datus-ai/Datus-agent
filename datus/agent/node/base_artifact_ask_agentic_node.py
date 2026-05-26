@@ -157,6 +157,25 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
     # (``ask_dashboard``) keep this False so the disk path stays available.
     BLOB_REQUIRED: ClassVar[bool] = False
 
+    # Capability tool groups gated by the subagent's ``tools`` whitelist, mapped
+    # to the node attribute that holds the built tool instance. Infrastructure
+    # tools (artifact-anchored filesystem, ask_user, plan/todo, sub-agent
+    # delegation) are deliberately ABSENT: a read-only consultant needs them to
+    # read its bound artifact and converse regardless of the whitelist, so they
+    # always survive pruning — mirroring GenSQLAgenticNode's always-on
+    # filesystem + sub_agent_task + plan set. ``read_query`` & friends live
+    # under ``db_tools`` and are dropped unless explicitly whitelisted.
+    _WHITELIST_GROUP_ATTRS: ClassVar[Dict[str, str]] = {
+        "db_tools": "db_func_tool",
+        "context_search_tools": "context_search_tools",
+        "semantic_tools": "semantic_tools",
+        "reference_template_tools": "reference_template_tools",
+        "date_parsing_tools": "date_parsing_tools",
+        "platform_doc_tools": "_platform_doc_tool",
+        "bash_tools": "bash_tool",
+        "skills": "skill_func_tool",
+    }
+
     def __init__(
         self,
         node_id: str,
@@ -176,6 +195,13 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         # need our own (``node_name`` from agentic_nodes, e.g. "ask_xxx") so
         # template resolution + node_config lookup land on the right entry.
         self._configured_subagent_name = node_name or self.NODE_NAME
+
+        # ChatAgenticNode never builds semantic tools, but an ask_* ``tools``
+        # whitelist may request them (metric/dimension/attribution analysis).
+        # Declare the slot before super().__init__() (which triggers
+        # ``setup_tools``) so the whitelist pass can build it on demand and
+        # ``_tool_category_map`` can reference it safely.
+        self.semantic_tools = None
 
         # Resolve the artifact binding BEFORE super().__init__() because
         # ChatAgenticNode.__init__ calls ``setup_tools()`` synchronously,
@@ -230,6 +256,148 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         if name:
             return name
         return self.configured_node_name or self.NODE_NAME
+
+    # ── Tool whitelist enforcement (honor SubAgent.tools) ───────────────
+
+    def setup_tools(self) -> None:
+        """Build the full chat tool surface, then constrain capability tools
+        to the subagent's configured ``tools`` whitelist.
+
+        ChatAgenticNode wires its capability tools (db_tools, context_search,
+        …) unconditionally and never consults ``tools``. For an ask_*
+        consultant that field is a hard whitelist — the agent must not reach a
+        capability the operator did not grant (e.g. ``read_query`` when only
+        semantic/context tools were configured). We reuse the base setup so all
+        infrastructure (permission/skill managers, artifact-anchored
+        filesystem, plan + sub-agent tooling) is built correctly, then apply
+        the whitelist. An empty/absent whitelist leaves the inherited surface
+        untouched (back-compat for ask agents created before tool scoping).
+        """
+        super().setup_tools()
+        self._apply_tools_whitelist()
+
+    def _rebuild_tools(self) -> None:
+        """Re-apply the whitelist after any base rebuild.
+
+        ``ChatAgenticNode._rebuild_tools`` (also reached via a mid-session
+        datasource switch) repopulates ``self.tools`` from the full set of tool
+        instances, which would silently re-expose pruned capabilities. Re-running
+        the whitelist here keeps the constraint enforced for the life of the
+        node. Safe during ``super().__init__`` because the slots it reads are
+        initialised beforehand or accessed via ``getattr``.
+        """
+        super()._rebuild_tools()
+        self._apply_tools_whitelist()
+
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Register semantic tools under their canonical permission category.
+
+        The chat base has no semantic tools so its map omits them; when the
+        whitelist makes us build them, surface them here so PermissionHooks
+        matches ``semantic_tools.*`` rules instead of the ``tools.*`` catch-all.
+        """
+        mapping = super()._tool_category_map()
+        if getattr(self, "semantic_tools", None):
+            mapping["semantic_tools"] = list(self.semantic_tools.available_tools())
+        return mapping
+
+    def _apply_tools_whitelist(self) -> None:
+        """Constrain ``self.tools`` to the configured whitelist + infrastructure."""
+        patterns = self._parse_tool_whitelist(self.node_config.get("tools"))
+        if not patterns:
+            # Unconfigured -> keep the inherited full surface (back-compat).
+            return
+        self._ensure_whitelisted_groups_present(patterns)
+        self._prune_capability_tools(patterns)
+
+    @staticmethod
+    def _parse_tool_whitelist(tools_value: Any) -> List[str]:
+        """Split the comma-separated ``tools`` field into trimmed patterns."""
+        if not tools_value or not str(tools_value).strip():
+            return []
+        return [p.strip() for p in str(tools_value).split(",") if p.strip()]
+
+    @staticmethod
+    def _tool_matches_whitelist(group: str, tool_name: str, patterns: List[str]) -> bool:
+        """True if ``group``/``tool_name`` is granted by any whitelist pattern.
+
+        Accepts the same three shapes GenSQLAgenticNode does: ``group`` (whole
+        group), ``group.*`` (wildcard) and ``group.<method>`` (single tool).
+        """
+        candidates = {group, f"{group}.*", f"{group}.{tool_name}"}
+        return any(p in candidates for p in patterns)
+
+    def _ensure_whitelisted_groups_present(self, patterns: List[str]) -> None:
+        """Build + surface whitelisted capability groups the chat base omits.
+
+        Only ``semantic_tools`` falls in this bucket today — ChatAgenticNode
+        builds every other gated group. Built once, then re-surfaced into
+        ``self.tools`` on every call so a post-rebuild whitelist pass does not
+        lose it (``_rebuild_tools`` never re-adds semantic tools itself).
+        """
+        wants_semantic = any(p == "semantic_tools" or p.startswith("semantic_tools.") for p in patterns)
+        if not wants_semantic:
+            return
+        if not getattr(self, "semantic_tools", None):
+            try:
+                from datus.tools.func_tool.semantic_tools import SemanticTools
+
+                self.semantic_tools = SemanticTools(
+                    agent_config=self.agent_config,
+                    sub_agent_name=self.node_config.get("system_prompt"),
+                    adapter_type=self.node_config.get("adapter_type", "metricflow"),
+                )
+            except Exception as exc:
+                logger.error("%s: failed to build whitelisted semantic_tools: %s", self.get_node_name(), exc)
+                return
+        present = {t.name for t in self.tools}
+        for tool in self.semantic_tools.available_tools():
+            if tool.name not in present:
+                self.tools.append(tool)
+
+    def _capability_tool_groups(self) -> Dict[str, str]:
+        """Map each built capability tool *name* -> its whitelist group label.
+
+        Built only from the gated groups in ``_WHITELIST_GROUP_ATTRS``;
+        infrastructure tools are intentionally excluded so they never appear
+        here and therefore always survive pruning.
+        """
+        name_to_group: Dict[str, str] = {}
+        for group, attr in self._WHITELIST_GROUP_ATTRS.items():
+            inst = getattr(self, attr, None)
+            if not inst:
+                continue
+            try:
+                for tool in inst.available_tools():
+                    name_to_group[tool.name] = group
+            except Exception as exc:
+                logger.warning("%s: cannot enumerate %s tools for whitelist: %s", self.get_node_name(), group, exc)
+        return name_to_group
+
+    def _prune_capability_tools(self, patterns: List[str]) -> None:
+        """Drop every capability tool not granted by the whitelist.
+
+        A tool is kept when it is NOT a gated capability (i.e. infrastructure)
+        or when a whitelist pattern grants it. Idempotent — safe to call on
+        every rebuild.
+        """
+        name_to_group = self._capability_tool_groups()
+        kept: List[Any] = []
+        dropped: List[str] = []
+        for tool in self.tools:
+            group = name_to_group.get(tool.name)
+            if group is None or self._tool_matches_whitelist(group, tool.name, patterns):
+                kept.append(tool)
+            else:
+                dropped.append(tool.name)
+        self.tools = kept
+        if dropped:
+            logger.info(
+                "%s tools whitelist applied: dropped=%s exposed=%s",
+                self.get_node_name(),
+                sorted(set(dropped)),
+                sorted({t.name for t in kept}),
+            )
 
     # ── Artifact binding resolution ─────────────────────────────────────
 
