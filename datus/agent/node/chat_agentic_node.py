@@ -379,23 +379,53 @@ class ChatAgenticNode(AgenticNode):
 
     # ── System Prompt ───────────────────────────────────────────────────
 
+    def _exposed_tool_names(self) -> set:
+        """Names of the tools currently exposed to the LLM (``self.tools``)."""
+        return {tool.name for tool in (self.tools or [])}
+
+    @staticmethod
+    def _tool_group_exposed(tool_instance, exposed_names: set) -> bool:
+        """True if ``tool_instance`` exists and at least one of its tools is exposed.
+
+        Used to derive the prompt's ``has_*`` flags from the live tool surface
+        so a pruned-but-still-instantiated group (see ``_get_system_prompt``)
+        is not advertised to the model.
+        """
+        if not tool_instance:
+            return False
+        try:
+            return any(tool.name in exposed_names for tool in tool_instance.available_tools())
+        except Exception:
+            return False
+
     def _get_system_prompt(
         self,
         conversation_summary: Optional[str] = None,
         prompt_version: Optional[str] = None,
     ) -> str:
         """Get the system prompt using enhanced template context."""
+        # Derive the ``has_*`` flags from the tools actually exposed to the LLM
+        # (``self.tools``), not from the existence of the tool *instance*. A
+        # subclass may build a tool instance for internal use yet prune its
+        # tools from the LLM-facing list (e.g. ``BaseArtifactAskAgenticNode``
+        # keeps ``db_func_tool`` for reference-template execution but drops
+        # db_tools from ``self.tools`` when the subagent whitelist excludes
+        # them). Keying the prompt flags off the instance would then advertise
+        # tools the model cannot actually call, producing "Tool X not found".
+        exposed = self._exposed_tool_names()
         context = prepare_template_context(
             node_config=self.node_config,
-            has_db_tools=bool(self.db_func_tool),
-            has_filesystem_tools=bool(self.filesystem_func_tool),
+            has_db_tools=self._tool_group_exposed(self.db_func_tool, exposed),
+            has_filesystem_tools=self._tool_group_exposed(self.filesystem_func_tool, exposed),
             has_mf_tools=False,
-            has_context_search_tools=bool(self.context_search_tools),
-            has_reference_template_tools=bool(
-                self.reference_template_tools and self.reference_template_tools.has_reference_templates
+            has_context_search_tools=self._tool_group_exposed(self.context_search_tools, exposed),
+            has_reference_template_tools=(
+                self._tool_group_exposed(self.reference_template_tools, exposed)
+                and bool(self.reference_template_tools and self.reference_template_tools.has_reference_templates)
             ),
-            has_parsing_tools=bool(self.date_parsing_tools),
-            has_platform_doc_tools=bool(self._platform_doc_tool),
+            has_parsing_tools=self._tool_group_exposed(self.date_parsing_tools, exposed),
+            has_platform_doc_tools=self._tool_group_exposed(self._platform_doc_tool, exposed),
+            has_semantic_tools=self._tool_group_exposed(getattr(self, "semantic_tools", None), exposed),
             agent_config=self.agent_config,
             workspace_root=self._resolve_workspace_root(),
         )
