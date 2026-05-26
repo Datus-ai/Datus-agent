@@ -828,9 +828,9 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         The filter is invoked by the SDK before every LLM turn within a
         ``Runner.run_streamed`` invocation (``agents/run.py`` ~1483). It
-        drains the queue (up to ``MAX_DRAIN_PER_TURN`` items) and appends
-        each as a structured Responses-API user message, also persisting
-        them onto the session so future runs see them.
+        drains the queue (every queued item, FIFO) and appends each as a
+        structured Responses-API user message, also persisting them onto
+        the session so future runs see them.
 
         When ``interaction_broker`` is provided, each drained item is also
         emitted as a USER ``ActionHistory`` via

@@ -93,6 +93,34 @@ total_turns, token_count, last_sql_queries, is_active }`。
 | `interaction_key` | string   | 交互请求对应的 key |
 | `input`           | string[] | 每个预期答案一个元素 |
 
+### `POST /api/v1/chat/insert`
+
+在对话流式运行过程中，把一段自由文本用户消息追加到 Agent 的**待发送输入队列**。与 `/chat/stop` 不同，此接口**不会**打断当前工具调用——消息会在下一次 LLM turn 之前发送给模型，从而**引导**正在进行的运行，而不是开启一段新对话。TUI 中"运行时按 Enter"使用的也是同一条队列。
+
+**Body**：
+
+| 字段         | 类型   | 说明 |
+|--------------|--------|------|
+| `session_id` | string | 活跃 chat 会话 id |
+| `message`    | string | 自由文本用户消息（去空白后长度 1–4000） |
+
+**响应**：`Result[InsertMessageData]`，`data = { session_id, queued_count }`，其中 `queued_count` 是入队后队列长度。
+
+**错误码**：
+
+| `errorCode`             | 含义 |
+|-------------------------|------|
+| `SESSION_NOT_RUNNING`   | 当前会话没有运行中的 chat 任务 |
+| `INVALID_INPUT`         | `message` 去空白后为空 |
+| `QUEUE_UNAVAILABLE`     | 该会话的 agent 节点没有待发送输入队列（非 chat 类型运行） |
+
+**语义**：
+
+- 每次 LLM turn 之前，Agent 会 drain 队列中所有排队消息，作为 `user` 项追加并持久化到会话历史。
+- 如果运行结束时队列仍非空，会**自动续跑**到一段新的运行中，直到队列清空为止。
+- 注入的文本会以 `user_insert` ActionHistory 的形式广播给所有连接的 SSE 客户端（TUI 与 `/chat/stream` 的消费者均会收到）——见 [MessageData content 中的 `user_insert`](#user_insert)。
+- 队列硬上限为 **200** 条待发送项；超出后新 push 会丢弃最旧的入队项。
+
 ---
 
 ## 流式格式 {#streaming-format}
@@ -307,6 +335,19 @@ Agent 需要用户做决策才能继续时下发。SSE 流随后暂停,直到通
 - 自由文本类问题的 `options` 为 `null`;否则是 `{ key, title }` 列表,用户的回答应填所选项的 `key`(如 `"1"`)。
 - `allowFreeText: true` 表示即使有 `options`,也允许用户输入自定义答案。
 - `contentType` 通常为 `markdown`。
+
+#### `user_insert` {#user_insert}
+
+当用户通过 [`POST /chat/insert`](#post-apiv1chatinsert) 或 TUI 的"运行时按 Enter"在运行中注入自由文本消息时下发。外层 `MessageData.role` 为 `"user"`，且**始终**会下发给 SSE 客户端，不受 `include_user_message` 标志影响——它代表客户端可能尚未感知的文本。
+
+```json
+{
+  "type": "markdown",
+  "payload": { "content": "顺便也把取消的订单纳入这条 SQL" }
+}
+```
+
+> 该 action 的 `action_type` 为 `user_insert`，与首条用户请求 action 区分开。客户端应当将其按用户消息渲染，并在 verbose/compact 切换以及历史回放期间予以保留。
 
 #### `subagent-complete`
 

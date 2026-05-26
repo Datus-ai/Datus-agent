@@ -956,22 +956,21 @@ class TestPendingInputQueue:
         assert len(q) == 3
 
         drained = q.drain()
-        # MAX_DRAIN_PER_TURN caps per-turn drain at 3 — all three fit.
         assert drained == ["first", "second", "third"]
         assert len(q) == 0
 
-    def test_drain_respects_max_per_turn_cap(self):
+    def test_drain_empties_queue_in_one_call(self):
         q = PendingInputQueue()
-        for i in range(PendingInputQueue.MAX_DRAIN_PER_TURN + 2):
+        for i in range(20):
             q.push(f"msg-{i}")
 
-        first = q.drain()
-        assert len(first) == PendingInputQueue.MAX_DRAIN_PER_TURN
-        # Remaining items stay in the queue and flush on the next drain.
-        assert len(q) == 2
-        second = q.drain()
-        assert second == ["msg-3", "msg-4"]
+        drained = q.drain()
+        assert len(drained) == 20
+        assert drained[0] == "msg-0"
+        assert drained[-1] == "msg-19"
         assert len(q) == 0
+        # Subsequent drain on empty queue returns nothing.
+        assert q.drain() == []
 
     def test_snapshot_does_not_consume(self):
         q = PendingInputQueue()
@@ -989,14 +988,6 @@ class TestPendingInputQueue:
         # Items still available for actual drain afterwards.
         assert q.drain() == ["alpha", "beta"]
 
-    def test_drain_all_pops_everything(self):
-        q = PendingInputQueue()
-        for i in range(7):
-            q.push(f"m{i}")
-        all_items = q.drain_all()
-        assert len(all_items) == 7
-        assert len(q) == 0
-
     def test_clear_drops_pending_items(self):
         q = PendingInputQueue()
         q.push("x")
@@ -1009,7 +1000,6 @@ class TestPendingInputQueue:
     def test_drain_on_empty_returns_empty_list(self):
         q = PendingInputQueue()
         assert q.drain() == []
-        assert q.drain_all() == []
 
     def test_concurrent_push_from_multiple_threads_preserves_count(self):
         import threading
@@ -1037,7 +1027,7 @@ class TestPendingInputQueue:
 
         # No items lost under contention; FIFO order within a single
         # producer's pushes is preserved by the underlying deque.
-        items = q.drain_all()
+        items = q.drain()
         assert len(items) == n_threads * per_thread
 
     def test_push_beyond_cap_drops_oldest_and_warns(self, caplog):

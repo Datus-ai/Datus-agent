@@ -22,7 +22,7 @@ from rich.syntax import Syntax
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.cli.action_display.display import ActionHistoryDisplay
 from datus.cli.action_display.renderers import render_assistant_response_markdown
-from datus.cli.cli_styles import CODE_THEME, print_error, print_success, print_warning
+from datus.cli.cli_styles import CODE_THEME, print_error, print_success
 from datus.cli.execution_state import ExecutionInterrupted, PendingInputQueue, auto_submit_interaction
 from datus.cli.list_selector_app import ListItem, ListSelectorApp
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
@@ -246,14 +246,6 @@ class ChatCommands:
         )
         return f"{message.rstrip()}\n\n{annotation}"
 
-    # Hard cap on how many extra turns the chat layer will auto-spawn to
-    # drain a non-empty :class:`PendingInputQueue` after a run finishes
-    # (final-turn residue case). Bounded so a misbehaving producer cannot
-    # turn the agent into a perpetual motion machine; the remaining
-    # backlog is surfaced as a warning and waits for the next manual
-    # prompt.
-    MAX_AUTO_CONTINUATIONS = 3
-
     def execute_chat_command(
         self,
         message: str,
@@ -270,7 +262,6 @@ class ChatCommands:
         are not silently dropped.
         """
         current_message = message
-        continuations = 0
         while True:
             self._execute_chat(
                 current_message,
@@ -288,17 +279,8 @@ class ChatCommands:
                 queue.clear()
                 break
 
-            if continuations >= self.MAX_AUTO_CONTINUATIONS:
-                print_warning(
-                    self.console,
-                    f"{len(queue)} queued message(s) skipped — auto-continuation cap reached. "
-                    "Send a new prompt to flush them.",
-                )
-                break
-
-            residual = queue.drain_all()
+            residual = queue.drain()
             current_message = "\n\n".join(residual)
-            continuations += 1
 
     def _resolve_clean_output(
         self,

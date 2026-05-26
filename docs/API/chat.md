@@ -94,6 +94,34 @@ Submit the user's answer to an interactive prompt raised during the chat.
 | `interaction_key` | string   | Key of the interaction request |
 | `input`           | string[] | One element per expected answer |
 
+### `POST /api/v1/chat/insert`
+
+Append a free-text user message to the agent's **pending input queue** while a chat run is still streaming. Unlike `/chat/stop`, this does **not** interrupt the current tool call — the message is delivered to the model right before its next LLM turn, so it steers the run in progress instead of starting a new one. The same queue backs the TUI "Enter while running" experience.
+
+**Body**:
+
+| Field        | Type   | Notes |
+|--------------|--------|-------|
+| `session_id` | string | Active chat session id |
+| `message`    | string | Free-text user message (1–4000 chars after stripping whitespace) |
+
+**Response**: `Result[InsertMessageData]` with `data = { session_id, queued_count }`, where `queued_count` is the number of items in the queue after this push.
+
+**Error codes**:
+
+| `errorCode`             | Meaning |
+|-------------------------|---------|
+| `SESSION_NOT_RUNNING`   | No active chat task for this session |
+| `INVALID_INPUT`         | `message` is empty/whitespace-only after stripping |
+| `QUEUE_UNAVAILABLE`     | The session's agent node has no pending input queue (not a chat-style run) |
+
+**Semantics**:
+
+- At each LLM turn, the agent drains every queued message, appends them as `user` items, and persists them to the session.
+- If the run finishes with the queue still non-empty, it **auto-continues** in a fresh run until the queue is empty.
+- The injected text is also broadcast as a `user_insert` ActionHistory to every connected SSE client (TUI and `/chat/stream` consumers) — see [`user_insert` in MessageData content](#user_insert).
+- The queue has a hard ceiling of **200** pending items; further pushes drop the oldest staged input.
+
 ---
 
 ## Streaming format
@@ -318,6 +346,19 @@ Notes on `requests`:
   expected to be the `key` of the chosen option (e.g. `"1"`).
 - `allowFreeText: true` means the user may type a custom answer even when `options` is non-empty.
 - `contentType` is usually `markdown`.
+
+#### `user_insert` {#user_insert}
+
+Emitted whenever a free-text user message is injected mid-run via [`POST /chat/insert`](#post-apiv1chatinsert) or the TUI's "Enter while running" handler. The enclosing `MessageData.role` is `"user"`, and the event is **always** sent to SSE clients regardless of the `include_user_message` flag — it represents text the client may not yet know about.
+
+```json
+{
+  "type": "markdown",
+  "payload": { "content": "Also include cancelled orders in that query" }
+}
+```
+
+> The action's `action_type` is `user_insert`, distinguishing it from the initial-request user turn. Clients should render it as a user message and preserve it across verbose/compact toggles and history reprints.
 
 #### `subagent-complete`
 

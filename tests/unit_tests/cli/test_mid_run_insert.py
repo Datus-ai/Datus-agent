@@ -36,11 +36,8 @@ class _StubChatCommands:
     A minimal stub keeps the test focused on the loop logic itself.
     """
 
-    # Mirror the cap on the real class so the test stays aligned even
-    # if the production constant moves.
     from datus.cli.chat_commands import ChatCommands as _Real
 
-    MAX_AUTO_CONTINUATIONS = _Real.MAX_AUTO_CONTINUATIONS
     execute_chat_command = _Real.execute_chat_command
 
     def __init__(self, queue_residuals):
@@ -96,22 +93,20 @@ class TestExecuteChatCommandAutoContinuation:
 
         assert cc._calls == ["orig", "one\n\ntwo\n\nthree"]
 
-    def test_continuation_cap_stops_loop(self):
-        """``MAX_AUTO_CONTINUATIONS`` prevents a perpetual loop. After the
-        cap is reached we warn the user and leave the queue intact."""
-        # Always-non-empty residual — without the cap the loop would
-        # never terminate.
-        residuals = [[f"msg-{i}"] for i in range(_StubChatCommands.MAX_AUTO_CONTINUATIONS + 4)]
+    def test_loop_drains_every_residual_with_no_cap(self):
+        """No continuation cap: the loop keeps spawning runs until the
+        queue is empty, no matter how many residual rounds appear."""
+        rounds = 7
+        # ``rounds`` consecutive non-empty residuals followed by an empty
+        # one. Without a cap the loop runs exactly ``rounds + 1`` times.
+        residuals = [[f"msg-{i}"] for i in range(rounds)] + [[]]
         cc = _StubChatCommands(queue_residuals=residuals)
 
         cc.execute_chat_command("orig")
 
-        # 1 initial + MAX_AUTO_CONTINUATIONS auto-continuations.
-        assert len(cc._calls) == 1 + _StubChatCommands.MAX_AUTO_CONTINUATIONS
-        # Warning printed to the console.
-        cc.console.print.assert_called_once()
-        warning_text = cc.console.print.call_args[0][0]
-        assert "auto-continuation cap reached" in warning_text
+        assert cc._calls == ["orig"] + [f"msg-{i}" for i in range(rounds)]
+        # No warning printed — the cap is gone.
+        cc.console.print.assert_not_called()
 
     def test_interrupt_clears_queue_and_stops_loop(self):
         """An interrupted run drains the queue and breaks the loop —

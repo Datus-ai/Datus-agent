@@ -64,6 +64,19 @@ After an interrupt, the session remains intact — you can continue typing new i
 
 Press **Ctrl+O** while the agent is running to toggle the trace display mode between **compact** (progress only) and **verbose** (full step details). This lets you control how much detail you see during execution without interrupting the agent.
 
+### Mid-run Message Insertion
+
+While the agent is running, you don't have to wait for it to finish before adding more context. Type into the input box and press **Enter** — the text is queued and delivered to the model right before its next LLM turn, so it influences the run already in progress rather than starting a new one.
+
+How it works:
+
+- A **pinned preview** appears above the bottom status bar showing every queued message. The preview collapses to zero rows when the queue is drained.
+- At each LLM turn, every queued message is drained, appended to the model input as `user` items, and persisted to the session history.
+- If the run finishes its final turn while items are still queued, the residue **auto-continues** in a fresh run so nothing you typed is silently dropped.
+- Inserted messages are kept in the rendered transcript across `Ctrl+O` verbose/compact toggles and on `/resume`, so you always see what you injected.
+
+This complements — rather than replaces — `ESC` / `Ctrl+C` (interrupt) and `/chat/stop`. Use insertion when you want to **steer** the current run with new context; use interrupt when you want to **abort** it.
+
 ### Session Commands
 
 - `/clear`: Clear the current session context and start fresh
