@@ -193,6 +193,7 @@ jobs:
         run: |
           cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
           cp /home/datus_ci/ci_template/ci.env .env
+          cp /home/datus_ci/ci_template/nightly.env .nightly.env
 
       - name: Restore tracked test config
         run: git restore --source=HEAD --worktree --staged tests/conf/agent.yml
@@ -236,16 +237,18 @@ jobs:
 
       - name: Load environment variables
         run: |
-          echo "Loading environment variables from .env file..."
-          while IFS= read -r line || [ -n "$line" ]; do
-            if [[ ! -z "$line" && ! "$line" =~ ^[[:space:]]*# ]]; then
-              var_name=$(echo "$line" | cut -d'=' -f1)
-              var_value=$(echo "$line" | cut -d'=' -f2-)
-              echo "::add-mask::$var_value"
-              echo "Loading variable: $var_name"
-              echo "$line" >> $GITHUB_ENV
-            fi
-          done < .env
+          for env_file in .env .nightly.env; do
+            echo "Loading environment variables from ${env_file} file..."
+            while IFS= read -r line || [ -n "$line" ]; do
+              if [[ ! -z "$line" && ! "$line" =~ ^[[:space:]]*# ]]; then
+                var_name=$(echo "$line" | cut -d'=' -f1)
+                var_value=$(echo "$line" | cut -d'=' -f2-)
+                echo "::add-mask::$var_value"
+                echo "Loading variable: $var_name"
+                echo "$line" >> $GITHUB_ENV
+              fi
+            done < "$env_file"
+          done
           echo "Environment variables loaded successfully"
 
       - name: Enable strict nightly test requirements
@@ -394,6 +397,7 @@ jobs:
         env:
           EXTERNAL_REPOS_ROOT: ${{ github.workspace }}/external
           NIGHTLY_PYTEST_BASETEMP: ${{ runner.temp }}/datus-agent-nightly-pytest-${{ github.run_id }}-${{ github.run_attempt }}
+          NIGHTLY_REQUIRE_LANGFUSE_TRACING: "1"
         run: |
           ci/run-nightly-tests.sh
 

@@ -107,6 +107,15 @@ agent:
         pattern: "sql-*"
         permission: ask
 
+  observability:
+    tracing:
+      enabled: true
+      service_name: datus-agent-nightly
+      environment: nightly
+      capture_content: true
+      adapters:
+        - type: langfuse
+
   agentic_nodes:
     gen_semantic_model:
       max_turns: 40

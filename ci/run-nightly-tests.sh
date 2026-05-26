@@ -24,6 +24,7 @@ NIGHTLY_GROUP_FILTER="${NIGHTLY_GROUP_FILTER:-}"
 AGENT_TEST_CONFIG="${AGENT_TEST_CONFIG:-tests/conf/agent.yml}"
 DATUS_TEST_PROJECT_NAME="${DATUS_TEST_PROJECT_NAME:-datus_agent_nightly}"
 export DATUS_TEST_PROJECT_NAME
+NIGHTLY_REQUIRE_LANGFUSE_TRACING="${NIGHTLY_REQUIRE_LANGFUSE_TRACING:-0}"
 NIGHTLY_COMPOSE_PROJECT_PREFIX="${NIGHTLY_COMPOSE_PROJECT_PREFIX:-datus-nightly-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-}"
 
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(cd "${REPO_ROOT}/.." && pwd)}"
@@ -608,6 +609,36 @@ run_with_agent_home() {
   local status=$?
   restore_agent_test_config
   return "$status"
+}
+
+nightly_requires_langfuse_tracing() {
+  case "$(printf '%s' "$NIGHTLY_REQUIRE_LANGFUSE_TRACING" | tr '[:upper:]' '[:lower:]')" in
+    1 | true | yes | on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+prepare_nightly_langfuse_tracing() {
+  if ! nightly_requires_langfuse_tracing; then
+    return 0
+  fi
+
+  export LANGFUSE_BASE_URL="${LANGFUSE_BASE_URL:-https://us.cloud.langfuse.com}"
+
+  local missing=()
+  if [ -z "${LANGFUSE_PUBLIC_KEY:-}" ]; then
+    missing+=(LANGFUSE_PUBLIC_KEY)
+  fi
+  if [ -z "${LANGFUSE_SECRET_KEY:-}" ]; then
+    missing+=(LANGFUSE_SECRET_KEY)
+  fi
+
+  if [ "${#missing[@]}" -gt 0 ]; then
+    echo "Langfuse tracing requested for nightly suites, but missing: ${missing[*]}" | tee -a "$LOG_FILE" >&2
+    return 1
+  fi
+
+  log "Langfuse tracing enabled for nightly suites: base_url=$LANGFUSE_BASE_URL"
 }
 
 nightly_kb_ready_dir() {
@@ -1414,6 +1445,11 @@ log "HIVE_HOST=${HIVE_HOST:-} HIVE_PORT=${HIVE_PORT:-} HIVE_METASTORE_HOST_PORT=
 log "SPARK_HOST=${SPARK_HOST:-} SPARK_PORT=${SPARK_PORT:-} SPARK_THRIFT_HOST_PORT=${SPARK_THRIFT_HOST_PORT:-} SPARK_UI_HOST_PORT=${SPARK_UI_HOST_PORT:-}"
 if [ -n "$NIGHTLY_GROUP_FILTER" ]; then
   log "NIGHTLY_GROUP_FILTER=$NIGHTLY_GROUP_FILTER"
+fi
+
+if ! prepare_nightly_langfuse_tracing; then
+  test_exit_code=1
+  exit "$test_exit_code"
 fi
 
 validate_nightly_group_filter || exit 1
