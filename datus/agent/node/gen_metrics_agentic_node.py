@@ -317,7 +317,6 @@ class GenMetricsAgenticNode(AgenticNode):
 
     def _get_system_prompt(
         self,
-        conversation_summary: Optional[str] = None,
         prompt_version: Optional[str] = None,
         template_context: Optional[dict] = None,
     ) -> str:
@@ -325,7 +324,6 @@ class GenMetricsAgenticNode(AgenticNode):
         Get the system prompt for metrics generation using enhanced template context.
 
         Args:
-            conversation_summary: Optional summary from previous conversation compact
             prompt_version: Optional prompt version override (ignored when the
                 ``node_config`` / ``self.input`` already pin a version)
             template_context: Optional template context variables
@@ -344,7 +342,6 @@ class GenMetricsAgenticNode(AgenticNode):
             # Prepare template variables
             template_vars = {
                 "agent_config": self.agent_config,
-                "conversation_summary": conversation_summary,
             }
 
             # Add template context if provided

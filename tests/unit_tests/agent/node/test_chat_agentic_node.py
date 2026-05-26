@@ -652,21 +652,6 @@ class TestChatAgenticNodeSystemPrompt:
         assert isinstance(prompt, str)
         assert len(prompt) >= 100
 
-    def test_get_system_prompt_with_conversation_summary(self, real_agent_config, mock_llm_create):
-        """_get_system_prompt accepts conversation summary argument."""
-        from datus.agent.node.chat_agentic_node import ChatAgenticNode
-
-        node = ChatAgenticNode(
-            node_id="test_prompt_summary",
-            description="Test prompt with summary",
-            node_type=NodeType.TYPE_CHAT,
-            agent_config=real_agent_config,
-        )
-
-        prompt = node._get_system_prompt(conversation_summary="Previous conversation about SQL queries.")
-        assert isinstance(prompt, str)
-        assert "Previous conversation about SQL queries." in prompt
-
     def test_get_system_prompt_contains_active_permission_profile(self, real_agent_config, mock_llm_create):
         """Runtime /profile changes must be visible to the next LLM turn."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode

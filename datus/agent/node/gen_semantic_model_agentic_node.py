@@ -304,7 +304,6 @@ class GenSemanticModelAgenticNode(AgenticNode):
 
     def _get_system_prompt(
         self,
-        conversation_summary: Optional[str] = None,
         prompt_version: Optional[str] = None,
         template_context: Optional[dict] = None,
     ) -> str:
@@ -312,7 +311,6 @@ class GenSemanticModelAgenticNode(AgenticNode):
         Get the system prompt for semantic model generation using enhanced template context.
 
         Args:
-            conversation_summary: Optional summary from previous conversation compact
             prompt_version: Optional prompt version override (falls back to
                 ``node_config`` setting when not supplied)
             template_context: Optional template context variables
@@ -331,7 +329,6 @@ class GenSemanticModelAgenticNode(AgenticNode):
             # Prepare template variables
             template_vars = {
                 "agent_config": self.agent_config,
-                "conversation_summary": conversation_summary,
             }
 
             # Add template context if provided

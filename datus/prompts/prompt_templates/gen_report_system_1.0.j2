@@ -81,10 +81,6 @@ Your final response MUST be a valid JSON object:
 - Unless the user explicitly requests a different datasource, use ONLY the current datasource for all operations.
 {% endif -%}
 {% endif -%}
-{% if conversation_summary %}
-Previous conversation summary:
-{{ conversation_summary }}
-{% endif %}
 
 ## Important Notes
 - **CRITICAL**: Your final response MUST be valid JSON with `report` field containing Markdown content.

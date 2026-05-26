@@ -269,9 +269,7 @@ class SkillCreatorAgenticNode(AgenticNode):
             logger.debug(f"Could not load companion skill '{skill_name}': {e}")
             return ""
 
-    def _get_system_prompt(
-        self, conversation_summary: Optional[str] = None, prompt_version: Optional[str] = None
-    ) -> str:
+    def _get_system_prompt(self, prompt_version: Optional[str] = None) -> str:
         """Get the system prompt for the skill creator node."""
         from datus.prompts.prompt_manager import get_prompt_manager
         from datus.utils.time_utils import get_default_current_date
@@ -308,7 +306,6 @@ class SkillCreatorAgenticNode(AgenticNode):
             "skill_directories": skill_directories,
             "existing_skills": existing_skills,
             "workspace_root": self._resolve_workspace_root(),
-            "conversation_summary": conversation_summary,
             "current_date": get_default_current_date(None),
             **build_datasource_prompt_context(self.agent_config),
         }

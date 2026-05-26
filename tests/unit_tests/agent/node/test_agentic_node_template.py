@@ -116,15 +116,14 @@ class FakeAgenticNode(AgenticNode):
         return _noop()
 
     def _get_or_create_session(self):
-        return ("fake_session", "summary text")
+        return "fake_session"
 
     def _get_system_prompt(
         self,
-        conversation_summary: Optional[str] = None,
         prompt_version: Optional[str] = None,
         template_context: Optional[dict] = None,
     ) -> str:
-        return f"sys[{conversation_summary or '-'}|{prompt_version or '-'}]"
+        return f"sys[{prompt_version or '-'}]"
 
     def _build_enhanced_message(self, user_input: FakeInput, extra_enhanced_parts=None) -> str:
         return f"enhanced({user_input.user_message})"
@@ -406,7 +405,7 @@ class TestHookCallOrder:
 
             def _get_or_create_session(self):
                 order.append("session")
-                return ("s", "sum")
+                return "s"
 
             def _build_template_context(self, ctx):
                 order.append("template_ctx")

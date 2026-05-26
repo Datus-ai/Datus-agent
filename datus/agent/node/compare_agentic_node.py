@@ -196,8 +196,8 @@ class CompareAgenticNode(AgenticNode):
         ``_prepare_prompt_components`` returns both prompts together (they share
         Jinja context), so we cache the system instruction on ``self`` for the
         ``_get_system_prompt`` override and stash the rendered user prompt in
-        ``ctx.extras`` for ``_build_template_context`` to combine with the
-        session's ``conversation_summary``.
+        ``ctx.extras`` for ``_build_template_context`` to surface as
+        ``user_message_override``.
         """
         system_instruction, raw_user_prompt, _ = self._prepare_prompt_components(
             ctx.user_input, agent_config=self.agent_config
@@ -206,24 +206,16 @@ class CompareAgenticNode(AgenticNode):
         ctx.extras["compare_user_prompt"] = raw_user_prompt
 
     def _build_template_context(self, ctx: StreamRunContext) -> Optional[dict]:
-        """Combine conversation_summary + rendered user prompt into user_message_override.
+        """Forward the rendered user prompt as ``user_message_override``.
 
-        Runs after session setup so ``ctx.conversation_summary`` is populated.
         Returns ``None`` because Compare uses a pre-rendered system instruction,
         not template-driven rendering.
         """
-        raw_user_prompt = ctx.extras.pop("compare_user_prompt", "")
-        if ctx.conversation_summary:
-            raw_user_prompt = (
-                f"Previous conversation summary:\n{ctx.conversation_summary}\n\n"
-                f"New comparison request:\n{raw_user_prompt}"
-            )
-        ctx.user_message_override = raw_user_prompt
+        ctx.user_message_override = ctx.extras.pop("compare_user_prompt", "")
         return None
 
     def _get_system_prompt(
         self,
-        conversation_summary: Optional[str] = None,
         prompt_version: Optional[str] = None,
         template_context: Optional[dict] = None,
     ) -> str:

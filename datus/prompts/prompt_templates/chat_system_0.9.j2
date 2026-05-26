@@ -149,10 +149,6 @@ Current context:
 {% if workspace_root -%}
     - Workspace root: {{ workspace_root }} (search via search_documents first)
 {% endif -%}
-{% if conversation_summary -%}
-    Previous conversation summary:
-    {{ conversation_summary }}
-{% endif -%}
 
 ## Output Format
 Return a JSON object with the following structure:

@@ -315,14 +315,12 @@ class GenReportAgenticNode(AgenticNode):
 
     def _get_system_prompt(
         self,
-        conversation_summary: Optional[str] = None,
         prompt_version: Optional[str] = None,
     ) -> str:
         """
         Get the system prompt for this report generation node.
 
         Args:
-            conversation_summary: Optional summary from previous conversation compact
             prompt_version: Optional prompt version to use
 
         Returns:
@@ -334,7 +332,6 @@ class GenReportAgenticNode(AgenticNode):
             "has_ask_user_tool": self.ask_user_tool is not None,
             "has_task_tool": bool(self.sub_agent_task_tool),
             "agent_config": self.agent_config,
-            "conversation_summary": conversation_summary,
         }
 
         # Add rules from configuration

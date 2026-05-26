@@ -293,7 +293,6 @@ class SqlSummaryAgenticNode(AgenticNode):
 
     def _get_system_prompt(
         self,
-        conversation_summary: Optional[str] = None,
         prompt_version: Optional[str] = None,
         template_context: Optional[dict] = None,
     ) -> str:
@@ -301,7 +300,6 @@ class SqlSummaryAgenticNode(AgenticNode):
         Get the system prompt for this SQL summary node using enhanced template context.
 
         Args:
-            conversation_summary: Optional summary from previous conversation compact
             prompt_version: Optional prompt version to use (ignored, hardcoded to "1.0")
             template_context: Optional template context variables
 
@@ -316,7 +314,6 @@ class SqlSummaryAgenticNode(AgenticNode):
             # Prepare template variables
             template_vars = {
                 "agent_config": self.agent_config,
-                "conversation_summary": conversation_summary,
             }
 
             # Add template context if provided

@@ -269,7 +269,6 @@ class DeliverableAgenticNode(AgenticNode):
 
     def _get_system_prompt(
         self,
-        conversation_summary: Optional[str] = None,
         template_context: Optional[dict] = None,
         prompt_version: Optional[str] = None,
     ) -> str:
@@ -284,7 +283,6 @@ class DeliverableAgenticNode(AgenticNode):
         try:
             template_vars = {
                 "agent_config": self.agent_config,
-                "conversation_summary": conversation_summary,
             }
             if template_context:
                 template_vars.update(template_context)

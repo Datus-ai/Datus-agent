@@ -396,7 +396,6 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
 
     def _get_system_prompt(
         self,
-        conversation_summary: Optional[str] = None,
         prompt_version: Optional[str] = None,
     ) -> str:
         context: Dict[str, Any] = {
@@ -406,7 +405,6 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             "has_ask_user_tool": self.ask_user_tool is not None,
             "has_task_tool": bool(self.sub_agent_task_tool),
             "agent_config": self.agent_config,
-            "conversation_summary": conversation_summary,
             self._artifact_slug_prompt_key(): self._active_artifact_slug,
             "rules": self.node_config.get("rules", []),
             "agent_description": self.node_config.get("agent_description", ""),

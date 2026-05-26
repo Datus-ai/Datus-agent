@@ -330,16 +330,19 @@ class TestChatServiceCompactSession:
         verify_session = verify_sm.get_session(session_id)
         items = await verify_session.get_items()
 
-        # After the compact refactor, the session contains a single user
-        # message carrying the continuation summary + recovery pointers.
-        # (Previously it was a user-marker + assistant-summary pair.) The
-        # continuation message must embed the LLM summary verbatim and
-        # announce the resume so the next turn doesn't greet/recap.
+        # After the compact refactor, the session contains a single assistant
+        # message carrying the summary + a JSONL recovery pointer appended by
+        # the host. Storing as ``assistant`` (not ``user``) makes the next
+        # turn see the summary as a prior assistant utterance — the natural
+        # shape for "I summarized previously, now answer the next question",
+        # and avoids /chat/history rendering a phantom user message.
         assert len(items) == 1
-        assert items[0]["role"] == "user"
-        body = items[0]["content"]
+        assert items[0]["role"] == "assistant"
+        content_blocks = items[0]["content"]
+        assert isinstance(content_blocks, list) and len(content_blocks) == 1
+        assert content_blocks[0]["type"] == "output_text"
+        body = content_blocks[0]["text"]
         assert "Summary of conversation" in body
-        assert "continued from a previous conversation" in body
 
 
 @pytest.mark.asyncio

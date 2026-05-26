@@ -32,8 +32,7 @@ class StreamRunContext:
     Attributes are populated in order by the template method:
 
     1. ``user_input`` / ``action_history_manager`` — set at construction.
-    2. ``session`` / ``conversation_summary`` — set after session setup
-       (None in workflow mode).
+    2. ``session`` — set after session setup (None in workflow mode).
     3. ``system_instruction`` / ``user_prompt`` — set during prompt assembly.
     4. ``response_content`` / ``last_successful_output`` / ``last_tool_summary``
        — populated incrementally as actions flow through ``_stream_once``.
@@ -44,7 +43,6 @@ class StreamRunContext:
     action_history_manager: "ActionHistoryManager"
 
     session: Optional["AdvancedSQLiteSession"] = None
-    conversation_summary: Optional[str] = None
 
     system_instruction: str = ""
     user_prompt: str = ""

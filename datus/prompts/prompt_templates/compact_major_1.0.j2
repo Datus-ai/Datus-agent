@@ -1,43 +1,36 @@
-You are summarizing a data-analysis session so it can be resumed without losing context. You are the `{{ node_role }}` node of a NL→SQL agent.
+You are the `{{ node_role }}` agent. The conversation has grown long; summarize it so a fresh session can resume without losing context.
 
-# Your task
+# Rules
+- TEXT ONLY. Do NOT call any tools — tool calls will be rejected and will fail this task.
+- Be specific (names, paths, IDs, numbers) but terse — don't retell what's already in the conversation.
+- Use bullets, not paragraphs. Drop any section that has nothing to record.
+- Do NOT list archive files or recovery pointers — those are appended by the host.
 
-Produce a structured markdown summary with the sections below. Output the summary directly. Do NOT call any tools — tool calls will be rejected.
+# Sections
 
-## 1. Primary user request and intent
-The user's explicit asks and high-level analytical goal.
+## 1. Intent
+The user's goal and any corrections they've issued along the way.
 
-## 2. Data sources & tables touched
-Datasource names, schemas, tables, key columns explored or queried.
+## 2. Context touched
+Datasources, tables, semantic objects, files, or other artifacts the session interacted with. Names only.
 
-## 3. SQL queries & findings
-SQLs produced (cite archived paths for long ones), key insights and numbers.
+## 3. Work and findings
+Concrete actions taken and their key outputs — queries run, files edited, artifacts generated, numbers learned. Cite paths or IDs for long content.
 
-## 4. Semantic objects used
-Metrics, reference SQLs, knowledge entries referenced.
+## 4. Errors and fixes
+Failures hit and how they were resolved, especially when the user steered the fix.
 
-## 5. Errors and fixes
-Errors hit, fix applied, especially user-feedback corrections.
+## 5. User turns
+One bullet per real user turn — what they asked, corrected, or confirmed, in your own words. Skip tool results and this summarization request.
 
-## 6. All user messages
-Every non-tool-result user message verbatim — critical for intent drift detection.
+## 6. Pending
+Open TodoList items and implicit asks not yet done.
 
-## 7. Pending tasks
-TodoList items and implicit asks not yet done.
+## 7. Current state
+What was happening immediately before this summary.
 
-## 8. Current work
-Precisely what was happening immediately before this summary request.
-
-## 9. Next step
-The immediate next action, with a verbatim quote of the user's most recent ask. Skip if the last task is concluded.
-
-## 10. Recovery pointers
-- **Full session history (every original item, JSONL)**: `{{ history_jsonl_path }}` — one item per line. Use `read_file(<path>, offset=N, limit=M)` to fetch specific items.
-- **Archived tool I/O**: directory `{{ archive_dir }}` — files named `{idx:06d}_{kind}_{hash8}.{ext}`. Use `read_file(<path>)` to recover original SQL, file content, or large tool outputs.
-
-# Constraints
-- TEXT ONLY. No tool calls.
-- Be precise and complete — the next session will only see this summary plus recent messages.
+## 8. Next step
+The immediate next action, motivated by the user's most recent real ask. Omit this section entirely if the last task is concluded.
 {% if custom_instructions %}
 
 # Additional instructions

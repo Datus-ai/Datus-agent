@@ -711,11 +711,17 @@ class TestManualCompact:
         mock_session.add_items.assert_awaited_once()
         items = mock_session.add_items.await_args.args[0]
         assert len(items) == 1
-        assert items[0]["role"] == "user"
-        # Continuation message must reference the session-continuation language
-        # so the LLM knows it's resuming, plus embed the summary verbatim.
-        assert "continued from a previous conversation" in items[0]["content"]
-        assert "Primary user request" in items[0]["content"]
+        # Continuation persists as an assistant ``output_text`` block so the
+        # next turn sees the summary as a prior assistant utterance — the
+        # natural shape for "I summarized previously, now answer the next
+        # question". Storing as user role used to confuse /chat/history into
+        # rendering a phantom user turn.
+        assert items[0]["role"] == "assistant"
+        assert items[0]["type"] == "message"
+        content_blocks = items[0]["content"]
+        assert isinstance(content_blocks, list) and len(content_blocks) == 1
+        assert content_blocks[0]["type"] == "output_text"
+        assert "Primary user request" in content_blocks[0]["text"]
         # Major compact preserves the session — no delete on the session_manager.
         mock_sm.delete_session.assert_not_called()
 
@@ -1196,9 +1202,8 @@ class TestGetOrCreateSession:
         node = _make_simple_node()
         mock_session = MagicMock()
         node._session = mock_session
-        session, summary = node._get_or_create_session()
+        session = node._get_or_create_session()
         assert session is mock_session
-        assert summary is None
 
     def test_creates_new_session_when_none(self):
         node = _make_simple_node()
@@ -1208,7 +1213,7 @@ class TestGetOrCreateSession:
         node._session_manager = mock_sm
         node.session_id = "my_session"
 
-        session, summary = node._get_or_create_session()
+        session = node._get_or_create_session()
         assert session is mock_session
         mock_sm.create_session.assert_called_once_with("my_session")
 
@@ -1226,20 +1231,6 @@ class TestGetOrCreateSession:
         node._get_or_create_session()
         assert node.session_id == "preset_session_xyz"
         mock_sm.create_session.assert_called_once_with("preset_session_xyz")
-
-    def test_summary_is_no_longer_returned_via_get_or_create_session(self):
-        """Compacted summary now lives inside the session history itself, not
-        on a node attribute. _get_or_create_session must always return None
-        for the summary slot."""
-        node = _make_simple_node()
-        mock_sm = MagicMock()
-        mock_session = MagicMock()
-        mock_sm.create_session.return_value = mock_session
-        node._session_manager = mock_sm
-        node.session_id = "s"
-
-        _, summary = node._get_or_create_session()
-        assert summary is None
 
 
 # ---------------------------------------------------------------------------

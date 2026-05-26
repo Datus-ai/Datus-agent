@@ -400,7 +400,6 @@ class ChatAgenticNode(AgenticNode):
 
     def _get_system_prompt(
         self,
-        conversation_summary: Optional[str] = None,
         prompt_version: Optional[str] = None,
     ) -> str:
         """Get the system prompt using enhanced template context."""
@@ -429,7 +428,6 @@ class ChatAgenticNode(AgenticNode):
             agent_config=self.agent_config,
             workspace_root=self._resolve_workspace_root(),
         )
-        context["conversation_summary"] = conversation_summary
         context["has_task_tool"] = bool(self.sub_agent_task_tool)
         context["active_profile"] = getattr(self.agent_config, "active_profile_name", None) or "normal"
         from datus.utils.time_utils import get_default_current_date

@@ -766,7 +766,6 @@ Rules:
 
     def _get_system_prompt(
         self,
-        conversation_summary: Optional[str] = None,
         prompt_version: Optional[str] = None,
         template_context: Optional[dict] = None,
     ) -> str:
@@ -774,7 +773,6 @@ Rules:
         Get the system prompt for this external knowledge node using enhanced template context.
 
         Args:
-            conversation_summary: Optional summary from previous conversation compact
             prompt_version: Optional prompt version to use (ignored, hardcoded to "1.0")
             template_context: Optional template context variables
 
@@ -789,7 +787,6 @@ Rules:
             # Prepare template variables
             template_vars = {
                 "agent_config": self.agent_config,
-                "conversation_summary": conversation_summary,
             }
 
             # Add template context if provided

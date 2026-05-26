@@ -790,7 +790,6 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
 
     def _get_system_prompt(
         self,
-        conversation_summary: Optional[str] = None,
         prompt_version: Optional[str] = None,
     ) -> str:
         """Render a SELF-CONTAINED ask-* system prompt.
@@ -808,7 +807,7 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         read-only consultant's prompt. ``_render_ask_base_prompt`` resolves
         only the ask template (builtin fallback), never chat.
         """
-        base_prompt = self._render_ask_base_prompt(conversation_summary, prompt_version)
+        base_prompt = self._render_ask_base_prompt(prompt_version)
         artifact_header = self._render_artifact_context_block()
         final_prompt = (artifact_header + "\n\n" + base_prompt) if artifact_header else base_prompt
         # Observability hook: real-world prompt growth after the
@@ -837,7 +836,6 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
 
     def _render_ask_base_prompt(
         self,
-        conversation_summary: Optional[str],
         prompt_version: Optional[str],
     ) -> str:
         """Render the ask tool catalogue from the purpose-built ask template.
@@ -867,7 +865,6 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             agent_config=self.agent_config,
             workspace_root=self._resolve_workspace_root(),
         )
-        context["conversation_summary"] = conversation_summary
         # Ask consultants never carry the task() delegation tool; set it
         # explicitly so a shared partial can't advertise a tool they lack.
         context["has_task_tool"] = False

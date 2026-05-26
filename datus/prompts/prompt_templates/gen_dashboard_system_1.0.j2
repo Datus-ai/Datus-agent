@@ -83,8 +83,3 @@ order users should read the dashboard.
 {% if has_ask_user_tool | default(false) %}
 - Use ask_user to clarify ambiguous requirements (unclear dashboard scope, missing chart specifics, which dataset, etc.).
 {% endif %}
-
-{% if conversation_summary %}
-## Previous Context
-{{ conversation_summary }}
-{% endif %}

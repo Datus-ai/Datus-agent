@@ -201,9 +201,7 @@ class ExploreAgenticNode(AgenticNode):
             mapping["date_parsing_tools"] = list(self.date_parsing_tools.available_tools())
         return mapping
 
-    def _get_system_prompt(
-        self, conversation_summary: Optional[str] = None, prompt_version: Optional[str] = None
-    ) -> str:
+    def _get_system_prompt(self, prompt_version: Optional[str] = None) -> str:
         """Get the system prompt for the explore node."""
         from datus.prompts.prompt_manager import get_prompt_manager
         from datus.utils.time_utils import get_default_current_date
@@ -225,7 +223,6 @@ class ExploreAgenticNode(AgenticNode):
             "has_date_parsing_tools": bool(self.date_parsing_tools),
             **build_datasource_prompt_context(self.agent_config),
             "workspace_root": self._resolve_workspace_root(),
-            "conversation_summary": conversation_summary,
             "current_date": get_default_current_date(None),
             "scoped_tables": (
                 self.input.scoped_tables

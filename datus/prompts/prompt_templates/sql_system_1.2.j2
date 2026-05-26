@@ -158,11 +158,6 @@ Unless the user explicitly requests a different datasource, use ONLY the current
 Current date: {{ current_date }}
 {% endif -%}
 
-{% if conversation_summary -%}
-## Previous Conversation Summary
-{{ conversation_summary }}
-{% endif -%}
-
 ## Final Output Format
 Your final assistant response MUST be one valid JSON object, with no markdown fence and no extra text:
 

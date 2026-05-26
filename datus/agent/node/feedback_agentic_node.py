@@ -153,7 +153,6 @@ class FeedbackAgenticNode(AgenticNode):
 
     def _get_system_prompt(
         self,
-        conversation_summary: Optional[str] = None,
         prompt_version: Optional[str] = None,
         template_context: Optional[dict] = None,
     ) -> str:
@@ -163,7 +162,6 @@ class FeedbackAgenticNode(AgenticNode):
         try:
             template_vars = {
                 "agent_config": self.agent_config,
-                "conversation_summary": conversation_summary,
                 "native_tools": ", ".join([tool.name for tool in self.tools]) if self.tools else "None",
                 "has_task_tool": bool(self.sub_agent_task_tool),
                 "has_ask_user_tool": self.ask_user_tool is not None,

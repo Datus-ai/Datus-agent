@@ -775,7 +775,6 @@ class AgenticNode(Node):
 
     def _get_system_prompt(
         self,
-        conversation_summary: Optional[str] = None,
         prompt_version: Optional[str] = None,
         template_context: Optional[Dict[str, Any]] = None,
     ) -> str:
@@ -785,7 +784,6 @@ class AgenticNode(Node):
         The template name follows the pattern: {get_node_name()}_system_{version}
 
         Args:
-            conversation_summary: Optional summary from previous conversation compact
             prompt_version: Optional prompt version to use, overrides agent config version
             template_context: Optional extra keyword arguments forwarded into the
                 template render call. Subclasses populate this via
@@ -809,7 +807,6 @@ class AgenticNode(Node):
             "agent_config": self.agent_config,
             "datasource": getattr(self.agent_config, "current_datasource", None) if self.agent_config else None,
             "workspace_root": root_path,  # DEPRECATED: Use semantic_model_dir or sql_summary_dir instead
-            "conversation_summary": conversation_summary,
         }
         if template_context:
             render_kwargs.update(template_context)
@@ -998,21 +995,20 @@ class AgenticNode(Node):
         """Generate a unique session ID."""
         return f"{self.get_node_name()}_session_{str(uuid.uuid4())[:8]}"
 
-    def _get_or_create_session(self) -> tuple[AdvancedSQLiteSession, Optional[str]]:
+    def _get_or_create_session(self) -> AdvancedSQLiteSession:
         """
         Get or create the session for this node.
 
         Returns:
-            Tuple of (session, summary). The summary slot is always None now
-            that compaction persists the summary directly into the session
-            history; it is kept in the return type for backward compatibility
-            with existing call sites that unpack two values.
+            The active session. Compaction persists its summary directly into
+            the session history as an assistant message, so this method no
+            longer carries a separate ``conversation_summary`` slot.
         """
         if self._session is None:
             self._session = self.session_manager.create_session(self.session_id)
             logger.debug(f"Created session: {self.session_id}")
 
-        return self._session, None
+        return self._session
 
     async def _count_session_tokens(self) -> int:
         """
@@ -1307,13 +1303,12 @@ class AgenticNode(Node):
         """LLM-driven full-history compact pass.
 
         Pipeline: (1) dump the full session as JSONL so any detail dropped by
-        the summary stays recoverable, (2) render the structured 10-section
-        prompt with the j2 template (passing the JSONL and archive paths so
-        the recovery pointers section is filled in), (3) run a single-turn
-        generation with the node's own system instruction so the summary
-        stays grounded in this node's identity, (4) clear the session and
-        seed a continuation user message that tells the next turn the chat
-        is resumed and where to find original content.
+        the summary stays recoverable, (2) render the structured prompt with
+        the j2 template, (3) run a single-turn generation with the node's
+        own system instruction so the summary stays grounded in this node's
+        identity, (4) clear the session and persist the summary as a single
+        assistant ``output_text`` message with the JSONL recovery pointer
+        appended by host code (the LLM never authors the pointer line).
         """
         self._ensure_compact_state()
         try:
@@ -1333,15 +1328,9 @@ class AgenticNode(Node):
 
         logger.info("Starting major compact for session %s (reason=%s)", self.session_id, reason)
         history_jsonl_path = await self._dump_session_history_jsonl()
-        archive = self._get_archive()
-        archive_dir_str = str(archive.dir) if archive is not None else ""
 
-        sys_prompt = self._get_system_prompt(conversation_summary=None)
-        summarization_prompt = render_major_compact_prompt(
-            node_role=self.get_node_name(),
-            history_jsonl_path=str(history_jsonl_path) if history_jsonl_path else "",
-            archive_dir=archive_dir_str,
-        )
+        sys_prompt = self._get_system_prompt()
+        summarization_prompt = render_major_compact_prompt(node_role=self.get_node_name())
 
         try:
             result = await self.model.generate_with_tools(
@@ -1362,8 +1351,7 @@ class AgenticNode(Node):
 
         continuation = build_continuation_message(
             summary or "(empty summary)",
-            str(history_jsonl_path) if history_jsonl_path else "(unavailable)",
-            archive_dir_str or "(unavailable)",
+            str(history_jsonl_path) if history_jsonl_path else "",
         )
         try:
             await self._session.clear_session()
@@ -1371,8 +1359,8 @@ class AgenticNode(Node):
                 [
                     {
                         "type": "message",
-                        "role": "user",
-                        "content": continuation,
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": continuation}],
                     },
                 ]
             )
@@ -1387,8 +1375,8 @@ class AgenticNode(Node):
             }
 
         # Reset the high-water mark — the prior history is now collapsed into
-        # a single continuation user message, so the next minor pass starts
-        # scanning from the top of the rewritten session.
+        # a single assistant continuation message, so the next minor pass
+        # starts scanning from the top of the rewritten session.
         self._compacted_until = 0
 
         logger.info(
@@ -1404,7 +1392,6 @@ class AgenticNode(Node):
             "summary": summary,
             "summary_token": summary_token,
             "history_jsonl": str(history_jsonl_path) if history_jsonl_path else "",
-            "archive_dir": archive_dir_str,
         }
 
     async def _minor_compact(self, *, reason: str) -> Dict[str, Any]:
@@ -2219,21 +2206,17 @@ class AgenticNode(Node):
 
             if self.execution_mode == "interactive":
                 await self._auto_compact()
-                ctx.session, ctx.conversation_summary = self._get_or_create_session()
+                ctx.session = self._get_or_create_session()
 
             template_context = self._build_template_context(ctx)
             prompt_version = getattr(self.input, "prompt_version", None)
             if template_context:
                 ctx.system_instruction = self._get_system_prompt(
-                    conversation_summary=ctx.conversation_summary,
                     prompt_version=prompt_version,
                     template_context=template_context,
                 )
             else:
-                ctx.system_instruction = self._get_system_prompt(
-                    conversation_summary=ctx.conversation_summary,
-                    prompt_version=prompt_version,
-                )
+                ctx.system_instruction = self._get_system_prompt(prompt_version=prompt_version)
 
             # Compose the user prompt, optionally with a per-run override of
             # ``user_input.user_message`` set during ``_before_stream`` (used

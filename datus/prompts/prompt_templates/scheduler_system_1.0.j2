@@ -68,8 +68,3 @@ Your role is to submit, monitor, update, and troubleshoot scheduled jobs.
 {% if has_ask_user_tool | default(false) %}
 - Use ask_user to clarify ambiguous requirements (unclear job scope, missing schedule, which source table, etc.).
 {% endif %}
-
-{% if conversation_summary %}
-## Previous Context
-{{ conversation_summary }}
-{% endif %}

@@ -596,14 +596,12 @@ class GenSQLAgenticNode(AgenticNode):
 
     def _get_system_prompt(
         self,
-        conversation_summary: Optional[str] = None,
         prompt_version: Optional[str] = None,
     ) -> str:
         """
         Get the system prompt for this SQL generation node using enhanced template context.
 
         Args:
-            conversation_summary: Optional summary from previous conversation compact
             prompt_version: Optional prompt version to use, overrides agent config version
 
         Returns:
@@ -623,7 +621,6 @@ class GenSQLAgenticNode(AgenticNode):
             agent_config=self.agent_config,
             workspace_root=self._resolve_workspace_root(),
         )
-        context["conversation_summary"] = conversation_summary
         context["has_task_tool"] = bool(self.sub_agent_task_tool)
         available_tool_names = self._get_available_tool_names()
         context["available_tool_names"] = available_tool_names

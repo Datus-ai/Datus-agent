@@ -57,11 +57,6 @@ Current context:
 {% if active_profile -%}
 - Current permission profile: {{ active_profile }} (authoritative for this turn; previous messages may mention an older profile)
 {% endif -%}
-{% if conversation_summary -%}
-
-Previous conversation summary:
-{{ conversation_summary }}
-{% endif -%}
 
 - Available tools: Database operations, File system operations, Subject operations, Date parsing tools
 - Reference SQL files: Available *.sql in allowed directory
