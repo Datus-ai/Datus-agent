@@ -73,6 +73,35 @@ def is_archived_output(output_str: Any) -> bool:
     return isinstance(output_str, str) and output_str.startswith(ARCHIVED_MARKER)
 
 
+def parse_archived_marker(text: Any) -> Optional[Dict[str, str]]:
+    """Parse ``[DATUS_ARCHIVED] path=<p> preview=<t>`` into its parts.
+
+    Returns ``{"path": <abs>, "preview": <text>}`` when ``text`` is a marker
+    string, ``None`` otherwise. Pure string parsing — the archive file at
+    ``path`` is never opened, so callers can surface the inline preview on
+    display surfaces (e.g. ``/chat/history``) without any disk I/O or
+    reverse archival.
+
+    The split uses the literal `` preview=`` delimiter, which appears exactly
+    once and is preceded by a single space in markers produced by
+    :meth:`ToolArchive.archive`. This is robust to spaces inside the path's
+    fallback form ``<unavailable: archive write failed>`` because that token
+    contains no ``preview=`` substring.
+    """
+    if not isinstance(text, str) or not text.startswith(ARCHIVED_MARKER):
+        return None
+    body = text[len(ARCHIVED_MARKER) :].strip()
+    path = ""
+    preview = ""
+    if " preview=" in body:
+        head, preview = body.split(" preview=", 1)
+        if head.startswith("path="):
+            path = head[len("path=") :].strip()
+    elif body.startswith("path="):
+        path = body[len("path=") :].strip()
+    return {"path": path, "preview": preview}
+
+
 #: Error-output preview is widened to this multiple of ``preview_chars`` so
 #: the LLM sees the full traceback / error message inline without needing a
 #: round-trip through ``read_file``. Internal constant — not user-tunable

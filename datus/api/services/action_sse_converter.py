@@ -8,6 +8,7 @@ chat-history retrieval can share the same conversion logic.
 import json
 from typing import Any, List, Optional
 
+from datus.agent.node.compact_archive import parse_archived_marker
 from datus.api.models.cli_models import (
     IMessageContent,
     SSEDataType,
@@ -42,6 +43,15 @@ def _extract_function(action: ActionHistory) -> tuple[str, dict]:
             arguments = json.loads(arguments)
         except json.JSONDecodeError:
             arguments = {}
+
+    # Minor-compact archives a long arguments payload by storing the marker
+    # string in place of the original JSON object. Surface the inline preview
+    # so callers (e.g. ``/chat/history``) render a placeholder instead of
+    # dropping the params to ``{}`` and losing all signal.
+    if isinstance(arguments, str):
+        marker = parse_archived_marker(arguments)
+        if marker is not None:
+            return function_name, {"archived": True, "preview": marker["preview"]}
 
     if not isinstance(arguments, dict):
         arguments = {}
@@ -124,6 +134,15 @@ def _normalize_tool_result_payload(
     if direct_error:
         success = False
         error = direct_error
+
+    # Minor-compact archives a long tool output as the marker string; surface
+    # the inline preview so the web UI does not render the raw
+    # ``[DATUS_ARCHIVED] path=... preview=...`` text. The marker can land in
+    # either the unwrapped ``result`` field (envelope case) or the bare
+    # ``raw_result`` (non-envelope case where the whole output was replaced).
+    marker = parse_archived_marker(result) or parse_archived_marker(raw_result)
+    if marker is not None:
+        result = {"archived": True, "preview": marker["preview"]}
 
     if status == ActionStatus.FAILED:
         success = False

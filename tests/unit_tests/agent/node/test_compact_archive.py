@@ -17,6 +17,7 @@ from datus.agent.node.compact_archive import (
     is_archived_args,
     is_archived_output,
     maybe_truncate_item,
+    parse_archived_marker,
 )
 from datus.utils.exceptions import DatusException, ErrorCode
 
@@ -150,6 +151,53 @@ class TestArchivedMarkerDetection:
     def test_output_marker_not_detected_for_non_string(self):
         assert is_archived_output(None) is False
         assert is_archived_output({"result": "ok"}) is False
+
+
+class TestParseArchivedMarker:
+    """Display-side parser for ``[DATUS_ARCHIVED] path=... preview=...``."""
+
+    def test_parses_well_formed_marker(self):
+        text = f"{ARCHIVED_MARKER} path=/abs/000003_args_abc12345.json preview=hello world"
+        result = parse_archived_marker(text)
+        assert result == {"path": "/abs/000003_args_abc12345.json", "preview": "hello world"}
+
+    def test_preview_keeps_internal_spaces(self):
+        # ``preview=`` is the split delimiter and appears exactly once, so the
+        # rest of the marker (which may include spaces, ``=``, brackets) is
+        # captured verbatim in the preview field.
+        text = f"{ARCHIVED_MARKER} path=/tmp/x.json preview=SELECT a, b FROM t WHERE x = 1"
+        result = parse_archived_marker(text)
+        assert result["preview"] == "SELECT a, b FROM t WHERE x = 1"
+
+    def test_handles_inline_truncated_fallback_path(self):
+        # ``_inline_truncated`` writes ``path=<unavailable: archive write failed>``
+        # — the angle-bracketed token contains a space but no ``preview=``
+        # substring, so the parser still splits correctly.
+        text = f"{ARCHIVED_MARKER} path=<unavailable: archive write failed> preview=oops"
+        result = parse_archived_marker(text)
+        assert result == {"path": "<unavailable: archive write failed>", "preview": "oops"}
+
+    def test_returns_none_for_non_marker_string(self):
+        assert parse_archived_marker("just a regular tool output") is None
+
+    def test_returns_none_for_non_string(self):
+        assert parse_archived_marker(None) is None
+        assert parse_archived_marker(123) is None
+        assert parse_archived_marker({"path": "/x"}) is None
+        assert parse_archived_marker(["a", "b"]) is None
+
+    def test_marker_with_empty_preview(self):
+        text = f"{ARCHIVED_MARKER} path=/abs/x.json preview="
+        result = parse_archived_marker(text)
+        assert result == {"path": "/abs/x.json", "preview": ""}
+
+    def test_marker_without_preview_segment(self):
+        # Defensive: callers should not produce markers without ``preview=``,
+        # but the parser still returns a usable dict so display surfaces don't
+        # crash. Path is captured; preview defaults to empty.
+        text = f"{ARCHIVED_MARKER} path=/abs/x.json"
+        result = parse_archived_marker(text)
+        assert result == {"path": "/abs/x.json", "preview": ""}
 
 
 class TestMaybeTruncateItem:

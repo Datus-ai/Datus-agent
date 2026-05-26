@@ -1,5 +1,6 @@
 """Tests for datus.api.services.action_sse_converter — ActionHistory to SSE conversion."""
 
+import json
 from datetime import datetime, timedelta
 
 from datus.api.models.cli_models import IMessageContent, SSEDataType, SSEEvent
@@ -97,6 +98,29 @@ class TestExtractFunction:
         assert name == "fn"
         assert args == {}
 
+    def test_archived_arguments_surface_preview(self):
+        """Minor-compact replaces long args with a marker — the SSE layer must
+        surface the inline preview instead of dropping the params to ``{}``.
+
+        ``arguments`` on the wire is a JSON-encoded string of the marker
+        (``maybe_truncate_item`` stores it as ``json.dumps(marker)``), so the
+        existing ``json.loads`` step unwraps to a bare marker string and the
+        new branch then parses the preview out of it. The web UI sees an
+        ``archived: True`` flag plus the preview text — no disk read, no
+        original-arguments recovery.
+        """
+        marker = "[DATUS_ARCHIVED] path=/sessions/p/sid/data/000004_args_a1b2c3d4.json preview=SELECT * FROM orders WHERE region IN ('NA','EU')"
+        wire_arguments = json.dumps(marker)
+        action = _make_action(
+            input={"function_name": "execute_sql", "arguments": wire_arguments},
+        )
+        name, args = _extract_function(action)
+        assert name == "execute_sql"
+        assert args == {
+            "archived": True,
+            "preview": "SELECT * FROM orders WHERE region IN ('NA','EU')",
+        }
+
 
 # ------------------------------------------------------------------
 # Content builders
@@ -118,6 +142,19 @@ class TestBuildToolCallContent:
         assert contents[0].payload["callToolId"] == "tool-123"
         assert contents[0].payload["toolName"] == "search_table_metadata"
         assert contents[0].payload["toolParams"] == {"query": "revenue"}
+
+    def test_archived_arguments_become_preview_payload(self):
+        """Archived tool params are surfaced as an ``archived/preview`` pair."""
+        marker = "[DATUS_ARCHIVED] path=/x/000004_args_dead.json preview=COPY orders FROM 's3://...'"
+        action = _make_action(
+            action_id="tool-arch-1",
+            input={"function_name": "execute_sql", "arguments": json.dumps(marker)},
+        )
+        contents = _build_tool_call_content(action)
+        assert contents[0].payload["toolParams"] == {
+            "archived": True,
+            "preview": "COPY orders FROM 's3://...'",
+        }
 
 
 class TestBuildToolResultContent:
@@ -235,6 +272,51 @@ class TestBuildToolResultContent:
         contents = _build_tool_result_content(action)
 
         assert contents[0].payload["result"] == {"success": 1, "result": [{"name": "orders"}]}
+
+    def test_archived_output_in_session_manager_envelope_surfaces_preview(self):
+        """SessionManager stores archived outputs as ``{"result": "<marker>"}``.
+
+        That dict satisfies ``_is_tool_result_envelope`` (set of keys is
+        ``{"result"}``), so the unwrap returns the marker string. The
+        converter must then detect the marker and replace ``result`` with the
+        ``archived/preview`` payload instead of leaking the raw
+        ``[DATUS_ARCHIVED] path=...`` line to the web UI.
+        """
+        marker = "[DATUS_ARCHIVED] path=/sessions/p/sid/data/000007_output_cafef00d.txt preview={'success': 1, 'rows': [...]}"
+        action = _make_action(
+            action_id="complete_tool-arch-2",
+            status=ActionStatus.SUCCESS,
+            input={"function_name": "execute_sql"},
+            output={"result": marker},
+        )
+
+        contents = _build_tool_result_content(action)
+
+        assert contents[0].payload["result"] == {
+            "success": 1,
+            "result": {"archived": True, "preview": "{'success': 1, 'rows': [...]}"},
+        }
+        assert "error" not in contents[0].payload
+
+    def test_archived_output_as_bare_raw_output_surfaces_preview(self):
+        """Defensive path: when the marker arrives as a bare ``raw_output``
+        string (no enclosing envelope), the converter still surfaces the
+        preview rather than passing the raw marker through.
+        """
+        marker = "[DATUS_ARCHIVED] path=/x/000009_output_beefdeadbeef.txt preview=Traceback line 1, line 2"
+        action = _make_action(
+            action_id="complete_tool-arch-3",
+            status=ActionStatus.SUCCESS,
+            input={"function_name": "run_cmd"},
+            output={"raw_output": marker},
+        )
+
+        contents = _build_tool_result_content(action)
+
+        assert contents[0].payload["result"] == {
+            "success": 1,
+            "result": {"archived": True, "preview": "Traceback line 1, line 2"},
+        }
 
     def test_failed_func_tool_envelope_uses_nested_error(self):
         """Failed FuncToolResult-shaped output exposes the nested error to the card."""
