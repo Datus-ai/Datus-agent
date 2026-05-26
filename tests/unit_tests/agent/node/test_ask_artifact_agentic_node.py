@@ -2113,3 +2113,103 @@ class TestPromptToolConsistency:
         rules = node._render_behavioral_rules_section()
         assert "execute_sql" not in rules
         assert "live SQL execution is not enabled" in rules
+
+
+# --------------------------------------------------------------------------- #
+# Chat decoupling + lazy-injection gating                                     #
+# --------------------------------------------------------------------------- #
+
+
+class TestChatDecoupling:
+    """The ask_* system prompt is self-contained.
+
+    Two regressions: (1) the prompt must never carry the ``chat_system``
+    template (the silent FileNotFoundError fallback dumped the full chat tool
+    catalogue + ``task()`` routing rubric into a read-only consultant), and
+    (2) ``_finalize_system_prompt``'s lazy bash/skill re-injection — which runs
+    on every prompt build, AFTER ``setup_tools()`` pruned the whitelist — must
+    not silently re-expose tools the ``tools`` whitelist never granted.
+    """
+
+    def test_prompt_excludes_chat_template_content(self, real_agent_config):
+        """Self-contained ask prompt: the ask template is used, and none of the
+        chat system template / chat-agent finalize extras leak in."""
+        node = _make_ask_report_with_tools(
+            real_agent_config,
+            "date_parsing_tools.*,filesystem_tools.*,semantic_tools.*",
+            name="ask_decouple",
+            slug="decouple",
+        )
+        prompt = node._get_system_prompt()
+        assert "ask_report consultant" in prompt  # purpose-built ask template
+        for marker in (
+            "You are a helpful AI assistant integrated with Datus-agent",
+            'task(type="gen_sql"',
+            "Routing decision",
+            "Persistent memory at",  # chat-agent memory block (dropped by lean finalize)
+        ):
+            assert marker not in prompt, f"chat content leaked into ask prompt: {marker!r}"
+
+    def test_missing_subagent_template_falls_back_to_builtin_ask_not_chat(self, real_agent_config):
+        """When the per-subagent ``{name}_system`` template is absent (the SaaS
+        case that produced the leaked chat prompt), resolution falls through to
+        the BUILTIN ask template — never ``chat_system``."""
+        node = _make_ask_report_with_tools(
+            real_agent_config, "filesystem_tools.*", name="ask_missing_tpl", slug="missing_tpl"
+        )
+        # A template root that doesn't ship -> configured attempt raises
+        # FileNotFoundError, forcing the builtin-ask fallback.
+        node.node_config["system_prompt"] = "ask_nonexistent_subagent_xyz"
+        prompt = node._get_system_prompt()
+        assert "ask_report consultant" in prompt
+        assert "You are a helpful AI assistant integrated with Datus-agent" not in prompt
+
+    def test_bash_not_reinjected_after_prompt_build(self, real_agent_config):
+        """``execute_command`` stays out of the surface across a prompt build
+        when ``bash_tools`` isn't whitelisted — the core lazy-injection leak."""
+        node = _make_ask_report_with_tools(
+            real_agent_config, "date_parsing_tools.*,filesystem_tools.*", name="ask_nobash", slug="nobash"
+        )
+        assert "execute_command" not in _tool_names(node)
+        node._get_system_prompt()  # runs the lazy bash re-injection path
+        assert "execute_command" not in _tool_names(node), "bash leaked via prompt-build lazy injection"
+
+    def test_skills_not_reinjected_after_prompt_build(self, real_agent_config):
+        """Same lazy-injection bypass as bash, for the skill loader tools."""
+        node = _make_ask_report_with_tools(
+            real_agent_config, "date_parsing_tools.*,filesystem_tools.*", name="ask_noskill", slug="noskill"
+        )
+        node._get_system_prompt()
+        leaked = {"load_skill", "skill_execute_command"} & _tool_names(node)
+        assert not leaked, f"skill tools leaked via prompt-build lazy injection: {sorted(leaked)}"
+
+    def test_bash_present_when_whitelisted(self, real_agent_config):
+        """The gate is whitelist-driven, not a blanket block: ``bash_tools.*``
+        keeps ``execute_command`` available through the prompt build."""
+        node = _make_ask_report_with_tools(
+            real_agent_config, "bash_tools.*,filesystem_tools.*", name="ask_bash", slug="withbash"
+        )
+        node._get_system_prompt()
+        assert "execute_command" in _tool_names(node)
+
+    def test_skills_present_when_whitelisted(self, real_agent_config):
+        """Symmetric to bash: ``skills.*`` keeps the skill loader tool through
+        the prompt build (``load_skill`` is always offered by SkillFuncTool)."""
+        node = _make_ask_report_with_tools(
+            real_agent_config, "skills.*,filesystem_tools.*", name="ask_skills", slug="withskills"
+        )
+        node._get_system_prompt()
+        assert "load_skill" in _tool_names(node)
+
+    def test_no_db_boundary_statement_gated_on_db_exposure(self, real_agent_config):
+        """A db-less whitelist gets the explicit 'no live database access'
+        boundary (countering DB-capability hallucination); a db whitelist omits
+        it."""
+        nodb = _make_ask_report_with_tools(
+            real_agent_config, "filesystem_tools.*,semantic_tools.*", name="ask_boundary", slug="boundary"
+        )
+        assert "This agent has NO live database access" in nodb._render_behavioral_rules_section()
+        withdb = _make_ask_report_with_tools(
+            real_agent_config, "db_tools.*,filesystem_tools.*", name="ask_boundary_db", slug="boundary_db"
+        )
+        assert "This agent has NO live database access" not in withdb._render_behavioral_rules_section()
