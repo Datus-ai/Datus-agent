@@ -397,13 +397,13 @@ class TestAutoOpenInBrowser:
 
 
 @pytest.mark.asyncio
-async def test_execute_stream_without_binding_marks_failure(real_agent_config, mock_llm_create):
-    """LLM never binds a report → run reports a binding-required failure."""
+async def test_execute_stream_without_binding_and_no_answer_marks_failure(real_agent_config, mock_llm_create):
+    """No binding AND no prose answer (the run did nothing) → binding-required failure."""
     from tests.unit_tests.mock_llm_model import build_simple_response
 
     mock_llm_create.reset(
         responses=[
-            build_simple_response("I gathered context but never bound a report."),
+            build_simple_response(""),
         ]
     )
 
@@ -432,6 +432,33 @@ async def test_execute_stream_without_binding_marks_failure(real_agent_config, m
     assert result["name"] is None
     assert result["description"] is None
     assert result["created_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_execute_stream_informational_answer_ends_normally(real_agent_config, mock_llm_create):
+    """An informational question answered in prose without binding a report
+    ends normally instead of surfacing the internal missing-binding error."""
+    from tests.unit_tests.mock_llm_model import build_simple_response
+
+    answer = "Earlier you switched the revenue chart to monthly and added a YoY column."
+    mock_llm_create.reset(responses=[build_simple_response(answer)])
+
+    node = _make_node(real_agent_config)
+    node.input = GenVisualReportNodeInput(user_message="what did I change?")
+
+    actions = []
+    async for action in node.execute_stream(ActionHistoryManager()):
+        actions.append(action)
+
+    final = actions[-1]
+    assert final.status == ActionStatus.SUCCESS
+    result = final.output
+    assert isinstance(result, dict)
+    assert result["success"] is True
+    assert not result.get("error")
+    assert result["report_slug"] is None
+    assert result["app_jsx_path"] is None
+    assert result["response"] == answer
 
 
 @pytest.mark.asyncio

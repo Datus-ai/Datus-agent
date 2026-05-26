@@ -638,6 +638,14 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         """
         return None
 
+    def _binding_tool_action_types(self) -> set:
+        """Tool action types that bind an artifact for this run.
+
+        Used to tell a real "never bound" failure apart from an
+        informational prose answer (which makes no binding attempt).
+        """
+        return {f"start_new_{self.ARTIFACT_KIND}", f"bind_existing_{self.ARTIFACT_KIND}"}
+
     def _missing_binding_error(self) -> str:
         kind = self.ARTIFACT_KIND
         return (
@@ -725,15 +733,30 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         )
 
         if app_jsx_rel_path is None:
-            error_msg = (
-                self._missing_binding_error() if self._active_artifact_slug is None else self._incomplete_render_error()
+            # No render produced. Separate a genuine "forgot to bind / render"
+            # failure from a legitimate informational turn: when the model
+            # never attempted to bind an artifact and answered the user in
+            # prose (e.g. "what changes did I make?"), that's a valid response
+            # — end normally instead of forcing the missing-binding error.
+            binding_attempted = any(a.action_type in self._binding_tool_action_types() for a in all_actions)
+            informational_answer = (
+                self._active_artifact_slug is None and not binding_attempted and bool(response_content.strip())
             )
-            if hasattr(result, "error"):
-                result.error = error_msg  # type: ignore[attr-defined]
-            # When the render is incomplete, success must reflect that so the
-            # template's final action emits SUCCESS=False status.
-            if hasattr(result, "success"):
-                result.success = False  # type: ignore[attr-defined]
+            if informational_answer:
+                if hasattr(result, "success"):
+                    result.success = True  # type: ignore[attr-defined]
+            else:
+                error_msg = (
+                    self._missing_binding_error()
+                    if self._active_artifact_slug is None
+                    else self._incomplete_render_error()
+                )
+                if hasattr(result, "error"):
+                    result.error = error_msg  # type: ignore[attr-defined]
+                # When the render is incomplete, success must reflect that so the
+                # template's final action emits SUCCESS=False status.
+                if hasattr(result, "success"):
+                    result.success = False  # type: ignore[attr-defined]
 
         # Stash artifact summary so ``_final_summary_for_action`` (used by the
         # base template's final action emit) can render the right message.

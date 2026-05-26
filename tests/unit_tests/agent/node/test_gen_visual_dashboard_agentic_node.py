@@ -326,13 +326,13 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
 
 
 @pytest.mark.asyncio
-async def test_execute_stream_fails_when_no_binding(real_agent_config, mock_llm_create):
-    """If the LLM never calls start_/bind_existing_dashboard, the node fails clearly."""
+async def test_execute_stream_fails_when_no_binding_and_no_answer(real_agent_config, mock_llm_create):
+    """No binding AND no prose answer (the run did nothing) → fails clearly."""
     mock_llm_create.reset(
         responses=[
             build_tool_then_response(
                 tool_calls=[],
-                content="I changed my mind.",
+                content="",
             ),
         ]
     )
@@ -349,6 +349,35 @@ async def test_execute_stream_fails_when_no_binding(real_agent_config, mock_llm_
     assert isinstance(result, dict)
     assert result["success"] is False
     assert "start_new_dashboard" in (result.get("error") or "")
+
+
+@pytest.mark.asyncio
+async def test_execute_stream_informational_answer_ends_normally(real_agent_config, mock_llm_create):
+    """An informational question (e.g. "what changes did I make?") answered in
+    prose without binding an artifact must end normally — not surface the
+    internal "Run finished without binding a dashboard" error."""
+    answer = "In this session you changed 2 charts: revenue trend → bar, product mix → donut."
+    mock_llm_create.reset(
+        responses=[
+            build_tool_then_response(tool_calls=[], content=answer),
+        ]
+    )
+
+    node = _make_node(real_agent_config)
+    node.input = GenVisualDashboardNodeInput(user_message="what changes did I make?", database="california_schools")
+    actions = []
+    async for action in node.execute_stream(ActionHistoryManager()):
+        actions.append(action)
+
+    final = actions[-1]
+    assert final.status == ActionStatus.SUCCESS
+    result = final.output
+    assert isinstance(result, dict)
+    assert result["success"] is True
+    assert not result.get("error")
+    assert result["dashboard_slug"] is None
+    assert result["app_jsx_path"] is None
+    assert result["response"] == answer
 
 
 class TestNodeFactoryDashboardBranch:
