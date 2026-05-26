@@ -57,6 +57,16 @@ class TestResolveEnv:
         result = resolve_env("${DATUS_NONEXISTENT_VAR_XYZ}")
         assert result == "<MISSING:DATUS_NONEXISTENT_VAR_XYZ>"
 
+    def test_missing_env_var_with_default_uses_default(self, monkeypatch):
+        monkeypatch.delenv("DATUS_NONEXISTENT_VAR_XYZ", raising=False)
+        result = resolve_env("${DATUS_NONEXISTENT_VAR_XYZ:-false}")
+        assert result == "false"
+
+    def test_env_var_with_default_uses_env_value(self, monkeypatch):
+        monkeypatch.setenv("DATUS_ENV_WITH_DEFAULT", "true")
+        result = resolve_env("${DATUS_ENV_WITH_DEFAULT:-false}")
+        assert result == "true"
+
     def test_multiple_env_vars_in_string(self, monkeypatch):
         monkeypatch.setenv("HOST_VAR", "localhost")
         monkeypatch.setenv("PORT_VAR", "5432")

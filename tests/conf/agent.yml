@@ -109,7 +109,7 @@ agent:
 
   observability:
     tracing:
-      enabled: true
+      enabled: ${LANGFUSE_TRACING_ENABLED:-false}
       service_name: datus-agent-nightly
       environment: nightly
       capture_content: true

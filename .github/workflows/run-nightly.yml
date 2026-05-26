@@ -397,6 +397,7 @@ jobs:
         env:
           EXTERNAL_REPOS_ROOT: ${{ github.workspace }}/external
           NIGHTLY_PYTEST_BASETEMP: ${{ runner.temp }}/datus-agent-nightly-pytest-${{ github.run_id }}-${{ github.run_attempt }}
+          LANGFUSE_TRACING_ENABLED: "true"
           NIGHTLY_REQUIRE_LANGFUSE_TRACING: "1"
         run: |
           ci/run-nightly-tests.sh

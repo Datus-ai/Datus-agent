@@ -2123,7 +2123,10 @@ def resolve_env(value: str) -> str:
     pattern = r"\${([^}]+)}"
 
     def replace_env(match):
-        env_var = match.group(1)
+        expr = match.group(1)
+        env_var, separator, default = expr.partition(":-")
+        if separator:
+            return os.getenv(env_var, default)
         return os.getenv(env_var, f"<MISSING:{env_var}>")
 
     return re.sub(pattern, replace_env, value)
