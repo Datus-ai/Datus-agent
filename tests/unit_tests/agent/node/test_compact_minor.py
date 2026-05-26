@@ -12,6 +12,7 @@ older to disk via a single-line ``[DATUS_ARCHIVED]`` marker.
 """
 
 import json
+from pathlib import Path
 from typing import AsyncGenerator, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -249,7 +250,7 @@ async def test_minor_compact_archives_to_disk_byte_equal(tmp_path):
     rewritten = node._session.add_items.await_args.args[0]
     args_marker = _decoded_args_marker(rewritten[1])
     archived_path = args_marker.split("path=", 1)[1].split(" preview=", 1)[0]
-    assert open(archived_path).read() == original
+    assert Path(archived_path).read_bytes() == original.encode("utf-8")
 
 
 @pytest.mark.asyncio

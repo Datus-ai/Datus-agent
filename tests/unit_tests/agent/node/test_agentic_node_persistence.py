@@ -53,9 +53,11 @@ class TestPlanModeStatePersistence:
         state_path = _state_path(node, "chat_session_aaaa")
         assert state_path.exists()
         data = json.loads(state_path.read_text(encoding="utf-8"))
-        # On-disk layout is now nested (``plan_mode`` / ``compact``) so that
-        # the compact subsystem can persist alongside plan-mode in the same
-        # file without either clobbering the other.
+        # On-disk layout is nested under a top-level ``plan_mode`` key so the
+        # state file can grow additional sections later without breaking
+        # forward/backward compatibility. Today only ``plan_mode`` is written
+        # here — the compact subsystem keeps its own state in memory and on
+        # the session DB, not in this file.
         assert data["plan_mode"]["plan_mode_active"] is True
         assert data["plan_mode"]["plan_file_path"] == node.plan_file_path
         assert data["plan_mode"]["workflow_prompt_sent"] is False

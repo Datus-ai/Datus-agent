@@ -121,6 +121,31 @@ def _coerce_bool(value: Any, default: bool) -> bool:
     return bool(value)
 
 
+def _coerce_numeric_fields(kwargs: Dict[str, Any], field_specs) -> None:
+    """In-place coerce string values to ``int`` / ``float`` per the dataclass
+    field type. YAML can yield strings for numbers when the user quotes them
+    (``token_threshold: "0.9"``); without coercion these would survive into the
+    dataclass and break comparisons downstream.
+    """
+    for f in field_specs:
+        if f.name not in kwargs:
+            continue
+        value = kwargs[f.name]
+        if not isinstance(value, str):
+            continue
+        target = f.type
+        if target is int or target == "int":
+            try:
+                kwargs[f.name] = int(value)
+            except (TypeError, ValueError):
+                pass
+        elif target is float or target == "float":
+            try:
+                kwargs[f.name] = float(value)
+            except (TypeError, ValueError):
+                pass
+
+
 @dataclass
 class MajorCompactConfig:
     """Settings controlling the LLM-driven full-history summarization pass."""
@@ -169,14 +194,23 @@ class CompactConfig:
     def from_dict(cls, raw: Optional[Dict[str, Any]]) -> "CompactConfig":
         if not raw or not isinstance(raw, dict):
             return cls()
-        major_raw = raw.get("major") or {}
-        minor_raw = raw.get("minor") or {}
+        major_raw = raw.get("major")
+        minor_raw = raw.get("minor")
+        # ``compact.major: true`` / ``compact.minor: "yes"`` style YAML must not
+        # crash the loader — fall back to defaults when the section is not a
+        # mapping. ``or {}`` alone would still try to index a non-mapping below.
+        if not isinstance(major_raw, dict):
+            major_raw = {}
+        if not isinstance(minor_raw, dict):
+            minor_raw = {}
         major_kwargs = {f.name: major_raw[f.name] for f in fields(MajorCompactConfig) if f.name in major_raw}
         minor_kwargs = {f.name: minor_raw[f.name] for f in fields(MinorCompactConfig) if f.name in minor_raw}
         if "enabled" in major_kwargs:
             major_kwargs["enabled"] = _coerce_bool(major_kwargs["enabled"], True)
         if "enabled" in minor_kwargs:
             minor_kwargs["enabled"] = _coerce_bool(minor_kwargs["enabled"], True)
+        _coerce_numeric_fields(major_kwargs, fields(MajorCompactConfig))
+        _coerce_numeric_fields(minor_kwargs, fields(MinorCompactConfig))
         return cls(major=MajorCompactConfig(**major_kwargs), minor=MinorCompactConfig(**minor_kwargs))
 
 

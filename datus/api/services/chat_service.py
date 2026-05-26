@@ -205,7 +205,15 @@ class ChatService:
                     data=CompactSessionData(session_id=session_id, success=False, error="Compact failed"),
                 )
 
-            summary_token = result.get("summary_token", 0)
+            summary_token = result.get("summary_token") or 0
+            if not summary_token:
+                # major-compact payload now reports ``summary`` / ``history_jsonl``
+                # and may omit ``summary_token`` when the upstream LLM does not
+                # surface ``output_tokens``. Fall back to a 4-char-per-token
+                # estimate over the summary text so the metrics remain
+                # directionally correct instead of silently zeroing out.
+                summary_text = result.get("summary") or ""
+                summary_token = max(len(summary_text) // 4, 0)
             return Result[CompactSessionData](
                 success=True,
                 data=CompactSessionData(

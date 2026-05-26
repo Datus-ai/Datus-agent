@@ -1054,7 +1054,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                             logger.error("Overflow compact_callback failed: %s", compact_exc)
                             raise DatusException(
                                 ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}
-                            ) from e
+                            ) from compact_exc
                         try:
                             result = await Runner.run(
                                 agent,

@@ -486,7 +486,7 @@ class TestSessionDataDir:
         # Path-traversal segments must be rejected — otherwise an attacker
         # who controlled session_id could escape the project shard.
         for bad in ("", "../escape", "with/slash", ".hidden"):
-            with pytest.raises((DatusException, ValueError)):
+            with pytest.raises(DatusException):
                 pm.session_data_dir(bad)
 
 
@@ -518,4 +518,4 @@ class TestRelpathForDisplay:
         # ``totally_other/`` is neither under project_root nor datus_home; absolute
         # is the correct fallback (LLM can still feed it back, just no shortening).
         target = tmp_path / "totally_other" / "file.txt"
-        assert pm.relpath_for_display(target).startswith(str(tmp_path / "totally_other"))
+        assert pm.relpath_for_display(target).startswith((tmp_path / "totally_other").as_posix())

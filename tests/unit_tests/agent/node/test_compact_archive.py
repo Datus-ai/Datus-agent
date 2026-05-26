@@ -18,6 +18,7 @@ from datus.agent.node.compact_archive import (
     is_archived_output,
     maybe_truncate_item,
 )
+from datus.utils.exceptions import DatusException, ErrorCode
 
 
 @pytest.fixture
@@ -88,8 +89,9 @@ class TestToolArchive:
         assert len(preview) <= 100
 
     def test_archive_rejects_invalid_kind(self, archive):
-        with pytest.raises(ValueError):
+        with pytest.raises(DatusException) as excinfo:
             archive.archive("content", 0, "bogus")
+        assert excinfo.value.code == ErrorCode.COMMON_FIELD_INVALID
 
     def test_preview_is_single_line(self, archive):
         # Multi-line content must be flattened — newlines in the marker would

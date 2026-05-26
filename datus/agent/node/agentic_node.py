@@ -1254,11 +1254,6 @@ class AgenticNode(Node):
             return None
         return self._archive
 
-    @staticmethod
-    def _is_tool_io_item(item: Dict[str, Any]) -> bool:
-        """Whether an item counts as one half of a tool-call/output round."""
-        return item.get("type") in ("function_call", "function_call_output")
-
     def _resolve_user_turn_cutoff(self, items: List[Dict[str, Any]]) -> int:
         """Return the items index that bounds the eligible compact region.
 

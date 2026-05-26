@@ -31,6 +31,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.path_manager import DatusPathManager, get_path_manager
 
 logger = logging.getLogger(__name__)
@@ -128,7 +129,14 @@ class ToolArchive:
             assigning to ``arguments``.
         """
         if kind not in ("args", "output"):
-            raise ValueError(f"ToolArchive.archive: kind must be 'args' or 'output', got {kind!r}")
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_INVALID,
+                message_args={
+                    "field_name": "kind",
+                    "except_values": "'args' or 'output'",
+                    "your_value": repr(kind),
+                },
+            )
         ext = "json" if kind == "args" else "txt"
         digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
         fname = f"{message_idx:06d}_{kind}_{digest[:8]}.{ext}"
