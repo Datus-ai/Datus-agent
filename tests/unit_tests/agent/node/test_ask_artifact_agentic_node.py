@@ -1811,6 +1811,12 @@ def _register_ask_agent_with_tools(
         agent_config.agentic_nodes = {}
     entry = {
         "type": agent_type,
+        # Pin the prompt template to the builtin ask_* template so
+        # ``_get_system_prompt`` renders ``_ask_artifact_common.j2`` (which the
+        # prompt-consistency tests inspect) instead of falling back to the
+        # default chat template. In production the backend copies this same
+        # builtin to ``{name}_system.j2`` (AgentService._copy_prompt_template).
+        "system_prompt": agent_type,
         "artifact_slug": slug,
         "agent_description": f"Ask consultant for {slug}",
         "rules": [],
@@ -1870,11 +1876,12 @@ _NO_DB_WHITELIST = (
 
 
 class TestToolsWhitelist:
-    """A configured ``tools`` whitelist is a hard cap on the LLM-facing surface.
+    """An ask_* agent's LLM tool surface is determined SOLELY by ``tools``.
 
-    Pins the fix for the leak where ask_* nodes (ChatAgenticNode subclasses)
-    ignored ``tools`` and always wired db_tools, leaving ``read_query``
-    callable for a subagent that only whitelisted semantic/context tools.
+    Nothing carries over from the ChatAgenticNode surface: only the groups the
+    whitelist lists are exposed, an empty/absent ``tools`` exposes nothing, and
+    a single group (e.g. ``filesystem_tools.*``) yields only that group — db /
+    bash / etc. stay out unless explicitly granted.
     """
 
     def test_db_tools_dropped_when_not_whitelisted(self, real_agent_config):
@@ -1911,14 +1918,20 @@ class TestToolsWhitelist:
         for other in ("list_tables", "describe_table", "get_table_ddl"):
             assert other not in names, f"{other} should not be exposed by a method-level whitelist"
 
-    def test_infrastructure_tools_always_survive(self, real_agent_config):
-        """Filesystem tools anchor the consultant to its artifact and must
-        survive even though the whitelist never lists them."""
-        node = _make_ask_report_with_tools(real_agent_config, _NO_DB_WHITELIST)
-        names = _tool_names(node)
-        fs_names = _fs_tool_names(node)
-        assert fs_names, "filesystem tool exposes no tools — fixture broken"
-        assert fs_names <= names, f"infrastructure filesystem tools were pruned: {sorted(fs_names - names)}"
+    def test_filesystem_tools_require_whitelist(self, real_agent_config):
+        """Filesystem tools are gated like every other group — present only
+        when ``filesystem_tools`` is whitelisted, dropped otherwise. There is
+        no always-on infrastructure on an ask_* agent."""
+        # The no-db whitelist omits filesystem_tools -> filesystem dropped.
+        nofs = _make_ask_report_with_tools(real_agent_config, _NO_DB_WHITELIST, name="ask_nofs", slug="nofs")
+        assert not (_fs_tool_names(nofs) & _tool_names(nofs)), "filesystem leaked without being whitelisted"
+        # ``filesystem_tools.*`` alone -> ONLY filesystem tools, nothing else
+        # (no db, no bash, no semantic) — the exact contract the operator set.
+        withfs = _make_ask_report_with_tools(real_agent_config, "filesystem_tools.*", name="ask_withfs", slug="withfs")
+        names = _tool_names(withfs)
+        fs_names = _fs_tool_names(withfs)
+        assert fs_names and fs_names <= names
+        assert names == fs_names, f"filesystem_tools.* exposed non-filesystem tools: {sorted(names - fs_names)}"
 
     def test_wildcard_group_keeps_all_group_methods(self, real_agent_config):
         """``date_parsing_tools.*`` keeps every method of that group."""
@@ -1936,17 +1949,18 @@ class TestToolsWhitelist:
         assert "read_query" in names
         assert "list_tables" in names
 
-    def test_empty_whitelist_keeps_full_surface(self, real_agent_config):
-        """An empty ``tools`` string is back-compat: keep the inherited full
-        chat surface (db_tools included) rather than stripping to nothing."""
-        node = _make_ask_report_with_tools(real_agent_config, "")
-        assert "read_query" in _tool_names(node)
+    def test_empty_whitelist_exposes_no_tools(self, real_agent_config):
+        """An empty ``tools`` string exposes NOTHING — no chat-surface
+        carryover, no infrastructure default. The agent answers purely from
+        the inlined artifact context."""
+        node = _make_ask_report_with_tools(real_agent_config, "", name="ask_empty", slug="empty_wl")
+        assert _tool_names(node) == set()
 
-    def test_absent_tools_key_keeps_full_surface(self, real_agent_config):
-        """``tools`` key absent entirely (subagent created before scoping) →
-        same back-compat full surface."""
-        node = _make_ask_report_with_tools(real_agent_config, None)
-        assert "read_query" in _tool_names(node)
+    def test_absent_tools_key_exposes_no_tools(self, real_agent_config):
+        """``tools`` key absent entirely also exposes nothing — the surface is
+        determined solely by ``tools``."""
+        node = _make_ask_report_with_tools(real_agent_config, None, name="ask_absent", slug="absent_wl")
+        assert _tool_names(node) == set()
 
     def test_dashboard_honors_whitelist(self, real_agent_config):
         """The fix lives on the shared base, so ask_dashboard enforces the
@@ -1968,11 +1982,10 @@ class TestToolsWhitelist:
         monkeypatch.setattr(sem_mod, "SemanticTools", _boom)
         node = _make_ask_report_with_tools(real_agent_config, _NO_DB_WHITELIST, name="ask_sem_fail", slug="sem_fail")
         names = _tool_names(node)
-        # Whitelist still enforced (db dropped); semantic absent but no crash.
+        # Node built without crashing; db still absent and the failed semantic
+        # group simply contributes no tools.
         assert "read_query" not in names
         assert "query_metrics" not in names
-        # Infrastructure (artifact filesystem) survives so the node still works.
-        assert "read_file" in names
 
     def test_rebuild_tools_re_applies_whitelist(self, real_agent_config):
         """A mid-session datasource switch routes through ``_rebuild_tools``,
@@ -1987,3 +2000,116 @@ class TestToolsWhitelist:
         # Whitelisted semantic tool also survives the rebuild (it isn't
         # re-added by the base _rebuild_tools, so the override must re-surface it).
         assert "query_metrics" in names
+
+
+# --------------------------------------------------------------------------- #
+# System-prompt / tool-surface consistency                                    #
+# --------------------------------------------------------------------------- #
+
+
+class TestPromptToolConsistency:
+    """The system prompt must advertise only tools the whitelist exposes.
+
+    Regression for the mismatch where ask_* kept the ``db_func_tool`` instance
+    for internal use after pruning db_tools from the LLM surface, so the
+    prompt's ``has_db_tools`` flag (keyed off the instance) still advertised
+    db tools the model could not call — leading it to attempt ``list_tables`` /
+    ``read_query`` and hit "Tool ... not found".
+    """
+
+    def test_no_db_whitelist_prompt_omits_db_tools(self, real_agent_config):
+        """A whitelist without db_tools must not advertise or instruct db tools,
+        while semantic tools it DID whitelist are advertised (built on demand)."""
+        node = _make_ask_report_with_tools(
+            real_agent_config,
+            "date_parsing_tools.*,filesystem_tools.*,semantic_tools.*",
+            name="ask_nodb_prompt",
+            slug="nodb_prompt",
+        )
+        assert node._db_tools_exposed() is False
+        prompt = node._get_system_prompt()
+        # db tools are not callable -> never advertised nor instructed.
+        assert "**Database tools**" not in prompt
+        assert "execute_sql" not in prompt
+        assert "`describe_table` / `execute_sql`" not in prompt
+        # rule 1's live-data path reflects that db tools are unavailable.
+        assert "live database tools are not enabled" in prompt
+        # semantic tools ARE exposed (whitelisted + built on demand) -> advertised.
+        assert "Semantic / metric tools" in prompt
+
+    def test_db_whitelist_prompt_includes_db_tools(self, real_agent_config):
+        """A whitelist with db_tools keeps the db advertisement + live-data
+        guidance — the fix must not strip db tooling when it's legitimately
+        granted."""
+        node = _make_ask_report_with_tools(
+            real_agent_config,
+            "db_tools.*,filesystem_tools.*",
+            name="ask_db_prompt",
+            slug="db_prompt",
+        )
+        assert node._db_tools_exposed() is True
+        prompt = node._get_system_prompt()
+        assert "**Database tools**" in prompt
+        assert "`describe_table` / `execute_sql`" in prompt
+
+    def test_behavioral_rules_gate_db_guidance(self, real_agent_config):
+        """``_render_behavioral_rules_section`` swaps the live-data clause based
+        on db availability (unit-level check, independent of full prompt)."""
+        nodb = _make_ask_report_with_tools(
+            real_agent_config, "filesystem_tools.*,date_parsing_tools.*", name="ask_rules_nodb", slug="rules_nodb"
+        )
+        rules = nodb._render_behavioral_rules_section()
+        assert "execute_sql" not in rules
+        assert "live database tools are not enabled" in rules
+
+    def test_table_schemas_section_gates_describe_table_when_no_db(self, real_agent_config):
+        """The schema snapshot's ``describe_table`` refresh hint is dropped when
+        db tools aren't whitelisted — the snapshot becomes the sole source."""
+        from datus.agent.node.base_artifact_ask_agentic_node import INLINE_SCHEMA_COLS_PER_TABLE
+
+        slug = "schema_nodb"
+        _seed_artifact(real_agent_config.project_root, "report", slug)
+        root = Path(real_agent_config.project_root) / "reports" / slug
+        # Cover all three describe_table hint paths in one no-db render: the
+        # intro, a per-table ``error`` hint, and a wide-table truncation hint.
+        wide_cols = [{"name": f"c{i}", "type": "int"} for i in range(INLINE_SCHEMA_COLS_PER_TABLE + 5)]
+        _seed_analysis_extras(
+            root,
+            key_tables_schema={
+                "tables": [
+                    {"name": "orders", "columns": [{"name": "id", "type": "int"}]},
+                    {"name": "broken", "error": "connection refused"},
+                    {"name": "wide", "columns": wide_cols},
+                ]
+            },
+        )
+        blob = _blob_from_disk(real_agent_config.project_root, "report", slug)
+        _register_ask_agent_with_tools(
+            real_agent_config,
+            name="ask_schema_nodb",
+            kind="report",
+            slug=slug,
+            tools="filesystem_tools.*,date_parsing_tools.*",
+            blob=blob,
+        )
+        node = AskReportAgenticNode(
+            node_id="x", description="d", node_type="chat", agent_config=real_agent_config, node_name="ask_schema_nodb"
+        )
+        section = node._render_table_schemas_section()
+        assert "orders" in section  # snapshot still rendered
+        assert "live schema tools are not enabled" in section
+        # No describe_table suggestion anywhere — not the intro, the error hint,
+        # nor the truncation hint — since the tool isn't callable.
+        assert "describe_table(" not in section
+        assert "more columns not shown in this snapshot" in section  # truncation hint, no-db form
+        assert "schema unavailable in the snapshot" in section  # error hint, no-db form
+
+    def test_dashboard_rule6_gated_when_no_db(self, real_agent_config):
+        """ask_dashboard rule 6 must not promise ad-hoc ``execute_sql`` when the
+        whitelist grants no db tools (disk-bound dashboard path)."""
+        node = _make_ask_dashboard_with_tools(
+            real_agent_config, "filesystem_tools.*,semantic_tools.*", name="ask_dash_nodb", slug="dash_nodb"
+        )
+        rules = node._render_behavioral_rules_section()
+        assert "execute_sql" not in rules
+        assert "live SQL execution is not enabled" in rules

@@ -940,6 +940,7 @@ def prepare_template_context(
     has_reference_template_tools: bool = False,
     has_parsing_tools: bool = True,
     has_platform_doc_tools: bool = False,
+    has_semantic_tools: bool = False,
     agent_config: Optional[AgentConfig] = None,
     workspace_root: Optional[str] = None,
 ) -> dict:
@@ -955,6 +956,7 @@ def prepare_template_context(
         has_reference_template_tools: Whether reference template tools are available
         has_parsing_tools: Whether date parsing tools are available
         has_platform_doc_tools: Whether platform documentation search tools are available
+        has_semantic_tools: Whether semantic / metric tools are available
         agent_config: Agent configuration
         workspace_root: Workspace root path
 
@@ -969,6 +971,7 @@ def prepare_template_context(
         "has_reference_template_tools": has_reference_template_tools,
         "has_parsing_tools": has_parsing_tools,
         "has_platform_doc_tools": has_platform_doc_tools,
+        "has_semantic_tools": has_semantic_tools,
     }
     if not isinstance(node_config, SubAgentConfig):
         node_config = SubAgentConfig.model_validate(node_config)

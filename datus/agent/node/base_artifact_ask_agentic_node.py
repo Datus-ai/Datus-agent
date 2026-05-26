@@ -157,20 +157,23 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
     # (``ask_dashboard``) keep this False so the disk path stays available.
     BLOB_REQUIRED: ClassVar[bool] = False
 
-    # Capability tool groups gated by the subagent's ``tools`` whitelist, mapped
-    # to the node attribute that holds the built tool instance. Infrastructure
-    # tools (artifact-anchored filesystem, ask_user, plan/todo, sub-agent
-    # delegation) are deliberately ABSENT: a read-only consultant needs them to
-    # read its bound artifact and converse regardless of the whitelist, so they
-    # always survive pruning — mirroring GenSQLAgenticNode's always-on
-    # filesystem + sub_agent_task + plan set. ``read_query`` & friends live
-    # under ``db_tools`` and are dropped unless explicitly whitelisted.
+    # Tool groups selectable via the subagent's ``tools`` whitelist, mapped to
+    # the node attribute that holds the built tool instance. An ask_* agent's
+    # LLM-facing tool surface is determined SOLELY by this whitelist: only the
+    # groups listed here are eligible, and a tool is exposed only when a
+    # whitelist pattern grants it. There is no chat-surface carryover and no
+    # always-on infrastructure — an empty/absent ``tools`` exposes nothing
+    # (the agent answers from the inlined artifact context), and e.g.
+    # ``filesystem_tools.*`` yields ONLY filesystem tools. ``filesystem_tools``
+    # is therefore gated like any other group; ``ask_user`` / ``task`` /
+    # plan-mode tools are not expressible here and are never exposed on ask_*.
     _WHITELIST_GROUP_ATTRS: ClassVar[Dict[str, str]] = {
         "db_tools": "db_func_tool",
         "context_search_tools": "context_search_tools",
         "semantic_tools": "semantic_tools",
         "reference_template_tools": "reference_template_tools",
         "date_parsing_tools": "date_parsing_tools",
+        "filesystem_tools": "filesystem_func_tool",
         "platform_doc_tools": "_platform_doc_tool",
         "bash_tools": "bash_tool",
         "skills": "skill_func_tool",
@@ -260,18 +263,18 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
     # ── Tool whitelist enforcement (honor SubAgent.tools) ───────────────
 
     def setup_tools(self) -> None:
-        """Build the full chat tool surface, then constrain capability tools
-        to the subagent's configured ``tools`` whitelist.
+        """Restrict the LLM-facing tool surface to the configured ``tools``.
 
-        ChatAgenticNode wires its capability tools (db_tools, context_search,
-        …) unconditionally and never consults ``tools``. For an ask_*
-        consultant that field is a hard whitelist — the agent must not reach a
-        capability the operator did not grant (e.g. ``read_query`` when only
-        semantic/context tools were configured). We reuse the base setup so all
-        infrastructure (permission/skill managers, artifact-anchored
-        filesystem, plan + sub-agent tooling) is built correctly, then apply
-        the whitelist. An empty/absent whitelist leaves the inherited surface
-        untouched (back-compat for ask agents created before tool scoping).
+        ChatAgenticNode wires its full tool surface (db_tools, context_search,
+        filesystem, bash, …) unconditionally. For an ask_* consultant the
+        ``tools`` field is the *sole* determinant of what the LLM may call —
+        nothing carries over from the chat surface. We reuse the base setup so
+        infrastructure that is NOT a tool (permission/skill managers,
+        artifact-anchored filesystem instance, sessions, MCP) is built
+        correctly, then replace ``self.tools`` with exactly the tools the
+        whitelist grants. An empty/absent ``tools`` exposes nothing (the agent
+        answers purely from the inlined artifact context); ``filesystem_tools.*``
+        exposes only filesystem tools; and so on.
         """
         super().setup_tools()
         self._apply_tools_whitelist()
@@ -281,10 +284,10 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
 
         ``ChatAgenticNode._rebuild_tools`` (also reached via a mid-session
         datasource switch) repopulates ``self.tools`` from the full set of tool
-        instances, which would silently re-expose pruned capabilities. Re-running
-        the whitelist here keeps the constraint enforced for the life of the
-        node. Safe during ``super().__init__`` because the slots it reads are
-        initialised beforehand or accessed via ``getattr``.
+        instances, which would silently re-expose tools outside the whitelist.
+        Re-running the restriction here keeps the surface locked to ``tools``
+        for the life of the node. Safe during ``super().__init__`` because the
+        slots it reads are initialised beforehand or accessed via ``getattr``.
         """
         super()._rebuild_tools()
         self._apply_tools_whitelist()
@@ -302,13 +305,14 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         return mapping
 
     def _apply_tools_whitelist(self) -> None:
-        """Constrain ``self.tools`` to the configured whitelist + infrastructure."""
+        """Replace ``self.tools`` with exactly the tools the whitelist grants.
+
+        No early return on an empty whitelist: an empty/absent ``tools`` must
+        yield an empty tool surface, not the inherited chat surface.
+        """
         patterns = self._parse_tool_whitelist(self.node_config.get("tools"))
-        if not patterns:
-            # Unconfigured -> keep the inherited full surface (back-compat).
-            return
         self._ensure_whitelisted_groups_present(patterns)
-        self._prune_capability_tools(patterns)
+        self._restrict_tools_to_whitelist(patterns)
 
     @staticmethod
     def _parse_tool_whitelist(tools_value: Any) -> List[str]:
@@ -355,12 +359,13 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             if tool.name not in present:
                 self.tools.append(tool)
 
-    def _capability_tool_groups(self) -> Dict[str, str]:
-        """Map each built capability tool *name* -> its whitelist group label.
+    def _whitelist_tool_groups(self) -> Dict[str, str]:
+        """Map each selectable tool *name* -> its whitelist group label.
 
-        Built only from the gated groups in ``_WHITELIST_GROUP_ATTRS``;
-        infrastructure tools are intentionally excluded so they never appear
-        here and therefore always survive pruning.
+        Built from every group in ``_WHITELIST_GROUP_ATTRS`` (filesystem
+        included). Tools whose name is absent from this map are not expressible
+        in the ``tools`` field (e.g. ``ask_user`` / ``task`` / plan-mode) and
+        are therefore never exposed on an ask_* agent.
         """
         name_to_group: Dict[str, str] = {}
         for group, attr in self._WHITELIST_GROUP_ATTRS.items():
@@ -374,30 +379,52 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
                 logger.warning("%s: cannot enumerate %s tools for whitelist: %s", self.get_node_name(), group, exc)
         return name_to_group
 
-    def _prune_capability_tools(self, patterns: List[str]) -> None:
-        """Drop every capability tool not granted by the whitelist.
+    def _restrict_tools_to_whitelist(self, patterns: List[str]) -> None:
+        """Keep only tools a whitelist pattern grants; drop everything else.
 
-        A tool is kept when it is NOT a gated capability (i.e. infrastructure)
-        or when a whitelist pattern grants it. Idempotent — safe to call on
-        every rebuild.
+        A tool survives only when it maps to a selectable group AND a pattern
+        grants it. Tools outside the selectable groups (``ask_user`` / ``task``
+        / plan-mode) and every tool when ``patterns`` is empty are dropped, so
+        the surface equals exactly what ``tools`` requested. Idempotent — safe
+        to call on every rebuild.
         """
-        name_to_group = self._capability_tool_groups()
+        name_to_group = self._whitelist_tool_groups()
         kept: List[Any] = []
         dropped: List[str] = []
         for tool in self.tools:
             group = name_to_group.get(tool.name)
-            if group is None or self._tool_matches_whitelist(group, tool.name, patterns):
+            if group is not None and self._tool_matches_whitelist(group, tool.name, patterns):
                 kept.append(tool)
             else:
                 dropped.append(tool.name)
         self.tools = kept
         if dropped:
             logger.info(
-                "%s tools whitelist applied: dropped=%s exposed=%s",
+                "%s tools whitelist applied: configured=%r exposed=%s dropped=%s",
                 self.get_node_name(),
-                sorted(set(dropped)),
+                self.node_config.get("tools"),
                 sorted({t.name for t in kept}),
+                sorted(set(dropped)),
             )
+
+    def _db_tools_exposed(self) -> bool:
+        """True if any db_tools tool survived the whitelist prune.
+
+        Gates the prompt's db-tool guidance (rule 1's live-data path, the
+        dashboard ad-hoc-SQL rule, the schema-snapshot ``describe_table``
+        hints). When the subagent whitelist excludes db_tools we must not
+        instruct the model to call tools it no longer has, or it will attempt
+        them and hit "Tool ... not found". The ``db_func_tool`` instance often
+        still exists (reference-template execution needs it), so check the
+        exposed ``self.tools`` rather than the instance.
+        """
+        if not self.db_func_tool:
+            return False
+        exposed = {tool.name for tool in self.tools}
+        try:
+            return any(tool.name in exposed for tool in self.db_func_tool.available_tools())
+        except Exception:
+            return False
 
     # ── Artifact binding resolution ─────────────────────────────────────
 
@@ -1086,18 +1113,31 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         if not isinstance(tables, list) or not tables:
             return ""
 
-        intro = (
-            "Columns of every table in `manifest.key_tables` at the time "
-            "the artifact was finalized. **This is a SNAPSHOT — call "
-            "`describe_table('<table>')` instead when the user explicitly "
-            "asks about the LATEST / CURRENT schema, when they reference "
-            "a column NOT in this list (could be a typo or a post-"
-            "finalize addition), or when they ask about tables NOT in "
-            "`manifest.key_tables`.** For everything else (writing "
-            "follow-up SQL on the listed tables, explaining a column, "
-            "planning a join between listed tables), use this snapshot "
-            "directly — no `describe_table` round-trip needed."
-        )
+        db_exposed = self._db_tools_exposed()
+        if db_exposed:
+            intro = (
+                "Columns of every table in `manifest.key_tables` at the time "
+                "the artifact was finalized. **This is a SNAPSHOT — call "
+                "`describe_table('<table>')` instead when the user explicitly "
+                "asks about the LATEST / CURRENT schema, when they reference "
+                "a column NOT in this list (could be a typo or a post-"
+                "finalize addition), or when they ask about tables NOT in "
+                "`manifest.key_tables`.** For everything else (writing "
+                "follow-up SQL on the listed tables, explaining a column, "
+                "planning a join between listed tables), use this snapshot "
+                "directly — no `describe_table` round-trip needed."
+            )
+        else:
+            # No db tools for this agent — describe_table isn't callable, so
+            # don't suggest it. The snapshot is the only schema source.
+            intro = (
+                "Columns of every table in `manifest.key_tables` at the time "
+                "the artifact was finalized. **This is a SNAPSHOT and live "
+                "schema tools are not enabled for this agent** — treat it as "
+                "the authoritative schema, and if the user asks about the "
+                "current/latest schema or a column not listed here, say it "
+                "can't be verified live rather than guessing."
+            )
 
         lines: List[str] = ["### Table Schemas (`analysis/key_tables_schema.json`)", "", intro, ""]
         # Measure in UTF-8 bytes (not code points) since the cap is
@@ -1111,7 +1151,7 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         for tbl in tables:
             if not isinstance(tbl, dict):
                 continue
-            entry_lines = self._render_table_schema_entry(tbl)
+            entry_lines = self._render_table_schema_entry(tbl, db_exposed)
             entry_bytes = sum(len(line.encode("utf-8")) + 1 for line in entry_lines)
             if running_bytes + entry_bytes > INLINE_SCHEMA_BYTES_CAP:
                 cap_reached = True
@@ -1120,20 +1160,24 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             lines.append("")
             running_bytes += entry_bytes
         if cap_reached:
-            lines.append(
-                "_(schema section cap reached — remaining tables omitted; "
-                "call `describe_table('<table>')` for any name in "
-                "`manifest.key_tables` not shown above.)_"
-            )
+            if db_exposed:
+                lines.append(
+                    "_(schema section cap reached — remaining tables omitted; "
+                    "call `describe_table('<table>')` for any name in "
+                    "`manifest.key_tables` not shown above.)_"
+                )
+            else:
+                lines.append("_(schema section cap reached — remaining tables omitted from this snapshot.)_")
         return "\n".join(lines).rstrip()
 
-    def _render_table_schema_entry(self, tbl: Dict[str, Any]) -> List[str]:
+    def _render_table_schema_entry(self, tbl: Dict[str, Any], db_exposed: bool) -> List[str]:
         """Render one table block: header + optional description + columns.
 
         Per-table ``error`` (populated when ``describe_table`` failed
-        at finalize) surfaces as a "schema unavailable" hint with the
-        exact remediation (call ``describe_table('<name>')``) so the
-        LLM has a clear next step rather than guessing.
+        at finalize) surfaces as a "schema unavailable" hint. The
+        ``describe_table('<name>')`` remediation is only suggested when db
+        tools are actually exposed (``db_exposed``); otherwise pointing the
+        LLM at a tool it cannot call just produces a "Tool not found".
         """
         name = tbl.get("name") or "?"
         if not isinstance(name, str):
@@ -1146,7 +1190,10 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         if description:
             lines.append(f"_(description: {description})_")
         if error:
-            lines.append(f"_(schema unavailable: {error}; call `describe_table('{name}')` to fetch live schema.)_")
+            if db_exposed:
+                lines.append(f"_(schema unavailable: {error}; call `describe_table('{name}')` to fetch live schema.)_")
+            else:
+                lines.append(f"_(schema unavailable in the snapshot: {error}.)_")
             return lines
         if not isinstance(columns, list):
             return lines
@@ -1169,7 +1216,10 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             lines.append(line)
         if truncated:
             remaining = len(columns) - INLINE_SCHEMA_COLS_PER_TABLE
-            lines.append(f"- _(... {remaining} more columns; call `describe_table('{name}')` for the full list.)_")
+            if db_exposed:
+                lines.append(f"- _(... {remaining} more columns; call `describe_table('{name}')` for the full list.)_")
+            else:
+                lines.append(f"- _(... {remaining} more columns not shown in this snapshot.)_")
         return lines
 
     def _render_insights_section(self) -> str:
@@ -1420,13 +1470,33 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             return False
         return isinstance(insights, list) and bool(insights)
 
+    def _render_narrative_readable(self) -> bool:
+        """ask_report only: is the report's ``render/`` body readable on demand?
+
+        For a report, ``render/*.jsx`` *is* the written report (cover,
+        executive summary, per-section commentary, and whatever conclusion /
+        recommendation sections the author wrote) — none of which is inlined.
+        Only ``render/app.jsx`` is guaranteed to exist (the React entry that
+        imports the section components); the section filenames are arbitrary.
+        It's worth reading when the user asks about the report's wording, but
+        only if ``read_file`` was actually granted (per the subagent's
+        ``tools``). Dashboards keep render off-limits: their render tier is
+        parameterized chart presentation, and the answerable content lives in
+        queries / params.
+        """
+        if self.ARTIFACT_KIND != "report":
+            return False
+        return "read_file" in {tool.name for tool in self.tools}
+
     def _render_filesystem_layout_section(self) -> str:
         """Tell the LLM what's already inlined vs what still needs read_file.
 
         The directory tree mirrors the on-disk artifact layout but
         annotates each entry with "inlined above" vs "DO NOT read" vs
         "read on demand" so a model trying to be helpful by pre-fetching
-        files immediately sees that defensive reads are not useful.
+        files immediately sees that defensive reads are not useful. For a
+        report whose ``render/`` body is readable, that tree points the LLM
+        at the right component instead of forbidding the read.
         """
         layout_root_label = self._artifact_root.name if self._artifact_root is not None else self.ARTIFACT_ROOT_DIR_NAME
         has_insights = self._artifact_has_insights()
@@ -1438,6 +1508,15 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             "`queries/*.brief.json` plus the inlined slice of "
             "`queries/*` data + SQL above"
         )
+        # Reports surface their narrative body in render/*.jsx (not inlined);
+        # mention it in the intro so the read-on-demand path is explicit.
+        narrative_clause = (
+            " — or when the user asks about the report's narrative, executive "
+            "summary, conclusions, recommendations, or a section's commentary, which "
+            "live in `render/*.jsx` (start at `render/app.jsx`), not inlined"
+            if self._render_narrative_readable()
+            else ""
+        )
         lines: List[str] = [
             "### Artifact Filesystem Layout",
             "",
@@ -1447,7 +1526,7 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
                 f"already loaded into this prompt: {loaded_list}.** "
                 f"**Do NOT `read_file` / `glob` them defensively.** Read on "
                 f"demand only when the catalog above flags a query's data as "
-                f"sampled or its SQL as truncated."
+                f"sampled or its SQL as truncated" + narrative_clause + "."
             ),
             "",
             "```",
@@ -1462,16 +1541,34 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         # unconditionally (no insights file by design).
         if has_insights:
             lines.append("│   ├── insights.json            # inlined above")
+        schema_line = (
+            "│   ├── key_tables_schema.json   # inlined above (if present); snapshot only — describe_table() for live"
+            if self._db_tools_exposed()
+            else "│   ├── key_tables_schema.json   # inlined above (if present); snapshot only — no live schema tools enabled"
+        )
         lines.extend(
             [
                 "│   ├── subject_refs.json        # inlined above (if present)",
-                "│   ├── key_tables_schema.json   # inlined above (if present); snapshot only — describe_table() for live",
+                schema_line,
                 "│   └── suggested_questions.json # UI chips — DO NOT read",
                 "├── queries/                     # briefs always inlined; data + SQL inlined or sampled per catalog above",
-                "└── render/                     # presentation tier — DO NOT READ",
-                "```",
             ]
         )
+        # ``render/`` holds the written report for a report kind; point the LLM
+        # at the guaranteed entry (``app.jsx``, which imports the section
+        # components) instead of forbidding the read or assuming arbitrary
+        # section filenames. Off-limits when render can't be read (no
+        # read_file) or for dashboards (parameterized chart presentation).
+        if self._render_narrative_readable():
+            lines.append(
+                "└── render/                      # the report's written body (NOT inlined) — read "
+                "`render/app.jsx` (entry: cover + executive summary; it imports the section "
+                "components) and follow its imports on demand for the report's wording / "
+                "conclusions / recommendations / a section's commentary"
+            )
+        else:
+            lines.append("└── render/                      # presentation tier — DO NOT READ")
+        lines.append("```")
         return "\n".join(lines)
 
     def _render_behavioral_rules_section(self) -> str:
@@ -1492,6 +1589,16 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         # rule 1 claim "confirmed insights" are inlined, both of
         # which would mislead the LLM.
         has_insights = self._artifact_has_insights()
+        # When the subagent whitelist drops db_tools, the model has no
+        # describe_table / read_query to call — promising them in the rules
+        # makes it attempt unavailable tools ("Tool ... not found").
+        db_exposed = self._db_tools_exposed()
+        live_data_clause = (
+            "(call `describe_table` / `execute_sql` for those)"
+            if db_exposed
+            else "(live database tools are not enabled for this agent, so answer "
+            "from the snapshot and say plainly when something cannot be verified live)"
+        )
         lines: List[str] = ["### Behavioral Rules (load-bearing)", ""]
         lines.append(
             "1. **Answer from the inlined context first**. The header above "
@@ -1505,8 +1612,7 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             "explicitly flagged a query's data as sampled or its SQL as "
             "truncated, (b) the user asks about LIVE / CURRENT state "
             "the snapshot can't answer — fresh schema after a DDL "
-            "change, live row counts, today's data (call "
-            "`describe_table` / `execute_sql` for those), or (c) the "
+            "change, live row counts, today's data " + live_data_clause + ", or (c) the "
             "inlined summary genuinely doesn't address the question. "
             "When you do, briefly say which file or tool and why."
         )
@@ -1533,15 +1639,26 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             "user explicitly asks, but call it out in your answer."
         )
         if self.ARTIFACT_KIND == "dashboard":
-            lines.append(
-                "6. **Dashboard queries have no precomputed data**. The "
-                "`queries/<slug>.sql.j2` files (inlined above) are "
-                "templates; to answer quantitative questions, run an "
-                "equivalent ad-hoc SQL via `execute_sql` within the "
-                "dashboard's datasource scope, or use the params "
-                "declaration to explain what user-controllable filters "
-                "exist."
-            )
+            if db_exposed:
+                lines.append(
+                    "6. **Dashboard queries have no precomputed data**. The "
+                    "`queries/<slug>.sql.j2` files (inlined above) are "
+                    "templates; to answer quantitative questions, run an "
+                    "equivalent ad-hoc SQL via `execute_sql` within the "
+                    "dashboard's datasource scope, or use the params "
+                    "declaration to explain what user-controllable filters "
+                    "exist."
+                )
+            else:
+                lines.append(
+                    "6. **Dashboard queries have no precomputed data**. The "
+                    "`queries/<slug>.sql.j2` files (inlined above) are "
+                    "templates and live SQL execution is not enabled for this "
+                    "agent; answer quantitative questions from the inlined "
+                    "sample data and use the params declaration to explain "
+                    "what user-controllable filters exist, flagging anything "
+                    "that would need a live query."
+                )
         elif has_insights:
             lines.append(
                 "6. **`insights.json` is the authoritative findings "
