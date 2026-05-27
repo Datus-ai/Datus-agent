@@ -356,6 +356,7 @@ class TestResumeSessionId:
             node_id_suffix="_print",
             scope=None,
             session_id="session_uuid123",
+            execution_mode="workflow",
         )
 
 
@@ -393,7 +394,12 @@ class TestRunUsesFactory:
             runner.run()
 
         mock_create_node.assert_called_once_with(
-            None, runner.agent_config, node_id_suffix="_print", scope=None, session_id=None
+            None,
+            runner.agent_config,
+            node_id_suffix="_print",
+            scope=None,
+            session_id=None,
+            execution_mode="workflow",
         )
         mock_create_input.assert_called_once()
         assert mock_node.input == mock_input
