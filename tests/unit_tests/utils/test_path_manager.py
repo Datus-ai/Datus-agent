@@ -513,7 +513,14 @@ class TestRelpathForDisplay:
         target = home / "sessions" / "p" / "sid" / "data" / "x.json"
         assert pm.relpath_for_display(target) == "~/.datus/sessions/p/sid/data/x.json"
 
-    def test_outside_known_anchors_renders_absolute(self, tmp_path):
+    def test_outside_known_anchors_renders_absolute(self, tmp_path, monkeypatch):
+        # Pin $HOME to a sibling of tmp_path so the target cannot accidentally
+        # fall under Path.home() on CI runners whose tmp dir lives below $HOME
+        # (e.g. /home/runner/...); without this the third anchor matches and
+        # the path renders as ``~/...`` instead of absolute.
+        fake_home = tmp_path / "fake_home"
+        fake_home.mkdir()
+        monkeypatch.setenv("HOME", str(fake_home))
         pm = DatusPathManager(datus_home=str(tmp_path / "home"), project_name="p", project_root=str(tmp_path / "proj"))
         # ``totally_other/`` is neither under project_root nor datus_home; absolute
         # is the correct fallback (LLM can still feed it back, just no shortening).
