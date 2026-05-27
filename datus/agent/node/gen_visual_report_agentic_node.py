@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from datus.agent.node.base_visual_artifact_agentic_node import BaseVisualArtifactAgenticNode
-from datus.schemas.action_history import ActionHistory
+from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.gen_visual_report_models import (
     GenVisualReportNodeInput,
     GenVisualReportNodeResult,
@@ -162,16 +162,45 @@ class GenVisualReportAgenticNode(BaseVisualArtifactAgenticNode[GenVisualReportNo
             created_at=manifest.get("created_at"),
         )
 
-    def _post_validate_hook(self, artifact_slug: str, result: GenVisualReportNodeResult) -> None:
+    def _post_validate_hook(self, artifact_slug: str, result: GenVisualReportNodeResult) -> Optional[ActionHistory]:
         """CLI-mode side effect: compile a standalone HTML and open it.
 
         Dashboard mode has no analogue (its queries are templates that
         must run against a live datasource), so this stays in the report
         subclass and the base class skips the hook in dashboard mode.
+
+        Returns a stream message carrying the compiled HTML's absolute path
+        so the user can reopen the report after closing the auto-opened
+        browser tab; ``None`` when no HTML was compiled (non-CLI mode).
         """
         html_rel_path = self._maybe_compile_html(artifact_slug)
-        if html_rel_path:
-            result.html_path = html_rel_path
+        if not html_rel_path:
+            return None
+        result.html_path = html_rel_path
+        project_root = Path(self.agent_config.project_root).resolve()
+        html_abs_path = (project_root / html_rel_path).resolve()
+        return self._build_html_path_action(artifact_slug, html_abs_path)
+
+    def _build_html_path_action(self, report_slug: str, html_abs_path: Path) -> ActionHistory:
+        """Stream a status message naming the compiled report's absolute path.
+
+        The CLI auto-opens the report in a browser; once the user closes that
+        tab they otherwise have no record of where the artifact lives. Emitting
+        the absolute path into the action stream keeps it in the scrollback for
+        later reference. Uses the ``WORKFLOW`` role (the node status-message
+        convention) so the TUI same-turn assistant-response dedup never drops it.
+        """
+        message = (
+            f"Report saved to {html_abs_path} — open this file in a browser to view it again after closing the tab."
+        )
+        return ActionHistory.create_action(
+            role=ActionRole.WORKFLOW,
+            action_type="report_html_path",
+            messages=message,
+            input_data={"report_slug": report_slug},
+            output_data={"html_path": str(html_abs_path), "url": html_abs_path.as_uri()},
+            status=ActionStatus.SUCCESS,
+        )
 
     # ----------------------------------------------------------- CLI compile
 
