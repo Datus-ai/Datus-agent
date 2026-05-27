@@ -633,12 +633,14 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         """
         raise NotImplementedError
 
-    def _post_validate_hook(self, artifact_slug: str, result: ResultT) -> None:
+    def _post_validate_hook(self, artifact_slug: str, result: ResultT) -> Optional[ActionHistory]:
         """Run artifact-specific work after a successful ``validate_render``.
 
-        The report subagent uses this to compile a standalone HTML and
-        optionally open it in the browser; dashboard mode has nothing to
-        do here. Default is a no-op.
+        The report subagent uses this to compile a standalone HTML, open it
+        in the browser, and return a stream message naming the compiled
+        file's absolute path; dashboard mode has nothing to do here.
+        Returning an :class:`ActionHistory` makes ``_stream_post_build``
+        emit it into the action stream; ``None`` (the default) emits nothing.
         """
         return None
 
@@ -858,4 +860,6 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             result.finalize_warnings = finalize_summary["warnings"]  # type: ignore[attr-defined]
         if hasattr(result, "finalize_error") and finalize_summary.get("error"):
             result.finalize_error = finalize_summary["error"]  # type: ignore[attr-defined]
-        self._post_validate_hook(slug, result)
+        post_action = self._post_validate_hook(slug, result)
+        if post_action is not None:
+            yield post_action

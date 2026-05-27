@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 
 from datus.configuration.node_type import NodeType
-from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.gen_visual_report_models import GenVisualReportNodeInput
 from datus.tools.func_tool import (
     DBFuncTool,
@@ -278,6 +278,17 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
     assert result["html_path"] == expected_html_rel
     assert (report_dir / "index.html").is_file()
 
+    # CLI mode streams a WORKFLOW status message carrying the compiled HTML's
+    # absolute path so the user can reopen it after closing the browser tab.
+    path_actions = [a for a in actions if a.action_type == "report_html_path"]
+    assert len(path_actions) == 1, "expected exactly one report_html_path action in CLI mode"
+    path_action = path_actions[0]
+    assert path_action.role == ActionRole.WORKFLOW
+    abs_html = str((report_dir / "index.html").resolve())
+    assert abs_html in path_action.messages
+    assert path_action.output["html_path"] == abs_html
+    assert path_action.output["url"].startswith("file://")
+
     # Artifact card fields surface through the result so the SSE artifact
     # event can be built without touching disk a second time.
     assert result["artifact_kind"] == "report"
@@ -330,6 +341,48 @@ class TestReportDistResolution:
         node._maybe_compile_html(report_slug)
         copied_css = Path(real_agent_config.project_root) / "reports" / report_slug / "_assets" / "index.css"
         assert copied_css.read_text(encoding="utf-8") == "/* node-only css */"
+
+
+class TestHtmlPathStreamMessage:
+    """Verify the compiled-HTML absolute path is surfaced into the action stream."""
+
+    def test_post_validate_hook_emits_path_action_in_cli_mode(self, real_agent_config, mock_llm_create):
+        from datus.schemas.gen_visual_report_models import GenVisualReportNodeResult
+
+        node = _make_node(real_agent_config)
+        report_slug = "path_msg_cli"
+        _seed_render_on_disk(Path(real_agent_config.project_root), report_slug)
+        node._active_artifact_slug = report_slug
+
+        result = GenVisualReportNodeResult(success=True)
+        action = node._post_validate_hook(report_slug, result)
+
+        assert isinstance(action, ActionHistory)
+        assert action.action_type == "report_html_path"
+        assert action.role == ActionRole.WORKFLOW
+        abs_html = str((Path(real_agent_config.project_root) / "reports" / report_slug / "index.html").resolve())
+        assert action.output["html_path"] == abs_html
+        assert abs_html in action.messages
+        # The relative path is still recorded on the result for SaaS/task consumers.
+        assert result.html_path == f"reports/{report_slug}/index.html"
+
+    def test_post_validate_hook_returns_none_in_non_cli_mode(self, real_agent_config, mock_llm_create):
+        from datus.schemas.gen_visual_report_models import GenVisualReportNodeResult
+
+        # filesystem_strict flips the node into SaaS/API mode, which renders
+        # reports dynamically server-side and never compiles a standalone HTML.
+        real_agent_config.filesystem_strict = True
+        node = _make_node(real_agent_config)
+        report_slug = "path_msg_saas"
+        _seed_render_on_disk(Path(real_agent_config.project_root), report_slug)
+        node._active_artifact_slug = report_slug
+
+        result = GenVisualReportNodeResult(success=True)
+        action = node._post_validate_hook(report_slug, result)
+
+        assert action is None
+        assert result.html_path is None
+        assert not (Path(real_agent_config.project_root) / "reports" / report_slug / "index.html").exists()
 
 
 class _InlineThread:
