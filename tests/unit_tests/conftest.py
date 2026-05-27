@@ -23,18 +23,35 @@ from unittest.mock import patch
 
 import pytest
 
-# Clear Langfuse env vars BEFORE any test module imports trigger setup_tracing().
+# Clear Langfuse env vars BEFORE any unit test module imports trigger setup_tracing().
 # Session-scoped fixtures run too late (after collection), so we use pytest_configure.
+# Nightly/integration invocations set DATUS_TEST_LAYER to keep external tracing intact
+# even if this conftest is loaded during collection.
 _LANGFUSE_ENV_KEYS = ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_HOST", "LANGFUSE_BASE_URL")
 _saved_langfuse_env = {}
+_langfuse_env_stripped = False
+_EXTERNAL_TRACING_TEST_LAYERS = {"integration", "nightly", "product_e2e", "provider_health", "regression"}
+
+
+def _external_tracing_cleanup_enabled(test_layer: str | None) -> bool:
+    return (test_layer or "").strip().lower() not in _EXTERNAL_TRACING_TEST_LAYERS
 
 
 def pytest_configure(config):
+    global _langfuse_env_stripped
+    if not _external_tracing_cleanup_enabled(os.environ.get("DATUS_TEST_LAYER")):
+        _langfuse_env_stripped = False
+        return
+
+    _langfuse_env_stripped = True
     for key in _LANGFUSE_ENV_KEYS:
         _saved_langfuse_env[key] = os.environ.pop(key, None)
 
 
 def pytest_unconfigure(config):
+    if not _langfuse_env_stripped:
+        return
+
     for key, val in _saved_langfuse_env.items():
         if val is None:
             os.environ.pop(key, None)
@@ -82,6 +99,10 @@ def _disable_langsmith_tracing():
     Overrides any inherited env vars so UT runs never upload traces, even when
     the developer's shell has LANGSMITH_TRACING=true or an API key set.
     """
+    if not _external_tracing_cleanup_enabled(os.environ.get("DATUS_TEST_LAYER")):
+        yield
+        return
+
     saved = {
         k: os.environ.get(k)
         for k in (
