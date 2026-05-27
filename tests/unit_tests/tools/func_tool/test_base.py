@@ -5,6 +5,7 @@ Focuses on trans_to_function_tool parameter filtering for LLM-hallucinated argum
 
 import json
 import logging
+from unittest.mock import Mock
 
 import pytest
 
@@ -205,20 +206,17 @@ class TestParseToolArgs:
     def test_empty_args_with_required_fields(self):
         """Empty args_str with required_fields should return error."""
         result, error = parse_tool_args("", required_fields={"x"}, tool_name="test")
-        assert error is not None
         assert "missing required fields" in error
         assert result == {}
 
     def test_none_args_with_required_fields(self):
         """None args_str with required_fields should return error."""
         result, error = parse_tool_args(None, required_fields={"x"}, tool_name="test")
-        assert error is not None
         assert "missing required fields" in error
 
     def test_whitespace_only_args_with_required_fields(self):
         """Whitespace-only string with required_fields should return error."""
         result, error = parse_tool_args("   ", required_fields={"x"}, tool_name="test")
-        assert error is not None
         assert "missing required fields" in error
 
     def test_non_string_dict_input(self):
@@ -230,22 +228,19 @@ class TestParseToolArgs:
     def test_non_string_dict_input_missing_required(self):
         """Non-string dict input missing required fields should return error."""
         result, error = parse_tool_args({"a": 1}, required_fields={"b"}, tool_name="test")
-        assert error is not None
         assert "missing required fields" in error
 
     def test_non_string_invalid_input(self):
         """Non-string, non-dict input should return error."""
         result, error = parse_tool_args(12345, tool_name="test")
-        assert error is not None
         assert "Invalid arguments" in error
 
     def test_json_repair_exception_falls_through(self, monkeypatch):
         """When json_repair itself raises, should fall through to Invalid JSON error."""
         import json_repair as _jr
 
-        monkeypatch.setattr(_jr, "loads", lambda *a, **kw: (_ for _ in ()).throw(ValueError("boom")))
+        monkeypatch.setattr(_jr, "loads", Mock(side_effect=ValueError("boom")))
         result, error = parse_tool_args("{bad json}", tool_name="test")
-        assert error is not None
         assert "Invalid JSON" in error
 
     def test_truncated_json_hint(self, monkeypatch):
@@ -254,7 +249,6 @@ class TestParseToolArgs:
 
         monkeypatch.setattr(_jr, "loads", lambda *a, **kw: None)
         result, error = parse_tool_args('{"key": "val', tool_name="test")
-        assert error is not None
         assert "truncated" in error.lower()
 
     def test_repair_succeeds_no_truncation_hint(self):
