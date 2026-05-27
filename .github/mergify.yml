@@ -11,6 +11,15 @@ commands_restrictions:
         - sender-permission>=read
         - sender=github-actions[bot]
 
+# Defaults apply to both file-defined rules and `@Mergifyio backport ...`
+# commands. Override the backport PR body so it carries only a reference to
+# the source PR instead of a verbatim copy of the original description.
+defaults:
+  actions:
+    backport:
+      body: |
+        Automated backport of #{{ number }} to `{{ destination_branch }}`.
+
 pull_request_rules:
   - name: assign PRs with the pr author
     conditions:

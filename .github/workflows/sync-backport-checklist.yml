@@ -4,6 +4,11 @@ name: Sync backport checklist
 # the current set of `release/*` branches. User ticks ([x]) are preserved across
 # updates; branches that no longer exist are dropped automatically. The merge-time
 # workflow (trigger-backport-on-merge.yml) reads these ticks to fire Mergify.
+#
+# Only PRs targeting `main` get a checklist. Mergify-created backport PRs target
+# `release/*` branches and use a clean body template configured in
+# `.github/mergify.yml` (`defaults.actions.backport.body`), so they never need
+# their checklist scrubbed here.
 
 on:
   pull_request_target:
@@ -41,7 +46,6 @@ jobs:
             const pr = context.payload.pull_request;
             const oldBody = pr.body || '';
 
-            // Match `## Backport` section up to the next `## ` heading or EOF.
             const sectionRegex = /(^|\n)## Backport[ \t]*\r?\n[\s\S]*?(?=\n## |\s*$)/;
             const sectionMatch = oldBody.match(sectionRegex);
 
