@@ -11,3 +11,11 @@
 ## Test Cases
 
 <!-- What integration/nightly test cases were added or modified? If none, explain why. -->
+
+## Backport
+
+<!-- The checklist below is auto-generated and refreshed by
+     .github/workflows/sync-backport-checklist.yml whenever the PR is opened
+     or updated. Tick the release branches you want this PR backported to;
+     on merge, the bot will post a `@Mergifyio backport <branch>` comment. -->
+

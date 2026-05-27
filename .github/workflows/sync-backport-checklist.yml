@@ -1,0 +1,88 @@
+name: Sync backport checklist
+
+# Auto-maintain the `## Backport` checklist in the PR body so it always reflects
+# the current set of `release/*` branches. User ticks ([x]) are preserved across
+# updates; branches that no longer exist are dropped automatically. The merge-time
+# workflow (trigger-backport-on-merge.yml) reads these ticks to fire Mergify.
+
+on:
+  pull_request_target:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  sync-checklist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const SECTION_TITLE = '## Backport';
+            const HEADER_NOTE = '<!-- Auto-generated below by .github/workflows/sync-backport-checklist.yml. Tick the release branches to backport this PR to after merge. -->';
+
+            const branches = await github.paginate(github.rest.repos.listBranches, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            });
+            const releaseBranches = branches
+              .map(b => b.name)
+              .filter(n => n.startsWith('release/'))
+              .sort();
+
+            const pr = context.payload.pull_request;
+            const oldBody = pr.body || '';
+
+            // Match `## Backport` section up to the next `## ` heading or EOF.
+            const sectionRegex = /(^|\n)## Backport[ \t]*\r?\n[\s\S]*?(?=\n## |\s*$)/;
+            const sectionMatch = oldBody.match(sectionRegex);
+
+            const ticked = new Set();
+            if (sectionMatch) {
+              const tickedRegex = /^- \[x\] (release\/\S+)/gm;
+              let m;
+              while ((m = tickedRegex.exec(sectionMatch[0])) !== null) {
+                ticked.add(m[1]);
+              }
+            }
+
+            const lines = [SECTION_TITLE, '', HEADER_NOTE, ''];
+            if (releaseBranches.length === 0) {
+              lines.push('_No `release/*` branches exist yet._');
+            } else {
+              for (const br of releaseBranches) {
+                const mark = ticked.has(br) ? 'x' : ' ';
+                lines.push(`- [${mark}] ${br}`);
+              }
+            }
+            const newSection = lines.join('\n');
+
+            let newBody;
+            if (sectionMatch) {
+              const prefix = sectionMatch[1] || '';
+              newBody = oldBody.replace(sectionRegex, `${prefix}${newSection}`);
+            } else {
+              const sep = oldBody.endsWith('\n') ? '\n' : '\n\n';
+              newBody = `${oldBody}${sep}${newSection}\n`;
+            }
+
+            if (newBody === oldBody) {
+              core.info('Backport checklist already in sync.');
+              return;
+            }
+
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              body: newBody,
+            });
+            core.info(`Backport checklist updated (${releaseBranches.length} branches, ${ticked.size} preserved ticks).`);

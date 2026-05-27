@@ -1,0 +1,57 @@
+name: Trigger backport on merge
+
+# When a PR targeting main is merged, parse the `## Backport` section in the
+# PR body. For every ticked `release/*` branch, post a single
+# `@Mergifyio backport ...` comment so Mergify cherry-picks the change.
+# Requires .github/mergify.yml `commands_restrictions.backport` to allow
+# `sender=github-actions[bot]` (already configured).
+
+on:
+  pull_request_target:
+    branches:
+      - main
+    types:
+      - closed
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  trigger:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const body = pr.body || '';
+
+            const sectionRegex = /## Backport[ \t]*\r?\n[\s\S]*?(?=\n## |\s*$)/;
+            const sectionMatch = body.match(sectionRegex);
+            if (!sectionMatch) {
+              core.info('No `## Backport` section in PR body, skipping.');
+              return;
+            }
+
+            const tickedRegex = /^- \[x\] (release\/\S+)/gm;
+            const branches = [];
+            let m;
+            while ((m = tickedRegex.exec(sectionMatch[0])) !== null) {
+              branches.push(m[1]);
+            }
+
+            if (branches.length === 0) {
+              core.info('No release branches ticked, skipping backport.');
+              return;
+            }
+
+            const comment = `@Mergifyio backport ${branches.join(' ')}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body: comment,
+            });
+            core.info(`Posted: ${comment}`);
