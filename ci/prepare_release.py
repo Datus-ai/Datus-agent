@@ -36,11 +36,32 @@ def parse_canonical_version(raw_version: str) -> Version:
     return version
 
 
+def is_same_final_prerelease(target_version: Version, current_version: Version) -> bool:
+    return (
+        target_version.is_prerelease
+        and not current_version.is_prerelease
+        and Version(target_version.base_version) == current_version
+    )
+
+
 def ensure_version_can_advance(
-    repo_root: Path, target_version: Version, *, allow_current_version: bool = False
+    repo_root: Path,
+    target_version: Version,
+    *,
+    allow_current_version: bool = False,
+    allow_same_final_prerelease: bool = False,
 ) -> None:
     current_version = read_pyproject_version(repo_root)
-    if target_version < current_version or (target_version == current_version and not allow_current_version):
+    same_final_prerelease = is_same_final_prerelease(target_version, current_version)
+    if target_version < current_version:
+        if not (allow_same_final_prerelease and same_final_prerelease):
+            raise ValueError(f"Release version must advance current version {current_version}; got {target_version}")
+        stable_tag_errors = check_tag_available(repo_root, Version(target_version.base_version))
+        if stable_tag_errors:
+            raise ValueError(
+                f"Cannot prepare prerelease {target_version} from finalized {current_version}: {stable_tag_errors[0]}"
+            )
+    elif target_version == current_version and not allow_current_version:
         raise ValueError(f"Release version must advance current version {current_version}; got {target_version}")
 
     tag_errors = check_tag_available(repo_root, target_version)
@@ -156,6 +177,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Allow preparing a release branch that already has the target version",
     )
     parser.add_argument(
+        "--allow-same-final-prerelease",
+        action="store_true",
+        help="Allow preparing 0.3.2rcN from current 0.3.2 when the stable tag is not present",
+    )
+    parser.add_argument(
         "--allow-no-changes",
         action="store_true",
         help="Exit successfully when release metadata is already prepared",
@@ -169,7 +195,12 @@ def main(argv: list[str] | None = None) -> int:
     repo_root = args.repo_root.resolve()
     try:
         version = parse_canonical_version(args.version)
-        ensure_version_can_advance(repo_root, version, allow_current_version=args.allow_current_version)
+        ensure_version_can_advance(
+            repo_root,
+            version,
+            allow_current_version=args.allow_current_version,
+            allow_same_final_prerelease=args.allow_same_final_prerelease,
+        )
         changed = prepare_release(
             repo_root,
             version,
