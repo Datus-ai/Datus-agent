@@ -106,7 +106,7 @@ def test_is_structured_content_envelope_with_multiline_enhanced():
         ("", ""),
         ("  padded  ", "  padded  "),
         ('{"key": "value"}', '{"key": "value"}'),
-        ('[{"type": "user", "content": "legacy"}]', '[{"type": "user", "content": "legacy"}]'),
+        ('[{"type": "user", "content": "legacy"}]', "legacy"),
     ],
     ids=["plain", "empty", "padded", "json_object", "legacy_json_array"],
 )

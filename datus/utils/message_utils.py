@@ -10,6 +10,7 @@ tag is immediately followed by a newline.  When there is no enhanced context
 the message is sent as a plain string without any tag.
 """
 
+import json
 import logging
 from typing import Any, List, Optional
 
@@ -21,6 +22,9 @@ SYSTEM_REMINDER_CLOSE = "</system_reminder>\n"
 # Anthropic / OpenAI content-block ``type`` values that carry plain text
 # inside ``text`` (Anthropic) or ``text``/``content`` (OpenAI) fields.
 _TEXT_BLOCK_TYPES = ("text", "output_text", "input_text")
+
+# Legacy block types from older versions that stored user input in ``content``.
+_LEGACY_USER_BLOCK_TYPES = ("user",)
 
 
 def build_structured_content(enhanced: str, user_input: str) -> str:
@@ -74,6 +78,10 @@ def extract_user_input(content: Any) -> str:
                 text = part.get("text") or part.get("content")
                 if isinstance(text, str):
                     texts.append(extract_user_input(text) if is_structured_content(text) else text)
+            elif block_type in _LEGACY_USER_BLOCK_TYPES:
+                text = part.get("content") or part.get("text")
+                if isinstance(text, str):
+                    texts.append(text)
         return "\n".join(texts)
 
     if not isinstance(content, str):
@@ -81,6 +89,16 @@ def extract_user_input(content: Any) -> str:
 
     if is_structured_content(content):
         return content.split(SYSTEM_REMINDER_CLOSE, 1)[1]
+
+    # Legacy format: JSON array string [{"type":"enhanced",...},{"type":"user","content":"..."}]
+    if content.startswith("["):
+        try:
+            parts = json.loads(content)
+            if isinstance(parts, list):
+                return extract_user_input(parts)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
     return content
 
 
