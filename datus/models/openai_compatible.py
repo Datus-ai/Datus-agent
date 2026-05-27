@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 import httpx
-import json_repair
 import litellm
 import yaml
 from agents import Agent, ModelSettings, Runner, Tool
@@ -37,7 +36,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.tool_summary import TOOL_SUMMARY_REGISTRY, looks_like_failure
 from datus.utils.constants import LLMProvider
 from datus.utils.exceptions import DatusException, ErrorCode
-from datus.utils.json_utils import to_str
+from datus.utils.json_utils import repair_tool_call_arguments, to_str
 from datus.utils.loggings import get_logger
 from datus.utils.resource_utils import read_data_file_text
 from datus.utils.text_utils import LitellmPlaceholderStreamFilter, strip_litellm_placeholder
@@ -1334,27 +1333,19 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     call_id = f"tool_{uuid.uuid4().hex[:8]}"
                                     logger.warning(f"Tool call missing call_id, generated: {call_id}")
 
-                                # Try to format arguments
+                                repaired_args, was_repaired = repair_tool_call_arguments(arguments)
+                                if was_repaired:
+                                    logger.warning(
+                                        f"Repaired malformed tool call arguments for '{tool_name}' "
+                                        f"in session history: {arguments[:200]}"
+                                    )
+                                    event.item.raw_item = raw_item.model_copy(update={"arguments": repaired_args})
+                                    raw_item = event.item.raw_item
+                                    arguments = repaired_args
                                 try:
-                                    args_dict = json.loads(arguments) if arguments else {}
-                                    args_str = to_str(args_dict)[:80]
+                                    args_str = to_str(json.loads(arguments))[:80]
                                 except Exception:
-                                    try:
-                                        repaired = json_repair.loads(arguments)
-                                        repaired_str = json.dumps(repaired, ensure_ascii=False)
-                                        logger.warning(
-                                            f"Repaired malformed tool call arguments for '{tool_name}' "
-                                            f"in session history: {arguments[:200]}"
-                                        )
-                                        event.item.raw_item = raw_item.model_copy(update={"arguments": repaired_str})
-                                        raw_item = event.item.raw_item
-                                        arguments = repaired_str
-                                        args_str = repaired_str[:80]
-                                    except Exception:
-                                        logger.error(
-                                            f"Cannot repair tool call arguments for '{tool_name}': {arguments[:200]}"
-                                        )
-                                        args_str = str(arguments)[:80]
+                                    args_str = str(arguments)[:80]
 
                                 # Store tool call info for matching with result
                                 temp_tool_calls[call_id] = {

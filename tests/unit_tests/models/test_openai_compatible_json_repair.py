@@ -3,17 +3,18 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-Unit tests for malformed JSON repair in tool call arguments during streaming.
+Unit tests for malformed JSON repair in tool call arguments.
 
-Verifies that openai_compatible.py repairs malformed arguments in raw_item
-before they are stored in session history, preventing cascading API failures.
+Tests the shared repair_tool_call_arguments() utility and verifies
+that Pydantic model_copy correctly propagates repaired arguments.
 """
 
 import json
 
+import pytest
 from pydantic import BaseModel
 
-from datus.models.openai_compatible import json_repair
+from datus.utils.json_utils import repair_tool_call_arguments
 
 
 class FakeRawItem(BaseModel):
@@ -25,101 +26,213 @@ class FakeRawItem(BaseModel):
         extra = "allow"
 
 
-class TestToolCallArgumentsRepair:
-    """Test JSON repair of tool call arguments in streaming layer."""
+class TestRepairToolCallArguments:
+    """Test the repair_tool_call_arguments utility function."""
 
     def test_valid_json_passes_through_unchanged(self):
-        raw_item = FakeRawItem(arguments='{"question": "hello", "options": ["a", "b"]}')
-        original_arguments = raw_item.arguments
+        args = '{"question": "hello", "options": ["a", "b"]}'
+        result, was_repaired = repair_tool_call_arguments(args)
+        assert result == args
+        assert was_repaired is False
 
-        try:
-            json.loads(raw_item.arguments)
-            repaired = False
-        except (json.JSONDecodeError, TypeError, ValueError):
-            repaired = True
+    def test_empty_string_returns_empty_dict(self):
+        result, was_repaired = repair_tool_call_arguments("")
+        assert result == "{}"
+        assert was_repaired is False
 
-        assert not repaired
-        assert raw_item.arguments == original_arguments
+    def test_whitespace_only_returns_empty_dict(self):
+        result, was_repaired = repair_tool_call_arguments("   \t\n  ")
+        assert result == "{}"
+        assert was_repaired is False
 
     def test_malformed_json_is_repaired(self):
         malformed = '{"keywords": PERCENTILE function, "platform": "starrocks"}'
-        raw_item = FakeRawItem(arguments=malformed)
+        result, was_repaired = repair_tool_call_arguments(malformed)
+        assert was_repaired is True
+        parsed = json.loads(result)
+        assert "keywords" in parsed
+        assert "platform" in parsed
+        assert parsed["platform"] == "starrocks"
 
-        try:
-            json.loads(raw_item.arguments)
-            needs_repair = False
-        except (json.JSONDecodeError, TypeError, ValueError):
-            needs_repair = True
+    def test_glm_style_unquoted_values_repaired(self):
+        malformed = '{"question": 请问您想查询哪个数据库的信息？, "options": [StarRocks, MySQL]}'
+        result, was_repaired = repair_tool_call_arguments(malformed)
+        assert was_repaired is True
+        parsed = json.loads(result)
+        assert parsed["question"] == "请问您想查询哪个数据库的信息？"
+        assert parsed["options"] == ["StarRocks", "MySQL"]
 
-        assert needs_repair
+    def test_garbage_input_still_returns_valid_json(self):
+        garbage = "not json at all {{{{[[[["
+        result, was_repaired = repair_tool_call_arguments(garbage)
+        # json_repair may produce something from garbage; either way the result must be valid JSON
+        json.loads(result)
+        # If repair failed, original is returned unchanged
+        assert was_repaired is True or result == garbage
 
-        repaired = json_repair.loads(malformed)
-        repaired_str = json.dumps(repaired, ensure_ascii=False)
-        new_raw_item = raw_item.model_copy(update={"arguments": repaired_str})
+    @pytest.mark.parametrize(
+        "valid_args",
+        [
+            "{}",
+            '{"key": "value"}',
+            '{"nested": {"a": 1}, "list": [1, 2, 3]}',
+            "[]",
+            '{"unicode": "中文值"}',
+        ],
+    )
+    def test_various_valid_json_not_repaired(self, valid_args):
+        result, was_repaired = repair_tool_call_arguments(valid_args)
+        assert was_repaired is False
+        assert result == valid_args
 
-        assert json.loads(new_raw_item.arguments) is not None
-        assert new_raw_item.name == "ask_user"
-        assert new_raw_item.call_id == "call_abc123"
 
-    def test_model_copy_preserves_other_fields(self):
+class TestModelCopyIntegration:
+    """Verify that model_copy correctly propagates repaired arguments."""
+
+    def test_model_copy_updates_arguments(self):
+        malformed = '{"sql": SELECT * FROM t}'
         raw_item = FakeRawItem(
             name="execute_sql",
             call_id="call_xyz789",
-            arguments='{"sql": SELECT * FROM t}',
+            arguments=malformed,
         )
 
-        repaired = json_repair.loads(raw_item.arguments)
-        repaired_str = json.dumps(repaired, ensure_ascii=False)
-        new_raw_item = raw_item.model_copy(update={"arguments": repaired_str})
+        repaired_args, was_repaired = repair_tool_call_arguments(malformed)
+        assert was_repaired is True
 
+        new_raw_item = raw_item.model_copy(update={"arguments": repaired_args})
+        parsed = json.loads(new_raw_item.arguments)
+        assert "sql" in parsed
         assert new_raw_item.name == "execute_sql"
         assert new_raw_item.call_id == "call_xyz789"
-        assert json.loads(new_raw_item.arguments) is not None
 
-    def test_unrepairable_json_left_unchanged(self):
-        garbage = "not json at all {{{{[[[["
-        raw_item = FakeRawItem(arguments=garbage)
+    def test_model_copy_not_needed_for_valid_json(self):
+        valid = '{"question": "hello"}'
+        raw_item = FakeRawItem(arguments=valid)
 
-        try:
-            json.loads(raw_item.arguments)
-            needs_repair = False
-        except (json.JSONDecodeError, TypeError, ValueError):
-            needs_repair = True
+        result, was_repaired = repair_tool_call_arguments(valid)
+        assert was_repaired is False
+        assert raw_item.arguments == valid
 
-        assert needs_repair
 
-        # json_repair may still produce something from garbage;
-        # the key point is the original raw_item is unchanged if we don't write back
-        assert raw_item.arguments == garbage
+class TestDictRawItemRepair:
+    """Verify repair integration with dict-based raw_item (CodexModel path)."""
 
-    def test_empty_arguments_not_repaired(self):
-        raw_item = FakeRawItem(arguments="")
+    def test_dict_raw_item_updated_in_place(self):
+        malformed = '{"sql": SELECT * FROM users WHERE id = 1}'
+        raw_item = {"name": "execute_sql", "call_id": "call_001", "arguments": malformed}
 
-        try:
-            json.loads(raw_item.arguments) if raw_item.arguments else {}
-            needs_repair = False
-        except (json.JSONDecodeError, TypeError, ValueError):
-            needs_repair = True
+        repaired_args, was_repaired = repair_tool_call_arguments(malformed)
+        assert was_repaired is True
 
-        assert not needs_repair
+        if isinstance(raw_item, dict):
+            raw_item["arguments"] = repaired_args
 
-    def test_glm_style_unquoted_values_repaired(self):
-        """Simulate real GLM output: unquoted string values in JSON."""
-        malformed = '{"question": 请问您想查询哪个数据库的信息？, "options": [StarRocks, MySQL]}'
-        raw_item = FakeRawItem(arguments=malformed)
+        parsed = json.loads(raw_item["arguments"])
+        assert "sql" in parsed
+        assert raw_item["name"] == "execute_sql"
 
-        try:
-            json.loads(raw_item.arguments)
-            needs_repair = False
-        except (json.JSONDecodeError, TypeError, ValueError):
-            needs_repair = True
+    def test_dict_raw_item_unchanged_for_valid_json(self):
+        valid = '{"query": "SELECT 1"}'
+        raw_item = {"name": "execute_sql", "call_id": "call_002", "arguments": valid}
 
-        assert needs_repair
+        repaired_args, was_repaired = repair_tool_call_arguments(valid)
+        assert was_repaired is False
+        assert raw_item["arguments"] == valid
 
-        repaired = json_repair.loads(malformed)
-        repaired_str = json.dumps(repaired, ensure_ascii=False)
-        new_raw_item = raw_item.model_copy(update={"arguments": repaired_str})
 
-        parsed = json.loads(new_raw_item.arguments)
-        assert "question" in parsed
-        assert isinstance(parsed.get("options"), list)
+class TestRepairEdgeCases:
+    """Cover edge cases and exception paths in repair_tool_call_arguments."""
+
+    def test_none_like_string_treated_as_empty(self):
+        result, was_repaired = repair_tool_call_arguments("  ")
+        assert result == "{}"
+        assert was_repaired is False
+
+    def test_truncated_json_repaired(self):
+        truncated = '{"key": "value", "nested": {"a":'
+        result, was_repaired = repair_tool_call_arguments(truncated)
+        assert was_repaired is True
+        parsed = json.loads(result)
+        assert parsed["key"] == "value"
+
+    def test_trailing_comma_repaired(self):
+        trailing = '{"a": 1, "b": 2,}'
+        result, was_repaired = repair_tool_call_arguments(trailing)
+        assert was_repaired is True
+        parsed = json.loads(result)
+        assert parsed == {"a": 1, "b": 2}
+
+    def test_single_quotes_repaired(self):
+        single_quotes = "{'key': 'value'}"
+        result, was_repaired = repair_tool_call_arguments(single_quotes)
+        assert was_repaired is True
+        parsed = json.loads(result)
+        assert parsed["key"] == "value"
+
+    def test_repair_fallback_when_json_repair_raises(self):
+        """Cover the exception fallback path (lines 614-615) when json_repair itself fails."""
+        from unittest.mock import patch
+
+        malformed = '{"broken": !!!}'
+        with patch("datus.utils.json_utils.json_repair.loads", side_effect=Exception("repair failed")):
+            result, was_repaired = repair_tool_call_arguments(malformed)
+        assert result == malformed
+        assert was_repaired is False
+
+
+class TestStreamingRepairIntegration:
+    """Cover the repair branch inside model streaming event handlers."""
+
+    def test_openai_compatible_repair_branch_with_pydantic_raw_item(self):
+        """Simulate the repair path in OpenAICompatibleModel streaming."""
+        malformed = '{"sql": SELECT * FROM t WHERE id = 1}'
+        raw_item = FakeRawItem(name="execute_sql", call_id="call_001", arguments=malformed)
+
+        repaired_args, was_repaired = repair_tool_call_arguments(malformed)
+        assert was_repaired is True
+
+        # Simulate the model code path: event.item.raw_item = raw_item.model_copy(...)
+        new_raw_item = raw_item.model_copy(update={"arguments": repaired_args})
+        raw_item = new_raw_item
+        arguments = repaired_args
+
+        parsed = json.loads(arguments)
+        assert "sql" in parsed
+        assert raw_item.arguments == repaired_args
+
+    def test_codex_repair_branch_with_dict_raw_item(self):
+        """Simulate the dict-based repair path in CodexModel streaming."""
+        malformed = '{"query": SELECT count(*) FROM orders}'
+        raw_item = {"name": "execute_sql", "call_id": "call_002", "arguments": malformed}
+
+        repaired_args, was_repaired = repair_tool_call_arguments(malformed)
+        assert was_repaired is True
+
+        # Simulate the CodexModel code path: if isinstance(raw_item, dict)
+        if isinstance(raw_item, dict):
+            raw_item["arguments"] = repaired_args
+        arguments = repaired_args
+
+        parsed = json.loads(arguments)
+        assert "query" in parsed
+        assert raw_item["arguments"] == repaired_args
+
+    def test_codex_repair_branch_with_pydantic_raw_item(self):
+        """Simulate the else branch in CodexModel (Pydantic raw_item)."""
+        malformed = '{"table": users, "limit": 10}'
+        raw_item = FakeRawItem(name="read_table", call_id="call_003", arguments=malformed)
+
+        repaired_args, was_repaired = repair_tool_call_arguments(malformed)
+        assert was_repaired is True
+
+        # Simulate: not isinstance(raw_item, dict) → model_copy path
+        if not isinstance(raw_item, dict):
+            new_raw_item = raw_item.model_copy(update={"arguments": repaired_args})
+            raw_item = new_raw_item
+        arguments = repaired_args
+
+        assert raw_item.arguments == repaired_args
+        parsed = json.loads(arguments)
+        assert parsed["table"] == "users"
+        assert parsed["limit"] == 10

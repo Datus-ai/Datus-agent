@@ -570,6 +570,134 @@ class TestCodexModelGenerateWithToolsStream:
     @patch("datus.models.codex_model.Runner")
     @patch("datus.models.codex_model.Agent")
     @patch("datus.models.codex_model.extract_sql_contexts")
+    async def test_stream_repairs_malformed_tool_call_arguments_dict(
+        self, mock_extract, mock_agent_cls, mock_runner, mock_mcp, mock_oauth_cls, model_config
+    ):
+        """Cover the dict-based raw_item repair branch (lines 659-660)."""
+        from datus.models.codex_model import CodexModel
+
+        mock_oauth = MagicMock()
+        mock_oauth.get_access_token.return_value = "tok"
+        mock_oauth_cls.return_value = mock_oauth
+
+        model = CodexModel(model_config=model_config)
+        model._async_client = MagicMock()
+
+        with patch("agents.models.openai_responses.OpenAIResponsesModel"):
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            # Dict-based raw_item with malformed arguments
+            tool_call_event = MagicMock()
+            tool_call_event.type = "run_item_stream_event"
+            tool_call_event.item.type = "tool_call_item"
+            tool_call_event.item.raw_item = {
+                "name": "execute_sql",
+                "call_id": "call_repair_dict",
+                "arguments": '{"sql": SELECT * FROM users}',
+            }
+
+            tool_output_event = MagicMock()
+            tool_output_event.type = "run_item_stream_event"
+            tool_output_event.item.type = "tool_call_output_item"
+            tool_output_event.item.output = "repaired"
+            tool_output_event.item.raw_item = {"call_id": "call_repair_dict"}
+
+            mock_result = MagicMock()
+            mock_result.final_output = "Done"
+            is_complete_values = iter([False, True])
+            type(mock_result).is_complete = property(lambda self: next(is_complete_values))
+
+            async def stream_events():
+                yield tool_call_event
+                yield tool_output_event
+
+            mock_result.stream_events = stream_events
+            mock_runner.run_streamed.return_value = mock_result
+            mock_extract.return_value = []
+
+            actions = []
+            async for action in model.generate_with_tools_stream(prompt="test"):
+                actions.append(action)
+
+            assert len(actions) == 3
+            # Verify the dict raw_item was repaired in place
+            assert json.loads(tool_call_event.item.raw_item["arguments"])["sql"] is not None
+
+    @pytest.mark.asyncio
+    @patch("datus.models.codex_model.OAuthManager")
+    @patch("datus.models.codex_model.multiple_mcp_servers")
+    @patch("datus.models.codex_model.Runner")
+    @patch("datus.models.codex_model.Agent")
+    @patch("datus.models.codex_model.extract_sql_contexts")
+    async def test_stream_repairs_malformed_tool_call_arguments_pydantic(
+        self, mock_extract, mock_agent_cls, mock_runner, mock_mcp, mock_oauth_cls, model_config
+    ):
+        """Cover the Pydantic model_copy repair branch (lines 662-664)."""
+        from pydantic import BaseModel
+
+        from datus.models.codex_model import CodexModel
+
+        class FakeToolCallRawItem(BaseModel):
+            name: str = "execute_sql"
+            call_id: str = "call_repair_pydantic"
+            arguments: str = '{"sql": SELECT count(*) FROM orders}'
+
+            class Config:
+                extra = "allow"
+
+        mock_oauth = MagicMock()
+        mock_oauth.get_access_token.return_value = "tok"
+        mock_oauth_cls.return_value = mock_oauth
+
+        model = CodexModel(model_config=model_config)
+        model._async_client = MagicMock()
+
+        with patch("agents.models.openai_responses.OpenAIResponsesModel"):
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            raw_item = FakeToolCallRawItem()
+            tool_call_event = MagicMock()
+            tool_call_event.type = "run_item_stream_event"
+            tool_call_event.item.type = "tool_call_item"
+            tool_call_event.item.raw_item = raw_item
+
+            tool_output_event = MagicMock()
+            tool_output_event.type = "run_item_stream_event"
+            tool_output_event.item.type = "tool_call_output_item"
+            tool_output_event.item.output = "repaired"
+            tool_output_event.item.raw_item = {"call_id": "call_repair_pydantic"}
+
+            mock_result = MagicMock()
+            mock_result.final_output = "Done"
+            is_complete_values = iter([False, True])
+            type(mock_result).is_complete = property(lambda self: next(is_complete_values))
+
+            async def stream_events():
+                yield tool_call_event
+                yield tool_output_event
+
+            mock_result.stream_events = stream_events
+            mock_runner.run_streamed.return_value = mock_result
+            mock_extract.return_value = []
+
+            actions = []
+            async for action in model.generate_with_tools_stream(prompt="test"):
+                actions.append(action)
+
+            assert len(actions) == 3
+            # Verify model_copy was used — the event's raw_item should have repaired arguments
+            repaired_raw = tool_call_event.item.raw_item
+            parsed = json.loads(repaired_raw.arguments)
+            assert "sql" in parsed
+
+    @pytest.mark.asyncio
+    @patch("datus.models.codex_model.OAuthManager")
+    @patch("datus.models.codex_model.multiple_mcp_servers")
+    @patch("datus.models.codex_model.Runner")
+    @patch("datus.models.codex_model.Agent")
+    @patch("datus.models.codex_model.extract_sql_contexts")
     async def test_stream_with_raw_response_text(
         self, mock_extract, mock_agent_cls, mock_runner, mock_mcp, mock_oauth_cls, model_config
     ):

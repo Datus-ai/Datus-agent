@@ -592,3 +592,24 @@ def to_str(json_data: Any) -> Optional[str]:
     if json_data is None:
         return None
     return _dump_json(json_data)
+
+
+def repair_tool_call_arguments(arguments: str) -> tuple[str, bool]:
+    """Parse tool-call arguments; repair malformed JSON when possible.
+
+    Returns (json_str, was_repaired).
+    """
+    if not arguments or not arguments.strip():
+        return "{}", False
+    try:
+        json.loads(arguments)
+        return arguments, False
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+    try:
+        repaired = json_repair.loads(arguments)
+        repaired_str = json.dumps(repaired, ensure_ascii=False)
+        json.loads(repaired_str)
+        return repaired_str, True
+    except Exception:
+        return arguments, False

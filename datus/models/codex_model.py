@@ -12,7 +12,6 @@ import uuid
 from contextlib import nullcontext
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
-import json_repair
 from agents import Agent, ModelSettings, Runner, SQLiteSession, Tool
 from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
@@ -28,6 +27,7 @@ from datus.models.mcp_utils import multiple_mcp_servers
 from datus.observability.manager import get_observability_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.json_utils import repair_tool_call_arguments
 from datus.utils.loggings import get_logger
 from datus.utils.trace_context import build_agents_run_config_kwargs, build_trace_span_attributes
 
@@ -349,7 +349,6 @@ class CodexModel(LLMBaseModel):
         Returns:
             Parsed JSON response as a dictionary
         """
-        import json
 
         self._refresh_client_token()
         input_data = self._convert_prompt_to_input(prompt)
@@ -651,32 +650,19 @@ class CodexModel(LLMBaseModel):
                                 if not call_id:
                                     call_id = f"tool_{uuid.uuid4().hex[:8]}"
 
-                                # Validate and repair malformed JSON arguments
-                                try:
-                                    json.loads(arguments)
-                                    args_str = str(arguments)[:80]
-                                except (json.JSONDecodeError, TypeError, ValueError):
-                                    try:
-                                        repaired = json_repair.loads(arguments)
-                                        repaired_str = json.dumps(repaired, ensure_ascii=False)
-                                        logger.warning(
-                                            f"Repaired malformed tool call arguments for '{tool_name}' "
-                                            f"in session history: {arguments[:200]}"
-                                        )
-                                        if isinstance(raw_item, dict):
-                                            raw_item["arguments"] = repaired_str
-                                        else:
-                                            event.item.raw_item = raw_item.model_copy(
-                                                update={"arguments": repaired_str}
-                                            )
-                                            raw_item = event.item.raw_item
-                                        arguments = repaired_str
-                                        args_str = repaired_str[:80]
-                                    except Exception:
-                                        logger.error(
-                                            f"Cannot repair tool call arguments for '{tool_name}': {arguments[:200]}"
-                                        )
-                                        args_str = str(arguments)[:80]
+                                repaired_args, was_repaired = repair_tool_call_arguments(arguments)
+                                if was_repaired:
+                                    logger.warning(
+                                        f"Repaired malformed tool call arguments for '{tool_name}' "
+                                        f"in session history: {arguments[:200]}"
+                                    )
+                                    if isinstance(raw_item, dict):
+                                        raw_item["arguments"] = repaired_args
+                                    else:
+                                        event.item.raw_item = raw_item.model_copy(update={"arguments": repaired_args})
+                                        raw_item = event.item.raw_item
+                                    arguments = repaired_args
+                                args_str = str(arguments)[:80]
 
                                 temp_tool_calls[call_id] = {
                                     "tool_name": tool_name,
