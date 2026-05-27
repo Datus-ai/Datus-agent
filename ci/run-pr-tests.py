@@ -461,7 +461,7 @@ def _resolve_explicit_compare_ref(base_ref: str) -> str | None:
     elif ref.startswith("refs/remotes/"):
         add(ref.removeprefix("refs/remotes/"))
         add(ref)
-    elif "/" in ref:
+    elif ref.startswith(("origin/", "upstream/")):
         add(ref)
     else:
         add(f"origin/{ref}")
