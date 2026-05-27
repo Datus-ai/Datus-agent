@@ -489,6 +489,31 @@ class TestDocumentStoreGetAllRows:
 # ============================================================
 
 
+class TestDocumentStoreReadOnlyDegradation:
+    """Read-only wrappers must not force embedding model initialization."""
+
+    def test_list_versions_without_embedding_on_empty_store(self, doc_store):
+        """list_versions on an empty store returns [] without initializing embeddings."""
+        doc_store._shared.initialized = False
+        versions = doc_store.list_versions()
+        assert versions == []
+        assert doc_store._shared.initialized is False
+
+    def test_get_stats_without_embedding_on_empty_store(self, doc_store):
+        """get_stats on an empty store returns zero stats without initializing embeddings."""
+        doc_store._shared.initialized = False
+        stats = doc_store.get_stats()
+        assert stats["total_chunks"] == 0
+        assert doc_store._shared.initialized is False
+
+    def test_get_all_rows_without_embedding_on_empty_store(self, doc_store):
+        """get_all_rows on an empty store returns [] without initializing embeddings."""
+        doc_store._shared.initialized = False
+        rows = doc_store.get_all_rows()
+        assert rows == []
+        assert doc_store._shared.initialized is False
+
+
 class TestDocumentStoreHasData:
     """Tests for has_data method."""
 

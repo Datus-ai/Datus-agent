@@ -395,6 +395,18 @@ class TestSearchTablesNameParsing:
 # ---------------------------------------------------------------------------
 
 
+class TestSearchAllReadOnlyDegradation:
+    """BaseMetadataStorage.search_all must not force embedding initialization."""
+
+    def test_search_all_without_embedding_on_empty_store(self, tmp_path):
+        """search_all on an empty store returns empty result without initializing embeddings."""
+        store = SchemaStorage(get_db_embedding_model())
+        store._shared.initialized = False
+        result = store.search_all(catalog_name="cat")
+        assert result.num_rows == 0
+        assert store._shared.initialized is False
+
+
 class TestSearchSimilar:
     """Tests for search_similar and do_search_similar."""
 

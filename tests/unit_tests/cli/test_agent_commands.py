@@ -206,6 +206,19 @@ class TestCmdSearchMetrics:
         output = agent_commands.console.file.getvalue()
         assert "Error" in output
 
+    def test_context_tools_unavailable_shows_warning(self, agent_commands):
+        """When ContextSearchTools fails, cmd_search_metrics prints a warning instead of crashing."""
+        with patch(
+            "datus.cli.agent_commands.ContextSearchTools",
+            side_effect=RuntimeError("embedding model download failed"),
+        ):
+            agent_commands._context_search_tools = None
+            agent_commands._context_search_warning = ""
+            agent_commands.cmd_search_metrics("revenue")
+
+        output = agent_commands.console.file.getvalue()
+        assert "Context search and @ references are disabled" in output
+
     def test_success_displays_metrics(self, agent_commands):
         from datus.tools.func_tool.base import FuncToolResult
 
@@ -270,6 +283,19 @@ class TestCmdSearchReferenceSql:
         agent_commands.cmd_search_reference_sql("")
         output = agent_commands.console.file.getvalue()
         assert "Error" in output
+
+    def test_context_tools_unavailable_shows_warning(self, agent_commands):
+        """When ContextSearchTools fails, cmd_search_reference_sql prints a warning instead of crashing."""
+        with patch(
+            "datus.cli.agent_commands.ContextSearchTools",
+            side_effect=RuntimeError("embedding model download failed"),
+        ):
+            agent_commands._context_search_tools = None
+            agent_commands._context_search_warning = ""
+            agent_commands.cmd_search_reference_sql("revenue sql")
+
+        output = agent_commands.console.file.getvalue()
+        assert "Context search and @ references are disabled" in output
 
     def test_success_displays_table(self, agent_commands):
         from datus.tools.func_tool.base import FuncToolResult

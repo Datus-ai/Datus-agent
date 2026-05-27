@@ -119,9 +119,6 @@ class BaseMetadataStorage(BaseEmbeddingStore):
         select_fields: Optional[List[str]] = None,
     ) -> pa.Table:
         """Search all schemas for a given database name."""
-        # Ensure table is ready before searching
-        self._ensure_table_ready()
-
         where = _build_where_clause(
             catalog_name=catalog_name,
             database_name=database_name,

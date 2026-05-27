@@ -361,6 +361,16 @@ class TestReadOnlyPathsWithoutEmbedding:
         assert db.open_table_calls == [("test_table", {})]
         assert store._shared.initialized is False
 
+    def test_query_with_filter_zero_limit_without_embedding(self):
+        """query_with_filter(limit=0) returns empty without touching embedding model."""
+        table = _ReadOnlyTable([{"name": "orders", "definition": "CREATE TABLE orders(id int)", "vector": [0.1, 0.2]}])
+        db = _ReadOnlyVectorDb(exists=True, table=table)
+        store = self._make_store(db)
+
+        result = store.query_with_filter(limit=0, select_fields=["name"])
+        assert result.num_rows == 0
+        assert store._shared.initialized is False
+
 
 # ---------------------------------------------------------------------------
 # BaseEmbeddingStore.truncate
@@ -800,6 +810,15 @@ class TestQueryWithFilter:
         result = store.query_with_filter(select_fields=["identifier", "table_name"])
         assert "identifier" in result.column_names
         assert "table_name" in result.column_names
+
+    def test_query_with_filter_zero_limit_returns_empty(self, tmp_path):
+        """query_with_filter(limit=0) must return an empty table, not all rows."""
+        store = self._make_store(tmp_path)
+        data = [self._make_row(i) for i in range(5)]
+        store.store_batch(data)
+
+        result = store.query_with_filter(limit=0)
+        assert result.num_rows == 0
 
 
 # ---------------------------------------------------------------------------

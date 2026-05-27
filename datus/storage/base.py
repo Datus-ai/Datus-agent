@@ -629,6 +629,8 @@ class BaseEmbeddingStore(StorageBase):
             return self._empty_result(select_fields)
         if limit is None:
             limit = table.count_rows(where)
+        if limit == 0:
+            return self._empty_result(select_fields)
         return table.search_all(
             where=where,
             select_fields=select_fields,

@@ -221,8 +221,6 @@ class DocumentStore(BaseEmbeddingStore):
         Returns:
             List of dicts with version and chunk_count
         """
-        self._ensure_table_ready()
-
         all_data = self._search_all(
             select_fields=["version"],
         )
@@ -240,8 +238,6 @@ class DocumentStore(BaseEmbeddingStore):
         Returns:
             Dict with versions, total_chunks, doc_count, etc.
         """
-        self._ensure_table_ready()
-
         all_data = self._search_all(
             select_fields=["version", "doc_path", "created_at"],
         )
@@ -379,7 +375,6 @@ class DocumentStore(BaseEmbeddingStore):
         Returns:
             List of matching rows as dictionaries
         """
-        self._ensure_table_ready()
         results = self._search_all(where=where, select_fields=select_fields)
         return results.to_pylist()
 

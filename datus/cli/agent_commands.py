@@ -33,6 +33,7 @@ from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.node_models import ExecuteSQLInput, GenerateSQLInput, OutputInput, SqlTask
 from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
+from datus.storage.embedding_diagnostics import format_context_degraded_warning
 from datus.tools.db_tools import connector_registry
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.output_tools import OutputTool
@@ -58,12 +59,17 @@ class AgentCommands:
         self.darun_is_running = False
         self.agent_thread = None
         self._context_search_tools: ContextSearchTools | None = None
+        self._context_search_warning: str = ""
         self.output_tool: OutputTool | None = None
 
     @property
-    def context_search_tools(self):
-        if not self._context_search_tools:
-            self._context_search_tools = ContextSearchTools(self.cli.agent_config)
+    def context_search_tools(self) -> ContextSearchTools | None:
+        if self._context_search_tools is None and not self._context_search_warning:
+            try:
+                self._context_search_tools = ContextSearchTools(self.cli.agent_config)
+            except Exception as exc:
+                self._context_search_warning = format_context_degraded_warning(exc)
+                logger.warning("Context search tools disabled: %s", self._context_search_warning)
         return self._context_search_tools
 
     def update_agent_reference(self):
@@ -469,6 +475,9 @@ class AgentCommands:
         if not input_text:
             print_error(self.console, "Input text cannot be empty.")
             return
+        if self.context_search_tools is None:
+            print_warning(self.console, self._context_search_warning)
+            return
         subject_path = self._prompt_subject_path()
         top_n = self.cli.prompt_input("Enter top_n to match", default="5")
 
@@ -523,6 +532,9 @@ class AgentCommands:
         input_text = args.strip() or self.cli.prompt_input("Enter search text for reference SQL")
         if not input_text:
             print_error(self.console, "Input text cannot be empty.")
+            return
+        if self.context_search_tools is None:
+            print_warning(self.console, self._context_search_warning)
             return
 
         subject_path = self._prompt_subject_path()
