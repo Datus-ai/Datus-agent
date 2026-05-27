@@ -66,6 +66,7 @@ class PrintModeRunner:
             node_id_suffix="_print",
             scope=self.scope,
             session_id=self.session_id,
+            execution_mode="workflow",
         )
 
         if self.proxy_tool_patterns:
