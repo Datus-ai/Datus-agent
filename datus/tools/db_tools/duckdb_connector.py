@@ -2,8 +2,10 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import functools
 import re
-from typing import Any, Dict, List, Literal, Optional, Set, override
+import threading
+from typing import Any, Callable, Dict, List, Literal, Optional, Set, TypeVar, override
 
 import duckdb
 from datus_db_core import BaseSqlConnector, SchemaNamespaceMixin, list_to_in_str
@@ -44,6 +46,32 @@ def _metadata_names(_type: str) -> _DBMetadataNames:
     return METADATA_DICT[_type]
 
 
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+
+def _serialised(method: _F) -> _F:
+    """Serialise calls that touch ``self.connection`` against the connector's RLock.
+
+    ``DuckDBPyConnection`` is not thread-safe — concurrent ``execute()``
+    on the same instance races on the shared result/statement state and
+    manifests as ``description=None``, empty rows, or DuckDB's NULL-
+    shared_ptr INTERNAL Error (and in our local repro, a Python SIGSEGV).
+    Dashboard's multi-chart fan-out hits this hard because every chart's
+    filter query lands on the same cached connector via ``asyncio.to_thread``.
+
+    Applied as a decorator (rather than ``with self._lock:`` inside each
+    method body) so the lock change is one line per method instead of a
+    full re-indent — the connector's body stays diffable and reviewable.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self: "DuckdbConnector", *args: Any, **kwargs: Any) -> Any:
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper  # type: ignore[return-value]
+
+
 class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMixin):
     """
     Connector for DuckDB databases with schema support using native DuckDB SDK.
@@ -52,6 +80,9 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
     def __init__(self, config: DuckDBConfig):
         super().__init__(config, dialect=DBType.DUCKDB)
         self.db_path = config.db_path.replace("duckdb:///", "")
+        # ``RLock`` so same-thread re-entry (e.g. ``get_sample_rows`` →
+        # ``get_tables_with_ddl`` → ``_get_meta_with_ddl``) doesn't deadlock.
+        self._lock = threading.RLock()
         self.connection: Optional[duckdb.DuckDBPyConnection] = None
         self.enable_external_access = config.enable_external_access
         self.memory_limit = config.memory_limit
@@ -68,9 +99,16 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
     @override
     def connect(self):
         """Establish connection to DuckDB database."""
+        # Double-checked locking: skip the lock on the hot path (already
+        # connected) and only acquire it for the first-time race window.
         if self.connection:
             return
+        with self._lock:
+            if self.connection:
+                return
+            self._connect_locked()
 
+    def _connect_locked(self):
         try:
             # Align with the `custom_user_agent` that duckdb_engine auto-injects on every connect:
             # without this, any same-process SQLAlchemy+duckdb_engine client (metricflow validator,
@@ -316,6 +354,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         )
 
     @override
+    @_serialised
     def close(self):
         """Close the database connection."""
         if self.connection:
@@ -327,6 +366,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
                 self.connection = None
 
     @override
+    @_serialised
     def test_connection(self) -> bool:
         """Test the database connection."""
         opened_here = self.connection is None
@@ -378,6 +418,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
             )
 
     @override
+    @_serialised
     def execute_insert(self, sql: str) -> ExecuteSQLResult:
         """Execute an INSERT SQL statement."""
         try:
@@ -405,6 +446,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
             )
 
     @override
+    @_serialised
     def execute_update(self, sql: str) -> ExecuteSQLResult:
         """Execute an UPDATE SQL statement."""
         try:
@@ -432,6 +474,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
             )
 
     @override
+    @_serialised
     def execute_delete(self, sql: str) -> ExecuteSQLResult:
         """Execute a DELETE SQL statement."""
         try:
@@ -459,6 +502,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
             )
 
     @override
+    @_serialised
     def execute_ddl(self, sql: str) -> ExecuteSQLResult:
         """Execute a DDL SQL statement.
 
@@ -507,13 +551,20 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
             )
 
     @override
+    @_serialised
     def execute_query(
         self, sql: str, result_format: Literal["csv", "arrow", "pandas", "list"] = "csv"
     ) -> ExecuteSQLResult:
-        """Execute a SELECT query."""
+        """Execute a SELECT query.
+
+        Each call uses a fresh ``cursor()`` so its result handle is
+        independent — defence in depth on top of the connector-level lock,
+        so a future regression that drops the lock can't silently return
+        rows that belong to a sibling query whose state was just reset.
+        """
         try:
             self.connect()
-            result = self.connection.execute(sql)
+            result = self.connection.cursor().execute(sql)
 
             if result_format == "csv":
                 df = result.df()
@@ -572,6 +623,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         return self.execute_query(sql, result_format="csv")
 
     @override
+    @_serialised
     def execute_queries(self, queries: List[str]) -> List[Any]:
         """Execute multiple queries."""
         results = []
@@ -590,6 +642,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         return results
 
     @override
+    @_serialised
     def execute_content_set(self, sql_query: str) -> ExecuteSQLResult:
         """Execute SET/USE commands."""
         try:
@@ -621,6 +674,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
             )
 
     @override
+    @_serialised
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get all table names."""
         self.connect()
@@ -634,6 +688,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         return [row[0] for row in result.fetchall()]
 
     @override
+    @_serialised
     def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
         """Get all view names."""
         self.connect()
@@ -649,6 +704,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         return [row[0] for row in result.fetchall()]
 
     @override
+    @_serialised
     def get_databases(self, catalog_name: str = "", include_sys: bool = False) -> List[str]:
         """Get list of database names."""
         self.connect()
@@ -670,6 +726,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         return f'"{schema_name}"."{table_name}"' if schema_name else table_name
 
     @override
+    @_serialised
     def get_schemas(self, catalog_name: str = "", database_name: str = "", include_sys: bool = False) -> List[str]:
         self.connect()
         sql = "SELECT schema_name FROM duckdb_schemas()"
@@ -694,6 +751,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         return {"system", "temp", "information_schema"}
 
     @override
+    @_serialised
     def do_switch_context(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
         self.connect()
         if schema_name:
@@ -714,6 +772,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
             filter_tables=filter_tables,
         )
 
+    @_serialised
     def _get_meta_with_ddl(
         self,
         database_name: str = "",
@@ -783,6 +842,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         )
 
     @override
+    @_serialised
     def get_sample_rows(
         self,
         tables: Optional[List[str]] = None,
@@ -864,6 +924,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
             ) from e
 
     @override
+    @_serialised
     def get_schema(
         self, catalog_name: str = "", database_name: str = "", schema_name: str = "", table_name: str = ""
     ) -> List[Dict[str, str]]:
