@@ -14,7 +14,6 @@ not here.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from fastapi import APIRouter, Query
@@ -33,12 +32,24 @@ router = APIRouter(prefix="/api/v1", tags=["dashboard"])
 def _project_files_root(svc: ServiceDep) -> Path:
     """Project files root the dashboard artifacts live under.
 
-    Mirrors the convention in ``kb_routes`` — ``{agent.home}/files`` is
-    where the per-project tree is anchored in both the agent-only path
-    (``datus --web``) and the SaaS path (which injects the same shape
-    through ``get_project_files_root``).
+    ``agent_config.project_root`` is the universal anchor:
+
+    * Agent CLI (``datus --web``): ``AgentConfig`` defaults
+      ``project_root`` to ``os.getcwd()``, so ``gen_visual_dashboard``
+      writes ``<CWD>/dashboards/<slug>/`` and this route reads from the
+      same tree.
+    * Datus-backend SaaS: :mod:`datus_backend.config_loader` sets
+      ``project_root = project_files_dir`` (i.e.
+      ``<tenant>/<ws>/<project_id>/files``), which is where the SaaS
+      subagent writes its artifacts.
+
+    Previous incarnations of this helper composed ``{agent.home}/files``
+    by analogy with ``kb_routes`` — that only worked in the SaaS layout
+    where ``home == project_dir`` and ``project_root == home/files``;
+    in CLI it resolved to ``~/.datus/files`` and produced
+    TEMPLATE_NOT_FOUND on every query.
     """
-    return Path(os.path.join(svc.agent_config.home, "files"))
+    return Path(svc.agent_config.project_root)
 
 
 @router.get(
