@@ -18,11 +18,9 @@ from pathlib import Path
 import pytest
 
 from datus.agent.node.dashboard_html_renderer import (
-    DEFAULT_PROJECT_ID,
     DEFAULT_QUERY_ENDPOINT,
     render_dashboard_html,
 )
-
 
 _APP_JSX_TEMPLATE = """\
 /** @datus-title {title} */
@@ -108,9 +106,11 @@ def test_render_dashboard_html_bakes_default_query_endpoint(tmp_path: Path):
     assert DEFAULT_QUERY_ENDPOINT in body
     # initDashboard call is wired (template is in single quotes around the placeholder).
     assert "DatusArtifact.initDashboard" in body
-    # ProjectId / authToken defaults are baked in too.
-    assert f"projectId: '{DEFAULT_PROJECT_ID}'" in body
-    assert "authToken: ''" in body
+    # Auth + project propagation was dropped — the iframe no longer
+    # forwards anything beyond ``queryEndpoint``. Keep an explicit guard
+    # so a future regression that re-introduces those props gets caught.
+    assert "authToken" not in body
+    assert "projectId" not in body
 
 
 def test_render_dashboard_html_threads_custom_endpoint_through(tmp_path: Path):
@@ -119,15 +119,11 @@ def test_render_dashboard_html_threads_custom_endpoint_through(tmp_path: Path):
         project_root=tmp_path,
         dashboard_slug="custom_be",
         query_endpoint="https://api.example.com/api/v1/dashboard/query",
-        auth_token="secret-token",
-        project_id="proj_42",
     )
     body = out_path.read_text(encoding="utf-8")
 
     assert "queryEndpoint: 'https://api.example.com/api/v1/dashboard/query'" in body
-    assert "authToken: 'secret-token'" in body
-    assert "projectId: 'proj_42'" in body
-    # Default values must NOT leak in when overrides are supplied.
+    # Default value must NOT leak in when an override is supplied.
     assert DEFAULT_QUERY_ENDPOINT not in body
 
 

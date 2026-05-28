@@ -228,12 +228,7 @@
             // Live-query endpoint baked at compile time. ``datus --web``
             // serves it from ``/api/v1/dashboard/query``; the SaaS path
             // overrides this with its own absolute URL.
-            queryEndpoint: '__DATUS_QUERY_ENDPOINT__',
-            // NoAuthProvider (the default for ``datus --web``) doesn't
-            // validate this header; SaaS deployments substitute a real
-            // session token at serve time.
-            authToken: '__DATUS_AUTH_TOKEN__',
-            projectId: '__DATUS_PROJECT_ID__'
+            queryEndpoint: '__DATUS_QUERY_ENDPOINT__'
           });
           // Successful mount: React replaces #root's children, so the
           // loading state vanishes naturally. Nothing to do here.

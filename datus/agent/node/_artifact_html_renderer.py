@@ -27,10 +27,9 @@ What differs across kinds is centralised in :class:`ArtifactHtmlSpec`:
   reports and ``.sql.j2/.params.json`` for dashboards);
 * ``template_path`` — the HTML template file to slot the payload into;
 * ``extra_placeholders`` — kind-specific placeholders the caller can
-  fill in (the dashboard template needs ``__DATUS_QUERY_ENDPOINT__`` /
-  ``__DATUS_AUTH_TOKEN__`` / ``__DATUS_PROJECT_ID__`` because
-  ``DatusArtifact.initDashboard`` issues live queries against a
-  running ``datus --web`` server).
+  fill in (the dashboard template needs ``__DATUS_QUERY_ENDPOINT__``
+  because ``DatusArtifact.initDashboard`` issues live queries against
+  a running ``datus --web`` server).
 
 The CDN URLs both kinds use point at ``@datus/web-artifact-render`` —
 one UMD bundle now serves both viewers (Datus-saas#412).

@@ -27,12 +27,11 @@ Three asset / runtime modes:
 * **Offline mode** — caller passes ``dashboard_dist`` and the CSS/UMD
   pair is copied next to the HTML under ``_assets/`` so it opens through
   ``file://`` without hitting the CDN.
-* **Custom backend** — ``query_endpoint`` / ``auth_token`` /
-  ``project_id`` are baked into the HTML at compile time. Defaults
-  point at ``http://localhost:8501/api/v1/dashboard/query`` with empty
-  auth/project (matches the ``NoAuthProvider`` posture of
-  ``datus --web``); callers running against a SaaS-style deployment
-  override these.
+* **Custom backend** — ``query_endpoint`` is baked into the HTML at
+  compile time. Default points at ``http://localhost:8501/api/v1/dashboard/query``
+  (matches the ``--host`` / ``--port`` defaults of ``datus --web``);
+  callers running against a different host or a SaaS-style deployment
+  override it.
 
 The shared walker / template-slotting / asset-resolution machinery
 lives in :mod:`datus.agent.node._artifact_html_renderer`; this module
@@ -73,12 +72,6 @@ _DASHBOARD_SLUG_RE = re.compile(r"^[a-z0-9_]{1,80}$")
 #: ``--port`` of ``datus --web`` (see ``datus.cli.main``).
 DEFAULT_QUERY_ENDPOINT = "http://localhost:8501/api/v1/dashboard/query"
 
-#: Default ``projectId`` baked into the HTML. The agent-side
-#: ``DatusServiceCache`` keys per-project services off this fallback
-#: when the request supplies no project header (see
-#: ``_DEFAULT_PROJECT_KEY`` in ``datus.api.deps``).
-DEFAULT_PROJECT_ID = "default"
-
 _DASHBOARD_SPEC = ArtifactHtmlSpec(
     kind="dashboard",
     root_dir_name="dashboards",
@@ -99,8 +92,6 @@ def render_dashboard_html(
     dashboard_slug: str,
     dashboard_dist: Optional[Path] = None,
     query_endpoint: Optional[str] = None,
-    auth_token: Optional[str] = None,
-    project_id: Optional[str] = None,
 ) -> Path:
     """
     Compile ``dashboards/<dashboard_slug>/index.html`` from render/ + queries.
@@ -118,12 +109,6 @@ def render_dashboard_html(
         query_endpoint: absolute URL the rendered HTML will POST to for
             every dashboard query. Defaults to
             :data:`DEFAULT_QUERY_ENDPOINT` (``http://localhost:8501/api/v1/dashboard/query``).
-        auth_token: value baked into the iframe's ``x-datus-auth-token``
-            header. Empty string by default — matches the
-            ``NoAuthProvider`` posture of ``datus --web``.
-        project_id: value sent with every query request. Defaults to
-            :data:`DEFAULT_PROJECT_ID` (``"default"``), which matches the
-            ``_DEFAULT_PROJECT_KEY`` fallback in ``datus.api.deps``.
 
     Returns:
         Absolute path to the generated ``index.html``.
@@ -145,8 +130,6 @@ def render_dashboard_html(
         js_url_placeholder=_DASHBOARD_SPEC.js_url_placeholder,
         extra_placeholders={
             "__DATUS_QUERY_ENDPOINT__": query_endpoint or DEFAULT_QUERY_ENDPOINT,
-            "__DATUS_AUTH_TOKEN__": auth_token or "",
-            "__DATUS_PROJECT_ID__": project_id or DEFAULT_PROJECT_ID,
         },
     )
     return render_artifact_html(
