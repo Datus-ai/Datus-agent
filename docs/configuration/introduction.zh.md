@@ -124,6 +124,5 @@ conf/
 - **[数据库适配器](../adapters/db_adapters.md)**：安装额外的数据库连接器
 - **[工作流定义](workflow.md)**：自定义执行路径
 - **[节点配置](nodes.md)**：微调各节点行为
-- **[会话 Compact](compact.zh.md)**：调优 major / minor 压缩策略与磁盘归档
 - **[存储设置](storage.md)**：配置知识库/向量存储
 - **[基准测试](benchmark.md)**：评测与验证

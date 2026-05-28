@@ -154,6 +154,5 @@ Explore the detailed configuration for each component:
 - **[Database Adapters](../adapters/db_adapters.md)**: Install additional database connectors
 - **[Workflow Definitions](workflow.md)**: Define custom execution patterns
 - **[Node Configuration](nodes.md)**: Customize individual node behavior
-- **[Session Compact](compact.md)**: Tune major / minor session compaction and the on-disk tool I/O archive
 - **[Storage Settings](storage.md)**: Configure knowledge base and vector storage
 - **[Benchmark Datasets](benchmark.md)**: Set up evaluation and testing
