@@ -1086,10 +1086,13 @@ class TestGenMetricsNonInteractiveBridge:
 
     def test_workflow_mode_compose_hooks_is_non_interactive(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-        from datus.tools.permission.permission_hooks import PermissionHooks
 
         node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        # Workflow mode may now compose CompositeHooks (permission + compact)
+        # because multi-turn history is enabled for all modes. Validate the
+        # permission gate via ``node.permission_hooks`` instead of the bundle.
         hooks = node._compose_hooks()
-        assert isinstance(hooks, PermissionHooks)
-        assert hooks.non_interactive is True
+        assert hooks is not None
+        assert node.permission_hooks is not None
+        assert node.permission_hooks.non_interactive is True
         assert node.permission_manager.active_profile == "dangerous"

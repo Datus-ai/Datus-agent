@@ -715,10 +715,13 @@ class TestGenExtKnowledgeNonInteractiveBridge:
     """
 
     def test_workflow_mode_compose_hooks_is_non_interactive(self, real_agent_config, mock_llm_create):
-        from datus.tools.permission.permission_hooks import PermissionHooks
-
         node = _create_node(real_agent_config, execution_mode="workflow")
+        # ``_compose_hooks`` may return ``CompositeHooks`` (permission + compact)
+        # in workflow mode now that multi-turn history is enabled. Validate the
+        # permission gate directly — its presence + ``non_interactive`` is what
+        # keeps /bootstrap pools from deadlocking on broker prompts.
         hooks = node._compose_hooks()
-        assert isinstance(hooks, PermissionHooks)
-        assert hooks.non_interactive is True
+        assert hooks is not None
+        assert node.permission_hooks is not None
+        assert node.permission_hooks.non_interactive is True
         assert node.permission_manager.active_profile == "dangerous"

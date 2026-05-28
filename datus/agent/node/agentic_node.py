@@ -1859,9 +1859,12 @@ class AgenticNode(Node):
         try:
             await self._before_stream(ctx)
 
-            if self.execution_mode == "interactive":
-                await self._auto_compact()
-                ctx.session, ctx.conversation_summary = self._get_or_create_session()
+            # Session injection is independent of ``execution_mode``: workflow
+            # callers (print mode ``--resume``, API chat with ``interactive=False``,
+            # sub-agents continuing a parent session) all want SDK to see prior
+            # items. ``execution_mode`` controls human-in-the-loop, not history.
+            await self._auto_compact()
+            ctx.session, ctx.conversation_summary = self._get_or_create_session()
 
             template_context = self._build_template_context(ctx)
             prompt_version = getattr(self.input, "prompt_version", None)

@@ -444,16 +444,20 @@ class TestGenDashboardPermissionWiring:
 
         A ``None`` hook means the permission_manager never intercepts tool
         calls — rules defined in the profile are effectively ignored.
+
+        Workflow mode now also wires ``CompactHook`` (multi-turn history is
+        enabled for all modes), so ``_compose_hooks`` may return a
+        ``CompositeHooks`` bundle. Validate the permission gate on the node.
         """
         _add_dashboard_config(real_agent_config)
         _bi_core_mock.adapter_registry.get.return_value = lambda **kwargs: FullMockAdapter()
         with patch.dict(sys.modules, _BI_MODULES_PATCH):
             from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
-            from datus.tools.permission.permission_hooks import PermissionHooks
 
             node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
             hooks = node._compose_hooks()
-            assert isinstance(hooks, PermissionHooks)
+            assert hooks is not None
+            assert node.permission_hooks is not None
 
     def test_tool_registry_routes_delete_chart_to_bi_tools(self, real_agent_config, mock_llm_create):
         """After ``_ensure_permission_hooks`` runs, registry must classify ``delete_chart``.

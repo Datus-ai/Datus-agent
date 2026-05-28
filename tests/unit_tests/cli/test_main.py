@@ -116,7 +116,10 @@ class TestApplicationRun:
             app.run()
         mock_cli_cls.assert_not_called()
 
-    def test_resume_without_print_mode_errors(self):
+    def test_resume_without_print_mode_enters_repl(self):
+        """``--resume <id>`` without ``-p`` is now valid: it enters the REPL
+        and the CLI's ``_auto_resume_if_requested`` replays the session before
+        the first prompt (same effect as typing ``/resume <id>`` after start)."""
         app = Application()
         mock_args = SimpleNamespace(
             debug=False, datasource="ns1", print_mode=None, web=False, resume="sess_123", proxy_tools=None, config=None
@@ -125,9 +128,10 @@ class TestApplicationRun:
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
             patch("datus.cli.main.configure_logging"),
             patch.object(app, "_ensure_project_config"),
+            patch("datus.cli.main.DatusCLI") as mock_cli_cls,
         ):
-            with pytest.raises(SystemExit):
-                app.run()
+            app.run()
+        mock_cli_cls.assert_called_once_with(mock_args)
 
     def test_proxy_tools_without_print_mode_errors(self):
         """Verify that --proxy_tools without --print raises SystemExit."""
