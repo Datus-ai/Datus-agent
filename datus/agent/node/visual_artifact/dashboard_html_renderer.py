@@ -75,6 +75,24 @@ _DASHBOARD_SLUG_RE = re.compile(r"^[a-z0-9_]{1,80}$")
 #: ``--port`` of ``datus --web`` (see ``datus.cli.main``).
 DEFAULT_QUERY_ENDPOINT = "http://localhost:8501/api/v1/dashboard/query"
 
+
+def _escape_js_single_quoted(value: str) -> str:
+    """Escape ``value`` so it can be slotted into a single-quoted JS string.
+
+    The dashboard template wraps the query-endpoint placeholder in
+    ``'...'``; without this escape, a value containing ``'`` could close
+    the literal, and a ``</script>`` substring could close the surrounding
+    ``<script>`` block. The endpoint is normally derived from
+    ``agent.yml`` keys, but the agent is open-source and shipped to
+    third-party deployments, so defence-in-depth is cheap and matches
+    the ``_escape_for_script_tag`` treatment the JSON payload already
+    gets.
+    """
+    return (
+        value.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r").replace("</", "<\\/")
+    )
+
+
 _DASHBOARD_SPEC = ArtifactHtmlSpec(
     kind="dashboard",
     root_dir_name="dashboards",
@@ -132,7 +150,7 @@ def render_dashboard_html(
         css_url_placeholder=_DASHBOARD_SPEC.css_url_placeholder,
         js_url_placeholder=_DASHBOARD_SPEC.js_url_placeholder,
         extra_placeholders={
-            "__DATUS_QUERY_ENDPOINT__": query_endpoint or DEFAULT_QUERY_ENDPOINT,
+            "__DATUS_QUERY_ENDPOINT__": _escape_js_single_quoted(query_endpoint or DEFAULT_QUERY_ENDPOINT),
         },
     )
     return render_artifact_html(

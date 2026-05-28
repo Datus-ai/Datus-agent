@@ -66,7 +66,9 @@ def _resolve_report_dir(project_files_root: Path, report_slug: str) -> Optional[
         return None
     report_dir = (project_files_root / "reports" / report_slug).resolve()
     reports_root = (project_files_root / "reports").resolve()
-    if reports_root != report_dir and not str(report_dir).startswith(str(reports_root) + "/"):
+    # ``Path.is_relative_to`` is OS-agnostic — the previous
+    # ``str(...).startswith(... + "/")`` form only worked on POSIX.
+    if report_dir != reports_root and not report_dir.is_relative_to(reports_root):
         return None
     return report_dir
 

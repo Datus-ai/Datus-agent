@@ -82,7 +82,9 @@ def _resolve_dashboard_dir(project_files_root: Path, dashboard_slug: str) -> Opt
         return None
     dashboard_dir = (project_files_root / "dashboards" / dashboard_slug).resolve()
     dashboards_root = (project_files_root / "dashboards").resolve()
-    if dashboards_root != dashboard_dir and not str(dashboard_dir).startswith(str(dashboards_root) + "/"):
+    # ``Path.is_relative_to`` is OS-agnostic — the previous
+    # ``str(...).startswith(... + "/")`` form only worked on POSIX.
+    if dashboard_dir != dashboards_root and not dashboard_dir.is_relative_to(dashboards_root):
         return None
     return dashboard_dir
 

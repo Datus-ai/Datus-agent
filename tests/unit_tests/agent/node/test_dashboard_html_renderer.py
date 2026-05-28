@@ -127,6 +127,36 @@ def test_render_dashboard_html_threads_custom_endpoint_through(tmp_path: Path):
     assert DEFAULT_QUERY_ENDPOINT not in body
 
 
+def test_render_dashboard_html_escapes_query_endpoint_for_js_single_quoted(tmp_path: Path):
+    """The endpoint is slotted into a single-quoted JS string literal — a
+    crafted value must NOT be able to close the literal, inject JS, or
+    close the surrounding ``<script>`` block."""
+    _seed_dashboard(tmp_path, dashboard_slug="injection_check")
+    # All four escape vectors: single quote, backslash, newline, and
+    # the ``</`` sequence that would otherwise terminate ``<script>``.
+    crafted = "http://evil'\\bad\n</script><script>alert(1)</script>x"
+    out_path = render_dashboard_html(
+        project_root=tmp_path,
+        dashboard_slug="injection_check",
+        query_endpoint=crafted,
+    )
+    body = out_path.read_text(encoding="utf-8")
+
+    # The escaped form (what we want) is present.
+    assert ("queryEndpoint: 'http://evil\\'\\\\bad\\n<\\/script><script>alert(1)<\\/script>x'") in body
+    # The raw ``</script>`` payload must NOT appear inside the
+    # ``initDashboard`` script block — if it did, the browser would
+    # terminate ``<script>`` early and execute the injected snippet.
+    # We allow the literal ``</script>`` ONLY as the natural closer of
+    # the inline ``initDashboard`` block; nothing else.
+    init_idx = body.index("DatusArtifact.initDashboard")
+    init_close = body.index("</script>", init_idx)
+    init_block = body[init_idx:init_close]
+    assert "</script>" not in init_block
+    assert "alert(1)" in init_block  # text survives, but neutralised
+    assert "<\\/script>" in init_block
+
+
 def test_render_dashboard_html_includes_flat_files_with_template_pair(tmp_path: Path):
     """Payload is a single ``files`` list including both .sql.j2 + .params.json
     sibling files (the dashboard walker allowlist accepts both)."""
