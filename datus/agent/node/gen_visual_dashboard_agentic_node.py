@@ -344,11 +344,19 @@ class GenVisualDashboardAgenticNode(
     def _configured_datasource(self) -> Optional[str]:
         """Active datasource the user should pass to ``datus --web``.
 
-        Best-effort: peeks at ``agent_config.services.default_datasource``
-        when present so the printed command is copy-pasteable; falls back
-        to ``None`` (the message then surfaces a ``<your_datasource>``
-        placeholder).
+        Best-effort, in priority order:
+          1. ``agent_config.current_datasource`` — the live selection,
+             which the ``/datasource <name>`` slash command and the
+             ``--datasource`` CLI flag both feed into. Reflects what the
+             current session is actually pointed at.
+          2. ``agent_config.services.default_datasource`` — the YAML
+             default, used when the user hasn't switched in this session.
+          3. ``None`` (the message then surfaces a ``<your_datasource>``
+             placeholder).
         """
+        current = getattr(self.agent_config, "current_datasource", None)
+        if isinstance(current, str) and current:
+            return current
         services = getattr(self.agent_config, "services", None)
         if services is None:
             return None

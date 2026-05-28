@@ -96,7 +96,14 @@ def _iter_artifact_files(artifact_dir: Path) -> List[Path]:
     silently dropped so a stray scratch file doesn't trip detail.
     ``endswith``-based matching also supports compound suffixes like
     ``.sql.j2`` / ``.params.json``.
+
+    Each candidate is resolved before being kept so a symlink under
+    ``render/`` / ``queries/`` cannot exfiltrate a file from outside the
+    artifact directory into the inline bundle — the LLM controls these
+    paths and a stray ``ln -s /etc/passwd render/foo.jsx`` would
+    otherwise survive the ``is_file()`` probe (which follows symlinks).
     """
+    artifact_dir_resolved = artifact_dir.resolve()
     found: List[Path] = []
     for sub, (allowed_suffixes, recursive) in _DASHBOARD_ARTIFACT_DIRS.items():
         root = artifact_dir / sub
@@ -108,6 +115,15 @@ def _iter_artifact_files(artifact_dir: Path) -> List[Path]:
                 continue
             name_lower = path.name.lower()
             if not any(name_lower.endswith(suffix) for suffix in allowed_suffixes):
+                continue
+            resolved = path.resolve()
+            if not resolved.is_file():
+                continue
+            try:
+                resolved.relative_to(artifact_dir_resolved)
+            except ValueError:
+                # Symlink (or other indirection) escapes the artifact root —
+                # drop silently rather than leak content from outside.
                 continue
             found.append(path)
     found.sort(key=lambda p: p.relative_to(artifact_dir).as_posix())
