@@ -47,6 +47,14 @@ jobs:
       - name: Check release metadata
         run: python3 ci/check_release_readiness.py
 
+      - name: Validate harness coverage map
+        run: |
+          python3 ci/harness/validate_coverage_map.py \
+            --strict \
+            --report-json ci/harness/coverage-map-report.json \
+            --report-md ci/harness/coverage-map-report.md
+          cat ci/harness/coverage-map-report.md >> "$GITHUB_STEP_SUMMARY"
+
       - name: Setup config file
         run: |
           cp /home/datus_ci/ci_template/agent.yml conf/agent.yml
