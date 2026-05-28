@@ -53,6 +53,7 @@ class DatusService:
         self._visualization = None
         self._tool = None
         self._success_story = None
+        self._dashboard = None
 
     # ------------------------------------------------------------------
     # Read-only properties
@@ -171,6 +172,14 @@ class DatusService:
 
             self._visualization = DataVisualizationService(agent_config=self._agent_config)
         return self._visualization
+
+    @property
+    def dashboard(self):
+        if self._dashboard is None:
+            from datus.api.services.dashboard_service import DashboardService
+
+            self._dashboard = DashboardService(agent_config=self._agent_config)
+        return self._dashboard
 
     # ------------------------------------------------------------------
     # Lifecycle

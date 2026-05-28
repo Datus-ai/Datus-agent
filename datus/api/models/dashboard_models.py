@@ -1,0 +1,177 @@
+"""Pydantic models for the visual-dashboard API.
+
+Mirrors the wire shape consumed by the @datus/web-artifact dashboard
+renderer. The DB-bound fields on :class:`DashboardDetail`
+(``subagent`` / ``dashboard_id`` / ``published_version`` /
+``published_at``) are intentionally ``Optional`` / default ``0``: the
+agent-only path (``datus --web``) never populates them, while the
+Datus-backend wrapper enriches them from Postgres before responding.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from datus.schemas.artifact_manifest import ArtifactManifest
+from datus.schemas.gen_visual_dashboard_models import QueryTemplateMetaFile
+from datus.schemas.gen_visual_report_models import QueryColumnMeta
+
+__all__ = [
+    "ArtifactFile",
+    "DashboardDetail",
+    "DashboardQueryRequest",
+    "DashboardSubAgentInfo",
+    "SqlQueryResultEnvelope",
+]
+
+
+class ArtifactFile(BaseModel):
+    """Flat-wire entry for a single artifact file inside ``dashboards/<slug>/``
+    (and, by symmetry, ``reports/<slug>/`` on the SaaS side).
+
+    ``path`` is slug-relative, including the top-level directory
+    (e.g. ``render/charts/trend.jsx``, ``queries/sales.sql.j2``,
+    ``analysis/insights.json``). Matches ``IArtifactFileEntry`` on TS.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(
+        ...,
+        description=(
+            "Slug-relative path, including the top-level directory "
+            "(e.g. 'render/app.jsx', 'queries/foo.sql.j2', 'analysis/intent.md')."
+        ),
+    )
+    content: str = Field(..., description="Raw UTF-8 source text")
+
+
+class DashboardSubAgentInfo(BaseModel):
+    """Compact pointer to the ``ask_dashboard`` subagent bound to this dashboard.
+
+    Only populated when the dashboard has been published on the SaaS
+    backend (``visual_dashboards.subagent_id``). The agent-only path
+    always leaves this as ``None``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(..., description="SubAgent.id — opens the CommonTab agent editor")
+    name: str = Field(..., description="SubAgent.name (mirrors the dashboard's slug at create time)")
+    description: str = Field(..., description="SubAgent.description")
+
+
+class DashboardDetail(BaseModel):
+    """Wire shape of ``GET /api/v1/dashboard/detail``.
+
+    ``files`` is the slug-relative flat list covering every artifact file
+    the dashboard owns (render/ tree + queries/*.sql.j2 / queries/*.params.json
+    + analysis/). ``templates`` stays as a parsed sidecar for outer-panel
+    UI that wants to drive filter affordances without re-parsing the
+    .params.json bytes; the iframe itself only needs the render slice of
+    ``files``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    slug: str = Field(..., description="Dashboard slug, e.g. 'revenue_overview'")
+    name: str = Field(..., description="Human-readable display name (read from manifest.json)")
+    description: str = Field(..., description="One-paragraph description of what the dashboard tracks (manifest.json)")
+    manifest: ArtifactManifest = Field(
+        ..., description="Full manifest.json contents (slug + name + description + kind + created_at)"
+    )
+    created_at: Optional[str] = Field(None, description="ISO 8601 timestamp (render/app.jsx mtime)")
+    files: List[ArtifactFile] = Field(
+        ...,
+        description=(
+            "Flat list of every artifact file under dashboards/<slug>/ that passes the "
+            "per-prefix allowlist (render/{.jsx,.js,.css}, queries/{.sql.j2,.params.json}, "
+            "analysis/{.md,.json}). manifest.json is intentionally NOT included — "
+            "the parsed structured form is on ``manifest`` above. Sorted by path."
+        ),
+    )
+    templates: List[QueryTemplateMetaFile] = Field(
+        default_factory=list,
+        description="Per-slug Jinja2 template metadata (params declaration, columns, sample_params)",
+    )
+    subagent: Optional[DashboardSubAgentInfo] = Field(
+        None,
+        description=(
+            "The ``ask_dashboard`` SubAgent bound to this dashboard by ``/dashboard/publish``. "
+            "``None`` before the first successful publish or when running without a SaaS DB."
+        ),
+    )
+    dashboard_id: Optional[str] = Field(
+        None,
+        description=(
+            "``visual_dashboards.id`` for this (workspace, project, slug) once a publish "
+            "has landed; ``None`` before the first publish or when running without a SaaS DB."
+        ),
+    )
+    published_version: int = Field(
+        0,
+        description=(
+            "Latest ``visual_dashboard_versions.version`` for this (workspace, project, slug). "
+            "``0`` when nothing has been published yet or when running without a SaaS DB."
+        ),
+    )
+    published_at: Optional[str] = Field(
+        None,
+        description=(
+            "ISO 8601 UTC timestamp of the latest published version's ``created_at``. "
+            "``None`` when nothing has been published yet or when running without a SaaS DB."
+        ),
+    )
+
+
+class SqlQueryResultEnvelope(BaseModel):
+    """Matches the ISqlQueryResult shape consumed by ``useQuerySql`` on the frontend.
+
+    The frontend hook destructures ``data?.rows ?? []`` / ``data?.columns ?? []``
+    and reads ``data?.sql`` for the optional "View SQL" affordance — keep the
+    field names in lockstep with ``packages/web-artifact/src/types.ts``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    executed_at: str = Field(..., description="ISO 8601 UTC timestamp of the executing query")
+    datasource: str = Field(..., description="Logical datasource the query ran against")
+    row_count: int = Field(..., ge=0)
+    columns: List[QueryColumnMeta] = Field(..., description="Column name + inferred semantic type")
+    rows: List[Dict[str, Any]] = Field(default_factory=list, description="Result rows; each is a {column → scalar} map")
+    sql: Optional[str] = Field(
+        None,
+        description=(
+            "The fully rendered SQL the connector executed (after Jinja2 + bind-value substitution). "
+            "Surfaced so the in-iframe <ChartEntryMore> menu can show 'View SQL'."
+        ),
+    )
+
+
+class DashboardQueryRequest(BaseModel):
+    """Request body for ``POST /api/v1/dashboard/query``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dashboard_slug: str = Field(..., description="Dashboard slug, e.g. 'revenue_overview'")
+    query_slug: str = Field(
+        ...,
+        description=(
+            "Query template slug — the filename stem of the "
+            "``dashboards/<dashboard_slug>/queries/<query_slug>.sql.j2`` + "
+            "``.params.json`` sibling pair."
+        ),
+    )
+    params: Dict[str, Any] = Field(default_factory=dict, description="User-selected filter values keyed by param name")
+    published_version: Optional[int] = Field(
+        None,
+        ge=1,
+        description=(
+            "When set, render the template from the immutable ``visual_dashboard_versions`` "
+            "snapshot at this version instead of the on-disk buffer. Only supported by the "
+            "Datus-backend SaaS deployment that has a Postgres versions table; the "
+            "agent-only ``datus --web`` path rejects non-null values with INVALID_PUBLISHED_VERSION."
+        ),
+    )
