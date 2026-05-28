@@ -163,7 +163,6 @@ If the user wants live filters / period selectors / re-runnable queries, that is
        ├── formatters.js    # d3-format / dayjs wrappers
        └── table.jsx        # paginated <DataTable> primitive (sticky headers, row striping, fixed 15 rows/page — no page-size selector)
    ```
-   The card surface (`<ChartCard>`) is provided by `@datus/web-artifact` — do **not** add a `shared/card.jsx` reimplementation.
    Keep each file focused and small (well under the 200 KB filesystem cap). The renderer compiles each module on demand — there's no bundling step on your side.
 9. **Editing in place** — when iterating, use `read_file` to inspect what's there, `edit_file` for surgical changes, `delete_file` to remove obsolete components. The validator reports unreferenced files as warnings so you can decide to keep them or clean up.
 10. **Finalize** — call `validate_render()`. Fix any reported issues (missing entry, dangling sqlId, illegal import) and call it again. Stop the moment it returns success.
