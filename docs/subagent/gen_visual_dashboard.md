@@ -18,24 +18,30 @@ First confirm `datus --web` is running locally — the dashboard's filters need 
 uv run datus --datasource <your_datasource> --web
 ```
 
-Then just ask. State the question, the filter dimensions you want, and the headline metrics:
+Activate `gen_visual_dashboard` as your current agent — the legacy `/gen_visual_dashboard ...` slash invocation was removed in favor of `/agent`-based selection:
 
 ```bash
-/gen_visual_dashboard Build a store sales overview dashboard. Support filtering by region and month, with GMV, order count, and AOV as the headline metrics.
+/agent gen_visual_dashboard
+```
+
+(Or run `/agent` with no args to pick it from the unified agent TUI — Enter to edit, `s` to set as default.) Once active, just describe what you want — state the question, the filter dimensions you want, and the headline metrics:
+
+```bash
+Build a store sales overview dashboard. Support filtering by region and month, with GMV, order count, and AOV as the headline metrics.
 ```
 
 ```bash
-/gen_visual_dashboard Build a new-user activation funnel dashboard. Filter by acquisition channel and signup window, show signup → first-order → day-2 retention conversion.
+Build a new-user activation funnel dashboard. Filter by acquisition channel and signup window, show signup → first-order → day-2 retention conversion.
 ```
 
 To edit an existing dashboard, reference it by display name or by its short id:
 
 ```bash
-/gen_visual_dashboard Add an "AOV range" filter to dashboard store_sales_overview.
+Add an "AOV range" filter to dashboard store_sales_overview.
 ```
 
 ```bash
-/gen_visual_dashboard In "Store Sales Overview", switch the monthly aggregation to weekly.
+In "Store Sales Overview", switch the monthly aggregation to weekly.
 ```
 
 Once the dashboard is built, the chat panel prints the HTML file's absolute path together with the `datus --web --datasource <ds>` command anyone else needs to run before opening that file — open the HTML in a browser and the dashboard is live. Closing and reopening it later requires no re-build.
@@ -46,12 +52,12 @@ Once the dashboard is built, the chat panel prints the HTML file's absolute path
 
 - **From metrics** — reference an existing metric with `@Metrics <subject>.<group>.<metric>` (three segments — subject tree path + metric name). The agent will pull its definition, dimensions, and time windows from your semantic layer, and turn the dimensions into filters. Best when your project already has a curated metric registry (see [Generate Metrics](gen_metrics.md) for how to create them).
   ```bash
-  /gen_visual_dashboard Build an ops overview around @Metrics revenue.daily.dau and @Metrics conversion.weekly.signup_rate, with region and date-range filters.
+  Build an ops overview around @Metrics revenue.daily.dau and @Metrics conversion.weekly.signup_rate, with region and date-range filters.
   ```
 
 - **From SQL** — paste the SQL you want the dashboard built on. The agent identifies the parameterizable conditions in it (date ranges, enum values, ID lists, …), promotes them to filters, and composes charts around the rest. Best for ad-hoc exploration or when the metric you need doesn't exist yet.
   ```bash
-  /gen_visual_dashboard Build a merchant reconciliation dashboard using this SQL, with the date range and store_id exposed as filters:
+  Build a merchant reconciliation dashboard using this SQL, with the date range and store_id exposed as filters:
       SELECT trade_date, store_id, SUM(amount) AS gmv, COUNT(*) AS orders
       FROM mart.merchant_daily
       WHERE trade_date BETWEEN '2025-01-01' AND '2025-12-31'
@@ -80,10 +86,10 @@ You can re-invoke `gen_visual_dashboard` later to edit the same dashboard in pla
 Every dashboard is built out of independent modules — filters, individual charts, KPI cards, data tables. You can iterate on **just one** without touching anything else:
 
 ```bash
-/gen_visual_dashboard Change the AOV chart in store_sales_overview to a region-grouped bar chart
-/gen_visual_dashboard Add a "product category" filter to store_sales_overview
-/gen_visual_dashboard Drop the customer composition pie chart, it's not needed
-/gen_visual_dashboard Reorder the KPI cards so GMV comes first
+Change the AOV chart in store_sales_overview to a region-grouped bar chart
+Add a "product category" filter to store_sales_overview
+Drop the customer composition pie chart, it's not needed
+Reorder the KPI cards so GMV comes first
 ```
 
 Each call is a surgical change. The agent locates the affected module, edits it, rewrites only the SQL templates that changed, and leaves the rest of the layout, filters, and charts exactly as you reviewed them.

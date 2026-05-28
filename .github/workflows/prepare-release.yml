@@ -114,6 +114,9 @@ jobs:
             --allow-current-version
             --allow-no-changes
           )
+          if [[ "${VERSION}" =~ rc[0-9]+$ ]]; then
+            args+=(--allow-same-final-prerelease)
+          fi
           if [[ "${UPDATE_ADAPTER_BOUNDS}" == "true" ]]; then
             args+=(--update-adapter-bounds)
           else

@@ -8,28 +8,34 @@
 
 An HTML report is a long-form, narrative answer with the data baked in at build time. There are no filters and no live re-querying once the report is built. For interactive BI dashboards on Superset / Grafana, use `gen_dashboard` instead.
 
-If you'd rather have a plain-text **Markdown report** (no HTML rendering, no charts), use `/gen_report` instead.
+If you'd rather have a plain-text **Markdown report** (no HTML rendering, no charts), use the `gen_report` agent instead.
 
 ## Quick Start
 
-Just ask. State the question, the time window, and the breakdowns you care about:
+Activate `gen_visual_report` as your current agent — the legacy `/gen_visual_report ...` slash invocation was removed in favor of `/agent`-based selection:
 
 ```bash
-/gen_visual_report Give me a Q4 2025 revenue report. Show monthly trend, top 10 regions, and a YoY comparison vs Q4 2024.
+/agent gen_visual_report
+```
+
+(Or run `/agent` with no args to pick it from the unified agent TUI — Enter to edit, `s` to set as default.) Once active, just describe what you want — state the question, the time window, and the breakdowns you care about:
+
+```bash
+Give me a Q4 2025 revenue report. Show monthly trend, top 10 regions, and a YoY comparison vs Q4 2024.
 ```
 
 ```bash
-/gen_visual_report Analyze merchant churn for 2025 H2, segment by tenure bucket, and give key findings and recommendations.
+Analyze merchant churn for 2025 H2, segment by tenure bucket, and give key findings and recommendations.
 ```
 
 To edit an existing report, reference it by display name or by its short id:
 
 ```bash
-/gen_visual_report Add a channel-level breakdown table to report q4_2025_revenue_analysis.
+Add a channel-level breakdown table to report q4_2025_revenue_analysis.
 ```
 
 ```bash
-/gen_visual_report In "Q4 2025 Revenue Analysis", switch the revenue trend chart to monthly aggregation.
+In "Q4 2025 Revenue Analysis", switch the revenue trend chart to monthly aggregation.
 ```
 
 ## Start from a Metric or Your Own SQL
@@ -38,12 +44,12 @@ To edit an existing report, reference it by display name or by its short id:
 
 - **From metrics** — reference an existing metric with `@Metrics <subject>.<group>.<metric>` (three segments — subject tree path + metric name). The agent will pull its definition, dimensions, and time windows from your semantic layer. Best when your project already has a curated metric registry (see [Generate Metrics](gen_metrics.md) for how to create them).
   ```bash
-  /gen_visual_report Build a Q4 2025 report around @Metrics revenue.daily.dau and @Metrics conversion.weekly.signup_rate, broken down by region.
+  Build a Q4 2025 report around @Metrics revenue.daily.dau and @Metrics conversion.weekly.signup_rate, broken down by region.
   ```
 
 - **From SQL** — paste the SQL you want the report built on. The agent treats your query as the data source, executes it, and assembles the narrative + charts around the result. Best for one-off analyses or when the metric you need doesn't exist yet.
   ```bash
-  /gen_visual_report Build a churn report using this SQL:
+  Build a churn report using this SQL:
       SELECT signup_month, tenure_bucket, churned_users
       FROM mart.churn_monthly
       WHERE signup_month >= '2025-07-01'
@@ -68,10 +74,10 @@ The agent reads your question, looks up the metrics and tables that are most rel
 Every report is built out of independent modules — KPI banner, individual charts, data tables, recommendations block, footer. You can iterate on **just one** without touching anything else:
 
 ```bash
-/gen_visual_report Swap the revenue trend chart in q4_2025_revenue_analysis to monthly aggregation
-/gen_visual_report Add a YoY column to the regional breakdown table
-/gen_visual_report Drop the recommendations section, it's not needed for this audience
-/gen_visual_report Update the executive summary to emphasize the H2 turnaround
+Swap the revenue trend chart in q4_2025_revenue_analysis to monthly aggregation
+Add a YoY column to the regional breakdown table
+Drop the recommendations section, it's not needed for this audience
+Update the executive summary to emphasize the H2 turnaround
 ```
 
 Each call is a surgical change. The agent locates the affected module, edits it, re-runs only the queries that changed, and leaves everything else alone — so the rest of the layout, narrative, and figures stay exactly as you reviewed them. This makes the report cheap to iterate on: refine a wording, swap a chart type, add a column, or remove a section in a single back-and-forth, without ever rewriting the whole thing.

@@ -102,6 +102,45 @@ def test_ensure_version_can_advance_can_allow_current_version(tmp_path, prepare_
         prepare_release.ensure_version_can_advance(repo_root, Version("0.2.5"), allow_current_version=True)
 
 
+def test_ensure_version_can_allow_same_final_prerelease(tmp_path, prepare_release):
+    repo_root = _write_release_repo(tmp_path)
+
+    with pytest.raises(ValueError, match="must advance current version"):
+        prepare_release.ensure_version_can_advance(repo_root, Version("0.2.6rc1"))
+
+    assert (
+        prepare_release.ensure_version_can_advance(
+            repo_root,
+            Version("0.2.6rc1"),
+            allow_same_final_prerelease=True,
+        )
+        is None
+    )
+
+
+def test_ensure_version_can_allow_same_final_prerelease_rejects_finalized_tag(tmp_path, prepare_release):
+    repo_root = _write_release_repo(tmp_path)
+    subprocess.run(["git", "tag", "v0.2.6"], cwd=repo_root, check=True)
+
+    with pytest.raises(ValueError, match="Cannot prepare prerelease 0.2.6rc1 from finalized 0.2.6"):
+        prepare_release.ensure_version_can_advance(
+            repo_root,
+            Version("0.2.6rc1"),
+            allow_same_final_prerelease=True,
+        )
+
+
+def test_ensure_version_can_allow_same_final_prerelease_rejects_different_line(tmp_path, prepare_release):
+    repo_root = _write_release_repo(tmp_path)
+
+    with pytest.raises(ValueError, match="must advance current version"):
+        prepare_release.ensure_version_can_advance(
+            repo_root,
+            Version("0.2.5rc1"),
+            allow_same_final_prerelease=True,
+        )
+
+
 def test_prepare_release_updates_version_and_adapter_bounds(tmp_path, monkeypatch, prepare_release):
     repo_root = _write_release_repo(tmp_path)
     monkeypatch.setattr(
