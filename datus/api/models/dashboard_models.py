@@ -5,10 +5,9 @@ dashboard viewer. Models here only carry fields the agent actually
 populates: on-disk bundle assembly + Jinja2 template metadata.
 
 Publication-side fields (``subagent``, ``dashboard_id``,
-``published_version``, ``published_at``) live in Datus-backend's
-``PublishedDashboardDetail`` subclass — they're meaningful only when a
-SaaS Postgres deployment is sitting behind the agent and have no
-analogue on the agent-only path.
+``published_version``, ``published_at``) live in a downstream SaaS
+host's subclass — they're meaningful only when a Postgres deployment
+sits behind the agent and have no analogue on the agent-only path.
 """
 
 from __future__ import annotations
@@ -60,10 +59,10 @@ class DashboardDetail(BaseModel):
     .params.json bytes; the iframe itself only needs the render slice of
     ``files``.
 
-    Datus-backend's ``PublishedDashboardDetail`` subclass extends this
-    with the publication-side fields (``subagent`` / ``dashboard_id`` /
-    ``published_version`` / ``published_at``) that require a SaaS
-    Postgres deployment.
+    A downstream SaaS host extends this with the publication-side
+    fields (``subagent`` / ``dashboard_id`` / ``published_version`` /
+    ``published_at``) via its own subclass when a Postgres deployment
+    is present.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -133,9 +132,9 @@ class DashboardQueryRequest(BaseModel):
         None,
         ge=1,
         description=(
-            "When set, render the template from the immutable ``visual_dashboard_versions`` "
-            "snapshot at this version instead of the on-disk buffer. Only supported by the "
-            "Datus-backend SaaS deployment that has a Postgres versions table; the "
-            "agent-only ``datus --web`` path rejects non-null values with INVALID_PUBLISHED_VERSION."
+            "When set, render the template from an immutable snapshot at this version "
+            "instead of the on-disk buffer. Only supported by a SaaS host with a "
+            "version-snapshot store; the agent-only ``datus --web`` path rejects "
+            "non-null values with INVALID_PUBLISHED_VERSION."
         ),
     )

@@ -56,9 +56,9 @@ _TEMPLATE_PATH = Path(__file__).parent / "templates" / "dashboard_index.html"
 
 # Per-prefix allowlist driving the flat artifact walker. ``queries/``
 # carries Jinja2 templates + params metadata (vs. report's pre-executed
-# SQL + JSON result pairs). Mirrors the dashboard service in
-# Datus-backend / Datus-agent so the CLI-emitted HTML payload and the
-# SaaS ``IDashboardDetail`` share one shape.
+# SQL + JSON result pairs). Kept in lockstep with the dashboard API
+# service's walker so the CLI-emitted HTML payload and the SaaS
+# ``IDashboardDetail`` share one shape.
 _DASHBOARD_ARTIFACT_DIRS: Dict[str, Tuple[Tuple[str, ...], bool]] = {
     "render": ((".jsx", ".js", ".css", ".json"), True),
     "queries": ((".sql.j2", ".params.json"), False),

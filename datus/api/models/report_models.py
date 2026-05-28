@@ -1,14 +1,13 @@
 """Pydantic models for the visual-report API.
 
-Mirrors the wire shape consumed by the @datus/web-artifact-render report
-viewer. Models here only carry fields the agent actually populates: the
-on-disk artifact bundle.
+Mirrors the wire shape consumed by the @datus/web-artifact-render
+report viewer. Models here only carry fields the agent actually
+populates: the on-disk artifact bundle.
 
 Publication-side fields (``subagent``, ``report_id``,
-``published_version``, ``published_at``) live in Datus-backend's
-``PublishedReportDetail`` subclass — they're meaningful only when a
-SaaS Postgres deployment is sitting behind the agent and have no
-analogue on the agent-only path.
+``published_version``, ``published_at``) live in a downstream SaaS
+host's subclass — they're meaningful only when a Postgres deployment
+sits behind the agent and have no analogue on the agent-only path.
 """
 
 from __future__ import annotations
@@ -37,10 +36,10 @@ class ReportDetail(BaseModel):
     ``@datus/web-artifact-render`` UMD viewer it ships with) only needs
     this list to render the entire artifact.
 
-    Datus-backend's ``PublishedReportDetail`` subclass extends this with
-    the publication-side fields (``subagent`` / ``report_id`` /
-    ``published_version`` / ``published_at``) that require a SaaS
-    Postgres deployment.
+    A downstream SaaS host extends this with the publication-side
+    fields (``subagent`` / ``report_id`` / ``published_version`` /
+    ``published_at``) via its own subclass when a Postgres deployment
+    is present.
     """
 
     model_config = ConfigDict(extra="forbid")

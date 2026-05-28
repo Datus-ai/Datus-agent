@@ -15,13 +15,12 @@ artifact under ``<project_root>/dashboards/<slug>/``:
   Jinja2 SQL template plus its declared parameter metadata.
 * ``manifest.json`` — ``{slug, name, description, kind, created_at}``.
 
-At view time the backend renders the template with user-selected filter
-values and executes it live against the bound datasource — see
-``Datus-backend/datus_backend/services/dashboard_service.py``. The agent
-``--web`` server exposes the same ``POST /api/v1/dashboard/query``
-endpoint, so the CLI HTML compile path below produces a
-``dashboards/<slug>/index.html`` that drives the SaaS dashboard
-renderer against the local agent server (or any configured backend).
+At view time the query backend renders the template with user-selected
+filter values and executes it live against the bound datasource — the
+agent ``--web`` server exposes ``POST /api/v1/dashboard/query`` for
+that, and the CLI HTML compile path below produces a
+``dashboards/<slug>/index.html`` that drives the dashboard renderer
+against the local agent server (or any configured backend).
 
 Common machinery lives in :class:`BaseVisualArtifactAgenticNode`; this
 file owns the dashboard-specific artifact wiring, result model, and the

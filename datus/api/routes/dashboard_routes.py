@@ -6,10 +6,9 @@
   against the supplied filter values and executes it live through the
   project's connector.
 
-Published-version snapshotting (``visual_dashboards`` /
-``visual_dashboard_versions`` in Postgres) and the companion
-``ask_dashboard`` subagent live in the Datus-backend SaaS wrapper —
-not here.
+Published-version snapshotting and the companion ``ask_dashboard``
+subagent are not part of the agent contract — they live in a separate
+SaaS host that wraps this service when present.
 """
 
 from __future__ import annotations
@@ -30,25 +29,9 @@ router = APIRouter(prefix="/api/v1", tags=["dashboard"])
 
 
 def _project_files_root(svc: ServiceDep) -> Path:
-    """Project files root the dashboard artifacts live under.
-
-    ``agent_config.project_root`` is the universal anchor:
-
-    * Agent CLI (``datus --web``): ``AgentConfig`` defaults
-      ``project_root`` to ``os.getcwd()``, so ``gen_visual_dashboard``
-      writes ``<CWD>/dashboards/<slug>/`` and this route reads from the
-      same tree.
-    * Datus-backend SaaS: :mod:`datus_backend.config_loader` sets
-      ``project_root = project_files_dir`` (i.e.
-      ``<tenant>/<ws>/<project_id>/files``), which is where the SaaS
-      subagent writes its artifacts.
-
-    Previous incarnations of this helper composed ``{agent.home}/files``
-    by analogy with ``kb_routes`` — that only worked in the SaaS layout
-    where ``home == project_dir`` and ``project_root == home/files``;
-    in CLI it resolved to ``~/.datus/files`` and produced
-    TEMPLATE_NOT_FOUND on every query.
-    """
+    """Anchor for ``dashboards/<slug>/``; matches where
+    ``gen_visual_dashboard`` wrote the artifact (CWD in CLI; the
+    workspace's project files dir when a SaaS host overrides it)."""
     return Path(svc.agent_config.project_root)
 
 

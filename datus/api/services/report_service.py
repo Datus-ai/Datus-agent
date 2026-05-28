@@ -1,20 +1,13 @@
 """Report artifact reader.
 
-Walks ``reports/<slug>/`` produced by the ``gen_visual_report`` subagent
-and returns a flat ``files`` list plus the parsed ``manifest`` — the
-bundle expected by both the standalone ``@datus/web-artifact-render``
-viewer (CLI ``index.html``) and the SaaS-side renderer
-(``@datus/web-common/modules/report``).
+Walks ``reports/<slug>/`` produced by the ``gen_visual_report``
+subagent and returns a flat ``files`` list plus the parsed
+``manifest`` — the bundle the ``@datus/web-artifact-render`` viewer
+consumes.
 
-See ``Datus-saas/docs/gen-report-artifact.md`` §7 for the wire format.
-
-This service is the canonical implementation, shared by the agent-only
-``datus --web`` path and the Datus-backend SaaS wrapper. The wrapper
-layers Postgres-backed enrichment on top (``subagent`` / ``report_id``
-/ ``published_version`` / ``published_at``); publish (``ask_report``
-SubAgent + ``visual_report_versions`` snapshot) intentionally stays in
-the backend because it requires the SaaS schema that has no agent-only
-counterpart.
+This service is the canonical implementation. An optional SaaS host
+can layer publication-side enrichment on top and own publish, both of
+which require a Postgres schema that has no agent-only counterpart.
 """
 
 from __future__ import annotations
@@ -143,11 +136,9 @@ class ReportService:
     ) -> Result[ReportDetail]:
         """Load the on-disk artifact bundle for a report slug.
 
-        Returns the same wire shape as the SaaS path; the SaaS-only DB
-        fields (``subagent`` / ``report_id`` / ``published_version`` /
-        ``published_at``) stay at their ``None`` / ``0`` defaults — the
-        Datus-backend wrapper enriches them from Postgres before
-        responding.
+        Returns the slim agent-side :class:`ReportDetail`; a SaaS host
+        that needs publication-side fields layers them on via its own
+        subclass.
         """
         report_dir = _resolve_report_dir(project_files_root, report_slug)
         if report_dir is None:

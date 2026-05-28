@@ -212,7 +212,7 @@ def sql_quote_scalar(value: Any) -> str:
     """Quote a scalar literal for inline SQL substitution.
 
     Used both by the **trial render** inside ``save_query_template`` and by
-    the view-time render in ``Datus-backend.services.dashboard_service``.
+    the view-time render in the dashboard API service.
     Strings get their embedded single-quotes doubled (SQL-89 escape);
     numbers / booleans go in unquoted; ``None`` becomes ``NULL``.
 
@@ -355,7 +355,7 @@ def render_dashboard_template(sql_template: str, params_decl: List[TemplateParam
     """Render a dashboard's Jinja2 SQL template and substitute bind placeholders.
 
     Used by both the save-time trial path (``DashboardArtifactTools.save_query_template``)
-    and the view-time live path (``Datus-backend.services.dashboard_service.run_query``).
+    and the view-time live path (``DashboardService.run_query``).
     Caller is responsible for **validating / coercing** ``values`` against the
     declared types before calling — this function trusts what it receives.
 

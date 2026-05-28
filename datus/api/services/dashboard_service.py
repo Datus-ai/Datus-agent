@@ -12,11 +12,10 @@ Two endpoints power the dashboard viewer:
   project's connector. The result envelope matches the
   ``ISqlQueryResult`` shape consumed by ``RemoteQueryArtifactProvider``.
 
-This service is the canonical implementation. The Datus-backend SaaS
-wrapper layers Postgres-backed enrichment on top (``subagent``,
-``dashboard_id``, ``published_version``, ``published_at``) and a
-published-version template loader so the same wire contract serves both
-the ``datus --web`` agent-only path and the multi-tenant SaaS path.
+This service is the canonical implementation. An optional SaaS host
+can layer publication-side enrichment on top and supply a
+``published_template_loader`` so the same wire contract serves both
+the agent-only ``datus --web`` path and a multi-tenant deployment.
 """
 
 from __future__ import annotations
@@ -267,11 +266,9 @@ class DashboardService:
     ) -> Result[DashboardDetail]:
         """Load the on-disk artifact bundle for a dashboard slug.
 
-        Returns the same wire shape as the SaaS path; the SaaS-only DB
-        fields (``subagent`` / ``dashboard_id`` / ``published_version`` /
-        ``published_at``) stay at their ``None`` / ``0`` defaults — the
-        Datus-backend wrapper enriches them from Postgres before
-        responding.
+        Returns the slim agent-side :class:`DashboardDetail`; a SaaS
+        host that needs publication-side fields layers them on via its
+        own subclass.
         """
         dashboard_dir = _resolve_dashboard_dir(project_files_root, dashboard_slug)
         if dashboard_dir is None:

@@ -57,11 +57,10 @@ logger = get_logger(__name__)
 
 _TEMPLATE_PATH = Path(__file__).parent / "templates" / "report_index.html"
 
-# Per-prefix allowlist driving the flat artifact walker. Mirrors
-# ``_ARTIFACT_DIRS`` in
-# ``Datus-backend/datus_backend/services/report_service.py`` so the
-# CLI-emitted HTML payload and the saas-emitted ``IPublishedReportArtifact``
-# share one shape.
+# Per-prefix allowlist driving the flat artifact walker. Kept in
+# lockstep with the report API service's walker so the CLI-emitted
+# HTML payload and the SaaS ``IPublishedReportArtifact`` share one
+# shape.
 _REPORT_ARTIFACT_DIRS: Dict[str, Tuple[Tuple[str, ...], bool]] = {
     "render": ((".jsx", ".js", ".css", ".json"), True),
     "queries": ((".sql", ".json"), False),

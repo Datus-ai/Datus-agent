@@ -4,9 +4,9 @@
 modules) plus the full set of queries/*.sql and queries/*.json files for
 a report produced by the ``gen_visual_report`` subagent.
 
-Publish (``visual_reports`` / ``visual_report_versions`` snapshots) and
-the companion ``ask_report`` subagent live in the Datus-backend SaaS
-wrapper — not here.
+Publish and the companion ``ask_report`` subagent are not part of the
+agent contract — they live in a separate SaaS host that wraps this
+service when present.
 """
 
 from __future__ import annotations
@@ -23,25 +23,9 @@ router = APIRouter(prefix="/api/v1", tags=["report"])
 
 
 def _project_files_root(svc: ServiceDep) -> Path:
-    """Project files root the report artifacts live under.
-
-    ``agent_config.project_root`` is the universal anchor:
-
-    * Agent CLI (``datus --web``): ``AgentConfig`` defaults
-      ``project_root`` to ``os.getcwd()``, so ``gen_visual_report``
-      writes ``<CWD>/reports/<slug>/`` and this route reads from the
-      same tree.
-    * Datus-backend SaaS: :mod:`datus_backend.config_loader` sets
-      ``project_root = project_files_dir`` (i.e.
-      ``<tenant>/<ws>/<project_id>/files``), which is where the SaaS
-      subagent writes its artifacts.
-
-    Previous incarnations of this helper composed ``{agent.home}/files``
-    by analogy with ``kb_routes`` — that only worked in the SaaS layout
-    where ``home == project_dir`` and ``project_root == home/files``;
-    in CLI it resolved to ``~/.datus/files`` and produced
-    REPORT_NOT_FOUND on every detail lookup.
-    """
+    """Anchor for ``reports/<slug>/``; matches where
+    ``gen_visual_report`` wrote the artifact (CWD in CLI; the
+    workspace's project files dir when a SaaS host overrides it)."""
     return Path(svc.agent_config.project_root)
 
 
