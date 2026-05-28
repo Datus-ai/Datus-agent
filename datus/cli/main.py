@@ -137,7 +137,7 @@ class ArgumentParser:
             "--resume",
             type=str,
             default=None,
-            help="Resume an existing session by session_id (for print mode)",
+            help="Resume an existing session by session_id (REPL or --print mode)",
         )
 
         self.parser.add_argument(
@@ -222,9 +222,6 @@ class Application:
             args.datasource = self._resolve_default_datasource(args, allow_empty=is_repl)
             if not args.datasource and not is_repl:
                 return
-
-        if args.resume and args.print_mode is None:
-            self.arg_parser.parser.error("--resume requires --print mode")
 
         if args.proxy_tools and args.print_mode is None:
             self.arg_parser.parser.error("--proxy_tools requires --print mode")

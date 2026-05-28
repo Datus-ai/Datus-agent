@@ -2204,9 +2204,12 @@ class AgenticNode(Node):
         try:
             await self._before_stream(ctx)
 
-            if self.execution_mode == "interactive":
-                await self._auto_compact()
-                ctx.session = self._get_or_create_session()
+            # Session injection is independent of ``execution_mode``: workflow
+            # callers (print mode ``--resume``, API chat with ``interactive=False``,
+            # sub-agents continuing a parent session) all want SDK to see prior
+            # items. ``execution_mode`` controls human-in-the-loop, not history.
+            await self._auto_compact()
+            ctx.session = self._get_or_create_session()
 
             template_context = self._build_template_context(ctx)
             prompt_version = getattr(self.input, "prompt_version", None)
@@ -2957,18 +2960,12 @@ class AgenticNode(Node):
         bypass ``__init__`` don't trip on a missing attribute, and so the
         hook is only created in the loop where it will actually be used.
 
-        Returns ``None`` when:
-        - the compact subsystem is disabled in config (both ``major.enabled``
-          and ``minor.enabled`` off), or
-        - the node is running in non-interactive mode (workflow / single-shot
-          subagent). Those nodes don't loop with the user, so the rolling-
-          window minor compact has nothing to accumulate and the in-loop
-          major trigger has no observer — the legacy behavior (let the run
-          fail with ``MaxTurnsExceeded`` and rely on the model-layer
-          overflow callback) is the right answer there.
+        Returns ``None`` when the compact subsystem is disabled in config
+        (both ``major.enabled`` and ``minor.enabled`` off). Enabled for all
+        ``execution_mode`` values: ``cfg.*.enabled`` is the real gate, so
+        workflow callers that span multiple turns (API chat resume, sub-agents
+        with shared session_id) still get rolling-window compaction.
         """
-        if getattr(self, "execution_mode", None) != "interactive":
-            return None
         self._ensure_compact_state()
         cfg = self._compact_cfg
         if not (cfg.major.enabled or cfg.minor.enabled):
