@@ -3724,15 +3724,18 @@
 <p>先确认本地已经通过 <code>--web</code> 启动了 datus（HTML 仪表盘的筛选器需要这个后端处理查询）：</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>run<span class="w"> </span>datus<span class="w"> </span>--datasource<span class="w"> </span>&lt;你的数据源&gt;<span class="w"> </span>--web
 </span></code></pre></div>
-<p>然后直接提问。说清楚问题、想看的筛选维度，以及关心的核心指标：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>/gen_visual_dashboard<span class="w"> </span>做一份门店销售总览仪表盘,支持按地区、月份筛选,核心指标包含<span class="w"> </span>GMV、订单量、客单价
+<p>把当前 agent 切到 <code>gen_visual_dashboard</code>——之前的 <code>/gen_visual_dashboard ...</code> slash 调用方式已经移除，统一通过 <code>/agent</code> 选择：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>/agent<span class="w"> </span>gen_visual_dashboard
 </span></code></pre></div>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>/gen_visual_dashboard<span class="w"> </span>新用户激活漏斗仪表盘,可以按来源渠道、注册时段筛选,展示注册→首单→次日留存各环节转化
+<p>（或者直接 <code>/agent</code>（不带参数）打开 agent TUI，选中 <code>gen_visual_dashboard</code> → Enter 编辑、<code>s</code> 设为默认。）切好之后直接提问就行——说清楚问题、想看的筛选维度，以及关心的核心指标：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>做一份门店销售总览仪表盘,支持按地区、月份筛选,核心指标包含<span class="w"> </span>GMV、订单量、客单价
+</span></code></pre></div>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>新用户激活漏斗仪表盘,可以按来源渠道、注册时段筛选,展示注册→首单→次日留存各环节转化
 </span></code></pre></div>
 <p>要编辑已有的仪表盘,按显示名或 slug 引用即可:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>/gen_visual_dashboard<span class="w"> </span>给仪表盘<span class="w"> </span>store_sales_overview<span class="w"> </span>的筛选器加一个「客单价区间」
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>给仪表盘<span class="w"> </span>store_sales_overview<span class="w"> </span>的筛选器加一个「客单价区间」
 </span></code></pre></div>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>/gen_visual_dashboard<span class="w"> </span>修改「门店销售总览」,把按月聚合改成按周
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>修改「门店销售总览」,把按月聚合改成按周
 </span></code></pre></div>
 <p>仪表盘生成完成后,聊天面板会输出 HTML 文件的绝对路径,以及供他人启动后端时使用的 <code>datus --web --datasource &lt;ds&gt;</code> 命令——浏览器里把 HTML 打开就能用,关掉再开也不用重新生成。</p>
 <h2 id="metric-sql">用 metric 或你自己的 SQL 生成仪表盘<a class="headerlink" href="#metric-sql" title="Permanent link">&para;</a></h2>
@@ -3740,16 +3743,16 @@
 <ul>
 <li>
 <p><strong>从 metric 出发</strong> —— 用 <code>@Metrics &lt;subject&gt;.&lt;group&gt;.&lt;metric&gt;</code> 三段式直接引用已经生成的指标(subject 树路径 + 指标名),agent 会自动从语义层加载定义、维度和时间窗,并据此生成对应的筛选器。项目里已经沉淀了 metric 注册表时最适用(如何生成指标见 <a href="../gen_metrics/">Generate Metrics</a>)。
-  <div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>/gen_visual_dashboard<span class="w"> </span>围绕<span class="w"> </span>@Metrics<span class="w"> </span>revenue.daily.dau<span class="w"> </span>和<span class="w"> </span>@Metrics<span class="w"> </span>conversion.weekly.signup_rate<span class="w"> </span>做一份运营总览,支持按地区、日期范围筛选
+  <div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>围绕<span class="w"> </span>@Metrics<span class="w"> </span>revenue.daily.dau<span class="w"> </span>和<span class="w"> </span>@Metrics<span class="w"> </span>conversion.weekly.signup_rate<span class="w"> </span>做一份运营总览,支持按地区、日期范围筛选
 </span></code></pre></div></p>
 </li>
 <li>
 <p><strong>从 SQL 出发</strong> —— 把你想要的 SQL 贴进 prompt,agent 会从里面识别出可参数化的条件(日期范围、枚举值、ID 列表等),把它们提升成筛选器,再组织图表。适合临时探索,或者还没有现成 metric 的场景。
-  <div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>/gen_visual_dashboard<span class="w"> </span>用下面这段<span class="w"> </span>SQL<span class="w"> </span>做一份商户对账仪表盘,把日期范围和门店<span class="w"> </span>ID<span class="w"> </span>做成筛选器:
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">    </span>SELECT<span class="w"> </span>trade_date,<span class="w"> </span>store_id,<span class="w"> </span>SUM<span class="o">(</span>amount<span class="o">)</span><span class="w"> </span>AS<span class="w"> </span>gmv,<span class="w"> </span>COUNT<span class="o">(</span>*<span class="o">)</span><span class="w"> </span>AS<span class="w"> </span>orders
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span>FROM<span class="w"> </span>mart.merchant_daily
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">    </span>WHERE<span class="w"> </span>trade_date<span class="w"> </span>BETWEEN<span class="w"> </span><span class="s1">&#39;2025-01-01&#39;</span><span class="w"> </span>AND<span class="w"> </span><span class="s1">&#39;2025-12-31&#39;</span>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">    </span>GROUP<span class="w"> </span>BY<span class="w"> </span>trade_date,<span class="w"> </span>store_id
+  <div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>用下面这段<span class="w"> </span>SQL<span class="w"> </span>做一份商户对账仪表盘,把日期范围和门店<span class="w"> </span>ID<span class="w"> </span>做成筛选器:
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">    </span>SELECT<span class="w"> </span>trade_date,<span class="w"> </span>store_id,<span class="w"> </span>SUM<span class="o">(</span>amount<span class="o">)</span><span class="w"> </span>AS<span class="w"> </span>gmv,<span class="w"> </span>COUNT<span class="o">(</span>*<span class="o">)</span><span class="w"> </span>AS<span class="w"> </span>orders
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span>FROM<span class="w"> </span>mart.merchant_daily
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">    </span>WHERE<span class="w"> </span>trade_date<span class="w"> </span>BETWEEN<span class="w"> </span><span class="s1">&#39;2025-01-01&#39;</span><span class="w"> </span>AND<span class="w"> </span><span class="s1">&#39;2025-12-31&#39;</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">    </span>GROUP<span class="w"> </span>BY<span class="w"> </span>trade_date,<span class="w"> </span>store_id
 </span></code></pre></div></p>
 </li>
 </ul>
@@ -3765,10 +3768,10 @@
 <p>如果之后要修改,再次调用 <code>gen_visual_dashboard</code> 即可原地编辑同一份仪表盘。</p>
 <h2 id="_4">按模块独立修改<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
 <p>每份仪表盘都是由相互独立的模块组成的——筛选器、单张图表、KPI 卡片、数据表等等。你可以只针对 <strong>其中一个</strong> 模块做改动,其它部分不会被牵连:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>/gen_visual_dashboard<span class="w"> </span>把<span class="w"> </span>store_sales_overview<span class="w"> </span>的客单价图表改成按地区分组的柱状图
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>/gen_visual_dashboard<span class="w"> </span>给<span class="w"> </span>store_sales_overview<span class="w"> </span>加一个「商品大类」筛选器
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>/gen_visual_dashboard<span class="w"> </span>删掉客户构成饼图,这次不需要
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>/gen_visual_dashboard<span class="w"> </span>调整一下<span class="w"> </span>KPI<span class="w"> </span>卡片的顺序,把<span class="w"> </span>GMV<span class="w"> </span>放在最前面
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>把<span class="w"> </span>store_sales_overview<span class="w"> </span>的客单价图表改成按地区分组的柱状图
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>给<span class="w"> </span>store_sales_overview<span class="w"> </span>加一个「商品大类」筛选器
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>删掉客户构成饼图,这次不需要
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>调整一下<span class="w"> </span>KPI<span class="w"> </span>卡片的顺序,把<span class="w"> </span>GMV<span class="w"> </span>放在最前面
 </span></code></pre></div>
 <p>每一次调用都是定点修改:agent 会定位到对应的模块,只编辑它、只重写相关的 SQL 模板,其它的版面、筛选器和图表都保持原样——保持你之前审过的状态。</p>
 <h2 id="agent">agent 能用到的资源<a class="headerlink" href="#agent" title="Permanent link">&para;</a></h2>
@@ -3782,13 +3785,13 @@
 <p>这些都不需要你手动调用——写好 prompt 就行。</p>
 <h2 id="_5">配置<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
 <p><code>gen_visual_dashboard</code> 开箱即用,无需任何配置。下面这些在 <code>agent.yml</code> 中是可选项:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">gen_visual_dashboard</span><span class="p">:</span>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span><span class="w">              </span><span class="c1"># 可选,默认使用当前配置的模型</span>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span><span class="w">              </span><span class="c1"># 可选,默认 30</span>
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">      </span><span class="nt">web_host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">localhost</span><span class="w">        </span><span class="c1"># 可选,生成的 HTML 里筛选请求指向的 host</span>
-</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">      </span><span class="nt">web_port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8501</span><span class="w">             </span><span class="c1"># 可选,生成的 HTML 里筛选请求指向的 port</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">    </span><span class="nt">gen_visual_dashboard</span><span class="p">:</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span><span class="w">              </span><span class="c1"># 可选,默认使用当前配置的模型</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span><span class="w">              </span><span class="c1"># 可选,默认 30</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">      </span><span class="nt">web_host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">localhost</span><span class="w">        </span><span class="c1"># 可选,生成的 HTML 里筛选请求指向的 host</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">      </span><span class="nt">web_port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8501</span><span class="w">             </span><span class="c1"># 可选,生成的 HTML 里筛选请求指向的 port</span>
 </span></code></pre></div>
 <table>
 <thead>
