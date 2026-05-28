@@ -8,7 +8,7 @@ Compile a Datus report artifact into a single self-contained ``index.html``.
 Used only by the Datus-CLI path. SaaS deployments render dynamically through
 the backend ``/api/v1/report/detail`` endpoint and do not call this function.
 
-The generated HTML inlines a single payload next to ``@datus/web-report``:
+The generated HTML inlines a single payload next to ``@datus/web-artifact-render``:
 
 * ``files: [{path, content}, ...]`` inside one ``<script type="application/json">``
   block. ``path`` is **slug-relative** and includes the top-level directory
@@ -17,16 +17,19 @@ The generated HTML inlines a single payload next to ``@datus/web-report``:
   .css / .json, recursive — JSON allowed for sidecars an LLM may park next
   to its modules) and ``queries/`` (.sql / .json, one level). This matches
   the ``IPublishedReportArtifact`` / ``IReportDetail`` shape that
-  ``@datus/web-report`` consumes via ``splitArtifactFiles(detail.files)``.
+  ``@datus/web-artifact-render`` consumes via ``splitArtifactFiles(detail.files)``.
 
-``@datus/web-report`` boots the standalone viewer, which spins up the
-sandboxed iframe runtime; the runtime Babel-compiles each module on demand
-and renders the default export of ``render/app.jsx``.
+``@datus/web-artifact-render`` boots the standalone viewer, which spins up
+the sandboxed iframe runtime; the runtime Babel-compiles each module on
+demand and renders the default export of ``render/app.jsx``. The UMD
+global ``DatusArtifact`` exposes ``initReport`` / ``initDashboard``;
+this renderer drives ``initReport``.
 
 Two asset-loading modes, mirroring ``datus.cli.web.chatbot``:
 
-* **CDN mode (default)** — the rendered HTML loads ``@datus/web-report`` from
-  ``unpkg.com`` at a pinned version. Requires network at view time.
+* **CDN mode (default)** — the rendered HTML loads
+  ``@datus/web-artifact-render`` from ``unpkg.com`` at a pinned version.
+  Requires network at view time.
 * **Offline mode** — caller passes ``report_dist`` (resolved upstream from
   the ``--report-dist`` CLI flag or ``agentic_nodes.gen_visual_report.report_dist``).
   The two assets are copied next to the ``index.html`` under ``_assets/``
@@ -75,13 +78,16 @@ _ARTIFACT_DIRS: Dict[str, Tuple[Tuple[str, ...], bool]] = {
 }
 
 # CDN URLs used when no offline dist is supplied. Keep the pinned version in
-# lockstep with ``packages/web-report/package.json``.
+# lockstep with ``packages/web-artifact-render/package.json`` on the SaaS
+# side — the package was renamed from ``@datus/web-report`` to
+# ``@datus/web-artifact-render`` when the same UMD bundle picked up
+# dashboard rendering alongside report rendering (Datus-saas#412).
 _CDN_REPORT_VERSION = "~0.1.0"
-_CDN_REPORT_CSS = f"https://unpkg.com/@datus/web-report@{_CDN_REPORT_VERSION}/dist/index.css"
-_CDN_REPORT_JS = f"https://unpkg.com/@datus/web-report@{_CDN_REPORT_VERSION}/dist/index.umd.js"
+_CDN_REPORT_CSS = f"https://unpkg.com/@datus/web-artifact-render@{_CDN_REPORT_VERSION}/dist/index.css"
+_CDN_REPORT_JS = f"https://unpkg.com/@datus/web-artifact-render@{_CDN_REPORT_VERSION}/dist/index.umd.js"
 
 # Filename pair we expect inside ``report_dist``. Same names as those emitted
-# by ``packages/web-report`` (``vite build``).
+# by ``packages/web-artifact-render`` (``vite build``).
 _DIST_CSS_NAME = "index.css"
 _DIST_JS_NAME = "index.umd.js"
 
@@ -199,8 +205,8 @@ def render_report_html(
     Args:
         project_root: ``AgentConfig.project_root``; resolved absolute path.
         report_slug: target report slug (matches the directory name).
-        report_dist: optional path to a local ``@datus/web-report`` ``dist/``
-            directory containing ``index.css`` and
+        report_dist: optional path to a local ``@datus/web-artifact-render``
+            ``dist/`` directory containing ``index.css`` and
             ``index.umd.js``. When provided and valid, the two files
             are copied next to the generated HTML and the template links to
             them via relative paths (so the page works offline through
@@ -231,7 +237,7 @@ def render_report_html(
     dist_dir = _resolve_dist(report_dist)
     if dist_dir is not None:
         css_url, js_url = _copy_offline_assets(report_dir, dist_dir)
-        logger.info("Offline mode: copied web-report assets from %s", dist_dir)
+        logger.info("Offline mode: copied web-artifact-render assets from %s", dist_dir)
     else:
         css_url, js_url = _CDN_REPORT_CSS, _CDN_REPORT_JS
 

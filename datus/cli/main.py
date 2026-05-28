@@ -170,7 +170,7 @@ class ArgumentParser:
             type=str,
             default=None,
             help=(
-                "Path to a local @datus/web-report dist directory. When provided, "
+                "Path to a local @datus/web-artifact-render dist directory. When provided, "
                 "gen_visual_report copies index.css/.umd.js next to the generated "
                 "index.html so the report opens via file:// without network access. "
                 "Overrides agentic_nodes.gen_visual_report.report_dist from agent.yml."
