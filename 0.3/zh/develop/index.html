@@ -14,7 +14,7 @@
         <link rel="prev" href="../training/llm_trace_usage/">
       
       
-        <link rel="next" href="../vscode_extension/introduction/">
+        <link rel="next" href="observability/">
       
       
         
@@ -994,6 +994,8 @@
       
         
       
+        
+      
     
     
     
@@ -1332,6 +1334,34 @@
     
   
     HTML Report Generation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../subagent/gen_visual_dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTML Dashboard Generation
   
 
     
@@ -3258,6 +3288,8 @@
           
         
       
+        
+      
     
     
     
@@ -3290,6 +3322,11 @@
 
             </a>
             
+              
+              <label class="md-nav__link md-nav__link--active" for="__nav_1_16" id="__nav_1_16_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
           </div>
         
         <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_16_label" aria-expanded="true">
@@ -3303,6 +3340,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    可观测性
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
           </ul>
@@ -3532,67 +3597,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="可观测性">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#repl-trace" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        REPL 内联 Trace
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#yaml-trace" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        本地 YAML Trace
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#langsmith" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        LangSmith
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#langfuse" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Langfuse
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#langsmith-langfuse" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        同时使用 LangSmith 和 Langfuse
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
         <li class="md-nav__item">
@@ -3623,7 +3627,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.1/docs/develop/README.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.2/docs/develop/README.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -3873,130 +3877,13 @@
 </span><span id="__span-21-11"><a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a><span class="w">  </span>--workflow<span class="w"> </span>metric_to_sql
 </span></code></pre></div>
 <h2 id="_10">可观测性<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h2>
-<p>Datus 提供三种互补的执行观测方式：</p>
-<table>
-<thead>
-<tr>
-<th>范围</th>
-<th>机制</th>
-<th>适用场景</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>当前 REPL turn</td>
-<td>按 <code>Ctrl+O</code></td>
-<td>本地交互时查看工具调用、SQL、原始输出</td>
-</tr>
-<tr>
-<td>本地文件</td>
-<td><code>--save_llm_trace</code> 或 <code>save_llm_trace: true</code></td>
-<td>不接入托管 tracing 系统时，调试精确 prompt 与模型输出</td>
-</tr>
-<tr>
-<td>托管 trace</td>
-<td>LangSmith 和/或 Langfuse</td>
-<td>跨运行查看 workflow、benchmark、chat、LiteLLM 与 OpenAI Agents SDK trace</td>
-</tr>
-</tbody>
-</table>
-<h3 id="repl-trace">REPL 内联 Trace<a class="headerlink" href="#repl-trace" title="Permanent link">&para;</a></h3>
-<p>在 <code>datus</code> REPL 中，运行中或运行后按 <code>Ctrl+O</code> 可切换 verbose trace 详情。再次按下，或按 <code>q</code>，回到 compact 视图。</p>
-<h3 id="yaml-trace">本地 YAML Trace<a class="headerlink" href="#yaml-trace" title="Permanent link">&para;</a></h3>
-<p>使用 <code>--save_llm_trace</code> 持久化模型输入输出：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>uv<span class="w"> </span>run<span class="w"> </span>datus-agent<span class="w"> </span>--save_llm_trace<span class="w"> </span>run<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="w">  </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="w">  </span>--datasource<span class="w"> </span>local_duckdb<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-22-4"><a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="w">  </span>--task_db_name<span class="w"> </span>duckdb-demo<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-22-5"><a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a><span class="w">  </span>--task<span class="w"> </span><span class="s2">&quot;Summarize the tree table&quot;</span>
-</span></code></pre></div>
-<p>也可以在 custom model 条目上启用：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">  </span><span class="nt">models</span><span class="p">:</span>
-</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="w">    </span><span class="nt">my-internal</span><span class="p">:</span>
-</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai</span>
-</span><span id="__span-23-5"><a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="w">      </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://internal.example.com/v1</span>
-</span><span id="__span-23-6"><a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MY_KEY}</span>
-</span><span id="__span-23-7"><a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">internal-gpt-4</span>
-</span><span id="__span-23-8"><a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a><span class="w">      </span><span class="nt">save_llm_trace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span></code></pre></div>
-<p>Trace YAML 会写入 <code>{agent.home}/trajectory/...</code>。Workflow checkpoint 也保存在同一棵 trajectory 目录下；启用 LangSmith 或 Langfuse 时，保存的 workflow metadata 中可能包含 <code>trace_url</code>。</p>
-<h3 id="langsmith">LangSmith<a class="headerlink" href="#langsmith" title="Permanent link">&para;</a></h3>
-<p>LangSmith 只有在显式开启 tracing 且存在 API Key 时才会启用。</p>
-<p>源码开发环境中，<code>uv sync --dev</code> 会安装 LangSmith 相关包。最小环境中可安装到当前 Datus 环境：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>langsmith<span class="w"> </span>langsmith-fetch
-</span></code></pre></div>
-<p>启动 <code>datus</code> 或 <code>datus-agent</code> 前设置环境变量：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LANGSMITH_TRACING</span><span class="o">=</span><span class="nb">true</span>
-</span><span id="__span-25-2"><a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LANGSMITH_API_KEY</span><span class="o">=</span>&lt;your-langsmith-key&gt;
-</span><span id="__span-25-3"><a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LANGSMITH_PROJECT</span><span class="o">=</span>datus-agent-dev
-</span><span id="__span-25-4"><a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a>
-</span><span id="__span-25-5"><a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a><span class="c1"># 自托管 LangSmith 可选：</span>
-</span><span id="__span-25-6"><a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LANGSMITH_ENDPOINT</span><span class="o">=</span>https://api.smith.langchain.com
-</span></code></pre></div>
-<p>兼容写法 <code>LANGCHAIN_TRACING_V2=true</code> 与 <code>LANGCHAIN_API_KEY</code> 也可使用。</p>
-<p>运行任意被 trace 的路径：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-26-1"><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a>uv<span class="w"> </span>run<span class="w"> </span>datus-agent<span class="w"> </span>benchmark<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-26-2"><a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="w">  </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-26-3"><a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="w">  </span>--datasource<span class="w"> </span>bird_sqlite<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-26-4"><a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a><span class="w">  </span>--benchmark<span class="w"> </span>bird_dev<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-26-5"><a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a><span class="w">  </span>--benchmark_task_ids<span class="w"> </span><span class="m">14</span>
-</span></code></pre></div>
-<p>在 <code>LANGSMITH_PROJECT</code> 指定的 LangSmith project 中查看 trace。Workflow trace 结束时会在日志中打印 LangSmith trace URL；可用时也会持久化到保存的 workflow metadata。</p>
-<h3 id="langfuse">Langfuse<a class="headerlink" href="#langfuse" title="Permanent link">&para;</a></h3>
-<p>Langfuse 需要同时配置 public key 和 secret key。为了获得完整的 agent/tool span，保留 OpenInference 与 OpenTelemetry 依赖；它们包含在 <code>uv sync --dev</code> 中。</p>
-<p>最小环境中可安装：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-27-1"><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>langfuse<span class="w"> </span>openinference-instrumentation-openai-agents<span class="w"> </span>opentelemetry-exporter-otlp
-</span></code></pre></div>
-<p>启动 Datus 前设置环境变量：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-28-1"><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LANGFUSE_PUBLIC_KEY</span><span class="o">=</span>&lt;your-langfuse-public-key&gt;
-</span><span id="__span-28-2"><a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LANGFUSE_SECRET_KEY</span><span class="o">=</span>&lt;your-langfuse-secret-key&gt;
-</span><span id="__span-28-3"><a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LANGFUSE_HOST</span><span class="o">=</span>https://us.cloud.langfuse.com
-</span></code></pre></div>
-<p>自托管 Langfuse 时，把 <code>LANGFUSE_HOST</code> 指向你的实例。如果 OTLP ingestion endpoint 与 UI/API host 不同，显式设置 <code>LANGFUSE_OTEL_HOST</code>。否则 Datus 会从 <code>LANGFUSE_HOST</code> 或 <code>LANGFUSE_BASE_URL</code> 推导。</p>
-<p>运行一个命令：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-29-1"><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a>uv<span class="w"> </span>run<span class="w"> </span>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-29-2"><a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="w">  </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-29-3"><a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a><span class="w">  </span>--datasource<span class="w"> </span>local_duckdb<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-29-4"><a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a><span class="w">  </span>--components<span class="w"> </span>metadata
-</span></code></pre></div>
-<p>在对应 key pair 所属的 Langfuse project 中查看 trace。Trace 名称按操作组织，例如：</p>
-<table>
-<thead>
-<tr>
-<th>操作</th>
-<th>Trace 名称形态</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Workflow run</td>
-<td><code>cli/run/&lt;workflow&gt;</code></td>
-</tr>
-<tr>
-<td>Benchmark task</td>
-<td><code>benchmark/&lt;benchmark&gt;/&lt;context&gt;/task-&lt;id&gt;</code></td>
-</tr>
-<tr>
-<td>知识库初始化</td>
-<td><code>bootstrap-kb/&lt;datasource&gt;/&lt;components&gt;</code></td>
-</tr>
-<tr>
-<td>Chat/API session</td>
-<td><code>chat/&lt;agent&gt;</code></td>
-</tr>
-</tbody>
-</table>
-<p>Tag 与 metadata 会包含 datasource、workflow、benchmark、task id、run id，以及可用时的 <code>agent.home</code>。</p>
-<h3 id="langsmith-langfuse">同时使用 LangSmith 和 Langfuse<a class="headerlink" href="#langsmith-langfuse" title="Permanent link">&para;</a></h3>
-<p>两个 backend 可以在同一进程中同时启用。LangSmith 通过 tracing processor 处理 SDK tracing；Langfuse 接收 LiteLLM callback，并在安装 OpenInference 时接收 OpenAI Agents SDK span。</p>
-<p>Workflow metadata 只保存一个 <code>trace_url</code>。如果两个系统都启用且 LangSmith 已生成 URL，LangSmith URL 优先；Langfuse 仍会收到 trace。</p>
-<p>修改 tracing 环境变量后，需要重启 Datus 进程。Tracing setup 每个进程只初始化一次。</p>
+<p>Observability 配置与 tracing 示例已移到独立的 <a href="observability/">可观测性</a> 指南。该文档覆盖 REPL 内联 trace、本地 YAML trace、基于 OpenTelemetry 的外部 tracing，以及 LangSmith、Langfuse、Datadog、Braintrust 和通用 OTLP collector 的 adapter 配置。</p>
 <h2 id="_11">参考<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../getting_started/Quickstart/">快速开始</a></li>
 <li><a href="../configuration/introduction/">配置指南</a></li>
 <li><a href="../configuration/agent/">Agent 配置</a></li>
+<li><a href="observability/">可观测性</a></li>
 <li><a href="../benchmark/benchmark_manual/">Benchmark 手册</a></li>
 <li><a href="../configuration/semantic_layer/">语义层配置</a></li>
 <li><a href="../training/llm_trace_usage/">LLM Trace 使用</a></li>
@@ -4049,13 +3936,13 @@
         
         
           
-          <a href="../vscode_extension/introduction/" class="md-footer__link md-footer__link--next" aria-label="下一页: VSCode 插件">
+          <a href="observability/" class="md-footer__link md-footer__link--next" aria-label="下一页: 可观测性">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 下一页
               </span>
               <div class="md-ellipsis">
-                VSCode 插件
+                可观测性
               </div>
             </div>
             <div class="md-footer__button md-icon">

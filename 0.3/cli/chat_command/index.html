@@ -895,6 +895,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#mid-run-message-insertion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mid-run Message Insertion
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#session-commands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1131,6 +1142,8 @@
   
     
     
+      
+        
       
         
       
@@ -1492,6 +1505,34 @@
     
   
     HTML Report Generation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../subagent/gen_visual_dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTML Dashboard Generation
   
 
     
@@ -3416,6 +3457,8 @@
           
         
       
+        
+      
     
     
     
@@ -3448,6 +3491,11 @@
 
             </a>
             
+              
+              <label class="md-nav__link " for="__nav_1_16" id="__nav_1_16_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
           </div>
         
         <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_16_label" aria-expanded="false">
@@ -3461,6 +3509,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../develop/observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
           </ul>
@@ -3655,6 +3731,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#mid-run-message-insertion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mid-run Message Insertion
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#session-commands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3687,7 +3774,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.1/docs/cli/chat_command.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.2/docs/cli/chat_command.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -3732,6 +3819,16 @@
 <p>After an interrupt, the session remains intact — you can continue typing new instructions, refine your question, or provide additional context. Nothing is lost.</p>
 <h3 id="toggle-trace-display">Toggle Trace Display<a class="headerlink" href="#toggle-trace-display" title="Permanent link">&para;</a></h3>
 <p>Press <strong>Ctrl+O</strong> while the agent is running to toggle the trace display mode between <strong>compact</strong> (progress only) and <strong>verbose</strong> (full step details). This lets you control how much detail you see during execution without interrupting the agent.</p>
+<h3 id="mid-run-message-insertion">Mid-run Message Insertion<a class="headerlink" href="#mid-run-message-insertion" title="Permanent link">&para;</a></h3>
+<p>While the agent is running, you don't have to wait for it to finish before adding more context. Type into the input box and press <strong>Enter</strong> — the text is queued and delivered to the model right before its next LLM turn, so it influences the run already in progress rather than starting a new one.</p>
+<p>How it works:</p>
+<ul>
+<li>A <strong>pinned preview</strong> appears above the bottom status bar showing every queued message. The preview collapses to zero rows when the queue is drained.</li>
+<li>At each LLM turn, every queued message is drained, appended to the model input as <code>user</code> items, and persisted to the session history.</li>
+<li>If the run finishes its final turn while items are still queued, the residue <strong>auto-continues</strong> in a fresh run so nothing you typed is silently dropped.</li>
+<li>Inserted messages are kept in the rendered transcript across <code>Ctrl+O</code> verbose/compact toggles and on <code>/resume</code>, so you always see what you injected.</li>
+</ul>
+<p>This complements — rather than replaces — <code>ESC</code> / <code>Ctrl+C</code> (interrupt) and <code>/chat/stop</code>. Use insertion when you want to <strong>steer</strong> the current run with new context; use interrupt when you want to <strong>abort</strong> it.</p>
 <h3 id="session-commands">Session Commands<a class="headerlink" href="#session-commands" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>/clear</code>: Clear the current session context and start fresh</li>

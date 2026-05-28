@@ -895,6 +895,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        运行中插入消息
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#session-commands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1131,6 +1142,8 @@
   
     
     
+      
+        
       
         
       
@@ -1492,6 +1505,34 @@
     
   
     HTML Report Generation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../subagent/gen_visual_dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTML Dashboard Generation
   
 
     
@@ -3416,6 +3457,8 @@
           
         
       
+        
+      
     
     
     
@@ -3448,6 +3491,11 @@
 
             </a>
             
+              
+              <label class="md-nav__link " for="__nav_1_16" id="__nav_1_16_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
           </div>
         
         <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_16_label" aria-expanded="false">
@@ -3461,6 +3509,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../develop/observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    可观测性
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
           </ul>
@@ -3655,6 +3731,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        运行中插入消息
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#session-commands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3687,7 +3774,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.1/docs/cli/chat_command.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.2/docs/cli/chat_command.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -3732,6 +3819,16 @@
 <p>中断后会话保持不变——你可以继续输入新指令、修改问题或补充上下文，不会丢失任何内容。</p>
 <h3 id="trace">切换 Trace 显示模式<a class="headerlink" href="#trace" title="Permanent link">&para;</a></h3>
 <p>在智能体运行过程中，按 <strong>Ctrl+O</strong> 可以在 <strong>compact</strong>（仅显示进度）和 <strong>verbose</strong>（显示完整步骤详情）之间切换 trace 显示模式。这让你在不中断执行的情况下控制输出的详细程度。</p>
+<h3 id="_6">运行中插入消息<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
+<p>智能体运行过程中，你不必等它结束才能补充上下文。在输入框中输入文本并按 <strong>Enter</strong>，文本会被排入待发送队列，并在下一次 LLM turn 之前发送给模型——它会影响当前这一轮运行，而不是开启一段新对话。</p>
+<p>工作机制：</p>
+<ul>
+<li>底部状态栏上方会出现**置顶预览**，列出队列中所有待注入的消息。队列被消费完时，预览自动折叠为零行。</li>
+<li>每次 LLM turn 之前，队列中所有排队消息都会被 drain，作为 <code>user</code> 项追加到模型输入并持久化到会话历史。</li>
+<li>如果运行已进入最终 turn 但队列仍非空，残余消息会**自动续跑**到一段新的运行中，避免你输入的内容被静默丢弃。</li>
+<li>插入的消息会在 <code>Ctrl+O</code> verbose/compact 切换以及 <code>/resume</code> 之后保留在转录中，让你始终能看到自己注入的内容。</li>
+</ul>
+<p>此能力与 <code>ESC</code> / <code>Ctrl+C</code>（打断）以及 <code>/chat/stop</code> 是**互补**而非替代关系。需要用新上下文**引导**当前运行时用插入；需要**中止**当前运行时用打断。</p>
 <h3 id="session-commands">会话命令<a class="headerlink" href="#session-commands" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>/clear</code>：清空当前会话上下文，从头开始</li>

@@ -14,7 +14,7 @@
         <link rel="prev" href="../training/llm_trace_usage/">
       
       
-        <link rel="next" href="../vscode_extension/introduction/">
+        <link rel="next" href="observability/">
       
       
         
@@ -994,6 +994,8 @@
       
         
       
+        
+      
     
     
     
@@ -1332,6 +1334,34 @@
     
   
     HTML Report Generation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../subagent/gen_visual_dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTML Dashboard Generation
   
 
     
@@ -3258,6 +3288,8 @@
           
         
       
+        
+      
     
     
     
@@ -3290,6 +3322,11 @@
 
             </a>
             
+              
+              <label class="md-nav__link md-nav__link--active" for="__nav_1_16" id="__nav_1_16_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
           </div>
         
         <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_16_label" aria-expanded="true">
@@ -3303,6 +3340,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
           </ul>
@@ -3532,67 +3597,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Observability">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#inline-repl-trace" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Inline REPL Trace
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#local-yaml-traces" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Local YAML Traces
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#langsmith" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        LangSmith
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#langfuse" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Langfuse
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#running-langsmith-and-langfuse-together" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Running LangSmith and Langfuse Together
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
         <li class="md-nav__item">
@@ -3623,7 +3627,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.1/docs/develop/README.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.2/docs/develop/README.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -3873,130 +3877,13 @@
 </span><span id="__span-21-11"><a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a><span class="w">  </span>--workflow<span class="w"> </span>metric_to_sql
 </span></code></pre></div>
 <h2 id="observability">Observability<a class="headerlink" href="#observability" title="Permanent link">&para;</a></h2>
-<p>Datus has three complementary ways to inspect execution:</p>
-<table>
-<thead>
-<tr>
-<th>Scope</th>
-<th>Mechanism</th>
-<th>When to use</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Current REPL turn</td>
-<td>Press <code>Ctrl+O</code></td>
-<td>Inspect tool calls, SQL, and raw outputs while interacting locally</td>
-</tr>
-<tr>
-<td>Local files</td>
-<td><code>--save_llm_trace</code> or <code>save_llm_trace: true</code></td>
-<td>Debug exact prompts and model outputs without sending data to a hosted tracing system</td>
-</tr>
-<tr>
-<td>Hosted traces</td>
-<td>LangSmith and/or Langfuse</td>
-<td>Debug full workflow, benchmark, chat, LiteLLM, and OpenAI Agents SDK traces across runs</td>
-</tr>
-</tbody>
-</table>
-<h3 id="inline-repl-trace">Inline REPL Trace<a class="headerlink" href="#inline-repl-trace" title="Permanent link">&para;</a></h3>
-<p>In the <code>datus</code> REPL, press <code>Ctrl+O</code> during or after a turn to toggle verbose trace details. Press it again, or <code>q</code>, to return to the compact view.</p>
-<h3 id="local-yaml-traces">Local YAML Traces<a class="headerlink" href="#local-yaml-traces" title="Permanent link">&para;</a></h3>
-<p>Use <code>--save_llm_trace</code> to persist model inputs and outputs:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>uv<span class="w"> </span>run<span class="w"> </span>datus-agent<span class="w"> </span>--save_llm_trace<span class="w"> </span>run<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="w">  </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="w">  </span>--datasource<span class="w"> </span>local_duckdb<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-22-4"><a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="w">  </span>--task_db_name<span class="w"> </span>duckdb-demo<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-22-5"><a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a><span class="w">  </span>--task<span class="w"> </span><span class="s2">&quot;Summarize the tree table&quot;</span>
-</span></code></pre></div>
-<p>You can also enable it for a custom model entry:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">  </span><span class="nt">models</span><span class="p">:</span>
-</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="w">    </span><span class="nt">my-internal</span><span class="p">:</span>
-</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai</span>
-</span><span id="__span-23-5"><a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="w">      </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://internal.example.com/v1</span>
-</span><span id="__span-23-6"><a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MY_KEY}</span>
-</span><span id="__span-23-7"><a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">internal-gpt-4</span>
-</span><span id="__span-23-8"><a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a><span class="w">      </span><span class="nt">save_llm_trace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span></code></pre></div>
-<p>Trace YAML files are written under <code>{agent.home}/trajectory/...</code>. Workflow checkpoints are saved in the same trajectory tree and may include a <code>trace_url</code> metadata field when LangSmith or Langfuse is enabled.</p>
-<h3 id="langsmith">LangSmith<a class="headerlink" href="#langsmith" title="Permanent link">&para;</a></h3>
-<p>LangSmith tracing is enabled only when tracing is explicitly switched on and an API key is available.</p>
-<p>For source development, <code>uv sync --dev</code> installs the LangSmith packages. In a minimal environment, install them into the active Datus environment:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>langsmith<span class="w"> </span>langsmith-fetch
-</span></code></pre></div>
-<p>Set environment variables before starting <code>datus</code> or <code>datus-agent</code>:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LANGSMITH_TRACING</span><span class="o">=</span><span class="nb">true</span>
-</span><span id="__span-25-2"><a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LANGSMITH_API_KEY</span><span class="o">=</span>&lt;your-langsmith-key&gt;
-</span><span id="__span-25-3"><a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LANGSMITH_PROJECT</span><span class="o">=</span>datus-agent-dev
-</span><span id="__span-25-4"><a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a>
-</span><span id="__span-25-5"><a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a><span class="c1"># Optional, for self-hosted LangSmith:</span>
-</span><span id="__span-25-6"><a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LANGSMITH_ENDPOINT</span><span class="o">=</span>https://api.smith.langchain.com
-</span></code></pre></div>
-<p><code>LANGCHAIN_TRACING_V2=true</code> and <code>LANGCHAIN_API_KEY</code> are also accepted for compatibility.</p>
-<p>Run any traced path:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-26-1"><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a>uv<span class="w"> </span>run<span class="w"> </span>datus-agent<span class="w"> </span>benchmark<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-26-2"><a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="w">  </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-26-3"><a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="w">  </span>--datasource<span class="w"> </span>bird_sqlite<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-26-4"><a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a><span class="w">  </span>--benchmark<span class="w"> </span>bird_dev<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-26-5"><a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a><span class="w">  </span>--benchmark_task_ids<span class="w"> </span><span class="m">14</span>
-</span></code></pre></div>
-<p>View traces in the LangSmith project named by <code>LANGSMITH_PROJECT</code>. Workflow runs log the LangSmith trace URL when the trace ends and persist it in the saved workflow metadata when available.</p>
-<h3 id="langfuse">Langfuse<a class="headerlink" href="#langfuse" title="Permanent link">&para;</a></h3>
-<p>Langfuse requires both public and secret keys. For complete agent/tool spans, keep the OpenInference and OpenTelemetry packages installed; they are included by <code>uv sync --dev</code>.</p>
-<p>In a minimal environment:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-27-1"><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>langfuse<span class="w"> </span>openinference-instrumentation-openai-agents<span class="w"> </span>opentelemetry-exporter-otlp
-</span></code></pre></div>
-<p>Set environment variables before starting Datus:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-28-1"><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LANGFUSE_PUBLIC_KEY</span><span class="o">=</span>&lt;your-langfuse-public-key&gt;
-</span><span id="__span-28-2"><a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LANGFUSE_SECRET_KEY</span><span class="o">=</span>&lt;your-langfuse-secret-key&gt;
-</span><span id="__span-28-3"><a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LANGFUSE_HOST</span><span class="o">=</span>https://us.cloud.langfuse.com
-</span></code></pre></div>
-<p>For self-hosted Langfuse, point <code>LANGFUSE_HOST</code> at your instance. If your OTLP ingestion endpoint differs from the UI/API host, set <code>LANGFUSE_OTEL_HOST</code> explicitly. Otherwise Datus derives it from <code>LANGFUSE_HOST</code> or <code>LANGFUSE_BASE_URL</code>.</p>
-<p>Run a command:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-29-1"><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a>uv<span class="w"> </span>run<span class="w"> </span>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-29-2"><a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="w">  </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-29-3"><a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a><span class="w">  </span>--datasource<span class="w"> </span>local_duckdb<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-29-4"><a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a><span class="w">  </span>--components<span class="w"> </span>metadata
-</span></code></pre></div>
-<p>Open the Langfuse project for the key pair you configured. Traces are named by operation, for example:</p>
-<table>
-<thead>
-<tr>
-<th>Operation</th>
-<th>Trace name shape</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Workflow run</td>
-<td><code>cli/run/&lt;workflow&gt;</code></td>
-</tr>
-<tr>
-<td>Benchmark task</td>
-<td><code>benchmark/&lt;benchmark&gt;/&lt;context&gt;/task-&lt;id&gt;</code></td>
-</tr>
-<tr>
-<td>Knowledge bootstrap</td>
-<td><code>bootstrap-kb/&lt;datasource&gt;/&lt;components&gt;</code></td>
-</tr>
-<tr>
-<td>Chat/API session</td>
-<td><code>chat/&lt;agent&gt;</code></td>
-</tr>
-</tbody>
-</table>
-<p>Tags and metadata include datasource, workflow, benchmark, task id, run id, and <code>agent.home</code> when available.</p>
-<h3 id="running-langsmith-and-langfuse-together">Running LangSmith and Langfuse Together<a class="headerlink" href="#running-langsmith-and-langfuse-together" title="Permanent link">&para;</a></h3>
-<p>Both backends can be enabled in the same process. LangSmith handles SDK tracing through its tracing processor; Langfuse receives LiteLLM callbacks and, when OpenInference is installed, OpenAI Agents SDK spans as well.</p>
-<p>Only one <code>trace_url</code> is stored in workflow metadata. If both systems are enabled and LangSmith has produced a URL, that LangSmith URL takes precedence; Langfuse still receives traces.</p>
-<p>After changing tracing environment variables, restart the Datus process. Tracing setup is initialized once per process.</p>
+<p>Observability setup and tracing examples now live in the dedicated <a href="observability/">Observability</a> guide. It covers local REPL traces, local YAML traces, OpenTelemetry-based external tracing, and adapter configuration for LangSmith, Langfuse, Datadog, Braintrust, and generic OTLP collectors.</p>
 <h2 id="useful-references">Useful References<a class="headerlink" href="#useful-references" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../getting_started/Quickstart/">Quickstart</a></li>
 <li><a href="../configuration/introduction/">Configuration Guide</a></li>
 <li><a href="../configuration/agent/">Agent Configuration</a></li>
+<li><a href="observability/">Observability</a></li>
 <li><a href="../benchmark/benchmark_manual/">Benchmark Manual</a></li>
 <li><a href="../configuration/semantic_layer/">Semantic Layer Configuration</a></li>
 <li><a href="../training/llm_trace_usage/">LLM Trace Usage</a></li>
@@ -4049,13 +3936,13 @@
         
         
           
-          <a href="../vscode_extension/introduction/" class="md-footer__link md-footer__link--next" aria-label="Next: VSCode Extension">
+          <a href="observability/" class="md-footer__link md-footer__link--next" aria-label="Next: Observability">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                VSCode Extension
+                Observability
               </div>
             </div>
             <div class="md-footer__button md-icon">

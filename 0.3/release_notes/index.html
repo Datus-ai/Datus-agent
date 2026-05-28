@@ -987,6 +987,8 @@
       
         
       
+        
+      
     
     
     
@@ -1325,6 +1327,34 @@
     
   
     HTML Report Generation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../subagent/gen_visual_dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTML Dashboard Generation
   
 
     
@@ -3249,6 +3279,8 @@
           
         
       
+        
+      
     
     
     
@@ -3281,6 +3313,11 @@
 
             </a>
             
+              
+              <label class="md-nav__link " for="__nav_1_16" id="__nav_1_16_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
           </div>
         
         <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_16_label" aria-expanded="false">
@@ -3294,6 +3331,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../develop/observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
           </ul>
@@ -3416,6 +3481,17 @@
   
     <nav class="md-nav" aria-label="0.3">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#032" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.2
+      
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#031" class="md-nav__link">
@@ -3657,6 +3733,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#032" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.2
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#031" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3866,7 +3953,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.1/docs/release_notes.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.2/docs/release_notes.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -3876,6 +3963,25 @@
 
 <h1 id="release-notes">Release notes<a class="headerlink" href="#release-notes" title="Permanent link">&para;</a></h1>
 <h2 id="03">0.3<a class="headerlink" href="#03" title="Permanent link">&para;</a></h2>
+<h3 id="032">0.3.2<a class="headerlink" href="#032" title="Permanent link">&para;</a></h3>
+<p><strong>New Features</strong></p>
+<ul>
+<li><strong>Agent Observability (Configurable Tracing)</strong> - Turn on <code>agent.observability.tracing</code> to export run traces to Langfuse, LangSmith, Datadog, Braintrust, or a generic OTLP collector. Optionally capture run content and redact sensitive data, and get stable trace references plus runtime trace grouping that tie benchmark, bootstrap, CLI, and chat runs into a single trace for easy correlation and debugging. <a href="https://github.com/Datus-ai/Datus-agent/pull/833">#833</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/864">#864</a> <a href="../develop/observability/">docs</a></li>
+<li><strong>Visual Artifacts: Dashboard Support</strong> - The new <code>gen_visual_dashboard</code> generates dashboard-style HTML (multi-chart card layouts) right from Chat, just like <code>gen_visual_report</code>, with <strong>local interactive preview served by <code>datus --web</code></strong> — filters re-run live against your database, no SaaS backend required. Report and dashboard generation is also noticeably better: cleaner layouts, more reliable chart rendering (concurrent multi-chart queries to DuckDB no longer race), consistent use of the runtime ChartCard primitive, more accurate underlying data queries, support for more complex reports, and multi-round refinement. The compiled HTML's absolute path is now surfaced in the CLI message stream, so you can reopen the artifact after closing the browser tab. <a href="https://github.com/Datus-ai/Datus-agent/pull/829">#829</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/835">#835</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/842">#842</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/847">#847</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/848">#848</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/849">#849</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/853">#853</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/855">#855</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/863">#863</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/866">#866</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/867">#867</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/869">#869</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/894">#894</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/895">#895</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/901">#901</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/905">#905</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/907">#907</a> <a href="../subagent/gen_visual_dashboard/">docs</a></li>
+<li><strong>Mid-Run User Input</strong> - Send additional instructions while an agent run is still streaming — type in the CLI/TUI or POST to the API; the text is picked up on the model's next step, saved to the session, and shown live as it is inserted, without interrupting the run. <a href="https://github.com/Datus-ai/Datus-agent/pull/824">#824</a></li>
+</ul>
+<p><strong>Enhancements</strong></p>
+<ul>
+<li><strong>Semantic SQL Metric Extraction</strong> - When mining metrics from historical SQL, Datus tells apart brand-new metrics, metrics derived from existing ones, and plain references to existing metrics, so it won't create duplicates; it also keeps time grain, filters, and literal values. Supported metric types include count, distinct count, sum, average, min/max, conditional (filtered), ratio, expression, cumulative, and derived; for multi-table cases (cross-table calculations, non-equi joins, unions) it first combines the data into a single source and then defines metrics on top. End-to-end verified on a real warehouse (StarRocks): the generated metrics return the same values as the original SQL. <a href="https://github.com/Datus-ai/Datus-agent/pull/811">#811</a></li>
+<li><strong>Smoother CLI Chat &amp; Streaming</strong> - Fixes a duplicated last paragraph in the terminal when streaming through Claude's native API (plus a related session-resume parsing fix); chat history now renders through one unified path, so history, resume/rewind, and mid-run user inserts all display consistently, with user messages shown in a bordered panel for clearer separation. <a href="https://github.com/Datus-ai/Datus-agent/pull/837">#837</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/852">#852</a></li>
+</ul>
+<p><strong>Bug Fixes</strong></p>
+<ul>
+<li><strong>Phased Semantic-Model Validation</strong> - A semantic model can be validated before any metrics exist: the expected "no metrics yet" issue no longer aborts the flow, while genuine model errors still fail validation. <a href="https://github.com/Datus-ai/Datus-agent/pull/827">#827</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/850">#850</a></li>
+<li><strong>Reliable Bootstrap Result Handling</strong> - Bootstrap flows now correctly recognize each step's generation result (including failures), so successful output is no longer dropped and failures are no longer silently swallowed. <a href="https://github.com/Datus-ai/Datus-agent/pull/831">#831</a></li>
+<li><strong>Reference SQL Summary Path Resolution</strong> - Generated reference-SQL summary paths now resolve correctly across the different path forms; out-of-sandbox paths are safely skipped instead of crashing. <a href="https://github.com/Datus-ai/Datus-agent/pull/840">#840</a></li>
+<li><strong>Print Mode No Longer Hangs on Permission Prompts</strong> - <code>datus -p</code> (the non-interactive print mode, used in CI and scripting) now runs under the workflow execution mode and dangerous profile — consistent with <code>/bootstrap</code> and other non-interactive flows — so ASK/EXTERNAL permission prompts that previously blocked waiting for a human responder short-circuit cleanly. <a href="https://github.com/Datus-ai/Datus-agent/pull/891">#891</a></li>
+</ul>
 <h3 id="031">0.3.1<a class="headerlink" href="#031" title="Permanent link">&para;</a></h3>
 <p><strong>New Features</strong></p>
 <ul>

@@ -14,7 +14,7 @@
         <link rel="prev" href="../gen_job/">
       
       
-        <link rel="next" href="../../web_chatbot/introduction/">
+        <link rel="next" href="../gen_visual_dashboard/">
       
       
         
@@ -996,6 +996,8 @@
       
         
       
+        
+      
     
     
     
@@ -1477,6 +1479,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gen_visual_dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTML Dashboard Generation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -3393,6 +3423,8 @@
           
         
       
+        
+      
     
     
     
@@ -3425,6 +3457,11 @@
 
             </a>
             
+              
+              <label class="md-nav__link " for="__nav_1_16" id="__nav_1_16_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
           </div>
         
         <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_16_label" aria-expanded="false">
@@ -3438,6 +3475,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../develop/observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    可观测性
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
           </ul>
@@ -3641,7 +3706,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.1/docs/subagent/gen_visual_report.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.2/docs/subagent/gen_visual_report.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -3715,7 +3780,6 @@
 </span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="nt">gen_visual_report</span><span class="p">:</span>
 </span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span><span class="w">              </span><span class="c1"># 可选，默认使用当前配置的模型</span>
 </span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span><span class="w">              </span><span class="c1"># 可选，默认 30</span>
-</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">      </span><span class="nt">report_dist</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/report_dist</span><span class="w"> </span><span class="c1"># 可选，HTML 离线编译时使用的本地渲染器资源目录</span>
 </span></code></pre></div>
 <table>
 <thead>
@@ -3739,15 +3803,8 @@
 <td>agent 最多迭代多少轮后强制结束</td>
 <td>30</td>
 </tr>
-<tr>
-<td><code>report_dist</code></td>
-<td>否</td>
-<td>本地预构建渲染器资源目录。设置后，编译出的报告会引用本地文件，而不是从 CDN 加载——适合离线 / 内网环境。</td>
-<td>空（走 CDN）</td>
-</tr>
 </tbody>
 </table>
-<p><code>report_dist</code> 也可以通过 CLI 参数 <code>--report-dist</code> 传入。</p>
 <h2 id="prompt">怎么让 prompt 更有效<a class="headerlink" href="#prompt" title="Permanent link">&para;</a></h2>
 <p>下面这些信息越明确，报告越精准：</p>
 <ul>
@@ -3805,13 +3862,13 @@
         
         
           
-          <a href="../../web_chatbot/introduction/" class="md-footer__link md-footer__link--next" aria-label="下一页: chatbot">
+          <a href="../gen_visual_dashboard/" class="md-footer__link md-footer__link--next" aria-label="下一页: HTML Dashboard Generation">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 下一页
               </span>
               <div class="md-ellipsis">
-                chatbot
+                HTML Dashboard Generation
               </div>
             </div>
             <div class="md-footer__button md-icon">

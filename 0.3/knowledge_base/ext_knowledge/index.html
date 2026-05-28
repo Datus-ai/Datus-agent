@@ -994,6 +994,8 @@
       
         
       
+        
+      
     
     
     
@@ -1332,6 +1334,34 @@
     
   
     HTML Report Generation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../subagent/gen_visual_dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTML Dashboard Generation
   
 
     
@@ -3811,6 +3841,8 @@
           
         
       
+        
+      
     
     
     
@@ -3843,6 +3875,11 @@
 
             </a>
             
+              
+              <label class="md-nav__link " for="__nav_1_16" id="__nav_1_16_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
           </div>
         
         <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_16_label" aria-expanded="false">
@@ -3856,6 +3893,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../develop/observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
           </ul>
@@ -4477,7 +4542,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.1/docs/knowledge_base/ext_knowledge.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.2/docs/knowledge_base/ext_knowledge.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4811,11 +4876,11 @@
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>datus-cli<span class="w"> </span>--datasource<span class="w"> </span>california_schools
 </span></code></pre></div>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a># Browse the knowledge tree and entries
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>Datus&gt; /subject
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>&gt; /subject
 </span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a># Should show Education/SAT/Administrators and Education/SAT/Scores with the generated knowledge entries
 </span></code></pre></div>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a># Test with the original question
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>Datus&gt; Under whose administration is the school with the highest number of students scoring 1500 or more on the SAT? Indicate their full names.
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>&gt; Under whose administration is the school with the highest number of students scoring 1500 or more on the SAT? Indicate their full names.
 </span></code></pre></div>
 <p>The agent should:</p>
 <ol>
@@ -4830,7 +4895,7 @@
 </span></code></pre></div>
 <h4 id="step-2-invoke-the-subagent">Step 2: Invoke the Subagent<a class="headerlink" href="#step-2-invoke-the-subagent" title="Permanent link">&para;</a></h4>
 <p>Use the <code>/gen_ext_knowledge</code> slash command, pasting the question and reference SQL together in the message:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>Datus&gt; /gen_ext_knowledge Under whose administration is the school with the highest number of students scoring 1500 or more on the SAT? Indicate their full names. Reference SQL: SELECT T2.AdmFName1, T2.AdmLName1, T2.AdmFName2, T2.AdmLName2, T2.AdmFName3, T2.AdmLName3 FROM satscores AS T1 INNER JOIN schools AS T2 ON T1.cds = T2.CDSCode ORDER BY T1.NumGE1500 DESC LIMIT 1
+<div class="language-text highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>&gt; /gen_ext_knowledge Under whose administration is the school with the highest number of students scoring 1500 or more on the SAT? Indicate their full names. Reference SQL: SELECT T2.AdmFName1, T2.AdmLName1, T2.AdmFName2, T2.AdmLName2, T2.AdmFName3, T2.AdmLName3 FROM satscores AS T1 INNER JOIN schools AS T2 ON T1.cds = T2.CDSCode ORDER BY T1.NumGE1500 DESC LIMIT 1
 </span></code></pre></div>
 <h4 id="step-3-what-happens-internally_1">Step 3: What Happens Internally<a class="headerlink" href="#step-3-what-happens-internally_1" title="Permanent link">&para;</a></h4>
 <ol>
