@@ -162,6 +162,44 @@ class TestMaybeScheduleStartupSync:
         assert not hasattr(cli, "bg_sync")
 
 
+class TestAutoResumeIfRequested:
+    """``_auto_resume_if_requested`` mirrors ``/resume <id>`` at REPL startup.
+
+    Triggered from ``_run_prompt_session`` / ``_run_tui`` right after
+    ``_bootstrap_services``: ``datus --resume <id>`` enters the REPL with the
+    given session already rehydrated, no slash-command needed.
+    """
+
+    def test_noop_when_no_resume_flag(self, cli):
+        cli.args = MagicMock(resume=None)
+        cli._auto_resume_if_requested()
+        cli.chat_commands.cmd_resume.assert_not_called()
+
+    def test_invokes_cmd_resume_with_session_id(self, cli):
+        cli.args = MagicMock(resume="sess_abc123")
+        cli._auto_resume_if_requested()
+        cli.chat_commands.cmd_resume.assert_called_once_with("sess_abc123")
+
+    def test_run_prompt_session_invokes_auto_resume(self, cli):
+        """The prompt-session main loop must call ``_auto_resume_if_requested``
+        once before reading the first user prompt — that's what makes
+        ``datus --resume <id>`` work without an extra slash command."""
+        cli.args = MagicMock(resume="sess_abc")
+        cli._prefill_input = None
+        cli._print_welcome = MagicMock()
+        cli._warn_no_model = MagicMock()
+        cli._warn_no_datasource = MagicMock()
+        cli._bootstrap_services = MagicMock()
+        cli._auto_resume_if_requested = MagicMock()
+        cli._get_prompt_text = MagicMock(return_value="> ")
+        cli.session = MagicMock()
+        cli.session.prompt = MagicMock(side_effect=EOFError())  # exit loop immediately
+
+        cli._run_prompt_session()
+
+        cli._auto_resume_if_requested.assert_called_once_with()
+
+
 class TestCmdExitShutsDownBgSync:
     def test_exit_calls_bg_sync_shutdown(self, cli):
         cli.bg_sync = MagicMock()

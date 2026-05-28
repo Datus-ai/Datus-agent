@@ -497,12 +497,14 @@ class TestExecutionModeGenSemanticModel:
         """Workflow mode → PermissionHooks must run with non_interactive=True
         so ASK / EXTERNAL fs hits raise PermissionDeniedException instead of
         awaiting a broker that nobody will answer (``/bootstrap`` flow)."""
-        from datus.tools.permission.permission_hooks import PermissionHooks
-
         node = _make_node(real_agent_config, mock_llm_create, execution_mode="workflow")
+        # Workflow now also composes CompactHook (multi-turn history enabled
+        # in all modes), so _compose_hooks may return CompositeHooks. Check
+        # the permission gate on the node so the test stays robust.
         hooks = node._compose_hooks()
-        assert isinstance(hooks, PermissionHooks)
-        assert hooks.non_interactive is True
+        assert hooks is not None
+        assert node.permission_hooks is not None
+        assert node.permission_hooks.non_interactive is True
         # Permission manager must be loaded with the dangerous profile, not the
         # user's profile, so workflow flows always operate against a known
         # baseline.

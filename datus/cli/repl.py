@@ -975,6 +975,7 @@ class DatusCLI:
         self._warn_no_model()
         self._warn_no_datasource()
         self._bootstrap_services()
+        self._auto_resume_if_requested()
 
         while True:
             try:
@@ -1031,6 +1032,7 @@ class DatusCLI:
         self._warn_no_model()
         self._warn_no_datasource()
         self._bootstrap_services()
+        self._auto_resume_if_requested()
 
         # Prefill support mirrors the PromptSession path: ``.rewind`` stores
         # the replayed user message in ``_prefill_input`` and expects the
@@ -2131,6 +2133,17 @@ class DatusCLI:
             service_bootstrap.run(self)
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(f"service bootstrap failed: {exc}")
+
+    def _auto_resume_if_requested(self) -> None:
+        """Auto-trigger ``/resume`` when ``--resume <session_id>`` is set.
+
+        Same effect as entering the REPL and typing ``/resume <session_id>``:
+        rehydrates the node and replays history before the first prompt.
+        """
+        session_id = getattr(self.args, "resume", None)
+        if not session_id:
+            return
+        self.chat_commands.cmd_resume(session_id)
 
     def prompt_input(self, message: str, default: str = "", choices: list = None, multiline: bool = False):
         """

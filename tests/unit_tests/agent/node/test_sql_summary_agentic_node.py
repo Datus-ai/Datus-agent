@@ -483,10 +483,13 @@ class TestSqlSummaryNonInteractiveBridge:
     """
 
     def test_workflow_mode_compose_hooks_is_non_interactive(self, real_agent_config, mock_llm_create):
-        from datus.tools.permission.permission_hooks import PermissionHooks
-
         node = _create_node(real_agent_config, execution_mode="workflow")
+        # Workflow now also wires CompactHook (multi-turn history is enabled
+        # for all execution_mode values), so _compose_hooks may return a
+        # CompositeHooks bundle. Validate the permission gate directly on the
+        # node — that's what keeps /bootstrap parallel pools from deadlocking.
         hooks = node._compose_hooks()
-        assert isinstance(hooks, PermissionHooks)
-        assert hooks.non_interactive is True
+        assert hooks is not None
+        assert node.permission_hooks is not None
+        assert node.permission_hooks.non_interactive is True
         assert node.permission_manager.active_profile == "dangerous"

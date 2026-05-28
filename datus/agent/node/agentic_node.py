@@ -1859,9 +1859,18 @@ class AgenticNode(Node):
         try:
             await self._before_stream(ctx)
 
+<<<<<<< HEAD
             if self.execution_mode == "interactive":
                 await self._auto_compact()
                 ctx.session, ctx.conversation_summary = self._get_or_create_session()
+=======
+            # Session injection is independent of ``execution_mode``: workflow
+            # callers (print mode ``--resume``, API chat with ``interactive=False``,
+            # sub-agents continuing a parent session) all want SDK to see prior
+            # items. ``execution_mode`` controls human-in-the-loop, not history.
+            await self._auto_compact()
+            ctx.session = self._get_or_create_session()
+>>>>>>> 9704503 ([Refactor] Decouple session reuse from execution_mode so --resume works in any IO mode (#914))
 
             template_context = self._build_template_context(ctx)
             prompt_version = getattr(self.input, "prompt_version", None)
@@ -2568,5 +2577,42 @@ class AgenticNode(Node):
         if self.permission_hooks and extra:
             from datus.tools.permission.permission_hooks import CompositeHooks
 
+<<<<<<< HEAD
             return CompositeHooks([extra, self.permission_hooks])
         return self.permission_hooks or extra
+=======
+        active = [h for h in (extra, self.permission_hooks, compact_hook) if h is not None]
+        if not active:
+            return None
+        if len(active) == 1:
+            return active[0]
+        from datus.tools.permission.permission_hooks import CompositeHooks
+
+        return CompositeHooks(active)
+
+    def _get_or_create_compact_hook(self) -> Any:
+        """Lazily build the ``CompactHook`` for this node.
+
+        Construction is deferred to first SDK call so test harnesses that
+        bypass ``__init__`` don't trip on a missing attribute, and so the
+        hook is only created in the loop where it will actually be used.
+
+        Returns ``None`` when the compact subsystem is disabled in config
+        (both ``major.enabled`` and ``minor.enabled`` off). Enabled for all
+        ``execution_mode`` values: ``cfg.*.enabled`` is the real gate, so
+        workflow callers that span multiple turns (API chat resume, sub-agents
+        with shared session_id) still get rolling-window compaction.
+        """
+        self._ensure_compact_state()
+        cfg = self._compact_cfg
+        if not (cfg.major.enabled or cfg.minor.enabled):
+            return None
+        existing = getattr(self, "_compact_hook_instance", None)
+        if existing is not None:
+            return existing
+        from datus.agent.node.compact_hook import CompactHook
+
+        hook = CompactHook(self)
+        self._compact_hook_instance = hook
+        return hook
+>>>>>>> 9704503 ([Refactor] Decouple session reuse from execution_mode so --resume works in any IO mode (#914))

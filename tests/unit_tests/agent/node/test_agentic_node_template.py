@@ -251,24 +251,27 @@ class TestTemplateMethodHappyPath:
 
 class TestExecutionModeGuard:
     @pytest.mark.asyncio
-    async def test_workflow_mode_skips_session_setup(self):
-        """In workflow mode the template must not call _get_or_create_session."""
+    async def test_workflow_mode_also_builds_session(self):
+        """Workflow mode must also build a session so ``--resume`` / API chat
+        callers receive prior items via SDK; only the interactive *capability*
+        (broker prompts, ask_user tool) is gated on ``execution_mode``."""
         model = _StreamModel([[_ok_action("x")]])
         node = FakeAgenticNode(model, execution_mode="workflow")
         node.input = FakeInput(user_message="m")
+        calls = {"count": 0}
 
-        sentinel = {"called": False}
+        original = node._get_or_create_session
 
-        def _bomb():
-            sentinel["called"] = True
-            raise RuntimeError("workflow mode must not build a session")
+        def _spy():
+            calls["count"] += 1
+            return original()
 
-        node._get_or_create_session = _bomb  # type: ignore[assignment]
+        node._get_or_create_session = _spy  # type: ignore[assignment]
 
         async for _ in node.execute_stream(ActionHistoryManager()):
             pass
 
-        assert sentinel["called"] is False
+        assert calls["count"] == 1
 
     @pytest.mark.asyncio
     async def test_interactive_mode_builds_session_once(self):
