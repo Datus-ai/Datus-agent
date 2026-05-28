@@ -429,6 +429,7 @@ class ChatAgenticNode(AgenticNode):
             workspace_root=self._resolve_workspace_root(),
         )
         context["has_task_tool"] = bool(self.sub_agent_task_tool)
+        context["has_ask_user_tool"] = "ask_user" in exposed
         context["active_profile"] = getattr(self.agent_config, "active_profile_name", None) or "normal"
         from datus.utils.time_utils import get_default_current_date
 

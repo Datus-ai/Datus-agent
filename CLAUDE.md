@@ -11,10 +11,10 @@ AI-powered data-analysis agent: NL → SQL, multi-DB, RAG knowledge base, MCP pr
 
 ```bash
 uv sync                                                # Install dependencies
-uv run pytest tests/unit_tests/ -m "not nightly" -q    # CI tests (zero external deps)
+uv run python ci/run-pr-tests.py upstream/main         # PR CI harness: acceptance + impacted unit tests + coverage
 uv run pytest -m nightly tests/                        # Nightly (needs API keys)
 uv run pytest -m "nightly or regression" tests/        # Full regression
-uv run ruff format . && uv run ruff check --fix .      # Lint & format
+uv run ruff format datus/ tests/ && uv run ruff check --fix datus/ tests/  # Lint & format
 bash build_scripts/build_test_data.sh                  # Build test KB
 ```
 
@@ -104,16 +104,15 @@ When using `gh pr create --body`, copy `.github/PULL_REQUEST_TEMPLATE.md` as the
 
 ## Commit Workflow
 
-Every gate below also runs in CI on the PR — running them locally first avoids round-trip failures. Do **not** push until each one passes.
+Run the same gates that protect ordinary PRs before pushing, and keep extra full-suite runs targeted to high-risk changes.
 
-1. **Pre-format**: `uv run ruff format . && uv run ruff check --fix .` before staging.
-2. **Coverage gate** — both dimensions must pass:
-   - Overall: `uv run pytest tests/unit_tests/ -m "not nightly" --cov=datus --cov-report=xml:coverage.xml --cov-fail-under=80`
-   - Diff: `uv run diff-cover coverage.xml --compare-branch=upstream/main --fail-under=80` (add `--show-uncovered` to locate uncovered new lines).
-3. **Test-quality audit** (`ci/audit_tests.py`): `uv run python ci/audit_tests.py --diff-only upstream/main` — must report **`P0=0`**. P0 hard-fails CI (conditional asserts, tautologies, zero-assert tests, debug leftovers, hardcoded pre-built DBs, etc.); P1 is warn-only but should be addressed. Use `--all` for a full scan when you've touched many test files. Honor noqa with `# audit-noqa: <rule>` only when justified.
-4. **Pre-commit hooks**: never use `--no-verify`; auto-fix and retry until they pass.
-5. **Push**: only to `origin`, never to `upstream`.
-6. **PR body**: see **PR Conventions → Body** above.
+1. **Pre-format**: `uv run ruff format datus/ tests/ && uv run ruff check --fix datus/ tests/` before staging. CI checks the same paths with `ruff format --check datus/ tests/` and `ruff check datus/ tests/`.
+2. **PR coverage harness**: `uv run python ci/run-pr-tests.py upstream/main`. This runs the fixed acceptance harness, impacted unit-test targets selected from the diff, Cobertura coverage, and diff coverage. Inspect `ci/test-report.md` and `ci/diff-cover-report.md` when it fails.
+3. **Test-quality audit**: `uv run python ci/audit_tests.py --repo-root . --diff-only upstream/main` — must report **`P0=0`**. P0 hard-fails CI; P1 is warn-only but should be addressed. Use `--all` for a full scan when you've touched many test files. Honor noqa with `# audit-noqa: <rule>` only when justified.
+4. **Merge-queue rehearsal**: run `uv run python ci/run-merge-queue-tests.py` when changing acceptance harness targets, CI scripts, or code likely to affect merge-queue-only integration coverage.
+5. **Pre-commit hooks**: never use `--no-verify`; auto-fix and retry until they pass.
+6. **Push**: only to `origin`, never to `upstream`.
+7. **PR body**: see **PR Conventions → Body** above.
 
 ## Testing Rules
 
@@ -121,7 +120,7 @@ Every gate below also runs in CI on the PR — running them locally first avoids
 
 | Tier | Marker | Mock policy |
 |------|--------|-------------|
-| CI | none — discovered by directory under `tests/unit_tests/`; <5 s/test, deterministic | **Must** mock all external calls (LLM, remote DBs, network, optional packages) |
+| CI | PR acceptance harness plus impacted `tests/unit_tests/`; <5 s/test, deterministic | **Must** mock all external calls (LLM, remote DBs, network, optional packages) |
 | Nightly | `@pytest.mark.nightly` | Real LLM APIs OK; mock unstable services |
 | Regression | `@pytest.mark.regression` | Real services; gate missing keys with `@pytest.mark.skipif` |
 

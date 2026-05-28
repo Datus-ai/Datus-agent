@@ -15,6 +15,12 @@ allowed_agents:
   - gen_job
 ---
 
+## CRITICAL: Interactive vs Workflow Mode
+
+- When `ask_user` is available, use it for DDL confirmation and clarification.
+- When `ask_user` is not available (workflow, batch, or print mode), never call `ask_user` and never wait for user input. Treat the original request as authorization only for the specific non-destructive `CREATE TABLE` / CTAS it explicitly asks for.
+- If critical schema details, target table, target database, or destructive authorization are missing and `ask_user` is unavailable, stop and report exactly what is missing.
+
 ## CRITICAL: Cancel = Immediate Stop
 
 **If the user selects "Cancel" at ANY point (any `ask_user` response), you MUST immediately stop ALL work.** Do NOT:
@@ -42,7 +48,7 @@ The user's SQL already fully defines the output schema. Do NOT ask the user abou
 2. **Call `describe_table`** for each source table to understand column types.
 3. **Optionally call `read_query`** with `LIMIT 10` to validate the query output.
 4. **Determine table name**: Derive from the SQL context (e.g., `wide_order_customer`). If the user specified a name, use it.
-5. **Go directly to Phase 2** — do NOT call `ask_user` here. The DDL confirmation in Phase 2 is the only user interaction needed.
+5. **Go directly to Phase 2** — do NOT ask about table usage, purpose, or column selection.
 
 ### Description Mode (CREATE TABLE) — Confirm Schema First
 
@@ -50,14 +56,12 @@ Natural language is ambiguous, so clarification may be needed before generating 
 
 1. **Parse user description**: Extract table name, columns, types, constraints.
 2. **Call `describe_table`** for any referenced existing tables to infer column types.
-3. **If critical information is missing** (e.g., no column names or types specified), call `ask_user` to clarify. Only ask about genuinely missing information — do NOT ask about table usage or purpose if the user already described the schema.
+3. **If critical information is missing** (e.g., no column names or types specified), clarify with `ask_user` when available. If `ask_user` is unavailable, stop and report the missing fields instead of guessing.
 4. **Go to Phase 2** once the schema is clear.
 
-## Phase 2: Generate DDL and Confirm (MANDATORY ask_user)
+## Phase 2: Generate DDL and Authorize
 
-Generate the exact DDL SQL statement and present it to the user for confirmation.
-
-**Include the full DDL SQL inside the `ask_user` question text.** This is required because when running as a sub-agent, all intermediate assistant messages are collapsed in the UI — the user can ONLY see the `ask_user` interaction widget.
+Generate the exact DDL SQL statement.
 
 ### SQL Mode
 Generate CTAS: `CREATE TABLE {schema}.{table_name} AS ({select_sql})`
@@ -65,7 +69,7 @@ Generate CTAS: `CREATE TABLE {schema}.{table_name} AS ({select_sql})`
 ### Description Mode
 Generate: `CREATE TABLE {schema}.{table_name} ({column_defs})`
 
-### Both Modes — DDL Confirmation via ask_user
+### When `ask_user` is available — DDL Confirmation
 
 Call `ask_user` with the complete DDL embedded in the question:
 
@@ -87,9 +91,17 @@ ask_user(questions=[{
 - **Modify**: ask what to change, regenerate DDL, call `ask_user` again with the updated DDL
 - **Cancel**: **STOP IMMEDIATELY.** Return `{"table_name": "", "output": "Cancelled by user."}`. Do NOT continue.
 
+### When `ask_user` is unavailable — Workflow Authorization
+
+- Do not call `ask_user`.
+- Proceed to Phase 3 only when the request explicitly asks to create this table or CTAS result and the target database/table is unambiguous.
+- If the target table already exists, proceed only if the request explicitly authorizes replacement, overwrite, drop/recreate, or equivalent destructive behavior.
+- If the DDL includes `DROP`, `ALTER`, `TRUNCATE`, `CREATE OR REPLACE`, or any existing-object replacement, require explicit authorization in the original request. Otherwise stop and report the required authorization.
+- Include the final DDL in the output summary so the caller can audit what was executed.
+
 ## Phase 3: Execute and Verify
 
-1. **Call `execute_ddl(sql)`** with the confirmed DDL statement.
+1. **Call `execute_ddl(sql)`** with the confirmed or workflow-authorized DDL statement.
 2. **Verify**:
    - SQL Mode: Call `read_query("SELECT COUNT(*) FROM {schema}.{table_name}")` to confirm row count
    - Description Mode: Call `describe_table("{schema}.{table_name}")` to confirm schema matches
@@ -97,8 +109,9 @@ ask_user(questions=[{
 
 If DDL fails:
 - Parse the error message
-- Fix the SQL, show the updated DDL to the user via `ask_user`, and retry (up to 3 attempts)
-- If still failing, report the error to the user via `ask_user`
+- If `ask_user` is available, fix the SQL, show the updated DDL to the user via `ask_user`, and retry (up to 3 attempts)
+- If `ask_user` is unavailable, fix and retry directly up to 3 attempts when the intent remains the same and no new destructive action is introduced
+- If still failing, report the final error and the last attempted DDL in the output
 
 ## Phase 4: Summary
 
@@ -111,9 +124,10 @@ Output a summary including:
 
 ## Important Rules
 
-- **MUST call `ask_user`** before executing any DDL — never create tables without user confirmation
-- **DDL is irreversible** — always show the exact DDL SQL to the user before execution
-- If the target table already exists, warn the user and ask whether to DROP and recreate or abort
+- Use `ask_user` before executing DDL only when the tool is available.
+- In workflow mode, execute only explicitly requested non-destructive table creation; block ambiguous or destructive work instead of guessing.
+- **DDL is irreversible** — always include the exact DDL SQL in `ask_user` confirmation when interactive, or in the final output when workflow mode executes.
+- If the target table already exists, ask whether to drop/recreate/abort when interactive; require explicit replacement authorization when workflow mode.
 - Language: match user's language (Chinese input → Chinese output)
 - Do NOT modify the source tables — only create new tables
 - **Single responsibility** — gen-table only creates tables, does not generate semantic model YAML. For semantic model, suggest using `gen_semantic_model`

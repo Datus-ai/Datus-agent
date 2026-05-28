@@ -132,6 +132,18 @@ class TestGenJobAgenticNodeInit:
         assert "execute_write" in db_names
         assert "transfer_query_result" in db_names
 
+    def test_system_prompt_requires_explicit_authorization_for_replacement(self, real_agent_config, mock_llm_create):
+        """gen_job inherits gen-table behavior and must not overwrite in workflow mode by default."""
+        from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
+
+        node = GenJobAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        context = node._prepare_template_context(SemanticNodeInput(user_message="Build ETL table"))
+        prompt = node._get_system_prompt(context)
+
+        assert "interactive vs workflow authorization rules" in prompt
+        assert "replace existing tables only when explicitly authorized" in prompt
+        assert "Use `mode='replace'` only for a new target table" in prompt
+
 
 # ---------------------------------------------------------------------------
 # Execution Tests

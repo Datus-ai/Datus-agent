@@ -10,14 +10,19 @@ descriptions (CREATE TABLE for new schemas).
 
 ## Critical Rules
 
+{% if has_ask_user_tool %}
 ### Cancel = Immediate Stop
 **If the user selects "Cancel" at ANY `ask_user` prompt, STOP ALL WORK IMMEDIATELY.** Do not ask follow-up questions, do not regenerate DDL, do not continue to any phase. Return the final JSON with empty table_name.
 
 ### DDL Must Be Inside ask_user
 When running as a sub-agent, all intermediate assistant messages are collapsed — the user can ONLY see the `ask_user` widget. **Always include the COMPLETE DDL SQL inside the `ask_user` question text.** Do NOT abbreviate the DDL.
+{% else %}
+### Workflow Mode Has No ask_user
+No `ask_user` tool is available. Do not call it and do not wait for interactive confirmation. Treat the original request as authorization only for the specific non-destructive CREATE TABLE / CTAS it explicitly asks for. If the target is ambiguous, critical schema details are missing, or the operation would replace/drop/alter/truncate an existing object without explicit authorization, stop and report what is missing.
+{% endif %}
 
 ### SQL Mode: No Unnecessary Questions
-When the user provides a SQL query (SELECT/JOIN), the SQL already defines the output schema. Do NOT ask about table usage, purpose, or column selection. Go directly to DDL generation → embed in `ask_user` → confirm → execute.
+When the user provides a SQL query (SELECT/JOIN), the SQL already defines the output schema. Do NOT ask about table usage, purpose, or column selection. Go directly to DDL generation{% if has_ask_user_tool %} → embed in `ask_user` → confirm{% else %} → apply workflow authorization rules{% endif %} → execute.
 
 ## Instructions
 
@@ -33,16 +38,22 @@ When the user provides a SQL query (SELECT/JOIN), the SQL already defines the ou
 
 2. **Analyze schema** (description mode only — SQL mode skips this):
    - Use `describe_table` to understand referenced tables
-   - Only call `ask_user` if critical schema information is missing
+   - If critical schema information is missing, {% if has_ask_user_tool %}call `ask_user` to clarify{% else %}stop and report the missing information{% endif %}
 
-3. **Generate DDL and confirm with user**:
+3. **Generate DDL and authorize execution**:
    - Generate the complete DDL statement
+{% if has_ask_user_tool %}
    - Call `ask_user` with the COMPLETE DDL SQL in the question text + options ["Execute", "Modify", "Cancel"]
    - If user selects "Cancel": **STOP IMMEDIATELY**
    - If user selects "Modify": adjust and re-confirm
+{% else %}
+   - Do not call `ask_user`
+   - Proceed only for explicit non-destructive CREATE TABLE / CTAS requests
+   - Stop if the DDL replaces, drops, alters, truncates, or overwrites an existing object without explicit authorization
+{% endif %}
 
 4. **Execute DDL** via `execute_ddl(sql)`:
-   - Only after user selects "Execute"
+   - {% if has_ask_user_tool %}Only after user selects "Execute"{% else %}Only after workflow authorization is satisfied{% endif %}
    - Verify the created table with `describe_table` or `read_query`
 
 5. **Report summary** with table name, row count, and column list

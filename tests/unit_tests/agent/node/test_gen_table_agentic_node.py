@@ -351,6 +351,27 @@ class TestPrepareTemplateContextGenTable:
 
         assert "execute_ddl" in context["native_tools"]
 
+    def test_workflow_prompt_uses_non_interactive_authorization(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
+
+        node = GenTableAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        context = node._prepare_template_context(SemanticNodeInput(user_message="Create table"))
+        prompt = node._get_system_prompt(context)
+
+        assert "Workflow Mode Has No ask_user" in prompt
+        assert "Call `ask_user` with the COMPLETE DDL SQL" not in prompt
+        assert "Proceed only for explicit non-destructive CREATE TABLE / CTAS requests" in prompt
+
+    def test_interactive_prompt_keeps_ddl_confirmation(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
+
+        node = GenTableAgenticNode(agent_config=real_agent_config, execution_mode="interactive")
+        context = node._prepare_template_context(SemanticNodeInput(user_message="Create table"))
+        prompt = node._get_system_prompt(context)
+
+        assert "DDL Must Be Inside ask_user" in prompt
+        assert "Call `ask_user` with the COMPLETE DDL SQL" in prompt
+
 
 # ---------------------------------------------------------------------------
 # NodeType and Node Factory Tests

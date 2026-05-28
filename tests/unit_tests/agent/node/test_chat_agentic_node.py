@@ -669,6 +669,42 @@ class TestChatAgenticNodeSystemPrompt:
         assert "Current permission profile: dangerous" in prompt
         assert "authoritative for this turn" in prompt
 
+    def test_workflow_prompt_does_not_advertise_ask_user(self, real_agent_config, mock_llm_create):
+        """Workflow chat has no ask_user tool, so the prompt must not route to it."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        node = ChatAgenticNode(
+            node_id="test_prompt_workflow",
+            description="Test workflow prompt",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+
+        prompt = node._get_system_prompt()
+
+        assert "Ask user tool (`ask_user`)" not in prompt
+        assert "call `ask_user` FIRST" not in prompt
+        assert "No ask_user tool is available" in prompt
+        assert "stop with a concise missing-information response" in prompt
+
+    def test_interactive_prompt_advertises_ask_user(self, real_agent_config, mock_llm_create):
+        """Interactive chat keeps ask_user routing guidance."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        node = ChatAgenticNode(
+            node_id="test_prompt_interactive",
+            description="Test interactive prompt",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+            execution_mode="interactive",
+        )
+
+        prompt = node._get_system_prompt()
+
+        assert "Ask user tool (`ask_user`)" in prompt
+        assert "call `ask_user` FIRST" in prompt
+
     def test_get_system_prompt_fallback_on_missing_template(self, real_agent_config, mock_llm_create):
         """_get_system_prompt falls back to chat_system when configured template is missing."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
