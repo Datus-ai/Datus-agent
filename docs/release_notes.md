@@ -2,6 +2,26 @@
 
 ## 0.3
 
+### 0.3.2
+
+**New Features**
+
+- **Agent Observability (Configurable Tracing)** - Turn on `agent.observability.tracing` to export run traces to Langfuse, LangSmith, Datadog, Braintrust, or a generic OTLP collector. Optionally capture run content and redact sensitive data, and get stable trace references plus runtime trace grouping that tie benchmark, bootstrap, CLI, and chat runs into a single trace for easy correlation and debugging. [#833](https://github.com/Datus-ai/Datus-agent/pull/833) [#864](https://github.com/Datus-ai/Datus-agent/pull/864) [docs](develop/observability.md)
+- **Visual Artifacts: Dashboard Support** - The new `gen_visual_dashboard` generates dashboard-style HTML (multi-chart card layouts) right from Chat, just like `gen_visual_report`, with **local interactive preview served by `datus --web`** — filters re-run live against your database, no SaaS backend required. Report and dashboard generation is also noticeably better: cleaner layouts, more reliable chart rendering (concurrent multi-chart queries to DuckDB no longer race), consistent use of the runtime ChartCard primitive, more accurate underlying data queries, support for more complex reports, and multi-round refinement. The compiled HTML's absolute path is now surfaced in the CLI message stream, so you can reopen the artifact after closing the browser tab. [#829](https://github.com/Datus-ai/Datus-agent/pull/829) [#835](https://github.com/Datus-ai/Datus-agent/pull/835) [#842](https://github.com/Datus-ai/Datus-agent/pull/842) [#847](https://github.com/Datus-ai/Datus-agent/pull/847) [#848](https://github.com/Datus-ai/Datus-agent/pull/848) [#849](https://github.com/Datus-ai/Datus-agent/pull/849) [#853](https://github.com/Datus-ai/Datus-agent/pull/853) [#855](https://github.com/Datus-ai/Datus-agent/pull/855) [#863](https://github.com/Datus-ai/Datus-agent/pull/863) [#866](https://github.com/Datus-ai/Datus-agent/pull/866) [#867](https://github.com/Datus-ai/Datus-agent/pull/867) [#869](https://github.com/Datus-ai/Datus-agent/pull/869) [#894](https://github.com/Datus-ai/Datus-agent/pull/894) [#895](https://github.com/Datus-ai/Datus-agent/pull/895) [#901](https://github.com/Datus-ai/Datus-agent/pull/901) [#905](https://github.com/Datus-ai/Datus-agent/pull/905) [#907](https://github.com/Datus-ai/Datus-agent/pull/907) [docs](subagent/gen_visual_dashboard.md)
+- **Mid-Run User Input** - Send additional instructions while an agent run is still streaming — type in the CLI/TUI or POST to the API; the text is picked up on the model's next step, saved to the session, and shown live as it is inserted, without interrupting the run. [#824](https://github.com/Datus-ai/Datus-agent/pull/824)
+
+**Enhancements**
+
+- **Semantic SQL Metric Extraction** - When mining metrics from historical SQL, Datus tells apart brand-new metrics, metrics derived from existing ones, and plain references to existing metrics, so it won't create duplicates; it also keeps time grain, filters, and literal values. Supported metric types include count, distinct count, sum, average, min/max, conditional (filtered), ratio, expression, cumulative, and derived; for multi-table cases (cross-table calculations, non-equi joins, unions) it first combines the data into a single source and then defines metrics on top. End-to-end verified on a real warehouse (StarRocks): the generated metrics return the same values as the original SQL. [#811](https://github.com/Datus-ai/Datus-agent/pull/811)
+- **Smoother CLI Chat & Streaming** - Fixes a duplicated last paragraph in the terminal when streaming through Claude's native API (plus a related session-resume parsing fix); chat history now renders through one unified path, so history, resume/rewind, and mid-run user inserts all display consistently, with user messages shown in a bordered panel for clearer separation. [#837](https://github.com/Datus-ai/Datus-agent/pull/837) [#852](https://github.com/Datus-ai/Datus-agent/pull/852)
+
+**Bug Fixes**
+
+- **Phased Semantic-Model Validation** - A semantic model can be validated before any metrics exist: the expected "no metrics yet" issue no longer aborts the flow, while genuine model errors still fail validation. [#827](https://github.com/Datus-ai/Datus-agent/pull/827) [#850](https://github.com/Datus-ai/Datus-agent/pull/850)
+- **Reliable Bootstrap Result Handling** - Bootstrap flows now correctly recognize each step's generation result (including failures), so successful output is no longer dropped and failures are no longer silently swallowed. [#831](https://github.com/Datus-ai/Datus-agent/pull/831)
+- **Reference SQL Summary Path Resolution** - Generated reference-SQL summary paths now resolve correctly across the different path forms; out-of-sandbox paths are safely skipped instead of crashing. [#840](https://github.com/Datus-ai/Datus-agent/pull/840)
+- **Print Mode No Longer Hangs on Permission Prompts** - `datus -p` (the non-interactive print mode, used in CI and scripting) now runs under the workflow execution mode and dangerous profile — consistent with `/bootstrap` and other non-interactive flows — so ASK/EXTERNAL permission prompts that previously blocked waiting for a human responder short-circuit cleanly. [#891](https://github.com/Datus-ai/Datus-agent/pull/891)
+
 ### 0.3.1
 
 **New Features**
