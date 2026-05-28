@@ -1,11 +1,14 @@
 """Pydantic models for the visual-report API.
 
 Mirrors the wire shape consumed by the @datus/web-artifact-render report
-viewer. The DB-bound fields on :class:`ReportDetail`
-(``subagent`` / ``report_id`` / ``published_version`` /
-``published_at``) are intentionally ``Optional`` / default ``0``: the
-agent-only path (``datus --web``) never populates them, while the
-Datus-backend wrapper enriches them from Postgres before responding.
+viewer. Models here only carry fields the agent actually populates: the
+on-disk artifact bundle.
+
+Publication-side fields (``subagent``, ``report_id``,
+``published_version``, ``published_at``) live in Datus-backend's
+``PublishedReportDetail`` subclass — they're meaningful only when a
+SaaS Postgres deployment is sitting behind the agent and have no
+analogue on the agent-only path.
 """
 
 from __future__ import annotations
@@ -20,27 +23,11 @@ from datus.schemas.artifact_manifest import ArtifactManifest
 __all__ = [
     "ArtifactFile",
     "ReportDetail",
-    "ReportSubAgentInfo",
 ]
 
 
-class ReportSubAgentInfo(BaseModel):
-    """Compact pointer to the ``ask_report`` subagent bound to this report.
-
-    Only populated when the report has been published on the SaaS
-    backend (``visual_reports.subagent_id``). The agent-only path
-    always leaves this as ``None``.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: str = Field(..., description="SubAgent.id — opens the CommonTab agent editor")
-    name: str = Field(..., description="SubAgent.name (mirrors the report's display name at create time)")
-    description: str = Field(..., description="SubAgent.description")
-
-
 class ReportDetail(BaseModel):
-    """Wire shape of ``GET /api/v1/report/detail``.
+    """Wire shape of ``GET /api/v1/report/detail`` (agent-only path).
 
     ``files`` is the slug-relative flat list covering every artifact file
     the report owns (render/ tree + queries/<slug>.sql / .json pre-baked
@@ -49,6 +36,11 @@ class ReportDetail(BaseModel):
     view time, so ``@datus/web-common/modules/report`` (and the standalone
     ``@datus/web-artifact-render`` UMD viewer it ships with) only needs
     this list to render the entire artifact.
+
+    Datus-backend's ``PublishedReportDetail`` subclass extends this with
+    the publication-side fields (``subagent`` / ``report_id`` /
+    ``published_version`` / ``published_at``) that require a SaaS
+    Postgres deployment.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -67,34 +59,5 @@ class ReportDetail(BaseModel):
             "per-prefix allowlist (render/{.jsx,.js,.css,.json,.md}, queries/{.sql,.json}, "
             "analysis/{.md,.json}). manifest.json is intentionally NOT included — "
             "the parsed structured form is on ``manifest`` above. Sorted by path."
-        ),
-    )
-    subagent: Optional[ReportSubAgentInfo] = Field(
-        None,
-        description=(
-            "The ``ask_report`` SubAgent bound to this report by ``/report/publish``. "
-            "``None`` before the first successful publish or when running without a SaaS DB."
-        ),
-    )
-    report_id: Optional[str] = Field(
-        None,
-        description=(
-            "``visual_reports.id`` for this (workspace, project, slug) once a "
-            "publish has landed; ``None`` before the first publish or when running "
-            "without a SaaS DB. Use this to build the saas viewer URL ``/report/<report_id>``."
-        ),
-    )
-    published_version: int = Field(
-        0,
-        description=(
-            "Latest ``visual_report_versions.version`` for this (workspace, project, slug). "
-            "``0`` when nothing has been published yet or when running without a SaaS DB."
-        ),
-    )
-    published_at: Optional[str] = Field(
-        None,
-        description=(
-            "ISO 8601 UTC timestamp of the latest published version's ``created_at``. "
-            "``None`` when nothing has been published yet or when running without a SaaS DB."
         ),
     )

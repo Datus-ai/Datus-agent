@@ -1,11 +1,14 @@
 """Pydantic models for the visual-dashboard API.
 
-Mirrors the wire shape consumed by the @datus/web-artifact dashboard
-renderer. The DB-bound fields on :class:`DashboardDetail`
-(``subagent`` / ``dashboard_id`` / ``published_version`` /
-``published_at``) are intentionally ``Optional`` / default ``0``: the
-agent-only path (``datus --web``) never populates them, while the
-Datus-backend wrapper enriches them from Postgres before responding.
+Mirrors the wire shape consumed by the @datus/web-artifact-render
+dashboard viewer. Models here only carry fields the agent actually
+populates: on-disk bundle assembly + Jinja2 template metadata.
+
+Publication-side fields (``subagent``, ``dashboard_id``,
+``published_version``, ``published_at``) live in Datus-backend's
+``PublishedDashboardDetail`` subclass — they're meaningful only when a
+SaaS Postgres deployment is sitting behind the agent and have no
+analogue on the agent-only path.
 """
 
 from __future__ import annotations
@@ -22,7 +25,6 @@ __all__ = [
     "ArtifactFile",
     "DashboardDetail",
     "DashboardQueryRequest",
-    "DashboardSubAgentInfo",
     "SqlQueryResultEnvelope",
 ]
 
@@ -48,23 +50,8 @@ class ArtifactFile(BaseModel):
     content: str = Field(..., description="Raw UTF-8 source text")
 
 
-class DashboardSubAgentInfo(BaseModel):
-    """Compact pointer to the ``ask_dashboard`` subagent bound to this dashboard.
-
-    Only populated when the dashboard has been published on the SaaS
-    backend (``visual_dashboards.subagent_id``). The agent-only path
-    always leaves this as ``None``.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: str = Field(..., description="SubAgent.id — opens the CommonTab agent editor")
-    name: str = Field(..., description="SubAgent.name (mirrors the dashboard's slug at create time)")
-    description: str = Field(..., description="SubAgent.description")
-
-
 class DashboardDetail(BaseModel):
-    """Wire shape of ``GET /api/v1/dashboard/detail``.
+    """Wire shape of ``GET /api/v1/dashboard/detail`` (agent-only path).
 
     ``files`` is the slug-relative flat list covering every artifact file
     the dashboard owns (render/ tree + queries/*.sql.j2 / queries/*.params.json
@@ -72,6 +59,11 @@ class DashboardDetail(BaseModel):
     UI that wants to drive filter affordances without re-parsing the
     .params.json bytes; the iframe itself only needs the render slice of
     ``files``.
+
+    Datus-backend's ``PublishedDashboardDetail`` subclass extends this
+    with the publication-side fields (``subagent`` / ``dashboard_id`` /
+    ``published_version`` / ``published_at``) that require a SaaS
+    Postgres deployment.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -95,34 +87,6 @@ class DashboardDetail(BaseModel):
     templates: List[QueryTemplateMetaFile] = Field(
         default_factory=list,
         description="Per-slug Jinja2 template metadata (params declaration, columns, sample_params)",
-    )
-    subagent: Optional[DashboardSubAgentInfo] = Field(
-        None,
-        description=(
-            "The ``ask_dashboard`` SubAgent bound to this dashboard by ``/dashboard/publish``. "
-            "``None`` before the first successful publish or when running without a SaaS DB."
-        ),
-    )
-    dashboard_id: Optional[str] = Field(
-        None,
-        description=(
-            "``visual_dashboards.id`` for this (workspace, project, slug) once a publish "
-            "has landed; ``None`` before the first publish or when running without a SaaS DB."
-        ),
-    )
-    published_version: int = Field(
-        0,
-        description=(
-            "Latest ``visual_dashboard_versions.version`` for this (workspace, project, slug). "
-            "``0`` when nothing has been published yet or when running without a SaaS DB."
-        ),
-    )
-    published_at: Optional[str] = Field(
-        None,
-        description=(
-            "ISO 8601 UTC timestamp of the latest published version's ``created_at``. "
-            "``None`` when nothing has been published yet or when running without a SaaS DB."
-        ),
     )
 
 

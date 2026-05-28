@@ -251,9 +251,5 @@ class ReportService:
                 manifest=manifest,
                 created_at=created_at,
                 files=files,
-                subagent=None,
-                report_id=None,
-                published_version=0,
-                published_at=None,
             ),
         )

@@ -392,10 +392,6 @@ class DashboardService:
                 created_at=created_at,
                 files=files,
                 templates=templates,
-                subagent=None,
-                dashboard_id=None,
-                published_version=0,
-                published_at=None,
             ),
         )
 

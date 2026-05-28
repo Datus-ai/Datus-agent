@@ -178,12 +178,15 @@ async def test_get_detail_returns_bundle_and_templates(tmp_path: Path):
     assert detail.templates[0].slug == "by_region"
     assert detail.templates[0].datasource == "warehouse"
 
-    # DB-bound fields stay empty on the agent-only path; the SaaS wrapper
-    # is responsible for populating them from Postgres before responding.
-    assert detail.subagent is None
-    assert detail.dashboard_id is None
-    assert detail.published_version == 0
-    assert detail.published_at is None
+    # Publication-side fields (subagent / dashboard_id / published_version /
+    # published_at) are not part of the agent-side ``DashboardDetail``
+    # schema — they live on Datus-backend's ``PublishedDashboardDetail``
+    # subclass. The presence of any such attribute here would mean the
+    # subclass leaked into agent code.
+    assert not hasattr(detail, "subagent")
+    assert not hasattr(detail, "dashboard_id")
+    assert not hasattr(detail, "published_version")
+    assert not hasattr(detail, "published_at")
 
 
 @pytest.mark.asyncio

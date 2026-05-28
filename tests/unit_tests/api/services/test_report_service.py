@@ -129,12 +129,15 @@ async def test_get_detail_returns_flat_files(tmp_path: Path):
     # created_at comes from app.jsx mtime — must be a usable ISO 8601 UTC string.
     assert payload.created_at.endswith("Z") and "T" in payload.created_at
 
-    # DB-bound fields stay empty on the agent-only path; the SaaS wrapper
-    # populates them from Postgres before responding.
-    assert payload.subagent is None
-    assert payload.report_id is None
-    assert payload.published_version == 0
-    assert payload.published_at is None
+    # Publication-side fields (subagent / report_id / published_version /
+    # published_at) are not part of the agent-side ``ReportDetail`` schema
+    # — they live on Datus-backend's ``PublishedReportDetail`` subclass.
+    # The presence of any such attribute here would mean the subclass
+    # leaked into agent code.
+    assert not hasattr(payload, "subagent")
+    assert not hasattr(payload, "report_id")
+    assert not hasattr(payload, "published_version")
+    assert not hasattr(payload, "published_at")
 
 
 @pytest.mark.asyncio
