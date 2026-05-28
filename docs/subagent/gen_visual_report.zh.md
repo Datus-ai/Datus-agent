@@ -8,28 +8,34 @@
 
 HTML 报告是一份长篇叙事，数据在生成时就固化下来。页面上没有筛选器，也不会再次访问数据库。如果你要的是接 Superset / Grafana 的 BI 平台仪表盘，请使用 `gen_dashboard`。
 
-如果你想要的是纯文本的 **Markdown 报告**（不带 HTML 渲染、不带图表），请改用 `/gen_report`。
+如果你想要的是纯文本的 **Markdown 报告**（不带 HTML 渲染、不带图表），请改用 `gen_report` agent。
 
 ## 快速开始
 
-直接提问就行。说清楚问题、时间范围和你想看的维度：
+先把当前 agent 切到 `gen_visual_report`——之前的 `/gen_visual_report ...` slash 调用方式已经移除，统一通过 `/agent` 选择：
 
 ```bash
-/gen_visual_report 给我一份 2025 Q4 营收报告，包含月度趋势、Top 10 地区，以及和 2024 Q4 的同比对比
+/agent gen_visual_report
+```
+
+（或者直接 `/agent`（不带参数）打开 agent TUI，选中 `gen_visual_report` → Enter 编辑、`s` 设为默认。）切好之后直接提问就行——说清楚问题、时间范围和你想看的维度：
+
+```bash
+给我一份 2025 Q4 营收报告，包含月度趋势、Top 10 地区，以及和 2024 Q4 的同比对比
 ```
 
 ```bash
-/gen_visual_report 分析 2025 H2 商户流失情况，按入驻时长分段，给出主要结论和建议
+分析 2025 H2 商户流失情况，按入驻时长分段，给出主要结论和建议
 ```
 
 要编辑已有的报告，按显示名或 slug 引用即可：
 
 ```bash
-/gen_visual_report 给报告 q4_2025_revenue_analysis 的地区明细表追加一列 YoY
+给报告 q4_2025_revenue_analysis 的地区明细表追加一列 YoY
 ```
 
 ```bash
-/gen_visual_report 修改一下「Q4 2025 营收分析」，把营收趋势图改成按月聚合
+修改一下「Q4 2025 营收分析」，把营收趋势图改成按月聚合
 ```
 
 ## 用 metric 或你自己的 SQL 生成报告
@@ -38,12 +44,12 @@ HTML 报告是一份长篇叙事，数据在生成时就固化下来。页面上
 
 - **从 metric 出发** —— 用 `@Metrics <subject>.<group>.<metric>` 三段式直接引用已经生成的指标（subject 树路径 + 指标名），agent 会自动从语义层加载定义、维度和时间窗。项目里已经沉淀了 metric 注册表时最适用（如何生成指标见 [Generate Metrics](gen_metrics.zh.md)）。
   ```bash
-  /gen_visual_report 围绕 @Metrics revenue.daily.dau 和 @Metrics conversion.weekly.signup_rate 做一份 Q4 2025 报告，按地区拆分
+  围绕 @Metrics revenue.daily.dau 和 @Metrics conversion.weekly.signup_rate 做一份 Q4 2025 报告，按地区拆分
   ```
 
 - **从 SQL 出发** —— 把你想要的 SQL 贴进 prompt，agent 会把这条查询当作数据源执行，再围绕结果组织叙事 + 图表。适合一次性分析，或者还没有现成 metric 的场景。
   ```bash
-  /gen_visual_report 用下面这段 SQL 做一份商户流失报告：
+  用下面这段 SQL 做一份商户流失报告：
       SELECT signup_month, tenure_bucket, churned_users
       FROM mart.churn_monthly
       WHERE signup_month >= '2025-07-01'
@@ -68,10 +74,10 @@ agent 会先理解你的问题，找到最相关的 metric 和数据表，跑必
 每份报告都是由相互独立的模块组成的——KPI 横幅、单张图表、数据表、建议块、页脚等等。你可以只针对 **其中一个** 模块做改动，其它部分不会被牵连：
 
 ```bash
-/gen_visual_report 把 q4_2025_revenue_analysis 里的营收趋势图改成按月聚合
-/gen_visual_report 给地区明细表追加一列 YoY
-/gen_visual_report 删掉建议章节，这次的读者不需要
-/gen_visual_report 更新执行摘要，重点强调 H2 的回升
+把 q4_2025_revenue_analysis 里的营收趋势图改成按月聚合
+给地区明细表追加一列 YoY
+删掉建议章节，这次的读者不需要
+更新执行摘要，重点强调 H2 的回升
 ```
 
 每一次调用都是定点修改：agent 会定位到对应的模块，只编辑它、只重跑相关的查询，其它的版面、叙事和图表都保持原样——保持你之前审过的状态。这样迭代成本很低：调措辞、换图表类型、加一列、删一段，一来一回就能搞定，不需要重写整份报告。
