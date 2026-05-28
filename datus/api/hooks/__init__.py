@@ -1,6 +1,6 @@
 """Public extension points for hosts that embed datus-agent.
 
-Hosts (e.g. Datus-backend SaaS) register hook implementations during
+A host (e.g. a SaaS wrapper) registers hook implementations during
 lifespan startup. The agent's HTTP routes call into these hooks at well
 defined points; if no hook is registered, behavior is unchanged.
 """

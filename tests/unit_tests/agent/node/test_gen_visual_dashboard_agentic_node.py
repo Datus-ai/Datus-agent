@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from datus.configuration.node_type import NodeType
-from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeInput
 from datus.tools.func_tool import (
     DashboardArtifactTools,
@@ -324,6 +324,27 @@ async def test_execute_stream_end_to_end(real_agent_config, mock_llm_create):
     assert result["description"] == "End-to-end seeded dashboard."
     assert result["created_at"] == "2026-05-14T00:00:00Z"
 
+    # CLI mode compiles a standalone HTML next to the artifact and emits a
+    # WORKFLOW status action carrying both the path AND the ``datus --web``
+    # launch hint so the user can copy-paste the command for the live-query
+    # backend.
+    expected_html_rel = f"dashboards/{existing_slug}/index.html"
+    assert result["html_path"] == expected_html_rel
+    assert (dash_dir / "index.html").is_file()
+
+    path_actions = [a for a in actions if a.action_type == "dashboard_html_path"]
+    assert len(path_actions) == 1, "expected exactly one dashboard_html_path action in CLI mode"
+    path_action = path_actions[0]
+    assert path_action.role == ActionRole.WORKFLOW
+    abs_html = str((dash_dir / "index.html").resolve())
+    assert abs_html in path_action.messages
+    assert path_action.output["html_path"] == abs_html
+    assert path_action.output["url"].startswith("file://")
+    assert "/api/v1/dashboard/query" in path_action.output["query_endpoint"]
+    # The launch command names the active datasource (so it's copy-pasteable)
+    # AND keeps the executable + flag stable for docs-link references.
+    assert path_action.output["datus_web_command"].startswith("datus --web --datasource ")
+
 
 @pytest.mark.asyncio
 async def test_execute_stream_fails_when_no_binding_and_no_answer(real_agent_config, mock_llm_create):
@@ -378,6 +399,170 @@ async def test_execute_stream_informational_answer_ends_normally(real_agent_conf
     assert result["dashboard_slug"] is None
     assert result["app_jsx_path"] is None
     assert result["response"] == answer
+
+
+class TestDashboardHtmlPathStreamMessage:
+    """Verify the compiled-HTML status action surfaces the path + launch hint."""
+
+    def _seed_full_dashboard(self, project_root: Path, slug: str) -> Path:
+        """Seed render/queries/manifest fixtures so ``_maybe_compile_html`` succeeds."""
+        dash_dir = project_root / "dashboards" / slug
+        (dash_dir / "render").mkdir(parents=True, exist_ok=True)
+        (dash_dir / "queries").mkdir(parents=True, exist_ok=True)
+        (dash_dir / "render" / "app.jsx").write_text(
+            "import React from 'react';\nexport default function App() { return null; }\n",
+            encoding="utf-8",
+        )
+        (dash_dir / "queries" / "q.sql.j2").write_text("-- @datus-params\nSELECT 1\n", encoding="utf-8")
+        (dash_dir / "queries" / "q.params.json").write_text(
+            json.dumps(
+                {
+                    "slug": "q",
+                    "description": "",
+                    "datasource": "warehouse",
+                    "params": [],
+                    "columns": [{"name": "a", "type": "integer"}],
+                    "sample_params": {},
+                    "sample_row_count": 1,
+                    "saved_at": "2026-05-14T00:00:00Z",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (dash_dir / "manifest.json").write_text(
+            f'{{"slug":"{slug}","name":"d","description":"d","kind":"dashboard","created_at":"2026-05-14T00:00:00Z"}}\n',
+            encoding="utf-8",
+        )
+        return dash_dir
+
+    def test_post_validate_hook_emits_action_in_cli_mode(self, real_agent_config, mock_llm_create):
+        from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeResult
+
+        node = _make_node(real_agent_config)
+        dashboard_slug = "path_msg_cli"
+        dash_dir = self._seed_full_dashboard(Path(real_agent_config.project_root), dashboard_slug)
+        node._active_artifact_slug = dashboard_slug
+
+        result = GenVisualDashboardNodeResult(success=True)
+        action = node._post_validate_hook(dashboard_slug, result)
+
+        assert isinstance(action, ActionHistory)
+        assert action.action_type == "dashboard_html_path"
+        assert action.role == ActionRole.WORKFLOW
+
+        abs_html = str((dash_dir / "index.html").resolve())
+        assert action.output["html_path"] == abs_html
+        assert abs_html in action.messages
+
+        # The query endpoint defaults to the agent --web URL so the iframe
+        # knows where to POST live-query requests.
+        assert action.output["query_endpoint"].endswith("/api/v1/dashboard/query")
+        # The launch hint surfaces the exact command the user should run.
+        assert "datus --web --datasource" in action.output["datus_web_command"]
+        assert "datus --web" in action.messages
+        # Relative path is still recorded on the result for SaaS/task consumers.
+        assert result.html_path == f"dashboards/{dashboard_slug}/index.html"
+
+    def test_post_validate_hook_returns_none_in_non_cli_mode(self, real_agent_config, mock_llm_create):
+        from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeResult
+
+        # filesystem_strict flips the node into SaaS/API mode — dashboards
+        # then render dynamically through the backend's /dashboard/detail
+        # endpoint and never compile a standalone HTML.
+        real_agent_config.filesystem_strict = True
+        node = _make_node(real_agent_config)
+        dashboard_slug = "path_msg_saas"
+        self._seed_full_dashboard(Path(real_agent_config.project_root), dashboard_slug)
+        node._active_artifact_slug = dashboard_slug
+
+        result = GenVisualDashboardNodeResult(success=True)
+        action = node._post_validate_hook(dashboard_slug, result)
+
+        assert action is None
+        assert result.html_path is None
+        assert not (Path(real_agent_config.project_root) / "dashboards" / dashboard_slug / "index.html").exists()
+
+    def test_post_validate_hook_uses_node_config_overrides(self, real_agent_config, mock_llm_create):
+        """``agentic_nodes.gen_visual_dashboard.{web_host,web_port,query_endpoint}``
+        overrides surface in both the rendered HTML and the action payload."""
+        from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeResult
+
+        node = _make_node(real_agent_config)
+        node.node_config["web_host"] = "192.168.1.10"
+        node.node_config["web_port"] = 9000
+        dashboard_slug = "with_overrides"
+        dash_dir = self._seed_full_dashboard(Path(real_agent_config.project_root), dashboard_slug)
+        node._active_artifact_slug = dashboard_slug
+
+        result = GenVisualDashboardNodeResult(success=True)
+        action = node._post_validate_hook(dashboard_slug, result)
+        assert action is not None
+
+        expected_endpoint = "http://192.168.1.10:9000/api/v1/dashboard/query"
+        assert action.output["query_endpoint"] == expected_endpoint
+        body = (dash_dir / "index.html").read_text(encoding="utf-8")
+        assert f"queryEndpoint: '{expected_endpoint}'" in body
+        # Non-default port + non-localhost host both surface on the command.
+        cmd = action.output["datus_web_command"]
+        assert "--port 9000" in cmd
+        assert "--host 192.168.1.10" in cmd
+
+
+class TestConfiguredDatasource:
+    """``_configured_datasource`` powers the copy-paste ``datus --web --datasource``
+    hint — it must reflect what the active session is actually pointing at
+    instead of always falling back to the YAML default.
+
+    The helper is a pure getattr cascade over ``agent_config`` — these tests
+    swap ``node.agent_config`` with a ``SimpleNamespace`` stub so we can
+    exercise the three branches (live binding / YAML default / neither)
+    without going through the real ``current_datasource`` setter, which
+    refuses unknown names by design.
+    """
+
+    def test_prefers_current_datasource_over_services_default(self, real_agent_config, mock_llm_create):
+        from types import SimpleNamespace
+
+        node = _make_node(real_agent_config)
+        node.agent_config = SimpleNamespace(
+            current_datasource="live_ds",
+            services=SimpleNamespace(default_datasource="ignored_ds"),
+        )
+
+        assert node._configured_datasource() == "live_ds"
+
+    def test_falls_back_to_services_default_when_current_unset(self, real_agent_config, mock_llm_create):
+        from types import SimpleNamespace
+
+        node = _make_node(real_agent_config)
+        node.agent_config = SimpleNamespace(
+            current_datasource="",
+            services=SimpleNamespace(default_datasource="fallback_ds"),
+        )
+
+        assert node._configured_datasource() == "fallback_ds"
+
+    def test_returns_none_when_nothing_is_configured(self, real_agent_config, mock_llm_create):
+        from types import SimpleNamespace
+
+        node = _make_node(real_agent_config)
+        node.agent_config = SimpleNamespace(
+            current_datasource=None,
+            services=SimpleNamespace(default_datasource=None),
+        )
+
+        assert node._configured_datasource() is None
+
+    def test_returns_none_when_services_attribute_is_missing(self, real_agent_config, mock_llm_create):
+        """Defence-in-depth: the helper must still return None (not raise)
+        when ``agent_config`` lacks a ``services`` attribute — the
+        downstream message just renders ``<your_datasource>``."""
+        from types import SimpleNamespace
+
+        node = _make_node(real_agent_config)
+        node.agent_config = SimpleNamespace(current_datasource=None)
+
+        assert node._configured_datasource() is None
 
 
 class TestNodeFactoryDashboardBranch:

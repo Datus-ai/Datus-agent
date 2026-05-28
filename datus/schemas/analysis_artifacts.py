@@ -363,7 +363,8 @@ class FinalizeAnalysisOutput(BaseModel):
     references). The follow-up consultant reads the manifest and the
     insights directly instead. ``intent.md`` curation is handled by a
     separate, dedicated LLM call (``run_intent_curation`` in
-    ``_visual_artifact_finalize``) that returns a fresh markdown body
+    ``datus.agent.node.visual_artifact._visual_artifact_finalize``) that
+    returns a fresh markdown body
     via ``LLMBaseModel.generate`` — keeping it out of this schema
     avoids mixing transient curation signals with the persisted
     finalize products.

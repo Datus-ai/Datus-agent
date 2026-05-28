@@ -46,7 +46,7 @@ VALID_TOOL_CATEGORIES = set(VALID_TOOL_METHODS.keys())
 BUILTIN_SUBAGENTS = SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS
 
 # Curated list of categories surfaced through GET /agent/use_tools' ``tool_types``
-# block. Mirrors the saas Datus-backend choice — ``platform_doc_tools`` is a
+# block. Matches the SaaS editor's whitelist — ``platform_doc_tools`` is a
 # valid tool (and stays in VALID_TOOL_METHODS for write-side validation) but is
 # excluded from the editor picker.
 _USER_FACING_TOOL_CATEGORIES: tuple[str, ...] = (
@@ -125,7 +125,7 @@ def _build_tool_types(agent_type: str) -> dict[str, dict[str, list[str]]]:
     return tool_types
 
 
-# Per-agent-type tool reference. Mirrors the saas Datus-backend contract:
+# Per-agent-type tool reference. Matches the SaaS editor contract:
 # ``default_tools`` are wildcard / specific patterns preselected for the type,
 # ``tool_types`` is the curated catalog of categories the editor should
 # surface for that type (built via :func:`_build_tool_types`).
@@ -686,7 +686,7 @@ class AgentService:
     def get_use_tools(agent_type: str) -> Result[dict]:
         """Return available tools for a given agent type.
 
-        Response payload follows the saas Datus-backend contract:
+        Response payload follows the SaaS editor contract:
         ``{"default_tools": [...], "tool_types": {category: {"tools": [...]}}}``.
         """
         if agent_type not in SUBAGENT_TOOL_REFERENCE:

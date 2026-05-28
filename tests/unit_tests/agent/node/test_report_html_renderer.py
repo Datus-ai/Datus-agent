@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from datus.agent.node.report_html_renderer import render_report_html
+from datus.agent.node.visual_artifact.report_html_renderer import render_report_html
 
 _APP_JSX = """\
 /** @datus-title Demo report <update & fix> */
@@ -75,7 +75,7 @@ def test_render_report_html_includes_flat_files(tmp_path: Path):
     """Payload is a single ``files`` list with slug-relative paths.
 
     Matches the ``IPublishedReportArtifact`` / ``IReportDetail`` shape that
-    ``@datus/web-report`` consumes via ``splitArtifactFiles(detail.files)``;
+    ``@datus/web-artifact-render`` consumes via ``splitArtifactFiles(detail.files)``;
     ``render_files`` / ``queries`` are no longer separate top-level keys.
     """
     _seed_report(tmp_path, report_slug="demo_003")
@@ -167,7 +167,7 @@ def test_render_report_html_defaults_to_cdn(tmp_path: Path):
     _seed_report(tmp_path, report_slug="cdn_default")
     out_path = render_report_html(project_root=tmp_path, report_slug="cdn_default")
     body = out_path.read_text(encoding="utf-8")
-    assert "https://unpkg.com/@datus/web-report" in body
+    assert "https://unpkg.com/@datus/web-artifact-render" in body
     assert "index.css" in body
     assert "index.umd.js" in body
     assert not (tmp_path / "reports" / "cdn_default" / "_assets").exists()
@@ -211,7 +211,7 @@ def test_render_report_html_invalid_dist_falls_back_to_cdn(tmp_path: Path):
         report_dist=incomplete,
     )
     body = out_path.read_text(encoding="utf-8")
-    assert "https://unpkg.com/@datus/web-report" in body
+    assert "https://unpkg.com/@datus/web-artifact-render" in body
     assert not (tmp_path / "reports" / "invalid_dist" / "_assets").exists()
 
 
@@ -224,7 +224,7 @@ def test_render_report_html_ignores_environment_variables(tmp_path: Path, monkey
 
     out_path = render_report_html(project_root=tmp_path, report_slug="no_env_lookup")
     body = out_path.read_text(encoding="utf-8")
-    assert "https://unpkg.com/@datus/web-report" in body
+    assert "https://unpkg.com/@datus/web-artifact-render" in body
     assert not (tmp_path / "reports" / "no_env_lookup" / "_assets").exists()
 
 

@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" type="image/svg+xml" href="https://docs.datus.ai/assets/logo-light.png" />
+  <title>Datus Dashboard — __DATUS_DASHBOARD_TITLE__</title>
+  <link rel="stylesheet" href="__DATUS_DASHBOARD_CSS_URL__" />
+  <style>
+    /*
+     * Palette mirrors packages/web-common/src/common/styles/theme/{light,dark}.less
+     * so the loading + error states match the theme that the bundled CSS
+     * will apply once it kicks in. Mirror of report_index.html — keep in
+     * sync if either side adjusts the fallback tokens.
+     */
+    :root {
+      --datus-fallback-bg: #ffffff;
+      --datus-fallback-fg: #404040;
+      --datus-fallback-fg-soft: #808080;
+      --datus-fallback-accent: #6051F5;
+      --datus-fallback-accent-soft: rgba(96, 81, 245, 0.15);
+      --datus-fallback-error-fg: #E05252;
+      --datus-fallback-error-bg: rgba(224, 82, 82, 0.06);
+      --datus-fallback-error-border: rgba(224, 82, 82, 0.22);
+      --datus-fallback-code-bg: #F7F7F7;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --datus-fallback-bg: #222222;
+        --datus-fallback-fg: #d6d6d6;
+        --datus-fallback-fg-soft: #8a8a8a;
+        --datus-fallback-accent: #6051F5;
+        --datus-fallback-accent-soft: rgba(96, 81, 245, 0.22);
+        --datus-fallback-error-fg: #E05252;
+        --datus-fallback-error-bg: rgba(224, 82, 82, 0.10);
+        --datus-fallback-error-border: rgba(224, 82, 82, 0.32);
+        --datus-fallback-code-bg: #1e1e1e;
+      }
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--datus-fallback-bg);
+      color: var(--datus-fallback-fg);
+    }
+    #root { height: 100vh; overflow: auto; }
+
+    /* ---------- Loading ---------- */
+
+    .datus-loading {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      padding: 32px;
+    }
+    .datus-loading-spinner {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      border: 3px solid var(--datus-fallback-accent-soft);
+      border-top-color: var(--datus-fallback-accent);
+      animation: datus-spin 0.9s linear infinite;
+    }
+    .datus-loading-text {
+      font-size: 14px;
+      letter-spacing: 0.04em;
+      color: var(--datus-fallback-fg-soft);
+    }
+    .datus-loading-text::after {
+      content: '';
+      display: inline-block;
+      width: 1.2em;
+      text-align: left;
+      animation: datus-dots 1.5s steps(4, end) infinite;
+    }
+    @keyframes datus-spin {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes datus-dots {
+      0%   { content: ''; }
+      25%  { content: '.'; }
+      50%  { content: '..'; }
+      75%  { content: '...'; }
+      100% { content: ''; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .datus-loading-spinner { animation-duration: 3s; }
+      .datus-loading-text::after { animation: none; content: '…'; }
+    }
+
+    /* ---------- Error ---------- */
+
+    .datus-error {
+      max-width: 720px;
+      margin: 48px auto;
+      padding: 24px 28px;
+      border-radius: 12px;
+      border: 1px solid var(--datus-fallback-error-border);
+      background: var(--datus-fallback-error-bg);
+      line-height: 1.6;
+    }
+    .datus-error-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .datus-error-header svg {
+      width: 20px;
+      height: 20px;
+      color: var(--datus-fallback-error-fg);
+      flex-shrink: 0;
+    }
+    .datus-error-header h2 {
+      margin: 0;
+      font-size: 17px;
+      font-weight: 600;
+      color: var(--datus-fallback-error-fg);
+    }
+    .datus-error p {
+      margin: 0 0 12px 0;
+      font-size: 14px;
+      color: var(--datus-fallback-fg);
+    }
+    .datus-error code {
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--datus-fallback-code-bg);
+      font-family: 'SFMono-Regular', 'Menlo', monospace;
+      font-size: 13px;
+      word-break: break-all;
+    }
+    .datus-error-details {
+      margin-top: 16px;
+    }
+    .datus-error-details summary {
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--datus-fallback-fg-soft);
+      user-select: none;
+    }
+    .datus-error pre {
+      margin: 12px 0 0 0;
+      padding: 12px 14px;
+      background: var(--datus-fallback-code-bg);
+      border-radius: 8px;
+      max-height: 320px;
+      overflow: auto;
+      font-family: 'SFMono-Regular', 'Menlo', monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div id="datus-loading" class="datus-loading" role="status" aria-live="polite">
+      <div class="datus-loading-spinner" aria-hidden="true"></div>
+      <div class="datus-loading-text">Loading Datus Dashboard</div>
+    </div>
+    <div id="datus-error" class="datus-error" hidden>
+      <div class="datus-error-header">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <h2>Failed to load Datus Dashboard</h2>
+      </div>
+      <p>
+        If this page stays blank, either your environment cannot reach
+        <code>__DATUS_DASHBOARD_JS_URL__</code> or the dashboard query
+        backend at <code>__DATUS_QUERY_ENDPOINT__</code> is offline.
+      </p>
+      <p>
+        Start the query backend with <code>datus --web</code> against
+        the URL shown above and reload this page. For an offline bundle,
+        use the CLI's <code>--report-dist</code> flag to point at a local
+        copy of the renderer, or open this file in an environment with
+        network access to the unpkg host above.
+      </p>
+      <details class="datus-error-details">
+        <summary>Show raw artifact JSON</summary>
+        <pre id="datus-dashboard-fallback-pre"></pre>
+      </details>
+    </div>
+  </div>
+
+  <script type="application/json" id="datus-dashboard-data">__DATUS_DASHBOARD_DATA__</script>
+
+  <script>
+    (function () {
+      // Swap the centered spinner for the error card. Called by both the
+      // script-tag onerror (network/CSP failure) and the post-load inline
+      // check (UMD loaded but DatusArtifact never attached / initDashboard
+      // threw). Idempotent so a double trigger is harmless.
+      window.__datusShowDashboardError = function () {
+        var loading = document.getElementById('datus-loading');
+        var err = document.getElementById('datus-error');
+        if (loading) loading.style.display = 'none';
+        if (err && err.hidden) {
+          err.hidden = false;
+          var pre = document.getElementById('datus-dashboard-fallback-pre');
+          var data = document.getElementById('datus-dashboard-data');
+          if (pre && data) pre.textContent = data.textContent || '';
+        }
+      };
+    })();
+  </script>
+
+  <script src="__DATUS_DASHBOARD_JS_URL__"
+          onerror="window.__datusShowDashboardError && window.__datusShowDashboardError();"></script>
+  <script>
+    (function () {
+      if (window.DatusArtifact && typeof window.DatusArtifact.initDashboard === 'function') {
+        try {
+          window.DatusArtifact.initDashboard({
+            rootId: 'root',
+            dataScriptId: 'datus-dashboard-data',
+            // Live-query endpoint baked at compile time. ``datus --web``
+            // serves it from ``/api/v1/dashboard/query``; the SaaS path
+            // overrides this with its own absolute URL.
+            queryEndpoint: '__DATUS_QUERY_ENDPOINT__'
+          });
+          // Successful mount: React replaces #root's children, so the
+          // loading state vanishes naturally. Nothing to do here.
+        } catch (e) {
+          window.__datusShowDashboardError && window.__datusShowDashboardError();
+        }
+      } else {
+        window.__datusShowDashboardError && window.__datusShowDashboardError();
+      }
+    })();
+  </script>
+</body>
+</html>

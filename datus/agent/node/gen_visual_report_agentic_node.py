@@ -219,7 +219,7 @@ class GenVisualReportAgenticNode(BaseVisualArtifactAgenticNode[GenVisualReportNo
         if not self._is_cli_mode():
             return None
         try:
-            from datus.agent.node.report_html_renderer import render_report_html
+            from datus.agent.node.visual_artifact.report_html_renderer import render_report_html
 
             project_root = Path(self.agent_config.project_root).resolve()
             # ``report_dist`` priority (highest first):

@@ -36,8 +36,8 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator, ClassVar, Dict, Generic, 
 
 from pydantic import BaseModel
 
-from datus.agent.node._visual_artifact_finalize import FINALIZE_STAGE_TEXT, run_finalize_analysis
 from datus.agent.node.agentic_node import AgenticNode
+from datus.agent.node.visual_artifact._visual_artifact_finalize import FINALIZE_STAGE_TEXT, run_finalize_analysis
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 

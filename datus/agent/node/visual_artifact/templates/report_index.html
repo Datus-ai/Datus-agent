@@ -200,7 +200,7 @@
     (function () {
       // Swap the centered spinner for the error card. Called by both the
       // script-tag onerror (network/CSP failure) and the post-load inline
-      // check (UMD loaded but DatusReport never attached / initReport
+      // check (UMD loaded but DatusArtifact never attached / initReport
       // threw). Idempotent so a double trigger is harmless.
       window.__datusShowReportError = function () {
         var loading = document.getElementById('datus-loading');
@@ -220,9 +220,9 @@
           onerror="window.__datusShowReportError && window.__datusShowReportError();"></script>
   <script>
     (function () {
-      if (window.DatusReport && typeof window.DatusReport.initReport === 'function') {
+      if (window.DatusArtifact && typeof window.DatusArtifact.initReport === 'function') {
         try {
-          window.DatusReport.initReport({
+          window.DatusArtifact.initReport({
             rootId: 'root',
             dataScriptId: 'datus-report-data'
           });
