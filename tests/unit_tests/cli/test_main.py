@@ -64,6 +64,12 @@ class TestArgumentParser:
             args = ap.parse_args()
         assert args.resume == "sess_123"
 
+    def test_parse_args_symphony_tools(self):
+        ap = ArgumentParser()
+        with patch.object(sys, "argv", ["datus", "--datasource", "ns1", "--print", "hello", "--symphony-tools"]):
+            args = ap.parse_args()
+        assert args.symphony_tools is True
+
     def test_parse_args_web(self):
         ap = ArgumentParser()
         with patch.object(sys, "argv", ["datus", "--datasource", "ns1", "--web"]):
@@ -134,6 +140,27 @@ class TestApplicationRun:
         app = Application()
         mock_args = SimpleNamespace(
             debug=False, datasource="ns1", print_mode=None, web=False, resume=None, proxy_tools="*", config=None
+        )
+        with (
+            patch.object(app.arg_parser, "parse_args", return_value=mock_args),
+            patch("datus.cli.main.configure_logging"),
+            patch.object(app, "_ensure_project_config"),
+        ):
+            with pytest.raises(SystemExit):
+                app.run()
+
+    def test_symphony_tools_without_print_mode_errors(self):
+        """Verify that --symphony-tools without --print raises SystemExit."""
+        app = Application()
+        mock_args = SimpleNamespace(
+            debug=False,
+            datasource="ns1",
+            print_mode=None,
+            web=False,
+            resume=None,
+            proxy_tools=None,
+            symphony_tools=True,
+            config=None,
         )
         with (
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
