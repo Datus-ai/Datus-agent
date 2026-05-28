@@ -147,6 +147,15 @@ class GenVisualDashboardNodeResult(BaseResult):
     app_jsx_path: Optional[str] = Field(None, description="Relative path to render/app.jsx under project_root")
     render_file_count: int = Field(default=0, description="Number of files persisted under dashboards/<slug>/render/")
     template_count: int = Field(default=0, description="Number of templates persisted under queries/")
+    html_path: Optional[str] = Field(
+        None,
+        description=(
+            "Project-relative path to the standalone ``index.html`` compiled by the CLI "
+            "(``dashboards/<slug>/index.html``). ``None`` outside CLI mode — the SaaS path "
+            "renders dynamically through the backend's ``/api/v1/dashboard/detail`` "
+            "endpoint and never writes a standalone HTML."
+        ),
+    )
     tokens_used: int = Field(default=0, description="Total tokens used during this run")
     artifact_kind: Literal["dashboard"] = Field(
         default="dashboard",
