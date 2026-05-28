@@ -508,6 +508,63 @@ class TestDashboardHtmlPathStreamMessage:
         assert "--host 192.168.1.10" in cmd
 
 
+class TestConfiguredDatasource:
+    """``_configured_datasource`` powers the copy-paste ``datus --web --datasource``
+    hint — it must reflect what the active session is actually pointing at
+    instead of always falling back to the YAML default.
+
+    The helper is a pure getattr cascade over ``agent_config`` — these tests
+    swap ``node.agent_config`` with a ``SimpleNamespace`` stub so we can
+    exercise the three branches (live binding / YAML default / neither)
+    without going through the real ``current_datasource`` setter, which
+    refuses unknown names by design.
+    """
+
+    def test_prefers_current_datasource_over_services_default(self, real_agent_config, mock_llm_create):
+        from types import SimpleNamespace
+
+        node = _make_node(real_agent_config)
+        node.agent_config = SimpleNamespace(
+            current_datasource="live_ds",
+            services=SimpleNamespace(default_datasource="ignored_ds"),
+        )
+
+        assert node._configured_datasource() == "live_ds"
+
+    def test_falls_back_to_services_default_when_current_unset(self, real_agent_config, mock_llm_create):
+        from types import SimpleNamespace
+
+        node = _make_node(real_agent_config)
+        node.agent_config = SimpleNamespace(
+            current_datasource="",
+            services=SimpleNamespace(default_datasource="fallback_ds"),
+        )
+
+        assert node._configured_datasource() == "fallback_ds"
+
+    def test_returns_none_when_nothing_is_configured(self, real_agent_config, mock_llm_create):
+        from types import SimpleNamespace
+
+        node = _make_node(real_agent_config)
+        node.agent_config = SimpleNamespace(
+            current_datasource=None,
+            services=SimpleNamespace(default_datasource=None),
+        )
+
+        assert node._configured_datasource() is None
+
+    def test_returns_none_when_services_attribute_is_missing(self, real_agent_config, mock_llm_create):
+        """Defence-in-depth: the helper must still return None (not raise)
+        when ``agent_config`` lacks a ``services`` attribute — the
+        downstream message just renders ``<your_datasource>``."""
+        from types import SimpleNamespace
+
+        node = _make_node(real_agent_config)
+        node.agent_config = SimpleNamespace(current_datasource=None)
+
+        assert node._configured_datasource() is None
+
+
 class TestNodeFactoryDashboardBranch:
     """Exercises the ``gen_visual_*`` cases in ``node_factory``."""
 

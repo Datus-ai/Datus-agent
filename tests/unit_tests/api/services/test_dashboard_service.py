@@ -27,8 +27,11 @@ import pytest
 
 from datus.api.services.dashboard_service import (
     DashboardService,
+    _coerce_param_value,
     _load_local_template_pair,
+    _validate_params,
 )
+from datus.schemas.gen_visual_dashboard_models import TemplateParamDecl
 
 _SAMPLE_SQL_J2 = "SELECT * FROM sales WHERE region = :region;\n"
 _SAMPLE_META = {
@@ -377,3 +380,360 @@ async def test_run_query_published_version_uses_injected_loader(monkeypatch, tmp
     # won the source-selection.
     assert "LOCAL_LEAKED" not in captured["sql"]
     assert "APAC" in captured["sql"]
+
+
+# ---------------------------------------------------------------------------
+# _coerce_param_value — type coercion for one declared param
+# ---------------------------------------------------------------------------
+
+
+def _decl(name: str, type_: str, required: bool = True) -> TemplateParamDecl:
+    return TemplateParamDecl(name=name, type=type_, required=required)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "type_, raw, expected",
+    [
+        ("string", "hello", "hello"),
+        ("integer", 42, 42),
+        ("integer", "-7", -7),
+        ("number", 3.14, 3.14),
+        ("number", 1, 1),
+        ("number", "2.5", 2.5),
+        ("boolean", True, True),
+        ("boolean", False, False),
+        ("date", "2026-05-28", "2026-05-28"),
+    ],
+)
+def test_coerce_param_value_scalar_happy_paths(type_, raw, expected):
+    assert _coerce_param_value(_decl("p", type_), raw) == expected
+
+
+@pytest.mark.parametrize(
+    "type_, raw",
+    [
+        ("string", 1),
+        ("integer", True),  # bool must not pass as int
+        ("integer", "abc"),
+        ("number", True),
+        ("number", "not-a-number"),
+        ("number", object()),
+        ("boolean", 1),
+        ("date", "2026/05/28"),
+        ("date", 20260528),
+    ],
+)
+def test_coerce_param_value_scalar_rejects_bad_types(type_, raw):
+    with pytest.raises(ValueError):
+        _coerce_param_value(_decl("p", type_), raw)
+
+
+def test_coerce_param_value_array_coerces_each_element():
+    coerced = _coerce_param_value(_decl("ids", "integer[]"), ["1", 2, "3"])
+    assert coerced == [1, 2, 3]
+
+
+def test_coerce_param_value_array_rejects_non_list():
+    with pytest.raises(ValueError, match="expected array"):
+        _coerce_param_value(_decl("ids", "integer[]"), "1,2,3")
+
+
+# ---------------------------------------------------------------------------
+# _validate_params — full request payload against the declared params
+# ---------------------------------------------------------------------------
+
+
+def test_validate_params_returns_coerced_copy():
+    decls = [_decl("region", "string"), _decl("count", "integer")]
+    coerced = _validate_params(decls, {"region": "APAC", "count": "10"})
+    assert coerced == {"region": "APAC", "count": 10}
+
+
+def test_validate_params_rejects_unknown_param():
+    with pytest.raises(ValueError, match="unknown params"):
+        _validate_params([_decl("region", "string")], {"region": "APAC", "ghost": 1})
+
+
+def test_validate_params_rejects_missing_required():
+    decls = [_decl("region", "string"), _decl("count", "integer")]
+    with pytest.raises(ValueError, match="missing required params"):
+        _validate_params(decls, {"region": "APAC"})
+
+
+def test_validate_params_required_null_rejected():
+    """Supplying a required param explicitly as null must fail before render."""
+    decls = [_decl("region", "string", required=True)]
+    with pytest.raises(ValueError, match="missing required params"):
+        _validate_params(decls, {"region": None})
+
+
+def test_validate_params_optional_null_is_dropped():
+    """Optional + None passes coercion (caller may render the absence-of-value
+    branch of the Jinja template)."""
+    decls = [_decl("region", "string", required=False)]
+    coerced = _validate_params(decls, {"region": None})
+    assert coerced == {}
+
+
+def test_validate_params_wraps_per_param_coercion_error():
+    """Per-param coercion failures bubble up with the param name attached so
+    the wire error tells the client which filter to fix."""
+    decls = [_decl("count", "integer")]
+    with pytest.raises(ValueError, match="param 'count'"):
+        _validate_params(decls, {"count": "not-a-number"})
+
+
+# ---------------------------------------------------------------------------
+# run_query — error branches around template / params / execution
+# ---------------------------------------------------------------------------
+
+
+def _patch_failing_executor(monkeypatch, *, exc: Exception | None = None, exec_result=None) -> None:
+    """Override the DB layer with one that either raises during execute or
+    returns a controllable result envelope. Mirrors ``_patch_executor`` but
+    aims at the failure branches.
+    """
+
+    class _Connector:
+        def execute_query(self, sql, result_format="list"):
+            if exc is not None:
+                raise exc
+            return exec_result
+
+    class _FakeDBFuncTool:
+        def __init__(self, *, agent_config, sub_agent_name):
+            self.agent_config = agent_config
+
+        def _get_connector(self, datasource):
+            return _Connector()
+
+    import datus.tools.func_tool as func_tool_mod
+
+    monkeypatch.setattr(func_tool_mod, "DBFuncTool", _FakeDBFuncTool)
+
+
+@pytest.mark.asyncio
+async def test_run_query_template_corrupt_returns_template_corrupt(tmp_path: Path):
+    """``.params.json`` that's not valid JSON → TEMPLATE_CORRUPT (not silently
+    swallowed). Caller can surface the parse error to the UI."""
+    dashboard_dir = tmp_path / "dashboards" / "demo"
+    queries = dashboard_dir / "queries"
+    queries.mkdir(parents=True)
+    (queries / "q.sql.j2").write_text("SELECT 1\n", encoding="utf-8")
+    (queries / "q.params.json").write_text("{not-json", encoding="utf-8")
+
+    result = await DashboardService(agent_config=MagicMock()).run_query(
+        project_files_root=tmp_path,
+        dashboard_slug="demo",
+        query_slug="q",
+        params={},
+    )
+
+    assert result.success is False
+    assert result.errorCode == "TEMPLATE_CORRUPT"
+
+
+@pytest.mark.asyncio
+async def test_run_query_invalid_param_value_returns_invalid_params(tmp_path: Path):
+    """A param value the declared type can't coerce → INVALID_PARAMS, not
+    a downstream render or execution error."""
+    _write_dashboard(tmp_path)
+
+    result = await DashboardService(agent_config=MagicMock()).run_query(
+        project_files_root=tmp_path,
+        dashboard_slug="demo",
+        query_slug="by_region",
+        params={"region": 42},  # declared as string
+    )
+
+    assert result.success is False
+    assert result.errorCode == "INVALID_PARAMS"
+
+
+@pytest.mark.asyncio
+async def test_run_query_render_error_returns_template_render_error(tmp_path: Path, monkeypatch):
+    """A Jinja2 render failure surfaces TEMPLATE_RENDER_ERROR — not a
+    QUERY_EXECUTION_FAILED — so callers know the template, not the data,
+    is the problem."""
+    _write_dashboard(tmp_path)
+
+    import datus.api.services.dashboard_service as service_mod
+
+    def _boom(sql_template, decls, params):
+        raise ValueError("synthetic render failure")
+
+    monkeypatch.setattr(service_mod, "render_dashboard_template", _boom)
+
+    result = await DashboardService(agent_config=MagicMock()).run_query(
+        project_files_root=tmp_path,
+        dashboard_slug="demo",
+        query_slug="by_region",
+        params={"region": "APAC"},
+    )
+
+    assert result.success is False
+    assert result.errorCode == "TEMPLATE_RENDER_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_run_query_datasource_resolution_failure_returns_datasource_unavailable(tmp_path: Path, monkeypatch):
+    """``DBFuncTool._get_connector`` raising → DATASOURCE_UNAVAILABLE.
+    Distinct error code so the UI can prompt the user to fix the binding
+    rather than retry the query."""
+    _write_dashboard(tmp_path)
+
+    class _Broken:
+        def __init__(self, *, agent_config, sub_agent_name):
+            pass
+
+        def _get_connector(self, datasource):
+            raise RuntimeError(f"no datasource named {datasource!r}")
+
+    import datus.tools.func_tool as func_tool_mod
+
+    monkeypatch.setattr(func_tool_mod, "DBFuncTool", _Broken)
+
+    result = await DashboardService(agent_config=MagicMock()).run_query(
+        project_files_root=tmp_path,
+        dashboard_slug="demo",
+        query_slug="by_region",
+        params={"region": "APAC"},
+    )
+
+    assert result.success is False
+    assert result.errorCode == "DATASOURCE_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_run_query_connector_raises_returns_query_execution_failed(tmp_path: Path, monkeypatch):
+    _write_dashboard(tmp_path)
+    _patch_failing_executor(monkeypatch, exc=RuntimeError("connection lost"))
+
+    result = await DashboardService(agent_config=MagicMock()).run_query(
+        project_files_root=tmp_path,
+        dashboard_slug="demo",
+        query_slug="by_region",
+        params={"region": "APAC"},
+    )
+
+    assert result.success is False
+    assert result.errorCode == "QUERY_EXECUTION_FAILED"
+
+
+@pytest.mark.asyncio
+async def test_run_query_connector_returns_unsuccessful_envelope(tmp_path: Path, monkeypatch):
+    """``execute_query`` returns ``success=False`` (e.g. SQL error caught by
+    the connector) → QUERY_EXECUTION_FAILED."""
+    _write_dashboard(tmp_path)
+
+    class _Bad:
+        success = False
+        error = "syntax error near 'SELEC'"
+
+    _patch_failing_executor(monkeypatch, exec_result=_Bad())
+
+    result = await DashboardService(agent_config=MagicMock()).run_query(
+        project_files_root=tmp_path,
+        dashboard_slug="demo",
+        query_slug="by_region",
+        params={"region": "APAC"},
+    )
+
+    assert result.success is False
+    assert result.errorCode == "QUERY_EXECUTION_FAILED"
+    assert "syntax error" in (result.errorMessage or "")
+
+
+@pytest.mark.asyncio
+async def test_run_query_rejects_non_list_sql_return(tmp_path: Path, monkeypatch):
+    """A connector that returns ``sql_return`` as something other than a list
+    means the protocol is broken — fail hard, don't try to recover."""
+    _write_dashboard(tmp_path)
+
+    class _Bad:
+        success = True
+        sql_return = {"rows": []}  # not a list
+
+    _patch_failing_executor(monkeypatch, exec_result=_Bad())
+
+    result = await DashboardService(agent_config=MagicMock()).run_query(
+        project_files_root=tmp_path,
+        dashboard_slug="demo",
+        query_slug="by_region",
+        params={"region": "APAC"},
+    )
+
+    assert result.success is False
+    assert result.errorCode == "QUERY_EXECUTION_FAILED"
+
+
+@pytest.mark.asyncio
+async def test_run_query_rejects_non_dict_row(tmp_path: Path, monkeypatch):
+    """Each row must be a dict (column→value); rejecting positional lists
+    keeps the wire schema unambiguous."""
+    _write_dashboard(tmp_path)
+
+    class _Bad:
+        success = True
+        sql_return = [["APAC", 100]]  # positional, not dict — must fail
+
+    _patch_failing_executor(monkeypatch, exec_result=_Bad())
+
+    result = await DashboardService(agent_config=MagicMock()).run_query(
+        project_files_root=tmp_path,
+        dashboard_slug="demo",
+        query_slug="by_region",
+        params={"region": "APAC"},
+    )
+
+    assert result.success is False
+    assert result.errorCode == "QUERY_EXECUTION_FAILED"
+
+
+# ---------------------------------------------------------------------------
+# get_detail — corruption + bundle-shape error branches
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_detail_corrupt_manifest_returns_not_found(tmp_path: Path):
+    """``manifest.json`` exists but isn't valid JSON / schema → callers see
+    DASHBOARD_NOT_FOUND with a parse-error reason rather than crashing the
+    request."""
+    dashboard_dir = tmp_path / "dashboards" / "demo"
+    (dashboard_dir / "render").mkdir(parents=True)
+    (dashboard_dir / "render" / "app.jsx").write_text(_SAMPLE_APP_JSX, encoding="utf-8")
+    (dashboard_dir / "manifest.json").write_text("{not-json", encoding="utf-8")
+
+    result = await DashboardService(agent_config=None).get_detail(
+        project_files_root=tmp_path,
+        dashboard_slug="demo",
+    )
+
+    assert result.success is False
+    assert result.errorCode == "DASHBOARD_NOT_FOUND"
+    assert "corrupt" in (result.errorMessage or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_get_detail_skips_malformed_template_meta(tmp_path: Path):
+    """A junk ``.params.json`` sibling must not abort the detail call — it
+    just drops out of the parsed ``templates`` list (the file itself still
+    surfaces in ``files`` so the IDE can show the parse error)."""
+    dashboard_dir = _write_dashboard(tmp_path)
+    bad_meta = dashboard_dir / "queries" / "broken.params.json"
+    bad_meta.write_text("{not-json", encoding="utf-8")
+    # The sibling .sql.j2 keeps the pair shape consistent with what the
+    # walker would normally see; the walker still surfaces the file in
+    # ``files`` even though the meta parse fails.
+    (dashboard_dir / "queries" / "broken.sql.j2").write_text("SELECT 1\n", encoding="utf-8")
+
+    result = await DashboardService(agent_config=None).get_detail(
+        project_files_root=tmp_path,
+        dashboard_slug="demo",
+    )
+
+    assert result.success is True
+    template_slugs = [t.slug for t in result.data.templates]
+    assert "broken" not in template_slugs
+    assert "by_region" in template_slugs
