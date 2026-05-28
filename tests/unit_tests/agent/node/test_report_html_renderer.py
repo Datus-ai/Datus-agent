@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from datus.agent.node.report_html_renderer import render_report_html
+from datus.agent.node.visual_artifact.report_html_renderer import render_report_html
 
 _APP_JSX = """\
 /** @datus-title Demo report <update & fix> */

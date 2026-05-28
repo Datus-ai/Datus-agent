@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Unit tests for ``datus/agent/node/_visual_artifact_finalize.py``.
+"""Unit tests for ``datus/agent/node/visual_artifact/_visual_artifact_finalize.py``.
 
 Covers the four module-level "helper" functions
 (``collect_query_briefs``, ``collect_query_previews``,
@@ -25,7 +25,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from datus.agent.node._visual_artifact_finalize import (
+from datus.agent.node.visual_artifact._visual_artifact_finalize import (
     _sanitize_curated_intent_md,
     aggregate_referenced_tables,
     aggregate_subject_refs,
@@ -1155,7 +1155,7 @@ class TestUpdateManifestKeyTables:
         manifest_path = _seed_manifest(tmp_path)
         update_manifest_key_tables(manifest_path, ["Account"])  # establish baseline
 
-        from datus.agent.node import _visual_artifact_finalize as finalize_mod
+        from datus.agent.node.visual_artifact import _visual_artifact_finalize as finalize_mod
 
         write_calls: list[Path] = []
         original = finalize_mod._atomic_write_text
@@ -1355,7 +1355,7 @@ class TestRunIntentCuration:
         path = tmp_path / "intent.md"
         path.write_text(_ORIGINAL_INTENT, encoding="utf-8")
 
-        from datus.agent.node import _visual_artifact_finalize as finalize_mod
+        from datus.agent.node.visual_artifact import _visual_artifact_finalize as finalize_mod
 
         writes: list = []
         original = finalize_mod._atomic_write_text

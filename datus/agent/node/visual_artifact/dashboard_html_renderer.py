@@ -34,8 +34,8 @@ Three asset / runtime modes:
   override it.
 
 The shared walker / template-slotting / asset-resolution machinery
-lives in :mod:`datus.agent.node._artifact_html_renderer`; this module
-only owns the dashboard-kind config + the public entrypoint.
+lives in :mod:`datus.agent.node.visual_artifact._artifact_html_renderer`;
+this module only owns the dashboard-kind config + the public entrypoint.
 """
 
 from __future__ import annotations
@@ -44,7 +44,10 @@ import re
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
-from datus.agent.node._artifact_html_renderer import ArtifactHtmlSpec, render_artifact_html
+from datus.agent.node.visual_artifact._artifact_html_renderer import (
+    ArtifactHtmlSpec,
+    render_artifact_html,
+)
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)

@@ -254,7 +254,7 @@ class GenVisualDashboardAgenticNode(
         if not self._is_cli_mode():
             return None
         try:
-            from datus.agent.node.dashboard_html_renderer import render_dashboard_html
+            from datus.agent.node.visual_artifact.dashboard_html_renderer import render_dashboard_html
 
             project_root = Path(self.agent_config.project_root).resolve()
             # ``dashboard_dist`` priority (highest first):

@@ -1,13 +1,13 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 
-"""Unit tests for ``datus.agent.node.dashboard_html_renderer``.
+"""Unit tests for ``datus.agent.node.visual_artifact.dashboard_html_renderer``.
 
 The dashboard renderer reuses the shared
-:mod:`datus.agent.node._artifact_html_renderer` machinery — these tests
-cover the dashboard-specific surface (template path, allowlist,
-placeholders) plus the offline / CDN switch and the live-query endpoint
-the agent ``--web`` server hosts.
+:mod:`datus.agent.node.visual_artifact._artifact_html_renderer` machinery —
+these tests cover the dashboard-specific surface (template path,
+allowlist, placeholders) plus the offline / CDN switch and the
+live-query endpoint the agent ``--web`` server hosts.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from datus.agent.node.dashboard_html_renderer import (
+from datus.agent.node.visual_artifact.dashboard_html_renderer import (
     DEFAULT_QUERY_ENDPOINT,
     render_dashboard_html,
 )
