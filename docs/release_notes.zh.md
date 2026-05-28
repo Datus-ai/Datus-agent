@@ -2,6 +2,26 @@
 
 ## 0.3
 
+### 0.3.2
+
+**新功能**
+
+- **Agent 可观测性（可配置追踪）** - 在 `agent.observability.tracing` 中开启后，运行追踪即可导出到 Langfuse、LangSmith、Datadog、Braintrust 或通用 OTLP collector。可按需采集运行内容并对敏感信息脱敏，同时生成稳定的追踪引用、在运行期对追踪分组，把 benchmark、bootstrap、CLI、chat 等运行归到同一条链路下，便于关联与排查。[#833](https://github.com/Datus-ai/Datus-agent/pull/833) [#864](https://github.com/Datus-ai/Datus-agent/pull/864) [文档](develop/observability.zh.md)
+- **Visual Artifact 升级：支持 Dashboard** - 新增 `gen_visual_dashboard`，可在 Chat 里像 `gen_visual_report` 一样直接生成 dashboard 风格的 HTML 看板（多图表卡片布局），并可由 **本地 `datus --web` 直接预览**——切换筛选器即按当前条件重跑 SQL、实时刷新，无需 SaaS 后端。报告与看板的生成质量也明显提升：版面更整齐、图表渲染更稳定（多图表并发查询不再触发 DuckDB 竞态）、图表组件统一使用运行时 ChartCard、数据查询更准确，能应对更复杂的报告并支持多轮修改。生成完成后，HTML 的绝对路径会输出到 CLI 消息流中，关闭浏览器标签后仍可凭路径再次打开。[#829](https://github.com/Datus-ai/Datus-agent/pull/829) [#835](https://github.com/Datus-ai/Datus-agent/pull/835) [#842](https://github.com/Datus-ai/Datus-agent/pull/842) [#847](https://github.com/Datus-ai/Datus-agent/pull/847) [#848](https://github.com/Datus-ai/Datus-agent/pull/848) [#849](https://github.com/Datus-ai/Datus-agent/pull/849) [#853](https://github.com/Datus-ai/Datus-agent/pull/853) [#855](https://github.com/Datus-ai/Datus-agent/pull/855) [#863](https://github.com/Datus-ai/Datus-agent/pull/863) [#866](https://github.com/Datus-ai/Datus-agent/pull/866) [#867](https://github.com/Datus-ai/Datus-agent/pull/867) [#869](https://github.com/Datus-ai/Datus-agent/pull/869) [#894](https://github.com/Datus-ai/Datus-agent/pull/894) [#895](https://github.com/Datus-ai/Datus-agent/pull/895) [#901](https://github.com/Datus-ai/Datus-agent/pull/901) [#905](https://github.com/Datus-ai/Datus-agent/pull/905) [#907](https://github.com/Datus-ai/Datus-agent/pull/907) [文档](subagent/gen_visual_dashboard.zh.md)
+- **运行中追加指令** - agent 还在流式输出时，你可以在 CLI / TUI 继续输入、或通过 API 发送新的指令；它会在模型的下一步被读到并写入会话记录，界面上也会实时显示这条插入——不用打断当前运行。[#824](https://github.com/Datus-ai/Datus-agent/pull/824)
+
+**增强**
+
+- **语义 SQL 指标提取** - 从历史 SQL 提取指标时，能区分新建指标、基于已有指标计算的指标、以及对已有指标的直接引用，从而避免重复创建，并保留时间粒度、筛选条件、字面量等信息。支持的指标类型包括计数、去重计数、求和、平均、最大 / 最小、条件统计、比率、表达式、累计和派生；遇到跨表、非等值关联、合并等多表场景时，会先把数据组合成一个数据源，再在其上定义指标。已在真实数仓（StarRocks）端到端验证：生成指标的取数结果与原始 SQL 完全一致。[#811](https://github.com/Datus-ai/Datus-agent/pull/811)
+- **CLI 聊天显示更顺滑** - 修复使用 Claude 原生接口时终端里最后一段文字重复刷新的问题（并修复会话恢复时的相关解析）；同时统一了聊天记录的显示，历史消息、恢复 / 回退、运行中插话都呈现一致，用户消息以带边框面板更清晰区分。[#837](https://github.com/Datus-ai/Datus-agent/pull/837) [#852](https://github.com/Datus-ai/Datus-agent/pull/852)
+
+**Bug 修复**
+
+- **语义模型可分阶段校验** - 在还没生成指标时就能单独校验语义模型；此时预期内的「暂无指标」不再中断流程，真正的模型错误仍会被拦下。[#827](https://github.com/Datus-ai/Datus-agent/pull/827) [#850](https://github.com/Datus-ai/Datus-agent/pull/850)
+- **Bootstrap 正确识别生成结果** - bootstrap 流程能正确识别各步骤的生成结果（包括失败），不再漏掉成功结果，也不再悄悄吞掉失败。[#831](https://github.com/Datus-ai/Datus-agent/pull/831)
+- **参考 SQL 摘要路径解析** - 生成参考 SQL 摘要时，文件路径在各种写法下都能正确解析；越界路径会被安全跳过，而不再报错中断。[#840](https://github.com/Datus-ai/Datus-agent/pull/840)
+- **Print 模式不再被权限弹窗挂住** - `datus -p`（非交互的脚本 / CI 模式）现在走 workflow 执行模式，与 `/bootstrap` 等非交互流程一致；原本会挂起等待人工答复的权限 ASK/EXTERNAL 弹窗现在直接短路返回，跑批不会再卡住。[#891](https://github.com/Datus-ai/Datus-agent/pull/891)
+
 ### 0.3.1
 
 **新功能**
