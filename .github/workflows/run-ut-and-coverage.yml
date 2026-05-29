@@ -49,11 +49,17 @@ jobs:
 
       - name: Validate harness coverage map
         run: |
+          set +e
           python3 ci/harness/validate_coverage_map.py \
             --strict \
             --report-json ci/harness/coverage-map-report.json \
             --report-md ci/harness/coverage-map-report.md
-          cat ci/harness/coverage-map-report.md >> "$GITHUB_STEP_SUMMARY"
+          validation_exit=$?
+          set -e
+          if [ -f ci/harness/coverage-map-report.md ]; then
+            cat ci/harness/coverage-map-report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$validation_exit"
 
       - name: Setup config file
         run: |
