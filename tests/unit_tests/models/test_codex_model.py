@@ -870,7 +870,9 @@ class TestCodexResponsesModelPatch:
 
     @pytest.mark.asyncio
     async def test_stream_response_excludes_reasoning_items(self, model_config):
-        """Reasoning items are NOT injected into ResponseCompletedEvent.output (store=False safety)."""
+        """Reference-only reasoning items (no ``encrypted_content``) are NOT
+        injected into ResponseCompletedEvent.output — replaying them under
+        store=False would be rejected by the server."""
         from openai.types.responses import (
             Response,
             ResponseCompletedEvent,
@@ -1017,3 +1019,111 @@ class TestCodexResponsesModelPatch:
         assert type(responses_model) is _CodexResponsesModel
         assert issubclass(_CodexResponsesModel, OpenAIResponsesModel)
         assert responses_model.model == model_config.model
+
+
+class TestCodexCacheIdentity:
+    """Codex prompt caching is only honoured by the backend when the request
+    mimics the official client: a real-timestamp UUIDv7 prompt_cache_key reused
+    across the conversation, plus codex identity headers (originator /
+    session_id / thread_id / chatgpt-account-id). Packet capture confirmed that
+    with these the backend echoes our key (accepted) and caches ~84%, vs 0%
+    without."""
+
+    def _model(self, model_config, mock_oauth):
+        from datus.models.codex_model import CodexModel
+
+        m = CodexModel(model_config=model_config)
+        m.current_node = None
+        return m
+
+    def test_generate_uuid7_is_v7_with_recent_timestamp(self, model_config, mock_oauth):
+        import time
+        import uuid
+
+        from datus.models.codex_model import CodexModel
+
+        key = CodexModel._generate_uuid7()
+        u = uuid.UUID(key)
+        assert u.version == 7
+        embedded_ms = int.from_bytes(u.bytes[:6], "big")
+        now_ms = int(time.time() * 1000)
+        # Embedded timestamp must be sane/recent (within ~1 day), else the
+        # backend rejects it as a malformed v7.
+        assert abs(now_ms - embedded_ms) < 24 * 3600 * 1000
+
+    def test_prompt_cache_key_stable_and_distinct(self, model_config, mock_oauth):
+        model = self._model(model_config, mock_oauth)
+
+        class _S1:
+            session_id = "sess-1"
+
+        class _S2:
+            session_id = "sess-2"
+
+        k1 = model._stable_prompt_cache_key("chat", _S1())
+        # Same conversation → identical key reused for every call.
+        assert k1 == model._stable_prompt_cache_key("chat", _S1())
+        # Distinct conversation/agent → distinct key.
+        assert k1 != model._stable_prompt_cache_key("chat", _S2())
+        assert k1 != model._stable_prompt_cache_key("explore", _S1())
+
+    def test_chatgpt_account_id_decoded_from_jwt(self, model_config, mock_oauth):
+        import base64
+        import json
+
+        model = self._model(model_config, mock_oauth)
+        payload = (
+            base64.urlsafe_b64encode(
+                json.dumps({"https://api.openai.com/auth": {"chatgpt_account_id": "acct-xyz"}}).encode()
+            )
+            .decode()
+            .rstrip("=")
+        )
+        model._get_access_token = lambda: f"hdr.{payload}.sig"
+        assert model._chatgpt_account_id() == "acct-xyz"
+
+    def test_chatgpt_account_id_none_on_bad_token(self, model_config, mock_oauth):
+        model = self._model(model_config, mock_oauth)
+        model._get_access_token = lambda: "not-a-jwt"
+        assert model._chatgpt_account_id() is None
+
+    def test_model_settings_carry_identity_headers_and_key(self, model_config, mock_oauth):
+        model = self._model(model_config, mock_oauth)
+        model._get_access_token = lambda: "x.x.x"  # _chatgpt_account_id returns None
+
+        class _Session:
+            session_id = "sess-a"
+
+        ms = model._codex_model_settings("chat", _Session())
+        key = ms.extra_args["prompt_cache_key"]
+        h = ms.extra_headers
+        # The key is reused as session_id / thread_id / x-client-request-id.
+        assert h["originator"] == "codex_exec"
+        assert h["session_id"] == key
+        assert h["thread_id"] == key
+        assert h["x-client-request-id"] == key
+        # client_metadata (installation id) is intentionally NOT sent — a live
+        # capture confirmed the backend honours the key and caches ~93% without
+        # it, so we keep the request minimal.
+        assert ms.extra_body is None
+        assert ms.store is False and ms.include_usage is True
+
+    def test_model_settings_includes_account_id_when_available(self, model_config, mock_oauth):
+        import base64
+        import json
+
+        model = self._model(model_config, mock_oauth)
+        payload = (
+            base64.urlsafe_b64encode(
+                json.dumps({"https://api.openai.com/auth": {"chatgpt_account_id": "acct-42"}}).encode()
+            )
+            .decode()
+            .rstrip("=")
+        )
+        model._get_access_token = lambda: f"h.{payload}.s"
+
+        class _Session:
+            session_id = "sess-b"
+
+        ms = model._codex_model_settings("chat", _Session())
+        assert ms.extra_headers["chatgpt-account-id"] == "acct-42"

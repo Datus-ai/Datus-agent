@@ -4,6 +4,10 @@
 
 """Codex model implementation using OAuth authentication and Responses API."""
 
+import base64
+import json
+import os
+import time
 import uuid
 from contextlib import nullcontext
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
@@ -70,6 +74,10 @@ class _CodexResponsesModel(OpenAIResponsesModel):
                 # when store=False — the server never persisted them. Exclude from the
                 # injected output so they are not written to the SQLite session, while
                 # still yielding the raw event for streaming display.
+                #
+                # We do NOT request/replay encrypted reasoning here: cache reuse is
+                # driven by an accepted prompt_cache_key (see _codex_model_settings),
+                # and replaying reasoning would only enlarge each resent request.
                 if not isinstance(event.item, ResponseReasoningItem):
                     collected.append(event.item)
             elif isinstance(event, ResponseCompletedEvent) and not event.response.output and collected:
@@ -95,6 +103,10 @@ class CodexModel(LLMBaseModel):
         self._config_api_key = self._resolve_config_api_key(model_config.api_key)
         self._client = None
         self._async_client = None
+        # Cache of conversation -> UUIDv7 prompt_cache_key. Generated once per
+        # conversation (with a real timestamp) and reused for every LLM call so
+        # the backend routes them to one cache node. See _stable_prompt_cache_key.
+        self._prompt_cache_keys: Dict[str, str] = {}
 
     @staticmethod
     def _resolve_config_api_key(api_key: str | None) -> str | None:
@@ -154,6 +166,104 @@ class CodexModel(LLMBaseModel):
             self._client.api_key = token
         if self._async_client is not None:
             self._async_client.api_key = token
+
+    @staticmethod
+    def _generate_uuid7() -> str:
+        """Generate a real UUIDv7 (48-bit current-ms timestamp + random).
+
+        The Codex backend validates that ``prompt_cache_key`` is a genuine
+        UUIDv7 whose embedded timestamp is sane: a hash-derived "v7-shaped"
+        value (bogus timestamp) is rejected and replaced by a server UUID,
+        collapsing caching. So we mint one with the actual current time, just
+        like the official client does at thread creation.
+        """
+        unix_ms = int(time.time() * 1000)
+        b = bytearray(unix_ms.to_bytes(6, "big") + os.urandom(10))
+        b[6] = (b[6] & 0x0F) | 0x70  # version 7
+        b[8] = (b[8] & 0x3F) | 0x80  # RFC 4122 variant
+        return str(uuid.UUID(bytes=bytes(b)))
+
+    def _stable_prompt_cache_key(self, agent_name: Optional[str], session: Any) -> str:
+        """Return a conversation-stable UUIDv7 ``prompt_cache_key``.
+
+        The official Codex client uses one per-thread UUIDv7 (e.g.
+        ``019e730f-4449-77a2-...``) for every call in a turn and the backend
+        accepts it verbatim, routing the shared prefix to one cache node. We
+        mirror that: mint a real UUIDv7 once per conversation and reuse it for
+        all subsequent LLM calls (distinct per agent/session). Regenerated per
+        process — matching the official CLI, which uses a fresh thread id per
+        ``codex exec`` invocation.
+        """
+        session_id = getattr(session, "session_id", None)
+        parts = [self.model_name, agent_name or ""]
+        if session_id:
+            parts.append(str(session_id))
+        else:
+            node = getattr(self, "current_node", None)
+            if node is not None:
+                try:
+                    parts.append(node.get_node_name())
+                except Exception:  # noqa: BLE001
+                    pass
+                cfg = getattr(node, "agent_config", None)
+                if cfg is not None:
+                    parts.append(getattr(cfg, "current_datasource", "") or "")
+        seed = "|".join(parts)
+        cache = getattr(self, "_prompt_cache_keys", None)
+        if cache is None:  # tolerate test doubles bypassing __init__
+            cache = {}
+            self._prompt_cache_keys = cache
+        if seed not in cache:
+            cache[seed] = self._generate_uuid7()
+        return cache[seed]
+
+    def _chatgpt_account_id(self) -> Optional[str]:
+        """Extract the ChatGPT account id from the OAuth access-token JWT.
+
+        The official Codex client sends it as the ``chatgpt-account-id`` header;
+        the backend uses the codex identity headers to decide whether to honour
+        the client ``prompt_cache_key``.
+        """
+        try:
+            token = self._get_access_token()
+            payload = token.split(".")[1]
+            payload += "=" * (-len(payload) % 4)
+            data = json.loads(base64.urlsafe_b64decode(payload))
+            auth = data.get("https://api.openai.com/auth", {}) or {}
+            return auth.get("chatgpt_account_id")
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _codex_model_settings(self, agent_name: Optional[str], session: Any) -> ModelSettings:
+        """Build Codex ``ModelSettings`` that mirror the official client so the
+        backend honours our ``prompt_cache_key`` (→ high prompt-cache hit rate).
+
+        Packet analysis showed the backend only accepts a client-supplied key
+        when the request also carries the codex *identity headers*
+        (``originator``/``session_id``/``thread_id``/``chatgpt-account-id``) and
+        a real-timestamp UUIDv7 key. Without them it replaces the key with a
+        random server UUID and caching collapses. We replicate that header set
+        (via ``extra_headers``) and the ``prompt_cache_key`` (``extra_args``);
+        both reuse one stable UUIDv7 per conversation.
+        """
+        key = self._stable_prompt_cache_key(agent_name, session)
+
+        extra_headers: Dict[str, str] = {
+            "originator": "codex_exec",
+            "session_id": key,
+            "thread_id": key,
+            "x-client-request-id": key,
+        }
+        account_id = self._chatgpt_account_id()
+        if account_id:
+            extra_headers["chatgpt-account-id"] = account_id
+
+        return ModelSettings(
+            store=False,
+            include_usage=True,
+            extra_args={"prompt_cache_key": key},
+            extra_headers=extra_headers,
+        )
 
     @staticmethod
     def _consume_stream_text(stream) -> str:
@@ -314,12 +424,13 @@ class CodexModel(LLMBaseModel):
         responses_model = self._get_responses_model()
 
         async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
+            agent_name = kwargs.get("agent_name", "codex_agent")
             agent_kwargs: Dict[str, Any] = {
-                "name": kwargs.get("agent_name", "codex_agent"),
+                "name": agent_name,
                 "instructions": instruction,
                 "output_type": output_type,
                 "model": responses_model,
-                "model_settings": ModelSettings(store=False, include_usage=True),
+                "model_settings": self._codex_model_settings(agent_name, session),
             }
             if connected_servers:
                 agent_kwargs["mcp_servers"] = list(connected_servers.values())
@@ -401,12 +512,13 @@ class CodexModel(LLMBaseModel):
         responses_model = self._get_responses_model()
 
         async with multiple_mcp_servers(mcp_servers or {}) as connected_servers:
+            agent_name = kwargs.get("agent_name", "codex_agent")
             agent_kwargs: Dict[str, Any] = {
-                "name": kwargs.get("agent_name", "codex_agent"),
+                "name": agent_name,
                 "instructions": instruction,
                 "output_type": output_type,
                 "model": responses_model,
-                "model_settings": ModelSettings(store=False, include_usage=True),
+                "model_settings": self._codex_model_settings(agent_name, session),
             }
             if connected_servers:
                 agent_kwargs["mcp_servers"] = list(connected_servers.values())
