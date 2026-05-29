@@ -74,6 +74,19 @@ function readProviderCoverageManifest(workspace = '.') {
   }
 }
 
+function readNightlyProcessDiagnostics(workspace = '.') {
+  const diagnosticsPath = path.join(workspace, 'nightly-process-diagnostics.json');
+  if (!fs.existsSync(diagnosticsPath)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(diagnosticsPath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
 function pushUnique(items, item) {
   const value = String(item || '').trim();
   if (value && !items.includes(value)) {
@@ -275,6 +288,30 @@ function summarizeProviderCoverage(providerCoverage) {
   return `${providersTotal} providers, ${deterministicCovered} deterministic covered, ${liveDeclared} live smoke declared, ${liveCollected} live smoke collected, ${liveMissing} live smoke missing/undeclared${errorText}`;
 }
 
+function summarizeTraceDiagnostics(processDiagnostics) {
+  if (!processDiagnostics || !processDiagnostics.summary) {
+    return null;
+  }
+
+  const summary = processDiagnostics.summary;
+  const caseCount = summary.case_count || 0;
+  const traceReferenceCount = summary.trace_reference_count || 0;
+  const fetchStatusText = formatCounts(summary.trace_fetch_status_counts || {});
+  const findingText = formatCounts(summary.finding_type_counts || {});
+  const failedSpanCount = summary.failed_span_count || 0;
+  const avgDuration = summary.avg_duration_seconds;
+  const tokenUsage = summary.token_usage || {};
+  const totalTokens = tokenUsage.total || tokenUsage.total_tokens || 0;
+  const durationText = avgDuration != null ? `, avg trace duration: ${avgDuration}s` : '';
+  const tokenText = totalTokens > 0 ? `, total tokens: ${totalTokens}` : '';
+  const failedSpanText = failedSpanCount > 0 ? `, failed spans: ${failedSpanCount}` : '';
+
+  return {
+    headline: `${caseCount} expected/traced cases, ${traceReferenceCount} trace refs${fetchStatusText ? ` (${fetchStatusText})` : ''}${durationText}${tokenText}${failedSpanText}`,
+    findingText,
+  };
+}
+
 function buildNightlyFeishuMessage({
   status,
   runNumber,
@@ -288,8 +325,10 @@ function buildNightlyFeishuMessage({
   const manifest = readNightlyManifest(workspace);
   const classification = readFailureClassification(workspace);
   const providerCoverage = readProviderCoverageManifest(workspace);
+  const processDiagnostics = readNightlyProcessDiagnostics(workspace);
   const classificationSummary = summarizeClassification(classification);
   const providerCoverageSummary = summarizeProviderCoverage(providerCoverage);
+  const traceDiagnosticsSummary = summarizeTraceDiagnostics(processDiagnostics);
   const normalizedStatus = status || 'UNKNOWN';
   const isPassed = normalizedStatus === 'PASSED';
 
@@ -326,6 +365,13 @@ function buildNightlyFeishuMessage({
 
   if (providerCoverageSummary) {
     lines.push(`**Provider Coverage:** ${providerCoverageSummary}.`);
+  }
+
+  if (traceDiagnosticsSummary) {
+    lines.push(`**Trace Diagnostics:** ${traceDiagnosticsSummary.headline}.`);
+    if (traceDiagnosticsSummary.findingText) {
+      lines.push(`**Trace Findings:** ${traceDiagnosticsSummary.findingText}.`);
+    }
   }
 
   if (classificationSummary && classificationSummary.blockingFindings.length > 0) {
@@ -382,9 +428,11 @@ module.exports = {
   findLatestNightlyLog,
   readFailureClassification,
   readLatestNightlyLog,
+  readNightlyProcessDiagnostics,
   readProviderCoverageManifest,
   summarizeClassification,
   summarizeProviderCoverage,
+  summarizeTraceDiagnostics,
   stripAnsi,
   summarizeNightlyLog,
 };

@@ -18,6 +18,10 @@ NIGHTLY_FAILURE_CLASSIFICATION_FINALIZED=0
 PROVIDER_COVERAGE_MANIFEST_FILE="${PROVIDER_COVERAGE_MANIFEST_FILE:-provider-coverage-manifest.json}"
 PROVIDER_COVERAGE_MANIFEST_ENABLED="${PROVIDER_COVERAGE_MANIFEST_ENABLED:-1}"
 PROVIDER_COVERAGE_MANIFEST_FINALIZED=0
+NIGHTLY_TRACE_REFERENCES_FILE="${NIGHTLY_TRACE_REFERENCES_FILE:-nightly-trace-references.jsonl}"
+NIGHTLY_TRACE_SUMMARY_FILE="${NIGHTLY_TRACE_SUMMARY_FILE:-nightly-trace-summary.jsonl}"
+NIGHTLY_PROCESS_DIAGNOSTICS_FILE="${NIGHTLY_PROCESS_DIAGNOSTICS_FILE:-nightly-process-diagnostics.json}"
+NIGHTLY_TRACE_DIAGNOSTICS_FINALIZED=0
 test_exit_code=0
 last_command_exit_code=0
 NIGHTLY_GROUP_FILTER="${NIGHTLY_GROUP_FILTER:-}"
@@ -25,6 +29,7 @@ AGENT_TEST_CONFIG="${AGENT_TEST_CONFIG:-tests/conf/agent.yml}"
 DATUS_TEST_PROJECT_NAME="${DATUS_TEST_PROJECT_NAME:-datus_agent_nightly}"
 export DATUS_TEST_PROJECT_NAME
 NIGHTLY_REQUIRE_LANGFUSE_TRACING="${NIGHTLY_REQUIRE_LANGFUSE_TRACING:-0}"
+NIGHTLY_STARTED_AT="${NIGHTLY_STARTED_AT:-}"
 NIGHTLY_COMPOSE_PROJECT_PREFIX="${NIGHTLY_COMPOSE_PROJECT_PREFIX:-datus-nightly-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-}"
 
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(cd "${REPO_ROOT}/.." && pwd)}"
@@ -35,7 +40,7 @@ UNIT_TEST_HOME="${NIGHTLY_UNIT_TEST_HOME:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-
 UNIT_TEST_PROJECT_ROOT="${NIGHTLY_UNIT_TEST_PROJECT_ROOT:-${UNIT_TEST_HOME}/workspace}"
 NIGHTLY_PYTEST_BASETEMP="${NIGHTLY_PYTEST_BASETEMP:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-agent-nightly-pytest-${GITHUB_RUN_ID:-$$}-${GITHUB_RUN_ATTEMPT:-0}}"
 AGENT_TEST_CONFIG_BACKUP="${AGENT_TEST_CONFIG_BACKUP:-${TMPDIR:-/tmp}/datus-agent-nightly-config-${GITHUB_RUN_ID:-$$}.bak}"
-export LOG_FILE NIGHTLY_MANIFEST_FILE NIGHTLY_FAILURE_CLASSIFICATION_FILE PROVIDER_COVERAGE_MANIFEST_FILE NIGHTLY_HOME NIGHTLY_PROJECT_ROOT UNIT_TEST_HOME NIGHTLY_PYTEST_BASETEMP
+export LOG_FILE NIGHTLY_MANIFEST_FILE NIGHTLY_FAILURE_CLASSIFICATION_FILE PROVIDER_COVERAGE_MANIFEST_FILE NIGHTLY_TRACE_REFERENCES_FILE NIGHTLY_TRACE_SUMMARY_FILE NIGHTLY_PROCESS_DIAGNOSTICS_FILE NIGHTLY_HOME NIGHTLY_PROJECT_ROOT UNIT_TEST_HOME NIGHTLY_PYTEST_BASETEMP NIGHTLY_STARTED_AT
 
 NIGHTLY_PYTEST_ROOTS=(tests/integration tests/regression)
 
@@ -643,6 +648,63 @@ prepare_nightly_langfuse_tracing() {
   log "Langfuse tracing enabled for nightly suites: base_url=$LANGFUSE_BASE_URL"
 }
 
+nightly_trace_expected_for_group() {
+  case "$1" in
+    "Gen Agent Tests" | \
+      "Reference Template Nightly Tests" | \
+      "Web UI Nightly Tests" | \
+      "Product E2E Nightly Tests" | \
+      "Superset Nightly Tests" | \
+      "Grafana Nightly Tests" | \
+      "Airflow Nightly Tests" | \
+      "Provider Health Tests")
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+collect_nightly_trace_diagnostics() {
+  if [ "$NIGHTLY_TRACE_DIAGNOSTICS_FINALIZED" = "1" ]; then
+    return 0
+  fi
+  NIGHTLY_TRACE_DIAGNOSTICS_FINALIZED=1
+
+  local ended_at
+  ended_at="$(utc_now)"
+
+  if [ -x "${REPO_ROOT}/.venv/bin/python" ]; then
+    "${REPO_ROOT}/.venv/bin/python" ci/collect_nightly_trace_summary.py \
+      --trace-references-jsonl "$NIGHTLY_TRACE_REFERENCES_FILE" \
+      --output-jsonl "$NIGHTLY_TRACE_SUMMARY_FILE" \
+      --diagnostics-json "$NIGHTLY_PROCESS_DIAGNOSTICS_FILE" \
+      --from-start-time "${NIGHTLY_STARTED_AT:-}" \
+      --to-start-time "$ended_at" 2>>"$LOG_FILE"
+  elif command -v uv >/dev/null 2>&1; then
+    uv run python ci/collect_nightly_trace_summary.py \
+      --trace-references-jsonl "$NIGHTLY_TRACE_REFERENCES_FILE" \
+      --output-jsonl "$NIGHTLY_TRACE_SUMMARY_FILE" \
+      --diagnostics-json "$NIGHTLY_PROCESS_DIAGNOSTICS_FILE" \
+      --from-start-time "${NIGHTLY_STARTED_AT:-}" \
+      --to-start-time "$ended_at" 2>>"$LOG_FILE"
+  else
+    python3 ci/collect_nightly_trace_summary.py \
+      --trace-references-jsonl "$NIGHTLY_TRACE_REFERENCES_FILE" \
+      --output-jsonl "$NIGHTLY_TRACE_SUMMARY_FILE" \
+      --diagnostics-json "$NIGHTLY_PROCESS_DIAGNOSTICS_FILE" \
+      --from-start-time "${NIGHTLY_STARTED_AT:-}" \
+      --to-start-time "$ended_at" 2>>"$LOG_FILE"
+  fi
+
+  local status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "WARNING: nightly trace diagnostics collection failed; continuing because trace diagnostics are non-blocking." | tee -a "$LOG_FILE" >&2
+    return 0
+  fi
+}
+
 nightly_kb_ready_dir() {
   echo "${NIGHTLY_HOME}/data/${DATUS_TEST_PROJECT_NAME}/datus_db"
 }
@@ -713,6 +775,7 @@ cleanup_all() {
     manifest_finalize
     provider_coverage_finalize
     failure_classification_finalize
+    collect_nightly_trace_diagnostics
   fi
   restore_agent_test_config
   rm -f "$AGENT_TEST_CONFIG_BACKUP"
@@ -840,7 +903,15 @@ run_logged_unfiltered() {
   local started_at
   started_at="$(utc_now)"
   collect_pytest_suite "$group_name" "$@"
-  "$@" 2>&1 | tee -a "$LOG_FILE"
+  local trace_expected=0
+  if nightly_trace_expected_for_group "$group_name"; then
+    trace_expected=1
+  fi
+  PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:$PYTHONPATH}" \
+    DATUS_NIGHTLY_SUITE_NAME="$group_name" \
+    DATUS_NIGHTLY_TRACE_EXPECTED="$trace_expected" \
+    DATUS_NIGHTLY_TRACE_REFERENCES_FILE="$NIGHTLY_TRACE_REFERENCES_FILE" \
+    "$@" 2>&1 | tee -a "$LOG_FILE"
   local cmd_status=${PIPESTATUS[0]}
   local ended_at
   ended_at="$(utc_now)"
@@ -881,7 +952,15 @@ run_logged_warn_only_unfiltered() {
   local started_at
   started_at="$(utc_now)"
   collect_pytest_suite "$group_name" "$@"
-  "$@" 2>&1 | tee -a "$LOG_FILE"
+  local trace_expected=0
+  if nightly_trace_expected_for_group "$group_name"; then
+    trace_expected=1
+  fi
+  PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:$PYTHONPATH}" \
+    DATUS_NIGHTLY_SUITE_NAME="$group_name" \
+    DATUS_NIGHTLY_TRACE_EXPECTED="$trace_expected" \
+    DATUS_NIGHTLY_TRACE_REFERENCES_FILE="$NIGHTLY_TRACE_REFERENCES_FILE" \
+    "$@" 2>&1 | tee -a "$LOG_FILE"
   local cmd_status=${PIPESTATUS[0]}
   local ended_at
   ended_at="$(utc_now)"
@@ -1421,11 +1500,18 @@ run_compose_suite() {
   return 0
 }
 
+NIGHTLY_STARTED_AT="$(utc_now)"
+export NIGHTLY_STARTED_AT
+rm -f "$NIGHTLY_TRACE_REFERENCES_FILE" "$NIGHTLY_TRACE_SUMMARY_FILE" "$NIGHTLY_PROCESS_DIAGNOSTICS_FILE"
+
 manifest_init
 
 log "Nightly log: $LOG_FILE"
 log "Nightly manifest: $NIGHTLY_MANIFEST_FILE"
 log "Nightly failure classification: $NIGHTLY_FAILURE_CLASSIFICATION_FILE"
+log "Nightly trace references: $NIGHTLY_TRACE_REFERENCES_FILE"
+log "Nightly trace summary: $NIGHTLY_TRACE_SUMMARY_FILE"
+log "Nightly process diagnostics: $NIGHTLY_PROCESS_DIAGNOSTICS_FILE"
 log "DB_ADAPTERS_ROOT=$DB_ADAPTERS_ROOT"
 log "BI_ADAPTERS_ROOT=$BI_ADAPTERS_ROOT"
 log "SCHEDULER_ADAPTERS_ROOT=$SCHEDULER_ADAPTERS_ROOT"
@@ -1459,9 +1545,9 @@ validate_nightly_group_filter || exit 1
 validate_pytest_basetemp "$NIGHTLY_PYTEST_BASETEMP" || exit 1
 rm -rf "$NIGHTLY_PYTEST_BASETEMP"
 if [ -n "${PYTEST_ADDOPTS:-}" ]; then
-  export PYTEST_ADDOPTS="${PYTEST_ADDOPTS} --basetemp=$NIGHTLY_PYTEST_BASETEMP"
+  export PYTEST_ADDOPTS="${PYTEST_ADDOPTS} --basetemp=$NIGHTLY_PYTEST_BASETEMP -p ci.pytest_trace_reference_plugin"
 else
-  export PYTEST_ADDOPTS="--basetemp=$NIGHTLY_PYTEST_BASETEMP"
+  export PYTEST_ADDOPTS="--basetemp=$NIGHTLY_PYTEST_BASETEMP -p ci.pytest_trace_reference_plugin"
 fi
 require_docker_runtime || exit "$test_exit_code"
 
@@ -1531,12 +1617,16 @@ run_logged_unfiltered "Flaky Log Classification" uv run python ci/check_flaky_re
 manifest_finalize
 provider_coverage_finalize
 failure_classification_finalize
+collect_nightly_trace_diagnostics
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   echo "log_file=$LOG_FILE" >> "$GITHUB_OUTPUT"
   echo "manifest_file=$NIGHTLY_MANIFEST_FILE" >> "$GITHUB_OUTPUT"
   echo "failure_classification_file=$NIGHTLY_FAILURE_CLASSIFICATION_FILE" >> "$GITHUB_OUTPUT"
   echo "provider_coverage_manifest_file=$PROVIDER_COVERAGE_MANIFEST_FILE" >> "$GITHUB_OUTPUT"
+  echo "nightly_trace_references_file=$NIGHTLY_TRACE_REFERENCES_FILE" >> "$GITHUB_OUTPUT"
+  echo "nightly_trace_summary_file=$NIGHTLY_TRACE_SUMMARY_FILE" >> "$GITHUB_OUTPUT"
+  echo "nightly_process_diagnostics_file=$NIGHTLY_PROCESS_DIAGNOSTICS_FILE" >> "$GITHUB_OUTPUT"
   echo "test_exit_code=$test_exit_code" >> "$GITHUB_OUTPUT"
 fi
 

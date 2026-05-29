@@ -420,6 +420,9 @@ jobs:
             nightly-manifest.json
             nightly-failure-classification.json
             provider-coverage-manifest.json
+            nightly-trace-references.jsonl
+            nightly-trace-summary.jsonl
+            nightly-process-diagnostics.json
           retention-days: 7
 
       - name: Send Feishu notification

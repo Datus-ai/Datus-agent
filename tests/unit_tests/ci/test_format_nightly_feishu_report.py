@@ -123,3 +123,43 @@ console.log(message);
     assert "### Diagnostic Signals" in message
     assert "all findings" not in message
     assert "### Failure Classification" not in message
+
+
+def test_nightly_feishu_report_includes_trace_diagnostics(tmp_path):
+    (tmp_path / "nightly-process-diagnostics.json").write_text(
+        json.dumps(
+            {
+                "summary": {
+                    "case_count": 3,
+                    "trace_reference_count": 2,
+                    "trace_fetch_status_counts": {"fetched": 2, "missing_trace_reference": 1},
+                    "finding_type_counts": {"failed_span": 1, "slow_span": 2},
+                    "failed_span_count": 1,
+                    "avg_duration_seconds": 12.5,
+                    "token_usage": {"total": 100},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = f"""
+const {{ buildNightlyFeishuMessage }} = require({json.dumps(str(REPO_ROOT / "ci/format-nightly-feishu-report.js"))});
+const message = buildNightlyFeishuMessage({{
+  status: 'PASSED',
+  runNumber: '76',
+  runUrl: 'https://example.test/run/76',
+  date: '2026-05-18',
+  workspace: {json.dumps(str(tmp_path))},
+  logContent: '',
+}});
+console.log(message);
+"""
+    result = subprocess.run([_find_node_executable(), "-e", script], check=True, capture_output=True, text=True)
+    message = result.stdout
+
+    assert (
+        "**Trace Diagnostics:** 3 expected/traced cases, 2 trace refs (fetched: 2, missing_trace_reference: 1), avg trace duration: 12.5s, total tokens: 100, failed spans: 1."
+        in message
+    )
+    assert "**Trace Findings:** failed_span: 1, slow_span: 2." in message
