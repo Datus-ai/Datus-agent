@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import warnings
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -76,7 +77,14 @@ def _truthy(value: str) -> bool:
 
 
 def _append_jsonl(path: Path, row: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    line = json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(line)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+    except OSError as exc:
+        warnings.warn(
+            f"Failed to write nightly trace reference to {path}: {exc}",
+            RuntimeWarning,
+            stacklevel=2,
+        )

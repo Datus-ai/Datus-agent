@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from ci.pytest_trace_reference_plugin import _append_jsonl
 from tests.unit_tests import conftest as unit_conftest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -133,3 +134,17 @@ def test_unit_conftest_pytest_configure_strips_and_restores_langfuse_env_for_uni
         assert observed_env == expected_env
     finally:
         _restore_unit_conftest_langfuse_state(original_saved_env, original_stripped)
+
+
+def test_trace_reference_jsonl_write_is_warn_only(monkeypatch, tmp_path):
+    output = tmp_path / "missing-parent" / "trace.jsonl"
+
+    def fail_mkdir(*args, **kwargs):
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(Path, "mkdir", fail_mkdir)
+
+    with pytest.warns(RuntimeWarning, match="Failed to write nightly trace reference"):
+        _append_jsonl(output, {"trace_id": "trace-1"})
+
+    assert not output.exists()

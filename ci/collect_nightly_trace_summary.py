@@ -142,6 +142,7 @@ def fetch_observations(
             "fromStartTime": from_start_time,
             "toStartTime": to_start_time,
             "limit": "1000",
+            "fields": "core,basic,usage,metrics",
         }
         if cursor:
             query["cursor"] = cursor
@@ -155,7 +156,7 @@ def fetch_observations(
         meta = payload.get("meta") if isinstance(payload, dict) else None
         next_cursor = ""
         if isinstance(meta, dict):
-            next_cursor = str(meta.get("nextCursor") or meta.get("next_cursor") or "")
+            next_cursor = str(meta.get("cursor") or meta.get("nextCursor") or meta.get("next_cursor") or "")
         if not next_cursor:
             break
         cursor = next_cursor
@@ -423,14 +424,19 @@ def _span_summary(item: dict[str, Any], duration: float | None) -> dict[str, Any
 def _collect_token_usage(observations: list[dict[str, Any]]) -> dict[str, int]:
     totals: Counter[str] = Counter()
     for item in observations:
+        usage_payload: dict[str, Any] | None = None
         for payload_key in ["usageDetails", "usage_details", "usage", "usageMetadata"]:
             payload = item.get(payload_key)
             if isinstance(payload, dict):
-                _merge_numeric_usage(totals, payload)
-        for key in ["promptTokens", "completionTokens", "totalTokens", "inputTokens", "outputTokens"]:
-            value = item.get(key)
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                totals[_normalize_usage_key(key)] += int(value)
+                usage_payload = payload
+                break
+        if usage_payload is not None:
+            _merge_numeric_usage(totals, usage_payload)
+        else:
+            for key in ["promptTokens", "completionTokens", "totalTokens", "inputTokens", "outputTokens"]:
+                value = item.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    totals[_normalize_usage_key(key)] += int(value)
     return dict(totals)
 
 

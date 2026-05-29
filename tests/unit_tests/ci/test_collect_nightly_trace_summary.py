@@ -1,6 +1,13 @@
 import json
+import urllib.parse
 
-from ci.collect_nightly_trace_summary import build_process_diagnostics, dedupe_trace_refs, summarize_observations
+from ci.collect_nightly_trace_summary import (
+    _collect_token_usage,
+    build_process_diagnostics,
+    dedupe_trace_refs,
+    fetch_observations,
+    summarize_observations,
+)
 
 
 def test_summarize_observations_reports_counts_tokens_and_findings():
@@ -94,3 +101,67 @@ def test_dedupe_trace_refs_keeps_latest_row_for_same_case():
         {"suite": "S", "nodeid": "n", "outcome": "passed"},
         {"suite": "S", "nodeid": "n", "trace_id": "t", "outcome": "passed"},
     ]
+
+
+def test_fetch_observations_uses_v2_cursor_from_meta(monkeypatch):
+    requested_cursors: list[str] = []
+    requested_fields: list[str] = []
+
+    class FakeResponse:
+        def __init__(self, payload: dict):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps(self.payload).encode("utf-8")
+
+    responses = [
+        {"data": [{"id": "first"}], "meta": {"cursor": "cursor-2"}},
+        {"data": [{"id": "second"}], "meta": {}},
+    ]
+
+    def fake_urlopen(request, timeout):
+        parsed = urllib.parse.urlparse(request.full_url)
+        query = urllib.parse.parse_qs(parsed.query)
+        requested_cursors.append(query.get("cursor", [""])[0])
+        requested_fields.append(query.get("fields", [""])[0])
+        return FakeResponse(responses.pop(0))
+
+    monkeypatch.setattr("ci.collect_nightly_trace_summary.urllib.request.urlopen", fake_urlopen)
+
+    observations = fetch_observations(
+        trace_id="trace-1",
+        base_url="https://langfuse.test",
+        public_key="pk",
+        secret_key="sk",
+        from_start_time="2026-05-28T00:00:00Z",
+        to_start_time="2026-05-28T01:00:00Z",
+        timeout=1.0,
+        max_pages=3,
+    )
+
+    assert [item["id"] for item in observations] == ["first", "second"]
+    assert requested_cursors == ["", "cursor-2"]
+    assert requested_fields == ["core,basic,usage,metrics", "core,basic,usage,metrics"]
+
+
+def test_collect_token_usage_prefers_one_usage_payload_over_top_level_fields():
+    usage = _collect_token_usage(
+        [
+            {
+                "usageDetails": {"input": 10, "output": 5, "total": 15},
+                "usage": {"input": 99, "output": 99, "total": 198},
+                "promptTokens": 10,
+                "completionTokens": 5,
+                "totalTokens": 15,
+            },
+            {"promptTokens": 3, "completionTokens": 2, "totalTokens": 5},
+        ]
+    )
+
+    assert usage == {"input": 10, "output": 5, "total": 15, "input_tokens": 3, "output_tokens": 2, "total_tokens": 5}
