@@ -11,7 +11,6 @@ The pass keeps the original tool I/O of the most recent
 older to disk via a single-line ``[DATUS_ARCHIVED]`` marker.
 """
 
-import json
 from pathlib import Path
 from typing import AsyncGenerator, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -90,20 +89,16 @@ def _tool_pair(idx, args_text, output_text):
     ]
 
 
-def _decoded_args_marker(rewritten_item):
-    """Return the marker string stored in ``arguments`` after JSON-decoding."""
-    return json.loads(rewritten_item["arguments"])
-
-
 def _build_turns(num_turns, *, args_long=True, output_long=False):
     """Build ``num_turns`` user turns, each followed by one tool pair.
 
     Layout per turn (3 items): [user_message, function_call, function_call_output].
 
-    ``args_long=True`` (the typical case) makes args exceed threshold so they
-    are archived. ``output_long`` defaults to False so existing tests that
-    assert "kept window output stays as ``{"success": 1}``" continue to hold;
-    set it True when the test wants to archive outputs too.
+    ``args_long=True`` (the typical case) makes args exceed threshold; arguments
+    are never archived, so this only exercises the "args preserved verbatim"
+    assertions. ``output_long`` defaults to False so existing tests that assert
+    "kept window output stays as ``{"success": 1}``" continue to hold; set it
+    True when the test wants the output archived.
     """
     items = []
     for i in range(num_turns):
@@ -116,24 +111,25 @@ def _build_turns(num_turns, *, args_long=True, output_long=False):
 
 @pytest.mark.asyncio
 async def test_minor_compact_archives_tool_io_of_older_user_turns(tmp_path):
-    """Older user turns' tool I/O get archived; the kept window stays verbatim."""
+    """Older user turns' output gets archived; arguments and the kept window
+    stay verbatim. ``function_call.arguments`` is never archived.
+    """
     node = _build_node(tmp_path, keep_recent_user_turns=2, archive_threshold=100)
-    # 4 user turns; latest 2 must be preserved. Both args and output of the
-    # archived turns are long so we can verify the marker is written into
-    # BOTH fields (args and output use different code paths in the archiver).
+    # 4 user turns; latest 2 must be preserved. Outputs of the archived turns
+    # are long; arguments are long too but must NOT be archived.
     items = _build_turns(4, output_long=True)
     node._session = _mock_session(items)
 
     result = await node._minor_compact(reason="t")
 
     assert result["success"]
-    # First 2 user turns × 1 tool pair × (args + output) = 4 archives.
-    assert result["archived_count"] == 4
+    # First 2 user turns × 1 tool pair × output only = 2 archives (args never archived).
+    assert result["archived_count"] == 2
     rewritten = node._session.add_items.await_args.args[0]
-    # Turn 0 (items 1-2) and turn 1 (items 4-5) had long args → archived.
-    assert _decoded_args_marker(rewritten[1]).startswith(ARCHIVED_MARKER)
+    # Turn 0 (items 1-2) and turn 1 (items 4-5): output archived, args preserved.
+    assert rewritten[1]["arguments"] == "x" * 500
     assert rewritten[2]["output"].startswith(ARCHIVED_MARKER)
-    assert _decoded_args_marker(rewritten[4]).startswith(ARCHIVED_MARKER)
+    assert rewritten[4]["arguments"] == "x" * 500
     assert rewritten[5]["output"].startswith(ARCHIVED_MARKER)
     # Latest 2 user turns (items 6+) untouched — args still the original.
     assert rewritten[7]["arguments"] == "x" * 500
@@ -143,17 +139,19 @@ async def test_minor_compact_archives_tool_io_of_older_user_turns(tmp_path):
 @pytest.mark.asyncio
 async def test_minor_compact_preserves_recent_user_turns(tmp_path):
     """The most-recent ``keep_recent_user_turns`` user turns are never
-    compacted, even if their args/output cross ``archive_threshold``.
+    compacted, even if their output crosses ``archive_threshold``. (Older
+    turns' long output is archived, which is what triggers the rewrite.)
     """
     node = _build_node(tmp_path, keep_recent_user_turns=2, archive_threshold=100)
-    items = _build_turns(4)
+    items = _build_turns(4, output_long=True)
     node._session = _mock_session(items)
 
     await node._minor_compact(reason="t")
     rewritten = node._session.add_items.await_args.args[0]
-    # User-turn 2 (items 6-8) and user-turn 3 (items 9-11) must remain raw.
+    # User-turn 2 (items 6-8) and user-turn 3 (items 9-11) must remain raw —
+    # args were never archive-eligible, and recent output stays verbatim.
     assert rewritten[7]["arguments"] == "x" * 500
-    assert rewritten[8]["output"] == '{"success": 1}'
+    assert rewritten[8]["output"] == "y" * 500
     assert rewritten[10]["arguments"] == "x" * 500
 
 
@@ -164,7 +162,7 @@ async def test_minor_compact_idempotent_second_pass(tmp_path):
     ``maybe_truncate_item`` is the canonical idempotency guarantee.
     """
     node = _build_node(tmp_path, keep_recent_user_turns=1, archive_threshold=100)
-    items = _build_turns(3)
+    items = _build_turns(3, output_long=True)
     node._session = _mock_session(items)
 
     first = await node._minor_compact(reason="t1")
@@ -191,7 +189,7 @@ async def test_minor_compact_correct_when_state_lost(tmp_path):
     archived item is detected via its in-message ``[DATUS_ARCHIVED]`` marker.
     """
     node = _build_node(tmp_path, keep_recent_user_turns=1, archive_threshold=100)
-    items = _build_turns(3)
+    items = _build_turns(3, output_long=True)
     node._session = _mock_session(items)
     await node._minor_compact(reason="first")
     rewritten = node._session.add_items.await_args.args[0]
@@ -240,7 +238,7 @@ async def test_minor_compact_archives_to_disk_byte_equal(tmp_path):
     original = "abcdef" * 200  # 1200 chars
     items = (
         [_user_message("first ask")]
-        + _tool_pair(0, original, '{"success": 1}')
+        + _tool_pair(0, "short", original)
         + [_user_message("second ask")]
         + _tool_pair(1, "short", "short")
     )
@@ -248,8 +246,8 @@ async def test_minor_compact_archives_to_disk_byte_equal(tmp_path):
 
     await node._minor_compact(reason="t")
     rewritten = node._session.add_items.await_args.args[0]
-    args_marker = _decoded_args_marker(rewritten[1])
-    archived_path = args_marker.split("path=", 1)[1].split(" preview=", 1)[0]
+    output_marker = rewritten[2]["output"]
+    archived_path = output_marker.split("path=", 1)[1].split(" preview=", 1)[0]
     assert Path(archived_path).read_bytes() == original.encode("utf-8")
 
 

@@ -44,15 +44,6 @@ def _extract_function(action: ActionHistory) -> tuple[str, dict]:
         except json.JSONDecodeError:
             arguments = {}
 
-    # Minor-compact archives a long arguments payload by storing the marker
-    # string in place of the original JSON object. Surface the inline preview
-    # so callers (e.g. ``/chat/history``) render a placeholder instead of
-    # dropping the params to ``{}`` and losing all signal.
-    if isinstance(arguments, str):
-        marker = parse_archived_marker(arguments)
-        if marker is not None:
-            return function_name, {"archived": True, "preview": marker["preview"]}
-
     if not isinstance(arguments, dict):
         arguments = {}
 

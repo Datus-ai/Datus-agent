@@ -26,7 +26,15 @@ class ChatNodeInput(BaseInput):
     catalog: Optional[str] = Field(default=None, description="Database catalog for context")
     database: Optional[str] = Field(default=None, description="Database name for context")
     db_schema: Optional[str] = Field(default=None, description="Database schema for context")
-    max_turns: int = Field(default=30, description="Maximum conversation turns per interaction")
+    max_turns: int = Field(
+        default=30,
+        description=(
+            "Per-interaction override for the maximum conversation turns. "
+            "Only takes effect when set explicitly by the caller; otherwise "
+            "the chat node's configured max_turns "
+            "(agent.yml ``agentic_nodes.chat.max_turns``) is used."
+        ),
+    )
     external_knowledge: Optional[str] = Field(default="", description="External knowledge")
     workspace_root: Optional[str] = Field(default=None, description="Root directory path for filesystem MCP server")
     prompt_version: Optional[str] = Field(default=None, description="Version for prompt template")

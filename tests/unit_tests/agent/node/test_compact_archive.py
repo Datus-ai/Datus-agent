@@ -14,7 +14,6 @@ import pytest
 from datus.agent.node.compact_archive import (
     ARCHIVED_MARKER,
     ToolArchive,
-    is_archived_args,
     is_archived_output,
     maybe_truncate_item,
     parse_archived_marker,
@@ -125,23 +124,6 @@ class TestIsError:
 class TestArchivedMarkerDetection:
     """Idempotency helpers: detect already-archived items in re-scan."""
 
-    def test_args_marker_detected_after_json_round_trip(self):
-        # arguments is stored as a JSON-encoded string — i.e. the marker
-        # lives inside ``json.dumps("[DATUS_ARCHIVED] ...")``.
-        wire = json.dumps(f"{ARCHIVED_MARKER} path=/tmp/x preview=...")
-        assert is_archived_args(wire) is True
-
-    def test_args_marker_not_detected_for_real_arguments(self):
-        wire = json.dumps({"path": "datus/foo.py"})
-        assert is_archived_args(wire) is False
-
-    def test_args_marker_not_detected_for_invalid_json(self):
-        assert is_archived_args("not json at all {") is False
-
-    def test_args_marker_not_detected_for_non_string(self):
-        assert is_archived_args(None) is False
-        assert is_archived_args(123) is False
-
     def test_output_marker_detected_directly(self):
         assert is_archived_output(f"{ARCHIVED_MARKER} path=/tmp/y preview=...") is True
 
@@ -201,15 +183,16 @@ class TestParseArchivedMarker:
 
 
 class TestMaybeTruncateItem:
-    def test_long_args_get_archived(self, archive):
+    def test_long_args_now_pass_through(self, archive):
+        # ``function_call.arguments`` is never archived — a marker string in
+        # ``arguments`` would break the tool-call payload sent to the LLM. Even
+        # a 2000-char payload must come back byte-identical, with no file
+        # written to the archive dir.
         item = {"type": "function_call", "name": "f", "arguments": "z" * 2000, "call_id": "c1"}
         out = maybe_truncate_item(item, archive, threshold=1000, idx=3)
-        assert out is not item
-        decoded = json.loads(out["arguments"])
-        assert isinstance(decoded, str) and decoded.startswith(ARCHIVED_MARKER)
-        # Other fields preserved.
-        assert out["name"] == "f"
-        assert out["call_id"] == "c1"
+        assert out is item  # identity preserved → caller sees "no change"
+        assert out["arguments"] == "z" * 2000
+        assert list(archive.dir.iterdir()) == []
 
     def test_long_output_get_archived(self, archive):
         item = {"type": "function_call_output", "output": "y" * 2000, "call_id": "c1"}
@@ -231,18 +214,6 @@ class TestMaybeTruncateItem:
         for item in ({"type": "message", "content": "z" * 5000}, {"type": "reasoning", "content": "z" * 5000}):
             assert maybe_truncate_item(item, archive, threshold=10, idx=7) is item
 
-    def test_idempotent_already_archived_args_skipped(self, archive):
-        # Second pass over the same item must not produce a new file or
-        # rewrap the marker — this is the core idempotency guarantee that
-        # lets ``_compacted_until`` be a pure performance hint.
-        item = {"type": "function_call", "arguments": "z" * 5000, "name": "f"}
-        first = maybe_truncate_item(item, archive, threshold=1000, idx=9)
-        before = sorted(p.name for p in archive.dir.iterdir())
-        second = maybe_truncate_item(first, archive, threshold=1000, idx=9)
-        after = sorted(p.name for p in archive.dir.iterdir())
-        assert second is first  # identity returned → no rewrite
-        assert before == after  # no new file created
-
     def test_idempotent_already_archived_output_skipped(self, archive):
         item = {"type": "function_call_output", "output": "y" * 5000}
         first = maybe_truncate_item(item, archive, threshold=1000, idx=10)
@@ -260,10 +231,9 @@ class TestMaybeTruncateItem:
             raise OSError("disk full")
 
         monkeypatch.setattr(archive, "archive", raise_oserror)
-        item = {"type": "function_call", "arguments": "x" * 5000, "name": "f"}
+        item = {"type": "function_call_output", "output": "x" * 5000, "call_id": "c1"}
         out = maybe_truncate_item(item, archive, threshold=1000, idx=8)
-        decoded = json.loads(out["arguments"])
-        assert isinstance(decoded, str) and decoded.startswith(ARCHIVED_MARKER)
-        assert "<unavailable" in decoded
+        assert out["output"].startswith(ARCHIVED_MARKER)
+        assert "<unavailable" in out["output"]
         # New dict so the rest of the compact pass continues.
         assert out is not item

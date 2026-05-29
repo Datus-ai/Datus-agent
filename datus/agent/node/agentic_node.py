@@ -1399,9 +1399,10 @@ class AgenticNode(Node):
 
         Walks ``items[lo:cutoff)`` (everything older than the most recent
         ``keep_recent_user_turns`` user turns) and replaces any
-        ``function_call.arguments`` / ``function_call_output.output`` that
-        exceeds ``archive_threshold`` with a single-line text marker pointing
-        to a disk-backed archive file. The kept window
+        ``function_call_output.output`` that exceeds ``archive_threshold`` with
+        a single-line text marker pointing to a disk-backed archive file.
+        ``function_call.arguments`` is left untouched so the tool-call payload
+        stays valid for the LLM service. The kept window
         (``items[cutoff:]``) and the already-compacted prefix
         (``items[:lo]``) are untouched, preserving cache for stable sections
         of the prompt.
@@ -2335,12 +2336,24 @@ class AgenticNode(Node):
           model's internal monologue never lands in the final response) and
           ``ctx.last_tool_summary`` from successful tool actions.
         """
+        # ``max_turns`` precedence: a per-call value on the input wins, but only
+        # when the caller set it explicitly (tracked via Pydantic
+        # ``model_fields_set``); otherwise fall back to the node's configured
+        # limit (agent.yml ``agentic_nodes.<name>.max_turns``). The input field's
+        # own default must never shadow the node config -- otherwise a config
+        # value can never take effect.
+        explicit_turns = (
+            getattr(ctx.user_input, "max_turns", None)
+            if "max_turns" in getattr(ctx.user_input, "model_fields_set", ())
+            else None
+        )
+        effective_max_turns = explicit_turns if explicit_turns is not None else self.max_turns
         async for stream_action in self.model.generate_with_tools_stream(
             prompt=ctx.user_prompt,
             tools=self.tools or [],
             mcp_servers=self.mcp_servers,
             instruction=ctx.system_instruction,
-            max_turns=getattr(ctx.user_input, "max_turns", None) or self.max_turns,
+            max_turns=effective_max_turns,
             session=ctx.session,
             action_history_manager=ctx.action_history_manager,
             hooks=self._compose_run_hooks(ctx),

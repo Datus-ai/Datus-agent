@@ -98,28 +98,19 @@ class TestExtractFunction:
         assert name == "fn"
         assert args == {}
 
-    def test_archived_arguments_surface_preview(self):
-        """Minor-compact replaces long args with a marker — the SSE layer must
-        surface the inline preview instead of dropping the params to ``{}``.
-
-        ``arguments`` on the wire is a JSON-encoded string of the marker
-        (``maybe_truncate_item`` stores it as ``json.dumps(marker)``), so the
-        existing ``json.loads`` step unwraps to a bare marker string and the
-        new branch then parses the preview out of it. The web UI sees an
-        ``archived: True`` flag plus the preview text — no disk read, no
-        original-arguments recovery.
+    def test_archived_arguments_marker_no_longer_parsed(self):
+        """``function_call.arguments`` is never archived anymore, so a marker
+        string in ``arguments`` is just opaque, non-dict content. The SSE layer
+        unwraps the JSON string and falls back to ``{}`` — it must NOT emit the
+        old ``archived/preview`` payload.
         """
-        marker = "[DATUS_ARCHIVED] path=/sessions/p/sid/data/000004_args_a1b2c3d4.json preview=SELECT * FROM orders WHERE region IN ('NA','EU')"
-        wire_arguments = json.dumps(marker)
+        marker = "[DATUS_ARCHIVED] path=/sessions/p/sid/data/000004_args_a1b2c3d4.json preview=SELECT * FROM orders"
         action = _make_action(
-            input={"function_name": "execute_sql", "arguments": wire_arguments},
+            input={"function_name": "execute_sql", "arguments": json.dumps(marker)},
         )
         name, args = _extract_function(action)
         assert name == "execute_sql"
-        assert args == {
-            "archived": True,
-            "preview": "SELECT * FROM orders WHERE region IN ('NA','EU')",
-        }
+        assert args == {}
 
 
 # ------------------------------------------------------------------
@@ -143,18 +134,17 @@ class TestBuildToolCallContent:
         assert contents[0].payload["toolName"] == "search_table_metadata"
         assert contents[0].payload["toolParams"] == {"query": "revenue"}
 
-    def test_archived_arguments_become_preview_payload(self):
-        """Archived tool params are surfaced as an ``archived/preview`` pair."""
+    def test_archived_arguments_marker_falls_back_to_empty_params(self):
+        """A marker string in ``arguments`` (only possible in legacy sessions)
+        is no longer special-cased; it yields empty ``toolParams``.
+        """
         marker = "[DATUS_ARCHIVED] path=/x/000004_args_dead.json preview=COPY orders FROM 's3://...'"
         action = _make_action(
             action_id="tool-arch-1",
             input={"function_name": "execute_sql", "arguments": json.dumps(marker)},
         )
         contents = _build_tool_call_content(action)
-        assert contents[0].payload["toolParams"] == {
-            "archived": True,
-            "preview": "COPY orders FROM 's3://...'",
-        }
+        assert contents[0].payload["toolParams"] == {}
 
 
 class TestBuildToolResultContent:
