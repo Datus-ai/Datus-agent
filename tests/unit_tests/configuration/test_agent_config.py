@@ -152,6 +152,22 @@ class TestDbConfigFilterKwargs:
         cfg = DbConfig.filter_kwargs(DbConfig, kwargs)
         assert cfg.extra == {"custom_option": "value123"}
 
+    def test_snowflake_auth_fields_are_first_class(self):
+        kwargs = {
+            "type": "snowflake",
+            "account": "sf_account",
+            "username": "sf_user",
+            "role": "ANALYST",
+            "private_key_file": "/tmp/rsa_key.p8",
+            "private_key_file_pwd": 1234,
+            "custom_option": "value123",
+        }
+        cfg = DbConfig.filter_kwargs(DbConfig, kwargs)
+        assert cfg.role == "ANALYST"
+        assert cfg.private_key_file == "/tmp/rsa_key.p8"
+        assert cfg.private_key_file_pwd == "1234"
+        assert cfg.extra == {"custom_option": "value123"}
+
     def test_name_sets_logic_name(self):
         kwargs = {"type": "sqlite", "uri": "sqlite:///db.db", "name": "my_logic_name"}
         cfg = DbConfig.filter_kwargs(DbConfig, kwargs)
@@ -580,6 +596,37 @@ class TestAgentConfigServiceSelectors:
         config = cfg.build_semantic_adapter_config()
         assert config["type"] == "metricflow"
         assert config["datasource"] == "demo"
+
+    def test_build_semantic_adapter_config_preserves_snowflake_key_pair_fields(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {
+                    "sf": {
+                        "type": "snowflake",
+                        "account": "sf_account",
+                        "username": "sf_user",
+                        "role": "ANALYST",
+                        "private_key_file": "/tmp/rsa_key.p8",
+                        "private_key_file_pwd": 1234,
+                        "warehouse": "COMPUTE_WH",
+                        "database": "ANALYTICS",
+                        "default": True,
+                    }
+                },
+                "semantic_layer": {"metricflow": {}},
+            },
+        )
+
+        config = cfg.build_semantic_adapter_config()
+
+        assert config["type"] == "metricflow"
+        assert config["datasource"] == "sf"
+        assert config["db_config"]["type"] == "snowflake"
+        assert config["db_config"]["role"] == "ANALYST"
+        assert config["db_config"]["private_key_file"] == "/tmp/rsa_key.p8"
+        assert config["db_config"]["private_key_file_pwd"] == "1234"
+        assert "default" not in config["db_config"]
 
     def test_file_datasource_preserves_adapter_specific_extra_fields(self, tmp_path):
         cfg = self._make(

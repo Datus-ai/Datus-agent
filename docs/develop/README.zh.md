@@ -222,8 +222,11 @@ agent:
         type: snowflake
         account: ${SNOWFLAKE_ACCOUNT}
         username: ${SNOWFLAKE_USER}
-        password: ${SNOWFLAKE_PASSWORD}
+        password: ${SNOWFLAKE_PASSWORD}  # password 和 private_key_file 二选一
+        # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
+        # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}  # 可选
         warehouse: ${SNOWFLAKE_WAREHOUSE}
+        role: ${SNOWFLAKE_ROLE}  # 可选
 ```
 
 初始化并运行指定任务：

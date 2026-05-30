@@ -227,6 +227,9 @@ class DbConfig:
     database: str = field(default="", init=True)
     schema: str = field(default="", init=True)
     warehouse: str = field(default="", init=True)
+    role: str = field(default="", init=True)
+    private_key_file: str = field(default="", init=True)
+    private_key_file_pwd: str = field(default="", init=True)
     catalog: str = field(default="", init=True)
     logic_name: str = field(default="", init=True)  # Logical name for the database entry
     default: bool = field(default=False, init=True)  # Whether this is the default database

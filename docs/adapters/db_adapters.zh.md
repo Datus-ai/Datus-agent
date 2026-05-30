@@ -128,7 +128,9 @@ warehouse:
   type: snowflake
   account: your_account
   username: your_username
-  password: your_password
+  password: your_password  # password 和 private_key_file 二选一
+  # private_key_file: /path/to/rsa_key.p8
+  # private_key_file_pwd: optional_key_passphrase
   warehouse: your_warehouse
   database: your_database
   schema: your_schema

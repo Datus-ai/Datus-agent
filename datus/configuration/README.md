@@ -64,7 +64,9 @@ Configure database connections by datasource:
       type: snowflake
       account: ${SNOWFLAKE_ACCOUNT}
       username: ${SNOWFLAKE_USER}
-      password: ${SNOWFLAKE_PASSWORD}
+      password: ${SNOWFLAKE_PASSWORD} # Use either password or private_key_file
+      # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
+      # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}
 
     local_sqlite:
       type: sqlite
@@ -158,6 +160,9 @@ export DEEPSEEK_API_KEY="..."
 export SNOWFLAKE_ACCOUNT="your-account"
 export SNOWFLAKE_USER="your-user"
 export SNOWFLAKE_PASSWORD="your-password"
+export SNOWFLAKE_PRIVATE_KEY_FILE="/path/to/rsa_key.p8"
+export SNOWFLAKE_PRIVATE_KEY_FILE_PWD=""
+export SNOWFLAKE_ROLE=""
 export STARROCKS_HOST="localhost"
 export STARROCKS_PORT="9030"
 export STARROCKS_USER="root"
@@ -294,10 +299,11 @@ agent:
       type: snowflake
       account: ${SNOWFLAKE_ACCOUNT}
       username: ${SNOWFLAKE_USER}
-      password: ${SNOWFLAKE_PASSWORD}
+      password: ${SNOWFLAKE_PASSWORD} # Use either password or private_key_file
       database: PRODUCTION
       schema: PUBLIC
       warehouse: COMPUTE_WH
+      role: ${SNOWFLAKE_ROLE}
 ```
 
 ## Benchmark Configuration

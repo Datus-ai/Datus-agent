@@ -1022,6 +1022,9 @@ class TestExtractDbConfig:
             "host": "localhost",
             "port": 3306,
             "password": "secret",
+            "role": "ANALYST",
+            "private_key_file": "/tmp/rsa_key.p8",
+            "private_key_file_pwd": 1234,
             "extra": "skip",
             "logic_name": "skip",
             "path_pattern": "skip",
@@ -1034,6 +1037,9 @@ class TestExtractDbConfig:
         assert result["db_type"] == "mysql"
         assert result["host"] == "localhost"
         assert result["port"] == "3306"
+        assert result["role"] == "ANALYST"
+        assert result["private_key_file"] == "/tmp/rsa_key.p8"
+        assert result["private_key_file_pwd"] == "1234"
         assert "extra" not in result
         assert "logic_name" not in result
         assert "path_pattern" not in result

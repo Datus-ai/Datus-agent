@@ -156,6 +156,10 @@ agent:
         account: ${SNOWFLAKE_ACCOUNT}  # Use environment variables or real values
         username: ${SNOWFLAKE_USER}
         password: ${SNOWFLAKE_PASSWORD}
+        # For Snowflake key pair auth, omit password and use:
+        # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
+        # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}  # optional
+        # role: ${SNOWFLAKE_ROLE}  # optional
         # database: BBC
         # schema: BBC_NEWS
       # bird_sqlite: # This section is configured for the bird-dev benchmarking, you should download the database file and unzip it before you can continue

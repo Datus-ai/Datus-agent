@@ -8,7 +8,7 @@ Initialize metrics from semantic adapters.
 
 from typing import List, Optional
 
-from datus.configuration.agent_config import AgentConfig
+from datus.configuration.agent_config import AgentConfig, _db_config_to_semantic_adapter_config
 from datus.tools.semantic_tools.registry import semantic_adapter_registry
 from datus.tools.semantic_tools.storage_sync import SemanticStorageManager
 from datus.utils.loggings import get_logger
@@ -66,12 +66,7 @@ async def init_from_adapter(
             db_config = None
             if ns_configs:
                 db_config_obj = list(ns_configs.values())[0]
-                raw = db_config_obj.to_dict()
-                db_config = {
-                    k: str(v)
-                    for k, v in raw.items()
-                    if v is not None and v != "" and k not in ("extra", "logic_name", "path_pattern", "catalog")
-                }
+                db_config = _db_config_to_semantic_adapter_config(db_config_obj)
             semantic_models_path = str(agent_config.path_manager.semantic_model_path(datasource))
 
             if metadata and metadata.config_class:

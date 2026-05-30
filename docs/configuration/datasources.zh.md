@@ -72,10 +72,13 @@ my_snowflake:
   type: snowflake
   account: ${SNOWFLAKE_ACCOUNT}
   username: ${SNOWFLAKE_USER}
-  password: ${SNOWFLAKE_PASSWORD}
+  password: ${SNOWFLAKE_PASSWORD}      # password 和 private_key_file 二选一
+  # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
+  # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}  # 可选
   database: ${SNOWFLAKE_DATABASE}    # 可选
   schema: ${SNOWFLAKE_SCHEMA}        # 可选
   warehouse: ${SNOWFLAKE_WAREHOUSE}  # 可选
+  role: ${SNOWFLAKE_ROLE}            # 可选
   default: true                      # 可选：设为默认数据库
 ```
 

@@ -426,6 +426,27 @@ class TestDbConfigToConnectionConfigAdapterBranch:
         assert result.get("warehouse") == "COMPUTE_WH"
         assert result.get("role") == "ANALYST"
 
+    def test_adapter_preserves_snowflake_key_pair_fields(self):
+        """Snowflake key-pair auth fields are passed to the external adapter."""
+        mgr = self._make_manager()
+        cfg = _cfg(
+            type="snowflake",
+            account="sf_account",
+            username="sf_user",
+            database="ANALYTICS",
+            warehouse="COMPUTE_WH",
+            role="ANALYST",
+            private_key_file="/tmp/rsa_key.p8",
+            private_key_file_pwd="1234",
+        )
+        result = mgr._db_config_to_connection_config(cfg)
+
+        assert result["account"] == "sf_account"
+        assert result["warehouse"] == "COMPUTE_WH"
+        assert result["role"] == "ANALYST"
+        assert result["private_key_file"] == "/tmp/rsa_key.p8"
+        assert result["private_key_file_pwd"] == "1234"
+
     def test_adapter_none_values_removed(self):
         """None-valued fields are excluded from the result dict."""
         mgr = self._make_manager()

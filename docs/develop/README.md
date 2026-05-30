@@ -222,8 +222,11 @@ agent:
         type: snowflake
         account: ${SNOWFLAKE_ACCOUNT}
         username: ${SNOWFLAKE_USER}
-        password: ${SNOWFLAKE_PASSWORD}
+        password: ${SNOWFLAKE_PASSWORD}  # Use either password or private_key_file
+        # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
+        # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}  # Optional
         warehouse: ${SNOWFLAKE_WAREHOUSE}
+        role: ${SNOWFLAKE_ROLE}  # Optional
 ```
 
 Bootstrap and run selected tasks:
