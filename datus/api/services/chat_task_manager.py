@@ -22,6 +22,7 @@ from datus.api.models.cli_models import (
     SSEMessageData,
     SSEPingData,
     SSESessionData,
+    SSEUsageData,
     StreamChatInput,
 )
 from datus.api.services.action_sse_converter import action_to_sse_event
@@ -608,6 +609,16 @@ class ChatTaskManager:
                     include_final_response=_should_include_final_response(action, assistant_response_sent),
                 )
                 if sse:
+                    # Per-LLM-call usage event: the converter has no access
+                    # to the service-level session ids, so we stamp them
+                    # here before fan-out. Skip the assistant-message dedup
+                    # path entirely since usage carries no rendered text.
+                    if sse.event == "usage" and isinstance(sse.data, SSEUsageData):
+                        sse.data.session_id = session_id
+                        sse.data.llm_session_id = node.session_id
+                        await self._push_event(task, sse)
+                        event_id += 1
+                        continue
                     if _should_skip_duplicate_assistant_message(
                         action,
                         sse,

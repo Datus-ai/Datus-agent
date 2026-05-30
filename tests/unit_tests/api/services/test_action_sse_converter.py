@@ -1449,3 +1449,66 @@ class TestActionToSSEEvent:
         assert content.payload["subagentType"] == "explore"
         assert content.payload["toolCount"] == 3
         assert content.payload["error"] == "sub-agent timed out"
+
+
+class TestTokenUsageEvent:
+    """``token_usage`` actions become dedicated ``event: "usage"`` SSE events."""
+
+    def test_emits_usage_event_with_cumulative_and_delta(self):
+        from datus.api.models.cli_models import SSEUsageData
+
+        action = _make_action(
+            action_type="token_usage",
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            messages="",
+            output={
+                "cumulative": {
+                    "requests": 2,
+                    "input_tokens": 1200,
+                    "output_tokens": 300,
+                    "total_tokens": 1500,
+                    "cached_tokens": 100,
+                    "reasoning_tokens": 50,
+                },
+                "delta": {
+                    "requests": 1,
+                    "input_tokens": 700,
+                    "output_tokens": 200,
+                    "total_tokens": 900,
+                    "cached_tokens": 0,
+                    "reasoning_tokens": 0,
+                },
+                "context_length": 200_000,
+                "last_call_input_tokens": 700,
+            },
+        )
+        event = action_to_sse_event(action, event_id=99, message_id="msg-99")
+        event = _assert_sse_event(event)
+        # Dedicated SSE channel; not a message payload.
+        assert event.event == "usage"
+        assert isinstance(event.data, SSEUsageData)
+        assert event.data.total_tokens == 1500
+        assert event.data.cached_tokens == 100
+        assert event.data.reasoning_tokens == 50
+        assert event.data.last_call_input_tokens == 700
+        assert event.data.context_length == 200_000
+        # Delta carries only the most recent LLM call's contribution.
+        assert event.data.delta.total_tokens == 900
+        assert event.data.delta.input_tokens == 700
+        assert event.data.delta.output_tokens == 200
+
+    def test_missing_output_fields_zero_fill_instead_of_crashing(self):
+        """Defensive: a malformed ``token_usage`` action should still emit a
+        valid usage event with zero counts so downstream consumers don't
+        choke on a missing key."""
+        from datus.api.models.cli_models import SSEUsageData
+
+        action = _make_action(action_type="token_usage", output={"cumulative": {}, "delta": None})
+        event = action_to_sse_event(action, event_id=1, message_id="msg-1")
+        event = _assert_sse_event(event)
+        assert event.event == "usage"
+        assert isinstance(event.data, SSEUsageData)
+        assert event.data.total_tokens == 0
+        assert event.data.delta.total_tokens == 0
+        assert event.data.context_length == 0

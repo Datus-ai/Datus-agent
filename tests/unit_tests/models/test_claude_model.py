@@ -849,6 +849,61 @@ class TestGenerateWithMcpStream:
         assert usage["requests"] == 2
 
     @pytest.mark.asyncio
+    async def test_token_usage_folds_cache_into_input(self):
+        """Anthropic reports cache_read / cache_creation separately from
+        ``input_tokens``. The native loop must fold them back in so the reported
+        input, total, cache-hit-rate and context-usage ratios are correct —
+        otherwise heavy prompt caching collapses input to a few tokens and
+        inflates cache_hit_rate beyond 1.0 (the original bug)."""
+        from datus.schemas.action_history import ActionHistoryManager
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        tool_block = _make_tool_use_block()
+        # Mimic Claude Code subscription: tiny fresh input, large cache read.
+        resp1 = _make_response([tool_block], input_tokens=3, output_tokens=50)
+        resp1.usage.cache_creation_input_tokens = 12000
+        resp1.usage.cache_read_input_tokens = 0
+        resp2 = _make_response([_make_text_block("answer")], input_tokens=1, output_tokens=80)
+        resp2.usage.cache_creation_input_tokens = 0
+        resp2.usage.cache_read_input_tokens = 12003
+        model.anthropic_client.messages.create.side_effect = [resp1, resp2]
+
+        func_tool = MagicMock()
+        func_tool.name = "read_query"
+        func_tool.description = ""
+        func_tool.params_json_schema = {"type": "object"}
+        func_tool.on_invoke_tool = AsyncMock(return_value="result")
+
+        ahm = ActionHistoryManager()
+        actions = []
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for action in model._generate_with_mcp_stream(
+                prompt="test",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                func_tools=[func_tool],
+                action_history_manager=ahm,
+            ):
+                actions.append(action)
+
+        usage = actions[-1].output["usage"]
+        # input = (3 + 0 + 12000) + (1 + 12003 + 0) = 24007
+        assert usage["input_tokens"] == 24007
+        assert usage["output_tokens"] == 130  # 50 + 80
+        assert usage["total_tokens"] == 24137
+        assert usage["cached_tokens"] == 12003  # cumulative cache_read
+        # cache_hit_rate must stay a sane fraction (12003 / 24007), never > 1.
+        assert 0 < usage["cache_hit_rate"] <= 1
+        assert usage["cache_hit_rate"] == round(12003 / 24007, 3)
+        # last call's real context window = 1 + 12003 + 0 = 12004
+        assert usage["last_call_input_tokens"] == 12004
+
+    @pytest.mark.asyncio
     async def test_tool_failure_yields_failed_action(self):
         """When a tool fails, should yield FAILED action."""
         from datus.schemas.action_history import ActionHistoryManager, ActionStatus
@@ -1100,6 +1155,190 @@ class TestGenerateWithMcpStream:
 
         # The final action is still yielded even though persistence raised.
         assert any(a.action_type == "final_response" for a in actions)
+
+
+class TestNativeTokenUsageStreaming:
+    """The native OAuth loop bypasses the SDK Runner, so it must drive the
+    per-LLM-call token-usage hook and persist durable turn usage itself.
+    These tests pin that contract (the bug: status bar showed 0 usage /
+    context for native Claude because neither happened)."""
+
+    def _usage_hook(self):
+        """Build a real ``TokenUsageHook`` over a fake node that records the
+        emitted snapshots — exercises the genuine emit pipeline, not a stub."""
+        from datus.agent.node.token_usage_hook import TokenUsageHook
+        from datus.schemas.action_history import ActionHistoryManager
+
+        emitted: list = []
+
+        node = MagicMock()
+        node.model = MagicMock()
+        node.context_length = 200_000
+        node._current_action_history = ActionHistoryManager()
+        node.action_bus = None
+        node.session_id = "chat_session_native"
+        node.actions = []
+        node.running_turn_usage = None
+
+        sm = MagicMock()
+        sm.upsert_running_turn_usage = MagicMock(side_effect=lambda **kw: emitted.append(kw))
+        node.session_manager = sm
+        node._notify_status_dirty = MagicMock()
+
+        return TokenUsageHook(node), node, emitted
+
+    @pytest.mark.asyncio
+    async def test_native_loop_drives_per_call_usage_updates(self):
+        """Each Anthropic response must push a cumulative snapshot through the
+        hook so the status bar refreshes mid-turn (one update per LLM call)."""
+        from datus.schemas.action_history import ActionHistoryManager
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        tool_block = _make_tool_use_block(name="read_query", block_id="c1")
+        resp1 = _make_response([tool_block], input_tokens=100, output_tokens=40)
+        resp2 = _make_response([_make_text_block("done")], input_tokens=250, output_tokens=90)
+        model.anthropic_client.messages.create.side_effect = [resp1, resp2]
+
+        func_tool = MagicMock()
+        func_tool.name = "read_query"
+        func_tool.description = ""
+        func_tool.params_json_schema = {"type": "object"}
+        func_tool.on_invoke_tool = AsyncMock(return_value="ok")
+
+        hook, node, emitted = self._usage_hook()
+
+        ahm = ActionHistoryManager()
+        node._current_action_history = ahm
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for _ in model._generate_with_mcp_stream(
+                prompt="q",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                func_tools=[func_tool],
+                action_history_manager=ahm,
+                hooks=hook,
+            ):
+                pass
+
+        # Two Anthropic responses → two per-call usage updates persisted.
+        assert len(emitted) == 2
+        # Cumulative grows monotonically across calls.
+        assert emitted[0]["cumulative"]["input_tokens"] == 100
+        assert emitted[0]["cumulative"]["output_tokens"] == 40
+        assert emitted[1]["cumulative"]["input_tokens"] == 350  # 100 + 250
+        assert emitted[1]["cumulative"]["output_tokens"] == 130  # 40 + 90
+        assert emitted[1]["cumulative"]["total_tokens"] == 480
+        # Context length flows through so the status bar can render the ratio.
+        assert emitted[1]["context_length"] == 200_000
+        # The node's live snapshot reflects the final cumulative for the
+        # status bar's next paint.
+        assert node.running_turn_usage.total_tokens == 480
+
+    @pytest.mark.asyncio
+    async def test_native_loop_persists_durable_turn_usage(self):
+        """At turn end the native loop must write the durable ``turn_usage``
+        row via ``store_run_usage`` (with cached tokens), otherwise the status
+        bar's cumulative total resets to 0 once the running snapshot clears."""
+        from datus.schemas.action_history import ActionHistoryManager
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        # Single response carrying a cache read so we can assert cached flows
+        # into the persisted Usage.
+        resp = _make_response([_make_text_block("answer")], input_tokens=500, output_tokens=120)
+        resp.usage.cache_read_input_tokens = 200
+        model.anthropic_client.messages.create.return_value = resp
+
+        stored: list = []
+
+        async def _store_run_usage(result):
+            stored.append(result.context_wrapper.usage)
+
+        session = MagicMock()
+        session.get_items = AsyncMock(return_value=[])
+        session.add_items = AsyncMock()
+        session.store_run_usage = _store_run_usage
+
+        ahm = ActionHistoryManager()
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for _ in model._generate_with_mcp_stream(
+                prompt="q",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                action_history_manager=ahm,
+                session=session,
+            ):
+                pass
+
+        assert len(stored) == 1, "durable turn usage must be persisted exactly once"
+        usage = stored[0]
+        # Anthropic's ``input_tokens`` (500) excludes the cache_read (200); the
+        # native loop folds the cache components back in to match OpenAI's
+        # "input includes cached" semantics, so the persisted input is 700.
+        assert usage.input_tokens == 700
+        assert usage.output_tokens == 120
+        assert usage.total_tokens == 820
+        # cached_tokens must survive into the durable schema.
+        assert usage.input_tokens_details.cached_tokens == 200
+
+    @pytest.mark.asyncio
+    async def test_native_loop_skips_durable_usage_when_no_final_text(self):
+        """When the loop exhausts max_turns mid-tool-call (no final text), the
+        session is not persisted — and neither should the usage row be, to
+        avoid a turn_usage row with no matching message."""
+        from datus.schemas.action_history import ActionHistoryManager
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        tool_block = _make_tool_use_block(name="read_query", block_id="loop")
+        # Always returns a tool call → never produces final text → max_turns hit.
+        looping = _make_response([tool_block])
+        model.anthropic_client.messages.create.return_value = looping
+
+        func_tool = MagicMock()
+        func_tool.name = "read_query"
+        func_tool.description = ""
+        func_tool.params_json_schema = {"type": "object"}
+        func_tool.on_invoke_tool = AsyncMock(return_value="row")
+
+        stored: list = []
+
+        async def _store_run_usage(result):
+            stored.append(result)
+
+        session = MagicMock()
+        session.get_items = AsyncMock(return_value=[])
+        session.add_items = AsyncMock()
+        session.store_run_usage = _store_run_usage
+
+        ahm = ActionHistoryManager()
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for _ in model._generate_with_mcp_stream(
+                prompt="q",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                func_tools=[func_tool],
+                action_history_manager=ahm,
+                session=session,
+                max_turns=2,
+            ):
+                pass
+
+        assert stored == [], "no durable usage row when the turn produced no final text"
+        session.add_items.assert_not_awaited()
 
 
 class TestGenerateWithMcpWrapper:

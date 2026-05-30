@@ -15,6 +15,8 @@ from datus.api.models.cli_models import (
     SSEEvent,
     SSEMessageData,
     SSEMessagePayload,
+    SSEUsageData,
+    SSEUsageDelta,
 )
 from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
 from datus.utils.json_utils import llm_result2json
@@ -364,6 +366,64 @@ def _build_interaction_result_content(action: ActionHistory) -> Optional[List[IM
 # ------------------------------------------------------------------
 
 
+def _build_token_usage_event(action: ActionHistory, event_id: int) -> Optional[SSEEvent]:
+    """Convert a ``token_usage`` action into a dedicated ``usage`` SSE event.
+
+    Producer side: :class:`TokenUsageHook` records turn-cumulative usage and
+    a per-call delta into ``action.output``. We pass both through so the
+    frontend can render the running total and the single-call contribution
+    without re-aggregating on its end.
+    """
+    output = action.output if isinstance(action.output, dict) else {}
+    cumulative = output.get("cumulative") if isinstance(output.get("cumulative"), dict) else {}
+    delta = output.get("delta") if isinstance(output.get("delta"), dict) else {}
+    try:
+        context_length = int(output.get("context_length", 0) or 0)
+    except (TypeError, ValueError):
+        context_length = 0
+    try:
+        last_call_input_tokens = int(output.get("last_call_input_tokens", 0) or 0)
+    except (TypeError, ValueError):
+        last_call_input_tokens = 0
+
+    def _i(d: dict, key: str) -> int:
+        try:
+            return int(d.get(key, 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    sse_data = SSEUsageData(
+        # ``session_id`` is populated by :class:`ChatTaskManager` (the only
+        # caller that has the service-level id). We leave it as the action's
+        # session-scoped identifier when unavailable so the event still
+        # carries a recognizable correlation key.
+        session_id=str(getattr(action, "action_id", "") or ""),
+        llm_session_id=None,
+        requests=_i(cumulative, "requests"),
+        input_tokens=_i(cumulative, "input_tokens"),
+        output_tokens=_i(cumulative, "output_tokens"),
+        total_tokens=_i(cumulative, "total_tokens"),
+        cached_tokens=_i(cumulative, "cached_tokens"),
+        reasoning_tokens=_i(cumulative, "reasoning_tokens"),
+        last_call_input_tokens=last_call_input_tokens,
+        context_length=context_length,
+        delta=SSEUsageDelta(
+            requests=_i(delta, "requests"),
+            input_tokens=_i(delta, "input_tokens"),
+            output_tokens=_i(delta, "output_tokens"),
+            total_tokens=_i(delta, "total_tokens"),
+            cached_tokens=_i(delta, "cached_tokens"),
+            reasoning_tokens=_i(delta, "reasoning_tokens"),
+        ),
+    )
+    return SSEEvent(
+        id=event_id,
+        event="usage",
+        data=sse_data,
+        timestamp=to_utc_iso(getattr(action, "start_time", None)) or now_utc_iso(),
+    )
+
+
 def action_to_sse_event(
     action: ActionHistory,
     event_id: int,
@@ -410,6 +470,9 @@ def action_to_sse_event(
 
         if stream_thinking and is_update:
             sse_type = SSEDataType.UPDATE_MESSAGE
+
+        if action.action_type == "token_usage":
+            return _build_token_usage_event(action, event_id)
 
         if action.action_type == "thinking_delta":
             if not stream_thinking:

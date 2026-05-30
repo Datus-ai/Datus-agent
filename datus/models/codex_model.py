@@ -748,11 +748,24 @@ class CodexModel(LLMBaseModel):
             action_history_manager.add_action(final_action)
             yield final_action
 
-    def _extract_usage_info(self, result) -> dict:
-        """Extract usage info from Agent SDK result for token accounting."""
-        if not (hasattr(result, "context_wrapper") and hasattr(result.context_wrapper, "usage")):
+    def _extract_usage_info(self, source) -> dict:
+        """Extract usage info from an SDK ``RunResult`` or ``Usage`` object.
+
+        Accepts both shapes so :class:`TokenUsageHook` (which gets a
+        :class:`RunContextWrapper` and passes ``context.usage``) and the
+        existing callers (which pass a completed ``result``) share the
+        same extraction pipeline. Returns ``{}`` when neither shape
+        carries a usable usage attribute.
+        """
+        usage = None
+        if hasattr(source, "context_wrapper") and hasattr(source.context_wrapper, "usage"):
+            usage = source.context_wrapper.usage
+        elif source is not None and (
+            hasattr(source, "input_tokens") or hasattr(source, "output_tokens") or hasattr(source, "total_tokens")
+        ):
+            usage = source
+        if usage is None:
             return {}
-        usage = result.context_wrapper.usage
 
         def _int(val, default=0):
             try:

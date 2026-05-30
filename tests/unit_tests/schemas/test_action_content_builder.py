@@ -329,3 +329,52 @@ class TestActionToContent:
         contents = action_to_content(action)
         assert len(contents) == 1
         assert contents[0].type == "thinking"
+
+
+class TestTokenUsageContent:
+    """token_usage actions become a structured ``usage`` content (with real
+    numbers) instead of a bare "Token usage update" thinking line — print
+    mode / programmatic consumers need the counts, not noise."""
+
+    def _usage_action(self):
+        return _make_action(
+            action_type="token_usage",
+            messages="Token usage update",
+            output_data={
+                "cumulative": {
+                    "requests": 2,
+                    "input_tokens": 1200,
+                    "output_tokens": 300,
+                    "total_tokens": 1500,
+                    "cached_tokens": 100,
+                    "reasoning_tokens": 0,
+                },
+                "delta": {"input_tokens": 700, "output_tokens": 200, "total_tokens": 900, "cached_tokens": 0},
+                "context_length": 200_000,
+                "last_call_input_tokens": 700,
+            },
+        )
+
+    def test_action_to_content_routes_token_usage_to_usage_type(self):
+        from datus.schemas.action_content_builder import action_to_content
+
+        contents = action_to_content(self._usage_action())
+        assert contents is not None and len(contents) == 1
+        c = contents[0]
+        # Must NOT be a thinking line.
+        assert c.type == "usage"
+        assert c.payload["total_tokens"] == 1500
+        assert c.payload["cached_tokens"] == 100
+        assert c.payload["last_call_input_tokens"] == 700
+        assert c.payload["context_length"] == 200_000
+        assert c.payload["delta"]["total_tokens"] == 900
+
+    def test_build_token_usage_content_zero_fills_malformed(self):
+        from datus.schemas.action_content_builder import build_token_usage_content
+
+        action = _make_action(action_type="token_usage", output_data={"cumulative": {}, "delta": None})
+        [c] = build_token_usage_content(action)
+        assert c.type == "usage"
+        assert c.payload["total_tokens"] == 0
+        assert c.payload["delta"]["total_tokens"] == 0
+        assert c.payload["context_length"] == 0

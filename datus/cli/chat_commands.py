@@ -191,13 +191,42 @@ class ChatCommands:
         """
         from datus.agent.node.node_factory import create_interactive_node
 
-        return create_interactive_node(
+        node = create_interactive_node(
             subagent_name,
             self.cli.agent_config,
             node_id_suffix="_cli",
             scope=self.cli.scope,
             session_id=session_id,
         )
+        self._attach_status_dirty_callback(node)
+        return node
+
+    def _attach_status_dirty_callback(self, node) -> None:
+        """Wire ``TokenUsageHook`` mid-turn refreshes to ``DatusApp.invalidate``.
+
+        The hook fires after every LLM call; without an explicit invalidate
+        the status bar would only repaint on the periodic timer tick, which
+        defeats the purpose of streaming the usage updates. Looked up
+        lazily so the callback works regardless of whether ``tui_app`` is
+        already built when the node is created.
+        """
+        if node is None:
+            return
+        cli = self.cli
+
+        def _on_status_dirty() -> None:
+            app = getattr(cli, "tui_app", None)
+            if app is None:
+                return
+            try:
+                app.invalidate()
+            except Exception:  # noqa: BLE001 — never crash the run loop
+                pass
+
+        try:
+            node._status_dirty_callback = _on_status_dirty
+        except Exception:  # noqa: BLE001
+            pass
 
     def create_node_input(
         self,
@@ -444,6 +473,11 @@ class ChatCommands:
                             action_history_manager=self.cli.actions
                         )
                         async for action in action_stream:
+                            # Token-usage updates drive the status bar / API
+                            # ``usage`` events only; they carry no chat content
+                            # and must never render as a transcript line.
+                            if action.action_type == "token_usage":
+                                continue
                             # Streaming text deltas go to their own queue. Sub-agent
                             # deltas (depth > 0) are ignored here — they'd pollute
                             # the main-agent accumulator; sub-agents have their own
@@ -572,6 +606,10 @@ class ChatCommands:
                             action_history_manager=self.cli.actions
                         )
                         async for action in action_stream:
+                            # Token-usage updates feed the status bar / API
+                            # ``usage`` events only — skip before any rendering.
+                            if action.action_type == "token_usage":
+                                continue
                             if action.role == ActionRole.INTERACTION:
                                 # In non-interactive mode, auto-submit default choice for
                                 # PROCESSING interactions so the node is not left hanging.

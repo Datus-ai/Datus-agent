@@ -273,10 +273,20 @@ class AgenticNode(Node):
         # no-op, preserving the defaults set above.
         if not self.session_id:
             self.session_id = self._generate_session_id()
+        # Last persisted context-window occupancy. Defaults to 0 (fresh
+        # session); ``restore_context_state`` below overwrites them when an
+        # on-disk ``context_state`` section exists. These MUST be set before
+        # the restore call so the restored values are not clobbered.
+        self._restored_context_used: int = 0
+        self._restored_context_length: int = 0
         try:
             self.restore_plan_mode_state()
         except Exception as exc:  # noqa: BLE001 — restore must never crash construction
             logger.warning("Failed to restore plan-mode state for %s: %s", self.session_id, exc)
+        try:
+            self.restore_context_state()
+        except Exception as exc:  # noqa: BLE001 — restore must never crash construction
+            logger.warning("Failed to restore context state for %s: %s", self.session_id, exc)
 
         # ── Compact subsystem state ─────────────────────────────────────
         # ``_compacted_until`` is a same-process scan-start hint for the
@@ -298,6 +308,24 @@ class AgenticNode(Node):
         # tasks. The hook adds the task here and registers a ``discard``
         # done-callback so the set never grows unbounded.
         self._pending_compact_tasks: Set[asyncio.Task] = set()
+
+        # ── Mid-turn token-usage streaming ─────────────────────────────
+        # Populated by :class:`TokenUsageHook` after every LLM call so the
+        # CLI status bar and ``get_last_turn_usage`` can observe progress
+        # before ``store_run_usage`` persists the final ``turn_usage`` row.
+        # ``None`` between turns and right after a turn commits.
+        self.running_turn_usage: Optional["TokenUsage"] = None  # noqa: F821 — forward-ref
+        # Active ``ActionHistoryManager`` for the running stream. Set by
+        # :meth:`_stream_once` for the duration of one model invocation so
+        # the SDK ``on_llm_end`` hook can enqueue ``token_usage`` actions
+        # against the correct manager. Cleared in ``finally``.
+        self._current_action_history: Optional[ActionHistoryManager] = None
+        # Optional callback wired by the CLI (``DatusApp.invalidate``) so
+        # mid-turn usage updates repaint the bottom toolbar instantly. The
+        # API path leaves it unset; the hook tolerates ``None`` as no-op.
+        self._status_dirty_callback: Optional[Callable[[], None]] = None
+        # Lazy single-instance handle — see ``_get_or_create_token_usage_hook``.
+        self._token_usage_hook_instance: Optional[Any] = None
 
     @property
     def model(self) -> Optional[LLMBaseModel]:
@@ -553,6 +581,52 @@ class AgenticNode(Node):
             self.plan_file_path,
             self.workflow_prompt_sent,
         )
+
+    def persist_context_state(self, last_call_input_tokens: int, context_length: int) -> None:
+        """Persist the latest LLM call's context-window occupancy to disk.
+
+        Called by :class:`TokenUsageHook` after every LLM call. Unlike the
+        SQLite ``running_turn_usage`` snapshot (cleared at turn end), this
+        survives so a resumed process can render the context bar immediately.
+        No-op without a session_id / resolvable state path.
+        """
+        state_path = self._agent_state_file()
+        if state_path is None:
+            return
+        try:
+            from datus.storage.session_state import ContextState
+
+            used = max(0, int(last_call_input_tokens or 0))
+            length = max(0, int(context_length or 0))
+            ContextState(last_call_input_tokens=used, context_length=length).save(state_path)
+            # Keep the in-memory mirror in sync so a status-bar read in the
+            # same process does not have to round-trip through disk.
+            self._restored_context_used = used
+            self._restored_context_length = length
+        except Exception as exc:  # noqa: BLE001 — persistence must never crash the run loop
+            logger.debug("Failed to persist context state for %s: %s", self.session_id, exc)
+
+    def restore_context_state(self) -> None:
+        """Re-hydrate the last persisted context occupancy into this node.
+
+        Idempotent; invoked from ``__init__``. When no state file exists yet
+        (fresh session) the restored values stay at their 0 defaults.
+        """
+        state_path = self._agent_state_file()
+        if state_path is None or not state_path.exists():
+            return
+        from datus.storage.session_state import ContextState
+
+        loaded = ContextState.load(state_path)
+        self._restored_context_used = loaded.last_call_input_tokens
+        self._restored_context_length = loaded.context_length
+        if loaded.last_call_input_tokens or loaded.context_length:
+            logger.info(
+                "Context state restored for session %s: used=%s length=%s",
+                self.session_id,
+                loaded.last_call_input_tokens,
+                loaded.context_length,
+            )
 
     def _get_plan_mode_tools(self) -> List[Tool]:
         """Build the plan-mode func tools (``confirm_plan`` + ``todo_*``).
@@ -2293,6 +2367,9 @@ class AgenticNode(Node):
             yield final_action
 
         except ExecutionInterrupted:
+            # Skip the running-snapshot drop below so resume after Ctrl+C
+            # still shows the partial usage the interrupted turn accrued.
+            self._drop_running_turn_usage_on_exit = False
             raise
         except Exception as exc:
             error_msg = self._format_execution_error(exc)
@@ -2320,6 +2397,26 @@ class AgenticNode(Node):
             # a failed attempt.
             self.actions.extend(ahm.get_actions())
             yield error_action
+        finally:
+            # Drop the in-flight running snapshot once the turn ends so the
+            # next status-bar refresh does not double-count it on top of the
+            # committed ``turn_usage`` row. ``ExecutionInterrupted`` above
+            # opts out so Ctrl+C survivors keep the partial data for resume.
+            drop = getattr(self, "_drop_running_turn_usage_on_exit", True)
+            self._drop_running_turn_usage_on_exit = True
+            if drop:
+                try:
+                    self.running_turn_usage = None
+                    session_id = getattr(self, "session_id", None)
+                    if session_id:
+                        try:
+                            sm = self.session_manager
+                        except Exception:  # noqa: BLE001
+                            sm = None
+                        if sm is not None and hasattr(sm, "clear_running_turn_usage"):
+                            sm.clear_running_turn_usage(session_id)
+                except Exception:  # noqa: BLE001
+                    logger.debug("Failed to drop running_turn_usage on turn end", exc_info=True)
 
     async def _stream_once(self, ctx: "StreamRunContext") -> AsyncGenerator[ActionHistory, None]:
         """Run the model once and yield every action while collecting state.
@@ -2335,6 +2432,13 @@ class AgenticNode(Node):
           from assistant chunks (skipping ``is_thinking`` items so the
           model's internal monologue never lands in the final response) and
           ``ctx.last_tool_summary`` from successful tool actions.
+
+        Briefly exposes ``ctx.action_history_manager`` as
+        ``self._current_action_history`` so the SDK ``on_llm_end`` hook
+        (see :class:`TokenUsageHook`) can enqueue mid-turn ``token_usage``
+        actions against the active manager. Always cleared in ``finally``
+        so a follow-up turn / a node reused across requests never sees a
+        stale reference.
         """
         # ``max_turns`` precedence: a per-call value on the input wins, but only
         # when the caller set it explicitly (tracked via Pydantic
@@ -2348,49 +2452,55 @@ class AgenticNode(Node):
             else None
         )
         effective_max_turns = explicit_turns if explicit_turns is not None else self.max_turns
-        async for stream_action in self.model.generate_with_tools_stream(
-            prompt=ctx.user_prompt,
-            tools=self.tools or [],
-            mcp_servers=self.mcp_servers,
-            instruction=ctx.system_instruction,
-            max_turns=effective_max_turns,
-            session=ctx.session,
-            action_history_manager=ctx.action_history_manager,
-            hooks=self._compose_run_hooks(ctx),
-            agent_name=self.get_node_name(),
-            interrupt_controller=self.interrupt_controller,
-            pending_input_queue=ctx.pending_input_queue,
-            # Defensive: test doubles that bypass ``AgenticNode.__init__``
-            # may not have a broker; the model layer skips emit when None.
-            interaction_broker=getattr(self, "interaction_broker", None),
-        ):
-            rewritten = self._maybe_rewrite_stream_action(stream_action, ctx)
-            action_to_yield = rewritten or stream_action
-
-            if (
-                action_to_yield.role == ActionRole.ASSISTANT
-                and action_to_yield.status == ActionStatus.SUCCESS
-                and action_to_yield.output
+        self._current_action_history = ctx.action_history_manager
+        try:
+            async for stream_action in self.model.generate_with_tools_stream(
+                prompt=ctx.user_prompt,
+                tools=self.tools or [],
+                mcp_servers=self.mcp_servers,
+                instruction=ctx.system_instruction,
+                max_turns=effective_max_turns,
+                session=ctx.session,
+                action_history_manager=ctx.action_history_manager,
+                hooks=self._compose_run_hooks(ctx),
+                agent_name=self.get_node_name(),
+                interrupt_controller=self.interrupt_controller,
+                pending_input_queue=ctx.pending_input_queue,
+                # Defensive: test doubles that bypass ``AgenticNode.__init__``
+                # may not have a broker; the model layer skips emit when None.
+                interaction_broker=getattr(self, "interaction_broker", None),
             ):
-                output = action_to_yield.output
-                if isinstance(output, dict) and output.get("is_thinking") is not True:
-                    ctx.last_successful_output = output
-                    candidate = output.get("content", "") or output.get("response", "") or output.get("raw_output", "")
-                    # Preserve dict candidates (used by Deliverable / ExtKnowledge
-                    # for structured outputs); coerce only when the candidate is
-                    # a non-empty non-string scalar.
-                    if isinstance(candidate, str):
-                        if candidate:
-                            ctx.response_content = candidate
-                    elif candidate:
-                        ctx.response_content = candidate
-            elif action_to_yield.role == ActionRole.TOOL and action_to_yield.status == ActionStatus.SUCCESS:
-                tool_output = action_to_yield.output if isinstance(action_to_yield.output, dict) else {}
-                summary = tool_output.get("summary") or tool_output.get("status_message") or ""
-                if isinstance(summary, str) and summary.strip():
-                    ctx.last_tool_summary = summary.strip()
+                rewritten = self._maybe_rewrite_stream_action(stream_action, ctx)
+                action_to_yield = rewritten or stream_action
 
-            yield action_to_yield
+                if (
+                    action_to_yield.role == ActionRole.ASSISTANT
+                    and action_to_yield.status == ActionStatus.SUCCESS
+                    and action_to_yield.output
+                ):
+                    output = action_to_yield.output
+                    if isinstance(output, dict) and output.get("is_thinking") is not True:
+                        ctx.last_successful_output = output
+                        candidate = (
+                            output.get("content", "") or output.get("response", "") or output.get("raw_output", "")
+                        )
+                        # Preserve dict candidates (used by Deliverable / ExtKnowledge
+                        # for structured outputs); coerce only when the candidate is
+                        # a non-empty non-string scalar.
+                        if isinstance(candidate, str):
+                            if candidate:
+                                ctx.response_content = candidate
+                        elif candidate:
+                            ctx.response_content = candidate
+                elif action_to_yield.role == ActionRole.TOOL and action_to_yield.status == ActionStatus.SUCCESS:
+                    tool_output = action_to_yield.output if isinstance(action_to_yield.output, dict) else {}
+                    summary = tool_output.get("summary") or tool_output.get("status_message") or ""
+                    if isinstance(summary, str) and summary.strip():
+                        ctx.last_tool_summary = summary.strip()
+
+                yield action_to_yield
+        finally:
+            self._current_action_history = None
 
     # ── optional hooks (subclasses override as needed) ──────────────────
 
@@ -2618,8 +2728,18 @@ class AgenticNode(Node):
         }
 
     async def get_last_turn_usage(self) -> Optional[TokenUsage]:
-        """Get token usage from the last assistant action that contains usage data."""
+        """Get token usage from the last assistant action that contains usage data.
+
+        Mid-turn callers (e.g. status bar refresh, ``execute_stream`` early
+        exit) prefer the in-memory ``running_turn_usage`` snapshot updated
+        by :class:`TokenUsageHook` so they observe the latest cumulative
+        usage before the SDK's ``store_run_usage`` persists it.
+        """
         from datus.schemas.token_usage import TokenUsage as _TokenUsage
+
+        running = getattr(self, "running_turn_usage", None)
+        if running is not None:
+            return running
 
         for action in reversed(self.actions):
             # Stop at the last root-level user message to scope to the current turn
@@ -2953,11 +3073,16 @@ class AgenticNode(Node):
         holds a reference to this node) so we always include it — its
         ``_decide_compact_mode`` will return ``noop`` when no compact is
         needed, which is the common case.
+
+        ``TokenUsageHook`` is also wired in so each LLM call's ``on_llm_end``
+        publishes a ``token_usage`` action mid-turn (see
+        ``datus/agent/node/token_usage_hook.py``).
         """
         self._ensure_permission_hooks()
         compact_hook = self._get_or_create_compact_hook()
+        token_usage_hook = self._get_or_create_token_usage_hook()
 
-        active = [h for h in (extra, self.permission_hooks, compact_hook) if h is not None]
+        active = [h for h in (extra, self.permission_hooks, compact_hook, token_usage_hook) if h is not None]
         if not active:
             return None
         if len(active) == 1:
@@ -2965,6 +3090,59 @@ class AgenticNode(Node):
         from datus.tools.permission.permission_hooks import CompositeHooks
 
         return CompositeHooks(active)
+
+    def _get_or_create_token_usage_hook(self) -> Any:
+        """Lazily build the per-node ``TokenUsageHook``.
+
+        The hook is cheap (just a closure over ``self``) and idempotent so
+        we build it once and reuse it across turns. Returns ``None`` when
+        the feature is explicitly disabled via
+        ``agent.token_usage_streaming.enabled = false`` so callers can fall
+        back to the legacy turn-end-only emission path.
+        """
+        if not self._token_usage_streaming_enabled():
+            return None
+        existing = getattr(self, "_token_usage_hook_instance", None)
+        if existing is not None:
+            return existing
+        from datus.agent.node.token_usage_hook import TokenUsageHook
+
+        hook = TokenUsageHook(self)
+        self._token_usage_hook_instance = hook
+        return hook
+
+    def _token_usage_streaming_enabled(self) -> bool:
+        """Resolve the per-call token usage streaming toggle.
+
+        Defaults to ``True``; only an explicit ``False`` (under
+        ``agent.token_usage_streaming.enabled`` in ``agent.yml``) opts out.
+        Tolerates test doubles that bypass ``__init__`` and therefore have
+        no ``agent_config``.
+        """
+        cfg = getattr(self, "agent_config", None)
+        if cfg is None:
+            return True
+        streaming_cfg = getattr(cfg, "token_usage_streaming", None)
+        if streaming_cfg is None:
+            return True
+        enabled = getattr(streaming_cfg, "enabled", True)
+        return bool(enabled)
+
+    def _notify_status_dirty(self) -> None:
+        """Invoke the optional status-dirty callback (set by the CLI).
+
+        The CLI wires this to ``DatusApp.invalidate`` so a mid-turn token
+        usage update repaints the bottom toolbar immediately rather than
+        waiting for the next periodic redraw. No-op in API / headless
+        contexts where no callback is registered.
+        """
+        callback = getattr(self, "_status_dirty_callback", None)
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception:  # noqa: BLE001 — never crash the run loop
+            logger.debug("Status dirty callback raised", exc_info=True)
 
     def _get_or_create_compact_hook(self) -> Any:
         """Lazily build the ``CompactHook`` for this node.

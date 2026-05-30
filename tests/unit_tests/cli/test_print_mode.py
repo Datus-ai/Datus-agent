@@ -197,6 +197,56 @@ class TestPrintModeRun:
         assert data["parent_action_id"] is None
 
     @pytest.mark.asyncio
+    async def test_stream_chat_emits_token_usage_as_usage_payload(self):
+        """A token_usage action must surface as a structured ``usage`` content
+        with real counts — not a "Token usage update" thinking line."""
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+        usage_action = ActionHistory(
+            action_id="token_usage_abc",
+            role=ActionRole.ASSISTANT,
+            messages="Token usage update",
+            action_type="token_usage",
+            input={},
+            output={
+                "cumulative": {"input_tokens": 800, "output_tokens": 200, "total_tokens": 1000, "cached_tokens": 50},
+                "delta": {"input_tokens": 800, "output_tokens": 200, "total_tokens": 1000, "cached_tokens": 50},
+                "context_length": 200_000,
+                "last_call_input_tokens": 800,
+            },
+            status=ActionStatus.SUCCESS,
+        )
+
+        mock_node = MagicMock()
+        mock_node.session_id = None
+
+        async def fake_stream(actions):
+            yield usage_action
+
+        mock_node.execute_stream_with_interactions = fake_stream
+
+        with (
+            patch("datus.cli.print_mode.load_agent_config") as mock_cfg,
+            patch("datus.cli.print_mode.AtReferenceCompleter"),
+        ):
+            mock_cfg.return_value = MagicMock(datasource_configs={})
+            from datus.cli.print_mode import PrintModeRunner
+
+            runner = PrintModeRunner(_make_args())
+
+        buf = io.StringIO()
+        with patch("sys.stdout", buf):
+            await runner._stream_chat(mock_node)
+
+        data = json.loads(buf.getvalue().strip())
+        assert data["content"][0]["type"] == "usage"
+        assert data["content"][0]["type"] != "thinking"
+        payload = data["content"][0]["payload"]
+        assert payload["total_tokens"] == 1000
+        assert payload["cached_tokens"] == 50
+        assert payload["context_length"] == 200_000
+
+    @pytest.mark.asyncio
     async def test_stream_chat_subagent_hierarchy(self):
         """Test that _stream_chat propagates depth and parent_action_id from subagent actions."""
         from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus

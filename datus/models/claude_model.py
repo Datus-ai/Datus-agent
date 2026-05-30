@@ -25,6 +25,7 @@ import anthropic
 import httpx
 from agents import Agent, RunContextWrapper, Usage
 from agents.mcp import MCPServerStdio
+from agents.usage import InputTokensDetails, OutputTokensDetails
 
 from datus.configuration.agent_config import ModelConfig
 from datus.models.mcp_utils import multiple_mcp_servers
@@ -421,12 +422,19 @@ class ClaudeModel(OpenAICompatibleModel):
         action_history_manager: Optional[ActionHistoryManager] = None,
         interrupt_controller=None,
         session: Optional[Any] = None,
+        hooks=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Async generator: native Anthropic API with real-time tool call ActionHistory.
 
         Yields ActionHistory objects for each tool call (PROCESSING then SUCCESS/FAILURE),
         and a final ASSISTANT action containing the result dict.
+
+        ``hooks`` carries the node's composed run hooks. The native loop is not
+        driven by the openai-agents Runner, so the SDK never fires
+        ``on_llm_end`` — we drive :class:`TokenUsageHook` manually after every
+        Anthropic API response so the CLI status bar / API ``usage`` events
+        update per LLM call instead of only at turn end.
         """
         # Custom JSON encoder for special types
         self._setup_custom_json_encoder()
@@ -512,6 +520,12 @@ class ClaudeModel(OpenAICompatibleModel):
                 cache_creation_tokens = 0
                 cache_read_tokens = 0
                 last_call_input_tokens = 0
+
+                # Reset the per-LLM-call usage baseline so the first response
+                # of this user turn reports its full usage as a delta (the
+                # native loop never triggers the SDK ``on_start`` that the
+                # streaming Runner path relies on for the same reset).
+                await self._reset_token_usage_hook(hooks)
 
                 # Execute conversation loop
                 turn = -1
@@ -605,13 +619,44 @@ class ClaudeModel(OpenAICompatibleModel):
                         # for environments where the async client failed to init).
                         response = self._anthropic_messages_create(**request_kwargs)
 
-                    # Track token usage from this turn
+                    # Track token usage from this turn.
+                    #
+                    # Anthropic reports cached input SEPARATELY from ``input_tokens``:
+                    # the latter is only the fresh, non-cached input, while
+                    # ``cache_read_input_tokens`` / ``cache_creation_input_tokens`` are
+                    # distinct fields. The real input processed on a call is
+                    # ``input_tokens + cache_read + cache_creation``. OpenAI's
+                    # ``input_tokens`` already folds cached tokens in, so we add the
+                    # cache components back here to keep reporting parity — otherwise
+                    # heavy prompt caching (Claude Code subscription) collapses the
+                    # reported input to a handful of tokens and inflates the
+                    # cache-hit-rate / context-usage ratios into nonsense.
                     if hasattr(response, "usage") and response.usage:
-                        cumulative_input_tokens += getattr(response.usage, "input_tokens", 0)
+                        call_input = getattr(response.usage, "input_tokens", 0)
+                        call_cache_read = getattr(response.usage, "cache_read_input_tokens", 0)
+                        call_cache_creation = getattr(response.usage, "cache_creation_input_tokens", 0)
+                        call_total_input = call_input + call_cache_read + call_cache_creation
+                        cumulative_input_tokens += call_total_input
                         cumulative_output_tokens += getattr(response.usage, "output_tokens", 0)
-                        cache_creation_tokens += getattr(response.usage, "cache_creation_input_tokens", 0)
-                        cache_read_tokens += getattr(response.usage, "cache_read_input_tokens", 0)
-                        last_call_input_tokens = getattr(response.usage, "input_tokens", 0)
+                        cache_creation_tokens += call_cache_creation
+                        cache_read_tokens += call_cache_read
+                        last_call_input_tokens = call_total_input
+
+                        # Drive the per-LLM-call usage update so the CLI status
+                        # bar / API ``usage`` events refresh mid-turn. The
+                        # native loop bypasses the SDK Runner, so this is the
+                        # only place the hook can observe each response.
+                        await self._emit_native_token_usage(
+                            hooks,
+                            self._build_native_usage_info(
+                                requests=turn + 1,
+                                cumulative_input_tokens=cumulative_input_tokens,
+                                cumulative_output_tokens=cumulative_output_tokens,
+                                cache_read_tokens=cache_read_tokens,
+                                cache_creation_tokens=cache_creation_tokens,
+                                last_call_input_tokens=last_call_input_tokens,
+                            ),
+                        )
 
                     message = response.content
 
@@ -767,26 +812,14 @@ class ClaudeModel(OpenAICompatibleModel):
                             )
 
                 logger.debug("Agent execution completed")
-                total_tokens = cumulative_input_tokens + cumulative_output_tokens
-                cached_tokens = cache_read_tokens
-                usage_info = {
-                    "requests": turn + 1,
-                    "input_tokens": cumulative_input_tokens,
-                    "output_tokens": cumulative_output_tokens,
-                    "total_tokens": total_tokens,
-                    "cached_tokens": cached_tokens,
-                    "cache_creation_tokens": cache_creation_tokens,
-                    "reasoning_tokens": 0,
-                    "cache_hit_rate": (
-                        round(cached_tokens / cumulative_input_tokens, 3) if cumulative_input_tokens > 0 else 0
-                    ),
-                    "context_usage_ratio": (
-                        round(total_tokens / self.context_length(), 3)
-                        if self.context_length() and total_tokens > 0
-                        else 0
-                    ),
-                    "last_call_input_tokens": last_call_input_tokens,
-                }
+                usage_info = self._build_native_usage_info(
+                    requests=turn + 1,
+                    cumulative_input_tokens=cumulative_input_tokens,
+                    cumulative_output_tokens=cumulative_output_tokens,
+                    cache_read_tokens=cache_read_tokens,
+                    cache_creation_tokens=cache_creation_tokens,
+                    last_call_input_tokens=last_call_input_tokens,
+                )
                 logger.debug(f"Native API cumulative token usage: {usage_info}")
 
                 final_action = ActionHistory(
@@ -823,6 +856,14 @@ class ClaudeModel(OpenAICompatibleModel):
                             "content": [{"type": "text", "text": final_content}],
                         }
                         await session.add_items([user_turn_message, assistant_turn_message])
+                        # Persist the turn's token usage into the durable
+                        # ``turn_usage`` table. The native loop never calls
+                        # ``Runner.run`` (which is what normally triggers
+                        # ``store_run_usage``), so the CLI status bar's
+                        # cumulative total would stay at 0 without this. Must
+                        # run AFTER ``add_items`` so the SDK derives the right
+                        # ``user_turn_number`` from the freshly inserted rows.
+                        await self._store_native_turn_usage(session, usage_info)
                     except Exception as e:
                         logger.warning(f"Failed to persist session history for native Claude turn: {e}")
                 elif session is not None:
@@ -840,6 +881,112 @@ class ClaudeModel(OpenAICompatibleModel):
         except Exception as e:
             logger.error(f"Error in _generate_with_mcp_stream: {str(e)}")
             raise
+
+    def _build_native_usage_info(
+        self,
+        *,
+        requests: int,
+        cumulative_input_tokens: int,
+        cumulative_output_tokens: int,
+        cache_read_tokens: int,
+        cache_creation_tokens: int,
+        last_call_input_tokens: int,
+    ) -> dict:
+        """Build the standardized usage dict for the native Anthropic loop.
+
+        Shared by the mid-turn per-call updates and the final action so the
+        cumulative numbers reported to the status bar / SSE never drift from
+        what is attached to the final assistant action. ``cached_tokens``
+        maps to Anthropic's ``cache_read_input_tokens`` (the portion served
+        from cache), matching :meth:`OpenAICompatibleModel._extract_usage_info`.
+
+        ``cumulative_input_tokens`` here already includes the cache_read /
+        cache_creation components (folded in by the caller) so that
+        ``input_tokens``, ``total_tokens``, ``cache_hit_rate`` and
+        ``context_usage_ratio`` share OpenAI's "input includes cached" semantics.
+        """
+        total_tokens = cumulative_input_tokens + cumulative_output_tokens
+        cached_tokens = cache_read_tokens
+        context_length = self.context_length()
+        return {
+            "requests": requests,
+            "input_tokens": cumulative_input_tokens,
+            "output_tokens": cumulative_output_tokens,
+            "total_tokens": total_tokens,
+            "cached_tokens": cached_tokens,
+            "cache_creation_tokens": cache_creation_tokens,
+            "reasoning_tokens": 0,
+            "cache_hit_rate": (round(cached_tokens / cumulative_input_tokens, 3) if cumulative_input_tokens > 0 else 0),
+            "context_usage_ratio": (
+                round(total_tokens / context_length, 3) if context_length and total_tokens > 0 else 0
+            ),
+            "last_call_input_tokens": last_call_input_tokens,
+        }
+
+    @staticmethod
+    def _iter_token_usage_hooks(hooks):
+        """Yield every ``TokenUsageHook`` reachable from a composed hook.
+
+        ``hooks`` may be a bare hook or a ``CompositeHooks`` wrapping several;
+        we duck-type on ``emit_manual`` so the native loop stays decoupled
+        from the concrete hook classes.
+        """
+        if hooks is None:
+            return
+        if hasattr(hooks, "emit_manual"):
+            yield hooks
+        inner = getattr(hooks, "hooks_list", None)
+        if inner:
+            for h in inner:
+                if hasattr(h, "emit_manual"):
+                    yield h
+
+    async def _reset_token_usage_hook(self, hooks) -> None:
+        """Reset each token-usage hook's per-turn delta baseline."""
+        for hook in self._iter_token_usage_hooks(hooks):
+            try:
+                await hook.on_start(None, None)
+            except Exception:  # noqa: BLE001 — never break the native loop
+                logger.debug("Failed to reset token usage hook baseline", exc_info=True)
+
+    async def _emit_native_token_usage(self, hooks, usage_info: dict) -> None:
+        """Push one per-LLM-call usage snapshot through the token-usage hook(s)."""
+        for hook in self._iter_token_usage_hooks(hooks):
+            try:
+                await hook.emit_manual(usage_info)
+            except Exception:  # noqa: BLE001 — never break the native loop
+                logger.debug("Failed to emit native token usage", exc_info=True)
+
+    async def _store_native_turn_usage(self, session, usage_info: dict) -> None:
+        """Persist the native turn's cumulative usage into ``turn_usage``.
+
+        Constructs an SDK :class:`Usage` and feeds it through the session's
+        ``store_run_usage`` via a minimal result shim so the durable schema
+        and turn-numbering match the Runner-driven models exactly.
+        """
+        if session is None or not hasattr(session, "store_run_usage"):
+            return
+        try:
+            usage = Usage(
+                requests=int(usage_info.get("requests", 0) or 0),
+                input_tokens=int(usage_info.get("input_tokens", 0) or 0),
+                output_tokens=int(usage_info.get("output_tokens", 0) or 0),
+                total_tokens=int(usage_info.get("total_tokens", 0) or 0),
+                input_tokens_details=InputTokensDetails(cached_tokens=int(usage_info.get("cached_tokens", 0) or 0)),
+                output_tokens_details=OutputTokensDetails(
+                    reasoning_tokens=int(usage_info.get("reasoning_tokens", 0) or 0)
+                ),
+            )
+
+            class _NativeUsageResult:
+                """Minimal ``RunResult`` stand-in exposing ``context_wrapper.usage``."""
+
+                def __init__(self, _usage):
+                    self.context_wrapper = RunContextWrapper(context=None, usage=_usage)
+
+            await session.store_run_usage(_NativeUsageResult(usage))
+        except Exception as e:
+            logger.warning(f"Failed to store native Claude turn usage: {e}")
 
     async def generate_with_mcp(
         self,
@@ -962,6 +1109,7 @@ class ClaudeModel(OpenAICompatibleModel):
                 action_history_manager=action_history_manager,
                 interrupt_controller=kwargs.pop("interrupt_controller", None),
                 session=session,
+                hooks=hooks,
                 **kwargs,
             ):
                 yield action

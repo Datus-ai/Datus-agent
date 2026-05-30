@@ -543,8 +543,41 @@ class SSEErrorData(BaseModel):
     llm_session_id: Optional[str] = Field(None, description="LLM session ID")
 
 
+class SSEUsageDelta(BaseModel):
+    """Per-LLM-call token-usage delta (this call only)."""
+
+    requests: int = Field(0, description="LLM calls contributed by this update (typically 1)")
+    input_tokens: int = Field(0, description="Input tokens used by this LLM call")
+    output_tokens: int = Field(0, description="Output tokens produced by this LLM call")
+    total_tokens: int = Field(0, description="Total tokens (input + output + reasoning)")
+    cached_tokens: int = Field(0, description="Cached input tokens credited to this call")
+    reasoning_tokens: int = Field(0, description="Reasoning tokens spent on this call")
+
+
+class SSEUsageData(BaseModel):
+    """Data structure for mid-turn ``event: usage`` SSE events.
+
+    Emitted by :class:`TokenUsageHook` once per LLM call inside a user turn.
+    The end-of-turn ``event: end`` still carries the consolidated totals
+    (see :class:`SSEEndData`); this event lets the front-end render token
+    usage incrementally instead of jumping only when the whole turn ends.
+    """
+
+    session_id: str = Field(..., description="Service session ID")
+    llm_session_id: Optional[str] = Field(None, description="LLM session ID")
+    requests: int = Field(0, description="Turn-cumulative LLM call count")
+    input_tokens: int = Field(0, description="Turn-cumulative input tokens")
+    output_tokens: int = Field(0, description="Turn-cumulative output tokens")
+    total_tokens: int = Field(0, description="Turn-cumulative total tokens")
+    cached_tokens: int = Field(0, description="Turn-cumulative cache-hit tokens")
+    reasoning_tokens: int = Field(0, description="Turn-cumulative reasoning tokens")
+    last_call_input_tokens: int = Field(0, description="Most recent call's input window size")
+    context_length: int = Field(0, description="Model max context window")
+    delta: SSEUsageDelta = Field(default_factory=SSEUsageDelta, description="This LLM call's contribution")
+
+
 # Union type for SSE event data
-SSEEventData = Union[SSEMessageData, SSESessionData, SSEEndData, SSEPingData, SSEErrorData]
+SSEEventData = Union[SSEMessageData, SSESessionData, SSEEndData, SSEPingData, SSEErrorData, SSEUsageData]
 
 
 # SSE Event Structure

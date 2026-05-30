@@ -158,8 +158,13 @@ def test_compose_hooks_wires_compact_hook():
     node.execution_mode = "interactive"
     node._ensure_permission_hooks = lambda: None
     node.permission_hooks = None
-    # With no extras and no permission hook, the single returned object must
-    # BE the CompactHook — not None and not some other wrapper.
+    # Disable the per-LLM-call ``TokenUsageHook`` so the assertion can pin
+    # ``CompactHook`` as the sole returned object; the dedicated tests for
+    # ``TokenUsageHook`` cover its own wiring.
+    node._get_or_create_token_usage_hook = lambda: None
+    # With no extras, no permission hook, and token-usage off, the single
+    # returned object must BE the CompactHook — not None and not some other
+    # wrapper.
     assert isinstance(node._compose_hooks(), CompactHook)
 
 
@@ -194,5 +199,8 @@ def test_compact_hook_disabled_when_compact_off():
     cfg.major.enabled = False
     cfg.minor.enabled = False
     node._compact_cfg = cfg
+    # Token-usage streaming has an independent toggle; suppress here so the
+    # assertion isolates the compact-off contract.
+    node._get_or_create_token_usage_hook = lambda: None
     # No extras, no permission hook, compact disabled → no hooks at all.
     assert node._compose_hooks() is None
