@@ -13,9 +13,11 @@ from datus.schemas.action_history import ActionHistoryManager, ActionStatus
 from datus.schemas.batch_events import BatchEventEmitter, BatchEventHelper
 from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput
 from datus.storage.knowledge_provenance import (
+    REFERENCE_SQL_ARTIFACT_TYPE,
     KnowledgeProvenanceStore,
     build_reference_sql_provenance_rows,
     is_knowledge_provenance_enabled,
+    reference_sql_artifact_ids_for_items,
 )
 from datus.storage.reference_sql.init_utils import exists_reference_sql, gen_reference_sql_id
 from datus.storage.reference_sql.sql_file_processor import process_sql_files
@@ -33,13 +35,20 @@ def _sync_reference_sql_provenance(agent_config: AgentConfig, items: list[Dict[s
     if not items or not is_knowledge_provenance_enabled(agent_config):
         return 0
 
-    rows = build_reference_sql_provenance_rows(items)
-    if not rows:
+    artifact_ids = reference_sql_artifact_ids_for_items(items)
+    if not artifact_ids:
         return 0
 
+    rows = build_reference_sql_provenance_rows(items)
     try:
-        written = KnowledgeProvenanceStore(agent_config).upsert_many(rows)
-        logger.info("Synced %d reference SQL provenance row(s)", written)
+        written = KnowledgeProvenanceStore(agent_config).replace_for_artifact_ids(
+            REFERENCE_SQL_ARTIFACT_TYPE, artifact_ids, rows
+        )
+        logger.info(
+            "Synced %d reference SQL provenance row(s) for %d reference SQL artifact(s)",
+            written,
+            len(artifact_ids),
+        )
         return written
     except Exception as exc:
         logger.warning("Failed to sync reference SQL provenance sidecar: %s", exc)

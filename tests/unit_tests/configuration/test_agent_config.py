@@ -1047,6 +1047,41 @@ class TestAgentConfigApiSection:
         assert cfg.api_config == api
 
 
+class TestAgentConfigKnowledgeBase:
+    def _make(self, tmp_path, knowledge_base=None):
+        kwargs = dict(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={
+                "mock": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "m",
+                    "base_url": "http://localhost:0",
+                }
+            },
+            skip_init_dirs=True,
+        )
+        if knowledge_base is not None:
+            kwargs["knowledge_base"] = knowledge_base
+        return AgentConfig(**kwargs)
+
+    def test_knowledge_base_config_resolves_nested_env_values(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("DATUS_PROVENANCE_ENABLED", "true")
+        cfg = self._make(
+            tmp_path,
+            knowledge_base={"provenance": {"enabled": "${DATUS_PROVENANCE_ENABLED}"}},
+        )
+
+        assert cfg.knowledge_base["provenance"]["enabled"] == "true"
+
+    def test_knowledge_base_config_rejects_non_dict(self, tmp_path):
+        cfg = self._make(tmp_path, knowledge_base="bad")
+
+        assert cfg.knowledge_base == {}
+
+
 class TestAgentConfigChannels:
     def _make(self, tmp_path, channels=None):
         kwargs = dict(

@@ -590,7 +590,6 @@ class TestLogInvalidEntries:
 # ============================================================
 
 
-@pytest.mark.ci
 class TestSqlProvenanceDirectives:
     def test_extract_sql_provenance_reads_context_and_source_metadata(self):
         sql = """
@@ -621,6 +620,7 @@ class TestSqlProvenanceDirectives:
         )
 
         assert invalid == []
+        assert "@source_" not in valid[0]["sql"]
         assert valid[0]["source_context_ids"] == ["refsql:task:0", "refsql:task:1"]
         assert valid[0]["source_metadata"]["filepath"] == "/tmp/ref.sql"
         assert valid[0]["source_metadata"]["line_number"] == 7

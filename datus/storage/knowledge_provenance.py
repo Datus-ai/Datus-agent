@@ -6,16 +6,22 @@ from __future__ import annotations
 
 import json
 import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, Iterator, List, Optional
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows fallback for local development
+    fcntl = None
 
 from datus.configuration.agent_config import AgentConfig
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
-_REFERENCE_SQL = "reference_sql"
+REFERENCE_SQL_ARTIFACT_TYPE = "reference_sql"
 
 
 def _coerce_bool(value: Any, default: bool = False) -> bool:
@@ -62,6 +68,19 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def reference_sql_artifact_ids_for_items(items: Iterable[Dict[str, Any]]) -> List[str]:
+    """Return the reference SQL artifact IDs affected by processed bootstrap items."""
+    from datus.storage.reference_sql.init_utils import gen_reference_sql_id
+
+    ids: List[str] = []
+    for item in items:
+        sql = item.get("sql") or ""
+        artifact_id = str(item.get("id") or gen_reference_sql_id(sql) or "").strip()
+        if artifact_id and artifact_id not in ids:
+            ids.append(artifact_id)
+    return ids
+
+
 class KnowledgeProvenanceStore:
     """File-backed provenance sidecar for benchmark/evaluation-only metadata.
 
@@ -73,6 +92,19 @@ class KnowledgeProvenanceStore:
     def __init__(self, agent_config: AgentConfig, file_path: Optional[Path] = None):
         self.agent_config = agent_config
         self.file_path = file_path or (agent_config.path_manager.project_data_dir / "knowledge_provenance.json")
+
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        self.file_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = self.file_path.with_name(f"{self.file_path.name}.lock")
+        with lock_path.open("a+", encoding="utf-8") as lock_file:
+            if fcntl is not None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     def _load_rows(self) -> List[Dict[str, Any]]:
         if not self.file_path.exists():
@@ -104,37 +136,84 @@ class KnowledgeProvenanceStore:
             str(row.get("source_context_id") or ""),
         )
 
+    def _normalize_row(
+        self,
+        row: Dict[str, Any],
+        now: str,
+        existing_by_key: Optional[Dict[tuple[str, str, str, str], Dict[str, Any]]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        artifact_type = str(row.get("artifact_type") or "").strip()
+        artifact_id = str(row.get("artifact_id") or "").strip()
+        if not artifact_type or not artifact_id:
+            return None
+
+        normalized = dict(row)
+        normalized["artifact_type"] = artifact_type
+        normalized["artifact_id"] = artifact_id
+        normalized["source_id"] = str(normalized.get("source_id") or "")
+        normalized["source_context_id"] = str(normalized.get("source_context_id") or "")
+        normalized["source_type"] = str(normalized.get("source_type") or "")
+        metadata = normalized.get("source_metadata")
+        normalized["source_metadata"] = metadata if isinstance(metadata, dict) else {}
+
+        existing = (existing_by_key or {}).get(self._row_key(normalized), {})
+        normalized["created_at"] = existing.get("created_at") or normalized.get("created_at") or now
+        normalized["updated_at"] = now
+        return normalized
+
     def upsert_many(self, rows: Iterable[Dict[str, Any]]) -> int:
-        existing = self._load_rows()
-        by_key = {self._row_key(row): dict(row) for row in existing}
-        now = _now_iso()
-        written = 0
+        with self._locked():
+            existing = self._load_rows()
+            by_key = {self._row_key(row): dict(row) for row in existing}
+            now = _now_iso()
+            written = 0
 
-        for row in rows:
-            artifact_type = str(row.get("artifact_type") or "").strip()
-            artifact_id = str(row.get("artifact_id") or "").strip()
-            if not artifact_type or not artifact_id:
-                continue
+            for row in rows:
+                normalized = self._normalize_row(row, now, by_key)
+                if normalized is None:
+                    continue
+                by_key[self._row_key(normalized)] = normalized
+                written += 1
 
-            normalized = dict(row)
-            normalized["artifact_type"] = artifact_type
-            normalized["artifact_id"] = artifact_id
-            normalized["source_id"] = str(normalized.get("source_id") or "")
-            normalized["source_context_id"] = str(normalized.get("source_context_id") or "")
-            normalized["source_type"] = str(normalized.get("source_type") or "")
-            metadata = normalized.get("source_metadata")
-            normalized["source_metadata"] = metadata if isinstance(metadata, dict) else {}
+            if written:
+                self._write_rows(sorted(by_key.values(), key=self._row_key))
+            return written
 
-            key = self._row_key(normalized)
-            created_at = by_key.get(key, {}).get("created_at") or now
-            normalized["created_at"] = created_at
-            normalized["updated_at"] = now
-            by_key[key] = normalized
-            written += 1
+    def replace_for_artifact_ids(
+        self,
+        artifact_type: str,
+        artifact_ids: Iterable[str],
+        rows: Iterable[Dict[str, Any]],
+    ) -> int:
+        normalized_type = str(artifact_type or "").strip()
+        ids = {str(artifact_id).strip() for artifact_id in artifact_ids if str(artifact_id).strip()}
+        if not normalized_type or not ids:
+            return 0
 
-        if written:
-            self._write_rows(sorted(by_key.values(), key=self._row_key))
-        return written
+        with self._locked():
+            existing = self._load_rows()
+            existing_by_key = {self._row_key(row): dict(row) for row in existing}
+            kept = [
+                dict(row)
+                for row in existing
+                if not (row.get("artifact_type") == normalized_type and str(row.get("artifact_id") or "") in ids)
+            ]
+            by_key = {self._row_key(row): row for row in kept}
+            now = _now_iso()
+            written = 0
+
+            for row in rows:
+                normalized = self._normalize_row(row, now, existing_by_key)
+                if normalized is None:
+                    continue
+                if normalized["artifact_type"] != normalized_type or normalized["artifact_id"] not in ids:
+                    continue
+                by_key[self._row_key(normalized)] = normalized
+                written += 1
+
+            if written or len(kept) != len(existing):
+                self._write_rows(sorted(by_key.values(), key=self._row_key))
+            return written
 
     def find_by_artifact_ids(self, artifact_type: str, artifact_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
         ids = {str(artifact_id) for artifact_id in artifact_ids if artifact_id}
@@ -164,12 +243,12 @@ class KnowledgeProvenanceStore:
 
 def build_reference_sql_provenance_rows(items: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Build sidecar rows from processed reference SQL bootstrap items."""
-    from datus.storage.reference_sql.init_utils import gen_reference_sql_id
-
     rows: List[Dict[str, Any]] = []
     for item in items:
-        sql = item.get("sql") or ""
-        artifact_id = item.get("id") or gen_reference_sql_id(sql)
+        artifact_id = str(item.get("id") or "").strip()
+        if not artifact_id:
+            artifact_ids = reference_sql_artifact_ids_for_items([item])
+            artifact_id = artifact_ids[0] if artifact_ids else ""
         if not artifact_id:
             continue
 
@@ -187,7 +266,7 @@ def build_reference_sql_provenance_rows(items: Iterable[Dict[str, Any]]) -> List
         for context_id in context_values:
             rows.append(
                 {
-                    "artifact_type": _REFERENCE_SQL,
+                    "artifact_type": REFERENCE_SQL_ARTIFACT_TYPE,
                     "artifact_id": artifact_id,
                     "source_id": source_id,
                     "source_context_id": context_id,
@@ -206,7 +285,7 @@ def enrich_reference_sql_results(agent_config: AgentConfig, results: List[Dict[s
     if not ids:
         return results
 
-    provenance = KnowledgeProvenanceStore(agent_config).find_by_artifact_ids(_REFERENCE_SQL, ids)
+    provenance = KnowledgeProvenanceStore(agent_config).find_by_artifact_ids(REFERENCE_SQL_ARTIFACT_TYPE, ids)
     if not provenance:
         return results
 

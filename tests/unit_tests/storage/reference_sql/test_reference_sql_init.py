@@ -5,6 +5,7 @@
 """Unit tests for datus.storage.reference_sql.reference_sql_init."""
 
 from enum import Enum
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -449,3 +450,84 @@ class TestInitReferenceSqlAsync:
         assert isinstance(result, dict)
         assert result["status"] == "success"
         assert result["processed_entries"] == 0
+
+
+# ---------------------------------------------------------------------------
+# _sync_reference_sql_provenance
+# ---------------------------------------------------------------------------
+
+
+def _provenance_config(tmp_path, enabled=True):
+    return SimpleNamespace(
+        knowledge_base={"provenance": {"enabled": enabled}},
+        path_manager=SimpleNamespace(project_data_dir=tmp_path),
+    )
+
+
+def test_sync_reference_sql_provenance_disabled_is_noop(tmp_path):
+    from datus.storage.reference_sql.reference_sql_init import _sync_reference_sql_provenance
+
+    written = _sync_reference_sql_provenance(
+        _provenance_config(tmp_path, enabled=False),
+        [{"sql": "SELECT 1", "source_context_id": "refsql:task:0"}],
+    )
+
+    assert written == 0
+
+
+def test_sync_reference_sql_provenance_replaces_stale_rows(tmp_path):
+    from datus.storage.knowledge_provenance import (
+        REFERENCE_SQL_ARTIFACT_TYPE,
+        KnowledgeProvenanceStore,
+        build_reference_sql_provenance_rows,
+    )
+    from datus.storage.reference_sql.init_utils import gen_reference_sql_id
+    from datus.storage.reference_sql.reference_sql_init import _sync_reference_sql_provenance
+
+    config = _provenance_config(tmp_path, enabled=True)
+    artifact_id = gen_reference_sql_id("SELECT 1")
+    store = KnowledgeProvenanceStore(config)
+    store.upsert_many(
+        build_reference_sql_provenance_rows(
+            [
+                {
+                    "sql": "SELECT 1",
+                    "source_id": "seed_context:0",
+                    "source_context_ids": ["refsql:task:old", "refsql:task:stale"],
+                }
+            ]
+        )
+    )
+
+    written = _sync_reference_sql_provenance(
+        config,
+        [{"sql": "SELECT 1", "source_id": "seed_context:0", "source_context_id": "refsql:task:new"}],
+    )
+
+    found = store.find_by_artifact_ids(REFERENCE_SQL_ARTIFACT_TYPE, [artifact_id])
+    assert written == 1
+    assert found[artifact_id]["source_context_ids"] == ["refsql:task:new"]
+
+
+def test_sync_reference_sql_provenance_deletes_when_item_loses_provenance(tmp_path):
+    from datus.storage.knowledge_provenance import (
+        REFERENCE_SQL_ARTIFACT_TYPE,
+        KnowledgeProvenanceStore,
+        build_reference_sql_provenance_rows,
+    )
+    from datus.storage.reference_sql.init_utils import gen_reference_sql_id
+    from datus.storage.reference_sql.reference_sql_init import _sync_reference_sql_provenance
+
+    config = _provenance_config(tmp_path, enabled=True)
+    artifact_id = gen_reference_sql_id("SELECT 1")
+    store = KnowledgeProvenanceStore(config)
+    store.upsert_many(
+        build_reference_sql_provenance_rows(
+            [{"sql": "SELECT 1", "source_id": "seed_context:0", "source_context_id": "refsql:task:old"}]
+        )
+    )
+
+    written = _sync_reference_sql_provenance(config, [{"sql": "SELECT 1"}])
+
+    assert written == 0
+    assert store.find_by_artifact_ids(REFERENCE_SQL_ARTIFACT_TYPE, [artifact_id]) == {}

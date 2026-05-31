@@ -762,7 +762,10 @@ class AgentConfig:
         # inject their own via :meth:`set_provider_catalog`.
         self._provider_catalog: Optional[Dict[str, Any]] = None
         self._benchmark_config_dict = kwargs.get("benchmark", {})
-        self.knowledge_base: Dict[str, Any] = kwargs.get("knowledge_base", {}) or {}
+        knowledge_base_raw = kwargs.get("knowledge_base", {}) or {}
+        self.knowledge_base: Dict[str, Any] = (
+            _resolve_nested_value(knowledge_base_raw) if isinstance(knowledge_base_raw, dict) else {}
+        )
         # ``filesystem_strict`` is a process-wide safety switch that makes
         # ``FilesystemFuncTool`` fail-closed for EXTERNAL paths (outside the
         # project root) instead of prompting the broker. Set via
