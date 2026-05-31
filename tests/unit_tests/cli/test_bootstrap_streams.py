@@ -14,6 +14,7 @@ subagent group rather than collapsing them into BatchEvent counters.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import List
 
 import pytest
@@ -208,3 +209,88 @@ async def test_stream_reference_sql_incremental_does_not_truncate(monkeypatch) -
     ]
 
     fake_storage.truncate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_stream_reference_sql_syncs_provenance_sidecar_for_successful_items(monkeypatch, tmp_path) -> None:
+    """The /bootstrap reference_sql stream should sync provenance only after subagent success."""
+    from unittest.mock import MagicMock
+
+    from datus.cli.bootstrap_streams import stream_reference_sql
+    from datus.storage.knowledge_provenance import REFERENCE_SQL_ARTIFACT_TYPE, KnowledgeProvenanceStore
+    from datus.storage.reference_sql.init_utils import gen_reference_sql_id
+
+    success_sql = "SELECT 1 AS ok"
+    failed_sql = "SELECT 2 AS bad"
+    items = [
+        {
+            "sql": success_sql,
+            "filepath": "success.sql",
+            "source_context_ids": ["refsql:task:1"],
+            "source_metadata": {"task_id": "1"},
+        },
+        {
+            "sql": failed_sql,
+            "filepath": "failed.sql",
+            "source_context_ids": ["refsql:task:2"],
+            "source_metadata": {"task_id": "2"},
+        },
+    ]
+
+    fake_storage = MagicMock()
+    monkeypatch.setattr(
+        "datus.storage.reference_sql.store.ReferenceSqlRAG",
+        MagicMock(return_value=fake_storage),
+    )
+    monkeypatch.setattr(
+        "datus.storage.reference_sql.sql_file_processor.process_sql_files",
+        MagicMock(return_value=(items, [])),
+    )
+    monkeypatch.setattr(
+        "datus.storage.reference_sql.init_utils.exists_reference_sql",
+        MagicMock(return_value=set()),
+    )
+
+    class FakeSqlSummaryAgenticNode:
+        def __init__(self, **_kwargs):
+            self.input = None
+
+        async def execute_stream(self, _manager):
+            if self.input and self.input.sql_query == failed_sql:
+                yield _make_action("failed", status=ActionStatus.FAILED)
+            else:
+                yield _make_action("ok")
+
+    monkeypatch.setattr(
+        "datus.agent.node.sql_summary_agentic_node.SqlSummaryAgenticNode",
+        FakeSqlSummaryAgenticNode,
+    )
+
+    config = SimpleNamespace(
+        project_name="unit-test-project",
+        current_datasource="ds1",
+        knowledge_base={"provenance": {"enabled": True}},
+        path_manager=SimpleNamespace(project_data_dir=tmp_path),
+    )
+
+    actions = [
+        action
+        async for action in stream_reference_sql(
+            config,
+            datasource="ds1",
+            sql_dir="/tmp/sql",
+            build_mode="incremental",
+        )
+    ]
+
+    success_id = gen_reference_sql_id(success_sql)
+    failed_id = gen_reference_sql_id(failed_sql)
+    provenance = KnowledgeProvenanceStore(config).find_by_artifact_ids(
+        REFERENCE_SQL_ARTIFACT_TYPE,
+        [success_id, failed_id],
+    )
+
+    assert provenance[success_id]["source_context_ids"] == ["refsql:task:1"]
+    assert failed_id not in provenance
+    assert any("Synced 1 reference SQL provenance row(s)." in action.messages for action in actions)
+    assert any("Indexed 1 reference SQL item(s)." in action.messages for action in actions)

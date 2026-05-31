@@ -21,7 +21,7 @@ Each stream function:
 from __future__ import annotations
 
 import asyncio
-from typing import Any, AsyncGenerator, Awaitable, Callable, List, Optional, Tuple
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Set, Tuple
 
 from datus.cli.bootstrap_subagent import as_task_subagent, message_action
 from datus.configuration.agent_config import AgentConfig
@@ -55,6 +55,21 @@ def _set_current_datasource(agent_config: AgentConfig, datasource: str) -> None:
     """
     if datasource:
         agent_config.current_datasource = datasource
+
+
+def _status_equals(action: ActionHistory, expected: ActionStatus) -> bool:
+    return action.status == expected or action.status == expected.value
+
+
+def _completed_subagent_description(action: ActionHistory, subagent_type: str) -> Optional[str]:
+    """Return the task description for terminal bootstrap subagent actions."""
+    if action.action_type != "task" or not str(action.action_id or "").startswith("complete_"):
+        return None
+    payload = action.input if isinstance(action.input, dict) else {}
+    if payload.get("type") != subagent_type:
+        return None
+    description = payload.get("description")
+    return str(description) if description is not None else None
 
 
 async def merge_streams(
@@ -318,6 +333,7 @@ async def stream_reference_sql(
     from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
     from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput
     from datus.storage.reference_sql.init_utils import exists_reference_sql, gen_reference_sql_id
+    from datus.storage.reference_sql.reference_sql_init import _sync_reference_sql_provenance
     from datus.storage.reference_sql.sql_file_processor import process_sql_files
     from datus.storage.reference_sql.store import ReferenceSqlRAG
 
@@ -384,20 +400,40 @@ async def stream_reference_sql(
 
         return _factory
 
+    def _item_description(item: dict) -> str:
+        return str(item.get("filepath") or "<sql>")
+
     streams = [
         as_task_subagent(
             subagent_type="gen_sql_summary",
-            description=str(item.get("filepath") or "<sql>"),
+            description=_item_description(item),
             inner_factory=_build_inner(item),
         )
         for item in valid_items
     ]
 
+    completed_by_description: Dict[str, ActionStatus] = {}
+    failed_descriptions: Set[str] = set()
+
     async for action in merge_streams(*streams):
+        description = _completed_subagent_description(action, "gen_sql_summary")
+        if description is not None:
+            if _status_equals(action, ActionStatus.FAILED):
+                completed_by_description[description] = ActionStatus.FAILED
+                failed_descriptions.add(description)
+            elif _status_equals(action, ActionStatus.SUCCESS) and description not in failed_descriptions:
+                completed_by_description[description] = ActionStatus.SUCCESS
         yield action
 
+    successful_items = [
+        item for item in valid_items if completed_by_description.get(_item_description(item)) == ActionStatus.SUCCESS
+    ]
+    provenance_entries = _sync_reference_sql_provenance(agent_config, successful_items)
+    if provenance_entries:
+        yield message_action(f"Synced {provenance_entries} reference SQL provenance row(s).")
+
     storage.after_init()
-    yield message_action(f"Indexed {len(valid_items)} reference SQL item(s).")
+    yield message_action(f"Indexed {len(successful_items)} reference SQL item(s).")
 
 
 # ─────────────────────────────────────────────────────────────────────
