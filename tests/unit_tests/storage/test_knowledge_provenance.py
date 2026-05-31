@@ -5,9 +5,12 @@
 from types import SimpleNamespace
 
 from datus.storage.knowledge_provenance import (
+    METRIC_ARTIFACT_TYPE,
     REFERENCE_SQL_ARTIFACT_TYPE,
     KnowledgeProvenanceStore,
+    build_metric_provenance_rows,
     build_reference_sql_provenance_rows,
+    enrich_metric_results,
     enrich_reference_sql_results,
     is_knowledge_provenance_enabled,
     reference_sql_artifact_ids_for_items,
@@ -154,3 +157,39 @@ def test_replace_for_artifact_ids_deletes_when_current_rows_are_empty(tmp_path):
 
     assert store.replace_for_artifact_ids(REFERENCE_SQL_ARTIFACT_TYPE, [artifact_id], []) == 0
     assert store.find_by_artifact_ids(REFERENCE_SQL_ARTIFACT_TYPE, [artifact_id]) == {}
+
+
+def test_metric_provenance_sidecar_enriches_results(tmp_path):
+    config = _config(tmp_path, enabled=True)
+    rows = build_metric_provenance_rows(
+        [
+            {
+                "id": "metric:Sales.activity_count",
+                "source_id": "seed_context.csv:7",
+                "source_context_ids": ["metric:seed:7", "metric:task:21"],
+                "source_type": "success_story",
+                "source_metadata": {"row_index": 7},
+            }
+        ]
+    )
+
+    written = KnowledgeProvenanceStore(config).upsert_many(rows)
+    enriched = enrich_metric_results(config, [{"id": "metric:Sales.activity_count", "name": "activity_count"}])
+
+    assert written == 2
+    assert enriched[0]["source_ids"] == ["seed_context.csv:7"]
+    assert enriched[0]["source_context_ids"] == ["metric:seed:7", "metric:task:21"]
+    assert enriched[0]["source_metadata"] == [{"row_index": 7}]
+
+
+def test_delete_for_artifact_type_only_removes_matching_type(tmp_path):
+    config = _config(tmp_path, enabled=True)
+    store = KnowledgeProvenanceStore(config)
+    store.upsert_many(
+        build_reference_sql_provenance_rows([{"sql": "SELECT 1", "source_context_id": "refsql:task:0"}])
+        + build_metric_provenance_rows([{"id": "metric:Sales.activity_count", "source_context_id": "metric:seed:0"}])
+    )
+
+    assert store.delete_for_artifact_type(METRIC_ARTIFACT_TYPE) == 1
+    assert store.find_by_artifact_ids(METRIC_ARTIFACT_TYPE, ["metric:Sales.activity_count"]) == {}
+    assert store.find_by_artifact_ids(REFERENCE_SQL_ARTIFACT_TYPE, [gen_reference_sql_id("SELECT 1")])

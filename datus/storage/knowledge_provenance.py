@@ -22,6 +22,7 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 REFERENCE_SQL_ARTIFACT_TYPE = "reference_sql"
+METRIC_ARTIFACT_TYPE = "metric"
 
 
 def _coerce_bool(value: Any, default: bool = False) -> bool:
@@ -76,6 +77,16 @@ def reference_sql_artifact_ids_for_items(items: Iterable[Dict[str, Any]]) -> Lis
     for item in items:
         sql = item.get("sql") or ""
         artifact_id = str(item.get("id") or gen_reference_sql_id(sql) or "").strip()
+        if artifact_id and artifact_id not in ids:
+            ids.append(artifact_id)
+    return ids
+
+
+def metric_artifact_ids_for_items(items: Iterable[Dict[str, Any]]) -> List[str]:
+    """Return metric artifact IDs affected by processed bootstrap items."""
+    ids: List[str] = []
+    for item in items:
+        artifact_id = str(item.get("id") or item.get("artifact_id") or "").strip()
         if artifact_id and artifact_id not in ids:
             ids.append(artifact_id)
     return ids
@@ -240,6 +251,19 @@ class KnowledgeProvenanceStore:
                 entry["source_metadata"].append(metadata)
         return result
 
+    def delete_for_artifact_type(self, artifact_type: str) -> int:
+        normalized_type = str(artifact_type or "").strip()
+        if not normalized_type:
+            return 0
+
+        with self._locked():
+            existing = self._load_rows()
+            kept = [dict(row) for row in existing if row.get("artifact_type") != normalized_type]
+            deleted = len(existing) - len(kept)
+            if deleted:
+                self._write_rows(sorted(kept, key=self._row_key))
+            return deleted
+
 
 def build_reference_sql_provenance_rows(items: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Build sidecar rows from processed reference SQL bootstrap items."""
@@ -277,6 +301,39 @@ def build_reference_sql_provenance_rows(items: Iterable[Dict[str, Any]]) -> List
     return rows
 
 
+def build_metric_provenance_rows(items: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Build sidecar rows from metric bootstrap artifacts and source rows."""
+    rows: List[Dict[str, Any]] = []
+    for item in items:
+        artifact_id = str(item.get("id") or item.get("artifact_id") or "").strip()
+        if not artifact_id:
+            continue
+
+        source_id = str(item.get("source_id") or "")
+        context_ids = _normalize_string_list(item.get("source_context_ids") or item.get("source_context_id"))
+        if not source_id and not context_ids:
+            continue
+
+        metadata = item.get("source_metadata") if isinstance(item.get("source_metadata"), dict) else {}
+        source_type = str(item.get("source_type") or metadata.get("source_type") or "success_story")
+        if not source_id:
+            source_id = str(metadata.get("source_id") or "")
+        context_values = context_ids or [""]
+
+        for context_id in context_values:
+            rows.append(
+                {
+                    "artifact_type": METRIC_ARTIFACT_TYPE,
+                    "artifact_id": artifact_id,
+                    "source_id": source_id,
+                    "source_context_id": context_id,
+                    "source_type": source_type,
+                    "source_metadata": metadata,
+                }
+            )
+    return rows
+
+
 def enrich_reference_sql_results(agent_config: AgentConfig, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if not results or not is_knowledge_provenance_enabled(agent_config):
         return results
@@ -286,6 +343,34 @@ def enrich_reference_sql_results(agent_config: AgentConfig, results: List[Dict[s
         return results
 
     provenance = KnowledgeProvenanceStore(agent_config).find_by_artifact_ids(REFERENCE_SQL_ARTIFACT_TYPE, ids)
+    if not provenance:
+        return results
+
+    enriched: List[Dict[str, Any]] = []
+    for item in results:
+        if not isinstance(item, dict):
+            enriched.append(item)
+            continue
+        artifact_id = str(item.get("id") or "")
+        metadata = provenance.get(artifact_id)
+        if metadata:
+            updated = dict(item)
+            updated.update(metadata)
+            enriched.append(updated)
+        else:
+            enriched.append(item)
+    return enriched
+
+
+def enrich_metric_results(agent_config: AgentConfig, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not results or not is_knowledge_provenance_enabled(agent_config):
+        return results
+
+    ids = [str(item.get("id")) for item in results if isinstance(item, dict) and item.get("id")]
+    if not ids:
+        return results
+
+    provenance = KnowledgeProvenanceStore(agent_config).find_by_artifact_ids(METRIC_ARTIFACT_TYPE, ids)
     if not provenance:
         return results
 

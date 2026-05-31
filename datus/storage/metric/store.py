@@ -11,6 +11,7 @@ from datus_storage_base.conditions import WhereExpr, in_
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import EmbeddingModel
+from datus.storage.knowledge_provenance import enrich_metric_results, is_knowledge_provenance_enabled
 from datus.storage.subject_tree.store import BaseSubjectEmbeddingStore, base_schema_columns
 from datus.utils.loggings import get_logger
 
@@ -504,7 +505,9 @@ class MetricRAG:
         from datus.storage.rag_scope import _build_sub_agent_filter
         from datus.storage.registry import get_storage
 
+        self.agent_config = agent_config
         self.datasource_id = datasource_id or agent_config.current_datasource or ""
+        self._provenance_enabled = is_knowledge_provenance_enabled(agent_config)
         self.storage: MetricStorage = get_storage(MetricStorage, "metric", project=agent_config.project_name)
         self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.storage, "metrics")
 
@@ -514,6 +517,30 @@ class MetricRAG:
         if self._sub_agent_filter:
             conditions.append(self._sub_agent_filter)
         return conditions
+
+    def _selected_fields_with_provenance_id(
+        self, selected_fields: Optional[List[str]]
+    ) -> tuple[Optional[List[str]], bool]:
+        if not self._provenance_enabled or selected_fields is None or "id" in selected_fields:
+            return selected_fields, False
+        return [*selected_fields, "id"], True
+
+    def _enrich_metric_results(
+        self, results: List[Dict[str, Any]], strip_internal_id: bool = False
+    ) -> List[Dict[str, Any]]:
+        enriched = enrich_metric_results(self.agent_config, results)
+        if not strip_internal_id:
+            return enriched
+
+        cleaned: List[Dict[str, Any]] = []
+        for item in enriched:
+            if isinstance(item, dict):
+                updated = dict(item)
+                updated.pop("id", None)
+                cleaned.append(updated)
+            else:
+                cleaned.append(item)
+        return cleaned
 
     def truncate(self) -> None:
         """Delete all metrics for this datasource."""
@@ -533,11 +560,13 @@ class MetricRAG:
         subject_path: Optional[List[str]] = None,
         select_fields: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        return self.storage.search_all_metrics(
+        fields, strip_internal_id = self._selected_fields_with_provenance_id(select_fields)
+        results = self.storage.search_all_metrics(
             subject_path=subject_path,
-            select_fields=select_fields,
+            select_fields=fields,
             extra_conditions=self._sub_agent_conditions(),
         )
+        return self._enrich_metric_results(results, strip_internal_id)
 
     def after_init(self):
         self.storage.create_indices()
@@ -555,21 +584,23 @@ class MetricRAG:
         self, query_text: str, subject_path: Optional[List[str]] = None, top_n: int = 5
     ) -> List[Dict[str, Any]]:
         """Search metrics by query text with optional subject path filtering."""
-        return self.storage.search_metrics(
+        results = self.storage.search_metrics(
             query_text=query_text,
             subject_path=subject_path,
             top_n=top_n,
             extra_conditions=self._sub_agent_conditions(),
         )
+        return self._enrich_metric_results(results)
 
     def get_metrics_detail(self, subject_path: List[str], name: str) -> List[Dict[str, Any]]:
         """Get metrics detail by subject path and name."""
         full_path = subject_path.copy()
         full_path.append(name)
-        return self.storage.search_all_metrics(
+        results = self.storage.search_all_metrics(
             subject_path=full_path,
             extra_conditions=self._sub_agent_conditions(),
         )
+        return self._enrich_metric_results(results)
 
     def create_indices(self):
         """Create indices for metric storage."""
