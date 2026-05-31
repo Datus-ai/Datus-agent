@@ -312,7 +312,7 @@ def process_sql_items(items: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]]
         filepath = item.get("filepath") or ""
         line_number = item.get("line_number", 1)
         provenance = extract_sql_provenance(sql)
-        sql_for_processing = strip_sql_provenance_directives(sql) if provenance else sql
+        sql_for_processing = strip_sql_provenance_directives(sql)
 
         # Check SQL type - only process SELECT queries
         try:

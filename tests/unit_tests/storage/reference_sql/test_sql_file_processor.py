@@ -624,3 +624,20 @@ class TestSqlProvenanceDirectives:
         assert valid[0]["source_context_ids"] == ["refsql:task:0", "refsql:task:1"]
         assert valid[0]["source_metadata"]["filepath"] == "/tmp/ref.sql"
         assert valid[0]["source_metadata"]["line_number"] == 7
+
+    def test_process_sql_items_strips_empty_provenance_directives(self):
+        valid, invalid = process_sql_items(
+            [
+                {
+                    "comment": "",
+                    "sql": "-- @source_context_id:\nSELECT * FROM v_udata_ac_info",
+                    "filepath": "/tmp/ref.sql",
+                    "line_number": 9,
+                }
+            ]
+        )
+
+        assert invalid == []
+        assert len(valid) == 1
+        assert "@source_context_id" not in valid[0]["sql"]
+        assert "source_context_ids" not in valid[0]
