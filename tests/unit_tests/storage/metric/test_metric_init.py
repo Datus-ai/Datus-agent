@@ -638,6 +638,31 @@ class TestMetricProvenanceHelpers:
         assert written == 1
         assert found["metric:Sales.activity_count"]["source_context_ids"] == ["metric:seed:0"]
 
+    def test_sync_metric_provenance_skips_ambiguous_multi_source_batch(self, tmp_path):
+        from types import SimpleNamespace
+
+        from datus.storage.knowledge_provenance import METRIC_ARTIFACT_TYPE, KnowledgeProvenanceStore
+
+        config = SimpleNamespace(
+            knowledge_base={"provenance": {"enabled": True}},
+            path_manager=SimpleNamespace(project_data_dir=tmp_path),
+        )
+
+        written = _sync_metric_provenance(
+            config,
+            ["metric:Sales.activity_count"],
+            [
+                {"source_id": "seed_context.csv:0", "source_context_ids": ["metric:seed:0"]},
+                {"source_id": "seed_context.csv:1", "source_context_ids": ["metric:seed:1"]},
+            ],
+        )
+
+        found = KnowledgeProvenanceStore(config).find_by_artifact_ids(
+            METRIC_ARTIFACT_TYPE, ["metric:Sales.activity_count"]
+        )
+        assert written == 0
+        assert found == {}
+
 
 # ---------------------------------------------------------------------------
 # DEFAULT_METRICS_BATCH_SIZE constant

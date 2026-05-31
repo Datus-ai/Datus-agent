@@ -157,11 +157,17 @@ def _sync_metric_provenance(
 ) -> int:
     if not metric_artifact_ids or not source_entries or not is_knowledge_provenance_enabled(agent_config):
         return 0
+    if len(source_entries) != 1:
+        logger.warning(
+            "Skipping metric provenance sync because source-to-metric attribution is ambiguous for %d source row(s)",
+            len(source_entries),
+        )
+        return 0
 
+    source = source_entries[0]
     items: list[dict[str, Any]] = []
     for artifact_id in metric_artifact_ids:
-        for source in source_entries:
-            items.append({"id": artifact_id, **source})
+        items.append({"id": artifact_id, **source})
     rows = build_metric_provenance_rows(items)
     if not rows:
         return 0
