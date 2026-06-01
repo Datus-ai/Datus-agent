@@ -608,10 +608,39 @@ class DBFuncTool:
             result.append(name)
         return result
 
+    @staticmethod
+    def _dialect_name(value: Any) -> str:
+        raw_value = getattr(value, "value", value)
+        if not isinstance(raw_value, str):
+            return ""
+        return raw_value.strip().lower()
+
+    def _configured_tool_dialects(self) -> set[str]:
+        dialects: set[str] = set()
+        if self._is_multi_connector and self.agent_config:
+            try:
+                db_configs = self.agent_config.current_db_configs()
+            except Exception:
+                db_configs = {}
+            if isinstance(db_configs, dict):
+                for db_config in db_configs.values():
+                    if isinstance(db_config, dict):
+                        dialect = db_config.get("type", "")
+                    else:
+                        dialect = getattr(db_config, "type", "")
+                    normalized = self._dialect_name(dialect)
+                    if normalized:
+                        dialects.add(normalized)
+
+        if not dialects:
+            normalized = self._dialect_name(getattr(self.connector, "dialect", ""))
+            if normalized:
+                dialects.add(normalized)
+        return dialects
+
     def _excluded_tool_params(self) -> set[str]:
-        dialect = getattr(self.connector, "dialect", "") or ""
         excluded: set[str] = set()
-        if not connector_registry.support_catalog(dialect):
+        if not any(connector_registry.support_catalog(dialect) for dialect in self._configured_tool_dialects()):
             excluded.add("catalog")
         return excluded
 

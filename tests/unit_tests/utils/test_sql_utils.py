@@ -25,16 +25,36 @@ from datus.utils.sql_utils import (
     strip_sql_comments,
 )
 
+_CONNECTOR_REGISTRY_SNAPSHOT_ATTRS = ("_capabilities", "_uri_builders", "_context_resolvers")
+
+
+def _snapshot_connector_registry():
+    return {
+        attr: {k: (set(v) if isinstance(v, set) else v) for k, v in getattr(connector_registry, attr).items()}
+        for attr in _CONNECTOR_REGISTRY_SNAPSHOT_ATTRS
+    }
+
+
+def _restore_connector_registry(snapshots):
+    for attr, saved in snapshots.items():
+        live = getattr(connector_registry, attr)
+        live.clear()
+        live.update(saved)
+
 
 @pytest.fixture(autouse=True)
 def _register_test_capabilities():
     """Register capabilities for dialects used in tests."""
+    snapshots = _snapshot_connector_registry()
     connector_registry.register_handlers("mysql", capabilities={"database"})
     connector_registry.register_handlers("starrocks", capabilities={"catalog", "database"})
     connector_registry.register_handlers("oracle", capabilities={"database", "schema"})
     connector_registry.register_handlers("postgresql", capabilities={"database", "schema"})
     connector_registry.register_handlers("snowflake", capabilities={"database", "schema"})
-    yield
+    try:
+        yield
+    finally:
+        _restore_connector_registry(snapshots)
 
 
 SQL = """create or replace TABLE GT.GT2.VARIANTS (
@@ -1006,17 +1026,6 @@ def test_parse_context_switch_duckdb_set_schema():
     assert result["schema_name"] == "main"
     assert result["database_name"] == ""
     assert result["fuzzy"] is False
-
-
-@pytest.fixture(autouse=True)
-def _register_test_capabilitiesExtended():
-    """Register capabilities for dialects used in tests."""
-    connector_registry.register_handlers("mysql", capabilities={"database"})
-    connector_registry.register_handlers("starrocks", capabilities={"catalog", "database"})
-    connector_registry.register_handlers("oracle", capabilities={"database", "schema"})
-    connector_registry.register_handlers("postgresql", capabilities={"database", "schema"})
-    connector_registry.register_handlers("snowflake", capabilities={"database", "schema"})
-    yield
 
 
 # ---------------------------------------------------------------------------

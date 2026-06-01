@@ -3,6 +3,7 @@ Test cases for DBFuncTool class in datus/tools/tools.py
 """
 
 import os
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -12,10 +13,27 @@ from datus.tools.func_tool import DBFuncTool
 from datus.tools.func_tool.base import FuncToolResult
 from datus.utils.constants import DBType
 
+_CONNECTOR_REGISTRY_SNAPSHOT_ATTRS = ("_capabilities", "_uri_builders", "_context_resolvers")
+
+
+def _snapshot_connector_registry():
+    return {
+        attr: {k: (set(v) if isinstance(v, set) else v) for k, v in getattr(connector_registry, attr).items()}
+        for attr in _CONNECTOR_REGISTRY_SNAPSHOT_ATTRS
+    }
+
+
+def _restore_connector_registry(snapshots):
+    for attr, saved in snapshots.items():
+        live = getattr(connector_registry, attr)
+        live.clear()
+        live.update(saved)
+
 
 @pytest.fixture(autouse=True)
 def _register_test_capabilities():
     """Ensure test dialects have capabilities registered in the registry."""
+    snapshots = _snapshot_connector_registry()
     connector_registry.register_handlers(
         "postgresql",
         capabilities={"database", "schema"},
@@ -24,7 +42,10 @@ def _register_test_capabilities():
         "snowflake",
         capabilities={"database", "schema"},
     )
-    yield
+    try:
+        yield
+    finally:
+        _restore_connector_registry(snapshots)
 
 
 class FakeRecordBatch:
@@ -1467,6 +1488,39 @@ class TestDBFuncToolMultiConnector:
         assert tool._db_manager is mock_db_manager
         assert tool._primary_connector is mock_connector
         assert tool._is_multi_connector
+
+    def test_mixed_dialect_tool_schema_keeps_catalog(self):
+        """Keep catalog visible when any configured datasource supports it."""
+        from datus.tools.db_tools.db_manager import DBManager
+
+        connector_registry.register_handlers("starrocks", capabilities={"catalog", "database"})
+        connector_registry.register_handlers("snowflake", capabilities={"database", "schema"})
+
+        mock_db_manager = Mock(spec=DBManager)
+        mock_connector = Mock()
+        mock_connector.dialect = "snowflake"
+        mock_connector.database_name = "SNOWFLAKE_SAMPLE_DATA"
+        mock_connector.catalog_name = ""
+        mock_connector.schema_name = "TPCDS_SF10TCL"
+        mock_db_manager.first_conn.return_value = mock_connector
+
+        mock_config = Mock()
+        mock_config.active_model.return_value.model = "gpt-5.4"
+        mock_config.current_datasource = "my_snowflake"
+        mock_config.current_db_configs.return_value = {
+            "my_snowflake": SimpleNamespace(type="snowflake"),
+            "my_starrocks": SimpleNamespace(type="starrocks"),
+        }
+
+        tool = DBFuncTool(
+            mock_db_manager,
+            agent_config=mock_config,
+            default_datasource="my_snowflake",
+        )
+
+        schema = tool.to_function_tool(tool.list_tables).params_json_schema
+        assert "catalog" in schema.get("properties", {})
+        mock_db_manager.get_conn.assert_not_called()
 
     def test_get_connector_cache_hit(self, mock_agent_config):
         """Test that _get_connector uses cache for repeated calls."""

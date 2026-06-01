@@ -1466,7 +1466,10 @@ class TestEdgeCases:
         """create_node_input passes None when no database context source has values."""
         from datus.schemas.chat_agentic_node_models import ChatNodeInput
 
-        real_agent_config.current_db_config().database = ""
+        db_config = real_agent_config.current_db_config()
+        db_config.catalog = ""
+        db_config.database = ""
+        db_config.schema = ""
         cmds = _make_chat_commands(real_agent_config)
         # cli_context defaults have None for catalog/db_name/schema.
         assert cmds.cli.cli_context.current_catalog is None
