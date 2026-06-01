@@ -1512,3 +1512,40 @@ class TestTokenUsageEvent:
         assert event.data.total_tokens == 0
         assert event.data.delta.total_tokens == 0
         assert event.data.context_length == 0
+
+    def test_main_agent_usage_is_depth_zero(self):
+        """Main-agent usage carries depth=0 and no parent — the marker the API
+        consumer uses to treat it as the top-level usage meter."""
+        action = _make_action(
+            action_type="token_usage",
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            output={"cumulative": {"total_tokens": 100}, "delta": {}, "agent_session_id": "chat_session_main"},
+        )
+        event = _assert_sse_event(action_to_sse_event(action, event_id=1, message_id="m"))
+        assert event.data.depth == 0
+        assert event.data.parent_action_id is None
+        # Producing session surfaced so the consumer can attribute it.
+        assert event.data.llm_session_id == "chat_session_main"
+
+    def test_subagent_usage_carries_depth_and_parent_and_own_session(self):
+        """Sub-agent usage (depth>0) is distinguishable via depth + parent task
+        id, and keeps the sub-agent's own session id (not the parent's)."""
+        action = _make_action(
+            action_type="token_usage",
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            depth=1,
+            parent_action_id="task-call-77",
+            output={
+                "cumulative": {"input_tokens": 9000, "output_tokens": 800, "total_tokens": 9800},
+                "delta": {},
+                "agent_session_id": "gen_sql_session_abc",
+            },
+        )
+        event = _assert_sse_event(action_to_sse_event(action, event_id=2, message_id="m"))
+        assert event.data.depth == 1
+        assert event.data.parent_action_id == "task-call-77"
+        assert event.data.llm_session_id == "gen_sql_session_abc"
+        assert event.data.input_tokens == 9000
+        assert event.data.output_tokens == 800

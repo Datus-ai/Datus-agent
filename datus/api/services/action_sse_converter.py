@@ -398,7 +398,16 @@ def _build_token_usage_event(action: ActionHistory, event_id: int) -> Optional[S
         # session-scoped identifier when unavailable so the event still
         # carries a recognizable correlation key.
         session_id=str(getattr(action, "action_id", "") or ""),
-        llm_session_id=None,
+        # ``agent_session_id`` is the session of the node that produced this
+        # usage — for a forwarded sub-agent action that is the sub-agent's own
+        # session, not the parent's. ChatTaskManager only overrides this for
+        # main-agent (depth==0) usage.
+        llm_session_id=output.get("agent_session_id"),
+        # ``depth``/``parent_action_id`` let API consumers separate main-agent
+        # usage (depth==0) from sub-agent usage (depth>0) and group the latter
+        # under the originating ``task()`` call.
+        depth=int(getattr(action, "depth", 0) or 0),
+        parent_action_id=getattr(action, "parent_action_id", None),
         requests=_i(cumulative, "requests"),
         input_tokens=_i(cumulative, "input_tokens"),
         output_tokens=_i(cumulative, "output_tokens"),

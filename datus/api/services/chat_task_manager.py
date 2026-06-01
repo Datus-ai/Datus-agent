@@ -615,7 +615,13 @@ class ChatTaskManager:
                     # path entirely since usage carries no rendered text.
                     if sse.event == "usage" and isinstance(sse.data, SSEUsageData):
                         sse.data.session_id = session_id
-                        sse.data.llm_session_id = node.session_id
+                        # Only main-agent usage (depth==0) belongs to this
+                        # node's LLM session. Sub-agent usage (depth>0) keeps the
+                        # sub-agent session id stamped by the converter so the
+                        # consumer can attribute it to the right session instead
+                        # of mislabelling it as the parent's.
+                        if sse.data.depth == 0:
+                            sse.data.llm_session_id = node.session_id
                         await self._push_event(task, sse)
                         event_id += 1
                         continue

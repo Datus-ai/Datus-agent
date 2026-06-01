@@ -125,6 +125,12 @@ async def test_three_llm_calls_emit_three_usage_events_aligned_with_end(session_
         assert event.event == "usage"
         assert event.id == idx
         assert isinstance(event.data, SSEUsageData)
+        # Main-agent usage is depth=0 with no parent and carries the producing
+        # node's session, so the API can treat it as the top-level meter and
+        # tell it apart from forwarded sub-agent usage (depth>0).
+        assert event.data.depth == 0
+        assert event.data.parent_action_id is None
+        assert event.data.llm_session_id == session_id
         usage_events.append(event)
 
     # Cumulative on the last usage event matches the final LLM call's total.

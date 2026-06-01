@@ -565,6 +565,10 @@ class SSEUsageData(BaseModel):
 
     session_id: str = Field(..., description="Service session ID")
     llm_session_id: Optional[str] = Field(None, description="LLM session ID")
+    depth: int = Field(0, description="Agent depth: 0 = main agent, >0 = sub-agent (spawned via task())")
+    parent_action_id: Optional[str] = Field(
+        None, description="For sub-agent usage (depth>0), the parent task() call id it belongs to"
+    )
     requests: int = Field(0, description="Turn-cumulative LLM call count")
     input_tokens: int = Field(0, description="Turn-cumulative input tokens")
     output_tokens: int = Field(0, description="Turn-cumulative output tokens")

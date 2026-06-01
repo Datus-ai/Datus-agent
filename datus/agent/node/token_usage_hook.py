@@ -225,6 +225,10 @@ class TokenUsageHook(RunHooks):
                 "delta": delta,
                 "context_length": context_length,
                 "last_call_input_tokens": last_call_input_tokens,
+                # Session of the node that produced this usage (main agent or a
+                # sub-agent). Lets the API attribute a forwarded ``token_usage``
+                # to the correct LLM session instead of the parent's.
+                "agent_session_id": getattr(self._node, "session_id", None),
             },
             status=ActionStatus.SUCCESS,
         )
