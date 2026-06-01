@@ -378,3 +378,22 @@ class TestTokenUsageContent:
         assert c.payload["total_tokens"] == 0
         assert c.payload["delta"]["total_tokens"] == 0
         assert c.payload["context_length"] == 0
+
+    def test_build_token_usage_content_coerces_non_numeric_to_zero(self):
+        """A non-numeric count (provider quirk / corruption) must coerce to 0
+        via the ``_i`` guard rather than raising."""
+        from datus.schemas.action_content_builder import build_token_usage_content
+
+        action = _make_action(
+            action_type="token_usage",
+            output_data={
+                "cumulative": {"input_tokens": "abc", "total_tokens": 1500},
+                "delta": {"output_tokens": "xyz"},
+                "context_length": "n/a",
+            },
+        )
+        [c] = build_token_usage_content(action)
+        assert c.payload["input_tokens"] == 0  # "abc" coerced
+        assert c.payload["total_tokens"] == 1500  # valid value preserved
+        assert c.payload["delta"]["output_tokens"] == 0
+        assert c.payload["context_length"] == 0

@@ -17,6 +17,7 @@ contract:
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any, Dict, List, Tuple
 from unittest.mock import MagicMock
 
 import pytest
@@ -27,21 +28,23 @@ from datus.schemas.action_history import ActionRole, ActionStatus
 
 class _FakeManager:
     def __init__(self) -> None:
-        self.added = []
+        self.added: List[Any] = []
 
-    def add_action(self, action) -> None:
+    def add_action(self, action: Any) -> None:
         self.added.append(action)
 
 
 class _FakeBus:
     def __init__(self) -> None:
-        self.published = []
+        self.published: List[Any] = []
 
-    def put(self, action) -> None:
+    def put(self, action: Any) -> None:
         self.published.append(action)
 
 
-def _fake_node(cumulative_sequence):
+def _fake_node(
+    cumulative_sequence: List[Dict[str, Any]],
+) -> Tuple[MagicMock, _FakeManager, _FakeBus, MagicMock, MagicMock]:
     """Build a stub node whose ``model._extract_usage_info`` walks a script.
 
     ``cumulative_sequence`` lists dicts to return on successive calls so
@@ -49,9 +52,9 @@ def _fake_node(cumulative_sequence):
     SDK Usage object.
     """
 
-    cursor = {"i": 0}
+    cursor: Dict[str, int] = {"i": 0}
 
-    def _extract(_usage):
+    def _extract(_usage: Any) -> Dict[str, Any]:
         i = cursor["i"]
         cursor["i"] = min(i + 1, len(cumulative_sequence) - 1) if cumulative_sequence else 0
         return cumulative_sequence[i] if cumulative_sequence else {}

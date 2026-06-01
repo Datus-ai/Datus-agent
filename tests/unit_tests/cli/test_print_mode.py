@@ -245,6 +245,11 @@ class TestPrintModeRun:
         assert payload["total_tokens"] == 1000
         assert payload["cached_tokens"] == 50
         assert payload["context_length"] == 200_000
+        # Verify the per-call delta is populated from the action output.
+        assert payload["delta"]["input_tokens"] == 800
+        assert payload["delta"]["output_tokens"] == 200
+        assert payload["delta"]["total_tokens"] == 1000
+        assert payload["delta"]["cached_tokens"] == 50
 
     @pytest.mark.asyncio
     async def test_stream_chat_subagent_hierarchy(self):

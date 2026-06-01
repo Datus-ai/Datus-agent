@@ -77,6 +77,25 @@ def _save_section(path: Path, key: str, payload: Dict[str, Any]) -> None:
         logger.warning("Failed to persist session state to %s: %s", path, exc)
 
 
+def _remove_section(path: Path, key: str) -> None:
+    """Drop one section from the state file, preserving sibling sections.
+
+    Used by session cleanup (``clear``/``delete``) so a persisted mirror does
+    not survive a reset and leak the previous turn's state. No-op when the
+    file or section is absent.
+    """
+    if not path.exists():
+        return
+    try:
+        data = _load_raw(path)
+        if key not in data:
+            return
+        data.pop(key, None)
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Failed to remove section %r from session state %s: %s", key, path, exc)
+
+
 @dataclass
 class PlanModeState:
     plan_mode_active: bool = False
@@ -175,3 +194,8 @@ class ContextState:
     def save(self, path: Path) -> None:
         """Merge the context-state section into the state file."""
         _save_section(path, "context_state", asdict(self))
+
+    @classmethod
+    def clear(cls, path: Path) -> None:
+        """Remove the persisted context-state mirror (session reset/delete)."""
+        _remove_section(path, "context_state")

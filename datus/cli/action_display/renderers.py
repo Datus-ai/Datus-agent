@@ -555,14 +555,31 @@ class ActionRenderer:
             label = _truncate_middle(label, max_len=200)
         return [Text.from_markup(f"[dim]  \u23bf  {rich_escape(label)}[/dim]")]
 
-    def render_subagent_done(self, tool_count: int, start_time: Optional[datetime], end_action: ActionHistory) -> Text:
-        """Render the Done summary line for a sub-agent group."""
+    def render_subagent_done(
+        self,
+        tool_count: int,
+        start_time: Optional[datetime],
+        end_action: ActionHistory,
+        token_input: int = 0,
+        token_output: int = 0,
+        token_cached: int = 0,
+    ) -> Text:
+        """Render the Done summary line for a sub-agent group.
+
+        When token totals are supplied the same ``\u2191input(cached) \u2193output``
+        suffix used by :meth:`render_subagent_collapsed` and the async/TUI
+        completion paths is appended, so the sync (non-collapsed) path keeps
+        the accumulated counters instead of dropping them.
+        """
         end_time = end_action.end_time or datetime.now()
         dur_str = ""
         if start_time:
             dur_sec = (end_time - start_time).total_seconds()
             dur_str = f" \u00b7 {dur_sec:.1f}s"
-        summary = f"  \u23bf  Done ({tool_count} tool uses{dur_str})"
+        token_suffix = ""
+        if token_input > 0 or token_output > 0:
+            token_suffix = f" \u00b7 {format_io_tokens(token_input, token_output, token_cached)}"
+        summary = f"  \u23bf  Done ({tool_count} tool uses{dur_str}){token_suffix}"
         return Text.from_markup(f"[dim]{summary}[/dim]")
 
     def render_subagent_collapsed(

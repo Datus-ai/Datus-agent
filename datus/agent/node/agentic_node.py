@@ -2685,10 +2685,41 @@ class AgenticNode(Node):
                 status=ActionStatus.SUCCESS,
             )
 
+    def _reset_usage_caches(self) -> None:
+        """Drop the session-scoped token/context usage caches on reset.
+
+        ``running_turn_usage`` and the restored context mirrors survive
+        independently of the session DB, so a ``/clear`` or ``/delete`` must
+        zero the in-memory fields and remove the persisted running-turn
+        snapshot / ``ContextState`` — otherwise the status bar keeps showing
+        the previous turn's token and context-window usage until the next LLM
+        call overwrites it.
+        """
+        self.running_turn_usage = None
+        self._restored_context_used = 0
+        self._restored_context_length = 0
+        if not self.session_id:
+            return
+        try:
+            sm = getattr(self, "session_manager", None)
+            if sm is not None and hasattr(sm, "clear_running_turn_usage"):
+                sm.clear_running_turn_usage(self.session_id)
+        except Exception:  # noqa: BLE001 — cleanup must never crash node logic
+            logger.debug("Failed to clear running_turn_usage for %s", self.session_id, exc_info=True)
+        try:
+            state_path = self._agent_state_file()
+            if state_path is not None:
+                from datus.storage.session_state import ContextState
+
+                ContextState.clear(state_path)
+        except Exception:  # noqa: BLE001
+            logger.debug("Failed to clear persisted context state for %s", self.session_id, exc_info=True)
+
     def clear_session(self) -> None:
         """Clear the current session."""
         if self.session_id:
             self.session_manager.clear_session(self.session_id)
+            self._reset_usage_caches()
             self._session = None
             logger.info(f"Cleared session: {self.session_id}")
 
@@ -2701,6 +2732,7 @@ class AgenticNode(Node):
         log lines and tracebacks can still reference which session was deleted.
         """
         if self.session_id:
+            self._reset_usage_caches()
             self.session_manager.delete_session(self.session_id)
             self._session = None
             logger.info("Deleted session: %s", self.session_id)

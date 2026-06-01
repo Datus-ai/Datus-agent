@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from pathlib import Path
+from typing import Iterator
 
 import pytest
 from agents.extensions.memory import AdvancedSQLiteSession
@@ -21,7 +23,7 @@ from datus.models.session_manager import SessionManager
 
 
 @pytest.fixture
-def sm(tmp_path):
+def sm(tmp_path: Path) -> Iterator[SessionManager]:
     manager = SessionManager(session_dir=str(tmp_path / "sessions"))
     yield manager
     manager.close_all_sessions()
@@ -36,7 +38,7 @@ def _bootstrap_session(sm: SessionManager, session_id: str) -> str:
 
 
 class TestUpsertAndGet:
-    def test_upsert_then_get_round_trip(self, sm):
+    def test_upsert_then_get_round_trip(self, sm: SessionManager) -> None:
         session_id = "chat_session_aaa"
         _bootstrap_session(sm, session_id)
         sm.upsert_running_turn_usage(
@@ -63,7 +65,7 @@ class TestUpsertAndGet:
         assert isinstance(running["updated_at"], str)
         assert "T" in running["updated_at"]
 
-    def test_upsert_overwrites_previous_snapshot(self, sm):
+    def test_upsert_overwrites_previous_snapshot(self, sm: SessionManager) -> None:
         """Each LLM call replaces the prior snapshot — we never want stale
         partial counts polluting ``get_detailed_usage``'s ``running`` field."""
         session_id = "chat_session_bbb"
@@ -73,7 +75,7 @@ class TestUpsertAndGet:
         running = sm.get_running_turn_usage(session_id)
         assert running["cumulative"]["total_tokens"] == 250
 
-    def test_upsert_silently_skips_when_db_missing(self, sm):
+    def test_upsert_silently_skips_when_db_missing(self, sm: SessionManager) -> None:
         """Early ``on_llm_end`` can fire before the SDK has materialised the
         session DB. The method must no-op so the hook never crashes the
         run loop."""
@@ -81,7 +83,7 @@ class TestUpsertAndGet:
         sm.upsert_running_turn_usage("chat_session_ccc", 1, {"total_tokens": 50}, 0)
         assert sm.get_running_turn_usage("chat_session_ccc") is None
 
-    def test_get_returns_none_when_not_persisted(self, sm):
+    def test_get_returns_none_when_not_persisted(self, sm: SessionManager) -> None:
         session_id = "chat_session_ddd"
         _bootstrap_session(sm, session_id)
         # No upsert call → row absent → ``None``
@@ -89,14 +91,14 @@ class TestUpsertAndGet:
 
 
 class TestClear:
-    def test_clear_removes_row_so_future_status_bar_reads_zero(self, sm):
+    def test_clear_removes_row_so_future_status_bar_reads_zero(self, sm: SessionManager) -> None:
         session_id = "chat_session_eee"
         _bootstrap_session(sm, session_id)
         sm.upsert_running_turn_usage(session_id, 1, {"total_tokens": 75}, 100_000)
         sm.clear_running_turn_usage(session_id)
         assert sm.get_running_turn_usage(session_id) is None
 
-    def test_clear_is_idempotent(self, sm):
+    def test_clear_is_idempotent(self, sm: SessionManager) -> None:
         session_id = "chat_session_fff"
         _bootstrap_session(sm, session_id)
         # First call on an empty side-table must not raise and must leave
@@ -108,7 +110,7 @@ class TestClear:
         sm.clear_running_turn_usage(session_id)
         assert sm.get_running_turn_usage(session_id) is None
 
-    def test_clear_silently_skips_when_db_missing(self, sm):
+    def test_clear_silently_skips_when_db_missing(self, sm: SessionManager) -> None:
         """When the SDK has not yet materialised the session DB the clear
         method must no-op AND a subsequent ``get_*`` must still return
         ``None`` — i.e. the method does not lazily create the file."""
@@ -123,7 +125,7 @@ class TestClear:
 
 
 class TestGetDetailedUsageMerges:
-    def test_running_snapshot_is_folded_into_total(self, sm):
+    def test_running_snapshot_is_folded_into_total(self, sm: SessionManager) -> None:
         """``get_detailed_usage`` must add the running row's cumulative
         counters to ``total`` so a status bar that reads ``total.total_tokens``
         sees the live progress, not just historical turns."""
@@ -166,7 +168,7 @@ class TestGetDetailedUsageMerges:
         assert detailed["total"]["requests"] == 1 + 2
         assert detailed["total"]["cached_tokens"] == 0 + 20
 
-    def test_running_absent_returns_none_running_field(self, sm):
+    def test_running_absent_returns_none_running_field(self, sm: SessionManager) -> None:
         session_id = "chat_session_iii"
         _bootstrap_session(sm, session_id)
         detailed = sm.get_detailed_usage(session_id)

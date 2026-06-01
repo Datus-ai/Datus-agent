@@ -202,6 +202,19 @@ class TokenUsageHook(RunHooks):
         for action in actions:
             if getattr(action, "role", None) == ActionRole.USER and getattr(action, "depth", 0) == 0:
                 count += 1
+        # The in-flight USER action still lives in the active manager (not yet
+        # flushed into ``self._node.actions``); count it so a mid-turn snapshot
+        # is persisted against the current turn rather than the previous one.
+        manager = getattr(self._node, "_current_action_history", None)
+        if manager is not None:
+            try:
+                if any(
+                    getattr(action, "role", None) == ActionRole.USER and getattr(action, "depth", 0) == 0
+                    for action in manager.get_actions()
+                ):
+                    count += 1
+            except Exception:  # noqa: BLE001
+                logger.debug("TokenUsageHook: failed to inspect current action history", exc_info=True)
         return max(count, 1)
 
     def _enqueue_action(

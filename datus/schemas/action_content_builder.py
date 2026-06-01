@@ -103,10 +103,12 @@ def build_token_usage_content(action: ActionHistory) -> Optional[List[MessageCon
         "last_call_input_tokens": _i(output, "last_call_input_tokens"),
         "context_length": _i(output, "context_length"),
         "delta": {
+            "requests": _i(delta, "requests"),
             "input_tokens": _i(delta, "input_tokens"),
             "output_tokens": _i(delta, "output_tokens"),
             "total_tokens": _i(delta, "total_tokens"),
             "cached_tokens": _i(delta, "cached_tokens"),
+            "reasoning_tokens": _i(delta, "reasoning_tokens"),
         },
     }
     return [MessageContent(type="usage", payload=payload)]

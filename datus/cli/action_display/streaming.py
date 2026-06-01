@@ -420,7 +420,14 @@ class InlineStreamingContext:
             self.display.renderer.print_renderables(
                 self.display.console, self.display.renderer.render_subagent_action(buffered, self._verbose)
             )
-        done_text = self.display.renderer.render_subagent_done(group["tool_count"], group["start_time"], end_action)
+        done_text = self.display.renderer.render_subagent_done(
+            group["tool_count"],
+            group["start_time"],
+            end_action,
+            token_input=int(group.get("token_input", 0) or 0),
+            token_output=int(group.get("token_output", 0) or 0),
+            token_cached=int(group.get("token_cached", 0) or 0),
+        )
         self.display.console.print(done_text)
 
     # -- context manager (async mode) --------------------------------------

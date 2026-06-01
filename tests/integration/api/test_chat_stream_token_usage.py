@@ -26,7 +26,6 @@ from agents.extensions.memory import AdvancedSQLiteSession
 
 from datus.agent.node.token_usage_hook import TokenUsageHook
 from datus.api.models.cli_models import (
-    SSEDataType,
     SSEEndData,
     SSEEvent,
     SSEUsageData,
@@ -147,6 +146,20 @@ async def test_three_llm_calls_emit_three_usage_events_aligned_with_end(session_
     assert delta_input == 1700
     assert delta_output == 450
 
+    # Each individual delta must match the expected per-call increment, not
+    # just sum to the cumulative total — a regression that reported all usage
+    # in the first event (or mis-attributed tokens across calls) would still
+    # pass the aggregate checks above but fail here.
+    expected_deltas = [
+        (600, 500, 100),  # Call 1: first call, full cumulative
+        (750, 600, 150),  # Call 2: 1350-600, 1100-500, 250-100
+        (800, 600, 200),  # Call 3: 2150-1350, 1700-1100, 450-250
+    ]
+    for idx, (exp_total, exp_input, exp_output) in enumerate(expected_deltas):
+        assert usage_events[idx].data.delta.total_tokens == exp_total
+        assert usage_events[idx].data.delta.input_tokens == exp_input
+        assert usage_events[idx].data.delta.output_tokens == exp_output
+
     # Each per-call delta must be non-negative — UI consumers display this
     # to the user and a negative delta would be confusing nonsense.
     assert all(ev.data.delta.total_tokens >= 0 for ev in usage_events)
@@ -204,7 +217,9 @@ async def test_usage_event_is_not_confused_with_message_event(session_manager):
     [action] = [a for a in actions if a.action_type == "token_usage"]
     event = action_to_sse_event(action, event_id=1, message_id=action.action_id)
     assert event.event == "usage"
-    assert not hasattr(event.data, "type") or not isinstance(getattr(event.data, "type", None), SSEDataType)
+    # Directly assert the expected type (mirrors the main test) rather than a
+    # double-negative on a ``type`` attribute that ``SSEUsageData`` never has.
+    assert isinstance(event.data, SSEUsageData)
 
 
 @pytest.mark.asyncio

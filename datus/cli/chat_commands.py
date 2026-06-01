@@ -45,6 +45,7 @@ def _noop_escape_guard():
 
 
 if TYPE_CHECKING:
+    from datus.agent.node.agentic_node import AgenticNode
     from datus.cli.repl import DatusCLI
 
 logger = get_logger(__name__)
@@ -180,7 +181,7 @@ class ChatCommands:
             logger.warning(f"Failed to copy session on agent switch, starting fresh: {e}")
             return None
 
-    def _create_new_node(self, subagent_name: str = None, session_id: Optional[str] = None):
+    def _create_new_node(self, subagent_name: Optional[str] = None, session_id: Optional[str] = None) -> "AgenticNode":
         """Create new node based on subagent_name and configuration.
 
         Delegates to the shared node factory for actual node creation.
@@ -201,7 +202,7 @@ class ChatCommands:
         self._attach_status_dirty_callback(node)
         return node
 
-    def _attach_status_dirty_callback(self, node) -> None:
+    def _attach_status_dirty_callback(self, node: "AgenticNode") -> None:
         """Wire ``TokenUsageHook`` mid-turn refreshes to ``DatusApp.invalidate``.
 
         The hook fires after every LLM call; without an explicit invalidate

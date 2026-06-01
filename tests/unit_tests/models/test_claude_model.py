@@ -8,6 +8,7 @@ Unit tests for datus/models/claude_model.py.
 CI-level: zero external dependencies. Anthropic client and all I/O mocked.
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1339,6 +1340,100 @@ class TestNativeTokenUsageStreaming:
 
         assert stored == [], "no durable usage row when the turn produced no final text"
         session.add_items.assert_not_awaited()
+
+
+class TestNativeTokenUsageHooks:
+    """The native loop drives token-usage hooks manually (no SDK Runner)."""
+
+    def test_iter_yields_bare_hook_and_composite_inner_hooks(self):
+        model = _make_claude_model(_make_model_config(use_native_api=True))
+        bare = MagicMock(spec=["emit_manual"])
+        assert list(model._iter_token_usage_hooks(bare)) == [bare]
+        assert list(model._iter_token_usage_hooks(None)) == []
+
+        # Composite: hooks_list with a mix of usage and non-usage hooks.
+        usage_hook = MagicMock(spec=["emit_manual", "on_start"])
+        other_hook = MagicMock(spec=["on_start"])  # no emit_manual → skipped
+        composite = SimpleNamespace(hooks_list=[usage_hook, other_hook])
+        assert list(model._iter_token_usage_hooks(composite)) == [usage_hook]
+
+    @pytest.mark.asyncio
+    async def test_reset_and_emit_drive_composite_inner_hooks(self):
+        model = _make_claude_model(_make_model_config(use_native_api=True))
+        usage_hook = MagicMock()
+        usage_hook.on_start = AsyncMock()
+        usage_hook.emit_manual = AsyncMock()
+        composite = SimpleNamespace(hooks_list=[usage_hook])
+
+        await model._reset_token_usage_hook(composite)
+        usage_hook.on_start.assert_awaited_once()
+
+        await model._emit_native_token_usage(composite, {"total_tokens": 42})
+        usage_hook.emit_manual.assert_awaited_once_with({"total_tokens": 42})
+
+    @pytest.mark.asyncio
+    async def test_emit_swallows_hook_failure(self):
+        model = _make_claude_model(_make_model_config(use_native_api=True))
+        bad = MagicMock()
+        bad.emit_manual = AsyncMock(side_effect=RuntimeError("boom"))
+        # Must not propagate — the native loop keeps running.
+        await model._emit_native_token_usage(bad, {"total_tokens": 1})
+
+
+class TestStoreNativeTurnUsage:
+    """Direct coverage of the durable-usage persistence helper used by the
+    native Anthropic loop."""
+
+    @pytest.mark.asyncio
+    async def test_noop_when_session_is_none(self):
+        model = _make_claude_model(_make_model_config(use_native_api=True))
+        # Must simply return without raising.
+        await model._store_native_turn_usage(None, {"total_tokens": 100})
+
+    @pytest.mark.asyncio
+    async def test_noop_when_session_lacks_store_run_usage(self):
+        model = _make_claude_model(_make_model_config(use_native_api=True))
+        await model._store_native_turn_usage(object(), {"total_tokens": 100})
+
+    @pytest.mark.asyncio
+    async def test_builds_usage_and_calls_store_run_usage(self):
+        model = _make_claude_model(_make_model_config(use_native_api=True))
+        stored = []
+
+        async def _store(result):
+            stored.append(result.context_wrapper.usage)
+
+        session = MagicMock()
+        session.store_run_usage = _store
+        await model._store_native_turn_usage(
+            session,
+            {
+                "requests": 3,
+                "input_tokens": 52499,
+                "output_tokens": 1932,
+                "total_tokens": 54431,
+                "cached_tokens": 37747,
+                "reasoning_tokens": 0,
+            },
+        )
+        assert len(stored) == 1
+        usage = stored[0]
+        assert usage.input_tokens == 52499
+        assert usage.output_tokens == 1932
+        assert usage.total_tokens == 54431
+        assert usage.input_tokens_details.cached_tokens == 37747
+
+    @pytest.mark.asyncio
+    async def test_swallows_store_run_usage_failure(self):
+        model = _make_claude_model(_make_model_config(use_native_api=True))
+
+        async def _boom(result):
+            raise RuntimeError("db down")
+
+        session = MagicMock()
+        session.store_run_usage = _boom
+        # The warning path must not propagate the exception.
+        await model._store_native_turn_usage(session, {"total_tokens": 100})
 
 
 class TestGenerateWithMcpWrapper:

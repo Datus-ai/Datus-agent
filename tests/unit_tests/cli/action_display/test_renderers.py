@@ -380,6 +380,26 @@ class TestRenderSubagentDone:
         assert "Done" in text
         assert "2 tool uses" in text
 
+    def test_done_appends_token_suffix_when_totals_present(self):
+        """Sync-path Done line carries the accumulated ↑input(cached) ↓output
+        suffix so it stays consistent with the collapsed / async paths."""
+        now = datetime.now()
+        end_action = _make_action(ActionRole.TOOL, ActionStatus.SUCCESS, end_time=now + timedelta(seconds=2))
+        text = (
+            _renderer()
+            .render_subagent_done(3, now, end_action, token_input=12603, token_output=2048, token_cached=8192)
+            .plain
+        )
+        assert "Done" in text
+        assert "↑12K(8.0K) ↓2.0K" in text
+
+    def test_done_omits_token_suffix_when_zero(self):
+        """No token text when nothing was recorded (default kwargs)."""
+        end_action = _make_action(ActionRole.TOOL, ActionStatus.SUCCESS, end_time=datetime.now())
+        text = _renderer().render_subagent_done(1, None, end_action).plain
+        assert "Done" in text
+        assert "↑" not in text
+
 
 # ── render_subagent_collapsed ────────────────────────────────────
 

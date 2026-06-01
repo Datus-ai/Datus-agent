@@ -1513,6 +1513,27 @@ class TestTokenUsageEvent:
         assert event.data.delta.total_tokens == 0
         assert event.data.context_length == 0
 
+    def test_non_numeric_fields_coerce_to_zero(self):
+        """Non-numeric ``context_length`` / ``last_call_input_tokens`` and a
+        non-numeric cumulative count must coerce to 0 instead of crashing the
+        converter."""
+        action = _make_action(
+            action_type="token_usage",
+            role=ActionRole.ASSISTANT,
+            status=ActionStatus.SUCCESS,
+            output={
+                "cumulative": {"input_tokens": "abc", "total_tokens": 1500},
+                "delta": {},
+                "context_length": "n/a",
+                "last_call_input_tokens": "oops",
+            },
+        )
+        event = _assert_sse_event(action_to_sse_event(action, event_id=7, message_id="m"))
+        assert event.data.context_length == 0
+        assert event.data.last_call_input_tokens == 0
+        assert event.data.input_tokens == 0  # "abc" coerced via _i
+        assert event.data.total_tokens == 1500
+
     def test_main_agent_usage_is_depth_zero(self):
         """Main-agent usage carries depth=0 and no parent — the marker the API
         consumer uses to treat it as the top-level usage meter."""

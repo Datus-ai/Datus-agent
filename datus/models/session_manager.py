@@ -10,7 +10,7 @@ import os
 import re
 import sqlite3
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -880,7 +880,13 @@ class SessionManager:
                     "INSERT OR REPLACE INTO running_turn_usage "
                     "(session_id, user_turn_number, cumulative_json, context_length, updated_at) "
                     "VALUES (?, ?, ?, ?, ?)",
-                    (session_id, int(user_turn_number or 0), payload, int(context_length or 0), datetime.utcnow()),
+                    (
+                        session_id,
+                        int(user_turn_number or 0),
+                        payload,
+                        int(context_length or 0),
+                        datetime.now(timezone.utc),
+                    ),
                 )
                 conn.commit()
         except sqlite3.OperationalError as exc:

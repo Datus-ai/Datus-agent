@@ -424,6 +424,20 @@ class TestStatusBarProviderTokens:
         assert state.cumulative_tokens == 4096
         assert state.cached_tokens == 0
 
+    def test_session_totals_zero_when_session_manager_is_none(self):
+        node = SimpleNamespace(
+            session_manager=None,
+            model=SimpleNamespace(model_config=SimpleNamespace(model="m")),
+            session_id="sess-x",
+            actions=[],
+            context_length=0,
+        )
+        state = StatusBarProvider(self._make_cli(node)).current_state()
+        assert state.input_tokens == 0
+        assert state.output_tokens == 0
+        assert state.cumulative_tokens == 0
+        assert state.cached_tokens == 0
+
     def test_cumulative_tokens_zero_without_session_id(self):
         node = SimpleNamespace(model=SimpleNamespace(), session_id=None, actions=[], context_length=0)
         state = StatusBarProvider(self._make_cli(node)).current_state()
@@ -465,6 +479,24 @@ class TestStatusBarProviderTokens:
         node = SimpleNamespace(model=None, session_id=None, actions=[], context_length=None)
         provider = StatusBarProvider(self._make_cli(node))
         state = provider.current_state()
+        assert state.context_used == 0
+        assert state.context_total == 0
+
+    def test_context_used_swallows_non_numeric_values(self):
+        """Non-numeric running snapshot / action usage must fall through the
+        ``except`` guards to 0 instead of crashing the status bar."""
+        running = SimpleNamespace(session_total_tokens=object(), context_length=object())
+        actions = [SimpleNamespace(output={"usage": {"last_call_input_tokens": object()}})]
+        node = SimpleNamespace(
+            model=None,
+            session_id=None,
+            actions=actions,
+            context_length=0,
+            running_turn_usage=running,
+            _restored_context_used=object(),
+            _restored_context_length=object(),
+        )
+        state = StatusBarProvider(self._make_cli(node)).current_state()
         assert state.context_used == 0
         assert state.context_total == 0
 

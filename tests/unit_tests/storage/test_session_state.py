@@ -131,6 +131,19 @@ class TestContextStateRoundTrip:
         assert (loaded.last_call_input_tokens, loaded.context_length) == expected
 
 
+class TestSaveSectionErrors:
+    def test_save_swallows_oserror(self, tmp_path):
+        """A write failure (e.g. parent path is a file, not a dir) must be
+        logged and swallowed — persistence never crashes the caller."""
+        blocker = tmp_path / "blocker"
+        blocker.write_text("i am a file", encoding="utf-8")
+        # ``state`` would have to live *under* a regular file → mkdir raises
+        # NotADirectoryError (an OSError), which save() must absorb.
+        path = blocker / "state" / "s.json"
+        ContextState(last_call_input_tokens=1, context_length=2).save(path)
+        assert not path.exists()
+
+
 class TestSectionsCoexist:
     """``plan_mode`` and ``context_state`` live in the same file and are
     written by different subsystems at different times — neither save may
@@ -166,6 +179,42 @@ class TestSectionsCoexist:
         ContextState(last_call_input_tokens=7, context_length=99).save(path)
         data = json.loads(path.read_text(encoding="utf-8"))
         assert set(data.keys()) == {"plan_mode", "context_state"}
+
+
+class TestContextStateClear:
+    """``ContextState.clear`` removes only the context-state mirror on session
+    reset, so a status bar reading after ``/clear`` no longer sees the previous
+    turn's occupancy."""
+
+    def test_clear_removes_context_state_section(self, tmp_path):
+        path = tmp_path / "state" / "s.json"
+        ContextState(last_call_input_tokens=42, context_length=1000).save(path)
+        ContextState.clear(path)
+        # The section is gone — a subsequent load returns defaults.
+        loaded = ContextState.load(path)
+        assert (loaded.last_call_input_tokens, loaded.context_length) == (0, 0)
+        assert "context_state" not in json.loads(path.read_text(encoding="utf-8"))
+
+    def test_clear_preserves_sibling_plan_mode_section(self, tmp_path):
+        path = tmp_path / "state" / "s.json"
+        PlanModeState(plan_mode_active=True, plan_file_path="p.md").save(path)
+        ContextState(last_call_input_tokens=7, context_length=99).save(path)
+        ContextState.clear(path)
+        plan = PlanModeState.load(path)
+        assert plan.plan_mode_active is True
+        assert plan.plan_file_path == "p.md"
+
+    def test_clear_is_noop_when_file_absent(self, tmp_path):
+        # Must not raise and must not create the file.
+        path = tmp_path / "never.json"
+        ContextState.clear(path)
+        assert not path.exists()
+
+    def test_clear_is_noop_when_section_absent(self, tmp_path):
+        path = tmp_path / "state" / "s.json"
+        PlanModeState(plan_mode_active=True).save(path)
+        ContextState.clear(path)  # context_state never written
+        assert PlanModeState.load(path).plan_mode_active is True
 
 
 class TestLegacyCompactSectionIgnored:
