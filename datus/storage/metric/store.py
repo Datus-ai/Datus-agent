@@ -521,13 +521,16 @@ class MetricRAG:
     def _selected_fields_with_provenance_id(
         self, selected_fields: Optional[List[str]]
     ) -> tuple[Optional[List[str]], bool]:
-        if not self._provenance_enabled or selected_fields is None or "id" in selected_fields:
+        if not getattr(self, "_provenance_enabled", False) or selected_fields is None or "id" in selected_fields:
             return selected_fields, False
         return [*selected_fields, "id"], True
 
     def _enrich_metric_results(
         self, results: List[Dict[str, Any]], strip_internal_id: bool = False
     ) -> List[Dict[str, Any]]:
+        if not getattr(self, "_provenance_enabled", False):
+            return results
+
         enriched = enrich_metric_results(self.agent_config, results)
         if not strip_internal_id:
             return enriched
