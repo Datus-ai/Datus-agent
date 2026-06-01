@@ -187,6 +187,9 @@ STATUS_BAR_STYLE: dict[str, str] = {
     # Pinned subagent header: plain cyan prefix, default colour goal.
     "subagent-header-live": "ansicyan",
     "subagent-header-goal-live": "",
+    # Live token counter appended to the pinned subagent header — muted so it
+    # reads as metadata next to the name/goal, not as primary content.
+    "subagent-header-tokens-live": LIVE_SECONDARY,
     # Output-pane mouse selection (software-painted, see
     # ``datus.cli.tui.selection.split_line_for_selection``). ``reverse``
     # flips fg/bg so the highlight tracks the terminal's native palette

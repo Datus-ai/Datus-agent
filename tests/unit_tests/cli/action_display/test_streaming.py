@@ -315,6 +315,84 @@ class TestSyncModeSubagentGroups:
 
 
 @pytest.mark.ci
+class TestSubagentTokenCounter:
+    """The pinned subagent header / collapsed Done line surface the subagent's
+    cumulative token total (+ cached) fed by depth>0 ``token_usage`` actions."""
+
+    def _ctx(self, actions=None):
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        display = ActionHistoryDisplay(console)
+        return InlineStreamingContext(actions or [], display, sync_mode=True)
+
+    def _usage_action(self, parent_id, total, cached):
+        return _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            depth=1,
+            action_type="token_usage",
+            output_data={"cumulative": {"total_tokens": total, "cached_tokens": cached}},
+            parent_action_id=parent_id,
+        )
+
+    def test_apply_subagent_usage_folds_totals(self):
+        group = {"token_total": 0, "token_cached": 0, "actions": []}
+        consumed = InlineStreamingContext._apply_subagent_usage(group, self._usage_action("g", 12603, 8192))
+        assert consumed is True
+        assert group["token_total"] == 12603
+        assert group["token_cached"] == 8192
+
+    def test_apply_subagent_usage_ignores_non_usage(self):
+        group = {"token_total": 5, "token_cached": 1}
+        action = _make_action(ActionRole.TOOL, ActionStatus.SUCCESS, depth=1, action_type="read_query")
+        assert InlineStreamingContext._apply_subagent_usage(group, action) is False
+        # Non-usage action must not perturb the counters.
+        assert group["token_total"] == 5
+        assert group["token_cached"] == 1
+
+    def test_usage_action_updates_group_without_buffering_a_row(self):
+        """A token_usage action must update the group's counters but never be
+        buffered into ``actions`` (which would draw a bogus tool row), and must
+        not bump the tool count."""
+        ctx = self._ctx()
+        gid = "call-1"
+        first = _make_action(
+            ActionRole.TOOL, ActionStatus.PROCESSING, action_id=gid, action_type="task", input_data={"type": "gen_sql"}
+        )
+        ctx._start_subagent_group_sync(first, gid)
+        ctx._update_subagent_display_sync(self._usage_action(gid, 9000, 4000), gid)
+        group = ctx._subagent_groups[gid]
+        assert group["token_total"] == 9000
+        assert group["token_cached"] == 4000
+        assert group["actions"] == []  # usage never buffered as a render row
+        assert group["tool_count"] == 0  # usage is not a tool
+
+    def test_header_segments_include_token_counter(self):
+        first = _make_action(
+            ActionRole.TOOL, ActionStatus.PROCESSING, action_id="g", action_type="task", input_data={"type": "gen_sql"}
+        )
+        segments = InlineStreamingContext._build_subagent_header_segments(first, token_total=12603, token_cached=8192)
+        joined = "".join(text for _style, text in segments)
+        assert "gen_sql" in joined
+        assert "12K" in joined
+        assert "(8.0K cached)" in joined
+
+    def test_header_segments_omit_counter_when_no_tokens(self):
+        first = _make_action(
+            ActionRole.TOOL, ActionStatus.PROCESSING, action_id="g", action_type="task", input_data={"type": "gen_sql"}
+        )
+        segments = InlineStreamingContext._build_subagent_header_segments(first)
+        joined = "".join(text for _style, text in segments)
+        assert "·" not in joined
+        assert "cached" not in joined
+
+    def test_token_suffix_formatting(self):
+        assert InlineStreamingContext._subagent_token_suffix(0, 0) == ""
+        assert InlineStreamingContext._subagent_token_suffix(2048, 0) == " · 2.0K"
+        assert InlineStreamingContext._subagent_token_suffix(12603, 8192) == " · 12K (8.0K cached)"
+
+
+@pytest.mark.ci
 class TestPathAGate:
     """Regression coverage for the task-PROCESSING anchor contract.
 

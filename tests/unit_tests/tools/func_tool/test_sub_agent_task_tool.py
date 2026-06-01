@@ -1064,8 +1064,12 @@ class TestInteractionBrokerPassthrough:
 
     @pytest.mark.asyncio
     async def test_with_broker_uses_execute_stream(self, task_tool):
-        """When broker is injected, _execute_node calls execute_stream (not _with_interactions)."""
+        """When broker is injected, _execute_node calls execute_stream (not
+        _with_interactions) so the injected broker is not dual-consumed — but it
+        wraps the call in the node's own ``action_bus.merge`` so hook-enqueued
+        actions (e.g. ``token_usage``) are still surfaced to the parent."""
         from datus.cli.execution_state import InteractionBroker
+        from datus.schemas.action_bus import ActionBus
 
         parent_broker = InteractionBroker()
         task_tool.set_interaction_broker(parent_broker)
@@ -1076,6 +1080,9 @@ class TestInteractionBrokerPassthrough:
         mock_action.output = {"sql": "SELECT 1", "response": "ok", "tokens_used": 10}
 
         mock_node = MagicMock()
+        # Real ActionBus so the merge path yields the primary stream (and would
+        # surface any bus.put() items).
+        mock_node.action_bus = ActionBus()
 
         async def mock_stream(ahm):
             yield mock_action
@@ -1090,6 +1097,51 @@ class TestInteractionBrokerPassthrough:
 
         assert result.success == 1
         assert result.result["sql"] == "SELECT 1"
+
+    @pytest.mark.asyncio
+    async def test_with_broker_surfaces_bus_enqueued_token_usage(self, task_tool):
+        """A sub-agent ``token_usage`` action delivered via ``action_bus.put``
+        (the TokenUsageHook path) must be forwarded to the parent ActionBus with
+        depth=1 — the regression that left the pinned-header counter at 0."""
+        from datus.cli.execution_state import InteractionBroker
+        from datus.schemas.action_bus import ActionBus
+
+        task_tool.set_interaction_broker(InteractionBroker())
+        parent_bus = ActionBus()
+        task_tool.set_action_bus(parent_bus)
+        forwarded: list = []
+        parent_bus.put = lambda action: forwarded.append(action)
+
+        final_action = Mock(spec=ActionHistory)
+        final_action.status = ActionStatus.SUCCESS
+        final_action.role = ActionRole.ASSISTANT
+        final_action.output = {"response": "ok", "tokens_used": 12603}
+
+        usage_action = Mock(spec=ActionHistory)
+        usage_action.status = ActionStatus.SUCCESS
+        usage_action.role = ActionRole.ASSISTANT
+        usage_action.action_type = "token_usage"
+        usage_action.output = {"cumulative": {"total_tokens": 12603, "cached_tokens": 8192}}
+
+        node_bus = ActionBus()
+        mock_node = MagicMock()
+        mock_node.action_bus = node_bus
+
+        async def mock_stream(ahm):
+            # Hook delivers token_usage via the node's bus mid-stream.
+            node_bus.put(usage_action)
+            yield final_action
+
+        mock_node.execute_stream = mock_stream
+
+        with patch.object(task_tool, "_create_node", return_value=mock_node):
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                await task_tool.task(type="gen_sql", prompt="test")
+
+        # The token_usage action reached the parent bus, tagged depth=1.
+        usage_forwarded = [a for a in forwarded if getattr(a, "action_type", None) == "token_usage"]
+        assert usage_forwarded, "sub-agent token_usage was not forwarded to the parent bus"
+        assert usage_forwarded[0].depth == 1
 
     @pytest.mark.asyncio
     async def test_without_broker_uses_execute_stream_with_interactions(self, task_tool):
@@ -1131,10 +1183,13 @@ class TestInteractionBrokerPassthrough:
 
         injected_broker = None
 
+        from datus.schemas.action_bus import ActionBus
+
         mock_node = MagicMock()
         mock_node.hooks = None
         mock_node.permission_hooks = None
         mock_node.plan_hooks = None
+        mock_node.action_bus = ActionBus()
 
         async def mock_stream(ahm):
             nonlocal injected_broker

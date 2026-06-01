@@ -16,14 +16,13 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, List, Tuple
 
+from datus.cli._render_utils import humanize_tokens as _humanize_tokens
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
     from datus.cli.repl import DatusCLI
 
 logger = get_logger(__name__)
-
-_TOKEN_UNIT = 1024  # 1K == 1024 tokens
 
 # Half-period of the running-indicator blink in seconds. The DatusApp
 # periodic invalidate runs at the same cadence so one full cycle (on → off →
@@ -41,27 +40,6 @@ def _running_blink_symbol(now: float | None = None) -> str:
     """
     t = time.monotonic() if now is None else now
     return "●" if int(t / _RUNNING_BLINK_HALF_PERIOD) % 2 == 0 else "○"
-
-
-def _humanize_tokens(n: int) -> str:
-    """Format a token count using K (1024) as the sole unit.
-
-    - 0 tokens renders as ``0K``
-    - sub-kilo values keep one decimal (e.g. ``0.5K``) so they remain visible
-    - values >= 10K render as rounded integers (e.g. ``54K``, ``1024K``)
-    """
-    if n is None:
-        return "0K"
-    try:
-        n = int(n)
-    except (TypeError, ValueError):
-        return "0K"
-    if n <= 0:
-        return "0K"
-    k = n / _TOKEN_UNIT
-    if k < 10:
-        return f"{k:.1f}K"
-    return f"{round(k)}K"
 
 
 @dataclass

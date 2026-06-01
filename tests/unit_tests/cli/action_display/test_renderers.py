@@ -410,6 +410,38 @@ class TestRenderSubagentCollapsed:
         assert "3 tool uses" in text
         assert "\u2713" in text
 
+    def test_collapsed_appends_token_totals(self):
+        """When token totals are provided, the Done line carries them, with the
+        cached clause only when caching happened."""
+        now = datetime.now()
+        first = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            depth=0,
+            action_type="task",
+            messages="task(gen_sql, revenue query)",
+            input_data={"type": "gen_sql", "prompt": "revenue query"},
+        )
+        end = _make_action(ActionRole.TOOL, ActionStatus.SUCCESS, end_time=now + timedelta(seconds=5))
+        text = _plain(_renderer().render_subagent_collapsed(first, 3, now, end, token_total=12603, token_cached=8192))
+        assert "12K" in text
+        assert "(8.0K cached)" in text
+
+    def test_collapsed_omits_cached_when_zero(self):
+        """No cached clause when cache_read is 0; no token text when total is 0."""
+        now = datetime.now()
+        first = _make_action(
+            ActionRole.TOOL, ActionStatus.PROCESSING, depth=0, action_type="task", input_data={"type": "gen_sql"}
+        )
+        end = _make_action(ActionRole.TOOL, ActionStatus.SUCCESS, end_time=now + timedelta(seconds=1))
+        with_total = _plain(_renderer().render_subagent_collapsed(first, 1, now, end, token_total=2048, token_cached=0))
+        assert "2.0K" in with_total
+        assert "cached" not in with_total
+        no_tokens = _plain(_renderer().render_subagent_collapsed(first, 1, now, end))
+        # Done line present but no token separator when nothing recorded.
+        assert "Done" in no_tokens
+        assert "K)" not in no_tokens and " \u00b7 0K" not in no_tokens
+
 
 # ── render_main_action ────────────────────────────────────────────
 

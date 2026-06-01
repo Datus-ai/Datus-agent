@@ -20,6 +20,7 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.text import Text
 
+from datus.cli._render_utils import humanize_tokens
 from datus.cli.cli_styles import ACTION_ROLE_COLOR_NAMES, CODE_THEME, render_user_scrollback_text
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
@@ -570,6 +571,8 @@ class ActionRenderer:
         tool_count: int,
         start_time: Optional[datetime],
         end_action: ActionHistory,
+        token_total: int = 0,
+        token_cached: int = 0,
     ) -> List[Text]:
         """Render a completed subagent group as collapsed: header + Done summary.
 
@@ -604,7 +607,12 @@ class ActionRenderer:
         if start_time:
             dur_sec = (end_time - start_time).total_seconds()
             dur_str = f" \u00b7 {dur_sec:.1f}s"
-        summary = f"  \u23bf  Done {status_mark} ({tool_count} tool uses{dur_str})"
+        token_suffix = ""
+        if token_total > 0:
+            token_suffix = f" \u00b7 {humanize_tokens(token_total)}"
+            if token_cached > 0:
+                token_suffix += f" ({humanize_tokens(token_cached)} cached)"
+        summary = f"  \u23bf  Done {status_mark} ({tool_count} tool uses{dur_str}){token_suffix}"
         return [Text.from_markup(header), Text.from_markup(f"[dim]{summary}[/dim]")]
 
     def render_subagent_response(self, action: ActionHistory) -> List[Text]:

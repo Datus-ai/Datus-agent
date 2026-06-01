@@ -19,6 +19,32 @@ from rich.table import Table
 
 from datus.cli.cli_styles import TABLE_HEADER_STYLE
 
+_TOKEN_UNIT = 1024  # 1K == 1024 tokens
+
+
+def humanize_tokens(n: int) -> str:
+    """Format a token count using K (1024) as the sole unit.
+
+    - 0 (or non-numeric) renders as ``0K``
+    - sub-kilo values keep one decimal (e.g. ``0.5K``) so they remain visible
+    - values >= 10K render as rounded integers (e.g. ``54K``, ``1024K``)
+
+    Shared by the bottom status bar and the pinned subagent header so both
+    surfaces format token counts identically.
+    """
+    if n is None:
+        return "0K"
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return "0K"
+    if n <= 0:
+        return "0K"
+    k = n / _TOKEN_UNIT
+    if k < 10:
+        return f"{k:.1f}K"
+    return f"{round(k)}K"
+
 
 def format_cell(value: Any, *, max_width: Optional[int] = None) -> str:
     """Convert a cell value to the string shown in a Rich Table cell.

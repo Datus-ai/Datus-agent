@@ -475,8 +475,14 @@ class ChatCommands:
                         async for action in action_stream:
                             # Token-usage updates drive the status bar / API
                             # ``usage`` events only; they carry no chat content
-                            # and must never render as a transcript line.
+                            # and must never render as a transcript line. Sub-agent
+                            # usage (depth>0) is the exception: route it to the
+                            # display so the pinned subagent header shows a live
+                            # token counter (the display consumes it into group
+                            # state, still without drawing a transcript line).
                             if action.action_type == "token_usage":
+                                if action.depth > 0:
+                                    incremental_actions.append(action)
                                 continue
                             # Streaming text deltas go to their own queue. Sub-agent
                             # deltas (depth > 0) are ignored here — they'd pollute
@@ -608,7 +614,12 @@ class ChatCommands:
                         async for action in action_stream:
                             # Token-usage updates feed the status bar / API
                             # ``usage`` events only — skip before any rendering.
+                            # Sub-agent usage (depth>0) is routed to the display
+                            # so the pinned subagent header's live token counter
+                            # updates; it is still never drawn as a transcript line.
                             if action.action_type == "token_usage":
+                                if action.depth > 0:
+                                    incremental_actions.append(action)
                                 continue
                             if action.role == ActionRole.INTERACTION:
                                 # In non-interactive mode, auto-submit default choice for

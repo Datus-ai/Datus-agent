@@ -782,10 +782,17 @@ class SubAgentTaskTool:
             final_output = None
 
             # When parent broker is injected, INTERACTION actions flow through the
-            # parent's broker.fetch() → parent merge → CLI.  We only need
-            # execute_stream() here; otherwise fall back to the full merge.
+            # parent's broker.fetch() → parent merge → CLI, so we must NOT consume
+            # the sub-agent's own broker (that would dual-consume the injected
+            # stream). We still merge the sub-agent's ``action_bus`` though: hook-
+            # enqueued actions — notably ``TokenUsageHook``'s per-call
+            # ``token_usage`` — are delivered via ``action_bus.put`` and would
+            # otherwise never be yielded by the bare ``execute_stream`` (which only
+            # surfaces ``_stream_once`` output). Without this merge the parent never
+            # sees the sub-agent's token usage and its pinned-header counter stays 0.
             if self._interaction_broker is not None:
-                stream = node.execute_stream(action_history_manager)
+                node.action_bus.reset()
+                stream = node.action_bus.merge(node.execute_stream(action_history_manager))
             else:
                 stream = node.execute_stream_with_interactions(action_history_manager)
 
