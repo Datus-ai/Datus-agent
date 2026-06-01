@@ -54,7 +54,9 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install -r requirements-test.txt
-          pip install --upgrade --no-cache-dir datus-semantic-metricflow
+          pip install --upgrade --no-cache-dir \
+            "datus-metricflow @ https://github.com/stukid/metricflow/archive/95fe9271d2fbe1e12797595b2d841c84c1ce6f3d.tar.gz" \
+            "datus-semantic-metricflow @ https://github.com/stukid/datus-semantic-adapter/archive/002b93e39b906f42ecf9bc513ace3c1594139462.tar.gz#subdirectory=datus-semantic-metricflow"
           pip install packaging==26.2
 
       - name: Check release metadata
