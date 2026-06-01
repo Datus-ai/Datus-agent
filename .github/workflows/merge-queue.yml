@@ -54,7 +54,7 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install -r requirements-test.txt
-          pip install --upgrade --no-cache-dir datus-semantic-metricflow==0.2.2
+          pip install --upgrade --no-cache-dir datus-semantic-metricflow
           pip install packaging==26.2
 
       - name: Check release metadata

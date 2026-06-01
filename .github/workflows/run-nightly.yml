@@ -120,11 +120,13 @@ jobs:
           uv pip install --upgrade --no-cache-dir \
             --reinstall-package datus-semantic-core \
             --reinstall-package datus-semantic-metricflow \
+            --reinstall-package datus-snowflake \
             pytest-playwright \
             ./external/datus-semantic-adapter/datus-semantic-core \
             ./external/datus-semantic-adapter/datus-semantic-metricflow \
             ./external/datus-db-adapters/datus-db-core \
             ./external/datus-db-adapters/datus-sqlalchemy \
+            ./external/datus-db-adapters/datus-snowflake \
             ./external/datus-db-adapters/datus-postgresql \
             ./external/datus-db-adapters/datus-mysql \
             ./external/datus-db-adapters/datus-clickhouse \
