@@ -46,6 +46,21 @@ def humanize_tokens(n: int) -> str:
     return f"{round(k)}K"
 
 
+def format_io_tokens(input_tokens: int, output_tokens: int, input_cached: int = 0) -> str:
+    """Render token usage split as ``↑{input}({input_cached}) ↓{output}``.
+
+    ``input_tokens`` already includes cached input; ``input_cached`` is the
+    portion served from cache and is only appended in parentheses when > 0
+    (so an uncached call reads ``↑12K ↓2.5K``, not ``↑12K(0K) ↓2.5K``).
+    Shared by the bottom status bar and the pinned subagent header so both
+    surfaces format identically.
+    """
+    up = f"↑{humanize_tokens(input_tokens)}"
+    if input_cached > 0:
+        up += f"({humanize_tokens(input_cached)})"
+    return f"{up} ↓{humanize_tokens(output_tokens)}"
+
+
 def format_cell(value: Any, *, max_width: Optional[int] = None) -> str:
     """Convert a cell value to the string shown in a Rich Table cell.
 

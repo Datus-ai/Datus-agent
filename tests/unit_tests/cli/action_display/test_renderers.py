@@ -411,8 +411,8 @@ class TestRenderSubagentCollapsed:
         assert "\u2713" in text
 
     def test_collapsed_appends_token_totals(self):
-        """When token totals are provided, the Done line carries them, with the
-        cached clause only when caching happened."""
+        """When token totals are provided, the Done line carries the input/output
+        split, with the cached parenthetical only when caching happened."""
         now = datetime.now()
         first = _make_action(
             ActionRole.TOOL,
@@ -423,24 +423,30 @@ class TestRenderSubagentCollapsed:
             input_data={"type": "gen_sql", "prompt": "revenue query"},
         )
         end = _make_action(ActionRole.TOOL, ActionStatus.SUCCESS, end_time=now + timedelta(seconds=5))
-        text = _plain(_renderer().render_subagent_collapsed(first, 3, now, end, token_total=12603, token_cached=8192))
-        assert "12K" in text
-        assert "(8.0K cached)" in text
+        text = _plain(
+            _renderer().render_subagent_collapsed(
+                first, 3, now, end, token_input=12603, token_output=2048, token_cached=8192
+            )
+        )
+        assert "\u219112K(8.0K) \u21932.0K" in text
 
     def test_collapsed_omits_cached_when_zero(self):
-        """No cached clause when cache_read is 0; no token text when total is 0."""
+        """No cached parens when cache_read is 0; no token text when nothing recorded."""
         now = datetime.now()
         first = _make_action(
             ActionRole.TOOL, ActionStatus.PROCESSING, depth=0, action_type="task", input_data={"type": "gen_sql"}
         )
         end = _make_action(ActionRole.TOOL, ActionStatus.SUCCESS, end_time=now + timedelta(seconds=1))
-        with_total = _plain(_renderer().render_subagent_collapsed(first, 1, now, end, token_total=2048, token_cached=0))
-        assert "2.0K" in with_total
-        assert "cached" not in with_total
+        with_tokens = _plain(
+            _renderer().render_subagent_collapsed(
+                first, 1, now, end, token_input=2048, token_output=512, token_cached=0
+            )
+        )
+        assert "\u21912.0K \u21930.5K" in with_tokens
+        assert "(" not in with_tokens.split("\u2191")[1]  # no cached parens on the input segment
         no_tokens = _plain(_renderer().render_subagent_collapsed(first, 1, now, end))
-        # Done line present but no token separator when nothing recorded.
         assert "Done" in no_tokens
-        assert "K)" not in no_tokens and " \u00b7 0K" not in no_tokens
+        assert "\u2191" not in no_tokens
 
 
 # ── render_main_action ────────────────────────────────────────────

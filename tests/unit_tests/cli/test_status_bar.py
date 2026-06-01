@@ -50,7 +50,8 @@ class TestStatusBarState:
         state = StatusBarState(
             agent="chat",
             model="claude-sonnet-4-6",
-            cumulative_tokens=12_288,  # 12K exactly
+            input_tokens=12_288,  # 12K exactly
+            output_tokens=2_048,  # 2K exactly
             context_used=55_296,  # 54K exactly
             context_total=1_048_576,  # 1024K exactly
         )
@@ -58,7 +59,7 @@ class TestStatusBarState:
         assert "Datus" in text
         assert "chat" in text
         assert "claude-sonnet-4-6" in text
-        assert "12K" in text
+        assert "↑12K ↓2.0K" in text
         assert "54K/1024K 5%" in text
         assert " │ " in text
         # Labels must be gone — only values remain
@@ -75,15 +76,15 @@ class TestStatusBarState:
         assert "0K" in text
         assert "0K/0K 0%" in text
 
-    def test_tokens_display_includes_cached_suffix(self):
-        state = StatusBarState(cumulative_tokens=28_672, cached_tokens=20_480)
-        assert state.tokens_display() == "28K(20K cached)"
-        assert "28K(20K cached)" in state.format_plain()
+    def test_tokens_display_splits_input_output_with_cached(self):
+        state = StatusBarState(input_tokens=28_672, output_tokens=2_048, cached_tokens=20_480)
+        assert state.tokens_display() == "↑28K(20K) ↓2.0K"
+        assert "↑28K(20K) ↓2.0K" in state.format_plain()
 
-    def test_tokens_display_without_cache(self):
-        state = StatusBarState(cumulative_tokens=28_672, cached_tokens=0)
-        assert state.tokens_display() == "28K"
-        assert "cached" not in state.format_plain()
+    def test_tokens_display_omits_cached_parens_when_zero(self):
+        state = StatusBarState(input_tokens=28_672, output_tokens=2_048, cached_tokens=0)
+        assert state.tokens_display() == "↑28K ↓2.0K"
+        assert "(" not in state.tokens_display()
 
     def test_format_plain_includes_plan_marker_when_active(self):
         state = StatusBarState(plan_mode=True, agent="chat")
@@ -388,7 +389,9 @@ class TestStatusBarProviderTokens:
 
     def test_cumulative_and_cached_tokens_read_from_session_manager(self):
         session_manager = MagicMock()
-        session_manager.get_detailed_usage.return_value = {"total": {"total_tokens": 98_765, "cached_tokens": 20_480}}
+        session_manager.get_detailed_usage.return_value = {
+            "total": {"total_tokens": 98_765, "cached_tokens": 20_480, "input_tokens": 90_000, "output_tokens": 8_765}
+        }
         # session_manager is now owned by AgenticNode (not the model). The
         # status bar reads it directly off the node.
         node = SimpleNamespace(
@@ -401,6 +404,10 @@ class TestStatusBarProviderTokens:
         state = StatusBarProvider(self._make_cli(node)).current_state()
         assert state.cumulative_tokens == 98_765
         assert state.cached_tokens == 20_480
+        assert state.input_tokens == 90_000
+        assert state.output_tokens == 8_765
+        # Rendered split: input (with cached) ↑, output ↓.
+        assert state.tokens_display() == "↑88K(20K) ↓8.6K"
         session_manager.get_detailed_usage.assert_called_once_with("sess-1")
 
     def test_cached_tokens_zero_when_missing_from_totals(self):

@@ -16,6 +16,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, List, Tuple
 
+from datus.cli._render_utils import format_io_tokens
 from datus.cli._render_utils import humanize_tokens as _humanize_tokens
 from datus.utils.loggings import get_logger
 
@@ -51,6 +52,8 @@ class StatusBarState:
     connector: str = ""
     cumulative_tokens: int = 0
     cached_tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
     context_used: int = 0
     context_total: int = 0
     plan_mode: bool = False
@@ -65,10 +68,8 @@ class StatusBarState:
         return "0K/0K 0%"
 
     def tokens_display(self) -> str:
-        base = _humanize_tokens(self.cumulative_tokens)
-        if self.cached_tokens > 0:
-            return f"{base}({_humanize_tokens(self.cached_tokens)} cached)"
-        return base
+        """Cumulative session tokens split as ``↑{input}({cached}) ↓{output}``."""
+        return format_io_tokens(self.input_tokens, self.output_tokens, self.cached_tokens)
 
     def format_plain(self) -> str:
         """Render the status bar as a plain string (used for tests and logs)."""
@@ -152,7 +153,7 @@ class StatusBarProvider:
         self._cli = cli
 
     def current_state(self) -> StatusBarState:
-        cumulative, cached = self._resolve_session_totals()
+        input_tokens, output_tokens, cached, total = self._resolve_session_totals()
         tui_app = getattr(self._cli, "tui_app", None)
         agent_running = False
         if tui_app is not None:
@@ -171,8 +172,10 @@ class StatusBarProvider:
             agent=self._resolve_agent(),
             model=self._resolve_model(),
             connector=self._resolve_connector(),
-            cumulative_tokens=cumulative,
+            cumulative_tokens=total,
             cached_tokens=cached,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             context_used=self._resolve_context_used(),
             context_total=self._resolve_context_total(),
             plan_mode=self._resolve_plan_mode(),
@@ -318,28 +321,37 @@ class StatusBarProvider:
             return f"{db_type}: {db_name}"
         return str(db_name)
 
-    def _resolve_session_totals(self) -> Tuple[int, int]:
-        """Return ``(cumulative_total_tokens, cumulative_cached_tokens)``."""
+    def _resolve_session_totals(self) -> Tuple[int, int, int, int]:
+        """Return ``(input_tokens, output_tokens, cached_tokens, total_tokens)``.
+
+        ``cached_tokens`` is the cached portion of the input; ``total_tokens``
+        is kept for the cumulative segment / API parity.
+        """
         node = self._current_node()
         if node is None:
-            return 0, 0
+            return 0, 0, 0, 0
         session_id = getattr(node, "session_id", None)
         if not session_id:
-            return 0, 0
+            return 0, 0, 0, 0
         try:
             session_manager = node.session_manager
         except Exception as e:
             logger.debug(f"status_bar: session_manager unavailable: {e}")
-            return 0, 0
+            return 0, 0, 0, 0
         if session_manager is None:
-            return 0, 0
+            return 0, 0, 0, 0
         try:
             usage = session_manager.get_detailed_usage(session_id)
             total = usage.get("total", {}) if isinstance(usage, dict) else {}
-            return int(total.get("total_tokens", 0) or 0), int(total.get("cached_tokens", 0) or 0)
+            return (
+                int(total.get("input_tokens", 0) or 0),
+                int(total.get("output_tokens", 0) or 0),
+                int(total.get("cached_tokens", 0) or 0),
+                int(total.get("total_tokens", 0) or 0),
+            )
         except Exception as e:
             logger.debug(f"status_bar: get_detailed_usage failed: {e}")
-            return 0, 0
+            return 0, 0, 0, 0
 
     def _resolve_context_used(self) -> int:
         node = self._current_node()
