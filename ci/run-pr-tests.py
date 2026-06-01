@@ -176,6 +176,32 @@ def _dedupe_preserve(items: list[str]) -> list[str]:
     return ordered
 
 
+def _is_target_under_dir(target: str, parent_dir: str) -> bool:
+    child = _normalize_path(target).rstrip("/")
+    parent = _normalize_path(parent_dir).rstrip("/")
+    return bool(parent and child != parent and child.startswith(f"{parent}/"))
+
+
+def _collapse_contained_test_targets(targets: list[str]) -> list[str]:
+    """Drop explicit child targets when a parent directory target already covers them.
+
+    Passing both a test directory and files under that directory to pytest can
+    unexpectedly narrow collection to the explicit children. Keep the broadest
+    target so impacted-suite coverage matches the source-to-test mapping.
+    """
+    deduped = _dedupe_preserve(targets)
+    parent_dirs = [target for target in deduped if target.endswith("/")]
+    if not parent_dirs:
+        return deduped
+
+    collapsed: list[str] = []
+    for target in deduped:
+        if any(_is_target_under_dir(target, parent_dir) for parent_dir in parent_dirs):
+            continue
+        collapsed.append(target)
+    return collapsed
+
+
 def _remove_output_path(path: str) -> None:
     if os.path.isdir(path):
         shutil.rmtree(path, ignore_errors=True)
@@ -409,7 +435,7 @@ def select_impacted_unit_tests(changed_files: list[str]) -> list[str]:
                 impacted.append(test_target)
                 break
 
-    return _dedupe_preserve(impacted)
+    return _collapse_contained_test_targets(impacted)
 
 
 def _filter_existing_paths(paths: list[str]) -> list[str]:
@@ -426,7 +452,7 @@ def _filter_existing_paths(paths: list[str]) -> list[str]:
                 existing.append(path)
         elif os.path.exists(path):
             existing.append(path)
-    return existing
+    return _collapse_contained_test_targets(existing)
 
 
 def _git_ref_exists(ref: str) -> bool:

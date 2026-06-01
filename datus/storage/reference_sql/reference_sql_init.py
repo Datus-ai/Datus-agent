@@ -12,6 +12,13 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistoryManager, ActionStatus
 from datus.schemas.batch_events import BatchEventEmitter, BatchEventHelper
 from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput
+from datus.storage.knowledge_provenance import (
+    REFERENCE_SQL_ARTIFACT_TYPE,
+    KnowledgeProvenanceStore,
+    build_reference_sql_provenance_rows,
+    is_knowledge_provenance_enabled,
+    reference_sql_artifact_ids_for_items,
+)
 from datus.storage.reference_sql.init_utils import exists_reference_sql, gen_reference_sql_id
 from datus.storage.reference_sql.sql_file_processor import process_sql_files
 from datus.storage.reference_sql.store import ReferenceSqlRAG
@@ -22,6 +29,30 @@ from datus.utils.terminal_utils import suppress_keyboard_input
 logger = get_logger(__name__)
 
 BIZ_NAME = "reference_sql_init"
+
+
+def _sync_reference_sql_provenance(agent_config: AgentConfig, items: list[Dict[str, Any]]) -> int:
+    if not items or not is_knowledge_provenance_enabled(agent_config):
+        return 0
+
+    artifact_ids = reference_sql_artifact_ids_for_items(items)
+    if not artifact_ids:
+        return 0
+
+    rows = build_reference_sql_provenance_rows(items)
+    try:
+        written = KnowledgeProvenanceStore(agent_config).replace_for_artifact_ids(
+            REFERENCE_SQL_ARTIFACT_TYPE, artifact_ids, rows
+        )
+        logger.info(
+            "Synced %d reference SQL provenance row(s) for %d reference SQL artifact(s)",
+            written,
+            len(artifact_ids),
+        )
+        return written
+    except Exception as exc:
+        logger.warning("Failed to sync reference SQL provenance sidecar: %s", exc)
+        return 0
 
 
 def _action_status_value(action: Any) -> Optional[str]:
@@ -392,6 +423,8 @@ async def init_reference_sql_async(
         logger.info("No new items to process in incremental mode")
         process_items = []
 
+    provenance_entries = _sync_reference_sql_provenance(global_config, process_items)
+
     # Emit task completed
     event_helper.task_completed(
         total_items=len(items_to_process) if items_to_process else 0,
@@ -410,6 +443,7 @@ async def init_reference_sql_async(
         "processed_items": process_items,
         "invalid_entries": len(invalid_items) if invalid_items else 0,
         "total_stored_entries": storage.get_reference_sql_size(),
+        "provenance_entries": provenance_entries,
         "validation_errors": "\n".join(validate_errors) if validate_errors else None,
         "process_errors": "\n".join(process_errors) if process_errors else None,
     }

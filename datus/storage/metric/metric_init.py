@@ -3,7 +3,9 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import asyncio
+import json
 import os
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 import pandas as pd
@@ -18,6 +20,12 @@ from datus.schemas.action_history import (
 )
 from datus.schemas.batch_events import BatchEventEmitter, BatchEventHelper
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+from datus.storage.knowledge_provenance import (
+    METRIC_ARTIFACT_TYPE,
+    KnowledgeProvenanceStore,
+    build_metric_provenance_rows,
+    is_knowledge_provenance_enabled,
+)
 from datus.storage.semantic_model.auto_create import ensure_semantic_models_exist, extract_tables_from_sql_list
 from datus.utils.loggings import get_logger
 from datus.utils.terminal_utils import suppress_keyboard_input
@@ -32,6 +40,149 @@ def _action_status_value(action: Any) -> Optional[str]:
     if status is None:
         return None
     return status.value if hasattr(status, "value") else str(status)
+
+
+def _clean_cell(value: Any) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip()
+
+
+def _parse_context_ids(value: Any) -> list[str]:
+    text = _clean_cell(value)
+    if not text:
+        return []
+    parts = [part.strip() for part in text.replace(",", ";").split(";")]
+    return [part for part in parts if part]
+
+
+def _parse_source_metadata(value: Any) -> dict[str, Any]:
+    text = _clean_cell(value)
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return {"raw": text}
+    return parsed if isinstance(parsed, dict) else {"raw": text}
+
+
+def _source_provenance_from_row(row: Any, row_index: int, success_story: str) -> Optional[dict[str, Any]]:
+    context_ids: list[str] = []
+    for column in ("source_context_ids", "source_context_id", "context_ids", "context_id"):
+        context_ids.extend(_parse_context_ids(row.get(column)))
+    context_ids = list(dict.fromkeys(context_ids))
+    if not context_ids:
+        return None
+
+    metadata = _parse_source_metadata(row.get("source_metadata"))
+    source_id = _clean_cell(row.get("source_id")) or f"{Path(success_story).name}:{row_index}"
+    source_type = _clean_cell(row.get("source_type")) or "success_story"
+    metadata.setdefault("source_id", source_id)
+    metadata.setdefault("source_type", source_type)
+    metadata.setdefault("row_index", row_index)
+    question = _clean_cell(row.get("question"))
+    if question:
+        metadata.setdefault("question", question)
+    task_id = _clean_cell(row.get("task_id"))
+    if task_id:
+        metadata.setdefault("task_id", task_id)
+
+    return {
+        "source_id": source_id,
+        "source_type": source_type,
+        "source_context_ids": context_ids,
+        "source_metadata": metadata,
+    }
+
+
+def _extract_metric_artifact_ids(payload: Any) -> list[str]:
+    ids: list[str] = []
+
+    def add(value: Any) -> None:
+        if value is None:
+            return
+        values = value if isinstance(value, (list, tuple, set)) else [value]
+        for item in values:
+            text = str(item).strip()
+            if text and text not in ids:
+                ids.append(text)
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            add(value.get("metric_artifact_ids"))
+            add(value.get("_synced_metric_artifact_ids"))
+            for nested_key in ("result", "sync", "execution_stats", "metric_sync"):
+                if nested_key in value:
+                    visit(value[nested_key])
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                visit(item)
+
+    visit(payload)
+    return ids
+
+
+def _metric_ids_in_storage(agent_config: AgentConfig) -> set[str]:
+    try:
+        from datus.storage.metric.store import MetricRAG
+
+        return {
+            str(row["id"]) for row in MetricRAG(agent_config).search_all_metrics(select_fields=["id"]) if row.get("id")
+        }
+    except Exception as exc:  # pragma: no cover - defensive fallback for storage readiness issues
+        logger.debug("Failed to snapshot metric IDs for provenance fallback: %s", exc)
+        return set()
+
+
+def _clear_metric_provenance(agent_config: AgentConfig) -> int:
+    if not is_knowledge_provenance_enabled(agent_config):
+        return 0
+    try:
+        return KnowledgeProvenanceStore(agent_config).delete_for_artifact_type(METRIC_ARTIFACT_TYPE)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Failed to clear metric provenance sidecar: %s", exc)
+        return 0
+
+
+def _sync_metric_provenance(
+    agent_config: AgentConfig,
+    metric_artifact_ids: list[str],
+    source_entries: list[dict[str, Any]],
+) -> int:
+    if not metric_artifact_ids or not source_entries or not is_knowledge_provenance_enabled(agent_config):
+        return 0
+    if len(source_entries) != 1:
+        logger.warning(
+            "Skipping metric provenance sync because source-to-metric attribution is ambiguous for %d source row(s)",
+            len(source_entries),
+        )
+        return 0
+
+    source = source_entries[0]
+    items: list[dict[str, Any]] = []
+    for artifact_id in metric_artifact_ids:
+        items.append({"id": artifact_id, **source})
+    rows = build_metric_provenance_rows(items)
+    if not rows:
+        return 0
+
+    try:
+        written = KnowledgeProvenanceStore(agent_config).upsert_many(rows)
+        logger.info(
+            "Synced %d metric provenance row(s) for %d metric artifact(s)",
+            written,
+            len(metric_artifact_ids),
+        )
+        return written
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Failed to sync metric provenance sidecar: %s", exc)
+        return 0
 
 
 DEFAULT_METRICS_BATCH_SIZE = 1
@@ -80,6 +231,7 @@ async def _generate_metrics_batch(
     try:
         final_result = None
         terminal_error = None
+        synced_metric_artifact_ids: list[str] = []
         async for action in metrics_node.execute_stream(action_history_manager):
             if action_callback is not None:
                 try:
@@ -95,6 +247,9 @@ async def _generate_metrics_batch(
                     output=action.output,
                 )
             action_type = getattr(action, "action_type", "")
+            for artifact_id in _extract_metric_artifact_ids(getattr(action, "output", None)):
+                if artifact_id not in synced_metric_artifact_ids:
+                    synced_metric_artifact_ids.append(artifact_id)
             if action.status == ActionStatus.FAILED and action_type == "error":
                 terminal_error = action.messages or "Metrics extraction failed"
                 logger.error(terminal_error)
@@ -110,6 +265,8 @@ async def _generate_metrics_batch(
             return False, terminal_error, None
         if final_result is None:
             return False, "Metrics extraction completed but produced no output", None
+        if isinstance(final_result, dict) and synced_metric_artifact_ids:
+            final_result["_synced_metric_artifact_ids"] = synced_metric_artifact_ids
         return True, "", final_result
     except Exception as e:
         logger.error(f"Error in metrics extraction (batch {batch_idx}): {e}")
@@ -163,6 +320,9 @@ async def init_success_story_metrics_async(
             agent_config.project_name,
         )
         MetricRAG(agent_config).truncate()
+        cleared_provenance = _clear_metric_provenance(agent_config)
+        if cleared_provenance:
+            logger.info("Cleared %d stale metric provenance row(s)", cleared_provenance)
     elif build_mode == "incremental":
         from datus.storage.metric.init_utils import exists_metrics
         from datus.storage.metric.store import MetricRAG
@@ -206,15 +366,21 @@ async def init_success_story_metrics_async(
         if error:
             logger.warning(f"Semantic model generation had partial failures: {error}")
 
-    # Build query strings for all rows
-    all_query_strings = []
+    # Build query records for all rows. Optional source-context columns are only
+    # used by benchmark provenance mode and do not affect normal bootstrap data.
+    all_query_records: list[dict[str, Any]] = []
     for idx, row in df.iterrows():
         sql = row["sql"]
         question = row["question"]
-        all_query_strings.append(f"Query {idx + 1}:\nQuestion: {question}\nSQL:\n{sql}")
+        all_query_records.append(
+            {
+                "query": f"Query {idx + 1}:\nQuestion: {question}\nSQL:\n{sql}",
+                "source": _source_provenance_from_row(row, idx, success_story),
+            }
+        )
 
     # Split into batches
-    batches = [all_query_strings[i : i + batch_size] for i in range(0, len(all_query_strings), batch_size)]
+    batches = [all_query_records[i : i + batch_size] for i in range(0, len(all_query_records), batch_size)]
     total_batches = len(batches)
 
     logger.info(
@@ -226,8 +392,13 @@ async def init_success_story_metrics_async(
     completed_batches = 0
     failed_batches: list[tuple[int, str]] = []
     merged_result: Optional[dict[str, Any]] = None
+    provenance_entries = 0
 
-    for batch_idx, batch_queries in enumerate(batches):
+    for batch_idx, batch_records in enumerate(batches):
+        batch_queries = [record["query"] for record in batch_records]
+        source_entries = [record["source"] for record in batch_records if record.get("source")]
+        metric_ids_before = _metric_ids_in_storage(agent_config) if source_entries else set()
+
         logger.info(f"Processing batch {batch_idx + 1}/{total_batches} ({len(batch_queries)} queries)")
 
         success, error, batch_result = await _generate_metrics_batch(
@@ -242,12 +413,24 @@ async def init_success_story_metrics_async(
 
         if success and batch_result is not None:
             completed_batches += 1
+            metric_artifact_ids = _extract_metric_artifact_ids(batch_result)
+            if source_entries and not metric_artifact_ids:
+                metric_artifact_ids = sorted(_metric_ids_in_storage(agent_config) - metric_ids_before)
+            batch_provenance_entries = _sync_metric_provenance(agent_config, metric_artifact_ids, source_entries)
+            provenance_entries += batch_provenance_entries
+            if isinstance(batch_result, dict) and batch_provenance_entries:
+                batch_result["provenance_entries"] = (
+                    batch_result.get("provenance_entries", 0) + batch_provenance_entries
+                )
+
             if merged_result is None:
                 merged_result = batch_result
             elif isinstance(merged_result, dict) and isinstance(batch_result, dict):
                 for key, value in batch_result.items():
                     if key in merged_result and isinstance(merged_result[key], list) and isinstance(value, list):
                         merged_result[key].extend(value)
+                    elif key in merged_result and isinstance(merged_result[key], int) and isinstance(value, int):
+                        merged_result[key] += value
                     elif key not in merged_result:
                         merged_result[key] = value
             logger.info(f"Batch {batch_idx + 1}/{total_batches} completed successfully")
@@ -266,6 +449,9 @@ async def init_success_story_metrics_async(
     if failed_batches:
         partial_error = "; ".join(f"batch {i + 1}: {e}" for i, e in failed_batches)
         logger.warning(f"Metrics extraction partially succeeded: {partial_error}")
+
+    if isinstance(merged_result, dict) and provenance_entries:
+        merged_result["provenance_entries"] = provenance_entries
 
     logger.info(f"Metrics extraction completed: {completed_batches}/{total_batches} batch(es) succeeded")
     event_helper.task_completed(

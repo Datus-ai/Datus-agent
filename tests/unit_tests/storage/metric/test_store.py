@@ -655,3 +655,64 @@ class TestSyncYamlSubjectTreeForSubtree:
 
         # Should not raise
         metric_storage.sync_yaml_subject_tree_for_subtree(node["node_id"])
+
+
+# ---------------------------------------------------------------------------
+# MetricRAG provenance enrichment
+# ---------------------------------------------------------------------------
+
+
+class TestMetricRAGProvenance:
+    def _rag(self, tmp_path, enabled=True):
+        from types import SimpleNamespace
+
+        from datus.storage.metric.store import MetricRAG
+
+        config = SimpleNamespace(
+            knowledge_base={"provenance": {"enabled": enabled}},
+            path_manager=SimpleNamespace(project_data_dir=tmp_path),
+        )
+        rag = MetricRAG.__new__(MetricRAG)
+        rag.agent_config = config
+        rag._provenance_enabled = enabled
+        return rag, config
+
+    def test_selected_fields_adds_internal_id_only_when_needed(self, tmp_path):
+        rag, _ = self._rag(tmp_path, enabled=True)
+
+        assert rag._selected_fields_with_provenance_id(None) == (None, False)
+        assert rag._selected_fields_with_provenance_id(["name", "id"]) == (["name", "id"], False)
+        assert rag._selected_fields_with_provenance_id(["name"]) == (["name", "id"], True)
+
+        disabled, _ = self._rag(tmp_path, enabled=False)
+        assert disabled._selected_fields_with_provenance_id(["name"]) == (["name"], False)
+
+    def test_enrich_metric_results_adds_provenance_and_strips_internal_id(self, tmp_path):
+        from datus.storage.knowledge_provenance import KnowledgeProvenanceStore, build_metric_provenance_rows
+
+        rag, config = self._rag(tmp_path, enabled=True)
+        KnowledgeProvenanceStore(config).upsert_many(
+            build_metric_provenance_rows(
+                [
+                    {
+                        "id": "metric:Sales.activity_count",
+                        "source_id": "seed_context.csv:0",
+                        "source_context_id": "metric:seed:0",
+                    }
+                ]
+            )
+        )
+
+        result = rag._enrich_metric_results(
+            [{"id": "metric:Sales.activity_count", "name": "activity_count"}],
+            strip_internal_id=True,
+        )
+
+        assert result == [
+            {
+                "name": "activity_count",
+                "source_ids": ["seed_context.csv:0"],
+                "source_context_ids": ["metric:seed:0"],
+                "source_metadata": [],
+            }
+        ]

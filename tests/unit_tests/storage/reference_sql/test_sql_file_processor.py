@@ -8,6 +8,7 @@ import pytest
 
 from datus.storage.reference_sql.sql_file_processor import (
     _find_effective_semicolon,
+    extract_sql_provenance,
     log_invalid_entries,
     parse_comment_sql_pairs,
     process_sql_files,
@@ -582,3 +583,61 @@ class TestLogInvalidEntries:
         assert "b.sql" in content
         assert "[1]" in content
         assert "[2]" in content
+
+
+# ============================================================
+# Tests for provenance directives
+# ============================================================
+
+
+class TestSqlProvenanceDirectives:
+    def test_extract_sql_provenance_reads_context_and_source_metadata(self):
+        sql = """
+        -- @source_context_id: refsql:task:0
+        -- @source_id: seed_context:0
+        -- @source_type: seed_context
+        -- @source_metadata.task_id: 0
+        SELECT * FROM v_udata_ac_info;
+        """
+
+        provenance = extract_sql_provenance(sql)
+
+        assert provenance["source_context_ids"] == ["refsql:task:0"]
+        assert provenance["source_id"] == "seed_context:0"
+        assert provenance["source_type"] == "seed_context"
+        assert provenance["source_metadata"]["task_id"] == "0"
+
+    def test_process_sql_items_preserves_provenance_on_valid_select(self):
+        valid, invalid = process_sql_items(
+            [
+                {
+                    "comment": "",
+                    "sql": "-- @source_context_ids: refsql:task:0;refsql:task:1\nSELECT * FROM v_udata_ac_info",
+                    "filepath": "/tmp/ref.sql",
+                    "line_number": 7,
+                }
+            ]
+        )
+
+        assert invalid == []
+        assert "@source_" not in valid[0]["sql"]
+        assert valid[0]["source_context_ids"] == ["refsql:task:0", "refsql:task:1"]
+        assert valid[0]["source_metadata"]["filepath"] == "/tmp/ref.sql"
+        assert valid[0]["source_metadata"]["line_number"] == 7
+
+    def test_process_sql_items_strips_empty_provenance_directives(self):
+        valid, invalid = process_sql_items(
+            [
+                {
+                    "comment": "",
+                    "sql": "-- @source_context_id:\nSELECT * FROM v_udata_ac_info",
+                    "filepath": "/tmp/ref.sql",
+                    "line_number": 9,
+                }
+            ]
+        )
+
+        assert invalid == []
+        assert len(valid) == 1
+        assert "@source_context_id" not in valid[0]["sql"]
+        assert "source_context_ids" not in valid[0]

@@ -3,6 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import glob
+import json
 import os
 import re
 from pathlib import Path
@@ -15,6 +16,82 @@ from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import parse_sql_type
 
 logger = get_logger(__name__)
+
+_PROVENANCE_DIRECTIVE_RE = re.compile(
+    r"^\s*--\s*@(?P<key>source_context_ids?|context_ids?|source_id|source_type|source_metadata(?:\.[A-Za-z0-9_.-]+)?)\s*[:=]\s*(?P<value>.*?)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _split_directive_values(value: str) -> List[str]:
+    return [part.strip() for part in re.split(r"[;,]", value or "") if part.strip()]
+
+
+def extract_sql_provenance(sql: str) -> Dict[str, Any]:
+    """Extract optional benchmark provenance directives from SQL comments.
+
+    Supported leading or inline line-comment directives:
+      -- @source_context_id: refsql:task:0
+      -- @source_context_ids: refsql:task:0;refsql:task:1
+      -- @source_id: seed_context:0
+      -- @source_type: seed_context
+      -- @source_metadata.task_id: 0
+      -- @source_metadata: {"task_id": "0"}
+    """
+    context_ids: List[str] = []
+    source_metadata: Dict[str, Any] = {}
+    source_id = ""
+    source_type = ""
+
+    for line in (sql or "").splitlines():
+        match = _PROVENANCE_DIRECTIVE_RE.match(line)
+        if not match:
+            continue
+        key = match.group("key").lower()
+        value = (match.group("value") or "").strip()
+        if not value:
+            continue
+
+        if key in {"source_context_id", "context_id"}:
+            context_ids.extend(_split_directive_values(value))
+        elif key in {"source_context_ids", "context_ids"}:
+            context_ids.extend(_split_directive_values(value))
+        elif key == "source_id":
+            source_id = value
+        elif key == "source_type":
+            source_type = value
+        elif key == "source_metadata":
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                parsed = {}
+            if isinstance(parsed, dict):
+                source_metadata.update(parsed)
+        elif key.startswith("source_metadata."):
+            metadata_key = key[len("source_metadata.") :]
+            if metadata_key:
+                source_metadata[metadata_key] = value
+
+    result: Dict[str, Any] = {}
+    if context_ids:
+        deduped: List[str] = []
+        for context_id in context_ids:
+            if context_id not in deduped:
+                deduped.append(context_id)
+        result["source_context_ids"] = deduped
+    if source_id:
+        result["source_id"] = source_id
+    if source_type:
+        result["source_type"] = source_type
+    if source_metadata:
+        result["source_metadata"] = source_metadata
+    return result
+
+
+def strip_sql_provenance_directives(sql: str) -> str:
+    """Remove provenance-only SQL comments before validation/storage."""
+    kept_lines = [line for line in (sql or "").splitlines() if not _PROVENANCE_DIRECTIVE_RE.match(line)]
+    return "\n".join(kept_lines).strip()
 
 
 def _find_effective_semicolon(line: str, in_block_comment: bool) -> Tuple[int, bool]:
@@ -234,10 +311,12 @@ def process_sql_items(items: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]]
         comment = item.get("comment") or ""
         filepath = item.get("filepath") or ""
         line_number = item.get("line_number", 1)
+        provenance = extract_sql_provenance(sql)
+        sql_for_processing = strip_sql_provenance_directives(sql)
 
         # Check SQL type - only process SELECT queries
         try:
-            sql_type = parse_sql_type(sql, "mysql")
+            sql_type = parse_sql_type(sql_for_processing, "mysql")
             if sql_type != SQLType.SELECT:
                 logger.debug(f"Skipping non-SELECT SQL (type: {sql_type}) at {filepath}:{line_number}")
                 continue
@@ -245,20 +324,26 @@ def process_sql_items(items: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]]
             logger.warning(f"Failed to parse SQL type at {filepath}:{line_number}: {str(e)}")
             continue
 
-        is_valid, cleaned_sql, error_msg = validate_sql(sql)
+        is_valid, cleaned_sql, error_msg = validate_sql(sql_for_processing)
 
         if is_valid:
             cleaned_item = dict(item)
             cleaned_item["comment"] = comment
             cleaned_item["sql"] = cleaned_sql
             cleaned_item["filepath"] = filepath
+            if provenance:
+                cleaned_item.update(provenance)
+                source_metadata = dict(cleaned_item.get("source_metadata") or {})
+                source_metadata.setdefault("filepath", filepath)
+                source_metadata.setdefault("line_number", line_number)
+                cleaned_item["source_metadata"] = source_metadata
             cleaned_item.pop("line_number", None)
             cleaned_item.pop("error", None)
             valid_entries.append(cleaned_item)
         else:
             invalid_item = dict(item)
             invalid_item["comment"] = comment
-            invalid_item["sql"] = sql
+            invalid_item["sql"] = sql_for_processing
             invalid_item["filepath"] = filepath
             invalid_item["error"] = error_msg
             invalid_item["line_number"] = line_number

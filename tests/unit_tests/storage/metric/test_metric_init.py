@@ -13,7 +13,10 @@ from datus.storage.metric.metric_init import (
     BIZ_NAME,
     DEFAULT_METRICS_BATCH_SIZE,
     _action_status_value,
+    _extract_metric_artifact_ids,
     _generate_metrics_batch,
+    _source_provenance_from_row,
+    _sync_metric_provenance,
     init_semantic_yaml_metrics,
 )
 
@@ -562,6 +565,106 @@ class TestInitSuccessStoryMetricsAsyncOverwriteTruncate:
 
 
 # ---------------------------------------------------------------------------
+# provenance helpers
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ci
+class TestMetricProvenanceHelpers:
+    def test_source_provenance_from_row_reads_context_columns(self):
+        row = {
+            "source_context_id": "metric:seed:7; metric:task:21",
+            "source_id": "seed_context.csv:7",
+            "source_metadata": '{"task_id": "21"}',
+            "question": "delivery activities",
+        }
+
+        result = _source_provenance_from_row(row, 7, "/tmp/seed_context.csv")
+
+        assert result == {
+            "source_id": "seed_context.csv:7",
+            "source_type": "success_story",
+            "source_context_ids": ["metric:seed:7", "metric:task:21"],
+            "source_metadata": {
+                "task_id": "21",
+                "source_id": "seed_context.csv:7",
+                "source_type": "success_story",
+                "row_index": 7,
+                "question": "delivery activities",
+            },
+        }
+
+    def test_extract_metric_artifact_ids_recurses_nested_tool_result(self):
+        payload = {
+            "result": {
+                "sync": {
+                    "metric_artifact_ids": ["metric:Sales.activity_count", "metric:Sales.activity_count"],
+                }
+            }
+        }
+
+        assert _extract_metric_artifact_ids(payload) == ["metric:Sales.activity_count"]
+
+    def test_extract_metric_artifact_ids_reads_synced_field(self):
+        payload = {"_synced_metric_artifact_ids": ["metric:Sales.activity_count"]}
+
+        assert _extract_metric_artifact_ids(payload) == ["metric:Sales.activity_count"]
+
+    def test_sync_metric_provenance_writes_sidecar(self, tmp_path):
+        from types import SimpleNamespace
+
+        from datus.storage.knowledge_provenance import METRIC_ARTIFACT_TYPE, KnowledgeProvenanceStore
+
+        config = SimpleNamespace(
+            knowledge_base={"provenance": {"enabled": True}},
+            path_manager=SimpleNamespace(project_data_dir=tmp_path),
+        )
+
+        written = _sync_metric_provenance(
+            config,
+            ["metric:Sales.activity_count"],
+            [
+                {
+                    "source_id": "seed_context.csv:0",
+                    "source_context_ids": ["metric:seed:0"],
+                    "source_metadata": {"row_index": 0},
+                }
+            ],
+        )
+
+        found = KnowledgeProvenanceStore(config).find_by_artifact_ids(
+            METRIC_ARTIFACT_TYPE, ["metric:Sales.activity_count"]
+        )
+        assert written == 1
+        assert found["metric:Sales.activity_count"]["source_context_ids"] == ["metric:seed:0"]
+
+    def test_sync_metric_provenance_skips_ambiguous_multi_source_batch(self, tmp_path):
+        from types import SimpleNamespace
+
+        from datus.storage.knowledge_provenance import METRIC_ARTIFACT_TYPE, KnowledgeProvenanceStore
+
+        config = SimpleNamespace(
+            knowledge_base={"provenance": {"enabled": True}},
+            path_manager=SimpleNamespace(project_data_dir=tmp_path),
+        )
+
+        written = _sync_metric_provenance(
+            config,
+            ["metric:Sales.activity_count"],
+            [
+                {"source_id": "seed_context.csv:0", "source_context_ids": ["metric:seed:0"]},
+                {"source_id": "seed_context.csv:1", "source_context_ids": ["metric:seed:1"]},
+            ],
+        )
+
+        found = KnowledgeProvenanceStore(config).find_by_artifact_ids(
+            METRIC_ARTIFACT_TYPE, ["metric:Sales.activity_count"]
+        )
+        assert written == 0
+        assert found == {}
+
+
+# ---------------------------------------------------------------------------
 # DEFAULT_METRICS_BATCH_SIZE constant
 # ---------------------------------------------------------------------------
 
@@ -622,6 +725,55 @@ class TestGenerateMetricsBatch:
         assert ok is True
         assert err == ""
         assert result == {"metrics": ["revenue"]}
+
+    @pytest.mark.asyncio
+    async def test_success_captures_synced_metric_artifact_ids(self):
+        from unittest.mock import patch
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.schemas.batch_events import BatchEventHelper
+
+        mock_node = MagicMock()
+
+        async def fake_stream(_ahm):
+            tool_action = MagicMock()
+            tool_action.status = ActionStatus.SUCCESS
+            tool_action.action_type = "end_metric_generation"
+            tool_action.output = {"result": {"sync": {"metric_artifact_ids": ["metric:Sales.activity_count"]}}}
+            tool_action.messages = "published"
+            yield tool_action
+
+            final_action = MagicMock()
+            final_action.status = ActionStatus.SUCCESS
+            final_action.action_type = "gen_metrics_response"
+            final_action.output = {"metrics": ["activity_count"]}
+            final_action.messages = "ok"
+            yield final_action
+
+        mock_node.execute_stream = fake_stream
+
+        mock_config = MagicMock()
+        mock_config.current_db_config.return_value = MagicMock(catalog="", database="db", schema="")
+        mock_pm = MagicMock()
+        mock_pm.get_latest_version.return_value = "1.0"
+
+        with (
+            patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_pm),
+            patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", return_value=mock_node),
+        ):
+            ok, err, result = await _generate_metrics_batch(
+                ["Query 1:\nQuestion: rev?\nSQL:\nSELECT 1"],
+                0,
+                mock_config,
+                None,
+                None,
+                BatchEventHelper("test", None),
+                None,
+            )
+
+        assert ok is True
+        assert err == ""
+        assert result["_synced_metric_artifact_ids"] == ["metric:Sales.activity_count"]
 
     @pytest.mark.asyncio
     async def test_terminal_error_returns_failure(self):

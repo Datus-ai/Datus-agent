@@ -12,7 +12,9 @@ import pytest
 import yaml
 
 from datus.storage.embedding_models import get_db_embedding_model
-from datus.storage.reference_sql.store import ReferenceSqlStorage
+from datus.storage.knowledge_provenance import KnowledgeProvenanceStore, build_reference_sql_provenance_rows
+from datus.storage.reference_sql.init_utils import gen_reference_sql_id
+from datus.storage.reference_sql.store import ReferenceSqlRAG, ReferenceSqlStorage
 from datus.storage.subject_tree.store import SubjectTreeStore
 
 # ---------------------------------------------------------------------------
@@ -904,3 +906,52 @@ class TestSyncYamlSubjectTreeForSubtreeRefSql:
 
         # Should not raise
         ref_sql_storage.sync_yaml_subject_tree_for_subtree(node["node_id"])
+
+
+# ============================================================
+# ReferenceSqlRAG provenance enrichment
+# ============================================================
+
+
+class TestReferenceSqlRAGProvenance:
+    def _rag(self, tmp_path, enabled=True):
+        from types import SimpleNamespace
+
+        config = SimpleNamespace(
+            knowledge_base={"provenance": {"enabled": enabled}},
+            path_manager=SimpleNamespace(project_data_dir=tmp_path),
+        )
+        rag = ReferenceSqlRAG.__new__(ReferenceSqlRAG)
+        rag.agent_config = config
+        rag._provenance_enabled = enabled
+        return rag, config
+
+    def test_selected_fields_adds_internal_id_only_when_needed(self, tmp_path):
+        rag, _ = self._rag(tmp_path, enabled=True)
+
+        assert rag._selected_fields_with_provenance_id(None) == (None, False)
+        assert rag._selected_fields_with_provenance_id(["name", "id"]) == (["name", "id"], False)
+        assert rag._selected_fields_with_provenance_id(["name"]) == (["name", "id"], True)
+
+        disabled, _ = self._rag(tmp_path, enabled=False)
+        assert disabled._selected_fields_with_provenance_id(["name"]) == (["name"], False)
+
+    def test_enrich_reference_sql_results_adds_provenance_and_strips_internal_id(self, tmp_path):
+        rag, config = self._rag(tmp_path, enabled=True)
+        artifact_id = gen_reference_sql_id("SELECT 1")
+        KnowledgeProvenanceStore(config).upsert_many(
+            build_reference_sql_provenance_rows(
+                [{"sql": "SELECT 1", "source_id": "seed_context:0", "source_context_id": "refsql:task:0"}]
+            )
+        )
+
+        result = rag._enrich_reference_sql_results([{"id": artifact_id, "name": "q"}], strip_internal_id=True)
+
+        assert result == [
+            {
+                "name": "q",
+                "source_ids": ["seed_context:0"],
+                "source_context_ids": ["refsql:task:0"],
+                "source_metadata": [],
+            }
+        ]

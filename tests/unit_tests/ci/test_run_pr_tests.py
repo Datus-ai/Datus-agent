@@ -23,11 +23,7 @@ def test_select_impacted_unit_tests_maps_source_prefixes():
         ]
     )
 
-    assert impacted == [
-        "tests/unit_tests/agent/",
-        "tests/unit_tests/storage/",
-        "tests/unit_tests/",
-    ]
+    assert impacted == ["tests/unit_tests/"]
 
 
 def test_select_impacted_unit_tests_includes_changed_unit_tests_and_dedupes():
@@ -41,10 +37,23 @@ def test_select_impacted_unit_tests_includes_changed_unit_tests_and_dedupes():
     )
 
     assert impacted == [
-        "tests/unit_tests/tools/test_registry.py",
         "tests/unit_tests/tools/",
         "tests/unit_tests/ci/",
     ]
+
+
+def test_select_impacted_unit_tests_collapses_parent_directory_over_child_files():
+    impacted = run_pr_tests.select_impacted_unit_tests(
+        [
+            "datus/storage/knowledge_provenance.py",
+            "datus/storage/metric/store.py",
+            "tests/unit_tests/storage/metric/test_metric_init.py",
+            "tests/unit_tests/storage/metric/test_store.py",
+            "tests/unit_tests/storage/test_knowledge_provenance.py",
+        ]
+    )
+
+    assert impacted == ["tests/unit_tests/storage/"]
 
 
 def test_select_impacted_unit_tests_maps_db_tools_to_db_tools_tests():

@@ -10,6 +10,7 @@ import yaml
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import EmbeddingModel
+from datus.storage.knowledge_provenance import enrich_reference_sql_results, is_knowledge_provenance_enabled
 from datus.storage.subject_tree.store import BaseSubjectEmbeddingStore, base_schema_columns
 from datus.utils.loggings import get_logger
 
@@ -438,7 +439,9 @@ class ReferenceSqlRAG:
         from datus.storage.rag_scope import _build_sub_agent_filter
         from datus.storage.registry import get_storage
 
+        self.agent_config = agent_config
         self.datasource_id = datasource_id or agent_config.current_datasource or ""
+        self._provenance_enabled = is_knowledge_provenance_enabled(agent_config)
         self.reference_sql_storage = get_storage(
             ReferenceSqlStorage, "reference_sql", project=agent_config.project_name
         )
@@ -452,6 +455,30 @@ class ReferenceSqlRAG:
         if self._sub_agent_filter:
             conditions.append(self._sub_agent_filter)
         return conditions
+
+    def _selected_fields_with_provenance_id(
+        self, selected_fields: Optional[List[str]]
+    ) -> tuple[Optional[List[str]], bool]:
+        if not self._provenance_enabled or selected_fields is None or "id" in selected_fields:
+            return selected_fields, False
+        return [*selected_fields, "id"], True
+
+    def _enrich_reference_sql_results(
+        self, results: List[Dict[str, Any]], strip_internal_id: bool
+    ) -> List[Dict[str, Any]]:
+        enriched = enrich_reference_sql_results(self.agent_config, results)
+        if not strip_internal_id:
+            return enriched
+
+        cleaned: List[Dict[str, Any]] = []
+        for item in enriched:
+            if isinstance(item, dict):
+                updated = dict(item)
+                updated.pop("id", None)
+                cleaned.append(updated)
+            else:
+                cleaned.append(item)
+        return cleaned
 
     def truncate(self) -> None:
         """Delete all reference SQL data for this datasource."""
@@ -472,11 +499,13 @@ class ReferenceSqlRAG:
         subject_path: Optional[List[str]] = None,
         select_fields: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        return self.reference_sql_storage.search_all_reference_sql(
+        fields, strip_internal_id = self._selected_fields_with_provenance_id(select_fields)
+        results = self.reference_sql_storage.search_all_reference_sql(
             subject_path,
-            select_fields=select_fields,
+            select_fields=fields,
             extra_conditions=self._sub_agent_conditions(),
         )
+        return self._enrich_reference_sql_results(results, strip_internal_id)
 
     def after_init(self):
         """Initialize indices after data loading."""
@@ -498,13 +527,15 @@ class ReferenceSqlRAG:
         top_n: int = 5,
         selected_fields: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        return self.reference_sql_storage.search_reference_sql(
+        fields, strip_internal_id = self._selected_fields_with_provenance_id(selected_fields)
+        results = self.reference_sql_storage.search_reference_sql(
             query_text=query_text,
             subject_path=subject_path,
             top_n=top_n,
-            selected_fields=selected_fields,
+            selected_fields=fields,
             extra_conditions=self._sub_agent_conditions(),
         )
+        return self._enrich_reference_sql_results(results, strip_internal_id)
 
     def get_reference_sql_detail(
         self,
@@ -513,11 +544,13 @@ class ReferenceSqlRAG:
         selected_fields: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         full_path = list(subject_path) + [name]
-        return self.reference_sql_storage.search_all_reference_sql(
+        fields, strip_internal_id = self._selected_fields_with_provenance_id(selected_fields)
+        results = self.reference_sql_storage.search_all_reference_sql(
             full_path,
-            select_fields=selected_fields,
+            select_fields=fields,
             extra_conditions=self._sub_agent_conditions(),
         )
+        return self._enrich_reference_sql_results(results, strip_internal_id)
 
     def delete_reference_sql(self, subject_path: List[str], name: str) -> bool:
         return self.reference_sql_storage.delete_reference_sql(
