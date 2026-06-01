@@ -34,7 +34,7 @@ def _register_test_capabilities():
     """Register external dialect capabilities needed by tests."""
     connector_registry.register_handlers("postgresql", capabilities={"database", "schema"})
     connector_registry.register_handlers("mysql", capabilities={"database"})
-    connector_registry.register_handlers("snowflake", capabilities={"catalog", "database", "schema"})
+    connector_registry.register_handlers("snowflake", capabilities={"database", "schema"})
     yield
 
 

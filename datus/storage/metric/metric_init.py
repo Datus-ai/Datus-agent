@@ -26,7 +26,11 @@ from datus.storage.knowledge_provenance import (
     build_metric_provenance_rows,
     is_knowledge_provenance_enabled,
 )
-from datus.storage.semantic_model.auto_create import ensure_semantic_models_exist, extract_tables_from_sql_list
+from datus.storage.semantic_model.auto_create import (
+    ensure_semantic_models_exist,
+    extract_table_sql_evidence,
+    extract_tables_from_sql_list,
+)
 from datus.utils.loggings import get_logger
 from datus.utils.terminal_utils import suppress_keyboard_input
 
@@ -346,14 +350,23 @@ async def init_success_story_metrics_async(
     event_helper.task_started(total_items=len(df), success_story=success_story)
 
     # Step 0: Check and create missing semantic models
-    sql_list = [row["sql"] for _, row in df.iterrows() if row.get("sql")]
+    success_story_records = [
+        {"sql": row["sql"], "question": row.get("question")} for _, row in df.iterrows() if row.get("sql")
+    ]
+    sql_list = [record["sql"] for record in success_story_records]
     all_tables = extract_tables_from_sql_list(sql_list, agent_config)
 
     if all_tables:
         logger.info(f"Found {len(all_tables)} tables in success story SQL: {all_tables}")
+        sql_evidence_by_table = extract_table_sql_evidence(success_story_records, agent_config)
 
         # Check and create missing semantic models (per-table, partial failures tolerated)
-        success, error, created_tables = await ensure_semantic_models_exist(all_tables, agent_config, emit=None)
+        success, error, created_tables = await ensure_semantic_models_exist(
+            all_tables,
+            agent_config,
+            emit=None,
+            sql_evidence_by_table=sql_evidence_by_table,
+        )
 
         if not success:
             error_msg = f"Failed to create semantic models: {error}"

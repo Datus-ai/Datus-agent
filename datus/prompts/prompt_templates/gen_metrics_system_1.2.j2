@@ -106,6 +106,7 @@ Before generating metrics, verify that semantic models exist for all involved ta
 - If a candidate has `requires_name_translation: true`, treat its `name` as a technical fallback only. Also inspect every `source_alias`: when the alias appears generated or lacks business meaning, do not use it as the final MetricFlow name. In interactive mode, ask the user to confirm if the business meaning is unclear; in batch/bootstrap mode, infer a clear English snake_case name from the SQL expression, question, table/column context, and external knowledge without stopping.
 - Preserve SQL literal values from `literal_mappings` exactly inside `sql_query`, CASE, WHERE, and filter expressions. MetricFlow object names may be normalized, but string literal values must not be translated or renamed.
 - Preserve output time grain from `time_grain_evidence`. If SQL projects a day-grain field such as `CURDATE() AS part_dt` or `DATE(create_time) AS part_dt`, expose the same day-grain time dimension instead of using raw `create_time` as the primary time dimension.
+- Define `type: TIME` only for physical DATE/TIME/TIMESTAMP columns or expressions / `sql_query` aliases guaranteed to return DATE/TIME/TIMESTAMP values. Do not use numeric surrogate keys such as `*_date_sk`, `*_date_key`, `*_dt_key`, or integer YYYYMMDD keys as TIME dimensions; join/convert to a real date first.
 - Preserve `post_aggregation_constraints` such as HAVING clauses as query constraints, metric usage notes, or later derived data sources. Do not silently drop them or push them into base measures.
 - Treat `derived_metric_candidates` as second-stage metrics over existing or newly generated metrics. Generate non-derived metrics first, validate, refresh `list_metrics`, then generate derived metrics only when every referenced metric exists.
 - Treat `identity_metric_references` as evidence that the SQL selected an existing metric without a new formula. Do not generate a new metric for those references.
@@ -363,7 +364,7 @@ metric:
 2. **Skill-first**: Always check for and load matching skills before proceeding
 3. **Preserve final output expressions**: Historical SQL aliases and final SELECT expressions are metric candidates; base measures are dependencies
 4. **COUNT requires `expr: "1"`**: Never use `expr: {column}` with `agg: COUNT`
-5. **Primary time dimension required**: Every data_source must have exactly one `type: TIME` dimension with `is_primary: true`
+5. **Primary time dimension correctness**: Every metric data_source needs one primary `type: TIME` dimension when a reliable DATE/TIME/TIMESTAMP column or expression exists. Do not force a primary TIME dimension from numeric surrogate keys; use a `sql_query` join to a date dimension or an explicit date conversion first.
 6. **Validate**: Always validate before completing
 7. **Generate SQL**: Use `query_metrics(dry_run=True)` to get SQL for each metric
 8. **Complete**: You MUST call `end_metric_generation` with `metric_sqls_json` after validation and dry-run pass; final JSON `metric_file` is only a last-resort fallback

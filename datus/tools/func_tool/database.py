@@ -461,6 +461,32 @@ class DBFuncTool:
             return self._normalize_identifier_part(getattr(self.connector, fallback_attr))
         return ""
 
+    def _dialect_for_datasource(self, datasource: Optional[str] = "") -> str:
+        try:
+            connector = self._get_connector(datasource)
+        except Exception:
+            connector = self.connector
+        return getattr(connector, "dialect", "") or ""
+
+    def _normalize_namespace_args(
+        self,
+        catalog: Optional[str] = "",
+        database: Optional[str] = "",
+        schema: Optional[str] = "",
+        datasource: Optional[str] = "",
+    ) -> tuple[str, str, str]:
+        catalog_value = self._normalize_identifier_part(catalog)
+        database_value = self._normalize_identifier_part(database)
+        schema_value = self._normalize_identifier_part(schema)
+
+        dialect = self._dialect_for_datasource(datasource)
+        if not connector_registry.support_catalog(dialect):
+            if catalog_value and not database_value and connector_registry.support_database(dialect):
+                database_value = catalog_value
+            catalog_value = ""
+
+        return catalog_value, database_value, schema_value
+
     def _build_table_coordinate(
         self,
         raw_name: str,
@@ -582,6 +608,16 @@ class DBFuncTool:
             result.append(name)
         return result
 
+    def _excluded_tool_params(self) -> set[str]:
+        dialect = getattr(self.connector, "dialect", "") or ""
+        excluded: set[str] = set()
+        if not connector_registry.support_catalog(dialect):
+            excluded.add("catalog")
+        return excluded
+
+    def to_function_tool(self, bound_method: Callable) -> Tool:
+        return trans_to_function_tool(bound_method, excluded_params=self._excluded_tool_params())
+
     def available_tools(self) -> List[Tool]:
         bound_tools = []
         methods_to_convert: List[Callable] = [self.list_tables, self.describe_table]
@@ -597,13 +633,13 @@ class DBFuncTool:
         )
 
         if connector_registry.support_database(self.connector.dialect):
-            bound_tools.append(trans_to_function_tool(self.list_databases))
+            bound_tools.append(self.to_function_tool(self.list_databases))
 
         if connector_registry.support_schema(self.connector.dialect):
-            bound_tools.append(trans_to_function_tool(self.list_schemas))
+            bound_tools.append(self.to_function_tool(self.list_schemas))
 
         for bound_method in methods_to_convert:
-            bound_tools.append(trans_to_function_tool(bound_method))
+            bound_tools.append(self.to_function_tool(bound_method))
         return bound_tools
 
     @mcp_tool(availability_check="has_schema")
@@ -655,10 +691,16 @@ class DBFuncTool:
             return FuncToolResult(success=0, error="Table search is unavailable because schema storage is not ready.")
 
         try:
+            catalog, database, schema_name = self._normalize_namespace_args(
+                catalog,
+                database,
+                schema_name,
+                datasource,
+            )
             metadata, sample_values = self.schema_rag.search_similar(
                 query_text,
                 catalog_name=catalog,
-                database_name=self._reset_database_for_rag(datasource),
+                database_name=database or self._reset_database_for_rag(datasource),
                 schema_name=schema_name,
                 table_type="full",
                 top_n=top_n,
@@ -745,6 +787,7 @@ class DBFuncTool:
             an explanatory error message.
         """
         if self._is_multi_connector:
+            catalog, _, _ = self._normalize_namespace_args(catalog, "", "", datasource)
             if datasource and datasource not in self._datasources:
                 return FuncToolResult(
                     success=0, error=f"Datasource '{datasource}' not found. Available: {list(self._datasources)}"
@@ -758,6 +801,7 @@ class DBFuncTool:
             except Exception as e:
                 return FuncToolResult(success=0, error=str(e))
         try:
+            catalog, _, _ = self._normalize_namespace_args(catalog, "", "", datasource)
             connector = self._get_connector(datasource)
             databases = connector.get_databases(catalog, include_sys=include_sys)
             filtered = [db for db in databases if self._database_matches_scope(catalog, db)]
@@ -788,6 +832,7 @@ class DBFuncTool:
             FuncToolResult with result holding the schema name list. On failure success=0 with an explanatory message.
         """
         try:
+            catalog, database, _ = self._normalize_namespace_args(catalog, database, "", datasource)
             if database and not self._database_matches_scope(catalog, database):
                 return FuncToolResult(result=[])
             connector = self._get_connector(datasource)
@@ -820,6 +865,12 @@ class DBFuncTool:
             success=0 with an explanatory error message.
         """
         try:
+            catalog, database, schema_name = self._normalize_namespace_args(
+                catalog,
+                database,
+                schema_name,
+                datasource,
+            )
             connector = self._get_connector(datasource)
             result = []
             for tb in connector.get_tables(catalog, database, schema_name):
@@ -884,6 +935,12 @@ class DBFuncTool:
               - description (str): Table description from semantic model
         """
         try:
+            catalog, database, schema_name = self._normalize_namespace_args(
+                catalog,
+                database,
+                schema_name,
+                datasource,
+            )
             coordinate = self._build_table_coordinate(
                 raw_name=table_name,
                 catalog=catalog,
@@ -905,9 +962,9 @@ class DBFuncTool:
             # to the connector (avoids DuckDB treating "raw" as a catalog).
             connector = self._get_connector(datasource)
             column_result = connector.get_schema(
-                catalog_name=coordinate.catalog or catalog,
+                catalog_name=coordinate.catalog,
                 database_name=coordinate.database,
-                schema_name=coordinate.schema or schema_name,
+                schema_name=coordinate.schema,
                 table_name=coordinate.table,
             )
             logger.debug(f"Got {len(column_result)} columns from connector")
@@ -1091,6 +1148,12 @@ class DBFuncTool:
             Scoped-context mismatches or connector failures surface as success=0 with an explanatory message.
         """
         try:
+            catalog, database, schema_name = self._normalize_namespace_args(
+                catalog,
+                database,
+                schema_name,
+                datasource,
+            )
             coordinate = self._build_table_coordinate(
                 raw_name=table_name,
                 catalog=catalog,
@@ -1105,7 +1168,10 @@ class DBFuncTool:
             # Get tables with DDL
             connector = self._get_connector(datasource)
             tables_with_ddl = connector.get_tables_with_ddl(
-                catalog_name=catalog, database_name=database, schema_name=schema_name, tables=[table_name]
+                catalog_name=coordinate.catalog,
+                database_name=coordinate.database,
+                schema_name=coordinate.schema,
+                tables=[coordinate.table],
             )
 
             if not tables_with_ddl:

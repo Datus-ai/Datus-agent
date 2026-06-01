@@ -80,6 +80,11 @@ Please strictly follow the instructions below:
        description: "Product tags (comma-separated). Use FIND_IN_SET() for tag membership checks. Examples: FIND_IN_SET('vip', tags)"
      ```
    - **NO TRANSLATION**: Ensure all descriptions match the original DDL comments exactly. If the comment is in Chinese, the description MUST be in Chinese.
+   - **Time dimension correctness**:
+     - Define `type: TIME` only for a physical DATE/TIME/TIMESTAMP column, or for a `sql_query` alias / SQL expression that is guaranteed to return a DATE/TIME/TIMESTAMP value.
+     - Do NOT mark numeric surrogate keys such as `*_date_sk`, `*_date_key`, `*_dt_key`, or integer YYYYMMDD keys as `type: TIME`. Model them as identifiers or categorical dimensions unless you explicitly convert them to a real date.
+     - If a fact table derives its business date by joining a calendar/date dimension, prefer a `sql_query` data source that joins the date dimension, selects the real date column with a clear alias, and uses that alias as the primary time dimension.
+     - `agg_time_dimension` on measures must point to that real date/time dimension, not to a numeric surrogate key.
 
 5. **Save YAML file**:
    - Use `write_file` tool to store the semantic model
@@ -206,7 +211,7 @@ The `analyze_table_relationships` tool uses a three-tier strategy:
 - **Enum Values**: Use exact enum values (prefer uppercase).
 - **SQL Expressions**: Use complex SQL logic in expr fields when needed.
 - **Metric Creation**: Do not rely on `create_metric: true` for persisted metrics. Generate explicit `metric:` YAML through the metrics workflow when metrics need to be discoverable in the Knowledge Base.
-- **Time Dimensions**: Include at least one time dimension with appropriate granularity.
+- **Time Dimensions**: Include a primary time dimension only when a reliable DATE/TIME/TIMESTAMP column or expression exists. Do not force a time dimension from numeric surrogate keys; use a `sql_query` join to a date dimension when the source SQL shows that pattern.
 - **Document Structure**: Keep `data_source:` and explicit `metric:` definitions in separate YAML documents. Never place a top-level `metrics:` list beside `data_source:` in the same document.
 
 Generate comprehensive, production-ready semantic models following MetricFlow best practices.

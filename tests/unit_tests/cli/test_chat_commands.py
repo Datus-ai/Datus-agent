@@ -1463,11 +1463,12 @@ class TestEdgeCases:
         assert "Sales Report" in result
 
     def test_create_node_input_cli_context_none_values(self, real_agent_config, mock_llm_create):
-        """create_node_input passes None for catalog/database/schema when cli_context has no values."""
+        """create_node_input passes None when no database context source has values."""
         from datus.schemas.chat_agentic_node_models import ChatNodeInput
 
+        real_agent_config.current_db_config().database = ""
         cmds = _make_chat_commands(real_agent_config)
-        # cli_context defaults have None for catalog/db_name/schema
+        # cli_context defaults have None for catalog/db_name/schema.
         assert cmds.cli.cli_context.current_catalog is None
         assert cmds.cli.cli_context.current_db_name is None
         assert cmds.cli.cli_context.current_schema is None
@@ -1479,6 +1480,64 @@ class TestEdgeCases:
         assert node_input.catalog is None
         assert node_input.database is None
         assert node_input.db_schema is None
+
+    def test_create_node_input_falls_back_to_active_connector_when_cli_context_empty(
+        self, real_agent_config, mock_llm_create
+    ):
+        """create_node_input should not lose db context after CLI connection init."""
+        from datus.schemas.chat_agentic_node_models import ChatNodeInput
+
+        cmds = _make_chat_commands(real_agent_config)
+        cmds.cli.cli_context.current_catalog = ""
+        cmds.cli.cli_context.current_db_name = ""
+        cmds.cli.cli_context.current_schema = ""
+        cmds.cli.db_connector = MagicMock()
+        cmds.cli.db_connector.catalog_name = "connector_catalog"
+        cmds.cli.db_connector.database_name = "connector_db"
+        cmds.cli.db_connector.schema_name = "connector_schema"
+
+        node = cmds._create_new_node()
+        node_input, _ = cmds.create_node_input("Test", node, [], [], [])
+
+        assert isinstance(node_input, ChatNodeInput)
+        assert node_input.catalog == "connector_catalog"
+        assert node_input.database == "connector_db"
+        assert node_input.db_schema == "connector_schema"
+
+    def test_create_node_input_falls_back_to_config_database_when_cli_context_empty(
+        self, real_agent_config, mock_llm_create
+    ):
+        """Configured database should still reach the chat prompt."""
+        from datus.schemas.chat_agentic_node_models import ChatNodeInput
+
+        real_agent_config.current_db_config().catalog = "configured_catalog"
+        real_agent_config.current_db_config().database = "configured_db"
+        real_agent_config.current_db_config().schema = "configured_schema"
+        cmds = _make_chat_commands(real_agent_config)
+        cmds.cli.cli_context.current_catalog = ""
+        cmds.cli.cli_context.current_db_name = ""
+        cmds.cli.cli_context.current_schema = ""
+
+        node = cmds._create_new_node()
+        node_input, _ = cmds.create_node_input("Test", node, [], [], [])
+
+        assert isinstance(node_input, ChatNodeInput)
+        assert node_input.catalog == "configured_catalog"
+        assert node_input.database == "configured_db"
+        assert node_input.db_schema == "configured_schema"
+
+    def test_prompt_builder_uses_connector_database_when_input_database_empty(self, real_agent_config, mock_llm_create):
+        """AgenticNode prompt fallback works if the node has an initialized connector."""
+        from datus.schemas.chat_agentic_node_models import ChatNodeInput
+
+        cmds = _make_chat_commands(real_agent_config)
+        node = cmds._create_new_node()
+        node.db_func_tool._primary_connector = MagicMock()
+        node.db_func_tool._primary_connector.database_name = "connector_db"
+
+        message = node._build_enhanced_message(ChatNodeInput(user_message="有哪些表"))
+
+        assert "**Database**: connector_db" in message
 
     def test_display_markdown_response_simple_text(self, real_agent_config, mock_llm_create):
         """Simple text with no markdown formatting is still displayed."""

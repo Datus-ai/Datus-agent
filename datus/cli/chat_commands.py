@@ -245,18 +245,61 @@ class ChatCommands:
         """
         from datus.agent.node.node_factory import create_node_input as _create_node_input
 
+        catalog, database, db_schema = self._resolve_database_context()
         node_input = _create_node_input(
             user_message=user_message,
             node=current_node,
-            catalog=self.cli.cli_context.current_catalog or None,
-            database=self.cli.cli_context.current_db_name or None,
-            db_schema=self.cli.cli_context.current_schema or None,
+            catalog=catalog,
+            database=database,
+            db_schema=db_schema,
             at_tables=at_tables,
             at_metrics=at_metrics,
             at_sqls=at_sqls,
             plan_mode=plan_mode,
         )
         return node_input, current_node.type
+
+    def _resolve_database_context(self):
+        """Resolve catalog/database/schema for chat node input.
+
+        The CLI context is the active interactive state, but it starts empty
+        before connection initialization. Fall back to the live connector and
+        then to the datasource configuration so configured database names still
+        reach the prompt when the context was not hydrated.
+        """
+        cli_context = self.cli.cli_context
+        connector = getattr(self.cli, "db_connector", None)
+        config = None
+        agent_config = getattr(self.cli, "agent_config", None)
+        if agent_config is not None:
+            try:
+                config = agent_config.current_db_config()
+            except Exception:
+                config = None
+
+        def first_string(*values):
+            for value in values:
+                if isinstance(value, str) and value:
+                    return value
+            return None
+
+        return (
+            first_string(
+                getattr(cli_context, "current_catalog", None),
+                getattr(connector, "catalog_name", None),
+                getattr(config, "catalog", None),
+            ),
+            first_string(
+                getattr(cli_context, "current_db_name", None),
+                getattr(connector, "database_name", None),
+                getattr(config, "database", None),
+            ),
+            first_string(
+                getattr(cli_context, "current_schema", None),
+                getattr(connector, "schema_name", None),
+                getattr(config, "schema", None),
+            ),
+        )
 
     @staticmethod
     def _render_agent_dispatch_hint(message: str, agent_name: str) -> str:

@@ -5,7 +5,7 @@
 # -*- coding: utf-8 -*-
 import inspect
 import json
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from agents import FunctionTool, function_tool
 from pydantic import BaseModel, Field
@@ -91,7 +91,12 @@ class FuncToolListResult(BaseModel):
     )
 
 
-def trans_to_function_tool(bound_method: Callable, *, strict_mode: bool = True) -> FunctionTool:
+def trans_to_function_tool(
+    bound_method: Callable,
+    *,
+    strict_mode: bool = True,
+    excluded_params: Optional[Iterable[str]] = None,
+) -> FunctionTool:
     """
     Transfer a bound method to a function tool.
     This method is to solve the problem that '@function_tool' can only be applied to static methods
@@ -103,14 +108,19 @@ def trans_to_function_tool(bound_method: Callable, *, strict_mode: bool = True) 
             for tools that genuinely need an open-ended object parameter — e.g. a
             ``sample_params``-style dict where the LLM provides arbitrary keys matching
             a declaration the tool itself validates.
+        excluded_params: Optional parameter names to remove from the exposed JSON schema.
+            Use this for dialect-specific parameters that the current tool instance does not support.
     """
     tool_template = function_tool(bound_method, strict_mode=strict_mode)
+    excluded_param_set = set(excluded_params or [])
 
     corrected_schema = json.loads(json.dumps(tool_template.params_json_schema))
-    if "self" in corrected_schema.get("properties", {}):
-        del corrected_schema["properties"]["self"]
-    if "self" in corrected_schema.get("required", []):
-        corrected_schema["required"].remove("self")
+    params_to_remove = {"self", *excluded_param_set}
+    for param_name in params_to_remove:
+        if param_name in corrected_schema.get("properties", {}):
+            del corrected_schema["properties"][param_name]
+        if param_name in corrected_schema.get("required", []):
+            corrected_schema["required"].remove(param_name)
 
     # The invoker MUST be an 'async' function.
     # We define a closure to correctly capture the 'bound_method' for each iteration.
@@ -148,8 +158,16 @@ def trans_to_function_tool(bound_method: Callable, *, strict_mode: bool = True) 
 
             # Filter out unexpected parameters that LLM may hallucinate
             sig = inspect.signature(method_to_call)
-            valid_params = set(sig.parameters.keys()) - {"self"}
+            valid_params = set(sig.parameters.keys()) - {"self"} - excluded_param_set
             has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+            excluded_in_args = set(args_dict.keys()) & excluded_param_set
+            if excluded_in_args:
+                params = ", ".join(sorted(excluded_in_args))
+                return {
+                    "success": 0,
+                    "error": f"Unsupported parameters for this tool: {params}",
+                    "result": None,
+                }
             if not has_var_keyword:
                 extra_params = set(args_dict.keys()) - valid_params
                 if extra_params:

@@ -487,7 +487,10 @@ class GenSQLAgenticNode(AgenticNode):
                 method = getattr(tool_instance, method_name)
                 from datus.tools.func_tool import trans_to_function_tool
 
-                self.tools.append(trans_to_function_tool(method))
+                if isinstance(tool_instance, DBFuncTool):
+                    self.tools.append(tool_instance.to_function_tool(method))
+                else:
+                    self.tools.append(trans_to_function_tool(method))
                 logger.debug(f"Added specific tool method: {tool_type}.{method_name}")
             else:
                 logger.warning(f"Method '{method_name}' not found in {tool_type}")

@@ -3,6 +3,8 @@
 
 """Unit tests for skill_registry.py covering diff lines."""
 
+import logging
+
 import pytest
 
 from datus.tools.skill_tools.skill_config import SkillConfig
@@ -149,6 +151,43 @@ class TestSkillRegistryInstall:
 
 
 class TestSkillRegistryDuplicateWarning:
+    def test_duplicate_directory_paths_do_not_warn(self, tmp_path, caplog):
+        d1 = tmp_path / "skills" / "my-skill"
+        d1.mkdir(parents=True)
+        (d1 / "SKILL.md").write_text(SKILL_MD)
+        skills_dir = tmp_path / "skills"
+
+        config = SkillConfig(
+            directories=[
+                str(skills_dir),
+                str(skills_dir.resolve()),
+                str(skills_dir / ".." / "skills"),
+            ],
+            warn_duplicates=True,
+        )
+        registry = SkillRegistry(config=config)
+        with caplog.at_level(logging.WARNING, logger="datus.tools.skill_tools.skill_registry"):
+            registry.scan_directories()
+
+        assert registry.get_skill_count() == 1
+        assert "Duplicate skill name" not in caplog.text
+
+    def test_overlapping_directories_do_not_warn_for_same_skill_file(self, tmp_path, caplog):
+        d1 = tmp_path / "skills" / "my-skill"
+        d1.mkdir(parents=True)
+        (d1 / "SKILL.md").write_text(SKILL_MD)
+
+        config = SkillConfig(
+            directories=[str(tmp_path), str(tmp_path / "skills")],
+            warn_duplicates=True,
+        )
+        registry = SkillRegistry(config=config)
+        with caplog.at_level(logging.WARNING, logger="datus.tools.skill_tools.skill_registry"):
+            registry.scan_directories()
+
+        assert registry.get_skill_count() == 1
+        assert "Duplicate skill name" not in caplog.text
+
     def test_duplicate_skill_warns(self, tmp_path):
         d1 = tmp_path / "skills1" / "my-skill"
         d1.mkdir(parents=True)

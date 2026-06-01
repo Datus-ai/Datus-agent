@@ -227,13 +227,30 @@ def _merge_delta_run(run: list[SSEEvent]) -> SSEEvent:
 
 
 def _fill_database_context(
-    agent_config: AgentConfig,  # noqa: ARG001
-    catalog: Optional[str] = None,  # noqa: ARG001 — reserved for future use
-    database: Optional[str] = None,  # noqa: ARG001 — reserved for future use
-    schema: Optional[str] = None,  # noqa: ARG001 — reserved for future use
-) -> None:
-    """No-op: current_datasource is resolved at bootstrap; per-request database
-    selection is a logical-DB concern handled downstream, not a datasource override."""
+    agent_config: Optional[AgentConfig],
+    catalog: Optional[str] = None,
+    database: Optional[str] = None,
+    schema: Optional[str] = None,
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Resolve API database context without changing the active datasource."""
+    config = None
+    if agent_config is not None:
+        try:
+            config = agent_config.current_db_config()
+        except Exception:
+            config = None
+
+    def first_string(*values):
+        for value in values:
+            if isinstance(value, str) and value:
+                return value
+        return None
+
+    return (
+        first_string(catalog, getattr(config, "catalog", None)),
+        first_string(database, getattr(config, "database", None)),
+        first_string(schema, getattr(config, "schema", None)),
+    )
 
 
 class ChatTask:
@@ -319,7 +336,7 @@ class ChatTaskManager:
                 agent_config.set_active_custom(model_id, persist=False)
             else:
                 agent_config.set_active_provider_model(provider, model_id, persist=False)
-        _fill_database_context(
+        request.catalog, request.database, request.db_schema = _fill_database_context(
             agent_config,
             catalog=request.catalog,
             database=request.database,
@@ -882,6 +899,16 @@ class ChatTaskManager:
         Chat branches).
         """
         from datus.agent.node.node_factory import create_node_input
+
+        node_agent_config = getattr(current_node, "agent_config", None)
+        if not isinstance(node_agent_config, AgentConfig):
+            node_agent_config = None
+        catalog, database, db_schema = _fill_database_context(
+            node_agent_config,
+            catalog=catalog,
+            database=database,
+            schema=db_schema,
+        )
 
         return create_node_input(
             user_message=user_message,

@@ -51,10 +51,27 @@ class PrintModeRunner:
         self.scope = getattr(args, "session_scope", None)
         self.stream_thinking = getattr(args, "stream_thinking", False)
 
-        # Datasource context from args
-        self.catalog = getattr(args, "catalog", None)
-        self.database = getattr(args, "datasource", None) or None
-        self.db_schema = getattr(args, "schema", None)
+        self.catalog, self.database, self.db_schema = self._resolve_database_context(args)
+
+    def _resolve_database_context(self, args):
+        """Resolve catalog/database/schema for one-shot print mode input."""
+        config = None
+        try:
+            config = self.agent_config.current_db_config()
+        except Exception:
+            config = None
+
+        def first_string(*values):
+            for value in values:
+                if isinstance(value, str) and value:
+                    return value
+            return None
+
+        return (
+            first_string(getattr(args, "catalog", None), getattr(config, "catalog", None)),
+            first_string(getattr(args, "database", None), getattr(config, "database", None)),
+            first_string(getattr(args, "schema", None), getattr(config, "schema", None)),
+        )
 
     def run(self):
         if self.session_id:

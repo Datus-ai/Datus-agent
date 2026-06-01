@@ -33,7 +33,7 @@ def _register_test_capabilities():
     connector_registry.register_handlers("starrocks", capabilities={"catalog", "database"})
     connector_registry.register_handlers("oracle", capabilities={"database", "schema"})
     connector_registry.register_handlers("postgresql", capabilities={"database", "schema"})
-    connector_registry.register_handlers("snowflake", capabilities={"catalog", "database", "schema"})
+    connector_registry.register_handlers("snowflake", capabilities={"database", "schema"})
     yield
 
 
@@ -969,7 +969,7 @@ class TestMetadataIdentifier:
         result = metadata_identifier(
             catalog_name="wh", database_name="db", schema_name="s", table_name="t", dialect="snowflake"
         )
-        assert result == "wh.db.s.t"
+        assert result == "db.s.t"
 
     def test_snowflake_no_catalog(self):
         result = metadata_identifier(database_name="db", schema_name="s", table_name="t", dialect="snowflake")
@@ -1015,7 +1015,7 @@ def _register_test_capabilitiesExtended():
     connector_registry.register_handlers("starrocks", capabilities={"catalog", "database"})
     connector_registry.register_handlers("oracle", capabilities={"database", "schema"})
     connector_registry.register_handlers("postgresql", capabilities={"database", "schema"})
-    connector_registry.register_handlers("snowflake", capabilities={"catalog", "database", "schema"})
+    connector_registry.register_handlers("snowflake", capabilities={"database", "schema"})
     yield
 
 

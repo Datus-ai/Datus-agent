@@ -101,6 +101,26 @@ class TestTransToFunctionTool:
         assert result["success"] == 1
         assert result["result"] == "test"
 
+    @pytest.mark.asyncio
+    async def test_excluded_parameters_are_not_exposed(self):
+        """Excluded parameters should be omitted from the function-tool schema."""
+
+        class FakeTool:
+            def list_tables(self, catalog: str = "", database: str = "") -> FuncToolResult:
+                return FuncToolResult(result={"catalog": catalog, "database": database})
+
+        fake = FakeTool()
+        tool = trans_to_function_tool(fake.list_tables, excluded_params={"catalog"})
+
+        assert "catalog" not in tool.params_json_schema.get("properties", {})
+        assert "database" in tool.params_json_schema.get("properties", {})
+
+        args = json.dumps({"catalog": "cat", "database": "db"})
+        result = await tool.on_invoke_tool(None, args)
+
+        assert result["success"] == 0
+        assert result["error"] == "Unsupported parameters for this tool: catalog"
+
 
 class TestFuncToolListResult:
     """Tests for the canonical list-shaped envelope."""

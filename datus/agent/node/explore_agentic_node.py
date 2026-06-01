@@ -134,8 +134,8 @@ class ExploreAgenticNode(AgenticNode):
                 # the model cannot drift into broader schema exploration.
                 self.tools.extend(
                     [
-                        trans_to_function_tool(self.db_func_tool.describe_table),
-                        trans_to_function_tool(self.db_func_tool.read_query),
+                        self.db_func_tool.to_function_tool(self.db_func_tool.describe_table),
+                        self.db_func_tool.to_function_tool(self.db_func_tool.read_query),
                     ]
                 )
             else:
@@ -181,8 +181,8 @@ class ExploreAgenticNode(AgenticNode):
             # Mirror the subset actually exposed by this node — describe/read
             # always, the rest only when scoped_tables isn't set.
             db_bucket = [
-                trans_to_function_tool(self.db_func_tool.describe_table),
-                trans_to_function_tool(self.db_func_tool.read_query),
+                self.db_func_tool.to_function_tool(self.db_func_tool.describe_table),
+                self.db_func_tool.to_function_tool(self.db_func_tool.read_query),
             ]
             scoped = isinstance(self.input, ExploreNodeInput) and self.input.scoped_tables
             if not scoped:

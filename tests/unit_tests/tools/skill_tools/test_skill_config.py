@@ -68,6 +68,21 @@ class TestSkillConfig:
         config = SkillConfig.from_dict({"directories": [builtin, "/other"]})
         assert config.directories.count(builtin) == 1
 
+    def test_skill_config_from_dict_does_not_double_add_builtin_equivalent_path(self):
+        """Equivalent path spellings of the packaged dir should not be appended again."""
+        builtin = _builtin_skills_dir()
+        assert isinstance(builtin, str)
+        equivalent_builtin = str(Path(builtin) / ".." / Path(builtin).name)
+
+        config = SkillConfig.from_dict({"directories": [equivalent_builtin, "/other"]})
+
+        builtin_paths = [
+            directory
+            for directory in config.directories
+            if Path(directory).expanduser().resolve() == Path(builtin).expanduser().resolve()
+        ]
+        assert builtin_paths == [equivalent_builtin]
+
     def test_skill_config_from_dict_empty(self):
         """Empty config dict falls back to the packaged-aware default."""
         config = SkillConfig.from_dict({})

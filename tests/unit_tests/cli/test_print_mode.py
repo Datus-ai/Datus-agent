@@ -61,6 +61,58 @@ def _make_runner(**overrides):
 
 
 # ---------------------------------------------------------------------------
+# Tests: database context resolution
+# ---------------------------------------------------------------------------
+
+
+class TestDatabaseContextResolution:
+    def test_init_uses_config_database_not_datasource(self):
+        """Print mode must not pass the datasource key as database context."""
+        cfg = MagicMock(datasource_configs={})
+        cfg.current_db_config.return_value = SimpleNamespace(
+            catalog="",
+            database="SNOWFLAKE_SAMPLE_DATA",
+            schema="TPCH_SF1",
+        )
+        with (
+            patch("datus.cli.print_mode.load_agent_config", return_value=cfg),
+            patch("datus.cli.print_mode.AtReferenceCompleter"),
+        ):
+            from datus.cli.print_mode import PrintModeRunner
+
+            runner = PrintModeRunner(_make_args(datasource="my_snowflake", database=""))
+
+        assert runner.database == "SNOWFLAKE_SAMPLE_DATA"
+        assert runner.database != "my_snowflake"
+        assert runner.db_schema == "TPCH_SF1"
+
+    def test_explicit_context_overrides_config(self):
+        cfg = MagicMock(datasource_configs={})
+        cfg.current_db_config.return_value = SimpleNamespace(
+            catalog="configured_catalog",
+            database="configured_database",
+            schema="configured_schema",
+        )
+        with (
+            patch("datus.cli.print_mode.load_agent_config", return_value=cfg),
+            patch("datus.cli.print_mode.AtReferenceCompleter"),
+        ):
+            from datus.cli.print_mode import PrintModeRunner
+
+            runner = PrintModeRunner(
+                _make_args(
+                    catalog="explicit_catalog",
+                    database="explicit_database",
+                    schema="explicit_schema",
+                )
+            )
+
+        assert runner.catalog == "explicit_catalog"
+        assert runner.database == "explicit_database"
+        assert runner.db_schema == "explicit_schema"
+
+
+# ---------------------------------------------------------------------------
 # Tests: PrintModeRunner._write_payload
 # ---------------------------------------------------------------------------
 
@@ -426,7 +478,13 @@ class TestRunUsesFactory:
             patch("datus.cli.print_mode.load_agent_config") as mock_cfg,
             patch("datus.cli.print_mode.AtReferenceCompleter") as mock_completer,
         ):
-            mock_cfg.return_value = MagicMock(datasource_configs={})
+            cfg = MagicMock(datasource_configs={})
+            cfg.current_db_config.return_value = SimpleNamespace(
+                catalog="configured_catalog",
+                database="configured_database",
+                schema="configured_schema",
+            )
+            mock_cfg.return_value = cfg
             mock_completer.return_value.parse_at_context.return_value = ([], [], [], None)
             from datus.cli.print_mode import PrintModeRunner
 
@@ -457,6 +515,9 @@ class TestRunUsesFactory:
             execution_mode="workflow",
         )
         mock_create_input.assert_called_once()
+        assert mock_create_input.call_args.kwargs["catalog"] == "configured_catalog"
+        assert mock_create_input.call_args.kwargs["database"] == "configured_database"
+        assert mock_create_input.call_args.kwargs["db_schema"] == "configured_schema"
         assert mock_node.input == mock_input
 
 

@@ -81,6 +81,7 @@ Call `analyze_metric_candidates_from_history` with all parsed SQL queries and `e
 6. **Choose business-safe names** — if a candidate has `requires_name_translation: true`, treat `name` as a technical fallback only. Also inspect every `source_alias`: when the alias appears generated or lacks business meaning, do not use it as the final MetricFlow name. In interactive mode, ask the user to confirm if the business meaning is unclear; in batch/bootstrap mode, infer a clear English snake_case name from the SQL expression, question, table/column context, and external knowledge without stopping.
 7. **Preserve SQL literal values** — if `literal_mappings` is present, keep the literal `value` exactly as it appears in SQL predicates/CASE/sql_query output. Only MetricFlow object names may be translated or normalized.
 8. **Preserve SQL time grain** — if `time_grain_evidence` is present, expose an equivalent time dimension in any derived data source. Do not replace a projected date such as `CURDATE() AS part_dt` or `DATE(create_time) AS part_dt` with raw `create_time` as the primary time dimension.
+   Define `type: TIME` only for physical DATE/TIME/TIMESTAMP columns or SQL expressions / `sql_query` aliases guaranteed to return DATE/TIME/TIMESTAMP values. Numeric surrogate keys such as `*_date_sk`, `*_date_key`, `*_dt_key`, or integer YYYYMMDD keys must be identifiers or categorical dimensions unless converted to a real date.
 9. **Preserve post-aggregation constraints** — if `post_aggregation_constraints` is present, keep each HAVING/post-aggregation condition as a query constraint, metric usage note, or later derived data source. Do not silently drop it or push it into a base measure.
 10. **Cross-reference with Phase 0** — remove any candidate that already exists in the knowledge base.
 11. **Separate derived metrics** — treat `derived_metric_candidates` as second-stage metrics over existing metrics. Do not mix them into base semantic model or measure generation.
@@ -252,7 +253,7 @@ Phase 1 confirms the generation scope; validation plus dry-run are the acceptanc
 - For derived metrics, all referenced metrics must already be defined, the expression must not be a single metric passthrough, and the dependency graph must not contain cycles.
 - For cumulative metrics, the measure must exist and a primary time dimension must be defined.
 - Use consistent naming: metric names in snake_case, measure names matching the semantic model.
-- Every data_source MUST have a primary time dimension (`type: TIME` with `is_primary: true`).
+- Every metric data_source needs a primary time dimension when a reliable DATE/TIME/TIMESTAMP column or expression exists. Do not force a primary TIME dimension from numeric surrogate keys; join/convert to a real date first.
 - Measure names must be globally unique across all data sources.
 - For snapshot/balance data, always add `non_additive_dimension` to prevent incorrect time aggregation.
 - **Keep files scoped** — only write semantic model YAML and metric YAML files. Sync metrics through `end_metric_generation`; the final JSON `metric_file` is only a last-resort fallback.

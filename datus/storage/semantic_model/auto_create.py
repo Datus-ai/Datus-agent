@@ -5,13 +5,16 @@
 """Auto-create missing semantic models before metrics generation."""
 
 import asyncio
-from typing import Callable, List, Optional, Set
+from collections import defaultdict
+from typing import Callable, Dict, List, Optional, Sequence, Set
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistoryManager, ActionStatus
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+MAX_SQL_EVIDENCE_PER_TABLE = 8
 
 
 def extract_tables_from_sql_list(
@@ -43,6 +46,79 @@ def extract_tables_from_sql_list(
                 continue
 
     return all_tables
+
+
+def _table_lookup_keys(table: str) -> Set[str]:
+    """Return stable lookup keys for a possibly-qualified table name."""
+    if not table:
+        return set()
+
+    cleaned = str(table).strip().strip('"`[]')
+    if not cleaned:
+        return set()
+
+    parts = [part.strip().strip('"`[]') for part in cleaned.split(".") if part.strip()]
+    keys = {".".join(parts).lower()} if parts else {cleaned.lower()}
+    if parts:
+        keys.add(parts[-1].lower())
+    return keys
+
+
+def _format_sql_evidence(index: int, sql: str, question: Optional[str] = None) -> str:
+    evidence = f"Query {index}:"
+    if question:
+        evidence += f"\nQuestion: {question}"
+    evidence += f"\nSQL:\n{sql}"
+    return evidence
+
+
+def extract_table_sql_evidence(
+    records: Sequence[dict],
+    agent_config: AgentConfig,
+    *,
+    max_records_per_table: int = MAX_SQL_EVIDENCE_PER_TABLE,
+) -> Dict[str, List[str]]:
+    """
+    Build table-scoped SQL evidence from success-story records.
+
+    Keys include both fully-qualified table names and unqualified table names
+    so callers can look up evidence regardless of how SQL parsing returned
+    the target table.
+    """
+    from datus.utils.sql_utils import extract_table_names
+
+    evidence_by_key: dict[str, list[str]] = defaultdict(list)
+    dialect = agent_config.db_type
+
+    for idx, record in enumerate(records, 1):
+        sql = str(record.get("sql") or "").strip()
+        if not sql:
+            continue
+
+        try:
+            tables = extract_table_names(sql, dialect=dialect, ignore_empty=True)
+        except Exception as e:
+            logger.warning(f"Failed to extract table-scoped SQL evidence: {e}")
+            continue
+
+        evidence = _format_sql_evidence(idx, sql, record.get("question"))
+        for table in tables:
+            for key in _table_lookup_keys(table):
+                items = evidence_by_key[key]
+                if evidence not in items and len(items) < max_records_per_table:
+                    items.append(evidence)
+
+    return dict(evidence_by_key)
+
+
+def _lookup_sql_evidence(table: str, sql_evidence_by_table: Optional[dict[str, list[str]]]) -> List[str]:
+    if not sql_evidence_by_table:
+        return []
+    for key in _table_lookup_keys(table):
+        evidence = sql_evidence_by_table.get(key)
+        if evidence:
+            return evidence
+    return []
 
 
 def find_missing_semantic_models(
@@ -97,6 +173,7 @@ async def create_semantic_model_for_table(
     agent_config: AgentConfig,
     emit: Optional[Callable] = None,
     related_tables: Optional[List[str]] = None,
+    sql_evidence: Optional[Sequence[str]] = None,
 ) -> tuple[bool, str]:
     """
     Create a semantic model for a single table.
@@ -107,6 +184,9 @@ async def create_semantic_model_for_table(
         emit: Optional progress callback.
         related_tables: Other tables being processed in the same batch.
             Passed as context so the LLM can infer join relationships.
+        sql_evidence: Success-story SQL queries that reference this table.
+            Passed as primary modeling evidence so joins and derived time
+            columns are not lost during per-table auto-creation.
 
     Returns:
         (success, error_message)
@@ -119,6 +199,12 @@ async def create_semantic_model_for_table(
         others = [t for t in related_tables if t != table]
         if others:
             user_message += f"\n\nRelated tables (for join context): {', '.join(others)}"
+    if sql_evidence:
+        user_message += (
+            "\n\nSuccess-story SQL evidence for this table. Use these queries as "
+            "primary modeling evidence, preserving joins that derive business "
+            "dimensions or real time columns:\n\n" + "\n\n".join(sql_evidence)
+        )
 
     current_db_config = agent_config.current_db_config()
     semantic_input = SemanticNodeInput(
@@ -157,6 +243,7 @@ async def create_semantic_models_for_tables(
     tables: List[str],
     agent_config: AgentConfig,
     emit: Optional[Callable] = None,
+    sql_evidence_by_table: Optional[dict[str, list[str]]] = None,
 ) -> tuple[List[str], List[tuple[str, str]]]:
     """
     Create semantic models for the specified tables, processing each table
@@ -166,6 +253,8 @@ async def create_semantic_models_for_tables(
         tables: List of table names to create semantic models for
         agent_config: Agent configuration
         emit: Optional progress callback
+        sql_evidence_by_table: Optional mapping of table lookup key to
+            success-story SQL evidence.
 
     Returns:
         (succeeded_tables, failed_tables) where failed_tables is a list of
@@ -179,7 +268,17 @@ async def create_semantic_models_for_tables(
 
     for table in tables:
         logger.info(f"Creating semantic model for table: {table}")
-        success, error = await create_semantic_model_for_table(table, agent_config, emit, related_tables=tables)
+        sql_evidence = _lookup_sql_evidence(table, sql_evidence_by_table)
+        if sql_evidence:
+            success, error = await create_semantic_model_for_table(
+                table,
+                agent_config,
+                emit,
+                related_tables=tables,
+                sql_evidence=sql_evidence,
+            )
+        else:
+            success, error = await create_semantic_model_for_table(table, agent_config, emit, related_tables=tables)
         if success:
             succeeded.append(table)
             logger.info(f"Successfully created semantic model for table: {table}")
@@ -196,6 +295,7 @@ def create_semantic_models_for_tables_sync(
     tables: List[str],
     agent_config: AgentConfig,
     emit: Optional[Callable] = None,
+    sql_evidence_by_table: Optional[dict[str, list[str]]] = None,
 ) -> tuple[List[str], List[tuple[str, str]]]:
     """
     Synchronous wrapper for create_semantic_models_for_tables.
@@ -203,13 +303,16 @@ def create_semantic_models_for_tables_sync(
     Returns:
         (succeeded_tables, failed_tables)
     """
-    return asyncio.run(create_semantic_models_for_tables(tables, agent_config, emit))
+    if sql_evidence_by_table is None:
+        return asyncio.run(create_semantic_models_for_tables(tables, agent_config, emit))
+    return asyncio.run(create_semantic_models_for_tables(tables, agent_config, emit, sql_evidence_by_table))
 
 
 async def ensure_semantic_models_exist(
     tables: Set[str],
     agent_config: AgentConfig,
     emit: Optional[Callable] = None,
+    sql_evidence_by_table: Optional[dict[str, list[str]]] = None,
 ) -> tuple[bool, str, List[str]]:
     """
     Check and create missing semantic models. Processes each table independently
@@ -219,6 +322,8 @@ async def ensure_semantic_models_exist(
         tables: Set of table names to check
         agent_config: Agent configuration
         emit: Optional progress callback
+        sql_evidence_by_table: Optional mapping of table lookup key to
+            success-story SQL evidence.
 
     Returns:
         (success, error_message, created_tables) — success is True when at
@@ -233,7 +338,15 @@ async def ensure_semantic_models_exist(
 
     logger.info(f"Found {len(missing_tables)} tables without semantic models: {missing_tables}")
 
-    succeeded, failed = await create_semantic_models_for_tables(missing_tables, agent_config, emit)
+    if sql_evidence_by_table is not None:
+        succeeded, failed = await create_semantic_models_for_tables(
+            missing_tables,
+            agent_config,
+            emit,
+            sql_evidence_by_table=sql_evidence_by_table,
+        )
+    else:
+        succeeded, failed = await create_semantic_models_for_tables(missing_tables, agent_config, emit)
 
     if succeeded:
         logger.info(f"Successfully created semantic models for: {succeeded}")

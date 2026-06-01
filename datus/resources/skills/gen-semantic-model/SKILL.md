@@ -25,6 +25,9 @@ Create production-ready MetricFlow semantic model YAML for one or more database 
 
 2. **Model columns**
    - Choose one primary time dimension when a reliable time column exists.
+   - Define `type: TIME` only for a physical DATE/TIME/TIMESTAMP column, or for a SQL expression / `sql_query` alias that is guaranteed to return a DATE/TIME/TIMESTAMP value.
+   - Do not mark numeric surrogate keys such as `*_date_sk`, `*_date_key`, `*_dt_key`, or integer YYYYMMDD keys as `type: TIME`; model them as identifiers or categorical dimensions unless you explicitly convert them to a real date.
+   - If a fact table uses a calendar/date dimension to derive its business date, prefer a `sql_query` data source that joins the date dimension, selects the real date column with a clear alias, and uses that alias as the primary time dimension and measure `agg_time_dimension`.
    - Define identifiers for primary keys and join keys.
    - Define measures only for reusable aggregations.
    - Define dimensions for grouping/filtering fields.

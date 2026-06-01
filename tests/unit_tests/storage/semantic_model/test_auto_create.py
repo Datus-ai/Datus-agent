@@ -105,6 +105,45 @@ class TestExtractTablesFromSqlList:
         assert "customers" in tables
 
 
+class TestExtractTableSqlEvidence:
+    """Tests for table-scoped SQL evidence extraction."""
+
+    def test_maps_evidence_by_qualified_and_unqualified_table(self):
+        from datus.storage.semantic_model.auto_create import extract_table_sql_evidence
+
+        config = MagicMock()
+        config.db_type = "snowflake"
+        records = [
+            {
+                "question": "Monthly catalog sales",
+                "sql": (
+                    "SELECT d.d_date, SUM(cs.cs_net_paid) "
+                    "FROM SNOWFLAKE_SAMPLE_DATA.TPCDS_SF10TCL.CATALOG_SALES cs "
+                    "JOIN SNOWFLAKE_SAMPLE_DATA.TPCDS_SF10TCL.DATE_DIM d "
+                    "ON cs.cs_sold_date_sk = d.d_date_sk "
+                    "GROUP BY d.d_date"
+                ),
+            }
+        ]
+
+        evidence = extract_table_sql_evidence(records, config)
+
+        assert "catalog_sales" in evidence
+        assert any("DATE_DIM" in item for item in evidence["catalog_sales"])
+        assert "snowflake_sample_data.tpcds_sf10tcl.catalog_sales" in evidence
+
+    def test_limits_evidence_per_table(self):
+        from datus.storage.semantic_model.auto_create import extract_table_sql_evidence
+
+        config = MagicMock()
+        config.db_type = "snowflake"
+        records = [{"question": f"q{i}", "sql": "SELECT * FROM users"} for i in range(3)]
+
+        evidence = extract_table_sql_evidence(records, config, max_records_per_table=2)
+
+        assert len(evidence["users"]) == 2
+
+
 # ---------------------------------------------------------------------------
 # find_missing_semantic_models
 # ---------------------------------------------------------------------------
@@ -432,6 +471,55 @@ class TestCreateSemanticModelForTable:
         assert success is True
         assert len(emit_count) == 3
 
+    @pytest.mark.asyncio
+    async def test_sql_evidence_is_added_to_user_message(self):
+        """Success-story SQL evidence is passed into the semantic model prompt."""
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.storage.semantic_model.auto_create import create_semantic_model_for_table
+
+        mock_config = MagicMock()
+        mock_db_config = MagicMock()
+        mock_db_config.catalog = ""
+        mock_db_config.database = "db"
+        mock_db_config.schema = "public"
+        mock_config.current_db_config.return_value = mock_db_config
+        semantic_input_cls = MagicMock(return_value=MagicMock())
+
+        class MockNode:
+            def __init__(self, *args, **kwargs):
+                self.input = None
+
+            async def execute_stream(self, ahm):
+                yield SimpleNamespace(status=ActionStatus.SUCCESS, messages="ok")
+
+        with (
+            patch(
+                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                MockNode,
+            ),
+            patch(
+                "datus.schemas.semantic_agentic_node_models.SemanticNodeInput",
+                semantic_input_cls,
+            ),
+        ):
+            success, error = await create_semantic_model_for_table(
+                "catalog_sales",
+                mock_config,
+                related_tables=["catalog_sales", "date_dim"],
+                sql_evidence=[
+                    "Query 1:\nQuestion: q\nSQL:\nSELECT d.d_date FROM catalog_sales cs JOIN date_dim d ON cs.date_sk = d.d_date_sk"
+                ],
+            )
+
+        assert success is True
+        assert error == ""
+        user_message = semantic_input_cls.call_args.kwargs["user_message"]
+        assert "Success-story SQL evidence" in user_message
+        assert "JOIN date_dim" in user_message
+
 
 # ---------------------------------------------------------------------------
 # create_semantic_models_for_tables (batch with per-table isolation)
@@ -499,6 +587,32 @@ class TestCreateSemanticModelsForTables:
         assert succeeded == ["good1", "good2"]
         assert len(failed) == 1
         assert failed[0] == ("bad_table", "Max turns exceeded")
+
+    @pytest.mark.asyncio
+    async def test_passes_table_scoped_sql_evidence(self, monkeypatch):
+        """Batch creation passes matching SQL evidence to each table."""
+        from datus.storage.semantic_model import auto_create
+
+        calls = {}
+
+        async def mock_single(table, config, emit=None, related_tables=None, sql_evidence=None):
+            calls[table] = sql_evidence
+            return True, ""
+
+        monkeypatch.setattr(auto_create, "create_semantic_model_for_table", mock_single)
+
+        succeeded, failed = await auto_create.create_semantic_models_for_tables(
+            ["catalog_sales", "date_dim"],
+            MagicMock(),
+            sql_evidence_by_table={
+                "catalog_sales": ["catalog SQL"],
+                "date_dim": ["date SQL"],
+            },
+        )
+
+        assert succeeded == ["catalog_sales", "date_dim"]
+        assert failed == []
+        assert calls == {"catalog_sales": ["catalog SQL"], "date_dim": ["date SQL"]}
 
 
 # ---------------------------------------------------------------------------

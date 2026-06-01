@@ -37,6 +37,7 @@ def _register_test_capabilities():
     }
     connector_registry.register_handlers("starrocks", capabilities={"catalog", "database"})
     connector_registry.register_handlers("postgres", capabilities={"database", "schema"})
+    connector_registry.register_handlers("snowflake", capabilities={"database", "schema"})
     try:
         yield
     finally:
@@ -122,6 +123,20 @@ class TestExtractDDLTarget:
             dialect="postgresql",
         )
         assert t == TableTarget(datasource="default_db", database="mydb", db_schema="public", table="users")
+
+    def test_three_part_identifier_snowflake_no_catalog(self):
+        """On Snowflake the three-part form is ``database.schema.table``."""
+        t = extract_ddl_target(
+            "CREATE TABLE SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.CUSTOMER (id INT)",
+            "my_snowflake",
+            dialect="snowflake",
+        )
+        assert t == TableTarget(
+            datasource="my_snowflake",
+            database="SNOWFLAKE_SAMPLE_DATA",
+            db_schema="TPCH_SF1",
+            table="CUSTOMER",
+        )
 
     def test_two_part_identifier_catalog_is_none(self):
         """Two-part ``schema.table`` leaves catalog unset."""

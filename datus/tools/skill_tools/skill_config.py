@@ -63,6 +63,18 @@ def _default_skill_directories() -> List[str]:
     return dirs
 
 
+def _same_directory(left: str, right: str) -> bool:
+    """Compare directory paths after user and relative-path normalization."""
+    try:
+        return Path(str(left)).expanduser().resolve() == Path(str(right)).expanduser().resolve()
+    except (TypeError, OSError, RuntimeError):
+        return str(left) == str(right)
+
+
+def _contains_directory(directories: List[str], candidate: str) -> bool:
+    return any(_same_directory(directory, candidate) for directory in directories)
+
+
 class SkillConfig(BaseModel):
     """Global skills configuration from agent.yml.
 
@@ -127,7 +139,7 @@ class SkillConfig(BaseModel):
         else:
             directories = list(directories)
             builtin = _builtin_skills_dir()
-            if builtin and builtin not in directories:
+            if builtin and not _contains_directory(directories, builtin):
                 directories.append(builtin)
 
         return cls(

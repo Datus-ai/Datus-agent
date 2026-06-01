@@ -20,6 +20,10 @@ def _register_test_capabilities():
         "postgresql",
         capabilities={"database", "schema"},
     )
+    connector_registry.register_handlers(
+        "snowflake",
+        capabilities={"database", "schema"},
+    )
     yield
 
 
@@ -124,7 +128,7 @@ class TestDBFuncTool:
         assert result.error is None
         assert result.result == ["db1", "db2"]
 
-        mock_connector.get_databases.assert_called_once_with("test_catalog", include_sys=True)
+        mock_connector.get_databases.assert_called_once_with("", include_sys=True)
 
     def test_list_databases_default_params(self, db_func_tool, mock_connector):
         """Test list_databases with default parameters."""
@@ -151,7 +155,7 @@ class TestDBFuncTool:
         assert result.error is None
         assert result.result == ["schema1", "schema2"]
 
-        mock_connector.get_schemas.assert_called_once_with("test_catalog", "test_db", include_sys=True)
+        mock_connector.get_schemas.assert_called_once_with("", "test_db", include_sys=True)
 
     def test_list_schemas_default_params(self, db_func_tool, mock_connector):
         """Test list_schemas with default parameters."""
@@ -191,9 +195,9 @@ class TestDBFuncTool:
         assert len(result.result) == len(expected_result)
 
         # Verify tables were called
-        mock_connector.get_tables.assert_called_once_with("test_catalog", "test_db", "test_schema")
-        mock_connector.get_views.assert_called_once_with("test_catalog", "test_db", "test_schema")
-        mock_connector.get_materialized_views.assert_called_once_with("test_catalog", "test_db", "test_schema")
+        mock_connector.get_tables.assert_called_once_with("", "test_db", "test_schema")
+        mock_connector.get_views.assert_called_once_with("", "test_db", "test_schema")
+        mock_connector.get_materialized_views.assert_called_once_with("", "test_db", "test_schema")
 
     def test_list_tables_with_scope(self, scoped_db_func_tool):
         """Scoped tables should filter combined list of tables and views."""
@@ -428,7 +432,7 @@ class TestDBFuncTool:
         assert result.result["columns"][0]["name"] == "id"
 
         mock_connector.get_schema.assert_called_once_with(
-            catalog_name="test_catalog", database_name="test_db", schema_name="test_schema", table_name="users"
+            catalog_name="", database_name="test_db", schema_name="test_schema", table_name="users"
         )
 
     def test_describe_table_scope_validation(self, mock_connector):
@@ -636,7 +640,7 @@ class TestDBFuncTool:
         assert result.success == 1
         assert result.result["identifier"] == "db1.schema1.orders"
         mock_connector.get_tables_with_ddl.assert_called_once_with(
-            catalog_name="", database_name="", schema_name="", tables=["orders"]
+            catalog_name="", database_name="db1", schema_name="schema1", tables=["orders"]
         )
 
     def test_get_table_ddl_not_found(self, db_func_tool, mock_connector):
@@ -674,12 +678,10 @@ class TestDBFuncTool:
         """Catalog-qualified scopes should restrict databases, schemas, and tables."""
         from datus_db_core import connector_registry
 
-        # Register snowflake capabilities so _determine_field_order includes catalog/database/schema.
-        # In production this is done by the external datus_snowflake adapter package.
-        monkeypatch.setitem(connector_registry._capabilities, "snowflake", {"catalog", "database", "schema"})
+        monkeypatch.setitem(connector_registry._capabilities, "test_catalogdb", {"catalog", "database", "schema"})
 
         connector = Mock()
-        connector.dialect = "snowflake"
+        connector.dialect = "test_catalogdb"
         connector.catalog_name = "cat1"
         connector.database_name = "analytics"
         connector.schema_name = "public"
@@ -719,6 +721,91 @@ class TestDBFuncTool:
 
         blocked_tables = tool.list_tables(catalog="cat1", database="analytics", schema_name="marketing")
         assert blocked_tables.result == []
+
+    def test_snowflake_tool_schema_does_not_expose_catalog(self):
+        connector = Mock()
+        connector.dialect = "snowflake"
+        connector.catalog_name = ""
+        connector.database_name = "analytics"
+        connector.schema_name = "public"
+
+        tool = DBFuncTool(connector)
+        tools_by_name = {item.name: item for item in tool.available_tools()}
+
+        for tool_name in ("list_databases", "list_schemas", "list_tables", "describe_table", "get_table_ddl"):
+            assert "catalog" not in tools_by_name[tool_name].params_json_schema.get("properties", {})
+
+    def test_snowflake_catalog_argument_aliases_to_database_for_describe_table(self):
+        connector = Mock()
+        connector.dialect = "snowflake"
+        connector.catalog_name = ""
+        connector.database_name = "SNOWFLAKE_SAMPLE_DATA"
+        connector.schema_name = ""
+        connector.get_schema.return_value = [{"name": "C_CUSTOMER_SK", "type": "NUMBER(38,0)", "comment": ""}]
+
+        tool = DBFuncTool(connector)
+        result = tool.describe_table(
+            table_name="CUSTOMER",
+            catalog="SNOWFLAKE_SAMPLE_DATA",
+            schema_name="TPCDS_SF10TCL",
+        )
+
+        assert result.success == 1
+        connector.get_schema.assert_called_once_with(
+            catalog_name="",
+            database_name="SNOWFLAKE_SAMPLE_DATA",
+            schema_name="TPCDS_SF10TCL",
+            table_name="CUSTOMER",
+        )
+
+    def test_snowflake_catalog_argument_aliases_to_database_for_listing_tools(self):
+        connector = Mock()
+        connector.dialect = "snowflake"
+        connector.catalog_name = ""
+        connector.database_name = "SNOWFLAKE_SAMPLE_DATA"
+        connector.schema_name = ""
+        connector.get_schemas.return_value = ["TPCDS_SF10TCL"]
+        connector.get_tables.return_value = ["CUSTOMER"]
+        connector.get_views.return_value = []
+        connector.get_materialized_views.return_value = []
+
+        tool = DBFuncTool(connector)
+
+        schemas = tool.list_schemas(catalog="SNOWFLAKE_SAMPLE_DATA")
+        assert schemas.success == 1
+        connector.get_schemas.assert_called_once_with("", "SNOWFLAKE_SAMPLE_DATA", include_sys=False)
+
+        tables = tool.list_tables(catalog="SNOWFLAKE_SAMPLE_DATA", schema_name="TPCDS_SF10TCL")
+        assert tables.success == 1
+        connector.get_tables.assert_called_once_with("", "SNOWFLAKE_SAMPLE_DATA", "TPCDS_SF10TCL")
+
+    def test_snowflake_catalog_argument_aliases_to_database_for_get_table_ddl(self):
+        connector = Mock()
+        connector.dialect = "snowflake"
+        connector.catalog_name = ""
+        connector.database_name = "SNOWFLAKE_SAMPLE_DATA"
+        connector.schema_name = ""
+        connector.get_tables_with_ddl.return_value = [
+            {
+                "identifier": "SNOWFLAKE_SAMPLE_DATA.TPCDS_SF10TCL.CUSTOMER",
+                "definition": "CREATE TABLE CUSTOMER (...)",
+            }
+        ]
+
+        tool = DBFuncTool(connector)
+        result = tool.get_table_ddl(
+            table_name="CUSTOMER",
+            catalog="SNOWFLAKE_SAMPLE_DATA",
+            schema_name="TPCDS_SF10TCL",
+        )
+
+        assert result.success == 1
+        connector.get_tables_with_ddl.assert_called_once_with(
+            catalog_name="",
+            database_name="SNOWFLAKE_SAMPLE_DATA",
+            schema_name="TPCDS_SF10TCL",
+            tables=["CUSTOMER"],
+        )
 
     def test_scoped_tables_loaded_from_agent_config(self, monkeypatch, mock_connector):
         """When scoped tables come from AgentConfig, describe_table should respect them."""
@@ -1002,13 +1089,12 @@ class TestCheckSqlTableScopeDialects:
         assert tool._check_sql_table_scope("SELECT * FROM `default`.secret") != []
 
     def test_snowflake(self, monkeypatch):
-        """Snowflake: [catalog, database, schema, table]."""
+        """Snowflake: [database, schema, table]."""
         tool = self._make_tool(
             monkeypatch,
             "snowflake",
-            {"catalog", "database", "schema"},
-            scoped_tables={"wh1.analytics.public.orders"},
-            catalog_name="wh1",
+            {"database", "schema"},
+            scoped_tables={"analytics.public.orders"},
             database_name="analytics",
             schema_name="public",
         )
@@ -1022,8 +1108,8 @@ class TestCheckSqlTableScopeDialects:
         tool = self._make_tool(
             monkeypatch,
             "snowflake",
-            {"catalog", "database", "schema"},
-            scoped_tables={"wh1.analytics.public.orders"},
+            {"database", "schema"},
+            scoped_tables={"analytics.public.orders"},
             catalog_name="",
             database_name="analytics",
             schema_name="public",
@@ -1233,10 +1319,8 @@ class TestDBFuncToolIntegration:
 
     def test_tool_transformation_integration(self, db_func_tool):
         """Test that tools can be transformed properly."""
-        from datus.tools.func_tool import trans_to_function_tool
-
         # Test that a method can be transformed
-        tool = trans_to_function_tool(db_func_tool.list_tables)
+        tool = db_func_tool.to_function_tool(db_func_tool.list_tables)
 
         assert tool.name == "list_tables"
         assert hasattr(tool, "description")
@@ -1247,6 +1331,7 @@ class TestDBFuncToolIntegration:
         assert isinstance(schema, dict), f"Expected dict schema, got {type(schema).__name__}"
         assert "self" not in schema.get("properties", {})
         assert "self" not in schema.get("required", [])
+        assert "catalog" not in schema.get("properties", {})
 
     def test_compression_integration(self, db_func_tool, mock_connector):
         """Test that read_query properly uses compression."""

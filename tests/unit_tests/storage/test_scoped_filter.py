@@ -26,7 +26,7 @@ def _register_test_capabilities():
 
     snapshots = {a: getattr(ConnectorRegistry, a).copy() for a in attrs}
     connector_registry.register_handlers("postgresql", capabilities={"database", "schema"})
-    connector_registry.register_handlers("snowflake", capabilities={"catalog", "database", "schema"})
+    connector_registry.register_handlers("snowflake", capabilities={"database", "schema"})
     yield
     for a, snap in snapshots.items():
         setattr(ConnectorRegistry, a, snap)
@@ -192,9 +192,10 @@ class TestTableConditionForToken:
         assert "order%" in clause
 
     def test_three_part_with_snowflake(self):
-        """Three-part name with Snowflake maps catalog.database.schema.table."""
+        """Three-part name with Snowflake maps database.schema.table."""
         node = _table_condition_for_token("mydb.public.users", "snowflake")
         clause = build_where(node)
+        assert "database_name = 'mydb'" in clause
         assert "table_name = 'users'" in clause
         assert "schema_name = 'public'" in clause
 

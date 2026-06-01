@@ -22,8 +22,8 @@ class TestBuildDatabaseContext:
 
     def test_all_fields(self):
         """All fields present are included."""
-        result = build_database_context("snowflake", catalog="my_cat", database="my_db", schema="my_schema")
-        assert "**Dialect**: snowflake" in result
+        result = build_database_context("starrocks", catalog="my_cat", database="my_db", schema="my_schema")
+        assert "**Dialect**: starrocks" in result
         assert "**Catalog**: my_cat" in result
         assert "**Database**: my_db" in result
         assert "**Schema**: my_schema" in result

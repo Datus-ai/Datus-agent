@@ -80,10 +80,16 @@ class SkillRegistry:
                 return
 
             seen_names: Dict[str, Path] = {}
+            seen_directories: set[Path] = set()
+            seen_skill_files: set[Path] = set()
             total_found = 0
 
             for directory in self._directories:
                 dir_path = Path(directory).expanduser().resolve()
+                if dir_path in seen_directories:
+                    logger.debug(f"Skipping duplicate skills directory: {dir_path}")
+                    continue
+                seen_directories.add(dir_path)
 
                 if not dir_path.exists():
                     logger.debug(f"Skills directory not found: {dir_path}")
@@ -98,17 +104,30 @@ class SkillRegistry:
                 # Find all SKILL.md files (case-insensitive)
                 for skill_file in dir_path.rglob("SKILL.md"):
                     try:
+                        skill_file = skill_file.resolve()
+                        if skill_file in seen_skill_files:
+                            logger.debug(f"Skipping duplicate skill file: {skill_file}")
+                            continue
+                        seen_skill_files.add(skill_file)
+
                         metadata = self._parse_skill_file(skill_file)
                         if metadata:
                             total_found += 1
 
                             # Check for duplicates
                             if metadata.name in seen_names:
+                                existing_path = seen_names[metadata.name]
+                                if skill_file.parent == existing_path:
+                                    logger.debug(
+                                        f"Skipping duplicate skill name '{metadata.name}' from same path: "
+                                        f"{skill_file.parent}"
+                                    )
+                                    continue
                                 if self.config.warn_duplicates:
                                     logger.warning(
                                         f"Duplicate skill name '{metadata.name}': "
                                         f"found at {skill_file.parent}, "
-                                        f"already exists at {seen_names[metadata.name]}"
+                                        f"already exists at {existing_path}"
                                     )
                                 continue
 
