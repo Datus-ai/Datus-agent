@@ -1522,6 +1522,40 @@ class TestDBFuncToolMultiConnector:
         assert "catalog" in schema.get("properties", {})
         mock_db_manager.get_conn.assert_not_called()
 
+    def test_mixed_dialect_available_tools_use_all_configured_dialects(self):
+        """Publish discovery tools when any configured datasource supports them."""
+        from datus.tools.db_tools.db_manager import DBManager
+
+        connector_registry.register_handlers("sqlite", capabilities=set())
+        connector_registry.register_handlers("snowflake", capabilities={"database", "schema"})
+
+        mock_db_manager = Mock(spec=DBManager)
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.database_name = "local"
+        mock_connector.catalog_name = ""
+        mock_connector.schema_name = ""
+        mock_db_manager.first_conn.return_value = mock_connector
+
+        mock_config = Mock()
+        mock_config.active_model.return_value.model = "gpt-5.4"
+        mock_config.current_datasource = "local"
+        mock_config.current_db_configs.return_value = {
+            "local": SimpleNamespace(type="sqlite"),
+            "warehouse": SimpleNamespace(type="snowflake"),
+        }
+
+        tool = DBFuncTool(
+            mock_db_manager,
+            agent_config=mock_config,
+            default_datasource="local",
+        )
+
+        tool_names = {available_tool.name for available_tool in tool.available_tools()}
+        assert "list_databases" in tool_names
+        assert "list_schemas" in tool_names
+        mock_db_manager.get_conn.assert_not_called()
+
     def test_get_connector_cache_hit(self, mock_agent_config):
         """Test that _get_connector uses cache for repeated calls."""
         from datus.tools.db_tools.db_manager import DBManager

@@ -650,6 +650,7 @@ class DBFuncTool:
     def available_tools(self) -> List[Tool]:
         bound_tools = []
         methods_to_convert: List[Callable] = [self.list_tables, self.describe_table]
+        configured_dialects = self._configured_tool_dialects()
 
         if self.has_schema:
             methods_to_convert.append(self.search_table)
@@ -661,10 +662,10 @@ class DBFuncTool:
             ]
         )
 
-        if connector_registry.support_database(self.connector.dialect):
+        if any(connector_registry.support_database(dialect) for dialect in configured_dialects):
             bound_tools.append(self.to_function_tool(self.list_databases))
 
-        if connector_registry.support_schema(self.connector.dialect):
+        if any(connector_registry.support_schema(dialect) for dialect in configured_dialects):
             bound_tools.append(self.to_function_tool(self.list_schemas))
 
         for bound_method in methods_to_convert:
