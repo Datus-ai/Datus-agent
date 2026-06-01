@@ -67,6 +67,45 @@ def test_select_impacted_unit_tests_maps_db_tools_to_db_tools_tests():
     assert impacted == ["tests/unit_tests/tools/db_tools/"]
 
 
+def test_select_impacted_unit_tests_maps_prompt_and_resource_paths_without_full_suite():
+    impacted = run_pr_tests.select_impacted_unit_tests(
+        [
+            "datus/prompts/prompt_templates/gen_metrics_system_1.2.j2",
+            "datus/resources/skills/gen-metrics/SKILL.md",
+            "datus/resources/skills/gen-semantic-model/SKILL.md",
+        ]
+    )
+
+    assert impacted == [
+        "tests/unit_tests/prompts/",
+        "tests/unit_tests/tools/skill_tools/",
+    ]
+
+
+def test_select_impacted_unit_tests_prefers_specific_subpackage_mappings():
+    impacted = run_pr_tests.select_impacted_unit_tests(
+        [
+            "datus/agent/node/gen_sql_agentic_node.py",
+            "datus/api/services/chat_task_manager.py",
+            "datus/storage/metric/metric_init.py",
+            "datus/storage/semantic_model/auto_create.py",
+            "datus/tools/func_tool/database.py",
+            "datus/tools/skill_tools/skill_registry.py",
+            "datus/validation/target_extractor.py",
+        ]
+    )
+
+    assert impacted == [
+        "tests/unit_tests/agent/node/",
+        "tests/unit_tests/api/services/",
+        "tests/unit_tests/storage/metric/",
+        "tests/unit_tests/storage/semantic_model/",
+        "tests/unit_tests/tools/func_tool/",
+        "tests/unit_tests/tools/skill_tools/",
+        "tests/unit_tests/validation/",
+    ]
+
+
 def test_select_impacted_unit_tests_maps_non_python_files_to_parent_directory():
     impacted = run_pr_tests.select_impacted_unit_tests(
         [
