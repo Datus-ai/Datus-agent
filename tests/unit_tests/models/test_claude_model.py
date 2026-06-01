@@ -1378,6 +1378,9 @@ class TestNativeTokenUsageHooks:
         bad.emit_manual = AsyncMock(side_effect=RuntimeError("boom"))
         # Must not propagate — the native loop keeps running.
         await model._emit_native_token_usage(bad, {"total_tokens": 1})
+        # The hook WAS invoked (so the raise happened inside and was swallowed),
+        # proving the suppression path — not a silent skip — was exercised.
+        bad.emit_manual.assert_awaited_once_with({"total_tokens": 1})
 
 
 class TestStoreNativeTurnUsage:
@@ -1387,13 +1390,19 @@ class TestStoreNativeTurnUsage:
     @pytest.mark.asyncio
     async def test_noop_when_session_is_none(self):
         model = _make_claude_model(_make_model_config(use_native_api=True))
-        # Must simply return without raising.
-        await model._store_native_turn_usage(None, {"total_tokens": 100})
+        # No session → nothing to persist; the guard returns None without raising.
+        result = await model._store_native_turn_usage(None, {"total_tokens": 100})
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_noop_when_session_lacks_store_run_usage(self):
         model = _make_claude_model(_make_model_config(use_native_api=True))
-        await model._store_native_turn_usage(object(), {"total_tokens": 100})
+        # A session object that does not expose ``store_run_usage`` (spec omits
+        # it) must trip the guard and no-op rather than AttributeError.
+        session = MagicMock(spec=["add_items"])
+        assert not hasattr(session, "store_run_usage")
+        result = await model._store_native_turn_usage(session, {"total_tokens": 100})
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_builds_usage_and_calls_store_run_usage(self):
@@ -1427,13 +1436,19 @@ class TestStoreNativeTurnUsage:
     async def test_swallows_store_run_usage_failure(self):
         model = _make_claude_model(_make_model_config(use_native_api=True))
 
+        attempts = []
+
         async def _boom(result):
+            attempts.append(result)
             raise RuntimeError("db down")
 
         session = MagicMock()
         session.store_run_usage = _boom
         # The warning path must not propagate the exception.
         await model._store_native_turn_usage(session, {"total_tokens": 100})
+        # Storage WAS attempted (and the raised error swallowed), confirming the
+        # except branch ran rather than the call being skipped entirely.
+        assert len(attempts) == 1
 
 
 class TestGenerateWithMcpWrapper:
