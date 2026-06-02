@@ -130,6 +130,28 @@ class TestDecideCompactMode:
                 # Ratio defaults to 0.0 → below major threshold → noop.
                 assert await node._decide_compact_mode() == "noop"
 
+    @pytest.mark.asyncio
+    async def test_mid_turn_skips_minor(self, tmp_path):
+        """Within a turn (``mid_turn=True``) the user-turn-count minor gate is
+        skipped — that count cannot change between tool calls, so minor is left
+        to the turn-start (``pre_user_turn``) check."""
+        node = _build_node(tmp_path)
+        node._compact_cfg.minor.keep_recent_user_turns = 2
+        with patch.object(_Node, "_history_token_ratio_sync", return_value=0.1):
+            with patch.object(_Node, "_user_turn_count_from_session", new=AsyncMock(return_value=99)):
+                # mid-turn: skip minor even though the count is well over the window
+                assert await node._decide_compact_mode(mid_turn=True) == "noop"
+                # turn start (default): the same state does pick minor
+                assert await node._decide_compact_mode() == "minor"
+
+    @pytest.mark.asyncio
+    async def test_mid_turn_still_allows_major(self, tmp_path):
+        """major still fires mid-turn — its token-ratio gate genuinely changes
+        as the turn progresses."""
+        node = _build_node(tmp_path)
+        with patch.object(_Node, "_history_token_ratio_sync", return_value=0.95):
+            assert await node._decide_compact_mode(mid_turn=True) == "major"
+
 
 class TestUserTurnCountFromSession:
     """``_user_turn_count_from_session`` counts ``role == "user"`` items in

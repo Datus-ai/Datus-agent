@@ -12,7 +12,7 @@ As a chat session grows, its history eventually approaches the model's context w
 
 ## Minor compact
 
-**What triggers it** — Once a session has more than `keep_recent_user_turns` user turns (default 4), minor compact becomes eligible and runs after a tool call. It blocks like major does, but because it is a purely local, rule-based archive (no LLM call) it finishes quickly and barely delays the agent before the next model call.
+**What triggers it** — At the start of each user turn, if the session has more than `keep_recent_user_turns` user turns (default 4), minor compact runs. Its gate — the user-turn count — only changes between turns, so it is evaluated once per turn rather than after every tool call (that per-tool-call check is reserved for major, whose token ratio actually grows mid-turn). It is synchronous but, being a purely local, rule-based archive with no LLM call, finishes quickly and barely delays the agent.
 
 **What it does** — For every turn *older* than the kept window, any tool-call argument or output longer than `archive_threshold` characters (default 1000) is moved out of the live conversation and written to an on-disk archive. A short inline preview (`archive_preview_chars`, default 1000; 2× for error outputs) is left behind with a `[DATUS_ARCHIVED]` marker.
 

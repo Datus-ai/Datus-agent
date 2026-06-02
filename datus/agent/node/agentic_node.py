@@ -1250,7 +1250,7 @@ class AgenticNode(Node):
         if not hasattr(self, "_compact_lock"):
             self._compact_lock = None
 
-    async def _decide_compact_mode(self) -> Literal["major", "minor", "noop"]:
+    async def _decide_compact_mode(self, mid_turn: bool = False) -> Literal["major", "minor", "noop"]:
         """Choose major / minor / noop from token-ratio + session item counts.
 
         Priority order:
@@ -1266,6 +1266,13 @@ class AgenticNode(Node):
            still be in the model's cache).
         3. Otherwise → noop.
 
+        ``mid_turn`` skips the minor branch. The minor gate is the user-turn
+        count, which cannot change within a single user turn (a new ``user``
+        message only arrives on the next turn), so re-evaluating it after every
+        tool call is redundant — minor is decided once at turn start
+        (``pre_user_turn``). Only major, whose token ratio grows as the turn
+        progresses, needs the per-tool-call check that ``CompactHook`` provides.
+
         The user-turn count is read from session items (the same source
         ``_resolve_user_turn_cutoff`` uses) rather than ``self.actions``, so a
         rebuilt node on resume — whose ``self.actions`` is empty but whose
@@ -1280,6 +1287,8 @@ class AgenticNode(Node):
             ratio = 0.0
         if cfg.major.enabled and ratio >= cfg.major.token_threshold:
             return "major"
+        if mid_turn:
+            return "noop"
         if cfg.minor.enabled:
             count = await self._user_turn_count_from_session()
             if count > cfg.minor.keep_recent_user_turns:

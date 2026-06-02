@@ -52,7 +52,10 @@ class CompactHook(RunHooks):
         # so the hook does not need to mutate any per-tool counter. It just
         # dispatches the decide-and-act pipeline once per tool completion.
         try:
-            mode = await node._decide_compact_mode()
+            # ``mid_turn=True``: only major is decided per tool call. Minor's
+            # gate is the user-turn count, which is constant within a turn, so
+            # it is decided once at turn start (``pre_user_turn``) instead.
+            mode = await node._decide_compact_mode(mid_turn=True)
         except Exception as exc:  # noqa: BLE001 — never crash the run loop
             logger.debug("compact mode decision failed in on_tool_end: %s", exc)
             return

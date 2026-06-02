@@ -38,6 +38,17 @@ async def test_on_tool_end_noop_does_not_call_compact():
 
 
 @pytest.mark.asyncio
+async def test_on_tool_end_decides_with_mid_turn():
+    """The hook evaluates compaction with ``mid_turn=True`` so the minor gate
+    (user-turn count) is not re-checked on every tool call — only major is.
+    """
+    node = _fake_node(mode_choice="noop")
+    hook = CompactHook(node)
+    await hook.on_tool_end(context=None, agent=None, tool=None, result="ok")
+    node._decide_compact_mode.assert_awaited_once_with(mid_turn=True)
+
+
+@pytest.mark.asyncio
 async def test_on_tool_end_runs_major_synchronously():
     """Major must complete before the SDK loop yields; otherwise the next
     turn would re-read the unchanged session and overflow again.
