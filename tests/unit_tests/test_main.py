@@ -333,6 +333,7 @@ class TestMainRunAction:
         mock_config = MagicMock()
         mock_config.current_db_name_type.return_value = ("mydb", "sqlite")
         mock_config.output_dir = "/tmp/output"
+        mock_config.current_datasource = "ns"
 
         with (
             patch("datus.main.configure_logging"),
