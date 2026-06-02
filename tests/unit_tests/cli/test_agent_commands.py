@@ -809,6 +809,42 @@ class TestRunNode:
         result = agent_commands.run_node("schema_linking")
         assert result["success"] is False
 
+    def test_sql_node_result_prints_sql_once_and_excludes_sql_from_tree(self, agent_commands):
+        from types import SimpleNamespace
+
+        agent_commands.agent = MagicMock()
+        workflow = MagicMock()
+        workflow.tools = []
+        workflow.context.sql_contexts = []
+        runner = MagicMock()
+        runner.workflow_ready = True
+        runner.workflow = workflow
+        agent_commands.cli.workflow_runner = runner
+
+        node = MagicMock()
+        node.type = NodeType.TYPE_GEN_SQL
+        node.status = "success"
+        node.input = GenSQLNodeInput(user_message="count schools", database="california_schools")
+        node.result = SimpleNamespace(sql="SELECT 1", response="done", tokens_used=1)
+
+        tree_payloads = []
+
+        def fake_dict_to_tree(payload, console=None):
+            tree_payloads.append(payload)
+            return "TREE"
+
+        with (
+            patch("datus.cli.agent_commands.Node.new_instance", return_value=node),
+            patch("datus.cli.agent_commands.setup_node_input", return_value={"success": True}),
+            patch("datus.cli.agent_commands.update_context_from_node", return_value={"success": True}),
+            patch("datus.cli.agent_commands.dict_to_tree", side_effect=fake_dict_to_tree),
+        ):
+            result = agent_commands.run_node(NodeType.TYPE_GEN_SQL, need_confirm=False)
+
+        assert result["success"] is True
+        assert tree_payloads == [{"response": "done", "tokens_used": 1}]
+        assert "SELECT 1" in agent_commands.console.file.getvalue()
+
 
 # ---------------------------------------------------------------------------
 # Tests: _extract_sql_from_streaming_actions
@@ -868,6 +904,22 @@ class TestExtractSqlFromStreamingActions:
         agent_commands._extract_sql_from_streaming_actions([action], workflow, node)
         # Failed context (error != "") should not be added
         assert len(workflow.context.sql_contexts) == 0
+
+    def test_extracts_output_field_from_final_assistant_message(self, agent_commands):
+        workflow = MagicMock()
+        workflow.context.sql_contexts = []
+
+        action = MagicMock()
+        action.action_type = "message"
+        action.role = "assistant"
+        action.output = {"raw_output": '{"sql": "SELECT 1", "output": "compact response"}'}
+
+        node = MagicMock(spec=[])
+        agent_commands._extract_sql_from_streaming_actions([action], workflow, node)
+
+        assert len(workflow.context.sql_contexts) == 1
+        assert workflow.context.sql_contexts[0].sql_query == "SELECT 1"
+        assert workflow.context.sql_contexts[0].explanation == "compact response"
 
     def test_exception_in_extraction_does_not_raise(self, agent_commands):
         """Top-level exception in extraction should be caught and logged, not raised."""

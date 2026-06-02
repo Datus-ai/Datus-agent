@@ -2840,6 +2840,41 @@ class TestGenSQLSystemPromptToolContext:
         assert '"output"' in prompt
         assert "Do not use `tables`, `explanation`, `mode`, or `validation` as final JSON fields." in prompt
 
+    def test_system_prompt_fallback_preserves_prompt_version(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        real_agent_config.agentic_nodes["custom_alias"] = {
+            "system_prompt": "custom_alias",
+            "tools": "db_tools.describe_table",
+            "prompt_version": "1.1",
+            "max_turns": 5,
+        }
+        node = GenSQLAgenticNode(
+            node_id="custom_alias",
+            description="Fallback GenSQL",
+            node_type=NodeType.TYPE_GEN_SQL,
+            agent_config=real_agent_config,
+            node_name="custom_alias",
+        )
+
+        with patch("datus.prompts.prompt_manager.get_prompt_manager") as mock_get_prompt_manager:
+            mock_prompt_manager = MagicMock()
+            mock_prompt_manager.render_template.side_effect = [
+                FileNotFoundError("missing alias template"),
+                "rendered fallback prompt",
+            ]
+            mock_get_prompt_manager.return_value = mock_prompt_manager
+
+            prompt = node._get_system_prompt()
+
+        assert prompt.startswith("rendered fallback prompt")
+        first_call = mock_prompt_manager.render_template.call_args_list[0].kwargs
+        second_call = mock_prompt_manager.render_template.call_args_list[1].kwargs
+        assert first_call["template_name"] == "custom_alias_system"
+        assert first_call["version"] == "1.1"
+        assert second_call["template_name"] == "gen_sql_system"
+        assert second_call["version"] == "1.1"
+
     def test_system_prompt_context_uses_actual_tools(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 

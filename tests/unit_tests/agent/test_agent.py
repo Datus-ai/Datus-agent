@@ -1355,6 +1355,52 @@ class TestGenerateDataset:
         assert data[0]["user_prompt"] == "What is the count?"
         os.remove(out_file)
 
+    def test_generates_json_with_sql_contexts_result_shape(self, tmp_path):
+        import json
+
+        import yaml as pyyaml
+
+        traj_file = tmp_path / "0_1234567890.yaml"
+        traj_data = {
+            "workflow": {
+                "nodes": [
+                    {
+                        "id": "node1",
+                        "type": "gen_sql",
+                        "result": {"sql_contexts": [{"sql_query": "SELECT 1", "explanation": "legacy context"}]},
+                    }
+                ]
+            }
+        }
+        traj_file.write_text(pyyaml.dump(traj_data))
+
+        node_dir = tmp_path / "0"
+        node_dir.mkdir()
+        node_file = node_dir / "node1.yml"
+        node_file.write_text(
+            pyyaml.dump(
+                {
+                    "user_prompt": "What is the count?",
+                    "system_prompt": "You are a SQL expert.",
+                    "reason_content": [],
+                    "output_content": "SELECT COUNT(*) FROM t",
+                }
+            )
+        )
+
+        args = _make_args_ext(trajectory_dir=str(tmp_path), dataset_name=str(tmp_path / "legacy_ds"), format="json")
+        agent = _make_agent_ext(args=args)
+
+        result = agent.generate_dataset()
+
+        assert result["status"] == "success"
+        assert result["total_entries"] == 1
+        out_file = result["output_file"]
+        with open(out_file, "r") as f:
+            data = json.load(f)
+        assert data[0]["sql_contexts"] == [{"sql_query": "SELECT 1", "explanation": "legacy context"}]
+        os.remove(out_file)
+
     def test_filters_by_task_ids(self, tmp_path):
         import yaml as pyyaml
 

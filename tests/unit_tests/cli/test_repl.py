@@ -113,6 +113,27 @@ def cli(real_agent_config):
     return _make_cli(real_agent_config)
 
 
+class TestTuiReflow:
+    def test_dumb_console_height_is_preserved_before_width_update(self, cli):
+        console = SimpleNamespace(
+            _width=120,
+            _height=None,
+            is_dumb_terminal=True,
+            size=SimpleNamespace(height=31),
+            width=120,
+        )
+        cli.console = console
+        cli._tui_output_buffer = SimpleNamespace(clear=MagicMock())
+        cli.chat_commands = None
+        cli._compute_pane_width = lambda sidebar_visible: 80
+
+        cli._reflow_for_sidebar(sidebar_visible=True)
+
+        assert console._height == 31
+        assert console._width == 80
+        cli._tui_output_buffer.clear.assert_called_once_with()
+
+
 # ---------------------------------------------------------------------------
 # Tests: CommandType
 # ---------------------------------------------------------------------------

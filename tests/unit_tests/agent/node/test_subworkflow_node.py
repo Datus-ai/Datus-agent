@@ -13,6 +13,17 @@ from datus.configuration.node_type import NodeType
 from datus.schemas.subworkflow_node_models import SubworkflowInput, SubworkflowResult
 
 
+def test_generate_workflow_lazy_wrapper_delegates_to_plan():
+    from datus.agent.node import subworkflow_node
+
+    expected = object()
+    with patch("datus.agent.plan.generate_workflow", return_value=expected) as generate:
+        result = subworkflow_node.generate_workflow("task", plan_type="fixed")
+
+    assert result is expected
+    generate.assert_called_once_with("task", plan_type="fixed")
+
+
 def make_agent_config(has_workflow=True, workflow_name="my_wf"):
     cfg = MagicMock()
     cfg.datasource_configs = {}
