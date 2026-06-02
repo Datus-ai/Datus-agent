@@ -47,6 +47,21 @@ if TYPE_CHECKING:
     from datus.cli.repl import DatusCLI
 
 
+def _is_embedding_unavailable_error(error: str | None) -> bool:
+    """Return True for embedding-cache/provider failures that should degrade search."""
+    if not error:
+        return False
+    return any(
+        marker in error
+        for marker in (
+            "MODEL_EMBEDDING_ERROR",
+            "error_code=300019",
+            "Embedding model cache is missing",
+            "embedding model is unavailable",
+        )
+    )
+
+
 class AgentCommands:
     """Handles all agent, workflow, and node-related commands."""
 
@@ -507,7 +522,10 @@ class AgentCommands:
                 )
             self.console.print(table)
         elif not result.success:
-            print_error(self.console, f"searching metrics: {result.error}")
+            if _is_embedding_unavailable_error(result.error):
+                print_warning(self.console, format_context_degraded_warning(result.error))
+            else:
+                print_error(self.console, f"searching metrics: {result.error}")
         else:
             print_warning(self.console, "No metrics found.")
 

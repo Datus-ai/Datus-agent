@@ -219,6 +219,26 @@ class TestCmdSearchMetrics:
         output = agent_commands.console.file.getvalue()
         assert "Context search and @ references are disabled" in output
 
+    def test_search_embedding_failure_shows_warning_after_prompts(self, agent_commands):
+        from datus.tools.func_tool.base import FuncToolResult
+
+        mock_result = MagicMock(spec=FuncToolResult)
+        mock_result.success = False
+        mock_result.result = None
+        mock_result.error = "error_code=300019 error_message=Embedding model cache is missing"
+        agent_commands.cli.prompt_input = MagicMock(return_value="5")
+
+        with patch.object(agent_commands, "_context_search_tools") as mock_cst:
+            mock_cst.search_metrics.return_value = mock_result
+            with patch.object(agent_commands, "_prompt_subject_path", return_value=None) as prompt_subject:
+                agent_commands.cmd_search_metrics("revenue")
+
+        prompt_subject.assert_called_once()
+        agent_commands.cli.prompt_input.assert_called_once_with("Enter top_n to match", default="5")
+        output = agent_commands.console.file.getvalue()
+        assert "Context search and @ references are disabled" in output
+        assert "Error" not in output
+
     def test_success_displays_metrics(self, agent_commands):
         from datus.tools.func_tool.base import FuncToolResult
 
