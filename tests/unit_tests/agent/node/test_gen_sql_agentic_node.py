@@ -446,8 +446,7 @@ class TestGenSQLAgenticNodeExecution:
                     content=json.dumps(
                         {
                             "sql": "SELECT * FROM satscores WHERE AvgScrRead > 500",
-                            "tables": ["satscores"],
-                            "explanation": "Get schools with high SAT reading scores",
+                            "output": "Get schools with high SAT reading scores",
                         }
                     ),
                 ),
@@ -484,6 +483,7 @@ class TestGenSQLAgenticNodeExecution:
         assert sql_value, f"Missing 'sql' key in output: {output.keys()}"
         assert "satscores" in sql_value.lower()
         assert "avgscrread" in sql_value.lower()
+        assert output["response"] == "Get schools with high SAT reading scores"
 
     @pytest.mark.asyncio
     async def test_gen_sql_input_not_set_raises(self, real_agent_config, mock_llm_create):
@@ -2803,6 +2803,42 @@ class TestGenSQLSystemPromptCurrentDate:
 
 class TestGenSQLSystemPromptToolContext:
     """Verify prompt rendering receives the actual available tool surface."""
+
+    def test_system_prompt_gen_sql_uses_canonical_template_and_context(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+        from datus.prompts.prompt_manager import PromptManager
+
+        real_agent_config.agentic_nodes["gen_sql"] = {
+            "system_prompt": "gen_sql",
+            "tools": "db_tools.describe_table",
+            "max_turns": 5,
+        }
+        node = GenSQLAgenticNode(
+            node_id="gen_sql",
+            description="Canonical GenSQL",
+            node_type=NodeType.TYPE_GEN_SQL,
+            agent_config=real_agent_config,
+            node_name="gen_sql",
+        )
+
+        real_prompt_manager = PromptManager(agent_config=real_agent_config)
+        with patch("datus.prompts.prompt_manager.get_prompt_manager") as mock_get_prompt_manager:
+            mock_prompt_manager = MagicMock()
+            mock_prompt_manager.render_template.side_effect = real_prompt_manager.render_template
+            mock_get_prompt_manager.return_value = mock_prompt_manager
+
+            prompt = node._get_system_prompt()
+
+        call_kwargs = mock_prompt_manager.render_template.call_args.kwargs
+        assert call_kwargs["template_name"] == "gen_sql_system"
+        assert "describe_table" in call_kwargs["available_tool_names"]
+        assert "read_query" not in call_kwargs["available_tool_names"]
+        assert call_kwargs["has_describe_table_tool"] is True
+        assert call_kwargs["has_read_query_tool"] is False
+        assert call_kwargs["has_ask_user_tool"] is True
+        assert '"sql"' in prompt
+        assert '"output"' in prompt
+        assert "Do not use `tables`, `explanation`, `mode`, or `validation` as final JSON fields." in prompt
 
     def test_system_prompt_context_uses_actual_tools(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode

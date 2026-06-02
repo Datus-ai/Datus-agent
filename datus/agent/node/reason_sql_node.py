@@ -7,6 +7,7 @@ from typing import AsyncGenerator, Dict, Optional
 
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
+from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.schemas.reason_sql_node_models import ReasoningInput, ReasoningResult
@@ -108,11 +109,11 @@ class ReasonSQLNode(Node):
         gen_sql_node = Node.new_instance(
             node_id=f"reflect_{workflow.reflection_round}_regenerate_sql",
             description="Generate corrected SQL based on schema analysis",
-            node_type="gen_sql",
+            node_type=NodeType.TYPE_GEN_SQL,
             input_data=None,
             agent_config=self.agent_config,
             tools=workflow.tools,
-            node_name="gen_sql",
+            node_name=NodeType.TYPE_GEN_SQL,
         )
 
         # Create SQL execution node

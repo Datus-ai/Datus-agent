@@ -168,6 +168,7 @@ Chat commands allow direct interaction with the AI:
 | Command                | Description                        |
 |------------------------|------------------------------------|
 | `/<message>`           | Chat with the AI assistant          |
+| `/gen_sql <query>`     | Generate SQL from a natural language request |
 
 ### 4. Internal Commands (.)
 

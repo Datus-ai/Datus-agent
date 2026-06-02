@@ -956,8 +956,8 @@ class AgentCommands:
                     sql_syntax = Syntax(sql_query, "sql", theme=CODE_THEME, line_numbers=False, word_wrap=True)
                     self.console.print(sql_syntax)
 
-                    # Create a copy of result_dict without sql_query for tree display
-                    other_info = {k: v for k, v in result_dict.items() if k != "sql_query"}
+                    # Create a copy of result_dict without SQL for tree display
+                    other_info = {k: v for k, v in result_dict.items() if k not in {"sql_query", "sql"}}
 
                     # Display other information in tree structure
                     if other_info:

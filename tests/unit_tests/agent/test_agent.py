@@ -1315,7 +1315,12 @@ class TestGenerateDataset:
                     {
                         "id": "node1",
                         "type": "gen_sql",
-                        "result": {"sql_contexts": [{"sql": "SELECT 1"}]},
+                        "result": {
+                            "success": True,
+                            "response": "Generated a count query.",
+                            "sql": "SELECT 1",
+                            "tokens_used": 0,
+                        },
                     }
                 ]
             }
@@ -1362,7 +1367,12 @@ class TestGenerateDataset:
                         {
                             "id": f"node_{task_id}",
                             "type": "gen_sql",
-                            "result": {"sql_contexts": [{"sql": "SELECT 1"}]},
+                            "result": {
+                                "success": True,
+                                "response": "Generated a count query.",
+                                "sql": "SELECT 1",
+                                "tokens_used": 0,
+                            },
                         }
                     ]
                 }

@@ -123,8 +123,8 @@ workflow:
 
 | Category | Nodes |
 |----------|-------|
-| **Core** | `schema_linking`, `gen_sql`, `execute_sql`, `reasoning`, `reflect`, `output` |
-| **Agentic** | `chat`, `explore`, `gen_semantic_model`, `gen_metrics`, `gen_ext_knowledge`, `gen_sql_summary`, `gen_skill`, `gen_table`, `compare` |
+| **Core** | `schema_linking`, `execute_sql`, `reasoning`, `reflect`, `output` |
+| **Agentic** | `gen_sql`, `chat`, `explore`, `gen_semantic_model`, `gen_metrics`, `gen_ext_knowledge`, `gen_sql_summary`, `gen_skill`, `gen_table`, `compare` |
 | **Control Flow** | `parallel`, `selection`, `subworkflow` |
 | **Utility** | `date_parser`, `doc_search`, `fix` |
 

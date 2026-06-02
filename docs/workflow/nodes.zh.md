@@ -38,8 +38,8 @@
   - 将结构信息写入上下文
 - **输出**：相关表结构与样例数据列表
 
-#### Generate SQL（生成 SQL） {#generate-sql-node}
-- **用途**：基于需求生成查询
+#### gen_sql Agentic Node（生成 SQL） {#generate-sql-node}
+- **用途**：通过 `GenSQLAgenticNode` 基于需求生成查询
 - **要点**：
   - 利用大模型理解业务需求
   - 复用历史 SQL 模式

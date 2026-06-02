@@ -42,8 +42,8 @@ Action nodes perform specific data processing and SQL-related tasks.
   - Update workflow context with schema information
 - **Output**: List of relevant table schemas with sample data
 
-#### Generate SQL Node
-- **Purpose**: Generate SQL queries based on user requirements
+#### gen_sql Agentic Node
+- **Purpose**: Generate SQL queries from user requirements with `GenSQLAgenticNode`
 - **Key Features**:
   - Uses LLM to understand business requirements
   - Leverages historical SQL patterns

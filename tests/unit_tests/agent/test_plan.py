@@ -127,12 +127,15 @@ class TestCreateSingleNode:
         assert "myagent" in cfg.agentic_nodes
         # Verify the normalization logic: agentic_nodes key -> TYPE_GEN_SQL
         task = _sql_task()
-        try:
+        fake_node = MagicMock()
+        fake_node.type = NodeType.TYPE_GEN_SQL
+        with patch("datus.agent.plan.Node.new_instance", return_value=fake_node) as new_instance:
             node = _create_single_node("myagent", "node_agent", task, cfg)
-            assert node.type == NodeType.TYPE_GEN_SQL
-        except Exception:
-            # TYPE_GEN_SQL node creation may fail without full DB setup
-            pass
+        assert node.type == NodeType.TYPE_GEN_SQL
+        new_instance.assert_called_once()
+        call_kwargs = new_instance.call_args.kwargs
+        assert call_kwargs["node_type"] == NodeType.TYPE_GEN_SQL
+        assert call_kwargs["node_name"] == "myagent"
 
     def test_schema_linking_creates_schema_linking_input(self):
         task = _sql_task()
