@@ -189,7 +189,9 @@ def _create_single_node(
         node_type=normalized_type,
         input_data=input_data,
         agent_config=agent_config,
-        node_name=node_type if normalized_type == NodeType.TYPE_GEN_SQL else None,  # Pass original name for gen_sql nodes
+        node_name=node_type
+        if normalized_type == NodeType.TYPE_GEN_SQL
+        else None,  # Pass original name for gen_sql nodes
     )
 
     return node

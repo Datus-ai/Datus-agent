@@ -615,7 +615,10 @@ class DatusCLI:
                 current_console._height = current_console.size.height
             except Exception:  # pragma: no cover - defensive
                 current_console._height = 25
-        if getattr(current_console, "_width", None) == new_width or getattr(current_console, "width", None) == new_width:
+        if (
+            getattr(current_console, "_width", None) == new_width
+            or getattr(current_console, "width", None) == new_width
+        ):
             return
         buffer = getattr(self, "_tui_output_buffer", None)
         if buffer is None:
