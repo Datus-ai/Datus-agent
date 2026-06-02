@@ -2292,6 +2292,9 @@ class TestCmdCompactWithSession:
         assert cleared, "screen must be cleared before the summary panel"
         output = _get_console_output(console)
         assert "context compacted" in output.lower()
+        # Lock the manual path to the shared compact-summary renderer: the panel
+        # must carry the mocked LLM summary body, not just the generic banner.
+        assert "Summary of conversation" in output
 
     def test_compact_failure_does_not_clear(self, real_agent_config, mock_llm_create):
         """A failed compact must NOT clear the screen — there is no valid

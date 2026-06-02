@@ -1590,7 +1590,9 @@ class TestCompactActions:
         assert content.payload["content"] == "# Recap\nDid X."
         assert content.payload["kind"] == "compact_summary"
         assert content.payload["summary_token"] == 77
-        assert content.payload["history_jsonl"] == "/h.jsonl"
+        # ``history_jsonl`` is a server-local path and must never be forwarded
+        # over SSE to remote clients.
+        assert "history_jsonl" not in content.payload
 
     def test_compact_summary_empty_returns_none(self):
         action = _make_action(action_type="compact_summary", output={"summary": ""})

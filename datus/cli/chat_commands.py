@@ -1550,8 +1550,10 @@ class ChatCommands:
             if result.get("success"):
                 # Clear the screen and surface the summary panel — identical to
                 # the auto (mid-turn) path's rendering, so both entry points
-                # present the compacted context the same way.
-                self.console.clear()
+                # present the compacted context the same way. Use the TUI-safe
+                # helper: ``console.clear()`` only injects escape bytes into the
+                # full-screen ``TUIOutputBuffer`` instead of wiping the viewport.
+                self._clear_scrollback()
                 self.console.print(
                     render_compact_summary_panel(
                         str(result.get("summary", "") or ""),

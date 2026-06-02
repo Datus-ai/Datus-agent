@@ -1637,11 +1637,10 @@ class InlineStreamingContext:
                 self.display.console.clear()
                 sys.stdout.write("\033[3J")
                 sys.stdout.flush()
-            if self._clear_header_callback is not None:
-                try:
-                    self._clear_header_callback()
-                except Exception as exc:
-                    logger.debug("clear_header_callback raised in compact summary: %s", exc, exc_info=True)
+            # Do not repaint the welcome banner here: ``_clear_header_callback``
+            # is wired from ChatCommands for Ctrl+O history redraws, and the
+            # manual ``/compact`` path only clears and prints the summary panel.
+            # Reusing it would make the auto-compact path diverge visually.
             self.display.console.print(
                 render_compact_summary_panel(
                     summary,

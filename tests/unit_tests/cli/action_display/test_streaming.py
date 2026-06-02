@@ -1862,7 +1862,7 @@ class TestCompactRendering:
 
     def test_compact_summary_prefers_clear_screen_callback_in_tui(self):
         buf = StringIO()
-        ctx, console = self._ctx(buf)
+        ctx, console, _live_state = self._ctx_tui(buf)
         cb = MagicMock()
         ctx._clear_screen_callback = cb
         console.clear = MagicMock()  # must NOT be used when a TUI callback exists
@@ -1953,15 +1953,21 @@ class TestCompactRendering:
         ctx.actions = [
             _make_action(
                 ActionRole.ASSISTANT,
+                ActionStatus.PROCESSING,
+                action_type="compact_progress",
+            ),
+            _make_action(
+                ActionRole.ASSISTANT,
                 ActionStatus.SUCCESS,
                 action_type="compact_summary",
                 output_data={"summary": "X"},
-            )
+            ),
         ]
         ctx._processed_index = 0
         ctx._process_actions()
-        ctx._render_compact_action.assert_called_once()
-        assert ctx._processed_index == 1
+        # Both the in-progress hint and the final summary route to the renderer.
+        assert ctx._render_compact_action.call_count == 2
+        assert ctx._processed_index == 2
 
     def test_flush_remaining_dispatches_compact_summary_to_renderer(self):
         buf = StringIO()
@@ -1970,11 +1976,17 @@ class TestCompactRendering:
         ctx.actions = [
             _make_action(
                 ActionRole.ASSISTANT,
+                ActionStatus.PROCESSING,
+                action_type="compact_progress",
+            ),
+            _make_action(
+                ActionRole.ASSISTANT,
                 ActionStatus.SUCCESS,
                 action_type="compact_summary",
                 output_data={"summary": "X"},
-            )
+            ),
         ]
         ctx._processed_index = 0
         ctx._flush_remaining_actions()
-        ctx._render_compact_action.assert_called_once()
+        # Both the in-progress hint and the final summary route to the renderer.
+        assert ctx._render_compact_action.call_count == 2

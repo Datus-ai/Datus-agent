@@ -218,11 +218,14 @@ def build_compact_summary_content(action: ActionHistory) -> Optional[List[Messag
     summary = str(out.get("summary", "") or "")
     if not summary:
         return None
+    # ``history_jsonl`` is a server-local filesystem path; it is intentionally
+    # excluded here so API/print consumers never receive backend filesystem
+    # details (the local CLI panel reads the path from the action output
+    # directly, not from this externally visible payload).
     payload = {
         "content": summary,
         "kind": "compact_summary",
         "summary_token": int(out.get("summary_token", 0) or 0),
-        "history_jsonl": str(out.get("history_jsonl", "") or ""),
     }
     return [MessageContent(type="markdown", payload=payload)]
 

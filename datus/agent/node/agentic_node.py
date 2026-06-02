@@ -1335,13 +1335,15 @@ class AgenticNode(Node):
         keeping the compact trigger and the status bar in agreement. This is
         what lets a major compact fire mid-turn instead of one turn late.
 
-        Falls back to walking ``self.actions`` — only populated once the turn
-        ends (``self.actions.extend(...)`` after the stream loop) — when no live
-        snapshot exists (e.g. a model call that surfaced no usage). We avoid
-        awaiting the session here because the trigger check has to be cheap
-        enough to call from ``on_tool_end`` without stalling the run loop.
-        Returns 0.0 when neither source yields a positive token count or no
-        ``context_length`` is known.
+        When no live snapshot exists, falls back to the restored context state
+        (``_restored_context_used`` / ``_restored_context_length``, populated by
+        ``restore_context_state()``) so a resumed node still reflects an
+        already-full session before its first LLM call, then to walking
+        ``self.actions`` — only populated once the turn ends
+        (``self.actions.extend(...)`` after the stream loop). We avoid awaiting
+        the session here because the trigger check has to be cheap enough to call
+        from ``on_tool_end`` without stalling the run loop. Returns 0.0 when no
+        source yields a positive token count or no ``context_length`` is known.
         """
         running = getattr(self, "running_turn_usage", None)
         if running is not None:
@@ -1349,6 +1351,15 @@ class AgenticNode(Node):
             ctx = running.context_length or self.context_length or 0
             if ctx > 0 and tok > 0:
                 return tok / float(ctx)
+        # Resumed node: ``running_turn_usage`` and ``self.actions`` are both empty
+        # before the first LLM call of the turn, but ``restore_context_state()``
+        # has already re-hydrated the last persisted occupancy. Honour it so the
+        # pre-user-turn major trigger does not miss an already-full session for a
+        # whole model call.
+        restored_tok = getattr(self, "_restored_context_used", 0) or 0
+        restored_ctx = getattr(self, "_restored_context_length", 0) or self.context_length or 0
+        if restored_ctx > 0 and restored_tok > 0:
+            return restored_tok / float(restored_ctx)
         if not self.context_length:
             return 0.0
         for action in reversed(self.actions):

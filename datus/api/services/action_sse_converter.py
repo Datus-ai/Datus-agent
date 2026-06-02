@@ -516,6 +516,9 @@ def action_to_sse_event(
             summary = str(output.get("summary", "") or "")
             if not summary:
                 return None
+            # ``history_jsonl`` is a server-local filesystem path that is unusable
+            # for remote clients and would disclose internal server layout, so it
+            # is deliberately omitted from the SSE-facing payload.
             contents = [
                 IMessageContent(
                     type="markdown",
@@ -523,7 +526,6 @@ def action_to_sse_event(
                         "content": summary,
                         "kind": "compact_summary",
                         "summary_token": int(output.get("summary_token", 0) or 0),
-                        "history_jsonl": str(output.get("history_jsonl", "") or ""),
                     },
                 )
             ]

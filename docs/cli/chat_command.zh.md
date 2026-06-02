@@ -82,7 +82,7 @@ Datus 会在思考时实时流式输出，展示每一步的执行结果。如�
 - `/clear`：清空当前会话上下文，从头开始
 - `/compact`：压缩历史对话，减少上下文占用同时保留关键信息
   - 执行 **major compact**：由模型把整个会话总结成一段摘要，完整历史会保存为 JSONL 文件以便找回
-  - 自动触发：当模型上下文使用率超过 90%（可配置）时也会自动执行 major compact；此外随着会话变长，更轻量的 **minor compact** 会在后台归档较早的工具 I/O
+  - 自动触发：当模型上下文使用率超过 90%（可配置）时也会自动执行 major compact；此外随着会话变长，更轻量的 **minor compact** 会在工具调用后自动归档较早的工具 I/O
   - major/minor 的区别与可调参数见[上下文压缩](../configuration/compact.zh.md)
 - `/chat_info`：查看当前激活的上下文（消息、数据表、指标）
 - `/resume [session_id]`：恢复之前的聊天会话
