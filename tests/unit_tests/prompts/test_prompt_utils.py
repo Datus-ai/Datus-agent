@@ -367,8 +367,8 @@ class TestGenMetricsV12Template:
         assert latest_parts >= (1, 2), f"Expected latest version >= '1.2', got '{latest}'"
 
 
-class TestSqlSystemV12Template:
-    """Smoke tests for sql_system_1.2.j2 and GenSQL template aliasing."""
+class TestGenSqlSystemV12Template:
+    """Smoke tests for gen_sql_system_1.2.j2."""
 
     @staticmethod
     def _builtin_versions(pm, template_name: str) -> list[str]:
@@ -382,30 +382,17 @@ class TestSqlSystemV12Template:
     def _read_builtin_template(pm, template_name: str, version: str) -> str:
         return (pm.default_templates_dir / f"{template_name}_{version}.j2").read_text(encoding="utf-8")
 
-    def test_sql_system_v12_is_latest_version(self):
-        """Bundled sql_system latest version is 1.2 or newer."""
-        from datus.prompts.prompt_manager import PromptManager
-
-        pm = PromptManager()
-        latest = self._builtin_versions(pm, "sql_system")[-1]
-        latest_parts = tuple(int(p) for p in latest.split("."))
-        assert latest_parts >= (1, 2), f"Expected latest version >= '1.2', got '{latest}'"
-
-    def test_gen_sql_system_latest_remains_legacy_compatible(self):
-        """GenerateSQLNode still reads gen_sql_system as a raw legacy prompt."""
+    def test_gen_sql_system_v12_is_latest_version(self):
+        """Bundled gen_sql_system latest version is 1.2 or newer."""
         from datus.prompts.prompt_manager import PromptManager
 
         pm = PromptManager()
         latest = self._builtin_versions(pm, "gen_sql_system")[-1]
+        latest_parts = tuple(int(p) for p in latest.split("."))
+        assert latest_parts >= (1, 2), f"Expected latest version >= '1.2', got '{latest}'"
 
-        assert latest == "1.1"
-        content = self._read_builtin_template(pm, "gen_sql_system", latest)
-        assert "{% include" not in content
-        assert '"tables"' in content
-        assert '"explanation"' in content
-
-    def test_get_sql_prompt_uses_raw_legacy_gen_sql_system(self, tmp_path):
-        """get_sql_prompt should not receive a Jinja include as its raw system prompt."""
+    def test_get_sql_prompt_uses_canonical_gen_sql_system_protocol(self, tmp_path):
+        """get_sql_prompt should render the canonical sql/output system protocol."""
         from datus.prompts.gen_sql import get_sql_prompt
         from datus.utils.path_manager import DatusPathManager
 
@@ -421,15 +408,16 @@ class TestSqlSystemV12Template:
 
         system_content = messages[0]["content"]
         assert "{% include" not in system_content
-        assert '"tables"' in system_content
-        assert '"explanation"' in system_content
+        assert '"sql"' in system_content
+        assert '"output"' in system_content
+        assert "Do not use `tables`, `explanation`, `mode`, or `validation` as final JSON fields." in system_content
 
-    def test_sql_system_v12_uses_current_output_protocol(self):
-        """sql_system 1.2 documents the compact sql/output final JSON protocol."""
+    def test_gen_sql_system_v12_uses_current_output_protocol(self):
+        """gen_sql_system 1.2 documents the compact sql/output final JSON protocol."""
         from datus.prompts.prompt_manager import PromptManager
 
         pm = PromptManager()
-        content = self._read_builtin_template(pm, "sql_system", "1.2")
+        content = self._read_builtin_template(pm, "gen_sql_system", "1.2")
         assert "explain=true" not in content
         assert "start_time" not in content
         assert "end_time" not in content

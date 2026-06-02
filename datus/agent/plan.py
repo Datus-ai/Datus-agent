@@ -170,9 +170,9 @@ def _create_single_node(
         normalized_type = NodeType.TYPE_EXECUTE_SQL
     elif node_type == "chat":
         normalized_type = NodeType.TYPE_CHAT
-    # Check if node_type is defined in agentic_nodes config - if so, map to gensql
+    # Check if node_type is defined in agentic_nodes config - if so, map to gen_sql
     elif agent_config and hasattr(agent_config, "agentic_nodes") and node_type in agent_config.agentic_nodes:
-        normalized_type = NodeType.TYPE_GENSQL
+        normalized_type = NodeType.TYPE_GEN_SQL
 
     description = NodeType.get_description(normalized_type)
 
@@ -189,7 +189,7 @@ def _create_single_node(
         node_type=normalized_type,
         input_data=input_data,
         agent_config=agent_config,
-        node_name=node_type if normalized_type == NodeType.TYPE_GENSQL else None,  # Pass original name for gensql nodes
+        node_name=node_type if normalized_type == NodeType.TYPE_GEN_SQL else None,  # Pass original name for gen_sql nodes
     )
 
     return node

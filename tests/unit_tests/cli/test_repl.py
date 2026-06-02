@@ -60,7 +60,7 @@ def _make_cli(agent_config, available_subagents=None):
     cli.actions = ActionHistoryManager()
 
     # Available subagents
-    cli.available_subagents = available_subagents or {"gensql", "chat", "compare"}
+    cli.available_subagents = available_subagents or {"gen_sql", "chat", "compare"}
 
     # Command handlers (mocked)
     cli.agent_commands = MagicMock()
@@ -713,9 +713,9 @@ class TestRenderUnknownCommand:
 
 class TestExecuteChatCommand:
     def test_delegates_to_chat_commands(self, cli):
-        cli._execute_chat_command("show revenue", subagent_name="gensql")
+        cli._execute_chat_command("show revenue", subagent_name="gen_sql")
         cli.chat_commands.execute_chat_command.assert_called_once_with(
-            "show revenue", plan_mode=False, subagent_name="gensql"
+            "show revenue", plan_mode=False, subagent_name="gen_sql"
         )
 
     def test_plan_mode_passed_through(self, cli):

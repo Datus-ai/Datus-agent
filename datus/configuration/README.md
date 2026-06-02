@@ -47,10 +47,12 @@ Configure specific behaviors for each workflow node:
       model: openai
       matching_rate: fast
       prompt_version: "1.0"
-    generate_sql:
+  agentic_nodes:
+    gen_sql:
       model: deepseek_v3
-      max_context_length: 8000
-      max_value_length: 500
+      system_prompt: gen_sql
+      tools: db_tools.*, context_search_tools.*
+      max_turns: 30
 ```
 
 ### 3. Database Configuration
@@ -106,7 +108,7 @@ Define execution workflows:
     bird_para:
       - schema_linking
       - parallel:
-          - generate_sql
+          - gen_sql
           - reasoning
       - selection
       - execute_sql
@@ -208,7 +210,7 @@ Define new workflow plans in the `workflow` section:
 workflow:
   my_custom_plan:
     - schema_linking
-    - generate_sql
+    - gen_sql
     - execute_sql
     - custom_node  # Add your custom node type
     - output

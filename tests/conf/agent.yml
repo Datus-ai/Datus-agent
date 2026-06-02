@@ -74,12 +74,6 @@ agent:
     schema_linking:
       model: deepseek
       matching_rate: fast
-    generate_sql:
-      model: deepseek
-      max_table_schemas_length: 10000
-      max_data_details_length: 8000
-      max_context_length: 8000
-      max_value_length: 500
     reasoning:
       model: deepseek
       max_table_schemas_length: 10000
@@ -129,6 +123,19 @@ agent:
     gen_sql_summary:
       max_turns: 30
       system_prompt: gen_sql_summary
+    gen_sql:
+      model: deepseek
+      system_prompt: gen_sql
+      prompt_language: en
+      max_turns: 30
+      tools: db_tools.*, context_search_tools.*, filesystem_tools.*, scheduler_tools.*
+      agent_description: "You are a specialized AI assistant for SQL generation"
+      rules:
+        - Use filesystem tools to read SQL files from the current directory (*/*.sql) as reference examples
+        - When SQL is involved, explain your approach and provide clear, executable queries
+        - Always check reference SQL files(*.sql) in allowed directory for similar patterns before writing new queries
+        - If context is provided, use the tables/metrics/sqls in user prompt
+        - Try to use database specific dialect
     chatbot:
       model: deepseek
       system_prompt: gen_sql

@@ -14,6 +14,11 @@ nodes:
     model: provider_name
     prompt_version: "1.0"
     # 其它节点参数
+agentic_nodes:
+  gen_sql:
+    model: provider_name
+    system_prompt: gen_sql
+    max_turns: 30
 ```
 
 !!! tip
@@ -34,17 +39,17 @@ schema_linking:
 - `matching_rate`：匹配范围/速度（fast/medium/slow/from_llm）
 - `prompt_version`：SQL模板版本
 
-### Generate SQL
+### GenSQL
 ```yaml
-generate_sql:
-  model: deepseek_v3
-  prompt_version: "1.0"
-  max_table_schemas_length: 4000
-  max_data_details_length: 2000
-  max_context_length: 8000
-  max_value_length: 500
+agentic_nodes:
+  gen_sql:
+    model: deepseek_v3
+    system_prompt: gen_sql
+    prompt_version: "1.2"
+    tools: db_tools.*, context_search_tools.*
+    max_turns: 30
 ```
-**参数**：同上，侧重控制上下文长度上限。
+**参数**：`gen_sql` 是 agentic 节点，`system_prompt` 统一使用 `gen_sql`，对应 `gen_sql_system` prompt，可通过 `tools` 和 `max_turns` 控制工具范围和推理轮数。
 
 ### Reasoning
 ```yaml
@@ -56,7 +61,7 @@ reasoning:
   max_context_length: 8000
   max_value_length: 500
 ```
-**参数**：同 `generate_sql`，用于迭代优化。
+**参数**：保留 reasoning 自身的固定节点参数；需要重新生成 SQL 时会回退到 `gen_sql`。
 
 ### Search Metrics
 ```yaml
@@ -89,10 +94,11 @@ output:
 
 ### Chat
 ```yaml
-chat:
-  workspace_root: sql2
-  model: anthropic
-  max_turns: 25
+agentic_nodes:
+  chat:
+    workspace_root: sql2
+    model: anthropic
+    max_turns: 25
 ```
 **参数**：工作目录、对话模型、最大轮数。
 
@@ -130,14 +136,6 @@ nodes:
     matching_rate: medium
     prompt_version: "1.0"
 
-  generate_sql:
-    model: deepseek_v3
-    prompt_version: "1.0"
-    max_table_schemas_length: 4000
-    max_data_details_length: 2000
-    max_context_length: 8000
-    max_value_length: 500
-
   reasoning:
     model: anthropic
     prompt_version: "1.0"
@@ -154,17 +152,25 @@ nodes:
     prompt_version: "1.0"
     check_result: true
 
-  chat:
-    workspace_root: workspace
-    model: anthropic
-    max_turns: 25
-
   date_parser:
     prompt_version: "1.0"
 
   fix:
     model: openai
     prompt_version: "1.0"
+
+agentic_nodes:
+  gen_sql:
+    model: deepseek_v3
+    system_prompt: gen_sql
+    prompt_version: "1.2"
+    tools: db_tools.*, context_search_tools.*
+    max_turns: 30
+
+  chat:
+    workspace_root: workspace
+    model: anthropic
+    max_turns: 25
 ```
 
 ## 模型分配建议

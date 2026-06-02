@@ -35,9 +35,9 @@ def _new_gen_sql_node(real_agent_config):
     from datus.configuration.node_type import NodeType
 
     return GenSQLAgenticNode(
-        node_id="test_gensql_inherit",
+        node_id="test_gen_sql_inherit",
         description="Test inherited memory for gen_sql",
-        node_type=NodeType.TYPE_GENSQL,
+        node_type=NodeType.TYPE_GEN_SQL,
         agent_config=real_agent_config,
         node_name="gen_sql",
         execution_mode="workflow",

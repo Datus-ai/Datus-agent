@@ -19,7 +19,7 @@ from datus.schemas.gen_skill_agentic_node_models import SkillCreatorNodeInput
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
 from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeInput
 from datus.schemas.gen_visual_report_models import GenVisualReportNodeInput
-from datus.schemas.node_models import ExecuteSQLInput, GenerateSQLInput, OutputInput, ReflectionInput
+from datus.schemas.node_models import ExecuteSQLInput, OutputInput, ReflectionInput
 from datus.schemas.parallel_node_models import ParallelInput, SelectionInput
 from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
@@ -44,7 +44,6 @@ class NodeType:
 
     # SQL workflow action types
     TYPE_SCHEMA_LINKING = "schema_linking"  # For database schema analysis
-    TYPE_GENERATE_SQL = "generate_sql"  # For SQL query generation
     TYPE_EXECUTE_SQL = "execute_sql"  # For SQL query execution
     TYPE_OUTPUT = "output"  # For result presentation
     TYPE_REASONING = "reasoning"  # For result presentation
@@ -56,7 +55,7 @@ class NodeType:
 
     # Agentic node types
     TYPE_CHAT = "chat"  # For conversational AI interactions
-    TYPE_GENSQL = "gensql"  # For SQL generation with conversational AI
+    TYPE_GEN_SQL = "gen_sql"  # For SQL generation with conversational AI
     TYPE_SEMANTIC = "semantic"  # For semantic model generation
     TYPE_SQL_SUMMARY = "sql_summary"  # For SQL summary generation
     TYPE_GEN_REPORT = "gen_report"  # For generic report generation
@@ -73,7 +72,6 @@ class NodeType:
 
     ACTION_TYPES = [
         TYPE_SCHEMA_LINKING,
-        TYPE_GENERATE_SQL,
         TYPE_EXECUTE_SQL,
         TYPE_OUTPUT,
         TYPE_REASONING,
@@ -83,7 +81,7 @@ class NodeType:
         TYPE_COMPARE,
         TYPE_DATE_PARSER,
         TYPE_CHAT,
-        TYPE_GENSQL,
+        TYPE_GEN_SQL,
         TYPE_SEMANTIC,
         TYPE_SQL_SUMMARY,
         TYPE_GEN_REPORT,
@@ -102,7 +100,6 @@ class NodeType:
     NODE_TYPE_DESCRIPTIONS = {
         TYPE_BEGIN: "Beginning of the workflow",
         TYPE_SCHEMA_LINKING: "Understand the query and find related schemas",
-        TYPE_GENERATE_SQL: "Generate SQL query",
         TYPE_EXECUTE_SQL: "Execute SQL query",
         TYPE_REFLECT: "evaluation and self-reflection",
         TYPE_OUTPUT: "Return the results to the user",
@@ -117,7 +114,7 @@ class NodeType:
         TYPE_COMPARE: "Compare SQL with expectations",
         TYPE_DATE_PARSER: "Parse temporal expressions in queries",
         TYPE_CHAT: "Conversational AI interactions with tool calling",
-        TYPE_GENSQL: "SQL generation with conversational AI and tool calling",
+        TYPE_GEN_SQL: "SQL generation with conversational AI and tool calling",
         TYPE_SEMANTIC: "Semantic model generation with conversational AI",
         TYPE_SQL_SUMMARY: "SQL summary generation with conversational AI",
         TYPE_GEN_REPORT: "Generic report generation with semantic and database tools",
@@ -147,8 +144,6 @@ class NodeType:
         # TODO: use factory pattern to create the input data
         if node_type == NodeType.TYPE_SCHEMA_LINKING:
             input_data_cls = SchemaLinkingInput
-        elif node_type == NodeType.TYPE_GENERATE_SQL:
-            input_data_cls = GenerateSQLInput
         elif node_type == NodeType.TYPE_EXECUTE_SQL:
             input_data_cls = ExecuteSQLInput
         elif node_type == NodeType.TYPE_REFLECT:
@@ -175,7 +170,7 @@ class NodeType:
             input_data_cls = DateParserInput
         elif node_type == NodeType.TYPE_CHAT:
             input_data_cls = ChatNodeInput
-        elif node_type == NodeType.TYPE_GENSQL:
+        elif node_type == NodeType.TYPE_GEN_SQL:
             input_data_cls = GenSQLNodeInput
         elif node_type == NodeType.TYPE_SEMANTIC:
             input_data_cls = SemanticNodeInput

@@ -47,7 +47,7 @@ def mock_model():
     model = MagicMock()
     model.generate.return_value = "Generated text response"
     model.generate_with_json_output.return_value = {"result": "success"}
-    model.generate_sql.return_value = "SELECT * FROM employees WHERE salary > 50000;"
+    model.gen_sql.return_value = "SELECT * FROM employees WHERE salary > 50000;"
     return model
 
 

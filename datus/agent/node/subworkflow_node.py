@@ -5,7 +5,6 @@
 from typing import Any, AsyncGenerator, Dict, Optional
 
 from datus.agent.node import Node
-from datus.agent.plan import generate_workflow
 from datus.agent.workflow import Workflow
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.base import BaseResult
@@ -13,6 +12,13 @@ from datus.schemas.subworkflow_node_models import SubworkflowInput, SubworkflowR
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+def generate_workflow(*args, **kwargs):
+    """Lazy wrapper to avoid importing plan.py during node package initialization."""
+    from datus.agent.plan import generate_workflow as _generate_workflow
+
+    return _generate_workflow(*args, **kwargs)
 
 
 class SubworkflowNode(Node):

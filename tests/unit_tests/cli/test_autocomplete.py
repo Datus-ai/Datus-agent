@@ -740,47 +740,47 @@ class TestDynamicAtReferenceCompleterFuzzyMatch:
 class TestAtReferenceCompleterSetSubAgent:
     def test_set_sub_agent_changes_context(self, real_agent_config):
         completer = AtReferenceCompleter(real_agent_config)
-        completer.set_sub_agent("gensql")
-        assert completer._sub_agent_name == "gensql"
-        assert completer.table_completer.sub_agent_name == "gensql"
-        assert completer.metric_completer.sub_agent_name == "gensql"
-        assert completer.sql_completer.sub_agent_name == "gensql"
+        completer.set_sub_agent("gen_sql")
+        assert completer._sub_agent_name == "gen_sql"
+        assert completer.table_completer.sub_agent_name == "gen_sql"
+        assert completer.metric_completer.sub_agent_name == "gen_sql"
+        assert completer.sql_completer.sub_agent_name == "gen_sql"
 
     def test_set_sub_agent_noop_same_name(self, real_agent_config):
-        completer = AtReferenceCompleter(real_agent_config, sub_agent_name="gensql")
+        completer = AtReferenceCompleter(real_agent_config, sub_agent_name="gen_sql")
         # Should not clear completers if same name
         completer.table_completer._loaded = True
-        completer.set_sub_agent("gensql")
+        completer.set_sub_agent("gen_sql")
         assert completer.table_completer._loaded is True  # not cleared
 
     def test_set_sub_agent_clears_completers(self, real_agent_config):
         completer = AtReferenceCompleter(real_agent_config)
         completer.table_completer._loaded = True
-        completer.set_sub_agent("gensql")
+        completer.set_sub_agent("gen_sql")
         assert completer.table_completer._loaded is False
 
 
 class TestAtReferenceCompleterDetectSubAgent:
     def test_no_slash_returns_empty(self, real_agent_config):
-        completer = AtReferenceCompleter(real_agent_config, available_subagents={"gensql", "compare"})
+        completer = AtReferenceCompleter(real_agent_config, available_subagents={"gen_sql", "compare"})
         assert completer._detect_sub_agent_from_input("hello world") == ""
 
     def test_slash_with_known_subagent(self, real_agent_config):
-        completer = AtReferenceCompleter(real_agent_config, available_subagents={"gensql", "compare"})
-        result = completer._detect_sub_agent_from_input("/gensql @Table users")
-        assert result == "gensql"
+        completer = AtReferenceCompleter(real_agent_config, available_subagents={"gen_sql", "compare"})
+        result = completer._detect_sub_agent_from_input("/gen_sql @Table users")
+        assert result == "gen_sql"
 
     def test_slash_with_unknown_subagent(self, real_agent_config):
-        completer = AtReferenceCompleter(real_agent_config, available_subagents={"gensql"})
+        completer = AtReferenceCompleter(real_agent_config, available_subagents={"gen_sql"})
         assert completer._detect_sub_agent_from_input("/unknown @Table users") == ""
 
     def test_slash_without_space(self, real_agent_config):
-        completer = AtReferenceCompleter(real_agent_config, available_subagents={"gensql"})
-        assert completer._detect_sub_agent_from_input("/gensql") == ""
+        completer = AtReferenceCompleter(real_agent_config, available_subagents={"gen_sql"})
+        assert completer._detect_sub_agent_from_input("/gen_sql") == ""
 
     def test_empty_subagents_returns_empty(self, real_agent_config):
         completer = AtReferenceCompleter(real_agent_config, available_subagents=set())
-        assert completer._detect_sub_agent_from_input("/gensql @Table users") == ""
+        assert completer._detect_sub_agent_from_input("/gen_sql @Table users") == ""
 
 
 class TestAtReferenceCompleterParseAtContext:
@@ -879,17 +879,17 @@ class TestAtReferenceCompleterGetCompletions:
         assert completions == []
 
     def test_slash_subagent_prefix_triggers_scope_switch(self, real_agent_config):
-        completer = AtReferenceCompleter(real_agent_config, available_subagents={"gensql"})
+        completer = AtReferenceCompleter(real_agent_config, available_subagents={"gen_sql"})
         assert completer._sub_agent_name == ""
-        doc = Document("/gensql @T", cursor_position=10)
+        doc = Document("/gen_sql @T", cursor_position=10)
         list(completer.get_completions(doc, None))
-        assert completer._sub_agent_name == "gensql"
+        assert completer._sub_agent_name == "gen_sql"
 
     def test_bare_input_resets_subagent_scope(self, real_agent_config):
         """A fresh bare-chat line has no sub-agent prefix, so scope must
         fall back to the global datasource.
         """
-        completer = AtReferenceCompleter(real_agent_config, available_subagents={"gensql"}, sub_agent_name="gensql")
+        completer = AtReferenceCompleter(real_agent_config, available_subagents={"gen_sql"}, sub_agent_name="gen_sql")
         doc = Document("@T", cursor_position=2)
         list(completer.get_completions(doc, None))
         assert completer._sub_agent_name == ""

@@ -233,7 +233,7 @@ class TestSaveAgentNew:
         manager.save_agent(config)
         assert "gen_report_system" in calls
 
-    def test_gen_sql_node_uses_sql_system_template(self, tmp_path):
+    def test_gen_sql_node_uses_gen_sql_system_template(self, tmp_path):
         manager, _, _ = _build_manager(tmp_path)
         calls = []
         original_copy_to = manager._prompt_manager.copy_to
@@ -249,7 +249,7 @@ class TestSaveAgentNew:
             scoped_context=ScopedContext(tables="t"),
         )
         manager.save_agent(config)
-        assert "sql_system" in calls
+        assert "gen_sql_system" in calls
 
 
 # ---------------------------------------------------------------------------

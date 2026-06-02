@@ -16,12 +16,12 @@ workflow:
   # Define execution plans inside workflow
   planA:
     - schema_linking
-    - generate_sql
+    - gen_sql
     - output
 
   planB:
     - schema_linking
-    - generate_sql
+    - gen_sql
     - execute_sql
     - reflect
     - output
@@ -37,7 +37,7 @@ workflow:
 
   basic_sql:
     - schema_linking                   # Find relevant tables
-    - generate_sql                     # Create SQL query
+    - gen_sql                     # Create SQL query
     - output                          # Format results
 ```
 
@@ -49,7 +49,7 @@ workflow:
 
   with_execution:
     - schema_linking                   # Find relevant tables
-    - generate_sql                     # Create SQL query
+    - gen_sql                     # Create SQL query
     - execute_sql                     # Run the query
     - reflect                         # Analyze results
     - output                          # Format final output
@@ -71,7 +71,7 @@ workflow:
   parallel_generation:
     - schema_linking
     - parallel:                       # Execute in parallel
-        - generate_sql
+        - gen_sql
         - reasoning
     - selection                       # Choose best result
     - execute_sql
@@ -99,7 +99,7 @@ workflow:
   # Define sub-workflows
   subworkflow1:
     - search_metrics
-    - generate_sql
+    - gen_sql
 
   subworkflow2:
     - search_metrics
@@ -131,7 +131,7 @@ workflow:
   subworkflow1:
     steps:
       - search_metrics
-      - generate_sql
+      - gen_sql
     config: multi/agent1.yaml          # Custom config file
 
   subworkflow2:
@@ -160,7 +160,7 @@ Datus Agent provides three built-in workflow plans if you don't configure custom
     # Built-in: reflection
     reflection:
       - schema_linking
-      - generate_sql
+      - gen_sql
       - execute_sql
       - reflect
       - output
@@ -172,7 +172,7 @@ Datus Agent provides three built-in workflow plans if you don't configure custom
     # Built-in: fixed
     fixed:
       - schema_linking
-      - generate_sql
+      - gen_sql
       - execute_sql
       - output
     ```
@@ -185,7 +185,7 @@ Datus Agent provides three built-in workflow plans if you don't configure custom
       - schema_linking
       - search_metrics
       - date_parser
-      - generate_sql
+      - gen_sql
       - execute_sql
       - output
     ```
@@ -199,14 +199,14 @@ reflection_nodes:
   # When schema linking needs improvement
   schema_linking:
     - schema_linking
-    - generate_sql
+    - gen_sql
     - execute_sql
     - reflect
 
   # When document search is needed
   doc_search:
     - doc_search
-    - generate_sql
+    - gen_sql
     - execute_sql
     - reflect
 

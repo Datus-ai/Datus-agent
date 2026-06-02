@@ -10,7 +10,7 @@ import pytest
 
 from datus.agent.node import Node
 from datus.configuration.node_type import NodeType
-from datus.schemas.node_models import GenerateSQLResult
+from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeResult
 from datus.schemas.parallel_node_models import SelectionInput, SelectionResult
 
 
@@ -38,12 +38,12 @@ def make_candidates():
     return {
         "node_a": {
             "success": True,
-            "result": GenerateSQLResult(success=True, sql_query="SELECT a FROM t", tables=["t"]),
+            "result": GenSQLNodeResult(success=True, response="Generated SQL A", sql="SELECT a FROM t"),
             "node_id": "node_a",
         },
         "node_b": {
             "success": True,
-            "result": GenerateSQLResult(success=True, sql_query="SELECT b FROM t", tables=["t"]),
+            "result": GenSQLNodeResult(success=True, response="Generated SQL B", sql="SELECT b FROM t"),
             "node_id": "node_b",
         },
     }
@@ -190,7 +190,7 @@ class TestSelectionNodeSetupInput:
         workflow.context.parallel_results = None
 
         other_node = MagicMock()
-        other_node.type = "generate_sql"
+        other_node.type = "gen_sql"
         other_node.status = "completed"
         workflow.nodes = {"sel_1": other_node}
 
@@ -215,7 +215,7 @@ class TestSelectionNodeUpdateContext:
 
     def test_update_context_with_sql_result(self):
         node = make_node(SelectionInput(candidate_results=make_candidates()))
-        sql_result = GenerateSQLResult(success=True, sql_query="SELECT a FROM t", tables=["t"], explanation="ok")
+        sql_result = GenSQLNodeResult(success=True, response="ok", sql="SELECT a FROM t")
         node.result = SelectionResult(
             success=True,
             selected_result={"result": sql_result},
@@ -229,6 +229,7 @@ class TestSelectionNodeUpdateContext:
         result = node.update_context(workflow)
         assert result["success"] is True
         assert len(workflow.context.sql_contexts) == 1
+        assert workflow.context.sql_contexts[0].sql_query == "SELECT a FROM t"
 
     def test_update_context_no_result(self):
         node = make_node()

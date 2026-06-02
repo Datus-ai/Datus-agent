@@ -19,14 +19,14 @@ Datus 提供多种内置工作流模板：
 workflow:
   reflection:
     - schema_linking
-    - generate_sql
+    - gen_sql
     - execute_sql
     - reflect
     - output
 
   fixed:
     - schema_linking
-    - generate_sql
+    - gen_sql
     - execute_sql
     - output
 
@@ -34,7 +34,7 @@ workflow:
     - schema_linking
     - search_metrics
     - date_parser
-    - generate_sql
+    - gen_sql
     - execute_sql
     - output
 ```
@@ -136,7 +136,7 @@ agent:
     custom_analytics:
       - schema_linking
       - search_metrics
-      - generate_sql
+      - gen_sql
       - execute_sql
       - compare
       - output
@@ -144,7 +144,7 @@ agent:
     data_exploration:
       - schema_linking
       - doc_search
-      - generate_sql
+      - gen_sql
       - execute_sql
       - reflect
       - output
@@ -161,7 +161,7 @@ agent:
     bird_para:
       - schema_linking
       - parallel:
-        - generate_sql
+        - gen_sql
         - reasoning
       - selection
       - execute_sql
@@ -185,7 +185,7 @@ agent:
 
     subworkflow1:
       - search_metrics
-      - generate_sql
+      - gen_sql
 
     subworkflow2:
       - search_metrics
@@ -209,7 +209,7 @@ agent:
     agent1_workflow:
       steps:
         - search_metrics
-        - generate_sql
+        - gen_sql
       config: multi/agent1.yaml
 
     agent2_workflow:

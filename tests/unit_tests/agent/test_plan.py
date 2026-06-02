@@ -121,17 +121,17 @@ class TestCreateSingleNode:
             # TYPE_CHAT may not be registered in Node.new_instance factory for workflow
             pass
 
-    def test_agentic_node_maps_to_gensql_via_config(self):
-        """When agentic_nodes contains a name, it normalizes to TYPE_GENSQL."""
+    def test_agentic_node_maps_to_gen_sql_via_config(self):
+        """When agentic_nodes contains a name, it normalizes to TYPE_GEN_SQL."""
         cfg = _mock_config(agentic_nodes={"myagent": {}})
         assert "myagent" in cfg.agentic_nodes
-        # Verify the normalization logic: agentic_nodes key -> TYPE_GENSQL
+        # Verify the normalization logic: agentic_nodes key -> TYPE_GEN_SQL
         task = _sql_task()
         try:
             node = _create_single_node("myagent", "node_agent", task, cfg)
-            assert node.type == NodeType.TYPE_GENSQL
+            assert node.type == NodeType.TYPE_GEN_SQL
         except Exception:
-            # TYPE_GENSQL node creation may fail without full DB setup
+            # TYPE_GEN_SQL node creation may fail without full DB setup
             pass
 
     def test_schema_linking_creates_schema_linking_input(self):
@@ -260,7 +260,7 @@ class TestGenerateWorkflow:
         assert [wf.nodes[node_id].type for node_id in wf.node_order] == [
             NodeType.TYPE_BEGIN,
             NodeType.TYPE_SCHEMA_LINKING,
-            NodeType.TYPE_GENERATE_SQL,
+            NodeType.TYPE_GEN_SQL,
             NodeType.TYPE_EXECUTE_SQL,
             NodeType.TYPE_REFLECT,
             NodeType.TYPE_OUTPUT,
@@ -310,5 +310,5 @@ class TestGenerateWorkflow:
                 generate_workflow(task, plan_type="bad_plan", agent_config=cfg)
         assert (
             str(exc_info.value) == "Invalid plan type 'bad_plan'. Available builtin workflows: ['reflection', 'fixed', "
-            "'empty', 'dynamic', 'metric_to_sql', 'chat_agentic', 'gensql_agentic'], custom workflows: ['c1']"
+            "'empty', 'dynamic', 'metric_to_sql', 'chat_agentic', 'gen_sql_agentic'], custom workflows: ['c1']"
         )

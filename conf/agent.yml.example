@@ -101,11 +101,6 @@ agent:
   nodes:
     schema_linking:
       matching_rate: fast
-    generate_sql:
-      max_table_schemas_length: 4000
-      max_data_details_length: 2000
-      max_context_length: 8000
-      max_value_length: 500
     reasoning:
       prompt_version: "1.0" # It can be unconfigured, and the latest version is used by default
       max_table_schemas_length: 4000
@@ -266,12 +261,12 @@ agent:
 
     planA:
       - schema_linking
-      - generate_sql
+      - gen_sql
       - output
 
     planB:
       - schema_linking
-      - generate_sql
+      - gen_sql
       - execute_sql
       - reflect
       - output
@@ -279,12 +274,12 @@ agent:
   reflection_nodes:
     schema_linking:
       - schema_linking
-      - generate_sql
+      - gen_sql
       - execute_sql
       - reflect
     doc_search:
       - doc_search
-      - generate_sql
+      - gen_sql
       - execute_sql
       - reflect
     simple_regenerate:
@@ -302,7 +297,7 @@ agent:
     bird_para:
       - schema_linking
       - parallel:
-        - generate_sql
+        - gen_sql
         - reasoning
       - selection
       - execute_sql
@@ -324,7 +319,7 @@ agent:
 
     subworkflow1:
       - search_metrics
-      - generate_sql
+      - gen_sql
 
     subworkflow2:
       - search_metrics
@@ -351,7 +346,7 @@ agent:
     subworkflow1:
       steps:
       - search_metrics
-      - generate_sql
+      - gen_sql
       config: multi/agent1.yaml
 
     subworkflow2:
@@ -399,6 +394,12 @@ agent:
 
     gen_sql_summary:
       model: deepseek_v3
+      max_turns: 30
+
+    gen_sql:
+      model: deepseek_v3
+      system_prompt: gen_sql
+      tools: db_tools.*, context_search_tools.*
       max_turns: 30
 
     gen_table:

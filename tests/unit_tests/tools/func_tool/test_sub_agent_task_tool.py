@@ -197,24 +197,24 @@ class TestGetAvailableTypes:
 @pytest.mark.ci
 class TestResolveNodeType:
     def test_gen_sql_with_config(self, task_tool):
-        """gen_sql resolves to TYPE_GENSQL using config key."""
+        """gen_sql resolves to TYPE_GEN_SQL using config key."""
         node_type, node_name = task_tool._resolve_node_type("gen_sql")
-        assert node_type == NodeType.TYPE_GENSQL
+        assert node_type == NodeType.TYPE_GEN_SQL
         assert node_name == "gen_sql"
 
     def test_gen_sql_without_config(self):
-        """gen_sql falls back to TYPE_GENSQL with default name."""
+        """gen_sql falls back to TYPE_GEN_SQL with default name."""
         config = Mock(spec=AgentConfig)
         config.agentic_nodes = {}
         tool = SubAgentTaskTool(agent_config=config)
         node_type, node_name = tool._resolve_node_type("gen_sql")
-        assert node_type == NodeType.TYPE_GENSQL
+        assert node_type == NodeType.TYPE_GEN_SQL
         assert node_name == "gen_sql"
 
     def test_custom_type_gen_sql_class(self, task_tool):
-        """Custom type with node_class=gen_sql maps to TYPE_GENSQL."""
+        """Custom type with node_class=gen_sql maps to TYPE_GEN_SQL."""
         node_type, node_name = task_tool._resolve_node_type("sales_analyst")
-        assert node_type == NodeType.TYPE_GENSQL
+        assert node_type == NodeType.TYPE_GEN_SQL
         assert node_name == "sales_analyst"
 
     def test_unknown_type_raises(self, task_tool):
@@ -438,7 +438,7 @@ class TestResolveNodeType:
     def test_node_class_map_coverage(self):
         """NODE_CLASS_MAP contains exactly the expected key→NodeType mappings."""
         expected_map = {
-            "gen_sql": NodeType.TYPE_GENSQL,
+            "gen_sql": NodeType.TYPE_GEN_SQL,
             "chat": NodeType.TYPE_CHAT,
             "gen_report": NodeType.TYPE_GEN_REPORT,
             "gen_visual_report": NodeType.TYPE_GEN_VISUAL_REPORT,
@@ -555,7 +555,7 @@ class TestBuildNodeInput:
 
         # Create a mock that is an instance of GenSQLAgenticNode
         mock_node = Mock(spec=GenSQLAgenticNode)
-        mock_node.type = NodeType.TYPE_GENSQL
+        mock_node.type = NodeType.TYPE_GEN_SQL
 
         result = task_tool._build_node_input(mock_node, "Show all users")
 
@@ -690,7 +690,7 @@ class TestSubAgentTaskAcceptance:
 
         assert "sales_analyst" in task_tool._get_available_types()
         node_type, node_name = task_tool._resolve_node_type("sales_analyst")
-        assert node_type == NodeType.TYPE_GENSQL
+        assert node_type == NodeType.TYPE_GEN_SQL
         assert node_name == "sales_analyst"
 
         effective = task_tool._resolve_effective_sub_agent_config("sales_analyst")
@@ -706,7 +706,7 @@ class TestSubAgentTaskAcceptance:
             "success": True,
         }
         mock_node = Mock(spec=GenSQLAgenticNode)
-        mock_node.type = NodeType.TYPE_GENSQL
+        mock_node.type = NodeType.TYPE_GEN_SQL
         mock_node.session_id = "sales_session_1"
 
         async def mock_stream(ahm):

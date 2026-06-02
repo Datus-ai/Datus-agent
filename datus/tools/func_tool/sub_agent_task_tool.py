@@ -47,7 +47,7 @@ logger = get_logger(__name__)
 
 # Mapping from subagent type string to NodeType constants
 NODE_CLASS_MAP = {
-    "gen_sql": NodeType.TYPE_GENSQL,
+    "gen_sql": NodeType.TYPE_GEN_SQL,
     "chat": NodeType.TYPE_CHAT,
     "gen_report": NodeType.TYPE_GEN_REPORT,
     "gen_visual_report": NodeType.TYPE_GEN_VISUAL_REPORT,
@@ -425,7 +425,7 @@ class SubAgentTaskTool:
             return GenSQLAgenticNode(
                 node_id=f"task_gen_sql_{uuid.uuid4().hex[:8]}",
                 description="SQL generation node for gen_sql",
-                node_type="gensql",
+                node_type="gen_sql",
                 input_data=None,
                 agent_config=self.agent_config,
                 tools=None,
@@ -574,10 +574,7 @@ class SubAgentTaskTool:
         """
         # Built-in gen_sql type
         if subagent_type == "gen_sql":
-            for key in ("gen_sql", "gensql"):
-                if key in self.agent_config.agentic_nodes:
-                    return NodeType.TYPE_GENSQL, key
-            return NodeType.TYPE_GENSQL, "gen_sql"
+            return NodeType.TYPE_GEN_SQL, "gen_sql"
 
         # Built-in explore type
         if subagent_type == "explore":
@@ -617,7 +614,7 @@ class SubAgentTaskTool:
         node_class = (
             sub_config.get("node_class") if isinstance(sub_config, dict) else getattr(sub_config, "node_class", None)
         )
-        node_type = NODE_CLASS_MAP.get(node_class or "gen_sql", NodeType.TYPE_GENSQL)
+        node_type = NODE_CLASS_MAP.get(node_class or "gen_sql", NodeType.TYPE_GEN_SQL)
         return node_type, subagent_type
 
     # ── broker injection ──────────────────────────────────────────────
@@ -715,10 +712,7 @@ class SubAgentTaskTool:
                     expected_owner = subagent_type
                 else:
                     _, expected_owner = self._resolve_node_type(subagent_type)
-                # Accept gen_sql/gensql alias (resolved per agent_config.agentic_nodes)
                 allowed_owners = {expected_owner}
-                if expected_owner in ("gen_sql", "gensql"):
-                    allowed_owners |= {"gen_sql", "gensql"}
                 if actual_owner not in allowed_owners:
                     return FuncToolResult(
                         success=0,

@@ -176,13 +176,15 @@ nodes:
     model: "claude-3-sonnet"
     temperature: 0.1
 
-  generate_sql:
-    model: "gpt-4"
-    temperature: 0.2
-
   reasoning:
     model: "claude-3-opus"
     temperature: 0.3
+
+agentic_nodes:
+  gen_sql:
+    model: "gpt-4"
+    system_prompt: gen_sql
+    max_turns: 30
 ```
 
 ### Prompt Templates
@@ -190,10 +192,10 @@ nodes:
 Nodes use configurable prompt templates:
 
 ```yaml
-nodes:
-  generate_sql:
-    prompt_template: "generate_sql_system.j2"
-    user_template: "generate_sql_user.j2"
+agentic_nodes:
+  gen_sql:
+    system_prompt: gen_sql
+    prompt_version: "1.2"
 ```
 
 ### Resource Limits
@@ -213,7 +215,7 @@ nodes:
 ### Node Selection
 
 1. **Use Schema Linking First**: Always start workflows with schema linking for context
-2. **Combine Complementary Nodes**: Use reasoning and generate_sql together for complex queries
+2. **Combine Complementary Nodes**: Use reasoning and gen_sql together for complex queries
 3. **Add Reflection for Robustness**: Include reflection nodes for adaptive behavior
 4. **Use Parallel for Experimentation**: Run multiple strategies in parallel for comparison
 
@@ -264,9 +266,9 @@ Combine multiple nodes for complex operations:
 ```python
 # Parallel SQL generation strategies
 parallel_node = ParallelNode([
-    GenerateSQLNode(strategy="conservative"),
-    GenerateSQLNode(strategy="aggressive"),
-    GenerateSQLNode(strategy="metric_based")
+    GenSQLAgenticNode(strategy="conservative"),
+    GenSQLAgenticNode(strategy="aggressive"),
+    GenSQLAgenticNode(strategy="metric_based")
 ])
 
 # Select best result

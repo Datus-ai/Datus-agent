@@ -112,7 +112,7 @@ class SubAgentManager:
         elif node_class == "gen_visual_dashboard":
             source_template = "gen_visual_dashboard_system"
         else:
-            source_template = "sql_system"
+            source_template = "gen_sql_system"
 
         try:
             file_name = self._prompt_manager.copy_to(

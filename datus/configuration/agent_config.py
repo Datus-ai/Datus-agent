@@ -583,13 +583,13 @@ logger = get_logger(__name__)
 DEFAULT_REFLECTION_NODES = {
     StrategyType.SCHEMA_LINKING.lower(): [
         NodeType.TYPE_SCHEMA_LINKING,
-        NodeType.TYPE_GENERATE_SQL,
+        NodeType.TYPE_GEN_SQL,
         NodeType.TYPE_EXECUTE_SQL,
         NodeType.TYPE_REFLECT,
     ],
     StrategyType.DOC_SEARCH.lower(): [
         NodeType.TYPE_DOC_SEARCH,
-        NodeType.TYPE_GENERATE_SQL,
+        NodeType.TYPE_GEN_SQL,
         NodeType.TYPE_EXECUTE_SQL,
         NodeType.TYPE_REFLECT,
     ],

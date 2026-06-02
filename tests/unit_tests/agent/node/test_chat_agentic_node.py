@@ -53,14 +53,14 @@ class TestChatAgenticNodeInheritance:
 
         assert isinstance(node, AgenticNode)
 
-    def test_not_instance_of_gensql(self, real_agent_config, mock_llm_create):
+    def test_not_instance_of_gen_sql(self, real_agent_config, mock_llm_create):
         """ChatAgenticNode is NOT a subclass of GenSQLAgenticNode."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
         node = ChatAgenticNode(
-            node_id="test_no_gensql",
-            description="Test not gensql",
+            node_id="test_no_gen_sql",
+            description="Test not gen_sql",
             node_type=NodeType.TYPE_CHAT,
             agent_config=real_agent_config,
         )

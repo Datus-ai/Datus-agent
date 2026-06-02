@@ -481,9 +481,9 @@ class TestMemoryEnabled:
         from datus.configuration.node_type import NodeType
 
         node = GenSQLAgenticNode(
-            node_id="test_gensql_mem",
-            description="Test gensql memory",
-            node_type=NodeType.TYPE_GENSQL,
+            node_id="test_gen_sql_mem",
+            description="Test gen_sql memory",
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
             node_name="gen_sql",
             execution_mode="workflow",
@@ -500,9 +500,9 @@ class TestMemoryEnabled:
         from datus.configuration.node_type import NodeType
 
         node = GenSQLAgenticNode(
-            node_id="test_gensql_override",
-            description="Test gensql override",
-            node_type=NodeType.TYPE_GENSQL,
+            node_id="test_gen_sql_override",
+            description="Test gen_sql override",
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
             node_name="gen_sql",
             execution_mode="workflow",
@@ -519,9 +519,9 @@ class TestMemoryEnabled:
         from datus.configuration.node_type import NodeType
 
         node = GenSQLAgenticNode(
-            node_id="test_gensql_mem_opt_in",
-            description="Test gensql opt-in memory",
-            node_type=NodeType.TYPE_GENSQL,
+            node_id="test_gen_sql_mem_opt_in",
+            description="Test gen_sql opt-in memory",
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
             node_name="gen_sql",
             execution_mode="workflow",

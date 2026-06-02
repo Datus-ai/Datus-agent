@@ -1314,7 +1314,7 @@ class TestGenerateDataset:
                 "nodes": [
                     {
                         "id": "node1",
-                        "type": "generate_sql",
+                        "type": "gen_sql",
                         "result": {"sql_contexts": [{"sql": "SELECT 1"}]},
                     }
                 ]
@@ -1361,7 +1361,7 @@ class TestGenerateDataset:
                     "nodes": [
                         {
                             "id": f"node_{task_id}",
-                            "type": "generate_sql",
+                            "type": "gen_sql",
                             "result": {"sql_contexts": [{"sql": "SELECT 1"}]},
                         }
                     ]

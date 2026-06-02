@@ -116,7 +116,7 @@ class AgenticNode(Node):
         Args:
             node_id: Unique identifier for the node
             description: Human-readable description of the node
-            node_type: Type of the node (e.g., 'chat', 'gensql')
+            node_type: Type of the node (e.g., 'chat', 'gen_sql')
             input_data: Input data for the node
             agent_config: Agent configuration
             tools: List of function tools available to this node

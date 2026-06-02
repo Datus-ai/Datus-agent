@@ -9,7 +9,7 @@ Nodes are the building blocks of Datus Agent workflows. Each node performs a spe
 
 ## Configuration Structure
 
-Nodes are configured within the `nodes` section of your configuration file:
+Fixed workflow nodes are configured in `nodes`; agentic workflow nodes such as `gen_sql` are configured in `agentic_nodes`:
 
 ```yaml
 nodes:
@@ -17,6 +17,11 @@ nodes:
     model: provider_name
     prompt_version: "1.0"
     # Additional node-specific parameters
+agentic_nodes:
+  gen_sql:
+    model: provider_name
+    system_prompt: gen_sql
+    max_turns: 30
 ```
 
 !!! tip
@@ -45,28 +50,27 @@ schema_linking:
     - `from_llm`: Use LLM to select the most relevant tables from all available metadata
 - **prompt_version**: Version of the prompt template to use
 
-### Generate SQL
+### GenSQL
 
-Generates SQL statements based on user questions and matching table information.
+Uses the agentic SQL generator to produce and validate SQL with database, semantic, and context-search tools.
 
 ```yaml
-generate_sql:
-  model: deepseek_v3                    # LLM for SQL generation
-  prompt_version: "1.0"                 # Prompt template version
-  max_table_schemas_length: 4000        # Max length for table metadata
-  max_data_details_length: 2000         # Max length for sample data
-  max_context_length: 8000              # Max context length
-  max_value_length: 500                 # Max length per sample value
+agentic_nodes:
+  gen_sql:
+    model: deepseek_v3                    # LLM for SQL generation
+    system_prompt: gen_sql                # Uses the canonical gen_sql_system prompt
+    prompt_version: "1.2"                 # Prompt template version
+    tools: db_tools.*, context_search_tools.*
+    max_turns: 30
 ```
 
 **Configuration Parameters:**
 
 - **model**: LLM model for SQL generation
+- **system_prompt**: Prompt family for SQL generation; use `gen_sql`, which maps to the canonical `gen_sql_system` template
 - **prompt_version**: Prompt template version (latest used by default)
-- **max_table_schemas_length**: Maximum character length for table metadata provided to LLM
-- **max_data_details_length**: Maximum character length for table sample data
-- **max_context_length**: Maximum character length for context information
-- **max_value_length**: Maximum character length for individual sample values
+- **tools**: Tool patterns available to the SQL generator
+- **max_turns**: Maximum number of tool-assisted reasoning turns
 
 ### Reasoning
 
@@ -83,7 +87,7 @@ reasoning:
 ```
 
 **Configuration Parameters:**
-- Same as `generate_sql` node - focuses on iterative improvement of SQL queries
+- Reasoning keeps its own fixed-node limits and may fall back to `gen_sql` when regeneration is needed
 
 ### Search Metrics
 
@@ -137,10 +141,11 @@ output:
 Enables multi-turn conversations with access to databases, files, metrics, and knowledge bases.
 
 ```yaml
-chat:
-  workspace_root: sql2             # Root directory for file operations
-  model: anthropic                 # LLM for conversation
-  max_turns: 25                    # Maximum conversation turns
+agentic_nodes:
+  chat:
+    workspace_root: sql2             # Root directory for file operations
+    model: anthropic                 # LLM for conversation
+    max_turns: 25                    # Maximum conversation turns
 ```
 
 **Configuration Parameters:**
@@ -197,15 +202,6 @@ nodes:
     matching_rate: medium
     prompt_version: "1.0"
 
-  # SQL generation
-  generate_sql:
-    model: deepseek_v3
-    prompt_version: "1.0"
-    max_table_schemas_length: 4000
-    max_data_details_length: 2000
-    max_context_length: 8000
-    max_value_length: 500
-
   # Advanced reasoning
   reasoning:
     model: anthropic
@@ -225,12 +221,6 @@ nodes:
     prompt_version: "1.0"
     check_result: true
 
-  # Interactive chat
-  chat:
-    workspace_root: workspace
-    model: anthropic
-    max_turns: 25
-
   # Date parsing
   date_parser:
     prompt_version: "1.0"
@@ -239,6 +229,21 @@ nodes:
   fix:
     model: openai
     prompt_version: "1.0"
+
+agentic_nodes:
+  # SQL generation
+  gen_sql:
+    model: deepseek_v3
+    system_prompt: gen_sql
+    prompt_version: "1.2"
+    tools: db_tools.*, context_search_tools.*
+    max_turns: 30
+
+  # Interactive chat
+  chat:
+    workspace_root: workspace
+    model: anthropic
+    max_turns: 25
 ```
 
 ## Model Assignment Strategy

@@ -1035,11 +1035,11 @@ class TestParseNodeConfigExtended:
         node = _make_simple_node()
         mock_config = MagicMock()
         mock_config.agentic_nodes = {
-            "gensql": {
+            "gen_sql": {
                 "rules": [{"always": "use CTEs"}, "plain rule"],
             }
         }
-        result = node._parse_node_config(mock_config, "gensql")
+        result = node._parse_node_config(mock_config, "gen_sql")
         rules = result.get("rules", [])
         assert len(rules) == 2
         assert any("always" in r for r in rules)

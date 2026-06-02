@@ -78,7 +78,24 @@ def get_sql_prompt(
         processed_metrics = to_pretty_str([m.__dict__ for m in metrics])
 
     pm = get_prompt_manager(agent_config=agent_config)
-    system_content = pm.get_raw_template("gen_sql_system", version=prompt_version)
+    system_content = pm.render_template(
+        "gen_sql_system",
+        version=prompt_version or None,
+        agent_description="",
+        rules=[],
+        available_tool_names=[],
+        has_read_query_tool=False,
+        has_describe_table_tool=False,
+        has_list_metrics_tool=False,
+        has_query_metrics_tool=False,
+        has_ask_user_tool=False,
+        has_platform_doc_tools=False,
+        has_filesystem_tools=False,
+        datasource=None,
+        current_datasource_dialect=database_type,
+        available_datasources={},
+        current_date=current_date,
+    )
     enhanced_context = pm.render_template(
         "gen_sql_user",
         database_type=database_type,

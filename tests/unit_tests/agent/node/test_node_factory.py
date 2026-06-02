@@ -129,13 +129,13 @@ class TestCreateInteractiveNode:
         )
 
     @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
-    def test_default_subagent_is_gensql(self, mock_init):
+    def test_default_subagent_is_gen_sql(self, mock_init):
         config = _mock_agent_config()
         create_interactive_node("my_custom_sql", config, node_id_suffix="_cli")
         mock_init.assert_called_once()
         call_kwargs = mock_init.call_args[1]
         assert call_kwargs["node_id"] == "my_custom_sql_cli"
-        assert call_kwargs["node_type"] == "gensql"
+        assert call_kwargs["node_type"] == "gen_sql"
 
     @patch("datus.agent.node.gen_table_agentic_node.GenTableAgenticNode.__init__", return_value=None)
     @patch("datus.agent.node.node_factory._resolve_node_class_type", return_value="gen_table")
@@ -187,7 +187,7 @@ class TestCreateInteractiveNode:
 
     @patch("datus.agent.node.feedback_agentic_node.FeedbackAgenticNode.__init__", return_value=None)
     def test_feedback_routes_to_feedback_node(self, mock_init):
-        """`/feedback` must land on FeedbackAgenticNode, not the gensql fallback."""
+        """`/feedback` must land on FeedbackAgenticNode, not the gen_sql fallback."""
         config = _mock_agent_config()
         create_interactive_node("feedback", config)
         mock_init.assert_called_once_with(

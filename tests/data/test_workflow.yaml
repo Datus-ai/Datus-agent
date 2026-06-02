@@ -42,7 +42,7 @@ workflow:
     status: pending
     type: schema_linking
   - dependencies: []
-    description: Generate SQL query
+    description: SQL generation with conversational AI and tool calling
     end_time: null
     id: node_2
     input: null
@@ -50,7 +50,7 @@ workflow:
     result: null
     start_time: null
     status: pending
-    type: generate_sql
+    type: gen_sql
   - dependencies: []
     description: Execute SQL query
     end_time: null

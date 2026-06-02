@@ -176,7 +176,7 @@ class TestReflectNodeExecuteStrategy:
         workflow.current_node_index = 0
         workflow.tools = []
         workflow._global_config = MagicMock()
-        workflow._global_config.reflection_nodes.return_value = ["generate_sql", "execute_sql"]
+        workflow._global_config.reflection_nodes.return_value = ["gen_sql", "execute_sql"]
         workflow.add_node = MagicMock()
         node.agent_config = make_agent_config()
 

@@ -30,7 +30,8 @@ from datus.cli.subject_rich_utils import build_historical_sql_tags
 from datus.configuration.node_type import NodeType
 from datus.schemas.base import BaseInput
 from datus.schemas.compare_node_models import CompareInput
-from datus.schemas.node_models import ExecuteSQLInput, GenerateSQLInput, OutputInput, SqlTask
+from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
+from datus.schemas.node_models import ExecuteSQLInput, OutputInput, SqlTask
 from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 from datus.storage.embedding_diagnostics import format_context_degraded_warning, is_embedding_unavailable_error
@@ -114,17 +115,22 @@ class AgentCommands:
                 matching_rate=matching_rate.strip(),
             )
 
-        elif node_type == NodeType.TYPE_GENERATE_SQL:
-            sql_task.task = (
+        elif node_type == NodeType.TYPE_GEN_SQL:
+            user_message = (
                 task_text
                 or sql_task.task
                 or self.cli.prompt_input("Enter task description for SQL generation", default="")
             )
-            return GenerateSQLInput(
-                sql_task=sql_task,
-                database_type=sql_task.database_type,
-                table_schemas=self.cli_context.get_recent_tables(),
+            sql_task.task = user_message
+            return GenSQLNodeInput(
+                user_message=user_message,
+                catalog=sql_task.catalog_name,
+                database=sql_task.database_name,
+                db_schema=sql_task.schema_name,
+                schemas=self.cli_context.get_recent_tables(),
                 metrics=self.cli_context.get_recent_metrics(),
+                external_knowledge=sql_task.external_knowledge,
+                reference_date=sql_task.current_date,
             )
 
         elif node_type == NodeType.TYPE_FIX:
@@ -731,8 +737,6 @@ class AgentCommands:
             input.matching_rate = matching_rate.strip()
             database_name = self.cli.prompt_input("Enter database name", default=input.database_name)
             input.database_name = database_name.strip()
-        elif isinstance(input, GenerateSQLInput):
-            pass
         elif isinstance(input, ExecuteSQLInput):
             pass
         elif isinstance(input, ReasoningInput):
@@ -789,29 +793,6 @@ class AgentCommands:
             if not input.expectation:
                 expectation = self.cli.prompt_input("Enter expectation (SQL query or expected data)", default="")
                 input.expectation = expectation.strip()
-
-    def cmd_gen(self, args: str):
-        """Generate SQL for a task."""
-        # Create input for SQL generation node
-        input_data = self.create_node_input(NodeType.TYPE_GENERATE_SQL, args)
-        if not input_data:
-            return
-
-        # Run standalone node
-        result = self.run_standalone_node(NodeType.TYPE_GENERATE_SQL, input_data)
-
-        if result and result.success:
-            # Store generated SQL in CLI context
-            if hasattr(result, "sql_contexts") and result.sql_contexts:
-                for sql_context in result.sql_contexts:
-                    self.cli_context.add_sql_context(sql_context)
-                    print_success(self.console, f"Generated SQL: {sql_context.sql_query}")
-            elif hasattr(result, "sql_query") and result.sql_query:
-                print_success(self.console, f"SQL generation completed: {result.sql_query}")
-            else:
-                print_success(self.console, "SQL generation completed")
-        else:
-            print_error(self.console, "SQL generation failed", prefix=False)
 
     def cmd_fix(self, args: str):
         """Fix the last SQL query."""
@@ -961,11 +942,11 @@ class AgentCommands:
             # 5. Display the result
             print_success(self.console, "Node Result:")
 
-            # Check if result is from a generate SQL task for SQL syntax highlighting
-            if next_node.type in [NodeType.TYPE_GENERATE_SQL, NodeType.TYPE_FIX]:
+            # Check if result is from a SQL-producing task for SQL syntax highlighting
+            if next_node.type in [NodeType.TYPE_GEN_SQL, NodeType.TYPE_FIX]:
                 # Get result dict and extract SQL query
                 result_dict = next_node.result.__dict__ if hasattr(next_node.result, "__dict__") else next_node.result
-                sql_query = result_dict.get("sql_query")
+                sql_query = result_dict.get("sql_query") or result_dict.get("sql")
                 # Display SQL separately without tree structure for easy copying
                 if sql_query:
                     # Display title separately
@@ -1102,7 +1083,7 @@ class AgentCommands:
                                 # Parse the final result to extract SQL
                                 content_dict = llm_result2json(raw_output)
                                 sql_query = content_dict.get("sql", "")
-                                explanation = content_dict.get("explanation", "")
+                                explanation = content_dict.get("output") or content_dict.get("explanation", "")
 
                                 if sql_query:
                                     # Create SQLContext with the final result SQL

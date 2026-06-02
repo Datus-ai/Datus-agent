@@ -1993,6 +1993,15 @@ class TestSetAgenticNodeOverride:
         # ``system_prompt`` is auto-filled so the YAML stays round-trippable.
         assert entry["system_prompt"] == "gen_sql"
 
+    def test_builtin_gen_sql_default_system_prompt_is_gen_sql(self, tmp_path):
+        cfg = self._make(tmp_path, agentic_nodes={"gen_sql": {}})
+        assert cfg.agentic_nodes["gen_sql"]["system_prompt"] == "gen_sql"
+
+    def test_override_builtin_gen_sql_default_system_prompt_is_gen_sql(self, tmp_path):
+        cfg = self._make(tmp_path)
+        cfg.set_agentic_node_override("gen_sql", model="legacy", max_turns=25, persist=False)
+        assert cfg.agentic_nodes["gen_sql"]["system_prompt"] == "gen_sql"
+
     def test_clear_model_preserves_max_turns(self, tmp_path):
         """Passing ``model=None`` clears only that key; max_turns stays
         put unless it is also set to ``None``."""

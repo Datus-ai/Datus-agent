@@ -1712,7 +1712,7 @@ class SubAgentWizard:
         elif node_class == "gen_visual_dashboard":
             fallback_template = "gen_visual_dashboard_system"
         else:
-            fallback_template = "sql_system"
+            fallback_template = "gen_sql_system"
         try:
             prompt_text = self.pm.render_template(preview_template, **prompt_context)
         except FileNotFoundError:
@@ -1744,7 +1744,7 @@ class SubAgentWizard:
         elif node_class == "gen_visual_dashboard":
             default_template = "gen_visual_dashboard_system"
         else:
-            default_template = "sql_system"
+            default_template = "gen_sql_system"
         if (
             self._is_updated
             and self._pre_name

@@ -292,7 +292,6 @@ class DatusCLI:
             "!search_sql": self.agent_commands.cmd_search_reference_sql,
             "!sd": self.agent_commands.cmd_doc_search,
             "!search_document": self.agent_commands.cmd_doc_search,
-            # "!gen": self.agent_commands.cmd_gen,
             # "!fix": self.agent_commands.cmd_fix,
             "!save": self.agent_commands.cmd_save,
             "!bash": self._cmd_bash,
@@ -604,7 +603,19 @@ class DatusCLI:
         current_console = getattr(self, "console", None)
         if current_console is None:
             return
-        if getattr(current_console, "width", None) == new_width:
+        # Rich ignores an explicit width on dumb terminals unless height is
+        # explicit too. The TUI output console is backed by an in-memory buffer,
+        # so preserve the existing height to make width reflow deterministic.
+        if (
+            getattr(current_console, "_width", None) is not None
+            and getattr(current_console, "_height", None) is None
+            and getattr(current_console, "is_dumb_terminal", False)
+        ):
+            try:
+                current_console._height = current_console.size.height
+            except Exception:  # pragma: no cover - defensive
+                current_console._height = 25
+        if getattr(current_console, "_width", None) == new_width or getattr(current_console, "width", None) == new_width:
             return
         buffer = getattr(self, "_tui_output_buffer", None)
         if buffer is None:

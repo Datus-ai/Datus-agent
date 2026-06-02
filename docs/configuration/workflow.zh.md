@@ -12,12 +12,12 @@ workflow:
 
 planA:
   - schema_linking
-  - generate_sql
+  - gen_sql
   - output
 
 planB:
   - schema_linking
-  - generate_sql
+  - gen_sql
   - execute_sql
   - reflect
   - output
@@ -32,7 +32,7 @@ workflow:
 
 basic_sql:
   - schema_linking
-  - generate_sql
+  - gen_sql
   - output
 ```
 
@@ -43,7 +43,7 @@ workflow:
 
 with_execution:
   - schema_linking
-  - generate_sql
+  - gen_sql
   - execute_sql
   - reflect
   - output
@@ -62,7 +62,7 @@ workflow:
 parallel_generation:
   - schema_linking
   - parallel:
-      - generate_sql
+      - gen_sql
       - reasoning
   - selection
   - execute_sql
@@ -86,7 +86,7 @@ multi_approach:
 
 subworkflow1:
   - search_metrics
-  - generate_sql
+  - gen_sql
 
 subworkflow2:
   - search_metrics
@@ -115,7 +115,7 @@ multi_agent:
 subworkflow1:
   steps:
     - search_metrics
-    - generate_sql
+    - gen_sql
   config: multi/agent1.yaml
 
 subworkflow2:
@@ -137,7 +137,7 @@ subworkflow3:
 ```yaml
 reflection:
   - schema_linking
-  - generate_sql
+  - gen_sql
   - execute_sql
   - reflect
   - output
@@ -147,7 +147,7 @@ reflection:
 ```yaml
 fixed:
   - schema_linking
-  - generate_sql
+  - gen_sql
   - execute_sql
   - output
 ```
@@ -158,7 +158,7 @@ metric_to_sql:
   - schema_linking
   - search_metrics
   - date_parser
-  - generate_sql
+  - gen_sql
   - execute_sql
   - reflect
   - output
@@ -169,13 +169,13 @@ metric_to_sql:
 reflection_nodes:
   schema_linking:
     - schema_linking
-    - generate_sql
+    - gen_sql
     - execute_sql
     - reflect
 
   doc_search:
     - doc_search
-    - generate_sql
+    - gen_sql
     - execute_sql
     - reflect
 

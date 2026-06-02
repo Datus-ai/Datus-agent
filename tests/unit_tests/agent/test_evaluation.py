@@ -42,7 +42,7 @@ class TestEvaluation:
             gen_node = Node.new_instance(
                 "task1",
                 "Generate SQL",
-                NodeType.TYPE_GENERATE_SQL,
+                NodeType.TYPE_GEN_SQL,
             )
             exec_node = Node.new_instance(
                 "task2",
@@ -86,7 +86,7 @@ class TestEvaluation:
             gen_node = Node.new_instance(
                 "task1",
                 "Generate SQL",
-                NodeType.TYPE_GENERATE_SQL,
+                NodeType.TYPE_GEN_SQL,
             )
             exec_node = Node.new_instance(
                 "task2",
@@ -131,7 +131,7 @@ class TestEvaluation:
             gen_node = Node.new_instance(
                 "task1",
                 "Generate SQL",
-                NodeType.TYPE_GENERATE_SQL,
+                NodeType.TYPE_GEN_SQL,
             )
             exec_node = Node.new_instance(
                 "task2",
@@ -220,7 +220,7 @@ class TestEvaluation:
             sql_gen_task = Node.new_instance(
                 "task1",
                 "Generate SQL",
-                NodeType.TYPE_GENERATE_SQL,
+                NodeType.TYPE_GEN_SQL,
             )
             sql_gen_task.result = "SELECT * FROM employees WHERE salary > 50000;"
             sql_gen_task.status = "completed"

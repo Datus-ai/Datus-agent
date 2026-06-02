@@ -643,7 +643,7 @@ class TestRewindSession:
 
     def test_rewind_preserves_node_type_in_new_id(self, sm):
         """Rewind preserves the node type prefix from source_session_id."""
-        source_id = "gensql_session_src001"
+        source_id = "gen_sql_session_src001"
         self._setup_source_session(
             sm,
             source_id,
@@ -654,7 +654,7 @@ class TestRewindSession:
         )
 
         new_id = sm.rewind_session(source_id, up_to_user_turn=1)
-        assert new_id.startswith("gensql_session_")
+        assert new_id.startswith("gen_sql_session_")
         assert new_id != source_id
 
     def test_rewind_no_session_prefix_uses_chat(self, sm):
@@ -1698,9 +1698,9 @@ class TestCopySession:
             ],
         )
 
-        new_id = sm.copy_session(source_id, "gensql")
+        new_id = sm.copy_session(source_id, "gen_sql")
 
-        assert new_id.startswith("gensql_session_")
+        assert new_id.startswith("gen_sql_session_")
         assert new_id != source_id
 
     def test_copy_session_preserves_all_messages(self, sm):
@@ -1744,15 +1744,15 @@ class TestCopySession:
         source_id = "chat_session_cached"
         self._setup_source_session(sm, source_id, [{"role": "user", "content": "test"}])
 
-        new_id = sm.copy_session(source_id, "gensql")
+        new_id = sm.copy_session(source_id, "gen_sql")
 
         assert new_id in sm._sessions
 
     def test_copy_nonexistent_source_returns_fresh_id(self, sm):
         """When source DB doesn't exist, return a fresh session_id (no crash)."""
-        new_id = sm.copy_session("nonexistent_session_xxx", "gensql")
+        new_id = sm.copy_session("nonexistent_session_xxx", "gen_sql")
 
-        assert new_id.startswith("gensql_session_")
+        assert new_id.startswith("gen_sql_session_")
         # No DB file should be created since there was nothing to copy
         new_db = os.path.join(sm.session_dir, f"{new_id}.db")
         assert not os.path.exists(new_db)
@@ -1794,7 +1794,7 @@ class TestCopySession:
             cursor = conn.execute("SELECT COUNT(*) FROM turn_usage WHERE session_id = ?", (source_id,))
             assert cursor.fetchone()[0] == 1
 
-        new_id = sm.copy_session(source_id, "gensql")
+        new_id = sm.copy_session(source_id, "gen_sql")
 
         # Verify turn_usage was copied
         new_db = os.path.join(sm.session_dir, f"{new_id}.db")
@@ -1829,7 +1829,7 @@ class TestCopySession:
         ]
         asyncio.run(source.add_items(items))
 
-        new_id = sm.copy_session(source_id, "gensql")
+        new_id = sm.copy_session(source_id, "gen_sql")
 
         # Open via the SDK class to exercise the real read path.
         new_db = os.path.join(sm.session_dir, f"{new_id}.db")

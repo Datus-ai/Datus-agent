@@ -354,7 +354,7 @@ class TestWorkflowRunnerRun:
 
         mock_node = MagicMock()
         mock_node.status = "completed"
-        mock_node.type = "generate_sql"
+        mock_node.type = "gen_sql"
         mock_node.description = "Generate SQL"
         mock_node.result = BaseResult(success=True)
         mock_node.run = MagicMock()
@@ -396,7 +396,7 @@ class TestWorkflowRunnerRun:
 
         mock_node = MagicMock()
         mock_node.status = "failed"
-        mock_node.type = "generate_sql"
+        mock_node.type = "gen_sql"
         mock_node.description = "Generate SQL"
         mock_node.result = None
         mock_node.run = MagicMock()
@@ -514,7 +514,7 @@ class TestWorkflowRunnerRunStream:
         mock_node = MagicMock()
         mock_node.id = "node_1"
         mock_node.status = "completed"
-        mock_node.type = "generate_sql"
+        mock_node.type = "gen_sql"
         mock_node.description = "Generate SQL"
 
         # run_stream on the node returns an async generator

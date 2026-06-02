@@ -350,7 +350,7 @@ class ReferenceSql(BaseModel):
 
 class GenerateSQLInput(BaseInput):
     """
-    Input model for SQL generation node.
+    Shared input model for SQL generation tasks.
     Validates the input parameters for SQL query generation.
     """
 
@@ -372,7 +372,7 @@ class GenerateSQLInput(BaseInput):
 
 class GenerateSQLResult(BaseResult):
     """
-    Result model for SQL generation node.
+    Shared result model for SQL generation tasks.
     Contains the generated SQL query and related information.
     """
 

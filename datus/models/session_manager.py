@@ -223,7 +223,7 @@ class SessionManager:
         Args:
             source_session_id: The session to copy from.
             target_node_name: Node name for the new session_id prefix
-                (e.g. ``"gensql"``, ``"chat"``).
+                (e.g. ``"gen_sql"``, ``"chat"``).
 
         Returns:
             The new session ID.

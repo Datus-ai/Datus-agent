@@ -10,7 +10,8 @@ import pytest
 
 from datus.agent.node import Node
 from datus.configuration.node_type import NodeType
-from datus.schemas.node_models import GenerateSQLResult
+from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeResult
+from datus.schemas.node_models import ExecuteSQLInput
 from datus.schemas.parallel_node_models import ParallelInput, ParallelResult
 
 
@@ -47,13 +48,13 @@ class TestParallelNodeExecute:
         assert "No child nodes" in result.error
 
     def test_execute_no_workflow_context_returns_failure(self):
-        node = make_node(ParallelInput(child_nodes=["generate_sql"]))
+        node = make_node(ParallelInput(child_nodes=["gen_sql"]))
         # workflow attr not set
         node.execute()
         assert node.result.success is False
 
     def test_execute_children_succeed(self):
-        node = make_node(ParallelInput(child_nodes=["generate_sql", "generate_sql"]))
+        node = make_node(ParallelInput(child_nodes=["gen_sql", "gen_sql"]))
         workflow = MagicMock()
         workflow.tools = []
         node.workflow = workflow
@@ -61,18 +62,18 @@ class TestParallelNodeExecute:
         mock_child_result = {
             "success": True,
             "status": "completed",
-            "result": GenerateSQLResult(success=True, sql_query="SELECT 1", tables=[]),
-            "node_id": "par_1_child_0_generate_sql",
-            "node_type": "generate_sql",
+            "result": GenSQLNodeResult(success=True, response="Generated SQL", sql="SELECT 1"),
+            "node_id": "par_1_child_0_gen_sql",
+            "node_type": "gen_sql",
             "start_time": 0.0,
             "end_time": 1.0,
         }
 
         with patch.object(node, "_create_child_nodes") as mock_create:
             child_node_a = MagicMock()
-            child_node_a.id = "par_1_child_0_generate_sql"
+            child_node_a.id = "par_1_child_0_gen_sql"
             child_node_b = MagicMock()
-            child_node_b.id = "par_1_child_1_generate_sql"
+            child_node_b.id = "par_1_child_1_gen_sql"
             mock_create.return_value = [child_node_a, child_node_b]
 
             with patch.object(node, "_execute_child_node", return_value=mock_child_result):
@@ -82,7 +83,7 @@ class TestParallelNodeExecute:
         assert len(node.result.child_results) == 2
 
     def test_execute_all_children_fail(self):
-        node = make_node(ParallelInput(child_nodes=["generate_sql"]))
+        node = make_node(ParallelInput(child_nodes=["gen_sql"]))
         workflow = MagicMock()
         workflow.tools = []
         node.workflow = workflow
@@ -91,15 +92,15 @@ class TestParallelNodeExecute:
             "success": False,
             "status": "failed",
             "error": "child failed",
-            "node_id": "par_1_child_0_generate_sql",
-            "node_type": "generate_sql",
+            "node_id": "par_1_child_0_gen_sql",
+            "node_type": "gen_sql",
             "start_time": 0.0,
             "end_time": 1.0,
         }
 
         with patch.object(node, "_create_child_nodes") as mock_create:
             child_node = MagicMock()
-            child_node.id = "par_1_child_0_generate_sql"
+            child_node.id = "par_1_child_0_gen_sql"
             mock_create.return_value = [child_node]
 
             with patch.object(node, "_execute_child_node", return_value=fail_result):
@@ -109,7 +110,7 @@ class TestParallelNodeExecute:
         assert "All child nodes failed" in node.result.error
 
     def test_execute_partial_success(self):
-        node = make_node(ParallelInput(child_nodes=["generate_sql", "generate_sql"]))
+        node = make_node(ParallelInput(child_nodes=["gen_sql", "gen_sql"]))
         workflow = MagicMock()
         workflow.tools = []
         node.workflow = workflow
@@ -118,7 +119,7 @@ class TestParallelNodeExecute:
             "success": True,
             "status": "completed",
             "node_id": "c0",
-            "node_type": "generate_sql",
+            "node_type": "gen_sql",
             "result": None,
             "start_time": 0.0,
             "end_time": 1.0,
@@ -128,7 +129,7 @@ class TestParallelNodeExecute:
             "status": "failed",
             "error": "fail",
             "node_id": "c1",
-            "node_type": "generate_sql",
+            "node_type": "gen_sql",
             "start_time": 0.0,
             "end_time": 1.0,
         }
@@ -148,7 +149,7 @@ class TestParallelNodeExecute:
         assert node.result.success is True
 
     def test_execute_create_child_nodes_exception(self):
-        node = make_node(ParallelInput(child_nodes=["generate_sql"]))
+        node = make_node(ParallelInput(child_nodes=["gen_sql"]))
         node.workflow = MagicMock()
 
         with patch.object(node, "_create_child_nodes", side_effect=RuntimeError("create error")):
@@ -162,17 +163,17 @@ class TestParallelNodeExecuteChildNode:
     """Test _execute_child_node()."""
 
     def test_execute_child_node_success(self):
-        node = make_node(ParallelInput(child_nodes=["generate_sql"]))
+        node = make_node(ParallelInput(child_nodes=["gen_sql"]))
         child = MagicMock()
         child.id = "child_id"
-        child.type = "generate_sql"
+        child.type = "gen_sql"
         child.start_time = 0.0
         child.end_time = 1.0
         child.status = "completed"
-        child.result = GenerateSQLResult(success=True, sql_query="SELECT 1", tables=[])
+        child.result = GenSQLNodeResult(success=True, response="Generated SQL", sql="SELECT 1")
 
         def mock_execute():
-            child.result = GenerateSQLResult(success=True, sql_query="SELECT 1", tables=[])
+            child.result = GenSQLNodeResult(success=True, response="Generated SQL", sql="SELECT 1")
 
         child.execute = mock_execute
 
@@ -180,10 +181,10 @@ class TestParallelNodeExecuteChildNode:
         assert result["success"] is True
 
     def test_execute_child_node_returns_null_result(self):
-        node = make_node(ParallelInput(child_nodes=["generate_sql"]))
+        node = make_node(ParallelInput(child_nodes=["gen_sql"]))
         child = MagicMock()
         child.id = "child_id"
-        child.type = "generate_sql"
+        child.type = "gen_sql"
         child.start_time = 0.0
         child.end_time = 1.0
         child.result = None
@@ -197,10 +198,10 @@ class TestParallelNodeExecuteChildNode:
         assert result["success"] is False
 
     def test_execute_child_node_raises_exception(self):
-        node = make_node(ParallelInput(child_nodes=["generate_sql"]))
+        node = make_node(ParallelInput(child_nodes=["gen_sql"]))
         child = MagicMock()
         child.id = "child_id"
-        child.type = "generate_sql"
+        child.type = "gen_sql"
         child.start_time = 0.0
         child.end_time = 1.0
         child._initialize.side_effect = RuntimeError("child error")
@@ -214,7 +215,7 @@ class TestParallelNodeSetupInput:
     """Test setup_input."""
 
     def test_setup_input_valid_action_types(self):
-        node = make_node(ParallelInput(child_nodes=["generate_sql", "reasoning"]))
+        node = make_node(ParallelInput(child_nodes=["gen_sql", "reasoning"]))
         workflow = MagicMock()
 
         result = node.setup_input(workflow)
@@ -230,12 +231,8 @@ class TestParallelNodeSetupInput:
 
     def test_setup_input_wrong_input_type(self):
         node = make_node()
-        from datus.schemas.node_models import GenerateSQLInput, SqlTask
 
-        node.input = GenerateSQLInput(
-            sql_task=SqlTask(task="t", database_type="sqlite", database_name="db"),
-            table_schemas=[],
-        )
+        node.input = ExecuteSQLInput(sql_query="SELECT 1", database_name="db")
         workflow = MagicMock()
         result = node.setup_input(workflow)
         assert result["success"] is False
@@ -266,7 +263,7 @@ class TestParallelNodeUpdateContext:
     """Test update_context."""
 
     def test_update_context_stores_parallel_results(self):
-        node = make_node(ParallelInput(child_nodes=["generate_sql"]))
+        node = make_node(ParallelInput(child_nodes=["gen_sql"]))
         node.result = ParallelResult(
             success=True,
             child_results={"c0": {"success": True}},
@@ -300,14 +297,14 @@ class TestParallelNodeStream:
 
     @pytest.mark.asyncio
     async def test_execute_stream_with_manager(self):
-        node = make_node(ParallelInput(child_nodes=["generate_sql"]))
+        node = make_node(ParallelInput(child_nodes=["gen_sql"]))
         node.workflow = MagicMock()
         fail_result = {
             "success": False,
             "status": "failed",
             "error": "fail",
             "node_id": "c0",
-            "node_type": "generate_sql",
+            "node_type": "gen_sql",
             "start_time": 0.0,
             "end_time": 1.0,
         }

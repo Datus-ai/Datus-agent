@@ -249,7 +249,7 @@ class TestShouldCreateNewNode:
         cmds = _make_chat_commands(real_agent_config)
         assert cmds.current_node is None
         assert cmds._should_create_new_node() is True
-        assert cmds._should_create_new_node(subagent_name="gensql") is True
+        assert cmds._should_create_new_node(subagent_name="gen_sql") is True
 
     def test_returns_false_when_node_exists_no_subagent(self, real_agent_config, mock_llm_create):
         """Should NOT create new node when a regular chat node already exists."""
@@ -268,39 +268,39 @@ class TestShouldCreateNewNode:
         cmds.current_node = cmds._create_new_node()
         cmds.current_subagent_name = None
 
-        result = cmds._should_create_new_node(subagent_name="gensql")
+        result = cmds._should_create_new_node(subagent_name="gen_sql")
         assert result is True
         assert cmds.current_subagent_name is None  # Not changed yet
 
     def test_returns_true_when_switching_between_different_subagents(self, real_agent_config, mock_llm_create):
         """Should create new node when switching between different subagents."""
         cmds = _make_chat_commands(real_agent_config)
-        cmds.current_node = cmds._create_new_node(subagent_name="gensql")
-        cmds.current_subagent_name = "gensql"
+        cmds.current_node = cmds._create_new_node(subagent_name="gen_sql")
+        cmds.current_subagent_name = "gen_sql"
 
         result = cmds._should_create_new_node(subagent_name="gen_semantic_model")
         assert result is True
-        assert cmds.current_subagent_name == "gensql"  # Not changed yet
+        assert cmds.current_subagent_name == "gen_sql"  # Not changed yet
 
     def test_returns_false_when_same_subagent(self, real_agent_config, mock_llm_create):
         """Should NOT create new node when continuing with the same subagent."""
         cmds = _make_chat_commands(real_agent_config)
-        cmds.current_node = cmds._create_new_node(subagent_name="gensql")
-        cmds.current_subagent_name = "gensql"
+        cmds.current_node = cmds._create_new_node(subagent_name="gen_sql")
+        cmds.current_subagent_name = "gen_sql"
 
-        result = cmds._should_create_new_node(subagent_name="gensql")
+        result = cmds._should_create_new_node(subagent_name="gen_sql")
         assert result is False
-        assert cmds.current_subagent_name == "gensql"
+        assert cmds.current_subagent_name == "gen_sql"
 
     def test_returns_true_when_switching_from_subagent_to_regular(self, real_agent_config, mock_llm_create):
         """Should create new node when switching from subagent back to regular chat."""
         cmds = _make_chat_commands(real_agent_config)
-        cmds.current_node = cmds._create_new_node(subagent_name="gensql")
-        cmds.current_subagent_name = "gensql"
+        cmds.current_node = cmds._create_new_node(subagent_name="gen_sql")
+        cmds.current_subagent_name = "gen_sql"
 
         result = cmds._should_create_new_node(subagent_name=None)
         assert result is True
-        assert cmds.current_subagent_name == "gensql"
+        assert cmds.current_subagent_name == "gen_sql"
 
 
 # ===========================================================================
@@ -317,10 +317,10 @@ class TestExtractNodeTypeFromSessionId:
         assert result == "chat"
         assert isinstance(result, str)
 
-    def test_gensql_session_returns_gensql(self):
-        """Extract 'gensql' from a gensql session ID."""
-        result = ChatCommands._extract_node_type_from_session_id("gensql_session_def456")
-        assert result == "gensql"
+    def test_gen_sql_session_returns_gen_sql(self):
+        """Extract 'gen_sql' from a gen_sql session ID."""
+        result = ChatCommands._extract_node_type_from_session_id("gen_sql_session_def456")
+        assert result == "gen_sql"
         assert "session" not in result
 
     def test_gen_semantic_model_session(self):
@@ -366,13 +366,13 @@ class TestCreateNewNode:
         assert isinstance(node, ChatAgenticNode)
         assert node.id == "chat_cli"
 
-    def test_gensql_node_creation(self, real_agent_config, mock_llm_create):
-        """subagent_name='gensql' creates a GenSQLAgenticNode (not ChatAgenticNode)."""
+    def test_gen_sql_node_creation(self, real_agent_config, mock_llm_create):
+        """subagent_name='gen_sql' creates a GenSQLAgenticNode (not ChatAgenticNode)."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
         cmds = _make_chat_commands(real_agent_config)
-        node = cmds._create_new_node(subagent_name="gensql")
+        node = cmds._create_new_node(subagent_name="gen_sql")
 
         assert isinstance(node, GenSQLAgenticNode)
         assert not isinstance(node, ChatAgenticNode)
@@ -469,19 +469,19 @@ class TestCreateNodeInput:
         assert node_type == "chat"
         assert node_input.user_message == "Hello"
 
-    def test_gensql_node_input(self, real_agent_config, mock_llm_create):
-        """GenSQLAgenticNode gets GenSQLNodeInput with 'gensql' type."""
+    def test_gen_sql_node_input(self, real_agent_config, mock_llm_create):
+        """GenSQLAgenticNode gets GenSQLNodeInput with 'gen_sql' type."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
         from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
 
         cmds = _make_chat_commands(real_agent_config)
-        node = cmds._create_new_node(subagent_name="gensql")
+        node = cmds._create_new_node(subagent_name="gen_sql")
         assert isinstance(node, GenSQLAgenticNode)
 
         node_input, node_type = cmds.create_node_input("Generate SQL for users", node, [], [], [])
 
         assert isinstance(node_input, GenSQLNodeInput)
-        assert node_type == "gensql"
+        assert node_type == "gen_sql"
         assert node_input.user_message == "Generate SQL for users"
 
     def test_semantic_model_node_input(self, real_agent_config, mock_llm_create):
@@ -572,13 +572,13 @@ class TestCreateNodeInput:
         assert node_input.plan_mode is True
         assert node_type == "chat"
 
-    def test_gensql_node_input_with_at_context(self, real_agent_config, mock_llm_create):
+    def test_gen_sql_node_input_with_at_context(self, real_agent_config, mock_llm_create):
         """GenSQLNodeInput passes through at_tables, at_metrics, at_sqls."""
         from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
         from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 
         cmds = _make_chat_commands(real_agent_config)
-        node = cmds._create_new_node(subagent_name="gensql")
+        node = cmds._create_new_node(subagent_name="gen_sql")
 
         at_tables = [
             TableSchema(
@@ -1293,10 +1293,10 @@ class TestExecuteChatCommand:
         console = Console(file=io.StringIO(), no_color=True)
         cmds = _make_chat_commands(real_agent_config, console=console)
 
-        cmds.execute_chat_command("Generate SQL for users", subagent_name="gensql")
+        cmds.execute_chat_command("Generate SQL for users", subagent_name="gen_sql")
 
         assert isinstance(cmds.current_node, GenSQLAgenticNode)
-        assert cmds.current_subagent_name == "gensql"
+        assert cmds.current_subagent_name == "gen_sql"
 
     def test_chat_history_updated_after_execution(self, real_agent_config, mock_llm_create):
         """Chat history is updated after execution (even if execution encounters errors)."""
@@ -1554,7 +1554,7 @@ class TestEdgeCases:
         assert "⏺" not in output
         assert len(output) > 20
 
-    def test_gensql_node_creation_default_subagent(self, real_agent_config, mock_llm_create):
+    def test_gen_sql_node_creation_default_subagent(self, real_agent_config, mock_llm_create):
         """Unknown subagent names without node_class default to GenSQLAgenticNode."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
@@ -1818,11 +1818,11 @@ class TestExecuteChatCommandResponseProcessing:
         cmds.execute_chat_command("Hello", subagent_name=None)
         first_node = cmds.current_node
 
-        cmds.execute_chat_command("Generate SQL", subagent_name="gensql")
+        cmds.execute_chat_command("Generate SQL", subagent_name="gen_sql")
         second_node = cmds.current_node
 
         assert first_node is not second_node
-        assert cmds.current_subagent_name == "gensql"
+        assert cmds.current_subagent_name == "gen_sql"
 
 
 # ===========================================================================
@@ -2298,10 +2298,10 @@ class TestTriggerCompactWithSession:
 
         # Second: switch to subagent — no compact should be triggered
         console.file = io.StringIO()
-        cmds.execute_chat_command("Generate SQL", subagent_name="gensql")
+        cmds.execute_chat_command("Generate SQL", subagent_name="gen_sql")
 
         output = _get_console_output(console)
-        assert cmds.current_subagent_name == "gensql"
+        assert cmds.current_subagent_name == "gen_sql"
         assert "compacting" not in output.lower()
 
 
@@ -3442,7 +3442,7 @@ class TestShouldCreateNewNodeExtended:
     def test_no_current_node_always_create(self, chat_cmd):
         chat_cmd.current_node = None
         assert chat_cmd._should_create_new_node() is True
-        assert chat_cmd._should_create_new_node("gensql") is True
+        assert chat_cmd._should_create_new_node("gen_sql") is True
 
     def test_has_node_no_subagent_no_switch(self, chat_cmd):
         """When current_node exists and no subagent requested, only create if currently using subagent."""
@@ -3452,17 +3452,17 @@ class TestShouldCreateNewNodeExtended:
 
     def test_has_node_same_subagent_no_create(self, chat_cmd):
         chat_cmd.current_node = MagicMock()
-        chat_cmd.current_subagent_name = "gensql"
-        assert chat_cmd._should_create_new_node("gensql") is False
+        chat_cmd.current_subagent_name = "gen_sql"
+        assert chat_cmd._should_create_new_node("gen_sql") is False
 
     def test_has_node_different_subagent_creates(self, chat_cmd):
         chat_cmd.current_node = MagicMock()
-        chat_cmd.current_subagent_name = "gensql"
+        chat_cmd.current_subagent_name = "gen_sql"
         assert chat_cmd._should_create_new_node("compare") is True
 
     def test_switching_from_subagent_to_chat_creates(self, chat_cmd):
         chat_cmd.current_node = MagicMock()
-        chat_cmd.current_subagent_name = "gensql"
+        chat_cmd.current_subagent_name = "gen_sql"
         assert chat_cmd._should_create_new_node(None) is True
 
 
@@ -3475,30 +3475,30 @@ class TestIsAgentSwitch:
     def test_no_current_node_is_not_switch(self, chat_cmd):
         """No current node means this is not a switch."""
         chat_cmd.current_node = None
-        assert chat_cmd._is_agent_switch("gensql") is False
+        assert chat_cmd._is_agent_switch("gen_sql") is False
 
     def test_same_subagent_is_not_switch(self, chat_cmd):
         """Same subagent is not a switch."""
         chat_cmd.current_node = MagicMock()
-        chat_cmd.current_subagent_name = "gensql"
-        assert chat_cmd._is_agent_switch("gensql") is False
+        chat_cmd.current_subagent_name = "gen_sql"
+        assert chat_cmd._is_agent_switch("gen_sql") is False
 
     def test_different_subagent_is_switch(self, chat_cmd):
         """Different subagent is a switch."""
         chat_cmd.current_node = MagicMock()
-        chat_cmd.current_subagent_name = "gensql"
+        chat_cmd.current_subagent_name = "gen_sql"
         assert chat_cmd._is_agent_switch("compare") is True
 
     def test_chat_to_subagent_is_switch(self, chat_cmd):
         """Switching from chat to subagent is a switch."""
         chat_cmd.current_node = MagicMock()
         chat_cmd.current_subagent_name = None
-        assert chat_cmd._is_agent_switch("gensql") is True
+        assert chat_cmd._is_agent_switch("gen_sql") is True
 
     def test_subagent_to_chat_is_switch(self, chat_cmd):
         """Switching from subagent to chat is a switch."""
         chat_cmd.current_node = MagicMock()
-        chat_cmd.current_subagent_name = "gensql"
+        chat_cmd.current_subagent_name = "gen_sql"
         assert chat_cmd._is_agent_switch(None) is True
 
     def test_chat_to_chat_is_not_switch(self, chat_cmd):
@@ -3535,10 +3535,10 @@ class TestSessionPreservationOnSwitch:
             return stub
 
         chat_cmd._create_new_node = MagicMock(side_effect=_create_new_node)
-        chat_cmd._copy_session_for_switch = MagicMock(return_value="gensql_session_def456")
+        chat_cmd._copy_session_for_switch = MagicMock(return_value="gen_sql_session_def456")
 
         # Simulate _execute_chat logic for agent switch
-        subagent_name = "gensql"
+        subagent_name = "gen_sql"
         need_new_node = chat_cmd._should_create_new_node(subagent_name)
         is_switch = chat_cmd._is_agent_switch(subagent_name)
 
@@ -3554,24 +3554,24 @@ class TestSessionPreservationOnSwitch:
         chat_cmd.current_node = chat_cmd._create_new_node(subagent_name, session_id=new_session_id)
 
         # Verify the new session_id has the target node prefix, not the source prefix
-        assert chat_cmd.current_node.session_id == "gensql_session_def456"
-        chat_cmd._copy_session_for_switch.assert_called_once_with("chat_session_abc123", "gensql")
+        assert chat_cmd.current_node.session_id == "gen_sql_session_def456"
+        chat_cmd._copy_session_for_switch.assert_called_once_with("chat_session_abc123", "gen_sql")
 
     def test_copy_session_delegates_to_session_manager(self, chat_cmd):
         """_copy_session_for_switch delegates to SessionManager.copy_session."""
         with patch("datus.models.session_manager.SessionManager") as mock_sm_cls:
             mock_sm = mock_sm_cls.return_value
-            mock_sm.copy_session.return_value = "gensql_session_xyz789"
+            mock_sm.copy_session.return_value = "gen_sql_session_xyz789"
 
-            result = chat_cmd._copy_session_for_switch("chat_session_abc123", "gensql")
+            result = chat_cmd._copy_session_for_switch("chat_session_abc123", "gen_sql")
 
-        assert result == "gensql_session_xyz789"
-        mock_sm.copy_session.assert_called_once_with("chat_session_abc123", "gensql")
+        assert result == "gen_sql_session_xyz789"
+        mock_sm.copy_session.assert_called_once_with("chat_session_abc123", "gen_sql")
 
     def test_copy_session_fallback_on_error(self, chat_cmd):
         """If copy_session fails, return None so the new node generates fresh."""
         with patch("datus.models.session_manager.SessionManager", side_effect=Exception("no dir")):
-            result = chat_cmd._copy_session_for_switch("chat_session_abc123", "gensql")
+            result = chat_cmd._copy_session_for_switch("chat_session_abc123", "gen_sql")
 
         assert result is None
 
@@ -3584,10 +3584,10 @@ class TestSessionPreservationOnSwitch:
         new_node.session_id = None
         chat_cmd._create_new_node = MagicMock(return_value=new_node)
 
-        is_switch = chat_cmd._is_agent_switch("gensql")
+        is_switch = chat_cmd._is_agent_switch("gen_sql")
         assert is_switch is False
 
-        chat_cmd.current_node = chat_cmd._create_new_node("gensql")
+        chat_cmd.current_node = chat_cmd._create_new_node("gen_sql")
         # session_id remains None (will be auto-generated on first use)
         assert chat_cmd.current_node.session_id is None
 
@@ -3669,7 +3669,7 @@ class TestCreateNewNodeExtended:
                 result = chat_cmd._create_new_node("gen_metrics")
         assert result is mock_node
 
-    def test_create_gensql_default(self, chat_cmd):
+    def test_create_gen_sql_default(self, chat_cmd):
         mock_node = MagicMock()
         with patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode") as mock_cls:
             mock_cls.return_value = mock_node
@@ -3677,7 +3677,7 @@ class TestCreateNewNodeExtended:
                 "sys.modules",
                 {"datus.agent.node.gen_sql_agentic_node": MagicMock(GenSQLAgenticNode=mock_cls)},
             ):
-                result = chat_cmd._create_new_node("gensql")
+                result = chat_cmd._create_new_node("gen_sql")
         mock_cls.assert_called_once()
         assert result is mock_node
 
@@ -3726,7 +3726,7 @@ class TestCmdChatInfoExtended:
         mock_node.get_last_turn_usage = mock_get_last_turn_usage
         mock_node.session_manager = None  # Prevent MagicMock auto-chain for get_detailed_usage
         chat_cmd.current_node = mock_node
-        chat_cmd.current_subagent_name = "gensql"
+        chat_cmd.current_subagent_name = "gen_sql"
 
         chat_cmd.cmd_chat_info("")
         output = chat_cmd.console.file.getvalue()

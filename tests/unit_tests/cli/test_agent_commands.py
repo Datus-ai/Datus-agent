@@ -32,7 +32,8 @@ from datus.cli.agent_commands import AgentCommands
 from datus.cli.cli_context import CliContext
 from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistoryManager
-from datus.schemas.node_models import GenerateSQLInput, SqlTask
+from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
+from datus.schemas.node_models import SqlTask
 from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.utils.constants import DBType
 
@@ -639,71 +640,6 @@ def sql_task():
 
 
 # ---------------------------------------------------------------------------
-# Tests: cmd_gen
-# ---------------------------------------------------------------------------
-
-
-class TestCmdGen:
-    def test_no_input_data_returns_early(self, agent_commands):
-        with patch.object(agent_commands, "create_node_input", return_value=None):
-            agent_commands.cmd_gen("")
-        # no exception, output unchanged
-        output = agent_commands.console.file.getvalue()
-        assert output == ""
-
-    def test_result_success_with_sql_contexts(self, agent_commands):
-        mock_ctx = MagicMock()
-        mock_ctx.sql_query = "SELECT 1"
-        mock_result = MagicMock()
-        mock_result.success = True
-        mock_result.sql_contexts = [mock_ctx]
-
-        with patch.object(agent_commands, "create_node_input", return_value=MagicMock()):
-            with patch.object(agent_commands, "run_standalone_node", return_value=mock_result):
-                agent_commands.cmd_gen("revenue")
-
-        output = agent_commands.console.file.getvalue()
-        assert "SELECT 1" in output
-
-    def test_result_success_sql_query_attribute(self, agent_commands):
-        mock_result = MagicMock()
-        mock_result.success = True
-        mock_result.sql_contexts = []
-        mock_result.sql_query = "SELECT 2"
-
-        with patch.object(agent_commands, "create_node_input", return_value=MagicMock()):
-            with patch.object(agent_commands, "run_standalone_node", return_value=mock_result):
-                agent_commands.cmd_gen("revenue")
-
-        output = agent_commands.console.file.getvalue()
-        assert "SELECT 2" in output
-
-    def test_result_success_no_sql(self, agent_commands):
-        mock_result = MagicMock()
-        mock_result.success = True
-        mock_result.sql_contexts = []
-        del mock_result.sql_query  # no sql_query attr
-
-        with patch.object(agent_commands, "create_node_input", return_value=MagicMock()):
-            with patch.object(agent_commands, "run_standalone_node", return_value=mock_result):
-                agent_commands.cmd_gen("revenue")
-
-        output = agent_commands.console.file.getvalue()
-        assert "completed" in output
-
-    def test_result_failure(self, agent_commands):
-        mock_result = MagicMock()
-        mock_result.success = False
-
-        with patch.object(agent_commands, "create_node_input", return_value=MagicMock()):
-            with patch.object(agent_commands, "run_standalone_node", return_value=mock_result):
-                agent_commands.cmd_gen("revenue")
-
-        output = agent_commands.console.file.getvalue()
-        assert "failed" in output.lower()
-
-
-# ---------------------------------------------------------------------------
 # Tests: cmd_fix
 # ---------------------------------------------------------------------------
 
@@ -1145,12 +1081,13 @@ class TestCmdDocSearchExtended:
 
 
 class TestCreateNodeInputExtended:
-    def test_generate_sql_type_returns_input(self, agent_commands, cli_context, sql_task):
+    def test_gen_sql_type_returns_agentic_input(self, agent_commands, cli_context, sql_task):
         cli_context.set_current_sql_task(sql_task)
         agent_commands.cli_context = cli_context
 
-        result = agent_commands.create_node_input(NodeType.TYPE_GENERATE_SQL, "show revenue")
-        assert isinstance(result, GenerateSQLInput)
+        result = agent_commands.create_node_input(NodeType.TYPE_GEN_SQL, "show revenue")
+        assert isinstance(result, GenSQLNodeInput)
+        assert result.user_message == "show revenue"
 
     def test_fix_type_no_sql_returns_none(self, agent_commands, cli_context, sql_task):
         """When there is no previous SQL, fix returns None."""
@@ -1169,7 +1106,7 @@ class TestCreateNodeInputExtended:
 
         Currently fails with ValidationError because create_node_input passes
         sql_query= as a keyword argument but ReasoningInput inherits extra='forbid'
-        from GenerateSQLInput.
+        from its base schema.
         """
         cli_context.set_current_sql_task(sql_task)
         agent_commands.cli_context = cli_context

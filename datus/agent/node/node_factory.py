@@ -264,7 +264,7 @@ def create_interactive_node(
             return GenSQLAgenticNode(
                 node_id=node_id if node_id is not None else f"{subagent_name}{node_id_suffix}",
                 description=f"SQL generation node for {subagent_name}",
-                node_type="gensql",
+                node_type="gen_sql",
                 input_data=None,
                 agent_config=agent_config,
                 tools=None,

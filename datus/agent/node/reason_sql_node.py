@@ -88,7 +88,7 @@ class ReasonSQLNode(Node):
                 workflow.context.sql_contexts.append(new_record)
                 return {"success": True, "message": "Updated reasoning context"}
             else:
-                # reasoning failed, use a final try with generate_sql
+                # reasoning failed, use a final try with gen_sql
                 self._regenerate_sql_with_all_context(workflow)
                 return {
                     "success": True,
@@ -104,14 +104,15 @@ class ReasonSQLNode(Node):
         """
         current_position = workflow.current_node_index
 
-        # Create SQL generation node
-        generate_sql_node = Node.new_instance(
+        # Create agentic SQL generation node
+        gen_sql_node = Node.new_instance(
             node_id=f"reflect_{workflow.reflection_round}_regenerate_sql",
             description="Generate corrected SQL based on schema analysis",
-            node_type="generate_sql",
+            node_type="gen_sql",
             input_data=None,
             agent_config=self.agent_config,
             tools=workflow.tools,
+            node_name="gen_sql",
         )
 
         # Create SQL execution node
@@ -126,7 +127,7 @@ class ReasonSQLNode(Node):
 
         # Add new nodes to workflow
         workflow.add_node(execute_sql_node, current_position + 1)
-        workflow.add_node(generate_sql_node, current_position + 1)
+        workflow.add_node(gen_sql_node, current_position + 1)
 
     async def _reason_sql_stream(
         self, action_history_manager: Optional[ActionHistoryManager] = None

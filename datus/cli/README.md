@@ -57,40 +57,12 @@ Do you want to execute this node? [y/n] (y):
 
 4. SQL Generation:
 ```sql
-> !gen
-Node Type: GENERATE_SQL
-Node Input:
-GenerateSQLInput(
-    database_type='sqlite',
-    table_schemas=[
-        TableSchema(
-            table_name='schools',
-            database_name='california_schools',
-            schema_name='',
-            schema_text="
-... 670-4590,,www.acoe.org,1980-07-01,,0.0,,,00,County Office of Education (COE),10,County Community,COMM,County Community School,HS,High 
-School,K-12,7-12,P,0.0,37.658212,-122.09713,Carolyn,Hobbs,chobbs@acoe.org,,,,,,,2016-10-06\n',
-            created_at='2025-05-13T05:07:45.689786'
-        )
-    ],
-    metrics=[],
-    input_text='How many schools in merged Alameda have number of test takers less than 100?',
-    contexts=[],
-    external_knowledge=''
-)
-Do you want to execute this node? [y/n] (y): 
-Executing GENERATE_SQL node...
-Node Result:
-GenerateSQLResult(
-    success=True,
-    error=None,
-    sql_query="SELECT COUNT(*) AS NumberOfSchools FROM satscores WHERE cname = 'Alameda' AND NumTstTakr < 100 AND rtype = 'S';",
-    tables=['satscores'],
-    explanation="The question asks for the count of schools in Alameda with fewer than 100 test takers. The 'satscores' table contains the relevant data, including the county name 
-('cname'), the number of test takers ('NumTstTakr'), and the record type ('rtype') which distinguishes between different types of records (e.g., 'S' for school). The query filters for 
-records where the county is Alameda, the number of test takers is less than 100, and the record type is 'S' (school), then counts these records."
-)
-Context updated successfully
+> /gen_sql How many schools in merged Alameda have number of test takers less than 100?
+SELECT COUNT(*) AS NumberOfSchools
+FROM satscores
+WHERE cname = 'Alameda'
+  AND NumTstTakr < 100
+  AND rtype = 'S';
 ```
 
 5. Run sql
@@ -171,7 +143,6 @@ Tool commands are used for AI-powered SQL generation and workflow execution:
 | `!darun <query>`       | Run a natural language query through the agentic way                |
 | `!dastart <query>`     | Start a new workflow session with manual input                     |
 | `!sl`                  | Schema linking: show list of recommended tables and values         |
-| `!gen`                 | Generate SQL, optionally with table constraints                    |
 | `!run`                 | Run the last generated SQL                                         |
 | `!fix <description>`   | Fix the last SQL query                                             |
 | `!reason`              | Run the full reasoning node to exploring                           |

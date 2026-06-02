@@ -63,11 +63,11 @@ class GenSQLAgenticNode(AgenticNode):
         Args:
             node_id: Unique identifier for the node
             description: Human-readable description of the node
-            node_type: Type of the node (should be 'gensql')
+            node_type: Type of the node (should be 'gen_sql')
             input_data: SQL generation input data
             agent_config: Agent configuration
             tools: List of tools (will be populated in setup_tools)
-            node_name: Name of the node configuration in agent.yml (e.g., "gensql", "gen_sql")
+            node_name: Name of the node configuration in agent.yml, typically "gen_sql"
             execution_mode: Execution mode - "interactive" (default) or "workflow"
             is_subagent: When True, skip SubAgentTaskTool setup (2-level depth enforcement)
         """
@@ -134,7 +134,7 @@ class GenSQLAgenticNode(AgenticNode):
         Get the configured node name for this SQL generation agentic node.
 
         Returns:
-            The configured node name from agent.yml (e.g., "gensql", "gen_sql")
+            The configured node name from agent.yml
         """
         return self.configured_node_name
 
@@ -646,7 +646,6 @@ class GenSQLAgenticNode(AgenticNode):
         ref = self.date_parsing_tools.reference_date if self.date_parsing_tools else None
         context["current_date"] = get_default_current_date(ref)
         prompt_version = prompt_version or self.node_config.get("prompt_version")
-        # Construct template name: {system_prompt}_system or fallback to {node_name}_system
         system_prompt_name = self.node_config.get("system_prompt") or self.get_node_name()
         template_name = f"{system_prompt_name}_system"
 
@@ -661,7 +660,7 @@ class GenSQLAgenticNode(AgenticNode):
         except FileNotFoundError:
             # Template not found - throw DatusException
             logger.warning(f"Failed to render system prompt '{system_prompt_name}', using the default template instead")
-            base_prompt = pm.render_template(template_name="sql_system", version=None, **context)
+            base_prompt = pm.render_template(template_name="gen_sql_system", version=None, **context)
             return self._finalize_system_prompt(base_prompt)
         except Exception as e:
             # Other template errors - wrap in DatusException
@@ -835,7 +834,7 @@ class GenSQLAgenticNode(AgenticNode):
                 # Extract SQL
                 sql = parsed.get("sql")
 
-                # New sql_system protocol uses `output` as the single user-facing field.
+                # New gen_sql_system protocol uses `output` as the single user-facing field.
                 output_text = parsed.get("output")
                 explanation = parsed.get("explanation", "")
                 tables = parsed.get("tables", [])

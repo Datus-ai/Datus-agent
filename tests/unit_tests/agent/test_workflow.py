@@ -20,13 +20,13 @@ class TestWorkflowNode:
         node = Node.new_instance(
             node_id="test_node",
             description="Test node",
-            node_type=NodeType.TYPE_GENERATE_SQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             input_data=None,
         )
 
         assert node.id == "test_node"
         assert node.description == "Test node"
-        assert node.type == NodeType.TYPE_GENERATE_SQL
+        assert node.type == NodeType.TYPE_GEN_SQL
         assert node.input is None
         assert node.status == "pending"
         assert node.result is None
@@ -39,7 +39,7 @@ class TestWorkflowNode:
         """Test node state transitions (start, complete, fail)."""
         from datus.schemas.node_models import BaseResult
 
-        node = Node.new_instance("test_node", "Test node", NodeType.TYPE_GENERATE_SQL)
+        node = Node.new_instance("test_node", "Test node", NodeType.TYPE_GEN_SQL)
 
         # Test start transition
         node.start()
@@ -54,7 +54,7 @@ class TestWorkflowNode:
         assert isinstance(node.end_time, float)
 
         # Test fail transition
-        node = Node.new_instance("test_node", "Test node", NodeType.TYPE_GENERATE_SQL)
+        node = Node.new_instance("test_node", "Test node", NodeType.TYPE_GEN_SQL)
         error_msg = "Test error"
         node.fail(error_msg)
         assert node.status == "failed"
@@ -64,7 +64,7 @@ class TestWorkflowNode:
 
     def test_node_dependencies(self):
         """Test adding dependencies to a node."""
-        node = Node.new_instance("test_node", "Test node", NodeType.TYPE_GENERATE_SQL)
+        node = Node.new_instance("test_node", "Test node", NodeType.TYPE_GEN_SQL)
 
         # Test adding dependencies
         node.add_dependency("dep_1")
@@ -81,14 +81,14 @@ class TestWorkflowNode:
         node = Node.new_instance(
             node_id="test_node",
             description="Test node",
-            node_type=NodeType.TYPE_GENERATE_SQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             input_data=None,
         )
 
         node_dict = node.to_dict()
         assert node_dict["id"] == "test_node"
         assert node_dict["description"] == "Test node"
-        assert node_dict["type"] == NodeType.TYPE_GENERATE_SQL
+        assert node_dict["type"] == NodeType.TYPE_GEN_SQL
         assert node_dict["status"] == "pending"
         assert node_dict["result"] is None
         assert node_dict["dependencies"] == []
@@ -161,7 +161,7 @@ class TestWorkflow:
         expected_nodes = [
             ("node_0", "Beginning of the workflow", NodeType.TYPE_BEGIN),
             ("node_1", "Understand the query and find related schemas", NodeType.TYPE_SCHEMA_LINKING),
-            ("node_2", "Generate SQL query", NodeType.TYPE_GENERATE_SQL),
+            ("node_2", "SQL generation with conversational AI and tool calling", NodeType.TYPE_GEN_SQL),
             ("node_3", "Execute SQL query", NodeType.TYPE_EXECUTE_SQL),
             ("node_4", "evaluation and self-reflection", NodeType.TYPE_REFLECT),
             ("node_5", "Return the results to the user", NodeType.TYPE_OUTPUT),
@@ -206,7 +206,7 @@ class TestWorkflow:
         node1 = Node.new_instance(
             node_id="node1",
             description="First node",
-            node_type=NodeType.TYPE_GENERATE_SQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             input_data=None,
         )
 
@@ -248,7 +248,7 @@ class TestWorkflow:
         # Verify node properties
         loaded_node1 = loaded_workflow.nodes["node1"]
         assert loaded_node1.description == "First node"
-        assert loaded_node1.type == NodeType.TYPE_GENERATE_SQL
+        assert loaded_node1.type == NodeType.TYPE_GEN_SQL
 
         loaded_node2 = loaded_workflow.nodes["node2"]
         assert loaded_node2.description == "Second node"
@@ -267,7 +267,7 @@ def _make_workflow(name="wf", task_text="test task"):
     return wf
 
 
-def _make_node(node_id, node_type=NodeType.TYPE_GENERATE_SQL, description="desc"):
+def _make_node(node_id, node_type=NodeType.TYPE_GEN_SQL, description="desc"):
     return Node.new_instance(
         node_id=node_id,
         description=description,
@@ -442,19 +442,19 @@ class TestWorkflowNavigation:
 
     def test_get_last_node_by_type(self):
         wf = _make_workflow()
-        n0 = _make_node("n0", NodeType.TYPE_GENERATE_SQL)
+        n0 = _make_node("n0", NodeType.TYPE_GEN_SQL)
         n1 = _make_node("n1", NodeType.TYPE_EXECUTE_SQL)
-        n2 = _make_node("n2", NodeType.TYPE_GENERATE_SQL)
+        n2 = _make_node("n2", NodeType.TYPE_GEN_SQL)
         wf.add_node(n0)
         wf.add_node(n1)
         wf.add_node(n2)
         wf.current_node_index = 3  # past all nodes
-        result = wf.get_last_node_by_type(NodeType.TYPE_GENERATE_SQL)
+        result = wf.get_last_node_by_type(NodeType.TYPE_GEN_SQL)
         assert result is n2
 
     def test_get_last_node_by_type_not_found_returns_none(self):
         wf = _make_workflow()
-        n0 = _make_node("n0", NodeType.TYPE_GENERATE_SQL)
+        n0 = _make_node("n0", NodeType.TYPE_GEN_SQL)
         wf.add_node(n0)
         wf.current_node_index = 1
         result = wf.get_last_node_by_type(NodeType.TYPE_EXECUTE_SQL)

@@ -636,11 +636,11 @@ class TestExplorerServiceCreateMetric:
             yaml="metric:\n  name: test_revenue\n  type: measure_proxy\n  type_params:\n    measure: count_orders\n",
         )
         result = await svc.create_metric(request)
-        # May fail on deep validation (no data_source in model) — that's expected.
-        # The important thing is it exercises the full path: parse → check existence → validate
+        # Without metricflow installed, validation intentionally falls back to
+        # YAML syntax checking, so this valid metric can be created locally.
         assert isinstance(result, Result)
-        assert result.success is False
-        assert "validation" in result.errorMessage.lower()
+        assert result.success is True
+        assert (metrics_dir / "test_revenue.yml").exists()
 
     async def test_create_metric_duplicate_file_fails(self, real_agent_config):
         """create_metric rejects when file already exists on disk."""

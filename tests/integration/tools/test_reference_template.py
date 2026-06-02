@@ -245,7 +245,7 @@ class TestNodeToolWiring:
             node = GenSQLAgenticNode(
                 node_id="test_tpl_node",
                 description="Test template node",
-                node_type=NodeType.TYPE_GENSQL,
+                node_type=NodeType.TYPE_GEN_SQL,
                 agent_config=agent_config,
                 node_name="test_template_node",
             )

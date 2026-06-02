@@ -4,7 +4,6 @@
 
 __all__ = [
     "SchemaLinkingNode",
-    "GenerateSQLNode",
     "ExecuteSQLNode",
     "ReasonSQLNode",
     "DocSearchNode",
@@ -53,7 +52,6 @@ from .gen_report_agentic_node import GenReportAgenticNode
 from .gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 from .gen_skill_agentic_node import SkillCreatorAgenticNode
 from .gen_sql_agentic_node import GenSQLAgenticNode
-from .generate_sql_node import GenerateSQLNode
 from .hitl_node import HitlNode
 from .output_node import OutputNode
 from .parallel_node import ParallelNode

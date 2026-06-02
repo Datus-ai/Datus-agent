@@ -36,18 +36,20 @@ class SelectionNode(Node):
                 # Get the actual result object from the child node result
                 child_result = selected_data["result"]
 
-                # Check if it's a SQL generation result
-                if hasattr(child_result, "sql_query") and hasattr(child_result, "explanation"):
+                # Check if it's a SQL generation result. GenSQLNodeResult uses
+                # `sql`; older reasoning/fix-style results may use `sql_query`.
+                sql_query = getattr(child_result, "sql", None) or getattr(child_result, "sql_query", None)
+                if sql_query:
                     from datus.schemas.node_models import SQLContext
 
+                    explanation = getattr(child_result, "response", None) or getattr(child_result, "explanation", "")
+
                     # Create SQL context from the selected result
-                    sql_context = SQLContext(
-                        sql_query=child_result.sql_query, explanation=child_result.explanation or ""
-                    )
+                    sql_context = SQLContext(sql_query=sql_query, explanation=explanation or "")
 
                     # Add to workflow context
                     workflow.context.sql_contexts.append(sql_context)
-                    logger.info(f"Added selected SQL to context: {child_result.sql_query[:100]}...")
+                    logger.info(f"Added selected SQL to context: {sql_query[:100]}...")
 
                     return {"success": True, "message": "Selection node context updated with SQL"}
 

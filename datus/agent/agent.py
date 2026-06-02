@@ -950,9 +950,19 @@ class Agent:
 
                 if "workflow" in trajectory_data and "nodes" in trajectory_data["workflow"]:
                     for node in trajectory_data["workflow"]["nodes"]:
-                        if node.get("type") in ["reasoning", "generate_sql"]:
-                            if "result" in node and "sql_contexts" in node["result"]:
-                                sql_contexts = node["result"]["sql_contexts"]
+                        if node.get("type") in ["reasoning", "gen_sql"]:
+                            result = node.get("result") or {}
+                            if "sql_contexts" in result:
+                                sql_contexts = result["sql_contexts"]
+                                first_sql_node_id = node["id"]
+                                break
+                            if result.get("sql"):
+                                sql_contexts = [
+                                    {
+                                        "sql_query": result.get("sql", ""),
+                                        "explanation": result.get("response", "") or result.get("output", ""),
+                                    }
+                                ]
                                 first_sql_node_id = node["id"]
                                 break
 

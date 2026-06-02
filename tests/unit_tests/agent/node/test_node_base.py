@@ -12,7 +12,8 @@ import pytest
 from datus.agent.node import Node
 from datus.configuration.node_type import NodeType
 from datus.schemas.base import BaseResult
-from datus.schemas.node_models import ExecuteSQLResult, GenerateSQLResult
+from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeResult
+from datus.schemas.node_models import ExecuteSQLResult
 from datus.schemas.schema_linking_node_models import SchemaLinkingResult
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SemanticNodeResult
 
@@ -38,9 +39,9 @@ class TestNodeInstantiation:
         assert node.type == NodeType.TYPE_SCHEMA_LINKING
         assert node.status == "pending"
 
-    def test_new_instance_generate_sql(self):
-        node = Node.new_instance("n2", "desc", NodeType.TYPE_GENERATE_SQL, agent_config=self.agent_config)
-        assert node.type == NodeType.TYPE_GENERATE_SQL
+    def test_new_instance_gen_sql(self):
+        node = Node.new_instance("n2", "desc", NodeType.TYPE_GEN_SQL)
+        assert node.type == NodeType.TYPE_GEN_SQL
 
     def test_new_instance_execute_sql(self):
         node = Node.new_instance("n3", "desc", NodeType.TYPE_EXECUTE_SQL, agent_config=self.agent_config)
@@ -92,10 +93,10 @@ class TestNodeInstantiation:
 
     def test_node_invalid_type_in_constructor(self):
         """Node constructor validates type against ACTION_TYPES and CONTROL_TYPES."""
-        from datus.agent.node.generate_sql_node import GenerateSQLNode
+        from datus.agent.node.execute_sql_node import ExecuteSQLNode
 
         with pytest.raises(ValueError, match="Invalid node type"):
-            GenerateSQLNode("nx", "desc", "bad_type")
+            ExecuteSQLNode("nx", "desc", "bad_type")
 
 
 class TestNodeLifecycle:
@@ -214,7 +215,7 @@ class TestNodeRun:
         assert result == BaseResult(success=False, error="boom")
 
     def test_run_fails_when_result_is_none(self):
-        node = Node.new_instance("run_none", "Test", NodeType.TYPE_GENERATE_SQL, agent_config=self.agent_config)
+        node = Node.new_instance("run_none", "Test", NodeType.TYPE_SCHEMA_LINKING, agent_config=self.agent_config)
         node._initialize = MagicMock()
         node.execute = MagicMock()  # Does not set node.result
 
@@ -233,7 +234,7 @@ class TestNodeInitialize:
         """If model is already an LLMBaseModel, _initialize is a no-op."""
         from datus.models.base import LLMBaseModel
 
-        node = Node.new_instance("init_test", "Test", NodeType.TYPE_GENERATE_SQL, agent_config=self.agent_config)
+        node = Node.new_instance("init_test", "Test", NodeType.TYPE_SCHEMA_LINKING, agent_config=self.agent_config)
         mock_model = MagicMock(spec=LLMBaseModel)
         node.model = mock_model
 
@@ -243,7 +244,7 @@ class TestNodeInitialize:
 
     def test_initialize_with_model_name_string(self):
         """If model is a string, _initialize creates the model via LLMBaseModel.create_model."""
-        node = Node.new_instance("init_str", "Test", NodeType.TYPE_GENERATE_SQL, agent_config=self.agent_config)
+        node = Node.new_instance("init_str", "Test", NodeType.TYPE_SCHEMA_LINKING, agent_config=self.agent_config)
         node.model = "gpt-4"
 
         mock_llm = MagicMock()
@@ -261,9 +262,9 @@ class TestNodeInitialize:
         node_config = MagicMock()
         node_config.model = "claude-3"
         node_config.input = None
-        self.agent_config.nodes = {NodeType.TYPE_GENERATE_SQL: node_config}
+        self.agent_config.nodes = {NodeType.TYPE_SCHEMA_LINKING: node_config}
 
-        node = Node.new_instance("init_cfg", "Test", NodeType.TYPE_GENERATE_SQL, agent_config=self.agent_config)
+        node = Node.new_instance("init_cfg", "Test", NodeType.TYPE_SCHEMA_LINKING, agent_config=self.agent_config)
 
         mock_llm = MagicMock()
         mock_llm.model_config.type = "anthropic"
@@ -326,19 +327,19 @@ class TestNodeFromDict:
         assert node.metadata == {"key": "val"}
         assert isinstance(node.result, ExecuteSQLResult)
 
-    def test_from_dict_with_generate_sql_result(self):
+    def test_from_dict_with_gen_sql_result(self):
         node_dict = {
             "id": "fd3",
             "description": "test",
-            "type": NodeType.TYPE_GENERATE_SQL,
+            "type": NodeType.TYPE_GEN_SQL,
             "input": None,
             "status": "completed",
             "result": {
                 "success": True,
                 "error": None,
-                "sql_query": "SELECT 1",
-                "tables": ["t1"],
-                "explanation": "test",
+                "response": "Generated SQL",
+                "sql": "SELECT 1",
+                "tokens_used": 0,
                 "action_history": None,
                 "execution_stats": None,
             },
@@ -347,8 +348,9 @@ class TestNodeFromDict:
             "dependencies": [],
             "metadata": {},
         }
-        node = Node.from_dict(node_dict, agent_config=self.agent_config)
-        assert isinstance(node.result, GenerateSQLResult)
+        node = Node.from_dict(node_dict)
+        assert isinstance(node.result, GenSQLNodeResult)
+        assert node.result.sql == "SELECT 1"
 
     @patch("datus.agent.node.gen_table_agentic_node.DBFuncTool")
     @patch("datus.models.base.LLMBaseModel.create_model")
@@ -408,7 +410,7 @@ class TestNodeFromDict:
         node_dict = {
             "id": "fd_bad",
             "description": "test",
-            "type": NodeType.TYPE_GENERATE_SQL,
+            "type": NodeType.TYPE_SCHEMA_LINKING,
             "input": {"invalid_key": "oops"},
             "status": "failed",
             "result": {"garbage": "data"},

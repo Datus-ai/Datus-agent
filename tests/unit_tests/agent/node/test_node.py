@@ -19,8 +19,6 @@ from datus.schemas.doc_search_node_models import DocSearchInput, DocSearchResult
 from datus.schemas.node_models import (
     ExecuteSQLInput,
     ExecuteSQLResult,
-    GenerateSQLInput,
-    GenerateSQLResult,
     ReflectionInput,
     SQLContext,
     SqlTask,
@@ -35,18 +33,9 @@ from tests.conftest import TEST_DATA_DIR, load_acceptance_config
 from tests.unit_tests.mock_llm_model import (
     MockLLMResponse,
     MockToolCall,
-    build_tool_then_response,
 )
 
 logger = get_logger(__name__)
-
-
-@pytest.fixture
-def generate_sql_input():
-    """load idata from YAML file"""
-    yaml_path = TEST_DATA_DIR / "GenerateSQLInput.yaml"
-    with open(yaml_path, "r") as f:
-        return yaml.safe_load(f)
 
 
 @pytest.fixture
@@ -107,7 +96,7 @@ def search_metrics_input() -> List[Dict[str, Any]]:
 
 
 # @pytest.fixture
-# def mock_generate_sql_input() -> Dict[str, Any]:
+# def mock_gen_sql_input() -> Dict[str, Any]:
 #    return {
 #        "database_type": "sqlite",
 #        "table_schemas": "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)",
@@ -130,15 +119,15 @@ def agent_config() -> AgentConfig:
     return agent_config
 
 
-@pytest.fixture
-def function_tools(agent_config: AgentConfig) -> List[Tool]:
-    return db_function_tools(agent_config)
-
-
 def save_to_yaml(content: BaseModel, filename: str):
     """Save a Pydantic model instance to a YAML file"""
     with open(filename, "w") as f:
         yaml.dump(content.to_dict(), f, allow_unicode=True)
+
+
+@pytest.fixture
+def function_tools(agent_config: AgentConfig) -> List[Tool]:
+    return db_function_tools(agent_config)
 
 
 def init_metricflow_db() -> None:
@@ -329,73 +318,6 @@ class TestNodeFactory:
         assert res.success is True
         assert res.schema_count > 0
         assert res.value_count == 0
-
-    def test_generation_node(self, generate_sql_input, agent_config, function_tools: List[Tool], mock_llm_create):
-        """Test SQL generation node with mock LLM and SQLite database"""
-        try:
-            # Mock LLM response for SQL generation
-            mock_llm_create.reset(
-                responses=[
-                    build_tool_then_response(
-                        tool_calls=[
-                            MockToolCall(name="list_tables", arguments="{}"),
-                            MockToolCall(name="describe_table", arguments='{"table_name": "schools"}'),
-                        ],
-                        content=json.dumps(
-                            {
-                                "sql": "SELECT * FROM schools WHERE City = 'Fresno' LIMIT 10",
-                                "tables": ["schools"],
-                                "explanation": "Query to retrieve schools in Fresno city",
-                            }
-                        ),
-                    ),
-                ]
-            )
-
-            # Create table schema from input data
-            input_data = GenerateSQLInput(**generate_sql_input[0]["input"])
-
-            # Create node instance for testing
-            node = Node.new_instance(
-                node_id="gen_sql_test",
-                description="Generate SQL Test",
-                node_type=NodeType.TYPE_GENERATE_SQL,
-                input_data=input_data,
-                agent_config=agent_config,
-                tools=function_tools,
-            )
-
-            # Verify initial node configuration
-            assert node.type == NodeType.TYPE_GENERATE_SQL
-            assert isinstance(node.input, GenerateSQLInput)
-            assert node.input.sql_task.task == generate_sql_input[0]["input"]["sql_task"]["task"]
-            assert node.input.database_type == DBType.SQLITE
-            assert len(node.input.table_schemas) == 3
-            assert node.input.table_schemas[0].table_name == "schools"
-
-            # Test validation error for invalid input
-            with pytest.raises(ValidationError):
-                GenerateSQLInput(**{"invalid": "data"})
-
-            # Execute node with valid dependencies
-            result = node.run()
-            logger.debug(f"Generation node result: {result.to_str()}")
-
-            # Verify execution results
-            assert node.status == "completed", f"Node execution failed with status: {node.status}"
-            assert result.success is True, f"Node execution failed: {result}"
-            assert isinstance(result, GenerateSQLResult), "Result type mismatch"
-            assert result.sql_query == "SELECT * FROM schools WHERE City = 'Fresno' LIMIT 10"
-            assert result.tables == ["schools"]
-
-            # Test error state handling
-            node.fail("Test error")
-            assert node.status == "failed"
-            assert node.result["error"] == "Test error"
-
-        except Exception as e:
-            logger.error(f"Generation node test failed: {str(e)}")
-            raise
 
     def test_node_dependencies(self, agent_config):
         """Test node dependencies"""

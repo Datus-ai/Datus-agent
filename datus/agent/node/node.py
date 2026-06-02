@@ -26,8 +26,6 @@ from datus.schemas.node_models import (
     BaseResult,
     ExecuteSQLInput,
     ExecuteSQLResult,
-    GenerateSQLInput,
-    GenerateSQLResult,
     OutputInput,
     OutputResult,
     ReflectionResult,
@@ -69,7 +67,6 @@ class Node(ABC):
             DocSearchNode,
             ExecuteSQLNode,
             FixNode,
-            GenerateSQLNode,
             GenSQLAgenticNode,
             HitlNode,
             OutputNode,
@@ -84,8 +81,6 @@ class Node(ABC):
 
         if node_type == NodeType.TYPE_SCHEMA_LINKING:
             return SchemaLinkingNode(node_id, description, node_type, input_data, agent_config)
-        elif node_type == NodeType.TYPE_GENERATE_SQL:
-            return GenerateSQLNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_EXECUTE_SQL:
             return ExecuteSQLNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_REASONING:
@@ -126,7 +121,7 @@ class Node(ABC):
                 is_subagent=is_subagent,
                 session_id=session_id,
             )
-        elif node_type == NodeType.TYPE_GENSQL:
+        elif node_type == NodeType.TYPE_GEN_SQL:
             return GenSQLAgenticNode(
                 node_id,
                 description,
@@ -134,7 +129,7 @@ class Node(ABC):
                 input_data,
                 agent_config,
                 tools,
-                node_name,
+                node_name or NodeType.TYPE_GEN_SQL,
                 execution_mode="workflow",
                 is_subagent=is_subagent,
                 session_id=session_id,
@@ -488,8 +483,6 @@ class Node(ABC):
             try:
                 if node_dict["type"] == NodeType.TYPE_SCHEMA_LINKING:
                     input_data = SchemaLinkingInput(**input_data)
-                elif node_dict["type"] == NodeType.TYPE_GENERATE_SQL:
-                    input_data = GenerateSQLInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_EXECUTE_SQL:
                     input_data = ExecuteSQLInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_OUTPUT:
@@ -500,7 +493,7 @@ class Node(ABC):
                     input_data = DateParserInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_CHAT:
                     input_data = ChatNodeInput(**input_data)
-                elif node_dict["type"] == NodeType.TYPE_GENSQL:
+                elif node_dict["type"] == NodeType.TYPE_GEN_SQL:
                     input_data = GenSQLNodeInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_GEN_REPORT:
                     from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput
@@ -542,8 +535,6 @@ class Node(ABC):
                 # TODO: use factory pattern to create the result data
                 if node_dict["type"] == NodeType.TYPE_SCHEMA_LINKING:
                     result_data = SchemaLinkingResult(**result_data)
-                elif node_dict["type"] == NodeType.TYPE_GENERATE_SQL:
-                    result_data = GenerateSQLResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_EXECUTE_SQL:
                     result_data = ExecuteSQLResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_OUTPUT:
@@ -556,7 +547,7 @@ class Node(ABC):
                     result_data = DateParserResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_CHAT:
                     result_data = ChatNodeResult(**result_data)
-                elif node_dict["type"] == NodeType.TYPE_GENSQL:
+                elif node_dict["type"] == NodeType.TYPE_GEN_SQL:
                     result_data = GenSQLNodeResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_GEN_REPORT:
                     from datus.schemas.gen_report_agentic_node_models import GenReportNodeResult

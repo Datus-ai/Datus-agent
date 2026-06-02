@@ -41,38 +41,38 @@ from tests.unit_tests.mock_llm_model import (
 class TestGenSQLAgenticNodeInit:
     """Tests for GenSQLAgenticNode initialization with real config."""
 
-    def test_gensql_init_with_real_config(self, real_agent_config, mock_llm_create):
+    def test_gen_sql_init_with_real_config(self, real_agent_config, mock_llm_create):
         """Node initializes with real AgentConfig, tools are set up correctly."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
         node = GenSQLAgenticNode(
-            node_id="test_gensql_1",
+            node_id="test_gen_sql_1",
             description="Test GenSQL node",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
-            node_name="gensql",
+            node_name="gen_sql",
         )
 
-        assert node.id == "test_gensql_1"
-        assert node.type == NodeType.TYPE_GENSQL
+        assert node.id == "test_gen_sql_1"
+        assert node.type == NodeType.TYPE_GEN_SQL
         assert node.description == "Test GenSQL node"
         assert node.status == "pending"
         assert node.agent_config is real_agent_config
-        assert node.get_node_name() == "gensql"
+        assert node.get_node_name() == "gen_sql"
         # Model should be the mock model
         assert isinstance(node.model, MockLLMModel)
 
-    def test_gensql_has_db_tools(self, real_agent_config, mock_llm_create):
+    def test_gen_sql_has_db_tools(self, real_agent_config, mock_llm_create):
         """After init, node has real db tools (list_tables, describe_table, read_query, get_table_ddl)."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
         from datus.tools.func_tool.database import DBFuncTool
 
         node = GenSQLAgenticNode(
-            node_id="test_gensql_2",
+            node_id="test_gen_sql_2",
             description="Test GenSQL node",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
-            node_name="gensql",
+            node_name="gen_sql",
         )
 
         assert isinstance(node.db_func_tool, DBFuncTool)
@@ -80,19 +80,19 @@ class TestGenSQLAgenticNodeInit:
         tool_names = {t.name for t in node.tools}
         assert {"list_tables", "describe_table", "read_query"} <= tool_names
 
-    def test_gensql_max_turns_from_config(self, real_agent_config, mock_llm_create):
+    def test_gen_sql_max_turns_from_config(self, real_agent_config, mock_llm_create):
         """max_turns is read from agentic_nodes config (set to 5 in fixture)."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
         node = GenSQLAgenticNode(
-            node_id="test_gensql_3",
+            node_id="test_gen_sql_3",
             description="Test GenSQL node",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
-            node_name="gensql",
+            node_name="gen_sql",
         )
 
-        # The fixture sets max_turns=5 for gensql
+        # The fixture sets max_turns=5 for gen_sql
         assert node.max_turns == 5
 
 
@@ -105,11 +105,11 @@ class TestGenSQLAgenticNodeExecutionMode:
         from datus.tools.func_tool.ask_user_tools import AskUserTool
 
         node = GenSQLAgenticNode(
-            node_id="test_gensql_interactive",
+            node_id="test_gen_sql_interactive",
             description="Test interactive mode",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
-            node_name="gensql",
+            node_name="gen_sql",
         )
 
         assert node.execution_mode == "interactive"
@@ -122,11 +122,11 @@ class TestGenSQLAgenticNodeExecutionMode:
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
         node = GenSQLAgenticNode(
-            node_id="test_gensql_workflow",
+            node_id="test_gen_sql_workflow",
             description="Test workflow mode",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
-            node_name="gensql",
+            node_name="gen_sql",
             execution_mode="workflow",
         )
 
@@ -140,11 +140,11 @@ class TestGenSQLAgenticNodeExecutionMode:
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
         node = GenSQLAgenticNode(
-            node_id="test_gensql_rebuild_ask",
+            node_id="test_gen_sql_rebuild_ask",
             description="Test rebuild with ask_user",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
-            node_name="gensql",
+            node_name="gen_sql",
         )
 
         node._rebuild_tools()
@@ -156,11 +156,11 @@ class TestGenSQLAgenticNodeExecutionMode:
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
         node = GenSQLAgenticNode(
-            node_id="test_gensql_rebuild_wf",
+            node_id="test_gen_sql_rebuild_wf",
             description="Test rebuild without ask_user",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
-            node_name="gensql",
+            node_name="gen_sql",
             execution_mode="workflow",
         )
 
@@ -175,7 +175,7 @@ class TestGenSQLAgenticNodeExecution:
     """Tests for GenSQLAgenticNode execute_stream and related methods."""
 
     @pytest.mark.asyncio
-    async def test_gensql_simple_response(self, real_agent_config, mock_llm_create):
+    async def test_gen_sql_simple_response(self, real_agent_config, mock_llm_create):
         """execute_stream with simple text response (no tool calls) produces USER and ASSISTANT actions."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
@@ -186,11 +186,11 @@ class TestGenSQLAgenticNodeExecution:
         )
 
         node = GenSQLAgenticNode(
-            node_id="test_gensql_simple",
+            node_id="test_gen_sql_simple",
             description="Test GenSQL node",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
-            node_name="gensql",
+            node_name="gen_sql",
         )
 
         node.input = GenSQLNodeInput(
@@ -213,7 +213,7 @@ class TestGenSQLAgenticNodeExecution:
         assert actions[-1].status == ActionStatus.SUCCESS
 
     @pytest.mark.asyncio
-    async def test_gensql_with_tool_calls(self, real_agent_config, mock_llm_create):
+    async def test_gen_sql_with_tool_calls(self, real_agent_config, mock_llm_create):
         """execute_stream where LLM calls list_tables then responds with SQL."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
@@ -235,11 +235,11 @@ class TestGenSQLAgenticNodeExecution:
         )
 
         node = GenSQLAgenticNode(
-            node_id="test_gensql_tools",
+            node_id="test_gen_sql_tools",
             description="Test GenSQL node",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
-            node_name="gensql",
+            node_name="gen_sql",
         )
 
         node.input = GenSQLNodeInput(
@@ -264,7 +264,7 @@ class TestGenSQLAgenticNodeExecution:
         assert tool_result["executed"] is True
 
     @pytest.mark.asyncio
-    async def test_gensql_execute_sql_tool(self, real_agent_config, mock_llm_create):
+    async def test_gen_sql_execute_sql_tool(self, real_agent_config, mock_llm_create):
         """LLM calls read_query on the real database, verify real results returned."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
@@ -286,11 +286,11 @@ class TestGenSQLAgenticNodeExecution:
         )
 
         node = GenSQLAgenticNode(
-            node_id="test_gensql_exec_sql",
+            node_id="test_gen_sql_exec_sql",
             description="Test GenSQL node",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
-            node_name="gensql",
+            node_name="gen_sql",
         )
 
         node.input = GenSQLNodeInput(
@@ -316,7 +316,7 @@ class TestGenSQLAgenticNodeExecution:
         assert "AvgScrRead" in output_str
 
     @pytest.mark.asyncio
-    async def test_gensql_describe_table_tool(self, real_agent_config, mock_llm_create):
+    async def test_gen_sql_describe_table_tool(self, real_agent_config, mock_llm_create):
         """LLM calls describe_table, verify real schema returned from SQLite."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
@@ -338,11 +338,11 @@ class TestGenSQLAgenticNodeExecution:
         )
 
         node = GenSQLAgenticNode(
-            node_id="test_gensql_describe",
+            node_id="test_gen_sql_describe",
             description="Test GenSQL node",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
-            node_name="gensql",
+            node_name="gen_sql",
         )
 
         node.input = GenSQLNodeInput(
@@ -369,7 +369,7 @@ class TestGenSQLAgenticNodeExecution:
         assert "sname" in output_str
 
     @pytest.mark.asyncio
-    async def test_gensql_action_history_tracking(self, real_agent_config, mock_llm_create):
+    async def test_gen_sql_action_history_tracking(self, real_agent_config, mock_llm_create):
         """Verify ActionHistory objects are yielded correctly and tracked in ActionHistoryManager."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
@@ -391,11 +391,11 @@ class TestGenSQLAgenticNodeExecution:
         )
 
         node = GenSQLAgenticNode(
-            node_id="test_gensql_history",
+            node_id="test_gen_sql_history",
             description="Test GenSQL node",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
-            node_name="gensql",
+            node_name="gen_sql",
         )
 
         node.input = GenSQLNodeInput(
@@ -436,7 +436,7 @@ class TestGenSQLAgenticNodeExecution:
                 assert str(UUID(action.action_id)) == action.action_id
 
     @pytest.mark.asyncio
-    async def test_gensql_sql_extraction(self, real_agent_config, mock_llm_create):
+    async def test_gen_sql_sql_extraction(self, real_agent_config, mock_llm_create):
         """Response content contains SQL in JSON format, verify it is extracted to the result."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
@@ -455,11 +455,11 @@ class TestGenSQLAgenticNodeExecution:
         )
 
         node = GenSQLAgenticNode(
-            node_id="test_gensql_extract",
+            node_id="test_gen_sql_extract",
             description="Test GenSQL node",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
-            node_name="gensql",
+            node_name="gen_sql",
         )
 
         node.input = GenSQLNodeInput(
@@ -486,16 +486,16 @@ class TestGenSQLAgenticNodeExecution:
         assert "avgscrread" in sql_value.lower()
 
     @pytest.mark.asyncio
-    async def test_gensql_input_not_set_raises(self, real_agent_config, mock_llm_create):
+    async def test_gen_sql_input_not_set_raises(self, real_agent_config, mock_llm_create):
         """execute_stream without input raises ValueError."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
         node = GenSQLAgenticNode(
-            node_id="test_gensql_no_input",
+            node_id="test_gen_sql_no_input",
             description="Test GenSQL node",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
-            node_name="gensql",
+            node_name="gen_sql",
         )
         node.input = None
 
@@ -809,7 +809,7 @@ class TestGenSQLNodeReferenceTemplateToolSetup:
         node = GenSQLAgenticNode(
             node_id="tpl_test_id",
             description="Test",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
             node_name="tpl_test",
         )
@@ -830,7 +830,7 @@ class TestGenSQLNodeReferenceTemplateToolSetup:
         node = GenSQLAgenticNode(
             node_id="tpl_test2_id",
             description="Test",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
             node_name="tpl_test2",
         )
@@ -1692,9 +1692,9 @@ class TestSqlFileStorageHelpers:
         node = GenSQLAgenticNode(
             node_id="test_sql_file",
             description="Test SQL file storage",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
-            node_name="gensql",
+            node_name="gen_sql",
         )
         if node_config_overrides:
             node.node_config.update(node_config_overrides)
@@ -1759,13 +1759,13 @@ class TestSqlFileStorageHelpers:
 # ---------------------------------------------------------------------------
 
 
-def _make_node(real_agent_config, mock_llm_create, node_name="gensql"):
+def _make_node(real_agent_config, mock_llm_create, node_name="gen_sql"):
     from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
     return GenSQLAgenticNode(
-        node_id="gensql_extra",
-        description="Extra gensql test",
-        node_type=NodeType.TYPE_GENSQL,
+        node_id="gen_sql_extra",
+        description="Extra gen_sql test",
+        node_type=NodeType.TYPE_GEN_SQL,
         agent_config=real_agent_config,
         node_name=node_name,
     )
@@ -2071,8 +2071,8 @@ class TestRebuildTools:
 
 class TestGetNodeNameGenSQL:
     def test_get_node_name_returns_configured_name(self, real_agent_config, mock_llm_create):
-        node = _make_node(real_agent_config, mock_llm_create, node_name="gensql")
-        assert node.get_node_name() == "gensql"
+        node = _make_node(real_agent_config, mock_llm_create, node_name="gen_sql")
+        assert node.get_node_name() == "gen_sql"
 
 
 # ---------------------------------------------------------------------------
@@ -2098,13 +2098,13 @@ class TestExecuteStreamGenSQLExtra:
 # ---------------------------------------------------------------------------
 
 
-def _make_node_extra2(real_agent_config, mock_llm_create, node_name="gensql"):
+def _make_node_extra2(real_agent_config, mock_llm_create, node_name="gen_sql"):
     from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
     return GenSQLAgenticNode(
-        node_id="gensql_extra2",
-        description="Extra gensql test 2",
-        node_type=NodeType.TYPE_GENSQL,
+        node_id="gen_sql_extra2",
+        description="Extra gen_sql test 2",
+        node_type=NodeType.TYPE_GEN_SQL,
         agent_config=real_agent_config,
         node_name=node_name,
     )
@@ -2396,11 +2396,11 @@ class TestExecuteStreamGenSQLError:
             yield  # noqa
 
         node = GenSQLAgenticNode(
-            node_id="gensql_error",
+            node_id="gen_sql_error",
             description="Error test",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
-            node_name="gensql",
+            node_name="gen_sql",
         )
         node.input = GenSQLNodeInput(user_message="Find total sales")
         mock_llm_create.generate_with_tools_stream = _raise_error
@@ -2421,7 +2421,7 @@ class TestExecuteStreamGenSQLError:
 # ---------------------------------------------------------------------------
 
 
-def _make_gensql_node(node_config=None, agent_config=None):
+def _make_gen_sql_node(node_config=None, agent_config=None):
     """Build GenSQLAgenticNode bypassing __init__."""
     from datus.agent.node.agentic_node import AgenticNode
     from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
@@ -2443,14 +2443,14 @@ def _make_gensql_node(node_config=None, agent_config=None):
     node.skill_manager = None
     node.skill_func_tool = None
     node._permission_callback = None
-    node.id = "gensql_test"
+    node.id = "gen_sql_test"
     node.description = "GenSQL Test"
-    node.type = "gensql"
+    node.type = "gen_sql"
     node.status = "pending"
     node.result = None
     node.dependencies = []
     node.input = None
-    node.configured_node_name = "gensql"
+    node.configured_node_name = "gen_sql"
     node.action_bus = ActionBus()
     node.interaction_broker = InteractionBroker()
     node.interrupt_controller = InterruptController()
@@ -2463,16 +2463,16 @@ def _make_gensql_node(node_config=None, agent_config=None):
 
 
 class TestGenSQLNodeName:
-    def test_returns_gensql(self):
+    def test_returns_gen_sql(self):
         from datus.agent.node.agentic_node import AgenticNode
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
         with patch.object(AgenticNode, "__init__", lambda self, *a, **kw: None):
             node = GenSQLAgenticNode.__new__(GenSQLAgenticNode)
         node.node_config = {}
-        node.configured_node_name = "gensql"
+        node.configured_node_name = "gen_sql"
         result = node.get_node_name()
-        assert result == "gensql"
+        assert result == "gen_sql"
 
 
 # ---------------------------------------------------------------------------
@@ -2554,9 +2554,9 @@ class TestGenSQLSetupTools:
         from datus.configuration.node_type import NodeType
 
         node = GenSQLAgenticNode(
-            node_id="gensql_tools_test",
+            node_id="gen_sql_tools_test",
             description="Test",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
         )
 
@@ -2572,43 +2572,43 @@ class TestGenSQLSetupTools:
         from datus.configuration.node_type import NodeType
 
         # Add scoped_context to agentic_nodes config
-        real_agent_config.agentic_nodes = {"gensql": {"system_prompt": "test", "scoped_context": True}}
+        real_agent_config.agentic_nodes = {"gen_sql": {"system_prompt": "test", "scoped_context": True}}
 
         node = GenSQLAgenticNode(
-            node_id="gensql_scoped",
+            node_id="gen_sql_scoped",
             description="Test",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
         )
         assert isinstance(node.tools, list)
 
 
 # ---------------------------------------------------------------------------
-# _parse_node_config for gensql node
+# _parse_node_config for gen_sql node
 # ---------------------------------------------------------------------------
 
 
 class TestGenSQLParseNodeConfig:
-    def test_gensql_adapter_type_extracted(self):
-        node = _make_gensql_node()
+    def test_gen_sql_adapter_type_extracted(self):
+        node = _make_gen_sql_node()
         mock_config = MagicMock()
         mock_config.agentic_nodes = {
-            "gensql": {
+            "gen_sql": {
                 "adapter_type": "custom_adapter",
                 "sql_file_threshold": 50,
                 "sql_preview_lines": 10,
             }
         }
-        result = node._parse_node_config(mock_config, "gensql")
+        result = node._parse_node_config(mock_config, "gen_sql")
         assert result.get("adapter_type") == "custom_adapter"
         assert result.get("sql_file_threshold") == 50
         assert result.get("sql_preview_lines") == 10
 
     def test_empty_agentic_nodes_returns_empty(self):
-        node = _make_gensql_node()
+        node = _make_gen_sql_node()
         mock_config = MagicMock()
         mock_config.agentic_nodes = {}
-        result = node._parse_node_config(mock_config, "gensql")
+        result = node._parse_node_config(mock_config, "gen_sql")
         assert result == {}
 
     def test_runtime_override_layered_on_yaml_entry(self):
@@ -2616,10 +2616,10 @@ class TestGenSQLParseNodeConfig:
         from datus.configuration.scoped_context_overrides import effective_subagent
         from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 
-        node = _make_gensql_node()
+        node = _make_gen_sql_node()
         mock_config = MagicMock()
         mock_config.agentic_nodes = {
-            "gensql": {
+            "gen_sql": {
                 "system_prompt": "yaml_prompt",
                 "scoped_context": {"tables": "yaml_tables"},
             }
@@ -2628,8 +2628,8 @@ class TestGenSQLParseNodeConfig:
             system_prompt="effective",
             scoped_context=ScopedContext(tables="override_tables"),
         )
-        with effective_subagent("gensql", override):
-            result = node._parse_node_config(mock_config, "gensql")
+        with effective_subagent("gen_sql", override):
+            result = node._parse_node_config(mock_config, "gen_sql")
         sc = result.get("scoped_context")
         if isinstance(sc, dict):
             assert sc.get("tables") == "override_tables"
@@ -2641,7 +2641,7 @@ class TestGenSQLParseNodeConfig:
         from datus.configuration.scoped_context_overrides import effective_subagent
         from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 
-        node = _make_gensql_node()
+        node = _make_gen_sql_node()
         mock_config = MagicMock()
         mock_config.agentic_nodes = {}
         override = SubAgentConfig(
@@ -2688,7 +2688,7 @@ class TestGenSQLExecuteStream:
         node = GenSQLAgenticNode(
             node_id="es_test",
             description="Test",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
         )
         node.input = GenSQLNodeInput(
@@ -2733,7 +2733,7 @@ class TestGenSQLUpdateContext:
         node = GenSQLAgenticNode(
             node_id="ctx_test",
             description="Test",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
         )
         node.result = GenSQLNodeResult(
@@ -2756,7 +2756,7 @@ class TestGenSQLUpdateContext:
         node = GenSQLAgenticNode(
             node_id="ctx_no_result",
             description="Test",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
         )
         node.result = None
@@ -2815,7 +2815,7 @@ class TestGenSQLSystemPromptToolContext:
         node = GenSQLAgenticNode(
             node_id="describe_only",
             description="Describe-only GenSQL",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
             node_name="describe_only",
         )
@@ -2846,7 +2846,7 @@ class TestGenSQLSystemPromptToolContext:
         node = GenSQLAgenticNode(
             node_id="mcp_metrics",
             description="MCP metrics GenSQL",
-            node_type=NodeType.TYPE_GENSQL,
+            node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
             node_name="mcp_metrics",
         )
@@ -2879,7 +2879,7 @@ class TestGenSQLSystemPromptToolContext:
         assert call_kwargs["has_query_metrics_tool"] is True
 
     def test_available_tool_names_includes_cached_mcp_tool_names(self, real_agent_config, mock_llm_create):
-        node = _make_gensql_node(agent_config=real_agent_config)
+        node = _make_gen_sql_node(agent_config=real_agent_config)
         node.tools = [SimpleNamespace(name="describe_table")]
         node.mcp_servers = {
             "templates_server": SimpleNamespace(

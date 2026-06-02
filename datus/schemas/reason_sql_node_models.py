@@ -9,7 +9,7 @@ from pydantic import Field
 from datus.schemas.node_models import ExecuteSQLResult, GenerateSQLInput, SQLContext
 
 
-# Reuse the GenerateSQLInput and ExecuteSQLResult for reasoning node
+# Reasoning keeps the shared SQL-task input shape while adding reasoning-specific limits.
 class ReasoningInput(GenerateSQLInput):
     """
     Input model for reasoning node.

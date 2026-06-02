@@ -152,20 +152,23 @@ nodes:
   schema_linking:
     model: "claude-3-sonnet"
     temperature: 0.1
-  generate_sql:
-    model: "gpt-4"
-    temperature: 0.2
   reasoning:
     model: "claude-3-opus"
     temperature: 0.3
+
+agentic_nodes:
+  gen_sql:
+    model: "gpt-4"
+    system_prompt: gen_sql
+    max_turns: 30
 ```
 
 ### SQL模板
 ```yaml
-nodes:
-  generate_sql:
-    prompt_template: "generate_sql_system.j2"
-    user_template: "generate_sql_user.j2"
+agentic_nodes:
+  gen_sql:
+    system_prompt: gen_sql
+    prompt_version: "1.2"
 ```
 
 ### 资源限制
@@ -181,7 +184,7 @@ nodes:
 
 ### 选择与组合
 1. 先做 Schema Linking，补足上下文
-2. 复杂场景结合 Reasoning 与 Generate SQL
+2. 复杂场景结合 Reasoning 与 GenSQL
 3. 引入 Reflect 提升稳健性
 4. 用 Parallel 比较多种策略
 
@@ -220,9 +223,9 @@ if needs_validation:
 ```python
 # 并行多种 SQL 生成策略
 parallel_node = ParallelNode([
-    GenerateSQLNode(strategy="conservative"),
-    GenerateSQLNode(strategy="aggressive"),
-    GenerateSQLNode(strategy="metric_based")
+    GenSQLAgenticNode(strategy="conservative"),
+    GenSQLAgenticNode(strategy="aggressive"),
+    GenSQLAgenticNode(strategy="metric_based")
 ])
 
 # 选择最优结果
