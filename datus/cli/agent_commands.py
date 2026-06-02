@@ -87,6 +87,22 @@ class AgentCommands:
                 logger.warning("Context search tools disabled: %s", self._context_search_warning)
         return self._context_search_tools
 
+    def _metric_embedding_ready_for_search(self) -> tuple[bool, str]:
+        tools = self.context_search_tools
+        if tools is None:
+            return False, self._context_search_warning
+
+        model = getattr(getattr(getattr(tools, "metric_rag", None), "storage", None), "model", None)
+        if model is None:
+            return True, ""
+
+        try:
+            if not model.has_local_fastembed_snapshot():
+                return False, format_context_degraded_warning("FastEmbed cache is missing for metric search")
+        except Exception as exc:
+            return False, format_context_degraded_warning(exc)
+        return True, ""
+
     def update_agent_reference(self):
         """Update the agent reference if it has changed in the CLI."""
         self.agent = self.cli.agent
@@ -495,6 +511,10 @@ class AgentCommands:
             return
         subject_path = self._prompt_subject_path()
         top_n = self.cli.prompt_input("Enter top_n to match", default="5")
+        ready, warning = self._metric_embedding_ready_for_search()
+        if not ready:
+            print_warning(self.console, warning)
+            return
 
         with self.console.status("[green]Searching for metrics...[/]"):
             result = self.context_search_tools.search_metrics(

@@ -239,6 +239,25 @@ class TestCmdSearchMetrics:
         assert "Context search and @ references are disabled" in output
         assert "Error" not in output
 
+    def test_missing_metric_embedding_cache_warns_after_prompts(self, agent_commands):
+        mock_model = MagicMock()
+        mock_model.has_local_fastembed_snapshot.return_value = False
+        mock_cst = MagicMock()
+        mock_cst.metric_rag.storage.model = mock_model
+        agent_commands._context_search_tools = mock_cst
+        agent_commands.cli.prompt_input = MagicMock(return_value="5")
+
+        with patch.object(agent_commands, "_prompt_subject_path", return_value=None) as prompt_subject:
+            agent_commands.cmd_search_metrics("revenue")
+
+        prompt_subject.assert_called_once()
+        agent_commands.cli.prompt_input.assert_called_once_with("Enter top_n to match", default="5")
+        mock_cst.search_metrics.assert_not_called()
+        output = agent_commands.console.file.getvalue()
+        assert "Context search and @ references are disabled" in output
+        assert "FastEmbed cache is" in output
+        assert "missing for metric search" in output
+
     def test_success_displays_metrics(self, agent_commands):
         from datus.tools.func_tool.base import FuncToolResult
 
