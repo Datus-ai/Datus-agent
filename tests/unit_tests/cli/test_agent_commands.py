@@ -193,29 +193,8 @@ class TestCmdSchemaLinking:
 
         mock_rag.search_similar.assert_called_once()
 
-    def test_missing_schema_embedding_cache_warns_after_prompts(self, agent_commands):
-        mock_rag = MagicMock()
-        for store in (mock_rag.schema_store, mock_rag.value_store):
-            store._count_rows.return_value = 1
-            store.model.has_local_fastembed_snapshot.return_value = False
-
-        with patch("datus.storage.schema_metadata.SchemaWithValueRAG", return_value=mock_rag):
-            with patch.object(agent_commands, "_prompt_db_layers", return_value=("", "testdb", "")) as prompt_layers:
-                agent_commands.cli.prompt_input = MagicMock(return_value="5")
-                agent_commands.cmd_schema_linking("find tables about revenue")
-
-        prompt_layers.assert_called_once()
-        agent_commands.cli.prompt_input.assert_called_once_with("Enter top_n to match", default="5")
-        mock_rag.search_similar.assert_not_called()
-        output = agent_commands.console.file.getvalue()
-        assert "Context search and @ references are disabled" in output
-        assert "FastEmbed cache is" in output
-
     def test_schema_search_embedding_failure_shows_warning(self, agent_commands):
         mock_rag = MagicMock()
-        for store in (mock_rag.schema_store, mock_rag.value_store):
-            store._count_rows.return_value = 1
-            store.model.has_local_fastembed_snapshot.return_value = True
         mock_rag.search_similar.side_effect = RuntimeError(
             "error_code=300019 error_message=Embedding model cache is missing"
         )
@@ -274,25 +253,6 @@ class TestCmdSearchMetrics:
         output = agent_commands.console.file.getvalue()
         assert "Context search and @ references are disabled" in output
         assert "Error" not in output
-
-    def test_missing_metric_embedding_cache_warns_after_prompts(self, agent_commands):
-        mock_model = MagicMock()
-        mock_model.has_local_fastembed_snapshot.return_value = False
-        mock_cst = MagicMock()
-        mock_cst.metric_rag.storage.model = mock_model
-        agent_commands._context_search_tools = mock_cst
-        agent_commands.cli.prompt_input = MagicMock(return_value="5")
-
-        with patch.object(agent_commands, "_prompt_subject_path", return_value=None) as prompt_subject:
-            agent_commands.cmd_search_metrics("revenue")
-
-        prompt_subject.assert_called_once()
-        agent_commands.cli.prompt_input.assert_called_once_with("Enter top_n to match", default="5")
-        mock_cst.search_metrics.assert_not_called()
-        output = agent_commands.console.file.getvalue()
-        assert "Context search and @ references are disabled" in output
-        assert "FastEmbed cache is" in output
-        assert "missing for metric search" in output
 
     def test_success_displays_metrics(self, agent_commands):
         from datus.tools.func_tool.base import FuncToolResult
@@ -371,25 +331,6 @@ class TestCmdSearchReferenceSql:
 
         output = agent_commands.console.file.getvalue()
         assert "Context search and @ references are disabled" in output
-
-    def test_missing_reference_sql_embedding_cache_warns_after_prompts(self, agent_commands):
-        mock_model = MagicMock()
-        mock_model.has_local_fastembed_snapshot.return_value = False
-        mock_cst = MagicMock()
-        mock_cst.reference_sql_store.reference_sql_storage.model = mock_model
-        agent_commands._context_search_tools = mock_cst
-        agent_commands.cli.prompt_input = MagicMock(return_value="5")
-
-        with patch.object(agent_commands, "_prompt_subject_path", return_value=None) as prompt_subject:
-            agent_commands.cmd_search_reference_sql("revenue sql")
-
-        prompt_subject.assert_called_once()
-        agent_commands.cli.prompt_input.assert_called_once_with("Enter top_n to match", default="5")
-        mock_cst.search_reference_sql.assert_not_called()
-        output = agent_commands.console.file.getvalue()
-        assert "Context search and @ references are disabled" in output
-        assert "FastEmbed cache is" in output
-        assert "missing for reference SQL search" in output
 
     def test_search_embedding_failure_shows_warning_after_prompts(self, agent_commands):
         from datus.tools.func_tool.base import FuncToolResult
@@ -496,23 +437,6 @@ class TestCmdDocSearch:
         agent_commands.cmd_doc_search("")
         output = agent_commands.console.file.getvalue()
         assert "Keywords cannot be empty." in output
-
-    def test_missing_document_embedding_cache_warns_after_prompts(self, agent_commands):
-        mock_store = MagicMock()
-        mock_store._count_rows.return_value = 1
-        mock_store.model.has_local_fastembed_snapshot.return_value = False
-        mock_tool = MagicMock()
-        mock_tool._get_document_store.return_value = mock_store
-        agent_commands.cli.prompt_input = MagicMock(side_effect=["duckdb", "", "5"])
-
-        with patch("datus.tools.search_tools.search_tool.SearchTool", return_value=mock_tool):
-            agent_commands.cmd_doc_search("create table")
-
-        mock_tool.search_document.assert_not_called()
-        output = agent_commands.console.file.getvalue()
-        assert "Context search and @ references are disabled" in output
-        assert "FastEmbed cache is" in output
-        assert "missing for document search" in output
 
     def test_document_embedding_failure_shows_warning(self, agent_commands):
         mock_result = MagicMock()

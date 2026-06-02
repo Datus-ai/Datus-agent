@@ -72,59 +72,15 @@ class AgentCommands:
                 logger.warning("Context search tools disabled: %s", self._context_search_warning)
         return self._context_search_tools
 
-    def _embedding_ready_for_search(self, model: Any, search_name: str) -> tuple[bool, str]:
-        if model is None:
-            return True, ""
-
-        try:
-            if not model.has_local_fastembed_snapshot():
-                return False, format_context_degraded_warning(f"FastEmbed cache is missing for {search_name}")
-        except Exception as exc:
-            return False, format_context_degraded_warning(exc)
-        return True, ""
-
-    def _embedding_store_ready_for_search(self, store: Any, search_name: str) -> tuple[bool, str]:
-        if store is None:
-            return True, ""
-
-        count_rows = getattr(store, "_count_rows", None)
-        if callable(count_rows):
-            try:
-                if count_rows() == 0:
-                    return True, ""
-            except Exception:
-                pass
-        return self._embedding_ready_for_search(getattr(store, "model", None), search_name)
-
-    def _metric_embedding_ready_for_search(self) -> tuple[bool, str]:
-        tools = self.context_search_tools
-        if tools is None:
-            return False, self._context_search_warning
-
-        store = getattr(getattr(tools, "metric_rag", None), "storage", None)
-        return self._embedding_store_ready_for_search(store, "metric search")
-
-    def _reference_sql_embedding_ready_for_search(self) -> tuple[bool, str]:
-        tools = self.context_search_tools
-        if tools is None:
-            return False, self._context_search_warning
-
-        store = getattr(getattr(tools, "reference_sql_store", None), "reference_sql_storage", None)
-        return self._embedding_store_ready_for_search(store, "reference SQL search")
-
-    def _schema_embedding_ready_for_search(self, schema_rag: Any) -> tuple[bool, str]:
-        for store_name, search_name in (
-            ("schema_store", "schema linking"),
-            ("value_store", "schema value linking"),
-        ):
-            ready, warning = self._embedding_store_ready_for_search(getattr(schema_rag, store_name, None), search_name)
-            if not ready:
-                return ready, warning
-        return True, ""
-
     def update_agent_reference(self):
         """Update the agent reference if it has changed in the CLI."""
         self.agent = self.cli.agent
+
+    def _print_embedding_aware_error(self, action: str, error: BaseException | str | None) -> None:
+        if is_embedding_unavailable_error(error):
+            print_warning(self.console, format_context_degraded_warning(error))
+        else:
+            print_error(self.console, f"{action}: {error}")
 
     def create_node_input(self, node_type: str, task_text: str = None) -> BaseInput:
         """Create input for a specific node type with console prompts."""
@@ -446,10 +402,6 @@ class AgentCommands:
         from datus.storage.schema_metadata import SchemaWithValueRAG
 
         schema_rag = SchemaWithValueRAG(self.cli.agent_config)
-        ready, warning = self._schema_embedding_ready_for_search(schema_rag)
-        if not ready:
-            print_warning(self.console, warning)
-            return
 
         try:
             with self.console.status("[green]Searching for relevant tables...[/]"):
@@ -461,10 +413,7 @@ class AgentCommands:
                     top_n=int(top_n.strip()),
                 )
         except Exception as exc:
-            if is_embedding_unavailable_error(exc):
-                print_warning(self.console, format_context_degraded_warning(exc))
-            else:
-                print_error(self.console, f"schema linking: {exc}")
+            self._print_embedding_aware_error("schema linking", exc)
             return
 
         if metadata.num_rows > 0 or sample_data.num_rows > 0:
@@ -542,10 +491,6 @@ class AgentCommands:
             return
         subject_path = self._prompt_subject_path()
         top_n = self.cli.prompt_input("Enter top_n to match", default="5")
-        ready, warning = self._metric_embedding_ready_for_search()
-        if not ready:
-            print_warning(self.console, warning)
-            return
 
         with self.console.status("[green]Searching for metrics...[/]"):
             result = self.context_search_tools.search_metrics(
@@ -573,10 +518,7 @@ class AgentCommands:
                 )
             self.console.print(table)
         elif not result.success:
-            if is_embedding_unavailable_error(result.error):
-                print_warning(self.console, format_context_degraded_warning(result.error))
-            else:
-                print_error(self.console, f"searching metrics: {result.error}")
+            self._print_embedding_aware_error("searching metrics", result.error)
         else:
             print_warning(self.console, "No metrics found.")
 
@@ -608,10 +550,6 @@ class AgentCommands:
 
         subject_path = self._prompt_subject_path()
         top_n = self.cli.prompt_input("Enter top_n to match", default="5")
-        ready, warning = self._reference_sql_embedding_ready_for_search()
-        if not ready:
-            print_warning(self.console, warning)
-            return
 
         with self.console.status("[green]Searching reference SQL...[/]"):
             result = self.context_search_tools.search_reference_sql(
@@ -652,10 +590,7 @@ class AgentCommands:
                 )
             self.console.print(table)
         elif not result.success:
-            if is_embedding_unavailable_error(result.error):
-                print_warning(self.console, format_context_degraded_warning(result.error))
-            else:
-                print_error(self.console, f"searching reference SQL: {result.error}")
+            self._print_embedding_aware_error("searching reference SQL", result.error)
         else:
             print_warning(self.console, "No reference SQL queries found.")
 
@@ -690,11 +625,6 @@ class AgentCommands:
         from datus.tools.search_tools.search_tool import SearchTool
 
         search_tool = SearchTool(agent_config=self.cli.agent_config)
-        store = search_tool._get_document_store(platform)
-        ready, warning = self._embedding_store_ready_for_search(store, "document search")
-        if not ready:
-            print_warning(self.console, warning)
-            return
 
         with self.console.status("[green]Searching documentation...[/]"):
             result = search_tool.search_document(
@@ -741,10 +671,7 @@ class AgentCommands:
                     )
                 self.console.print(table)
         elif not result.success:
-            if is_embedding_unavailable_error(result.error):
-                print_warning(self.console, format_context_degraded_warning(result.error))
-            else:
-                print_error(self.console, f"searching documents: {result.error}")
+            self._print_embedding_aware_error("searching documents", result.error)
         else:
             print_warning(self.console, "No documents found.")
 
