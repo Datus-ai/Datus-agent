@@ -617,3 +617,29 @@ class TestWorkflowDisplay:
             wf.display()
         assert mock_log.call_count == 3
         assert wf.node_order == ["n0"]
+
+
+# ---------------------------------------------------------------------------
+# _task_datasource resolution
+# ---------------------------------------------------------------------------
+
+
+class TestWorkflowTaskDatasource:
+    @staticmethod
+    def _workflow_with_task(task):
+        with patch.object(Workflow, "_init_tools", lambda self: setattr(self, "tools", [])):
+            return Workflow(name="wf", task=task, agent_config=None)
+
+    def test_returns_task_datasource_when_set(self):
+        wf = self._workflow_with_task(SqlTask(task="t", datasource="starrocks"))
+        assert wf._task_datasource() == "starrocks"
+
+    def test_falls_back_to_global_config_current_datasource(self):
+        wf = self._workflow_with_task(SqlTask(task="t", datasource=""))
+        wf._global_config = MagicMock(current_datasource="duckdb")
+        assert wf._task_datasource() == "duckdb"
+
+    def test_returns_empty_when_no_datasource_anywhere(self):
+        wf = self._workflow_with_task(SqlTask(task="t", datasource=""))
+        wf._global_config = None
+        assert wf._task_datasource() == ""

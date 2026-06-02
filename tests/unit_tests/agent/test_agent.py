@@ -21,7 +21,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from datus.agent.agent import Agent, _print_platform_doc_result, bootstrap_platform_doc
+from datus.agent.agent import Agent, _print_platform_doc_result, _task_item_value, bootstrap_platform_doc
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.batch_events import BatchEvent, BatchStage
 from datus.schemas.node_models import SqlTask
@@ -64,6 +64,23 @@ class _FakeInitResult:
         self.duration_seconds = duration_seconds
         self.version_details = version_details
         self.errors = errors or []
+
+
+class TestTaskItemValue:
+    """Tests for the _task_item_value helper in datus.agent.agent."""
+
+    def test_returns_empty_string_when_key_is_none(self):
+        assert _task_item_value({"a": "1"}, None) == ""
+
+    def test_returns_empty_string_when_value_missing(self):
+        assert _task_item_value({}, "missing") == ""
+
+    def test_returns_empty_string_when_value_is_none(self):
+        assert _task_item_value({"a": None}, "a") == ""
+
+    def test_returns_stripped_string_value(self):
+        assert _task_item_value({"a": "  hello  "}, "a") == "hello"
+        assert _task_item_value({"a": 42}, "a") == "42"
 
 
 class TestPrintPlatformDocResult:
