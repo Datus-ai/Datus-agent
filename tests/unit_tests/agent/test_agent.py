@@ -72,6 +72,10 @@ class TestTaskItemValue:
     def test_returns_empty_string_when_key_is_none(self):
         assert _task_item_value({"a": "1"}, None) == ""
 
+    def test_returns_empty_string_when_key_is_empty(self):
+        # An empty-string key is falsy too (e.g. an unset benchmark default key).
+        assert _task_item_value({"a": "1"}, "") == ""
+
     def test_returns_empty_string_when_value_missing(self):
         assert _task_item_value({}, "missing") == ""
 

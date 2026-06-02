@@ -738,7 +738,7 @@ class Agent:
     def do_benchmark(
         self, benchmark_platform: str, target_task_ids: Optional[Set[str]] = None, run_id: Optional[str] = None
     ):
-        db_manager = db_manager_instance(self.global_config.datasource_configs)
+        db_manager = self.db_manager
         default_datasource = self.global_config.current_datasource
         self.check_db()
 

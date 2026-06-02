@@ -395,6 +395,13 @@ class BenchmarkConfig:
     @staticmethod
     def filter_kwargs(cls, kwargs: dict) -> "BenchmarkConfig":
         valid_fields = {f.name for f in fields(cls)}
+        unknown = set(kwargs) - valid_fields
+        if unknown:
+            logger.warning(
+                "Ignoring unknown benchmark config key(s): %s. Note: 'db_key' was split into "
+                "'datasource_key'/'database_key'/'catalog_key'/'schema_key'; update your config accordingly.",
+                ", ".join(sorted(unknown)),
+            )
         return cls(**{k: v for k, v in kwargs.items() if k in valid_fields})
 
     def validate(self):
