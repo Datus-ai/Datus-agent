@@ -311,6 +311,18 @@ class TestSearchDocument:
         assert result.success is True
         assert result.docs["badkeyword"] == []
 
+    def test_embedding_keyword_search_exception_returns_failure(self):
+        tool = _make_tool()
+        store = _make_store_with_data()
+        store.search_docs.side_effect = Exception("error_code=300019 error_message=Embedding model cache is missing")
+        with (
+            patch.object(tool, "_get_document_store", return_value=store),
+            patch.object(tool, "_resolve_latest_version", return_value="v1.0"),
+        ):
+            result = tool.search_document("snowflake", ["badkeyword"])
+        assert result.success is False
+        assert "error_code=300019" in result.error
+
     def test_handles_outer_exception(self):
         tool = _make_tool()
         with patch.object(tool, "_get_document_store", side_effect=RuntimeError("outer error")):

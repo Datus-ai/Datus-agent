@@ -10,6 +10,7 @@ from datus_storage_base.conditions import And, Condition, WhereExpr, eq, like
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.doc_search_node_models import DocNavResult, DocSearchInput, DocSearchResult, GetDocResult
 from datus.storage.document.store import DocumentStore, document_store
+from datus.storage.embedding_diagnostics import is_embedding_unavailable_error
 from datus.tools.base import BaseTool
 from datus.utils.loggings import get_logger
 
@@ -443,6 +444,8 @@ class SearchTool(BaseTool):
                         total_count += len(results)
 
                     except Exception as e:
+                        if is_embedding_unavailable_error(e):
+                            raise
                         logger.error(f"Error searching for keyword '{keyword}': {e}")
                         docs[keyword] = []
 

@@ -217,6 +217,24 @@ class BaseEmbeddingStore(StorageBase):
                 message=f"Embedding model '{self.model.model_name}' initialization failed: {str(e)}",
             ) from e
 
+    def _ensure_embedding_cache_ready_for_search(self):
+        """Avoid on-demand downloads for read-time vector search."""
+        try:
+            has_snapshot = self.model.has_local_fastembed_snapshot()
+        except DatusException:
+            raise
+        except Exception as e:
+            raise DatusException(
+                ErrorCode.MODEL_EMBEDDING_ERROR,
+                message=f"Embedding cache readiness check failed for '{self.table_name}': {e}",
+            ) from e
+
+        if not has_snapshot:
+            raise DatusException(
+                ErrorCode.MODEL_EMBEDDING_ERROR,
+                message=f"Embedding model cache is missing for vector search on '{self.table_name}'",
+            )
+
     def truncate(self) -> None:
         """Drop the entire table and reset state (admin operation)."""
         with self._table_lock:
@@ -485,6 +503,14 @@ class BaseEmbeddingStore(StorageBase):
         where: WhereExpr = None,
         query_type: str = "vector",
     ) -> pa.Table:
+        table = self._open_existing_table_for_read()
+        if table is None:
+            return self._empty_result(select_fields)
+        row_count = table.count_rows(where) if where else table.count_rows()
+        if row_count == 0:
+            return self._empty_result(select_fields)
+
+        self._ensure_embedding_cache_ready_for_search()
         self._ensure_table_ready()
 
         if query_type == "hybrid":

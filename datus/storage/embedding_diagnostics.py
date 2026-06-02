@@ -66,3 +66,19 @@ def format_context_degraded_warning(error: BaseException | str | None = None) ->
     if details:
         message = f"{message} Details: {details}"
     return message
+
+
+def is_embedding_unavailable_error(error: BaseException | str | None) -> bool:
+    """Return True for embedding-cache/provider failures that should degrade search."""
+    if not error:
+        return False
+    message = str(error)
+    return any(
+        marker in message
+        for marker in (
+            "MODEL_EMBEDDING_ERROR",
+            "error_code=300019",
+            "Embedding model cache is missing",
+            "embedding model is unavailable",
+        )
+    )
