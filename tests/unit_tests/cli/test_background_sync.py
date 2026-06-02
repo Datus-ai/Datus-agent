@@ -251,6 +251,40 @@ class TestFailureKeepsOldData:
         cli.at_completer.table_completer.reload_data.assert_not_called()
         assert mgr.is_running() is False
 
+    def test_startup_sync_skips_missing_fastembed_cache(self, bg_loop, monkeypatch):
+        init_called = {"n": 0}
+
+        async def fake_init_async(*args, **kwargs):
+            init_called["n"] += 1
+
+        missing_model = MagicMock()
+        missing_model.has_local_fastembed_snapshot.return_value = False
+        fake_store = SimpleNamespace(
+            schema_store=SimpleNamespace(model=missing_model),
+            value_store=SimpleNamespace(model=missing_model),
+        )
+
+        monkeypatch.setattr(
+            "datus.storage.schema_metadata.local_init.init_local_schema_async",
+            fake_init_async,
+        )
+        monkeypatch.setattr(
+            "datus.storage.schema_metadata.store.SchemaWithValueRAG",
+            lambda *a, **kw: fake_store,
+        )
+
+        cli = _make_cli(bg_loop)
+        cli.at_completer.table_completer.reload_data = MagicMock()
+
+        mgr = BackgroundSchemaSyncManager(cli)
+        mgr.schedule(datasource="local_db", reason="startup")
+        _wait_for_future(mgr._current_future)
+
+        assert init_called["n"] == 0
+        missing_model.has_local_fastembed_snapshot.assert_called_once()
+        cli.at_completer.table_completer.reload_data.assert_not_called()
+        assert mgr.is_running() is False
+
 
 class TestDriftGuard:
     def test_current_datasource_drift_skips_sync(self, bg_loop, monkeypatch):

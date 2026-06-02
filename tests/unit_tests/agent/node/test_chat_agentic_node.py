@@ -302,6 +302,30 @@ class TestChatAgenticNodeToolSetup:
         assert "context_search_tools" in node.degraded_capabilities
         assert "hf offline" in node.degraded_capabilities["context_search_tools"]
 
+    def test_reference_template_failure_does_not_remove_db_tools(self, real_agent_config, mock_llm_create):
+        """Embedding/template setup failures should only remove template tools."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.tools.func_tool.database import DBFuncTool
+
+        with patch("datus.agent.node.chat_agentic_node.ReferenceTemplateTools", side_effect=RuntimeError("hf offline")):
+            node = ChatAgenticNode(
+                node_id="test_reference_template_degraded",
+                description="Test reference template degradation",
+                node_type=NodeType.TYPE_CHAT,
+                agent_config=real_agent_config,
+            )
+
+        tool_names = {tool.name for tool in node.tools}
+        registry = node.tool_registry.to_dict()
+
+        assert isinstance(node.db_func_tool, DBFuncTool)
+        assert node.reference_template_tools is None
+        assert "list_tables" in tool_names
+        assert "reference_template_tools" not in set(registry.values())
+        assert registry["list_tables"] == "db_tools"
+        assert "reference_template_tools" in node.degraded_capabilities
+        assert "hf offline" in node.degraded_capabilities["reference_template_tools"]
+
     def test_has_ask_user_tools(self, real_agent_config, mock_llm_create):
         """Chat node has ask_user tool set up via _setup_ask_user_tool."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode

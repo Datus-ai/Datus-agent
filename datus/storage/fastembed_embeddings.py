@@ -158,18 +158,7 @@ def check_snapshot(model_name: str, cache_dir: str) -> None:
     When ``local_files_only`` is True we only verify cached files exist.
     Otherwise a download will be attempted if the cache is missing.
     """
-    try:
-        description = TextEmbedding._get_model_description(model_name)
-    except ValueError as exc:
-        logger.error(f"Model '{model_name}' is not supported by fastembed: {exc}")
-        raise
-
-    repo_id = None
-    sources = getattr(description, "sources", None)
-    if sources is not None and hasattr(sources, "hf"):
-        repo_id = sources.hf  # type: ignore[assignment]
-    elif isinstance(description, dict):
-        repo_id = description.get("sources", {}).get("hf")  # type: ignore[assignment]
+    repo_id = _resolve_repo_id(model_name)
     if not repo_id:
         logger.warning(
             f"FastEmbed does not support models `{model_name}`. Support models: {TextEmbedding.list_supported_models()}"
@@ -198,3 +187,33 @@ def check_snapshot(model_name: str, cache_dir: str) -> None:
             )
             logger.error(message)
             raise DatusException(ErrorCode.MODEL_EMBEDDING_ERROR, message=message) from exc
+
+
+def has_local_snapshot(model_name: str, cache_dir: str) -> bool:
+    """Return whether the fastembed Hugging Face snapshot is cached locally."""
+    repo_id = _resolve_repo_id(model_name)
+    if not repo_id:
+        return True
+
+    from huggingface_hub import snapshot_download
+
+    try:
+        snapshot_download(repo_id, cache_dir=cache_dir, local_files_only=True)
+        return True
+    except LocalEntryNotFoundError:
+        return False
+
+
+def _resolve_repo_id(model_name: str) -> Optional[str]:
+    try:
+        description = TextEmbedding._get_model_description(model_name)
+    except ValueError as exc:
+        logger.error(f"Model '{model_name}' is not supported by fastembed: {exc}")
+        raise
+
+    sources = getattr(description, "sources", None)
+    if sources is not None and hasattr(sources, "hf"):
+        return sources.hf  # type: ignore[return-value]
+    if isinstance(description, dict):
+        return description.get("sources", {}).get("hf")  # type: ignore[return-value]
+    return None

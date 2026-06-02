@@ -153,6 +153,21 @@ class EmbeddingModel:
         """Check if the model is available without triggering initialization."""
         return not self.is_model_failed and (self._model is not None or not self.model_initialization_attempted)
 
+    def has_local_fastembed_snapshot(self) -> bool:
+        """Return whether FastEmbed artifacts are locally cached without downloading."""
+        if self.registry_name not in (EmbeddingProvider.SENTENCE_TRANSFORMERS, EmbeddingProvider.FASTEMBED):
+            return True
+
+        from datus.storage.fastembed_embeddings import FastEmbedEmbeddings, has_local_snapshot
+
+        model_name = FastEmbedEmbeddings._normalize_model_name(self.model_name)
+        cache_dir = self._model.cache_dir if self._model is not None else None
+        if cache_dir is None:
+            from datus.storage.embedding_diagnostics import resolve_fastembed_cache_dir
+
+            cache_dir = resolve_fastembed_cache_dir()
+        return has_local_snapshot(model_name, cache_dir)
+
     async def init_model_async(self):
         """Asynchronously initialize the embedding model."""
         import asyncio

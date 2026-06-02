@@ -130,7 +130,7 @@ class ChatAgenticNode(AgenticNode):
         node_name = self.get_node_name()
         self.db_func_tool = DBFuncTool(agent_config=self.agent_config, sub_agent_name=node_name)
         self._setup_context_search_tools()
-        self.reference_template_tools = ReferenceTemplateTools(self.agent_config, db_func_tool=self.db_func_tool)
+        self._setup_reference_template_tools()
         self._setup_date_parsing_tools()
         self._setup_filesystem_tools()
         # self.bash_tool was created in AgenticNode.__init__; just surface its
@@ -160,6 +160,23 @@ class ChatAgenticNode(AgenticNode):
             self.context_search_tools = None
             warning = self._record_context_search_degraded(exc)
             logger.warning("Failed to setup context search tools, continuing without: %s", warning)
+
+    def _setup_reference_template_tools(self):
+        """Setup reference-template tools without blocking DB/chat capabilities."""
+        try:
+            self.reference_template_tools = ReferenceTemplateTools(
+                self.agent_config,
+                sub_agent_name=self.get_node_name(),
+                db_func_tool=self.db_func_tool,
+            )
+        except Exception as exc:
+            self.reference_template_tools = None
+            message = (
+                "Reference template tools are disabled because the embedding-backed "
+                f"template store is unavailable. Details: {exc}"
+            )
+            self._record_degraded_capability("reference_template_tools", message)
+            logger.warning("Failed to setup reference template tools, continuing without: %s", message)
 
     def _setup_date_parsing_tools(self):
         """Setup date parsing tools."""

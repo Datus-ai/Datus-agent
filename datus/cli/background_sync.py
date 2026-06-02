@@ -155,6 +155,17 @@ class BackgroundSchemaSyncManager:
                 return
 
             store = SchemaWithValueRAG(cli.agent_config)
+            if reason == "startup":
+                cache_ready, reason_message = self._embedding_cache_ready_for_noncritical_sync(store)
+                if not cache_ready:
+                    logger.warning(
+                        "background sync skipped for %s (reason=%s): %s",
+                        datasource,
+                        reason,
+                        reason_message,
+                    )
+                    return
+
             await init_local_schema_async(
                 store,
                 cli.agent_config,
@@ -178,6 +189,27 @@ class BackgroundSchemaSyncManager:
             raise
         except Exception as exc:
             logger.warning("background sync failed for %s: %s", datasource, exc)
+
+    @staticmethod
+    def _embedding_cache_ready_for_noncritical_sync(store) -> tuple[bool, str]:
+        """Check embedding cache readiness without triggering downloads."""
+        for store_name in ("schema_store", "value_store"):
+            embedding_store = getattr(store, store_name, None)
+            model = getattr(embedding_store, "model", None)
+            if model is None:
+                continue
+            try:
+                if not model.has_local_fastembed_snapshot():
+                    return (
+                        False,
+                        (
+                            f"FastEmbed cache is missing for {store_name}; "
+                            "metadata sync will retry when cache is available"
+                        ),
+                    )
+            except Exception as exc:
+                return False, f"embedding cache check failed for {store_name}: {exc}"
+        return True, ""
 
     def _on_done(self, future: concurrent.futures.Future) -> None:
         with self._lock:
