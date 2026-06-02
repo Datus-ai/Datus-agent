@@ -302,12 +302,6 @@ class AgenticNode(Node):
         self._compacted_until: int = 0
         self._archive: Optional[ToolArchive] = None
         self._compact_lock: Optional[asyncio.Lock] = None
-        # Strong refs for background minor-compact tasks. Without this the
-        # task created via ``asyncio.create_task`` in ``CompactHook`` can be
-        # GC'd before it runs because asyncio only weakly references scheduled
-        # tasks. The hook adds the task here and registers a ``discard``
-        # done-callback so the set never grows unbounded.
-        self._pending_compact_tasks: Set[asyncio.Task] = set()
 
         # ── Mid-turn token-usage streaming ─────────────────────────────
         # Populated by :class:`TokenUsageHook` after every LLM call so the
@@ -1255,8 +1249,6 @@ class AgenticNode(Node):
             self._archive = None
         if not hasattr(self, "_compact_lock"):
             self._compact_lock = None
-        if not hasattr(self, "_pending_compact_tasks"):
-            self._pending_compact_tasks = set()
 
     async def _decide_compact_mode(self) -> Literal["major", "minor", "noop"]:
         """Choose major / minor / noop from token-ratio + session item counts.

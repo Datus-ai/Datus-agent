@@ -6,13 +6,13 @@ As a chat session grows, its history eventually approaches the model's context w
 |---|---|---|
 | What it does | Archives old tool I/O to disk | Summarizes the whole session |
 | Driven by | A rule (user-turn count) | The LLM (a summarization call) |
-| Execution | Asynchronous, non-blocking | Synchronous, blocks the run loop |
+| Execution | Synchronous, but fast (local, no LLM call) | Synchronous, blocks the run loop |
 | Touches recent turns | No | Yes — replaces all history |
 | Recoverable | Yes (archive files) | Yes (full-history JSONL) |
 
 ## Minor compact
 
-**What triggers it** — Once a session has more than `keep_recent_user_turns` user turns (default 4), minor compact becomes eligible. It runs after a tool call as a fire-and-forget background task, so the agent never waits on it.
+**What triggers it** — Once a session has more than `keep_recent_user_turns` user turns (default 4), minor compact becomes eligible and runs after a tool call. It blocks like major does, but because it is a purely local, rule-based archive (no LLM call) it finishes quickly and barely delays the agent before the next model call.
 
 **What it does** — For every turn *older* than the kept window, any tool-call argument or output longer than `archive_threshold` characters (default 1000) is moved out of the live conversation and written to an on-disk archive. A short inline preview (`archive_preview_chars`, default 1000; 2× for error outputs) is left behind with a `[DATUS_ARCHIVED]` marker.
 
@@ -20,7 +20,7 @@ As a chat session grows, its history eventually approaches the model's context w
 
 - The most recent `keep_recent_user_turns` turns keep their full tool I/O — the active part of the conversation is never degraded.
 - Older bulky outputs shrink to a preview plus a pointer; the model can still `read_file` the archive to recover the full content when it needs the detail.
-- Because it only archives (never summarizes), nothing is lost and no LLM call is spent. It is cheap and runs often.
+- Because it only archives (never summarizes), nothing is lost and no LLM call is spent. It is cheap and fast, and runs often.
 
 ## Major compact
 
