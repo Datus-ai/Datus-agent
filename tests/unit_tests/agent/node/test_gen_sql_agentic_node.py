@@ -2842,6 +2842,7 @@ class TestGenSQLSystemPromptToolContext:
 
     def test_system_prompt_fallback_preserves_prompt_version(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+        from datus.prompts.prompt_manager import PromptManager
 
         real_agent_config.agentic_nodes["custom_alias"] = {
             "system_prompt": "custom_alias",
@@ -2857,23 +2858,29 @@ class TestGenSQLSystemPromptToolContext:
             node_name="custom_alias",
         )
 
+        real_prompt_manager = PromptManager(agent_config=real_agent_config)
+
+        def render_missing_alias_then_real_template(**kwargs):
+            if kwargs["template_name"] == "custom_alias_system":
+                raise FileNotFoundError("missing alias template")
+            return real_prompt_manager.render_template(**kwargs)
+
         with patch("datus.prompts.prompt_manager.get_prompt_manager") as mock_get_prompt_manager:
             mock_prompt_manager = MagicMock()
-            mock_prompt_manager.render_template.side_effect = [
-                FileNotFoundError("missing alias template"),
-                "rendered fallback prompt",
-            ]
+            mock_prompt_manager.render_template.side_effect = render_missing_alias_then_real_template
             mock_get_prompt_manager.return_value = mock_prompt_manager
 
             prompt = node._get_system_prompt()
 
-        assert prompt.startswith("rendered fallback prompt")
         first_call = mock_prompt_manager.render_template.call_args_list[0].kwargs
         second_call = mock_prompt_manager.render_template.call_args_list[1].kwargs
         assert first_call["template_name"] == "custom_alias_system"
         assert first_call["version"] == "1.1"
         assert second_call["template_name"] == "gen_sql_system"
         assert second_call["version"] == "1.1"
+        assert '"sql"' in prompt
+        assert '"output"' in prompt
+        assert "Do not use `tables`, `explanation`, `mode`, or `validation` as final JSON fields." in prompt
 
     def test_system_prompt_context_uses_actual_tools(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
