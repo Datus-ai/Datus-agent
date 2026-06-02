@@ -4165,12 +4165,34 @@
 </span></code></pre></div>
 </div>
 <h3 id="sentence-transformers-local">Sentence Transformers (Local)<a class="headerlink" href="#sentence-transformers-local" title="Permanent link">&para;</a></h3>
-<p>For local embedding models without external API calls:</p>
+<p>For local embedding models:</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">database</span><span class="p">:</span>
 </span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">registry_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sentence-transformers</span><span class="w">   </span><span class="c1"># Default local provider</span>
 </span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span><span class="nt">model_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">all-MiniLM-L6-v2</span><span class="w">          </span><span class="c1"># Lightweight option</span>
 </span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span><span class="nt">dim_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">384</span>
 </span></code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Offline and intranet environments</p>
+<p>The default local provider uses FastEmbed. If the model is not already cached,
+FastEmbed may download <code>qdrant/all-MiniLM-L6-v2-onnx</code> from Hugging Face for
+the default <code>all-MiniLM-L6-v2</code> model. In offline, intranet, or Hugging
+Face-blocked environments, pre-cache the model artifacts or configure a
+Hugging Face proxy/mirror before enabling embedding-backed features.</p>
+<p>Relevant cache locations:</p>
+<ul>
+<li><code>FASTEMBED_CACHE_PATH</code> when set</li>
+<li><code>HF_HOME/fastembed</code> when <code>HF_HOME</code> is set</li>
+<li><code>~/.cache/huggingface/fastembed</code> by default</li>
+</ul>
+<p>If the embedding model is unavailable, Datus keeps database tools and normal
+chat available, but disables embedding-dependent features such as context
+search, semantic search, external knowledge search, reference SQL search,
+and <code>@Table</code> / <code>@Metrics</code> / <code>@Sql</code> references. CLI and Web sessions show a
+non-fatal warning with the cache path and remediation guidance.</p>
+<p>To avoid Hugging Face access entirely, configure <code>registry_name: openai</code> for
+each embedding-backed storage section and point <code>target_model</code> at an
+OpenAI-compatible embedding provider.</p>
+</div>
 <div class="admonition info">
 <p class="admonition-title">Alternative Local Models</p>
 <p>Consider these high-quality alternatives:</p>
