@@ -337,10 +337,18 @@ class TestBenchmarkConfigValidate:
             "question_key": "q",
             "question_file": "f.json",
             "question_id_key": "id",
+            "datasource_key": "__datus_datasource",
+            "catalog_key": "__datus_catalog",
+            "database_key": "__datus_database",
+            "schema_key": "__datus_schema",
             "unknown_field": "ignored",
         }
         cfg = BenchmarkConfig.filter_kwargs(BenchmarkConfig, data)
         assert cfg.question_key == "q"
+        assert cfg.datasource_key == "__datus_datasource"
+        assert cfg.catalog_key == "__datus_catalog"
+        assert cfg.database_key == "__datus_database"
+        assert cfg.schema_key == "__datus_schema"
         assert not hasattr(cfg, "unknown_field")
 
 

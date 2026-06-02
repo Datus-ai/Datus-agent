@@ -49,6 +49,49 @@ from datus.utils.traceable_utils import optional_traceable
 logger = get_logger(__name__)
 
 
+def _task_item_value(task_item: Dict[str, Any], key: Optional[str]) -> str:
+    if not key:
+        return ""
+    value = task_item.get(key)
+    return "" if value is None else str(value).strip()
+
+
+def _connector_context(conn: Any) -> Dict[str, str]:
+    context: Dict[str, Any] = {}
+    get_current_context = getattr(conn, "get_current_context", None)
+    if callable(get_current_context):
+        try:
+            context = get_current_context() or {}
+        except Exception as exc:  # pragma: no cover - defensive logging only
+            logger.warning(f"Failed to resolve connector context: {exc}")
+
+    return {
+        "catalog_name": str(
+            context["catalog_name"] if "catalog_name" in context else getattr(conn, "catalog_name", "") or ""
+        ),
+        "database_name": str(
+            context["database_name"] if "database_name" in context else getattr(conn, "database_name", "") or ""
+        ),
+        "schema_name": str(
+            context["schema_name"] if "schema_name" in context else getattr(conn, "schema_name", "") or ""
+        ),
+    }
+
+
+def _resolve_benchmark_sql_context(
+    benchmark_config: BenchmarkConfig,
+    task_item: Dict[str, Any],
+    conn: Any,
+) -> Dict[str, str]:
+    connector_context = _connector_context(conn)
+    return {
+        "catalog_name": _task_item_value(task_item, benchmark_config.catalog_key) or connector_context["catalog_name"],
+        "database_name": _task_item_value(task_item, benchmark_config.database_key)
+        or connector_context["database_name"],
+        "schema_name": _task_item_value(task_item, benchmark_config.schema_key) or connector_context["schema_name"],
+    }
+
+
 class Agent:
     """
     Main entry point for the SQL Agent system.
@@ -695,9 +738,8 @@ class Agent:
     def do_benchmark(
         self, benchmark_platform: str, target_task_ids: Optional[Set[str]] = None, run_id: Optional[str] = None
     ):
-        _, conn = db_manager_instance(self.global_config.datasource_configs).first_conn_with_name(
-            self.global_config.current_datasource
-        )
+        db_manager = db_manager_instance(self.global_config.datasource_configs)
+        default_datasource = self.global_config.current_datasource
         self.check_db()
 
         def run_single_task(task_id: str, benchmark_config: BenchmarkConfig, task_item: Dict[str, Any]):
@@ -709,8 +751,18 @@ class Agent:
                     "please check your benchmark configuration."
                 )
                 return task_id, ""
-            database_name = task_item.get(benchmark_config.db_key) or conn.database_name or ""
+            task_datasource = _task_item_value(task_item, benchmark_config.datasource_key) or default_datasource
+            _, task_conn = db_manager.first_conn_with_name(task_datasource)
+            sql_context = _resolve_benchmark_sql_context(benchmark_config, task_item, task_conn)
             logger.info(f"start benchmark with {task_id}: {task}")
+            logger.debug(
+                "Benchmark SQL context for %s: datasource=%s catalog=%s database=%s schema=%s",
+                task_id,
+                task_datasource,
+                sql_context["catalog_name"],
+                sql_context["database_name"],
+                sql_context["schema_name"],
+            )
             use_tables = None if not benchmark_config.use_tables_key else task_item.get(benchmark_config.use_tables_key)
 
             # Use hierarchical save directory structure
@@ -722,7 +774,7 @@ class Agent:
                 task_id=task_id,
                 workflow=getattr(self.args, "workflow", None),
                 context_type=getattr(self.args, "context_type", None),
-                datasource=self.global_config.current_datasource,
+                datasource=task_datasource,
                 agent_home=self.global_config.home,
                 extra={
                     "max_steps": getattr(self.args, "max_steps", None),
@@ -733,9 +785,12 @@ class Agent:
                 result = self.run(
                     SqlTask(
                         id=task_id,
-                        database_type=conn.dialect,
+                        datasource=task_datasource,
+                        database_type=task_conn.dialect,
                         task=task,
-                        database_name=database_name,
+                        catalog_name=sql_context["catalog_name"],
+                        database_name=sql_context["database_name"],
+                        schema_name=sql_context["schema_name"],
                         output_dir=output_dir,
                         current_date=self.args.current_date,
                         tables=use_tables,

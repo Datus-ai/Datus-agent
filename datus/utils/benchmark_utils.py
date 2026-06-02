@@ -613,14 +613,14 @@ class SingleFileGoldProvider(ResultProvider):
         task_id_key: str = "task_id",
         sql_key: str = "",
         query_result_key: str = "",
-        db_key: str = "",
+        database_key: str = "",
         allowed_task_ids: Optional[Iterable[str]] = None,
         frame_cache_size: int = 32,
     ):
         self.task_id_key = task_id_key
         self.query_result_key = query_result_key
         self.sql_key = sql_key
-        self.db_key = db_key
+        self.database_key = database_key
         self.result_file = Path(result_file)
         self.connections = connections
         self.allowed_task_ids = {str(task_id) for task_id in allowed_task_ids} if allowed_task_ids else None
@@ -781,7 +781,7 @@ class SingleFileGoldProvider(ResultProvider):
             if not sql_text:
                 self._errors[task_id] = f"Missing `{self.sql_key or self.query_result_key}` value"
                 return
-            db_name = str(row.get(self.db_key, "") or "").strip()
+            db_name = str(row.get(self.database_key, "") or "").strip()
             self._sql_tasks[task_id] = (sql_text, db_name)
 
         self._store_artifacts(task_id, row)
@@ -2051,7 +2051,7 @@ def _build_gold_result_provider(
     task_id_key = config.question_id_key or "_task_id"
     sql_key = config.gold_sql_key or ""
     query_result_key = config.gold_result_key or ""
-    db_key = config.db_key or ""
+    database_key = config.database_key or ""
 
     if result_path is None:
         gold_sql_path = _resolve_optional_path(base_path, config.gold_sql_path)
@@ -2085,7 +2085,7 @@ def _build_gold_result_provider(
         task_id_key=task_id_key,
         sql_key=sql_key,
         query_result_key=query_result_key,
-        db_key=db_key,
+        database_key=database_key,
         allowed_task_ids=allowed_task_ids,
     )
 

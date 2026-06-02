@@ -39,6 +39,7 @@ class TestNodeModelsSqlTask:
     def test_default_values(self):
         task = SqlTask(task="count rows")
         assert task.id == ""
+        assert task.datasource == ""
         assert task.database_type == ""
         assert task.catalog_name == ""
         assert task.output_dir == "output"
@@ -46,6 +47,12 @@ class TestNodeModelsSqlTask:
         assert task.schema_linking_type == "table"
         assert task.current_date is None
         assert task.subject_path is None
+
+    def test_datasource_is_distinct_from_database_name(self):
+        task = SqlTask(task="query", datasource="starrocks", database_name="ac_manage")
+        assert task.datasource == "starrocks"
+        assert task.database_name == "ac_manage"
+        assert task.to_dict()["datasource"] == "starrocks"
 
     def test_empty_task_raises(self):
         with pytest.raises(ValueError):

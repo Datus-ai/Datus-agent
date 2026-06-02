@@ -31,6 +31,7 @@ class SqlTask(BaseModel):
     """
 
     id: str = Field(default="", description="The id of the task")
+    datasource: str = Field(default="", description="Datus datasource routing key")
     database_type: str = Field(default="", description="Type of the database (e.g., sqlite, duckdb, snowflake)")
     task: str = Field(default="", description="The SQL task description or query")
     catalog_name: str = Field(default="", description="Catalog name for context")

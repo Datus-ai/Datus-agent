@@ -355,7 +355,7 @@ def test_evaluate_benchmark_and_report_with_jsonl_manifest(agent_config: AgentCo
         question_file="tasks.jsonl",
         question_id_key="task_id",
         question_key="prompt",
-        db_key="db_id",
+        database_key="db_id",
         gold_sql_key="gold_sql",
         gold_result_key="expected_answer",
         gold_result_path="tasks.jsonl",

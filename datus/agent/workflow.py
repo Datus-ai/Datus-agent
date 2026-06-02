@@ -516,7 +516,14 @@ class Workflow:
 
         return workflow
 
+    def _task_datasource(self) -> str:
+        if self.task and self.task.datasource:
+            return self.task.datasource
+        if self._global_config and self._global_config.current_datasource:
+            return self._global_config.current_datasource
+        return ""
+
     def _init_tools(self):
         from datus.tools.func_tool import db_function_tools
 
-        self.tools = db_function_tools(self._global_config, self.task.database_name)
+        self.tools = db_function_tools(self._global_config, self._task_datasource())

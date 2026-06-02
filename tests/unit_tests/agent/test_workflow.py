@@ -140,6 +140,22 @@ class TestWorkflowNode:
 class TestWorkflow:
     """Test suite for the Workflow class."""
 
+    def test_init_tools_uses_task_datasource_not_database_name(self, monkeypatch, real_agent_config):
+        captured = {}
+
+        def fake_db_function_tools(agent_config, database_name="", sub_agent_name=None):
+            captured["datasource"] = database_name
+            return []
+
+        monkeypatch.setattr("datus.tools.func_tool.db_function_tools", fake_db_function_tools)
+        Workflow(
+            name="test_workflow",
+            task=SqlTask(task="query", datasource="starrocks", database_name="ac_manage"),
+            agent_config=real_agent_config,
+        )
+
+        assert captured["datasource"] == "starrocks"
+
     def test_create_default_workflow(self, real_agent_config):
         """Test the default workflow creation with core nodes using plan._create_default_workflow."""
 

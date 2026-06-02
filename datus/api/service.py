@@ -116,6 +116,7 @@ class DatusAPIService:
 
         return SqlTask(
             id=task_id,
+            datasource=request.datasource,
             task=request.task,
             catalog_name=request.catalog_name or "",
             database_name=request.database_name or "default",

@@ -571,7 +571,7 @@ def _make_agent_config_ext(datasource="test_ns"):
     cfg.benchmark_config.return_value = MagicMock(
         question_id_key="task_id",
         question_key="question",
-        db_key="db",
+        database_key="db",
         use_tables_key=None,
         ext_knowledge_key=None,
     )

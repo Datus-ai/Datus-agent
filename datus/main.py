@@ -533,6 +533,7 @@ def main():
             result = agent.run(
                 SqlTask(
                     id=task_id,
+                    datasource=agent_config.current_datasource,
                     database_type=db_type,
                     catalog_name=args.task_catalog,
                     database_name=db_name,
