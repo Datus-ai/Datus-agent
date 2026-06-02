@@ -8,19 +8,19 @@
       
       
       
-        <link rel="canonical" href="https://docs.datus.ai/dev/cli/chat_command/">
+        <link rel="canonical" href="https://docs.datus.ai/dev/configuration/compact/">
       
       
-        <link rel="prev" href="../introduction/">
+        <link rel="prev" href="../agent/">
       
       
-        <link rel="next" href="../context_command/">
+        <link rel="next" href="../workflow/">
       
       
         
           <link rel="alternate" href="./" hreflang="en">
         
-          <link rel="alternate" href="../../zh/cli/chat_command/" hreflang="zh">
+          <link rel="alternate" href="../../zh/configuration/compact/" hreflang="zh">
         
       
       
@@ -29,7 +29,7 @@
     
     
       
-        <title>Chat Command - Datus Docs</title>
+        <title>Context Compaction - Datus Docs</title>
       
     
     
@@ -86,7 +86,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#chat-command" class="md-skip">
+        <a href="#context-compaction" class="md-skip">
           Skip to content
         </a>
       
@@ -123,7 +123,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Chat Command
+              Context Compaction
             
           </span>
         </div>
@@ -186,7 +186,7 @@
           </li>
         
           <li class="md-select__item">
-            <a href="../../zh/cli/chat_command/" hreflang="zh" class="md-select__link">
+            <a href="../../zh/configuration/compact/" hreflang="zh" class="md-select__link">
               中文
             </a>
           </li>
@@ -637,10 +637,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -669,11 +667,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_3" >
         
           
           <label class="md-nav__link" for="__nav_1_3" id="__nav_1_3_label" tabindex="0">
@@ -694,7 +692,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_1_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -712,7 +710,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../introduction/" class="md-nav__link">
+      <a href="../../cli/introduction/" class="md-nav__link">
         
   
   
@@ -737,37 +735,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Chat Command
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../cli/chat_command/" class="md-nav__link">
         
   
   
@@ -783,148 +754,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#1-overview" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Overview
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-basic-usage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Basic Usage
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-advanced-features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Advanced Features
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="3. Advanced Features">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#context-injection" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Context Injection
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Context Injection">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#browse-mode" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Browse Mode
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#fuzzy-search-mode" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fuzzy Search Mode
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#interrupt-execution" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Interrupt Execution
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#toggle-trace-display" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Toggle Trace Display
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#mid-run-message-insertion" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Mid-run Message Insertion
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#session-commands" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Session Commands
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -937,7 +766,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../context_command/" class="md-nav__link">
+      <a href="../../cli/context_command/" class="md-nav__link">
         
   
   
@@ -965,7 +794,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../execution_command/" class="md-nav__link">
+      <a href="../../cli/execution_command/" class="md-nav__link">
         
   
   
@@ -993,7 +822,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../mcp_extensions/" class="md-nav__link">
+      <a href="../../cli/mcp_extensions/" class="md-nav__link">
         
   
   
@@ -1021,7 +850,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../sql_execution/" class="md-nav__link">
+      <a href="../../cli/sql_execution/" class="md-nav__link">
         
   
   
@@ -1049,7 +878,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../skill_command/" class="md-nav__link">
+      <a href="../../cli/skill_command/" class="md-nav__link">
         
   
   
@@ -1077,7 +906,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/" class="md-nav__link">
+      <a href="../../cli/reference/" class="md-nav__link">
         
   
   
@@ -1105,7 +934,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../plan_mode/" class="md-nav__link">
+      <a href="../../cli/plan_mode/" class="md-nav__link">
         
   
   
@@ -2396,8 +2225,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -2424,11 +2255,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_10" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_10" checked>
         
           
           <label class="md-nav__link" for="__nav_1_10" id="__nav_1_10_label" tabindex="0">
@@ -2449,7 +2280,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_10_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_10_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1_10">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2467,7 +2298,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/introduction/" class="md-nav__link">
+      <a href="../introduction/" class="md-nav__link">
         
   
   
@@ -2495,7 +2326,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/agent/" class="md-nav__link">
+      <a href="../agent/" class="md-nav__link">
         
   
   
@@ -2520,10 +2351,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../configuration/compact/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Context Compaction
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -2539,6 +2397,81 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#minor-compact" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Minor compact
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#major-compact" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Major compact
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#auto-vs-manual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auto vs. manual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2551,7 +2484,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/workflow/" class="md-nav__link">
+      <a href="../workflow/" class="md-nav__link">
         
   
   
@@ -2579,7 +2512,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/benchmark/" class="md-nav__link">
+      <a href="../benchmark/" class="md-nav__link">
         
   
   
@@ -2667,7 +2600,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/datasources/" class="md-nav__link">
+      <a href="../datasources/" class="md-nav__link">
         
   
   
@@ -2695,7 +2628,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/semantic_layer/" class="md-nav__link">
+      <a href="../semantic_layer/" class="md-nav__link">
         
   
   
@@ -2723,7 +2656,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/bi_platforms/" class="md-nav__link">
+      <a href="../bi_platforms/" class="md-nav__link">
         
   
   
@@ -2751,7 +2684,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/schedulers/" class="md-nav__link">
+      <a href="../schedulers/" class="md-nav__link">
         
   
   
@@ -2787,7 +2720,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/storage/" class="md-nav__link">
+      <a href="../storage/" class="md-nav__link">
         
   
   
@@ -2815,7 +2748,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/nodes/" class="md-nav__link">
+      <a href="../nodes/" class="md-nav__link">
         
   
   
@@ -3666,10 +3599,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-overview" class="md-nav__link">
+  <a href="#minor-compact" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Overview
+        Minor compact
       
     </span>
   </a>
@@ -3677,10 +3610,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-basic-usage" class="md-nav__link">
+  <a href="#major-compact" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Basic Usage
+        Major compact
       
     </span>
   </a>
@@ -3688,102 +3621,35 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-advanced-features" class="md-nav__link">
+  <a href="#auto-vs-manual" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Advanced Features
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="3. Advanced Features">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#context-injection" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Context Injection
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Context Injection">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#browse-mode" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Browse Mode
+        Auto vs. manual
       
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#fuzzy-search-mode" class="md-nav__link">
+      
+        <li class="md-nav__item">
+  <a href="#parameters" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Fuzzy Search Mode
+        Parameters
       
     </span>
   </a>
   
 </li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#interrupt-execution" class="md-nav__link">
+      
+        <li class="md-nav__item">
+  <a href="#notes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Interrupt Execution
+        Notes
       
     </span>
   </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#toggle-trace-display" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Toggle Trace Display
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#mid-run-message-insertion" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Mid-run Message Insertion
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#session-commands" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Session Commands
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -3804,7 +3670,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/cli/chat_command.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/configuration/compact.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -3812,73 +3678,134 @@
   
 
 
-<h1 id="chat-command">Chat Command <code>/</code><a class="headerlink" href="#chat-command" title="Permanent link">&para;</a></h1>
-<h2 id="1-overview">1. Overview<a class="headerlink" href="#1-overview" title="Permanent link">&para;</a></h2>
-<p>The Chat Command <code>/</code> is the heart of Datus-CLI. It enables you to converse with the AI agent in a multi-turn session, describe tasks in natural language, and receive reasoning steps and SQL code suggestions. Think of it as your copilot for exploring data, drafting SQL, and planning workflows — all directly in the CLI.</p>
-<p>You can chat with Datus in any format — plain English, bullet points, or sketches of logic — and freely edit or follow up on its responses. The agent keeps track of your instructions and previous outputs, so you can iteratively refine results without starting over.</p>
-<hr />
-<h2 id="2-basic-usage">2. Basic Usage<a class="headerlink" href="#2-basic-usage" title="Permanent link">&para;</a></h2>
-<p>Start a new chat session by entering <code>/</code> followed by your message:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>/ How many orders were placed last week?
-</span></code></pre></div>
-<p>The agent will respond with its reasoning process and a proposed SQL query. You can then follow up naturally:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>/ Filter only for VIP customers
-</span></code></pre></div>
-<p>Datus streams the output as it thinks — showing each action's execution result in real time. If the result contains SQL, it will:</p>
+<h1 id="context-compaction">Context Compaction<a class="headerlink" href="#context-compaction" title="Permanent link">&para;</a></h1>
+<p>As a chat session grows, its history eventually approaches the model's context window limit. Datus manages this automatically with two complementary compaction passes configured under <code>agent.compact</code>, so you can keep working in one long session without manually clearing it or hitting token limits.</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Minor compact</th>
+<th>Major compact</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>What it does</td>
+<td>Archives old tool I/O to disk</td>
+<td>Summarizes the whole session</td>
+</tr>
+<tr>
+<td>Driven by</td>
+<td>A rule (user-turn count)</td>
+<td>The LLM (a summarization call)</td>
+</tr>
+<tr>
+<td>Execution</td>
+<td>Synchronous, but fast (local, no LLM call)</td>
+<td>Synchronous, blocks the run loop</td>
+</tr>
+<tr>
+<td>Touches recent turns</td>
+<td>No</td>
+<td>Yes — replaces all history</td>
+</tr>
+<tr>
+<td>Recoverable</td>
+<td>Yes (archive files)</td>
+<td>Yes (full-history JSONL)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="minor-compact">Minor compact<a class="headerlink" href="#minor-compact" title="Permanent link">&para;</a></h2>
+<p><strong>What triggers it</strong> — At the start of each user turn, if the session has more than <code>keep_recent_user_turns</code> user turns (default 4), minor compact runs. Its gate — the user-turn count — only changes between turns, so it is evaluated once per turn rather than after every tool call (that per-tool-call check is reserved for major, whose token ratio actually grows mid-turn). It is synchronous but, being a purely local, rule-based archive with no LLM call, finishes quickly and barely delays the agent.</p>
+<p><strong>What it does</strong> — For every turn <em>older</em> than the kept window, any tool-call argument or output longer than <code>archive_threshold</code> characters (default 1000) is moved out of the live conversation and written to an on-disk archive. A short inline preview (<code>archive_preview_chars</code>, default 1000; 2× for error outputs) is left behind with a <code>[DATUS_ARCHIVED]</code> marker.</p>
+<p><strong>Resulting behavior</strong></p>
 <ul>
-<li>Automatically highlight the SQL in the output</li>
-<li>Copy the SQL to your clipboard for quick use</li>
-<li>Finally produce a Markdown-formatted summary of the result</li>
+<li>The most recent <code>keep_recent_user_turns</code> turns keep their full tool I/O — the active part of the conversation is never degraded.</li>
+<li>Older bulky outputs shrink to a preview plus a pointer; the model can still <code>read_file</code> the archive to recover the full content when it needs the detail.</li>
+<li>Because it only archives (never summarizes), nothing is lost and no LLM call is spent. It is cheap and fast, and runs often.</li>
 </ul>
-<p><img alt="Reasoning progress" src="../../assets/reasoning_progress.png" /></p>
-<p><img alt="Result of query" src="../../assets/result_query.png" /></p>
-<p><img alt="Details of function calling" src="../../assets/function_calling_details.png" /></p>
-<hr />
-<h2 id="3-advanced-features">3. Advanced Features<a class="headerlink" href="#3-advanced-features" title="Permanent link">&para;</a></h2>
-<h3 id="context-injection">Context Injection<a class="headerlink" href="#context-injection" title="Permanent link">&para;</a></h3>
-<p>Context Injection allows you to pull existing tables, metrics or files into your conversation. There are two ways to do this:</p>
-<h4 id="browse-mode">Browse Mode<a class="headerlink" href="#browse-mode" title="Permanent link">&para;</a></h4>
-<p>Type <code>@</code> and press Tab to browse your context tree step by step. You can navigate by category (table / file / metrics) and drill down the directory-like structure to select the exact item you need.</p>
-<h4 id="fuzzy-search-mode">Fuzzy Search Mode<a class="headerlink" href="#fuzzy-search-mode" title="Permanent link">&para;</a></h4>
-<p>Type <code>@</code> followed by some keywords, then press Tab to trigger a fuzzy search. Datus will suggest context items ranked by textual similarity, letting you quickly find what you need without knowing the exact path.</p>
-<p>This is the fastest way to ground your prompts with precise context.</p>
-<p><img alt="Context injection browse mode" src="../../assets/context_browse.png" /></p>
-<p><img alt="Context injection fuzzy search" src="../../assets/context_fuzzy.png" /></p>
-<h3 id="interrupt-execution">Interrupt Execution<a class="headerlink" href="#interrupt-execution" title="Permanent link">&para;</a></h3>
-<p>Press <strong>ESC</strong> or <strong>Ctrl+C</strong> while the agent is running to gracefully interrupt the current execution. The agent will finish its current step, then stop and return control to you.</p>
-<p>After an interrupt, the session remains intact — you can continue typing new instructions, refine your question, or provide additional context. Nothing is lost.</p>
-<h3 id="toggle-trace-display">Toggle Trace Display<a class="headerlink" href="#toggle-trace-display" title="Permanent link">&para;</a></h3>
-<p>Press <strong>Ctrl+O</strong> while the agent is running to toggle the trace display mode between <strong>compact</strong> (progress only) and <strong>verbose</strong> (full step details). This lets you control how much detail you see during execution without interrupting the agent.</p>
-<h3 id="mid-run-message-insertion">Mid-run Message Insertion<a class="headerlink" href="#mid-run-message-insertion" title="Permanent link">&para;</a></h3>
-<p>While the agent is running, you don't have to wait for it to finish before adding more context. Type into the input box and press <strong>Enter</strong> — the text is queued and delivered to the model right before its next LLM turn, so it influences the run already in progress rather than starting a new one.</p>
-<p>How it works:</p>
+<h2 id="major-compact">Major compact<a class="headerlink" href="#major-compact" title="Permanent link">&para;</a></h2>
+<p><strong>What triggers it</strong> — When the input tokens of the most recent model call reach <code>token_threshold</code> of the context window (default <code>0.9</code>, i.e. 90%), a major compact is forced. The check runs at the start of each user turn and after each tool call, so it can fire <strong>mid-turn</strong> — right when the context is about to overflow — instead of waiting for the next turn. <code>/compact</code> triggers it manually at any time.</p>
+<p><strong>What it does</strong> — The model is asked to summarize the <strong>entire</strong> session into a single recap. The session history is then cleared and replaced by that summary as the new starting point, and the conversation continues from there. The complete pre-compact history is dumped to a JSONL file, and a pointer to it is appended to the summary so the agent can <code>read_file</code> it to recover any specific detail.</p>
+<p><strong>Resulting behavior</strong></p>
 <ul>
-<li>A <strong>pinned preview</strong> appears above the bottom status bar showing every queued message. The preview collapses to zero rows when the queue is drained.</li>
-<li>At each LLM turn, every queued message is drained, appended to the model input as <code>user</code> items, and persisted to the session history.</li>
-<li>If the run finishes its final turn while items are still queued, the residue <strong>auto-continues</strong> in a fresh run so nothing you typed is silently dropped.</li>
-<li>Inserted messages are kept in the rendered transcript across <code>Ctrl+O</code> verbose/compact toggles and on <code>/resume</code>, so you always see what you injected.</li>
+<li>It is <strong>synchronous and blocking</strong>: the run loop waits for the summary to be written before continuing, because the next model call must see the compacted history rather than the over-limit one.</li>
+<li>The visible conversation is collapsed — earlier turns are replaced by the recap. In the CLI this shows a <code>Compacting context…</code> hint followed by a summary panel; over the API/print stream it arrives as a <code>compact_summary</code> markdown message.</li>
+<li>Some fidelity is traded for room: the summary is concise, so fine detail now lives only in the JSONL dump (still reachable via <code>read_file</code>).</li>
+<li>A major compact spends one extra LLM call (the summarization), so it is rarer and only triggers near the context limit.</li>
 </ul>
-<p>This complements — rather than replaces — <code>ESC</code> / <code>Ctrl+C</code> (interrupt) and <code>/chat/stop</code>. Use insertion when you want to <strong>steer</strong> the current run with new context; use interrupt when you want to <strong>abort</strong> it.</p>
-<h3 id="session-commands">Session Commands<a class="headerlink" href="#session-commands" title="Permanent link">&para;</a></h3>
+<h2 id="auto-vs-manual">Auto vs. manual<a class="headerlink" href="#auto-vs-manual" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>/clear</code>: Clear the current session context and start fresh</li>
-<li><code>/compact</code>: Compress previous turns to reduce memory usage while preserving context</li>
-<li>Runs a <strong>major compact</strong>: the whole session is summarized by the model into a single recap, with the full history saved to a JSONL file for recovery</li>
-<li>Auto-trigger: a major compact also runs automatically when the model context usage exceeds 90% (configurable); separately, a lighter <strong>minor compact</strong> automatically archives old tool I/O after tool calls as the session grows</li>
-<li>See <a href="../../configuration/compact/">Context Compaction</a> for the major/minor difference and tunable parameters</li>
-<li><code>/chat_info</code>: Show the current active context (messages, tables, metrics)</li>
-<li><code>/resume [session_id]</code>: Resume a previous chat session</li>
-<li>Without arguments: displays a table of all available sessions (sorted by last modified time), then prompts you to pick one by number</li>
-<li>With a session ID: directly resumes that specific session</li>
-<li>After resuming, the full conversation history is replayed so you can see what was discussed, and you can continue chatting from where you left off</li>
-<li>If the session has high token usage (&gt;50k tokens), a hint is shown suggesting <code>/compact</code> to reduce context size</li>
-<li><code>/rewind [turn_number]</code>: Rewind the current session to a specific user turn, creating a new branched session</li>
-<li>Displays a numbered table of all user turns in the current session</li>
-<li>You select a turn number — the session is cloned up to (and including) that turn's assistant response, producing a new session</li>
-<li>The original session is preserved; the rewound copy becomes your active session</li>
-<li>Without arguments: shows the turn table and prompts for a turn number</li>
-<li>With a turn number: directly rewinds to that turn</li>
-<li>Useful when you want to retry a question with different phrasing or explore an alternative path without losing the original conversation</li>
+<li><strong>Automatic</strong> — Both passes run on their own during a session; you don't need to do anything. Major fires near the context limit, minor as the turn count grows.</li>
+<li><strong>Manual <code>/compact</code></strong> — Always runs a <strong>major</strong> pass immediately, regardless of current usage. Useful before starting a big new task when you want a clean, summarized starting point.</li>
+</ul>
+<h2 id="parameters">Parameters<a class="headerlink" href="#parameters" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>compact.major.enabled</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Enable the LLM-driven full-history summarization pass.</td>
+</tr>
+<tr>
+<td><code>compact.major.token_threshold</code></td>
+<td>float</td>
+<td><code>0.9</code></td>
+<td>Fraction of the context window above which a major compact is forced (overrides minor selection in the auto dispatcher).</td>
+</tr>
+<tr>
+<td><code>compact.minor.enabled</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Enable the rule-based archiving pass.</td>
+</tr>
+<tr>
+<td><code>compact.minor.keep_recent_user_turns</code></td>
+<td>int</td>
+<td><code>4</code></td>
+<td>Keep the original tool I/O of the most recent N user turns intact; older turns are eligible for archiving.</td>
+</tr>
+<tr>
+<td><code>compact.minor.archive_threshold</code></td>
+<td>int</td>
+<td><code>1000</code></td>
+<td>Tool-call arguments/outputs longer than this many characters are offloaded to disk.</td>
+</tr>
+<tr>
+<td><code>compact.minor.archive_preview_chars</code></td>
+<td>int</td>
+<td><code>1000</code></td>
+<td>Inline preview length kept in the archive marker (error outputs get a 2× preview).</td>
+</tr>
+</tbody>
+</table>
+<div class="language-yaml highlight"><span class="filename">agent.yml</span><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">compact</span><span class="p">:</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">major</span><span class="p">:</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="nt">token_threshold</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.9</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">    </span><span class="nt">minor</span><span class="p">:</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">      </span><span class="nt">keep_recent_user_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">      </span><span class="nt">archive_threshold</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1000</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">      </span><span class="nt">archive_preview_chars</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1000</span>
+</span></code></pre></div>
+<p>To disable automatic compaction entirely, set both <code>major.enabled</code> and <code>minor.enabled</code> to <code>false</code>. You can still run <code>/compact</code> manually even when <code>major.enabled</code> is <code>false</code>.</p>
+<h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Major compact's trigger reads the <strong>live</strong> token usage of the current turn (the same figure shown in the CLI status bar). On a brand-new session or right after <code>resume</code>, that signal starts at zero, so a major compact won't fire on the very first turn until at least one model call has reported usage.</li>
+<li>Minor compact reads its eligibility from the session's user-turn count, so it keeps working correctly after a resume.</li>
+<li>Archived tool I/O and the full-history JSONL live under the session's data directory; see <a href="../storage/">Storage</a> for paths.</li>
 </ul>
 
 
@@ -3911,7 +3838,7 @@
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../introduction/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Introduction">
+          <a href="../agent/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Agent">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -3921,20 +3848,20 @@
                 Previous
               </span>
               <div class="md-ellipsis">
-                Introduction
+                Agent
               </div>
             </div>
           </a>
         
         
           
-          <a href="../context_command/" class="md-footer__link md-footer__link--next" aria-label="Next: Context Command">
+          <a href="../workflow/" class="md-footer__link md-footer__link--next" aria-label="Next: Workflow">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Context Command
+                Workflow
               </div>
             </div>
             <div class="md-footer__button md-icon">

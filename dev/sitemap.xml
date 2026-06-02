@@ -204,6 +204,13 @@
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/configuration/bi_platforms/"/>
     </url>
     <url>
+        <loc>https://docs.datus.ai/dev/configuration/compact/</loc>
+        <lastmod>2026-06-02</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/configuration/compact/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/configuration/compact/"/>
+    </url>
+    <url>
         <loc>https://docs.datus.ai/dev/configuration/datasources/</loc>
         <lastmod>2026-06-02</lastmod>
         <changefreq>daily</changefreq>
@@ -741,6 +748,13 @@
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/configuration/bi_platforms/"/>
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devconfiguration/bi_platforms/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/zh/configuration/compact/</loc>
+        <lastmod>2026-06-02</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/configuration/compact/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devconfiguration/compact/"/>
     </url>
     <url>
         <loc>https://docs.datus.ai/dev/zh/configuration/datasources/</loc>

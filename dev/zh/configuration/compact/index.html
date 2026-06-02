@@ -1,6 +1,6 @@
 
 <!doctype html>
-<html lang="en" class="no-js">
+<html lang="zh" class="no-js">
   <head>
     
       <meta charset="utf-8">
@@ -8,35 +8,35 @@
       
       
       
-        <link rel="canonical" href="https://docs.datus.ai/dev/cli/chat_command/">
+        <link rel="canonical" href="https://docs.datus.ai/dev/zh/configuration/compact/">
       
       
-        <link rel="prev" href="../introduction/">
+        <link rel="prev" href="../agent/">
       
       
-        <link rel="next" href="../context_command/">
+        <link rel="next" href="../workflow/">
       
       
         
-          <link rel="alternate" href="./" hreflang="en">
+          <link rel="alternate" href="../../../configuration/compact/" hreflang="en">
         
-          <link rel="alternate" href="../../zh/cli/chat_command/" hreflang="zh">
+          <link rel="alternate" href="./" hreflang="zh">
         
       
       
-      <link rel="icon" href="../../assets/logo-light.png">
+      <link rel="icon" href="../../../assets/logo-light.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
-        <title>Chat Command - Datus Docs</title>
+        <title>上下文压缩 - Datus Docs</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -49,9 +49,9 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/extra.css">
+      <link rel="stylesheet" href="../../../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
   
@@ -86,8 +86,8 @@
     <div data-md-component="skip">
       
         
-        <a href="#chat-command" class="md-skip">
-          Skip to content
+        <a href="#context-compaction" class="md-skip">
+          跳转至
         </a>
       
     </div>
@@ -103,10 +103,10 @@
       
 
 <header class="md-header" data-md-component="header">
-  <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="Datus Docs" class="md-header__button md-logo" aria-label="Datus Docs" data-md-component="logo">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href="../../" title="Datus Docs" class="md-header__button md-logo" aria-label="Datus Docs" data-md-component="logo">
       
-  <img src="../../assets/logo-light.png" alt="logo">
+  <img src="../../../assets/logo-light.png" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -123,7 +123,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Chat Command
+              上下文压缩
             
           </span>
         </div>
@@ -173,20 +173,20 @@
       <div class="md-header__option">
   <div class="md-select">
     
-    <button class="md-header__button md-icon" aria-label="Select language">
+    <button class="md-header__button md-icon" aria-label="选择当前语言">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
     </button>
     <div class="md-select__inner">
       <ul class="md-select__list">
         
           <li class="md-select__item">
-            <a href="./" hreflang="en" class="md-select__link">
+            <a href="../../../configuration/compact/" hreflang="en" class="md-select__link">
               English
             </a>
           </li>
         
           <li class="md-select__item">
-            <a href="../../zh/cli/chat_command/" hreflang="zh" class="md-select__link">
+            <a href="./" hreflang="zh" class="md-select__link">
               中文
             </a>
           </li>
@@ -207,16 +207,16 @@
   <label class="md-search__overlay" for="__search"></label>
   <div class="md-search__inner" role="search">
     <form class="md-search__form" name="search">
-      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
       <label class="md-search__icon md-icon" for="__search">
         
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
         
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
       </label>
-      <nav class="md-search__options" aria-label="Search">
+      <nav class="md-search__options" aria-label="查找">
         
-        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
           
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
         </button>
@@ -227,7 +227,7 @@
       <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
         <div class="md-search-result" data-md-component="search-result">
           <div class="md-search-result__meta">
-            Initializing search
+            正在初始化搜索引擎
           </div>
           <ol class="md-search-result__list" role="presentation"></ol>
         </div>
@@ -239,7 +239,7 @@
     
     
       <div class="md-header__source">
-        <a href="https://github.com/Datus-ai/Datus-agent" title="Go to repository" class="md-source" data-md-component="source">
+        <a href="https://github.com/Datus-ai/Datus-agent" title="前往仓库" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
@@ -260,7 +260,7 @@
         
           
             
-<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+<nav class="md-tabs" aria-label="标签" data-md-component="tabs">
   <div class="md-grid">
     <ul class="md-tabs__list">
       
@@ -274,13 +274,13 @@
     
     
       <li class="md-tabs__item md-tabs__item--active">
-        <a href="../.." class="md-tabs__link">
+        <a href="../../" class="md-tabs__link">
           
   
   
     
   
-  Home
+  首页
 
         </a>
       </li>
@@ -300,7 +300,7 @@
   
     
   
-  Release Notes
+  发布说明
 
       </a>
     </li>
@@ -327,18 +327,18 @@
   
 
 
-<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="导航栏" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="Datus Docs" class="md-nav__button md-logo" aria-label="Datus Docs" data-md-component="logo">
+    <a href="../../" title="Datus Docs" class="md-nav__button md-logo" aria-label="Datus Docs" data-md-component="logo">
       
-  <img src="../../assets/logo-light.png" alt="logo">
+  <img src="../../../assets/logo-light.png" alt="logo">
 
     </a>
     Datus Docs
   </label>
   
     <div class="md-nav__source">
-      <a href="https://github.com/Datus-ai/Datus-agent" title="Go to repository" class="md-source" data-md-component="source">
+      <a href="https://github.com/Datus-ai/Datus-agent" title="前往仓库" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
@@ -416,14 +416,14 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../.." class="md-nav__link ">
+            <a href="../../" class="md-nav__link ">
               
   
   
   <span class="md-ellipsis">
     
   
-    Home
+    首页
   
 
     
@@ -445,7 +445,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Home
+    首页
   
 
           </label>
@@ -491,7 +491,7 @@
   <span class="md-ellipsis">
     
   
-    Getting Started
+    入门指南
   
 
     
@@ -507,7 +507,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Getting Started
+    入门指南
   
 
           </label>
@@ -527,7 +527,7 @@
   <span class="md-ellipsis">
     
   
-    Quickstart
+    快速开始
   
 
     
@@ -555,7 +555,7 @@
   <span class="md-ellipsis">
     
   
-    Data Engineering Quickstart
+    数据工程快速开始
   
 
     
@@ -583,7 +583,7 @@
   <span class="md-ellipsis">
     
   
-    Contextual Data Engineering
+    上下文数据工程
   
 
     
@@ -637,10 +637,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -669,11 +667,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_3" >
         
           
           <label class="md-nav__link" for="__nav_1_3" id="__nav_1_3_label" tabindex="0">
@@ -683,7 +681,7 @@
   <span class="md-ellipsis">
     
   
-    CLI
+    命令行
   
 
     
@@ -694,12 +692,12 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_1_3">
             <span class="md-nav__icon md-icon"></span>
             
   
-    CLI
+    命令行
   
 
           </label>
@@ -712,239 +710,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../introduction/" class="md-nav__link">
+      <a href="../../cli/introduction/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Introduction
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-    
-  
-  
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Chat Command
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Chat Command
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#1-overview" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Overview
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-basic-usage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Basic Usage
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-advanced-features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Advanced Features
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="3. Advanced Features">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#context-injection" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Context Injection
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Context Injection">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#browse-mode" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Browse Mode
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#fuzzy-search-mode" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fuzzy Search Mode
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#interrupt-execution" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Interrupt Execution
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#toggle-trace-display" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Toggle Trace Display
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#mid-run-message-insertion" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Mid-run Message Insertion
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#session-commands" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Session Commands
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../context_command/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Context Command
+    介绍
   
 
     
@@ -965,14 +738,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../execution_command/" class="md-nav__link">
+      <a href="../../cli/chat_command/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Execution Command
+    聊天命令
   
 
     
@@ -993,14 +766,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../mcp_extensions/" class="md-nav__link">
+      <a href="../../cli/context_command/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    MCP Extensions
+    上下文命令
   
 
     
@@ -1021,14 +794,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../sql_execution/" class="md-nav__link">
+      <a href="../../cli/execution_command/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    SQL Execution
+    执行命令
   
 
     
@@ -1049,14 +822,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../skill_command/" class="md-nav__link">
+      <a href="../../cli/mcp_extensions/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Skill Command
+    MCP 扩展
   
 
     
@@ -1077,14 +850,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/" class="md-nav__link">
+      <a href="../../cli/sql_execution/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Reference
+    SQL 执行
   
 
     
@@ -1105,14 +878,70 @@
   
   
     <li class="md-nav__item">
-      <a href="../plan_mode/" class="md-nav__link">
+      <a href="../../cli/skill_command/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Plan Mode
+    技能命令
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    参考
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/plan_mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    计划模式
   
 
     
@@ -1224,7 +1053,7 @@
   <span class="md-ellipsis">
     
   
-    Introduction
+    介绍
   
 
     
@@ -1252,7 +1081,7 @@
   <span class="md-ellipsis">
     
   
-    Built-in subagents
+    内置 subagent
   
 
     
@@ -1280,7 +1109,7 @@
   <span class="md-ellipsis">
     
   
-    Customized subagents
+    自定义 subagent
   
 
     
@@ -1308,7 +1137,7 @@
   <span class="md-ellipsis">
     
   
-    Generate Dashboard
+    生成 Dashboard
   
 
     
@@ -1336,7 +1165,7 @@
   <span class="md-ellipsis">
     
   
-    Generate Metrics
+    生成指标
   
 
     
@@ -1364,7 +1193,7 @@
   <span class="md-ellipsis">
     
   
-    Generate Semantic Model
+    生成语义模型
   
 
     
@@ -1392,7 +1221,7 @@
   <span class="md-ellipsis">
     
   
-    Scheduler
+    调度器
   
 
     
@@ -1568,7 +1397,7 @@
   <span class="md-ellipsis">
     
   
-    Chatbot
+    chatbot
   
 
     
@@ -1618,7 +1447,7 @@
   <span class="md-ellipsis">
     
   
-    IM Gateway
+    IM 网关
   
 
     
@@ -1634,7 +1463,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    IM Gateway
+    IM 网关
   
 
           </label>
@@ -1654,7 +1483,7 @@
   <span class="md-ellipsis">
     
   
-    Introduction
+    介绍
   
 
     
@@ -1710,7 +1539,7 @@
   <span class="md-ellipsis">
     
   
-    Feishu
+    飞书
   
 
     
@@ -1778,7 +1607,7 @@
   <span class="md-ellipsis">
     
   
-    Knowledge Base
+    知识库
   
 
     
@@ -1794,7 +1623,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Knowledge Base
+    知识库
   
 
           </label>
@@ -1814,7 +1643,7 @@
   <span class="md-ellipsis">
     
   
-    Introduction
+    介绍
   
 
     
@@ -1842,7 +1671,7 @@
   <span class="md-ellipsis">
     
   
-    External Knowledge
+    外部知识
   
 
     
@@ -1870,7 +1699,7 @@
   <span class="md-ellipsis">
     
   
-    Platform Documentation
+    平台文档
   
 
     
@@ -1898,7 +1727,7 @@
   <span class="md-ellipsis">
     
   
-    Metadata
+    元数据
   
 
     
@@ -1926,7 +1755,7 @@
   <span class="md-ellipsis">
     
   
-    Semantic Models
+    语义模型
   
 
     
@@ -1954,7 +1783,7 @@
   <span class="md-ellipsis">
     
   
-    Metrics
+    指标
   
 
     
@@ -2010,7 +1839,7 @@
   <span class="md-ellipsis">
     
   
-    Reference Template
+    SQL模板
   
 
     
@@ -2070,7 +1899,7 @@
   <span class="md-ellipsis">
     
   
-    Workflow
+    工作流
   
 
     
@@ -2086,7 +1915,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Workflow
+    工作流
   
 
           </label>
@@ -2106,7 +1935,7 @@
   <span class="md-ellipsis">
     
   
-    Introduction
+    介绍
   
 
     
@@ -2134,7 +1963,7 @@
   <span class="md-ellipsis">
     
   
-    Nodes
+    节点
   
 
     
@@ -2162,7 +1991,7 @@
   <span class="md-ellipsis">
     
   
-    Orchestration
+    编排
   
 
     
@@ -2286,7 +2115,7 @@
   <span class="md-ellipsis">
     
   
-    Introduction
+    介绍
   
 
     
@@ -2314,7 +2143,7 @@
   <span class="md-ellipsis">
     
   
-    Deployment
+    部署
   
 
     
@@ -2370,7 +2199,7 @@
   <span class="md-ellipsis">
     
   
-    Knowledge Base API
+    知识库 API
   
 
     
@@ -2396,8 +2225,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -2424,11 +2255,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_10" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_10" checked>
         
           
           <label class="md-nav__link" for="__nav_1_10" id="__nav_1_10_label" tabindex="0">
@@ -2438,7 +2269,7 @@
   <span class="md-ellipsis">
     
   
-    Configuration
+    配置
   
 
     
@@ -2449,12 +2280,12 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_10_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_10_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1_10">
             <span class="md-nav__icon md-icon"></span>
             
   
-    Configuration
+    配置
   
 
           </label>
@@ -2467,14 +2298,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/introduction/" class="md-nav__link">
+      <a href="../introduction/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Introduction
+    介绍
   
 
     
@@ -2495,7 +2326,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/agent/" class="md-nav__link">
+      <a href="../agent/" class="md-nav__link">
         
   
   
@@ -2520,17 +2351,147 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../configuration/compact/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    上下文压缩
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
   <span class="md-ellipsis">
     
   
-    Context Compaction
+    上下文压缩
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#minor-compact" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Minor compact
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#major-compact" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Major compact
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        自动 vs. 手动
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        参数
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        注意事项
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    工作流
   
 
     
@@ -2551,42 +2512,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/workflow/" class="md-nav__link">
+      <a href="../benchmark/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Workflow
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../configuration/benchmark/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Benchmark
+    基准测试
   
 
     
@@ -2638,7 +2571,7 @@
   <span class="md-ellipsis">
     
   
-    Services
+    服务
   
 
     
@@ -2654,7 +2587,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Services
+    服务
   
 
           </label>
@@ -2667,7 +2600,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/datasources/" class="md-nav__link">
+      <a href="../datasources/" class="md-nav__link">
         
   
   
@@ -2695,14 +2628,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/semantic_layer/" class="md-nav__link">
+      <a href="../semantic_layer/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Semantic Layer
+    语义层
   
 
     
@@ -2723,14 +2656,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/bi_platforms/" class="md-nav__link">
+      <a href="../bi_platforms/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    BI Platforms
+    BI 平台
   
 
     
@@ -2751,14 +2684,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/schedulers/" class="md-nav__link">
+      <a href="../schedulers/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Schedulers
+    调度器
   
 
     
@@ -2787,7 +2720,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/storage/" class="md-nav__link">
+      <a href="../storage/" class="md-nav__link">
         
   
   
@@ -2815,14 +2748,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/nodes/" class="md-nav__link">
+      <a href="../nodes/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Nodes
+    节点
   
 
     
@@ -2882,7 +2815,7 @@
   <span class="md-ellipsis">
     
   
-    Adapters
+    适配器
   
 
     
@@ -2898,7 +2831,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Adapters
+    适配器
   
 
           </label>
@@ -2918,7 +2851,7 @@
   <span class="md-ellipsis">
     
   
-    Database Adapters
+    数据库适配器
   
 
     
@@ -2946,7 +2879,7 @@
   <span class="md-ellipsis">
     
   
-    Semantic Adapters
+    语义层适配器
   
 
     
@@ -2974,7 +2907,7 @@
   <span class="md-ellipsis">
     
   
-    BI Adapters
+    BI 适配器
   
 
     
@@ -3002,7 +2935,7 @@
   <span class="md-ellipsis">
     
   
-    Scheduler Adapters
+    Scheduler 适配器
   
 
     
@@ -3056,7 +2989,7 @@
   <span class="md-ellipsis">
     
   
-    Benchmark
+    基准测试
   
 
     
@@ -3072,7 +3005,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Benchmark
+    基准测试
   
 
           </label>
@@ -3092,7 +3025,7 @@
   <span class="md-ellipsis">
     
   
-    Introduction
+    介绍
   
 
     
@@ -3146,7 +3079,7 @@
   <span class="md-ellipsis">
     
   
-    Metricflow
+    MetricFlow
   
 
     
@@ -3162,7 +3095,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Metricflow
+    MetricFlow
   
 
           </label>
@@ -3182,7 +3115,7 @@
   <span class="md-ellipsis">
     
   
-    Introduction
+    介绍
   
 
     
@@ -3242,7 +3175,7 @@
   <span class="md-ellipsis">
     
   
-    Integration
+    集成
   
 
     
@@ -3258,7 +3191,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Integration
+    集成
   
 
           </label>
@@ -3334,7 +3267,7 @@
   <span class="md-ellipsis">
     
   
-    Validation
+    校验
   
 
     
@@ -3362,7 +3295,7 @@
   <span class="md-ellipsis">
     
   
-    Auto Memory
+    自动记忆
   
 
     
@@ -3511,7 +3444,7 @@
   <span class="md-ellipsis">
     
   
-    Develop
+    开发
   
 
     
@@ -3533,7 +3466,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Develop
+    开发
   
 
           </label>
@@ -3555,7 +3488,7 @@
   <span class="md-ellipsis">
     
   
-    Observability
+    可观测性
   
 
     
@@ -3591,7 +3524,7 @@
   <span class="md-ellipsis">
     
   
-    VSCode Extension
+    VSCode 插件
   
 
     
@@ -3626,7 +3559,7 @@
   <span class="md-ellipsis">
     
   
-    Release Notes
+    发布说明
   
 
     
@@ -3652,7 +3585,7 @@
                   <div class="md-sidebar__inner">
                     
 
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+<nav class="md-nav md-nav--secondary" aria-label="目录">
   
   
   
@@ -3661,15 +3594,15 @@
   
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
-      Table of contents
+      目录
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-overview" class="md-nav__link">
+  <a href="#minor-compact" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Overview
+        Minor compact
       
     </span>
   </a>
@@ -3677,10 +3610,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-basic-usage" class="md-nav__link">
+  <a href="#major-compact" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Basic Usage
+        Major compact
       
     </span>
   </a>
@@ -3688,102 +3621,35 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-advanced-features" class="md-nav__link">
+  <a href="#vs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Advanced Features
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="3. Advanced Features">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#context-injection" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Context Injection
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Context Injection">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#browse-mode" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Browse Mode
+        自动 vs. 手动
       
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#fuzzy-search-mode" class="md-nav__link">
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Fuzzy Search Mode
+        参数
       
     </span>
   </a>
   
 </li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#interrupt-execution" class="md-nav__link">
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Interrupt Execution
+        注意事项
       
     </span>
   </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#toggle-trace-display" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Toggle Trace Display
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#mid-run-message-insertion" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Mid-run Message Insertion
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#session-commands" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Session Commands
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -3804,7 +3670,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/cli/chat_command.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/configuration/compact.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -3812,73 +3678,134 @@
   
 
 
-<h1 id="chat-command">Chat Command <code>/</code><a class="headerlink" href="#chat-command" title="Permanent link">&para;</a></h1>
-<h2 id="1-overview">1. Overview<a class="headerlink" href="#1-overview" title="Permanent link">&para;</a></h2>
-<p>The Chat Command <code>/</code> is the heart of Datus-CLI. It enables you to converse with the AI agent in a multi-turn session, describe tasks in natural language, and receive reasoning steps and SQL code suggestions. Think of it as your copilot for exploring data, drafting SQL, and planning workflows — all directly in the CLI.</p>
-<p>You can chat with Datus in any format — plain English, bullet points, or sketches of logic — and freely edit or follow up on its responses. The agent keeps track of your instructions and previous outputs, so you can iteratively refine results without starting over.</p>
-<hr />
-<h2 id="2-basic-usage">2. Basic Usage<a class="headerlink" href="#2-basic-usage" title="Permanent link">&para;</a></h2>
-<p>Start a new chat session by entering <code>/</code> followed by your message:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>/ How many orders were placed last week?
-</span></code></pre></div>
-<p>The agent will respond with its reasoning process and a proposed SQL query. You can then follow up naturally:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>/ Filter only for VIP customers
-</span></code></pre></div>
-<p>Datus streams the output as it thinks — showing each action's execution result in real time. If the result contains SQL, it will:</p>
+<h1 id="context-compaction">上下文压缩（Context Compaction）<a class="headerlink" href="#context-compaction" title="Permanent link">&para;</a></h1>
+<p>随着对话变长，历史最终会逼近模型的上下文窗口上限。Datus 通过 <code>agent.compact</code> 下的两种互补压缩自动管理上下文，让你在一个长会话里持续工作，而无需手动清空、也不会撞上 token 上限。</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Minor compact</th>
+<th>Major compact</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>做什么</td>
+<td>把较早的工具 I/O 归档到磁盘</td>
+<td>把整个会话总结成摘要</td>
+</tr>
+<tr>
+<td>驱动方式</td>
+<td>规则（user 轮次计数）</td>
+<td>LLM（一次摘要调用）</td>
+</tr>
+<tr>
+<td>执行方式</td>
+<td>同步，但很快（本地、无 LLM 调用）</td>
+<td>同步、阻塞运行循环</td>
+</tr>
+<tr>
+<td>是否触及最近轮次</td>
+<td>否</td>
+<td>是 —— 替换全部历史</td>
+</tr>
+<tr>
+<td>可恢复</td>
+<td>是（归档文件）</td>
+<td>是（全历史 JSONL）</td>
+</tr>
+</tbody>
+</table>
+<h2 id="minor-compact">Minor compact<a class="headerlink" href="#minor-compact" title="Permanent link">&para;</a></h2>
+<p><strong>触发条件</strong> —— 在每个 user 轮次开始时，如果会话的 user 轮次超过 <code>keep_recent_user_turns</code>（默认 4），就会运行 minor compact。它的判据——user 轮次计数——只在轮次之间变化，因此每个轮次只判断一次，而不是每次工具调用之后都判断（那种逐次工具调用的检查留给 major，因为只有它的 token 占用会在轮次中途增长）。它是同步的，但由于只是纯本地的、基于规则的归档（无 LLM 调用），很快就能完成，几乎不会拖慢 agent。</p>
+<p><strong>做什么</strong> —— 对于保留窗口之外的*较早*轮次，任何长度超过 <code>archive_threshold</code> 字符（默认 1000）的工具调用参数或输出都会被移出实时对话并写入磁盘归档；原处留下一段简短的内联预览（<code>archive_preview_chars</code>，默认 1000；错误输出为 2×）并带上 <code>[DATUS_ARCHIVED]</code> 标记。</p>
+<p><strong>产生的行为</strong></p>
 <ul>
-<li>Automatically highlight the SQL in the output</li>
-<li>Copy the SQL to your clipboard for quick use</li>
-<li>Finally produce a Markdown-formatted summary of the result</li>
+<li>最近 <code>keep_recent_user_turns</code> 个轮次的完整工具 I/O 保持不变 —— 对话的活跃部分永远不会被削弱。</li>
+<li>较早的大体积输出会缩成「预览 + 指针」；当模型需要细节时，仍可通过 <code>read_file</code> 读取归档恢复完整内容。</li>
+<li>由于它只归档（不做摘要），不会丢失任何信息，也不消耗 LLM 调用。开销低、速度快、触发频繁。</li>
 </ul>
-<p><img alt="Reasoning progress" src="../../assets/reasoning_progress.png" /></p>
-<p><img alt="Result of query" src="../../assets/result_query.png" /></p>
-<p><img alt="Details of function calling" src="../../assets/function_calling_details.png" /></p>
-<hr />
-<h2 id="3-advanced-features">3. Advanced Features<a class="headerlink" href="#3-advanced-features" title="Permanent link">&para;</a></h2>
-<h3 id="context-injection">Context Injection<a class="headerlink" href="#context-injection" title="Permanent link">&para;</a></h3>
-<p>Context Injection allows you to pull existing tables, metrics or files into your conversation. There are two ways to do this:</p>
-<h4 id="browse-mode">Browse Mode<a class="headerlink" href="#browse-mode" title="Permanent link">&para;</a></h4>
-<p>Type <code>@</code> and press Tab to browse your context tree step by step. You can navigate by category (table / file / metrics) and drill down the directory-like structure to select the exact item you need.</p>
-<h4 id="fuzzy-search-mode">Fuzzy Search Mode<a class="headerlink" href="#fuzzy-search-mode" title="Permanent link">&para;</a></h4>
-<p>Type <code>@</code> followed by some keywords, then press Tab to trigger a fuzzy search. Datus will suggest context items ranked by textual similarity, letting you quickly find what you need without knowing the exact path.</p>
-<p>This is the fastest way to ground your prompts with precise context.</p>
-<p><img alt="Context injection browse mode" src="../../assets/context_browse.png" /></p>
-<p><img alt="Context injection fuzzy search" src="../../assets/context_fuzzy.png" /></p>
-<h3 id="interrupt-execution">Interrupt Execution<a class="headerlink" href="#interrupt-execution" title="Permanent link">&para;</a></h3>
-<p>Press <strong>ESC</strong> or <strong>Ctrl+C</strong> while the agent is running to gracefully interrupt the current execution. The agent will finish its current step, then stop and return control to you.</p>
-<p>After an interrupt, the session remains intact — you can continue typing new instructions, refine your question, or provide additional context. Nothing is lost.</p>
-<h3 id="toggle-trace-display">Toggle Trace Display<a class="headerlink" href="#toggle-trace-display" title="Permanent link">&para;</a></h3>
-<p>Press <strong>Ctrl+O</strong> while the agent is running to toggle the trace display mode between <strong>compact</strong> (progress only) and <strong>verbose</strong> (full step details). This lets you control how much detail you see during execution without interrupting the agent.</p>
-<h3 id="mid-run-message-insertion">Mid-run Message Insertion<a class="headerlink" href="#mid-run-message-insertion" title="Permanent link">&para;</a></h3>
-<p>While the agent is running, you don't have to wait for it to finish before adding more context. Type into the input box and press <strong>Enter</strong> — the text is queued and delivered to the model right before its next LLM turn, so it influences the run already in progress rather than starting a new one.</p>
-<p>How it works:</p>
+<h2 id="major-compact">Major compact<a class="headerlink" href="#major-compact" title="Permanent link">&para;</a></h2>
+<p><strong>触发条件</strong> —— 当最近一次模型调用的输入 token 达到上下文窗口的 <code>token_threshold</code>（默认 <code>0.9</code>，即 90%）时，会强制执行 major compact。该检查在每个 user 轮次开始时以及每次工具调用之后进行，因此它可以在**轮次中途**触发 —— 正好在上下文即将溢出时，而不必等到下一轮。<code>/compact</code> 可随时手动触发。</p>
+<p><strong>做什么</strong> —— 由模型把**整个**会话总结成一段摘要；随后清空会话历史，并用该摘要作为新的起点继续对话。压缩前的完整历史会被转存为一个 JSONL 文件，并在摘要末尾附上指向它的指针，使 agent 能通过 <code>read_file</code> 找回任意具体细节。</p>
+<p><strong>产生的行为</strong></p>
 <ul>
-<li>A <strong>pinned preview</strong> appears above the bottom status bar showing every queued message. The preview collapses to zero rows when the queue is drained.</li>
-<li>At each LLM turn, every queued message is drained, appended to the model input as <code>user</code> items, and persisted to the session history.</li>
-<li>If the run finishes its final turn while items are still queued, the residue <strong>auto-continues</strong> in a fresh run so nothing you typed is silently dropped.</li>
-<li>Inserted messages are kept in the rendered transcript across <code>Ctrl+O</code> verbose/compact toggles and on <code>/resume</code>, so you always see what you injected.</li>
+<li>它是**同步、阻塞**的：运行循环会等待摘要写入后才继续，因为下一次模型调用必须看到压缩后的历史，而不是已超限的历史。</li>
+<li>可见对话被折叠 —— 较早的轮次被摘要替换。在 CLI 中会先显示 <code>Compacting context…</code> 提示，随后展示摘要面板；在 API/print 流中则作为一条 <code>compact_summary</code> markdown 消息到达。</li>
+<li>以一定的细节换取空间：摘要是精炼的，因此细粒度内容此时只存在于 JSONL 转存中（仍可通过 <code>read_file</code> 获取）。</li>
+<li>一次 major compact 会额外消耗一次 LLM 调用（用于摘要），因此较为少见，只在接近上下文上限时触发。</li>
 </ul>
-<p>This complements — rather than replaces — <code>ESC</code> / <code>Ctrl+C</code> (interrupt) and <code>/chat/stop</code>. Use insertion when you want to <strong>steer</strong> the current run with new context; use interrupt when you want to <strong>abort</strong> it.</p>
-<h3 id="session-commands">Session Commands<a class="headerlink" href="#session-commands" title="Permanent link">&para;</a></h3>
+<h2 id="vs">自动 vs. 手动<a class="headerlink" href="#vs" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>/clear</code>: Clear the current session context and start fresh</li>
-<li><code>/compact</code>: Compress previous turns to reduce memory usage while preserving context</li>
-<li>Runs a <strong>major compact</strong>: the whole session is summarized by the model into a single recap, with the full history saved to a JSONL file for recovery</li>
-<li>Auto-trigger: a major compact also runs automatically when the model context usage exceeds 90% (configurable); separately, a lighter <strong>minor compact</strong> automatically archives old tool I/O after tool calls as the session grows</li>
-<li>See <a href="../../configuration/compact/">Context Compaction</a> for the major/minor difference and tunable parameters</li>
-<li><code>/chat_info</code>: Show the current active context (messages, tables, metrics)</li>
-<li><code>/resume [session_id]</code>: Resume a previous chat session</li>
-<li>Without arguments: displays a table of all available sessions (sorted by last modified time), then prompts you to pick one by number</li>
-<li>With a session ID: directly resumes that specific session</li>
-<li>After resuming, the full conversation history is replayed so you can see what was discussed, and you can continue chatting from where you left off</li>
-<li>If the session has high token usage (&gt;50k tokens), a hint is shown suggesting <code>/compact</code> to reduce context size</li>
-<li><code>/rewind [turn_number]</code>: Rewind the current session to a specific user turn, creating a new branched session</li>
-<li>Displays a numbered table of all user turns in the current session</li>
-<li>You select a turn number — the session is cloned up to (and including) that turn's assistant response, producing a new session</li>
-<li>The original session is preserved; the rewound copy becomes your active session</li>
-<li>Without arguments: shows the turn table and prompts for a turn number</li>
-<li>With a turn number: directly rewinds to that turn</li>
-<li>Useful when you want to retry a question with different phrasing or explore an alternative path without losing the original conversation</li>
+<li><strong>自动</strong> —— 两种压缩在会话过程中自行运行，你无需做任何事。major 在接近上下文上限时触发，minor 随轮次增长触发。</li>
+<li><strong>手动 <code>/compact</code></strong> —— 无论当前用量如何，都会立即执行一次 <strong>major</strong>。适合在开始一项较大的新任务前使用，获得一个干净、已摘要的起点。</li>
+</ul>
+<h2 id="_1">参数<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>配置项</th>
+<th>类型</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>compact.major.enabled</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>启用 LLM 驱动的全历史摘要。</td>
+</tr>
+<tr>
+<td><code>compact.major.token_threshold</code></td>
+<td>float</td>
+<td><code>0.9</code></td>
+<td>上下文窗口占用比例超过该值时强制 major（覆盖自动调度中的 minor 选择）。</td>
+</tr>
+<tr>
+<td><code>compact.minor.enabled</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>启用规则驱动的归档压缩。</td>
+</tr>
+<tr>
+<td><code>compact.minor.keep_recent_user_turns</code></td>
+<td>int</td>
+<td><code>4</code></td>
+<td>保留最近 N 个 user 轮次的原始工具 I/O；更早的轮次可被归档。</td>
+</tr>
+<tr>
+<td><code>compact.minor.archive_threshold</code></td>
+<td>int</td>
+<td><code>1000</code></td>
+<td>工具调用参数/输出超过该字符数时转存到磁盘。</td>
+</tr>
+<tr>
+<td><code>compact.minor.archive_preview_chars</code></td>
+<td>int</td>
+<td><code>1000</code></td>
+<td>归档标记中保留的内联预览长度（错误输出为 2×）。</td>
+</tr>
+</tbody>
+</table>
+<div class="language-yaml highlight"><span class="filename">agent.yml</span><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">compact</span><span class="p">:</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">major</span><span class="p">:</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="nt">token_threshold</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.9</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">    </span><span class="nt">minor</span><span class="p">:</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">      </span><span class="nt">keep_recent_user_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">      </span><span class="nt">archive_threshold</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1000</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">      </span><span class="nt">archive_preview_chars</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1000</span>
+</span></code></pre></div>
+<p>如需完全关闭自动压缩，将 <code>major.enabled</code> 与 <code>minor.enabled</code> 都设为 <code>false</code>。即使 <code>major.enabled</code> 为 <code>false</code>，仍可手动运行 <code>/compact</code>。</p>
+<h2 id="_2">注意事项<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Major compact 的触发读取当前轮次的**实时** token 用量（与 CLI 状态栏显示的是同一数值）。在全新会话或刚 <code>resume</code> 后，该信号从零开始，因此在至少有一次模型调用上报用量之前，第一轮不会触发 major compact。</li>
+<li>Minor compact 依据会话的 user 轮次计数判断是否触发，因此在 resume 之后仍能正确工作。</li>
+<li>归档的工具 I/O 与全历史 JSONL 存放在会话的数据目录下；路径见 <a href="../storage/">存储（Storage）</a>。</li>
 </ul>
 
 
@@ -3908,33 +3835,33 @@
   
     
       
-      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+      <nav class="md-footer__inner md-grid" aria-label="页脚" >
         
           
-          <a href="../introduction/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Introduction">
+          <a href="../agent/" class="md-footer__link md-footer__link--prev" aria-label="上一页: Agent">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
             </div>
             <div class="md-footer__title">
               <span class="md-footer__direction">
-                Previous
+                上一页
               </span>
               <div class="md-ellipsis">
-                Introduction
+                Agent
               </div>
             </div>
           </a>
         
         
           
-          <a href="../context_command/" class="md-footer__link md-footer__link--next" aria-label="Next: Context Command">
+          <a href="../workflow/" class="md-footer__link md-footer__link--next" aria-label="下一页: 工作流">
             <div class="md-footer__title">
               <span class="md-footer__direction">
-                Next
+                下一页
               </span>
               <div class="md-ellipsis">
-                Context Command
+                工作流
               </div>
             </div>
             <div class="md-footer__button md-icon">
@@ -4024,10 +3951,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.footer", "navigation.tabs", "navigation.tracking", "navigation.indexes", "content.code.copy", "content.code.select", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.footer", "navigation.tabs", "navigation.tracking", "navigation.indexes", "content.code.copy", "content.code.select", "content.action.edit"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
     
   </body>
