@@ -233,6 +233,17 @@ def test_embedding_unavailable_error_detection():
     assert not is_embedding_unavailable_error("Storage not initialized")
 
 
+def test_fastembed_snapshot_check_skips_loaded_custom_embedding(monkeypatch):
+    def fail_has_local_snapshot(*args, **kwargs):
+        raise AssertionError("should not check fastembed snapshot for custom embedding")
+
+    monkeypatch.setattr("datus.storage.fastembed_embeddings.has_local_snapshot", fail_has_local_snapshot)
+    model = EmbeddingModel(model_name="unit-test-model", dim_size=2)
+    model._model = _FakeEmbeddingFunction()
+
+    assert model.has_local_fastembed_snapshot() is True
+
+
 def test_store_initializes_table_with_loaded_model():
     model = EmbeddingModel(model_name="unit-test-model", dim_size=2)
     model._model = _FakeEmbeddingFunction()

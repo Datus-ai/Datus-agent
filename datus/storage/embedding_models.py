@@ -161,6 +161,9 @@ class EmbeddingModel:
         from datus.storage.fastembed_embeddings import FastEmbedEmbeddings, has_local_snapshot
 
         model_name = FastEmbedEmbeddings._normalize_model_name(self.model_name)
+        if self._model is not None and not isinstance(self._model, FastEmbedEmbeddings):
+            return True
+
         cache_dir = self._model.cache_dir if self._model is not None else None
         if cache_dir is None:
             from datus.storage.embedding_diagnostics import resolve_fastembed_cache_dir
