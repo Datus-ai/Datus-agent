@@ -304,6 +304,8 @@ agent:
       max_turns: 30
 ```
 
+> 上下文压缩（在长会话中自动运行的 minor/major 压缩，使会话保持在模型上下文窗口内）通过 `agent.compact` 配置。其工作方式与可调参数见[上下文压缩](compact.md)。
+
 ## 完整示例
 ```yaml title="datus-config.yaml"
 agent:

@@ -342,6 +342,8 @@ agent:
       max_turns: 30
 ```
 
+> Context compaction (automatic minor/major passes that keep a long session within the model's context window) is configured under `agent.compact`. See [Context Compaction](compact.md) for how it works and the tunable parameters.
+
 ## Complete Configuration Example
 
 Here's a comprehensive agent configuration example with the provider-level format:

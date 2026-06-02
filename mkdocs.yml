@@ -60,6 +60,7 @@ nav:
     - Configuration:
       - Introduction: configuration/introduction.md
       - Agent: configuration/agent.md
+      - Context Compaction: configuration/compact.md
       - Workflow: configuration/workflow.md
       - Benchmark: configuration/benchmark.md
       - Services:
@@ -150,6 +151,7 @@ plugins:
             Chat: Chat
             Knowledge Base API: 知识库 API
             Configuration: 配置
+            Context Compaction: 上下文压缩
             Services: 服务
             Databases: 数据库
             Semantic Layer: 语义层

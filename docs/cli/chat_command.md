@@ -81,7 +81,9 @@ This complements — rather than replaces — `ESC` / `Ctrl+C` (interrupt) and `
 
 - `/clear`: Clear the current session context and start fresh
 - `/compact`: Compress previous turns to reduce memory usage while preserving context
-  - Auto-trigger: `/compact` will run automatically when the model context usage exceeds 90%, so you can continue chatting without hitting limits
+  - Runs a **major compact**: the whole session is summarized by the model into a single recap, with the full history saved to a JSONL file for recovery
+  - Auto-trigger: a major compact also runs automatically when the model context usage exceeds 90% (configurable); separately, a lighter **minor compact** archives old tool I/O in the background as the session grows
+  - See [Context Compaction](../configuration/compact.md) for the major/minor difference and tunable parameters
 - `/chat_info`: Show the current active context (messages, tables, metrics)
 - `/resume [session_id]`: Resume a previous chat session
   - Without arguments: displays a table of all available sessions (sorted by last modified time), then prompts you to pick one by number
