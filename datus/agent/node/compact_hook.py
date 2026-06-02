@@ -57,6 +57,10 @@ class CompactHook(RunHooks):
         if mode == "major":
             # Block the run loop here: the next SDK turn will re-read the
             # session, so we must persist the summary before yielding control.
+            # The user-facing display (pinned progress hint + cleared-screen
+            # summary panel) is injected inside ``node.compact`` so every major
+            # path — this hook, the turn-start ``pre_user_turn`` pass, and the
+            # manual ``/compact`` — shares one flow.
             try:
                 await node.compact(mode="major", reason="hook_major")
             except Exception as exc:

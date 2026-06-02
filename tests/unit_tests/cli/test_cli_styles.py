@@ -147,3 +147,55 @@ class TestColorMarkup:
     def test_status_fail_uses_red(self):
         raw = self._capture_with_color(print_status, "down", ok=False)
         assert SYM_CROSS in raw
+
+
+def _render_renderable(renderable) -> str:
+    import re
+
+    buf = StringIO()
+    Console(file=buf, no_color=True, force_terminal=True, width=100, highlight=False).print(renderable)
+    return re.sub(r"\x1b\[[^m]*m", "", buf.getvalue())
+
+
+class TestRenderCompactSummaryPanel:
+    def test_contains_summary_token_check_history(self):
+        from datus.cli.cli_styles import render_compact_summary_panel
+
+        out = _render_renderable(render_compact_summary_panel("Did **work** on X.", 42, "/tmp/h.jsonl"))
+        assert "Context compacted" in out
+        assert SYM_CHECK in out
+        assert "work" in out  # markdown body rendered
+        assert "42 tokens" in out
+        assert "/tmp/h.jsonl" in out
+
+    def test_returns_panel(self):
+        from rich.panel import Panel
+
+        from datus.cli.cli_styles import render_compact_summary_panel
+
+        assert isinstance(render_compact_summary_panel("s"), Panel)
+
+    def test_no_history_no_token_footer(self):
+        from datus.cli.cli_styles import render_compact_summary_panel
+
+        out = _render_renderable(render_compact_summary_panel("Just summary.", 0, ""))
+        assert "Just summary." in out
+        assert "History:" not in out
+        assert "tokens" not in out
+
+    def test_empty_summary_uses_placeholder(self):
+        from datus.cli.cli_styles import render_compact_summary_panel
+
+        out = _render_renderable(render_compact_summary_panel("", 0, ""))
+        assert "empty summary" in out
+
+
+class TestRenderCompactProgressLine:
+    def test_returns_text_with_message(self):
+        from rich.text import Text
+
+        from datus.cli.cli_styles import render_compact_progress_line
+
+        line = render_compact_progress_line()
+        assert isinstance(line, Text)
+        assert "Compacting context" in line.plain

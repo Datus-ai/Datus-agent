@@ -2225,7 +2225,7 @@ class TestCmdCompactWithSession:
         cmds.cmd_compact("")
 
         output = _get_console_output(console)
-        assert "session compacted" in output.lower()
+        assert "context compacted" in output.lower()
 
     def test_compact_resets_in_memory_state(self, real_agent_config, mock_llm_create):
         """After successful compact, in-memory state is reset via _reload_state_from_session."""
@@ -2262,12 +2262,56 @@ class TestCmdCompactWithSession:
         # Compact must succeed; this is the precondition for the reload behavior
         # under test. A silent failure here would have previously made the
         # remaining assertions vacuous.
-        assert "session compacted" in output.lower(), f"compact did not succeed; output={output!r}"  # noqa: E501
+        assert "context compacted" in output.lower(), f"compact did not succeed; output={output!r}"  # noqa: E501
         # After successful compact, _reload_state_from_session rebuilds from
         # the compacted session (which contains only the summary pair), so
         # pre-compact accumulated turn actions must be cleared.
         assert cmds._trace_verbose is False
         assert cmds.current_node.actions == []
+
+    def test_compact_success_clears_screen_and_renders_panel(self, real_agent_config, mock_llm_create):
+        """A successful manual compact clears the screen and renders the shared
+        summary panel — matching the auto (mid-turn) path's presentation."""
+        from tests.unit_tests.mock_llm_model import build_simple_response
+
+        console = Console(file=io.StringIO(), no_color=True)
+        cmds = _make_chat_commands(real_agent_config, console=console)
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("Hello!"),
+                build_simple_response("Summary of conversation"),
+            ]
+        )
+        cmds.execute_chat_command("Hi there")
+
+        cleared = []
+        console.clear = lambda *a, **k: cleared.append(True)
+        console.file = io.StringIO()
+        cmds.cmd_compact("")
+
+        assert cleared, "screen must be cleared before the summary panel"
+        output = _get_console_output(console)
+        assert "context compacted" in output.lower()
+
+    def test_compact_failure_does_not_clear(self, real_agent_config, mock_llm_create):
+        """A failed compact must NOT clear the screen — there is no valid
+        summary to anchor, and the failure message must stay visible."""
+        console = Console(file=io.StringIO(), no_color=True)
+        cmds = _make_chat_commands(real_agent_config, console=console)
+        cmds.current_node = cmds._create_new_node()
+
+        async def _fail(*, mode, reason):
+            return {"mode": mode, "success": False, "error": "boom"}
+
+        cmds.current_node.compact = _fail
+        cleared = []
+        console.clear = lambda *a, **k: cleared.append(True)
+        console.file = io.StringIO()
+        cmds.cmd_compact("")
+
+        assert not cleared
+        output = _get_console_output(console)
+        assert "failed to compact" in output.lower()
 
 
 # ===========================================================================

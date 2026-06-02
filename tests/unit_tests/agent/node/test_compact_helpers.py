@@ -21,6 +21,7 @@ from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.compact_archive import ToolArchive
 from datus.configuration.agent_config import CompactConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.token_usage import TokenUsage
 
 
 class _Node(AgenticNode):
@@ -42,6 +43,7 @@ def _build_node(tmp_path):
     node._node_model_name = None
     node.session_id = "sid_test"
     node.actions = []
+    node.running_turn_usage = None
     node._compact_cfg = CompactConfig()
     node._compacted_until = 0
     node._archive = ToolArchive(project_name="proj", session_id="sid_test", base_dir=tmp_path / "data")
@@ -256,6 +258,67 @@ class TestHistoryTokenRatioSync:
         node.actions.extend([old_assistant, user])
         assert node._history_token_ratio_sync() == 0.0
 
+    def test_prefers_running_turn_usage_over_actions(self, tmp_path):
+        """Mid-turn: the live ``running_turn_usage`` snapshot wins over the
+        (stale, prior-turn) ``self.actions`` scan. This is what lets a major
+        compact fire mid-turn rather than one turn late.
+        """
+        node = _build_node(tmp_path)
+        node._pinned_model = MagicMock()
+        node._pinned_model.context_length.return_value = 1000
+        # A stale action that would yield 0.999 if the actions scan ran.
+        node.actions.append(
+            ActionHistory.create_action(
+                role=ActionRole.ASSISTANT,
+                action_type="chat",
+                messages="stale",
+                input_data={},
+                output_data={"usage": {"last_call_input_tokens": 999}},
+                status=ActionStatus.SUCCESS,
+            )
+        )
+        node.running_turn_usage = TokenUsage(session_total_tokens=300, context_length=1000)
+        # 300/1000 from the live snapshot, NOT 999/1000 from actions.
+        assert node._history_token_ratio_sync() == 0.3
+
+    def test_running_turn_usage_context_length_falls_back_to_model(self, tmp_path):
+        """A snapshot without its own ``context_length`` uses the node model's."""
+        node = _build_node(tmp_path)
+        node._pinned_model = MagicMock()
+        node._pinned_model.context_length.return_value = 2000
+        node.running_turn_usage = TokenUsage(session_total_tokens=500, context_length=0)
+        assert node._history_token_ratio_sync() == 0.25
+
+    def test_running_turn_usage_falls_back_to_input_tokens(self, tmp_path):
+        """When ``session_total_tokens`` is 0, the snapshot's ``input_tokens``
+        is used as the live occupancy signal.
+        """
+        node = _build_node(tmp_path)
+        node._pinned_model = MagicMock()
+        node._pinned_model.context_length.return_value = 1000
+        node.running_turn_usage = TokenUsage(session_total_tokens=0, input_tokens=600, context_length=1000)
+        assert node._history_token_ratio_sync() == 0.6
+
+    def test_empty_running_turn_usage_does_not_mask_actions_fallback(self, tmp_path):
+        """A zero-token snapshot must not short-circuit the actions fallback —
+        the scan still surfaces the most recent usable usage record.
+        """
+        node = _build_node(tmp_path)
+        node._pinned_model = MagicMock()
+        node._pinned_model.context_length.return_value = 1000
+        node.running_turn_usage = TokenUsage(session_total_tokens=0, input_tokens=0, context_length=1000)
+        node.actions.append(
+            ActionHistory.create_action(
+                role=ActionRole.ASSISTANT,
+                action_type="chat",
+                messages="ok",
+                input_data={},
+                output_data={"usage": {"last_call_input_tokens": 700}},
+                status=ActionStatus.SUCCESS,
+            )
+        )
+        assert node._history_token_ratio_sync() == 0.7
+
 
 class TestResolveUserTurnCutoff:
     """The cutoff is the item-index that separates the eligible-to-archive
@@ -354,3 +417,93 @@ class TestDumpSessionHistoryJsonl:
         node._session.get_items = AsyncMock(side_effect=RuntimeError("db broke"))
         # Should swallow the error rather than break the whole major pass.
         assert await node._dump_session_history_jsonl() is None
+
+
+class TestCompactDisplayInjection:
+    """``compact()`` injects compact_progress/compact_summary display actions
+    for EVERY major path (hook_major, pre_user_turn, cli_manual) — so the CLI
+    feedback is driven from one place."""
+
+    @pytest.mark.asyncio
+    async def test_major_injects_progress_then_summary(self, tmp_path):
+        node = _build_node(tmp_path)
+        node.action_bus = MagicMock()
+        node._major_compact = AsyncMock(
+            return_value={
+                "mode": "major",
+                "success": True,
+                "summary": "S",
+                "summary_token": 7,
+                "history_jsonl": "/h",
+            }
+        )
+        result = await node.compact(mode="major", reason="test")
+        assert result["success"]
+        assert node.action_bus.put.call_count == 2
+        progress = node.action_bus.put.call_args_list[0].args[0]
+        summary = node.action_bus.put.call_args_list[1].args[0]
+        assert progress.action_type == "compact_progress"
+        assert summary.action_type == "compact_summary"
+        assert summary.action_id == progress.action_id  # shared id
+        assert summary.output["summary"] == "S"
+        assert summary.output["summary_token"] == 7
+        assert summary.output["history_jsonl"] == "/h"
+
+    @pytest.mark.asyncio
+    async def test_pre_user_turn_auto_major_injects_display(self, tmp_path):
+        """The turn-start ``_auto_compact`` (mode=auto, reason=pre_user_turn)
+        path must also display when it resolves to major."""
+        node = _build_node(tmp_path)
+        node.action_bus = MagicMock()
+        node._decide_compact_mode = AsyncMock(return_value="major")
+        node._major_compact = AsyncMock(return_value={"mode": "major", "success": True, "summary": "S"})
+        ran = await node._auto_compact()
+        assert ran is True
+        types = [c.args[0].action_type for c in node.action_bus.put.call_args_list]
+        assert types == ["compact_progress", "compact_summary"]
+
+    @pytest.mark.asyncio
+    async def test_major_failure_emits_terminal_with_empty_summary(self, tmp_path):
+        node = _build_node(tmp_path)
+        node.action_bus = MagicMock()
+        node._major_compact = AsyncMock(return_value={"mode": "major", "success": False})
+        result = await node.compact(mode="major", reason="test")
+        assert result["success"] is False
+        # progress + a terminal summary with empty payload, so the renderer can
+        # clear the pinned hint without drawing a panel.
+        assert node.action_bus.put.call_count == 2
+        progress, terminal = (c.args[0] for c in node.action_bus.put.call_args_list)
+        assert progress.action_type == "compact_progress"
+        assert terminal.action_type == "compact_summary"
+        assert terminal.output["summary"] == ""
+
+    @pytest.mark.asyncio
+    async def test_progress_injected_before_blocking_summary_call(self, tmp_path):
+        node = _build_node(tmp_path)
+        node.action_bus = MagicMock()
+        seen = {}
+
+        async def _major(*, reason):
+            seen["puts_before"] = node.action_bus.put.call_count
+            return {"mode": "major", "success": True, "summary": "S"}
+
+        node._major_compact = AsyncMock(side_effect=_major)
+        await node.compact(mode="major", reason="test")
+        assert seen["puts_before"] == 1  # progress already out before the blocking call
+
+    @pytest.mark.asyncio
+    async def test_minor_does_not_inject_display(self, tmp_path):
+        node = _build_node(tmp_path)
+        node.action_bus = MagicMock()
+        node._minor_compact = AsyncMock(return_value={"mode": "minor", "success": True})
+        await node.compact(mode="minor", reason="test")
+        node.action_bus.put.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_noop_does_not_inject_display(self, tmp_path):
+        node = _build_node(tmp_path)
+        node.action_bus = MagicMock()
+        node._compact_cfg.major.enabled = False
+        node._compact_cfg.minor.enabled = False
+        await node.compact(mode="auto", reason="test")
+        node.action_bus.put.assert_not_called()

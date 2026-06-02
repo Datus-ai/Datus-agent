@@ -483,6 +483,9 @@ def action_to_sse_event(
         if action.action_type == "token_usage":
             return _build_token_usage_event(action, event_id)
 
+        if action.action_type == "compact_progress":
+            return None  # REPL-only in-progress hint; not surfaced over SSE
+
         if action.action_type == "thinking_delta":
             if not stream_thinking:
                 return None
@@ -504,6 +507,27 @@ def action_to_sse_event(
                 return None
             contents = [IMessageContent(type="markdown", payload={"content": text})]
             sse_type = SSEDataType.UPDATE_MESSAGE if is_update else SSEDataType.CREATE_MESSAGE
+        elif action.action_type == "compact_summary":
+            # Post-compact summary: a markdown bubble carrying a ``kind`` marker
+            # so the frontend can recognise the compacted-context summary (and
+            # e.g. collapse the prior transcript). The backend never clears
+            # anything itself — clearing is a REPL-only concern.
+            output = action.output if isinstance(action.output, dict) else {}
+            summary = str(output.get("summary", "") or "")
+            if not summary:
+                return None
+            contents = [
+                IMessageContent(
+                    type="markdown",
+                    payload={
+                        "content": summary,
+                        "kind": "compact_summary",
+                        "summary_token": int(output.get("summary_token", 0) or 0),
+                        "history_jsonl": str(output.get("history_jsonl", "") or ""),
+                    },
+                )
+            ]
+            sse_type = SSEDataType.CREATE_MESSAGE
         elif action.action_type == SUBAGENT_COMPLETE_ACTION_TYPE:
             contents = _build_subagent_complete_content(action)
         elif role == ActionRole.TOOL and status == ActionStatus.PROCESSING:

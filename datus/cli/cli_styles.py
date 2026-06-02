@@ -125,6 +125,47 @@ def render_user_scrollback_text(message: str, prompt_text: str = USER_SCROLLBACK
     )
 
 
+def render_compact_progress_line() -> Text:
+    """One-line hint shown while a major compact is running.
+
+    Reused by both the auto path (mid-turn ``compact_progress`` action) and
+    the manual ``/compact`` command so the in-progress feedback is identical.
+    """
+    return Text("Compacting context…", style=CLR_INFO)
+
+
+def render_compact_summary_panel(summary: str, summary_token: int = 0, history_jsonl: str = "") -> Panel:
+    """Render the post-compact summary as a bordered panel.
+
+    Shown after a major compact completes — auto (mid-turn) or manual
+    ``/compact`` — once the screen is cleared, so the summary becomes the new
+    visual anchor for the compacted context. ``summary`` is the markdown the
+    compact LLM pass produced; ``summary_token`` / ``history_jsonl`` annotate
+    a dim footer. Both display paths share this single helper.
+    """
+    from rich.console import Group
+    from rich.markdown import Markdown
+
+    body = Markdown(summary.strip() or "(empty summary)", code_theme=CODE_THEME)
+    footer_bits: List[str] = []
+    if summary_token:
+        footer_bits.append(f"{summary_token} tokens")
+    if history_jsonl:
+        footer_bits.append(f"History: {history_jsonl}")
+    renderables: list = [body]
+    if footer_bits:
+        renderables.append(Text("  ·  ".join(footer_bits), style=CLR_INFO))
+    return Panel(
+        Group(*renderables),
+        title=f"{SYM_CHECK} Context compacted",
+        title_align="left",
+        border_style=CLR_SUCCESS,
+        box=ROUNDED,
+        padding=(0, 1),
+        expand=True,
+    )
+
+
 # ── prompt_toolkit Style dicts ──────────────────────────────
 # Main REPL / TUI status bar + completion menu + pinned rolling window.
 STATUS_BAR_STYLE: dict[str, str] = {

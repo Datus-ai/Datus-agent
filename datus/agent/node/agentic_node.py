@@ -1171,8 +1171,71 @@ class AgenticNode(Node):
             if resolved_mode == "noop":
                 return {"mode": "noop", "reason": reason, "success": True}
             if resolved_mode == "major":
-                return await self._major_compact(reason=reason)
+                # Every major path — ``hook_major`` (mid-turn), ``pre_user_turn``
+                # (turn start, via ``_auto_compact``) and ``cli_manual`` — flows
+                # through here, so the CLI display is driven from one place. A
+                # pinned in-progress hint goes out before the blocking summary
+                # call; a terminal summary action follows. Injection is a no-op
+                # when no action_bus consumer is live (the manual ``/compact``
+                # path renders to the console directly instead).
+                compact_action_id = f"compact_{uuid.uuid4().hex[:8]}"
+                self._emit_compact_display_action(compact_action_id, "progress")
+                result = await self._major_compact(reason=reason)
+                # Always emit the terminal action — even on failure — so the
+                # pinned hint is cleared; the renderer only draws the panel when
+                # a summary is actually present.
+                self._emit_compact_display_action(
+                    compact_action_id, "summary", result if result.get("success") else None
+                )
+                return result
             return await self._minor_compact(reason=reason)
+
+    def _emit_compact_display_action(
+        self, action_id: str, status: str, result: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Inject a ``compact_progress`` / ``compact_summary`` display action.
+
+        Pushed to ``action_bus`` ONLY — deliberately not ``add_action()``-ed to
+        the history manager: a major compact clears the session, so a persisted
+        summary action would duplicate on resume/reprint and contradict the
+        cleared-history semantics. The CLI renderer draws a pinned progress hint
+        and a cleared-screen summary panel; the print/API content builders
+        forward a markdown bubble. No-op when no ``action_bus`` is wired or no
+        consumer is live (e.g. manual ``/compact``, which renders directly).
+        """
+        bus = getattr(self, "action_bus", None)
+        put = getattr(bus, "put", None) if bus is not None else None
+        if not callable(put):
+            return
+        if status == "progress":
+            action = ActionHistory(
+                action_id=action_id,
+                role=ActionRole.ASSISTANT,
+                messages="Compacting context…",
+                action_type="compact_progress",
+                input={},
+                output={},
+                status=ActionStatus.PROCESSING,
+            )
+        else:
+            res = result if isinstance(result, dict) else {}
+            action = ActionHistory(
+                action_id=action_id,
+                role=ActionRole.ASSISTANT,
+                messages="Context compacted",
+                action_type="compact_summary",
+                input={},
+                output={
+                    "summary": res.get("summary", ""),
+                    "summary_token": res.get("summary_token", 0),
+                    "history_jsonl": res.get("history_jsonl", ""),
+                },
+                status=ActionStatus.SUCCESS,
+            )
+        try:
+            put(action)
+        except Exception as exc:  # noqa: BLE001 — display must never crash the run loop
+            logger.debug("compact display action injection failed: %s", exc)
 
     def _ensure_compact_state(self) -> None:
         """Lazy-init the compact subsystem attributes.
@@ -1261,12 +1324,30 @@ class AgenticNode(Node):
     def _history_token_ratio_sync(self) -> float:
         """Synchronous estimate of context window usage as a fraction.
 
-        Uses the last cached input-token count surfaced by ``_count_session_tokens``
-        via the most recent action. We avoid awaiting the session here because
-        the trigger check has to be cheap enough to call from
-        ``on_tool_end`` without stalling the run loop. Returns 0.0 when no
-        usage signal is available or no ``context_length`` is known.
+        Prefers the in-memory ``running_turn_usage`` snapshot, which
+        :class:`TokenUsageHook` refreshes after every LLM call (``on_llm_end``
+        / native ``emit_manual``). The only caller is ``_decide_compact_mode``
+        via ``CompactHook.on_tool_end``, and any ``on_tool_end`` fires after at
+        least one LLM call in the current turn, so the snapshot reflects the
+        **live** context occupancy of the turn in progress — the same value the
+        CLI status bar renders (``running_turn_usage.session_total_tokens``),
+        keeping the compact trigger and the status bar in agreement. This is
+        what lets a major compact fire mid-turn instead of one turn late.
+
+        Falls back to walking ``self.actions`` — only populated once the turn
+        ends (``self.actions.extend(...)`` after the stream loop) — when no live
+        snapshot exists (e.g. a model call that surfaced no usage). We avoid
+        awaiting the session here because the trigger check has to be cheap
+        enough to call from ``on_tool_end`` without stalling the run loop.
+        Returns 0.0 when neither source yields a positive token count or no
+        ``context_length`` is known.
         """
+        running = getattr(self, "running_turn_usage", None)
+        if running is not None:
+            tok = running.session_total_tokens or running.input_tokens or 0
+            ctx = running.context_length or self.context_length or 0
+            if ctx > 0 and tok > 0:
+                return tok / float(ctx)
         if not self.context_length:
             return 0.0
         for action in reversed(self.actions):

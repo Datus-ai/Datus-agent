@@ -397,3 +397,27 @@ class TestTokenUsageContent:
         assert c.payload["total_tokens"] == 1500  # valid value preserved
         assert c.payload["delta"]["output_tokens"] == 0
         assert c.payload["context_length"] == 0
+
+
+class TestCompactActions:
+    def test_compact_summary_to_markdown_with_kind_marker(self):
+        action = _make_action(
+            action_type="compact_summary",
+            output_data={"summary": "# Recap\nDid X.", "summary_token": 88, "history_jsonl": "/h.jsonl"},
+        )
+        contents = action_to_content(action)
+        assert contents is not None and len(contents) == 1
+        c = contents[0]
+        assert c.type == "markdown"
+        assert c.payload["content"] == "# Recap\nDid X."
+        assert c.payload["kind"] == "compact_summary"
+        assert c.payload["summary_token"] == 88
+        assert c.payload["history_jsonl"] == "/h.jsonl"
+
+    def test_compact_summary_empty_returns_none(self):
+        action = _make_action(action_type="compact_summary", output_data={"summary": ""})
+        assert action_to_content(action) is None
+
+    def test_compact_progress_returns_none(self):
+        action = _make_action(action_type="compact_progress", status=ActionStatus.PROCESSING, output_data={})
+        assert action_to_content(action) is None

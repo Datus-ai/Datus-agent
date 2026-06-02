@@ -1570,3 +1570,32 @@ class TestTokenUsageEvent:
         assert event.data.llm_session_id == "gen_sql_session_abc"
         assert event.data.input_tokens == 9000
         assert event.data.output_tokens == 800
+
+
+class TestCompactActions:
+    """compact_progress / compact_summary SSE conversion (display layer is REPL-only;
+    the API just forwards a markdown bubble with a ``kind`` marker, never clears)."""
+
+    def test_compact_summary_produces_markdown_message(self):
+        action = _make_action(
+            action_type="compact_summary",
+            output={"summary": "# Recap\nDid X.", "summary_token": 77, "history_jsonl": "/h.jsonl"},
+        )
+        event = action_to_sse_event(action, event_id=7, message_id="msg-7")
+        event = _assert_sse_event(event)
+        assert event.event == "message"
+        assert event.data.type == SSEDataType.CREATE_MESSAGE
+        content = event.data.payload.content[0]
+        assert content.type == "markdown"
+        assert content.payload["content"] == "# Recap\nDid X."
+        assert content.payload["kind"] == "compact_summary"
+        assert content.payload["summary_token"] == 77
+        assert content.payload["history_jsonl"] == "/h.jsonl"
+
+    def test_compact_summary_empty_returns_none(self):
+        action = _make_action(action_type="compact_summary", output={"summary": ""})
+        assert action_to_sse_event(action, event_id=8, message_id="msg-8") is None
+
+    def test_compact_progress_returns_none(self):
+        action = _make_action(action_type="compact_progress", status=ActionStatus.PROCESSING, output={})
+        assert action_to_sse_event(action, event_id=9, message_id="msg-9") is None

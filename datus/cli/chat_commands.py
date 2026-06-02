@@ -22,7 +22,13 @@ from rich.syntax import Syntax
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.cli.action_display.display import ActionHistoryDisplay
 from datus.cli.action_display.renderers import render_assistant_response_markdown
-from datus.cli.cli_styles import CODE_THEME, print_error, print_success
+from datus.cli.cli_styles import (
+    CODE_THEME,
+    print_error,
+    print_success,
+    render_compact_progress_line,
+    render_compact_summary_panel,
+)
 from datus.cli.execution_state import ExecutionInterrupted, PendingInputQueue, auto_submit_interaction
 from datus.cli.list_selector_app import ListItem, ListSelectorApp
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
@@ -1533,14 +1539,8 @@ class ChatCommands:
             return
 
         try:
-            # Determine node type for display
-            node_type = "Chat" if isinstance(self.current_node, ChatAgenticNode) else "Subagent"
-
-            # Display session info before compacting
-            self.console.print(f"[bold blue]Compacting {node_type} Session...[/]")
-            self.console.print(f"  Current Session ID: {session_info['session_id']}")
-            self.console.print(f"  Current Token Count: {session_info['token_count']}")
-            self.console.print(f"  Current Action Count: {session_info['action_count']}")
+            # In-progress hint (reuses the same helper as the auto path).
+            self.console.print(render_compact_progress_line())
 
             async def run_compact():
                 return await self.current_node.compact(mode="major", reason="cli_manual")
@@ -1548,11 +1548,17 @@ class ChatCommands:
             result = asyncio.run(run_compact())
 
             if result.get("success"):
-                self.console.print(f"[green]✓ Session compacted ({result.get('mode')})![/]")
-                if result.get("history_jsonl"):
-                    self.console.print(f"  History dump: {result['history_jsonl']}")
-                if result.get("archive_dir"):
-                    self.console.print(f"  Archive dir:  {result['archive_dir']}")
+                # Clear the screen and surface the summary panel — identical to
+                # the auto (mid-turn) path's rendering, so both entry points
+                # present the compacted context the same way.
+                self.console.clear()
+                self.console.print(
+                    render_compact_summary_panel(
+                        str(result.get("summary", "") or ""),
+                        int(result.get("summary_token", 0) or 0),
+                        str(result.get("history_jsonl", "") or ""),
+                    )
+                )
 
                 # Reload in-memory state from the compacted session
                 self._reload_state_from_session()

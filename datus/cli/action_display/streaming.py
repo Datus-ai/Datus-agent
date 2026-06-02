@@ -38,6 +38,12 @@ logger = get_logger(__name__)
 # is still driven by ``_tick`` but the glyph is constant.
 _PROCESSING_SYMBOL = "\u25cb"
 
+# In-progress hint shown in the pinned region while a major compact blocks the
+# run loop. Kept here (not via ``console.print``) so repeated majors overwrite a
+# single pinned line instead of stacking in the committed scrollback. Keep the
+# text in sync with ``cli_styles.render_compact_progress_line``.
+_COMPACT_PROGRESS_TEXT = "Compacting context\u2026"
+
 # In compact mode, only show the last N subagent actions in the Live overlay
 _SUBAGENT_ROLLING_WINDOW_SIZE = 2
 
@@ -157,6 +163,10 @@ class InlineStreamingContext:
         # region (TUI mode). ``_repaint_live`` reads this together with
         # ``_tick`` to animate the frame.
         self._processing_action: Optional[ActionHistory] = None
+        # True while a blocking major compact runs. Drawn by ``_repaint_live``
+        # as a single overwritable pinned line (set by ``compact_progress``,
+        # cleared by ``compact_summary``) so repeated majors never stack.
+        self._compact_in_progress: bool = False
         # ``action_id`` of every thinking_delta we've processed in the current
         # turn. The paired terminal ASSISTANT SUCCESS action from
         # ``openai_compatible`` / ``codex_model`` reuses the same id
@@ -766,6 +776,12 @@ class InlineStreamingContext:
                 self._end_subagent_group_by_key(group_key, action)
                 continue
 
+            # -- compact feedback: in-progress hint / clear-screen + summary panel --
+            if action.action_type in ("compact_progress", "compact_summary"):
+                self._render_compact_action(action)
+                self._processed_index += 1
+                continue
+
             # -- Sub-agent action (depth > 0) --
             # The group must already exist — anchored by the matching task
             # PROCESSING action earlier in the stream (see Path A above).
@@ -875,6 +891,12 @@ class InlineStreamingContext:
                 group_key = action.parent_action_id
                 self._processed_index += 1
                 self._end_subagent_group_by_key(group_key, action)
+                continue
+
+            # compact feedback (same handling as the live path)
+            if action.action_type in ("compact_progress", "compact_summary"):
+                self._render_compact_action(action)
+                self._processed_index += 1
                 continue
 
             # depth>0: render inside the sub-agent group. Group must
@@ -1316,6 +1338,13 @@ class InlineStreamingContext:
             return
         from datus.cli.tui.live_display_state import LiveDisplayLine
 
+        if self._compact_in_progress:
+            # A blocking major compact is running. One overwritable pinned line
+            # — repeated majors replace it in place, never stacking.
+            self._live_state.set_lines(
+                [LiveDisplayLine(segments=[("class:processing-live-top", _COMPACT_PROGRESS_TEXT)])]
+            )
+            return
         if self._processing_action is not None:
             frame = _PROCESSING_SYMBOL
             renderable = self.display.renderer.render_processing(self._processing_action, frame)
@@ -1563,6 +1592,63 @@ class InlineStreamingContext:
         return "\n".join(item.plain for item in items)
 
     # -- completed action printing -------------------------------------------
+
+    def _render_compact_action(self, action: ActionHistory) -> None:
+        """Render compact feedback.
+
+        ``compact_progress`` flips a pinned-region flag so the TUI draws a
+        single, overwritable "Compacting context…" line via ``_repaint_live``
+        — it is NEVER appended to the committed scrollback, so repeated majors
+        in one turn cannot stack into multiple lines. On a plain console there
+        is no pinned region (mirrors how PROCESSING tool frames are TUI-only).
+
+        ``compact_summary`` clears that flag, clears the screen, then prints the
+        summary panel to the committed scrollback. Unlike
+        :meth:`_reprint_with_collapse` we clear WITHOUT replaying history: a
+        major compact has just collapsed the session into this summary, so the
+        panel is the new visual anchor. TUI clears go through the pinned-region
+        callbacks (mirrors the verbose-toggle path); a plain console falls back
+        to ``console.clear()`` + ``\\033[3J``.
+        """
+        from datus.cli.cli_styles import render_compact_summary_panel
+
+        if action.action_type == "compact_progress":
+            self._compact_in_progress = True
+            self._repaint_live()
+            return
+
+        out = action.output if isinstance(action.output, dict) else {}
+        summary = str(out.get("summary", "") or "")
+        self._compact_in_progress = False
+        if not summary:
+            # Failed/empty major (e.g. the summary call errored): just drop the
+            # pinned hint — no screen wipe, no panel.
+            self._repaint_live()
+            return
+        self._stop_processing_live()
+        self._stop_subagent_live()
+        with self._print_lock:
+            if self._clear_screen_callback is not None:
+                try:
+                    self._clear_screen_callback()
+                except Exception as exc:
+                    logger.debug("clear_screen_callback raised in compact summary: %s", exc, exc_info=True)
+            else:
+                self.display.console.clear()
+                sys.stdout.write("\033[3J")
+                sys.stdout.flush()
+            if self._clear_header_callback is not None:
+                try:
+                    self._clear_header_callback()
+                except Exception as exc:
+                    logger.debug("clear_header_callback raised in compact summary: %s", exc, exc_info=True)
+            self.display.console.print(
+                render_compact_summary_panel(
+                    summary,
+                    int(out.get("summary_token", 0) or 0),
+                    str(out.get("history_jsonl", "") or ""),
+                )
+            )
 
     def _print_completed_action(self, action: ActionHistory) -> None:
         """Print a completed action permanently to the console."""

@@ -1831,3 +1831,150 @@ class TestStreamingMarkdown:
         # Finalize with an empty buffer must not set the latch either.
         ctx._finalize_markdown_stream()
         assert ctx.has_streamed_response is False
+
+
+@pytest.mark.ci
+class TestCompactRendering:
+    """compact_progress / compact_summary rendering: in-progress hint vs.
+    clear-screen + summary panel."""
+
+    def _ctx(self, buf):
+        console = Console(file=buf, no_color=True, width=100)
+        display = ActionHistoryDisplay(console)
+        return InlineStreamingContext([], display, sync_mode=True), console
+
+    def test_compact_summary_clears_then_renders_panel(self):
+        buf = StringIO()
+        ctx, console = self._ctx(buf)
+        cleared = []
+        console.clear = lambda *a, **k: cleared.append(True)
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            action_type="compact_summary",
+            output_data={"summary": "Recap body", "summary_token": 5, "history_jsonl": "/h.jsonl"},
+        )
+        ctx._render_compact_action(action)
+        assert cleared  # screen was cleared before printing the panel
+        out = buf.getvalue()
+        assert "Recap body" in out
+        assert "Context compacted" in out
+
+    def test_compact_summary_prefers_clear_screen_callback_in_tui(self):
+        buf = StringIO()
+        ctx, console = self._ctx(buf)
+        cb = MagicMock()
+        ctx._clear_screen_callback = cb
+        console.clear = MagicMock()  # must NOT be used when a TUI callback exists
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            action_type="compact_summary",
+            output_data={"summary": "X"},
+        )
+        ctx._render_compact_action(action)
+        cb.assert_called_once()
+        console.clear.assert_not_called()
+
+    def _ctx_tui(self, buf):
+        console = Console(file=buf, no_color=True, width=100)
+        display = ActionHistoryDisplay(console)
+        live_state = MagicMock()
+        ctx = InlineStreamingContext([], display, sync_mode=True, live_state=live_state)
+        return ctx, console, live_state
+
+    def test_compact_progress_uses_pinned_region_not_scrollback(self):
+        """compact_progress must NOT append to the committed scrollback; it sets
+        a pinned-region flag so repeated majors overwrite a single line instead
+        of stacking."""
+        buf = StringIO()
+        ctx, console, live_state = self._ctx_tui(buf)
+        console.clear = MagicMock()
+        action = _make_action(ActionRole.ASSISTANT, ActionStatus.PROCESSING, action_type="compact_progress")
+        ctx._render_compact_action(action)
+        assert ctx._compact_in_progress is True
+        console.clear.assert_not_called()
+        assert buf.getvalue() == ""  # nothing appended to scrollback
+        live_state.set_lines.assert_called()  # pinned hint drawn via _repaint_live
+
+    def test_repeated_compact_progress_does_not_stack_in_scrollback(self):
+        buf = StringIO()
+        ctx, _console, _live_state = self._ctx_tui(buf)
+        a = _make_action(ActionRole.ASSISTANT, ActionStatus.PROCESSING, action_type="compact_progress")
+        ctx._render_compact_action(a)
+        ctx._render_compact_action(a)
+        assert buf.getvalue() == ""  # two progress hints, still nothing stacked
+        assert ctx._compact_in_progress is True
+
+    def test_repaint_live_draws_single_compact_line_when_in_progress(self):
+        buf = StringIO()
+        ctx, _console, live_state = self._ctx_tui(buf)
+        ctx._compact_in_progress = True
+        ctx._repaint_live()
+        live_state.set_lines.assert_called_once()
+        lines = live_state.set_lines.call_args.args[0]
+        assert len(lines) == 1  # exactly one pinned line — never stacks
+
+    def test_compact_summary_clears_progress_flag(self):
+        buf = StringIO()
+        ctx, _console, _live_state = self._ctx_tui(buf)
+        ctx._compact_in_progress = True
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            action_type="compact_summary",
+            output_data={"summary": "Recap"},
+        )
+        ctx._render_compact_action(action)
+        assert ctx._compact_in_progress is False
+
+    def test_compact_summary_empty_clears_flag_without_clearing_screen(self):
+        """A failed/empty summary (no summary text) must drop the pinned hint
+        but NOT wipe the screen or draw a panel."""
+        buf = StringIO()
+        ctx, console, _live = self._ctx_tui(buf)
+        console.clear = MagicMock()
+        ctx._compact_in_progress = True
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            action_type="compact_summary",
+            output_data={"summary": ""},
+        )
+        ctx._render_compact_action(action)
+        assert ctx._compact_in_progress is False
+        console.clear.assert_not_called()
+        assert buf.getvalue() == ""  # no panel printed
+
+    def test_process_actions_dispatches_compact_summary_to_renderer(self):
+        buf = StringIO()
+        ctx, _console = self._ctx(buf)
+        ctx._render_compact_action = MagicMock()
+        ctx.actions = [
+            _make_action(
+                ActionRole.ASSISTANT,
+                ActionStatus.SUCCESS,
+                action_type="compact_summary",
+                output_data={"summary": "X"},
+            )
+        ]
+        ctx._processed_index = 0
+        ctx._process_actions()
+        ctx._render_compact_action.assert_called_once()
+        assert ctx._processed_index == 1
+
+    def test_flush_remaining_dispatches_compact_summary_to_renderer(self):
+        buf = StringIO()
+        ctx, _console = self._ctx(buf)
+        ctx._render_compact_action = MagicMock()
+        ctx.actions = [
+            _make_action(
+                ActionRole.ASSISTANT,
+                ActionStatus.SUCCESS,
+                action_type="compact_summary",
+                output_data={"summary": "X"},
+            )
+        ]
+        ctx._processed_index = 0
+        ctx._flush_remaining_actions()
+        ctx._render_compact_action.assert_called_once()
