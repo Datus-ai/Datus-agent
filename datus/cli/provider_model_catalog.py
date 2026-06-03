@@ -176,6 +176,13 @@ def _bucket_by_vendor(
             continue
         if provider_key == "claude":
             slug = slug.replace(".", "-")
+            # OpenRouter advertises "-fast" routing aliases (claude-opus-4-8-fast, …)
+            # that are not real Anthropic model IDs. The `claude` provider calls
+            # api.anthropic.com directly, which rejects the alias with
+            # not_found_error; the un-suffixed base model is always present in the
+            # same payload, so drop the alias.
+            if slug.endswith("-fast"):
+                continue
         entry: Dict[str, Any] = {"id": slug}
         name = item.get("name")
         if isinstance(name, str) and name:

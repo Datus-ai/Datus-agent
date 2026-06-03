@@ -332,6 +332,25 @@ class TestBucketByVendor:
         )
         assert _ids_only(buckets) == {"openai": ["gpt-4o"]}
 
+    def test_claude_fast_routing_aliases_are_dropped(self) -> None:
+        """OpenRouter exposes "-fast" routing aliases (e.g. claude-opus-4.8-fast)
+        that are not real Anthropic model IDs; the direct `claude` provider rejects
+        them with not_found_error. They must be dropped, keeping only the base model."""
+        buckets = pmc._bucket_by_vendor(
+            [
+                {"id": "anthropic/claude-opus-4.8-fast"},
+                {"id": "anthropic/claude-opus-4.8"},
+                {"id": "anthropic/claude-opus-4.7-fast"},
+                {"id": "anthropic/claude-opus-4.7"},
+            ]
+        )
+        assert _ids_only(buckets) == {"claude": ["claude-opus-4-8", "claude-opus-4-7"]}
+
+    def test_fast_suffix_is_kept_for_non_claude_vendors(self) -> None:
+        """The "-fast" drop is claude-specific; other vendors keep such slugs."""
+        buckets = pmc._bucket_by_vendor([{"id": "qwen/qwen3-fast"}])
+        assert _ids_only(buckets) == {"qwen": ["qwen3-fast"]}
+
     def test_non_chat_models_are_filtered(self) -> None:
         buckets = pmc._bucket_by_vendor(
             [
