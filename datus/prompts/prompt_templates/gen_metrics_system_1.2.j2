@@ -146,7 +146,7 @@ Skip any metric that already exists — do NOT update or overwrite.
 
 1. **Write files**: Use `write_file` to save metric YAML (and semantic model if newly created)
 2. **Validate (MUST PASS)**: Use `validate_semantic` — if validation fails, fix errors with `edit_file` and retry until it **passes**. Do NOT proceed to Step 6 until validation passes.
-3. **Dry-run SQL**: Use `query_metrics(metrics=["metric_name"], dry_run=True)` to generate SQL
+3. **Dry-run SQL**: Use `query_metrics(metrics=["metric_name"], dry_run=True)` to generate SQL. If the source SQL groups by dimensions or a time grain, also dry-run the generated metric set with matching `dimensions` / `time_granularity` from that source query. Use `get_dimensions` to find the exact generated dimension names; if a grouped source dimension cannot be queried, fix the semantic model joins/dimensions and retry.
 
 Collect each generated SQL into `metric_sqls_json`.
 

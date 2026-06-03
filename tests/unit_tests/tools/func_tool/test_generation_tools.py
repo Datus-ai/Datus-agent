@@ -8,6 +8,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from datus.tools.func_tool.base import FuncToolResult
+
 
 @pytest.fixture
 def mock_agent_config():
@@ -341,6 +343,57 @@ class TestEndMetricGenerationPreflight:
     def test_accepts_file_with_metric_block(self, generation_tools, tmp_path):
         self._mark_ready_to_publish(generation_tools)
         generation_tools.generation_evidence.metric_dry_run_metrics.add("revenue_total")
+        good = tmp_path / "semantic_models" / "good_metric.yml"
+        good.parent.mkdir(parents=True, exist_ok=True)
+        good.write_text("metric:\n  name: revenue_total\n  type: measure_proxy\n  type_params:\n    measure: revenue\n")
+        with (
+            self._patch_path_resolution(generation_tools, tmp_path),
+            patch.object(generation_tools, "_sync_metric_to_db", return_value={"success": True, "message": "ok"}),
+        ):
+            result = generation_tools.end_metric_generation(metric_file=str(good))
+        assert result.success == 1
+
+    def test_rejects_missing_grouped_queryability_dry_run(self, generation_tools, tmp_path):
+        self._mark_ready_to_publish(generation_tools)
+        generation_tools.generation_evidence.metric_dry_run_metrics.add("revenue_total")
+        generation_tools.generation_evidence.set_metric_queryability_contracts(
+            [
+                {
+                    "source": "sql_1",
+                    "metric_hints": ["revenue_total"],
+                    "dimension_hints": ["customer_segment"],
+                }
+            ]
+        )
+        good = tmp_path / "semantic_models" / "good_metric.yml"
+        good.parent.mkdir(parents=True, exist_ok=True)
+        good.write_text("metric:\n  name: revenue_total\n  type: measure_proxy\n  type_params:\n    measure: revenue\n")
+        with (
+            self._patch_path_resolution(generation_tools, tmp_path),
+            patch.object(generation_tools, "_sync_metric_to_db") as sync_mock,
+        ):
+            result = generation_tools.end_metric_generation(metric_file=str(good))
+        assert result.success == 0
+        assert "source SQL group-by dimensions" in result.error
+        assert result.result["queryability_contracts"][0]["dimension_hints"] == ["customer_segment"]
+        sync_mock.assert_not_called()
+
+    def test_accepts_grouped_queryability_dry_run(self, generation_tools, tmp_path):
+        self._mark_ready_to_publish(generation_tools)
+        generation_tools.generation_evidence.set_metric_queryability_contracts(
+            [
+                {
+                    "source": "sql_1",
+                    "metric_hints": ["revenue_total"],
+                    "dimension_hints": ["customer_segment"],
+                }
+            ]
+        )
+        generation_tools.generation_evidence.record_metric_dry_run(
+            ["revenue_total"],
+            FuncToolResult(success=1, result={"metadata": {"sql": "SELECT 1"}}),
+            dimensions=["customer_segment"],
+        )
         good = tmp_path / "semantic_models" / "good_metric.yml"
         good.parent.mkdir(parents=True, exist_ok=True)
         good.write_text("metric:\n  name: revenue_total\n  type: measure_proxy\n  type_params:\n    measure: revenue\n")

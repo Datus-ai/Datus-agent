@@ -9,6 +9,7 @@ import pytest
 
 from datus.tools.func_tool.base import FuncToolResult, normalize_null
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
+from datus.tools.func_tool.metric_queryability import extract_metric_queryability_contracts
 from datus.tools.func_tool.semantic_tools import _run_async
 from datus.tools.semantic_tools.models import QueryResult
 
@@ -58,6 +59,75 @@ class TestGenerationEvidence:
         assert evidence.metric_dry_run_passed is True
         assert evidence.metric_sqls == {}
         assert evidence.has_metric_dry_run(["revenue"]) is True
+
+    def test_queryability_contract_requires_grouped_dry_run(self):
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts(
+            [
+                {
+                    "source": "sql_1",
+                    "metric_hints": ["revenue_total"],
+                    "dimension_hints": ["customer_segment"],
+                }
+            ]
+        )
+        result = FuncToolResult(success=1, result={"metadata": {"sql": "SELECT 1"}})
+
+        evidence.record_metric_dry_run(["revenue_total"], result)
+
+        assert evidence.has_metric_dry_run(["revenue_total"]) is True
+        assert evidence.has_required_queryability_dry_runs(["revenue_total"]) is False
+
+        evidence.record_metric_dry_run(["revenue_total"], result, dimensions=["customer__segment_name"])
+
+        assert evidence.has_required_queryability_dry_runs(["revenue_total"]) is True
+
+    def test_queryability_contract_rejects_partial_dimension_token_match(self):
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts(
+            [
+                {
+                    "source": "sql_1",
+                    "metric_hints": ["revenue_total"],
+                    "dimension_hints": ["customer_segment"],
+                }
+            ]
+        )
+
+        evidence.record_metric_dry_run(
+            ["revenue_total"],
+            FuncToolResult(success=1, result={"metadata": {"sql": "SELECT 1"}}),
+            dimensions=["customer_region"],
+        )
+
+        assert evidence.has_required_queryability_dry_runs(["revenue_total"]) is False
+
+    def test_extracts_grouped_metric_queryability_contract_from_sql(self):
+        contracts = extract_metric_queryability_contracts(
+            """
+            SQL:
+            SELECT n.n_name AS supplier_nation, SUM(l.l_extendedprice) AS shipped_revenue
+            FROM lineitem l
+            JOIN supplier s ON l.l_suppkey = s.s_suppkey
+            JOIN nation n ON s.s_nationkey = n.n_nationkey
+            GROUP BY n.n_name;
+            """
+        )
+
+        assert contracts == [
+            {
+                "source": "sql_1",
+                "dimension_hints": ["supplier_nation"],
+                "metric_hints": ["shipped_revenue"],
+                "sql": (
+                    "SELECT n.n_name AS supplier_nation, SUM(l.l_extendedprice) AS shipped_revenue\n"
+                    "            FROM lineitem l\n"
+                    "            JOIN supplier s ON l.l_suppkey = s.s_suppkey\n"
+                    "            JOIN nation n ON s.s_nationkey = n.n_nationkey\n"
+                    "            GROUP BY n.n_name"
+                ),
+            }
+        ]
 
 
 class TestNormalizeNull:
@@ -371,11 +441,29 @@ class TestQueryMetricsCompression:
             metadata={"sql": "SELECT SUM(revenue) AS revenue FROM orders"},
         )
 
-        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
-            result = semantic_tools.query_metrics(metrics=["revenue"], dry_run=True)
+        with patch(
+            "datus.tools.func_tool.semantic_tools._run_async",
+            side_effect=[
+                [{"name": "customer_segment"}],
+                query_result,
+            ],
+        ):
+            result = semantic_tools.query_metrics(
+                metrics=["revenue"],
+                dimensions=["customer_segment"],
+                time_granularity="month",
+                dry_run=True,
+            )
 
         assert result.success == 1
         assert evidence.metric_dry_run_passed is True
+        assert evidence.metric_dry_run_queries == [
+            {
+                "metrics": ["revenue"],
+                "dimensions": ["customer_segment"],
+                "time_granularity": "month",
+            }
+        ]
         assert evidence.metric_sqls == {"revenue": "SELECT SUM(revenue) AS revenue FROM orders"}
 
     def test_query_metrics_non_dry_run_does_not_record_publish_evidence(self, semantic_tools):

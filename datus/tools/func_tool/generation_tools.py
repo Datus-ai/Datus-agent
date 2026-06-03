@@ -15,6 +15,7 @@ from datus.storage.metric.store import MetricRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
+from datus.tools.func_tool.metric_queryability import summarize_queryability_contracts
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import get_path_manager
 
@@ -333,6 +334,23 @@ class GenerationTools:
                         "metric_file": metric_file,
                         "semantic_model_file": semantic_model_file,
                         "metric_sqls": metric_sqls,
+                    },
+                )
+            if metric_names and not self.generation_evidence.has_required_queryability_dry_runs(metric_names):
+                missing_contracts = self.generation_evidence.missing_queryability_contracts(metric_names)
+                contract_summary = summarize_queryability_contracts(missing_contracts)
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        "query_metrics(dry_run=True) must pass with the source SQL group-by dimensions before "
+                        "publishing metrics. Run a dry-run query for the generated metric names with the matching "
+                        f"dimensions/time grain, fix semantic model join or dimension issues, and retry. Missing: {contract_summary}"
+                    ),
+                    result={
+                        "metric_file": metric_file,
+                        "semantic_model_file": semantic_model_file,
+                        "metric_sqls": metric_sqls,
+                        "queryability_contracts": missing_contracts,
                     },
                 )
 
