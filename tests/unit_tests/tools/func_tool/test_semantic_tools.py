@@ -124,7 +124,14 @@ class TestQueryMetricsCompression:
         )
         mock_adapter.query_metrics = Mock(return_value=query_result)
 
-        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+        with patch(
+            "datus.tools.func_tool.semantic_tools._run_async",
+            side_effect=[
+                [{"name": "date"}],
+                [{"name": "date"}],
+                query_result,
+            ],
+        ):
             result = semantic_tools.query_metrics(
                 metrics=["revenue", "orders"],
                 dimensions=["date"],
@@ -251,6 +258,81 @@ class TestQueryMetricsCompression:
             dry_run=False,
         )
 
+    def test_query_metrics_rejects_dimensions_not_common_to_all_metrics(self, semantic_tools, mock_adapter):
+        """Preflight reports incompatible metric/dimension combinations before adapter query."""
+        with patch(
+            "datus.tools.func_tool.semantic_tools._run_async",
+            side_effect=[
+                [{"name": "ship_date"}, {"name": "ship_mode"}],
+                [{"name": "ship_date"}, {"name": "ship_mode"}],
+                [{"name": "ship_date"}, {"name": "supplier_nation"}],
+            ],
+        ):
+            result = semantic_tools.query_metrics(
+                metrics=["shipped_revenue", "discount_amount", "discount_rate"],
+                dimensions=["supplier_nation"],
+            )
+
+        assert result.success == 0
+        assert "dimension preflight failed" in result.error
+        assert result.result["invalid_dimensions"] == [
+            {
+                "name": "supplier_nation",
+                "unsupported_metrics": ["shipped_revenue", "discount_amount"],
+                "supported_metrics": ["discount_rate"],
+            }
+        ]
+        assert result.result["common_dimensions"] == ["ship_date"]
+        assert result.result["suggested_metric_groups"] == [
+            {"metrics": ["shipped_revenue", "discount_amount"], "dimensions": []},
+            {"metrics": ["discount_rate"], "dimensions": ["supplier_nation"]},
+        ]
+        mock_adapter.query_metrics.assert_not_called()
+
+    def test_query_metrics_preflight_preserves_metric_time_in_retry_guidance(self, semantic_tools, mock_adapter):
+        """Preflight retry guidance keeps requested metric-time dimensions."""
+        with patch(
+            "datus.tools.func_tool.semantic_tools._run_async",
+            side_effect=[
+                [{"name": "ship_date"}, {"name": "ship_mode"}],
+                [{"name": "ship_date"}, {"name": "supplier_nation"}],
+            ],
+        ):
+            result = semantic_tools.query_metrics(
+                metrics=["shipped_revenue", "discount_rate"],
+                dimensions=["metric_time__month", "supplier_nation"],
+            )
+
+        assert result.success == 0
+        assert result.result["common_dimensions"] == ["metric_time__month", "ship_date"]
+        assert result.result["suggested_metric_groups"] == [
+            {"metrics": ["shipped_revenue"], "dimensions": ["metric_time__month"]},
+            {"metrics": ["discount_rate"], "dimensions": ["metric_time__month", "supplier_nation"]},
+        ]
+        mock_adapter.query_metrics.assert_not_called()
+
+    def test_query_metrics_preflight_allows_time_grain_alias_for_known_time_dimension(self, semantic_tools):
+        query_result = QueryResult(
+            columns=["metric_time__month", "orders"],
+            data=[{"metric_time__month": "2024-01-01", "orders": 10}],
+            metadata={},
+        )
+
+        with patch(
+            "datus.tools.func_tool.semantic_tools._run_async",
+            side_effect=[
+                [{"name": "order_date", "type": "TIME"}],
+                query_result,
+            ],
+        ):
+            result = semantic_tools.query_metrics(
+                metrics=["orders"],
+                dimensions=["order_date__month"],
+                time_granularity="month",
+            )
+
+        assert result.success == 1
+
     def test_query_metrics_adapter_exception(self, semantic_tools):
         """Test query_metrics handles adapter exceptions gracefully."""
         with patch(
@@ -351,7 +433,13 @@ class TestQueryMetricsCompression:
         """Test that all parameters are correctly passed to the adapter."""
         query_result = QueryResult(columns=["x"], data=[{"x": 1}], metadata={})
 
-        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+        with patch(
+            "datus.tools.func_tool.semantic_tools._run_async",
+            side_effect=[
+                [{"name": "region"}],
+                query_result,
+            ],
+        ):
             result = semantic_tools.query_metrics(
                 metrics=["revenue"],
                 dimensions=["region"],

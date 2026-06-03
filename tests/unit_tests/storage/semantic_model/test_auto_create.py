@@ -520,6 +520,69 @@ class TestCreateSemanticModelForTable:
         assert "Success-story SQL evidence" in user_message
         assert "JOIN date_dim" in user_message
 
+    @pytest.mark.asyncio
+    async def test_fully_qualified_snowflake_table_sets_target_namespace(self) -> None:
+        """Snowflake database.schema.table names are passed as separate DB tool coordinates."""
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.storage.semantic_model.auto_create import create_semantic_model_for_table
+
+        mock_config = MagicMock()
+        mock_config.db_type = "snowflake"
+        mock_db_config = MagicMock()
+        mock_db_config.catalog = ""
+        mock_db_config.database = "SNOWFLAKE_SAMPLE_DATA"
+        mock_db_config.schema = "TPCH_SF1"
+        mock_config.current_db_config.return_value = mock_db_config
+        semantic_input_cls = MagicMock(return_value=MagicMock())
+
+        class MockNode:
+            def __init__(self, *args, **kwargs):
+                self.input = None
+
+            async def execute_stream(self, ahm):
+                yield SimpleNamespace(status=ActionStatus.SUCCESS, messages="ok")
+
+        with (
+            patch(
+                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                MockNode,
+            ),
+            patch(
+                "datus.schemas.semantic_agentic_node_models.SemanticNodeInput",
+                semantic_input_cls,
+            ),
+        ):
+            success, error = await create_semantic_model_for_table(
+                "SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.ORDERS",
+                mock_config,
+            )
+
+        assert success is True
+        assert error == ""
+        kwargs = semantic_input_cls.call_args.kwargs
+        assert kwargs["catalog"] == ""
+        assert kwargs["database"] == "SNOWFLAKE_SAMPLE_DATA"
+        assert kwargs["db_schema"] == "TPCH_SF1"
+        assert 'table_name="ORDERS"' in kwargs["user_message"]
+        assert 'database="SNOWFLAKE_SAMPLE_DATA"' in kwargs["user_message"]
+        assert 'schema_name="TPCH_SF1"' in kwargs["user_message"]
+
+    @pytest.mark.asyncio
+    async def test_target_preparation_exception_returns_table_scoped_failure(self) -> None:
+        """Target-resolution failures are isolated to the table being generated."""
+        from datus.storage.semantic_model.auto_create import create_semantic_model_for_table
+
+        mock_config = MagicMock()
+        mock_config.current_db_config.side_effect = RuntimeError("missing datasource")
+
+        success, error = await create_semantic_model_for_table("orders", mock_config)
+
+        assert success is False
+        assert error == "Error preparing semantic model input for table orders: missing datasource"
+
 
 # ---------------------------------------------------------------------------
 # create_semantic_models_for_tables (batch with per-table isolation)

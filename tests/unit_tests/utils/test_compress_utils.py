@@ -1,3 +1,5 @@
+from datetime import date
+from decimal import Decimal
 from typing import Dict, List
 from unittest.mock import patch
 
@@ -234,6 +236,47 @@ class TestCompressPyarrowTable:
         df = compressed.to_pandas()
         assert df.iloc[10]["col"] == "..."
 
+    def test_large_typed_table_compressed_without_schema_mismatch(self):
+        table = pa.table(
+            {
+                "SHIP_DATE": pa.array([date(1998, 2, (i % 28) + 1) for i in range(30)], type=pa.date32()),
+                "SHIPPED_REVENUE": pa.array(
+                    [Decimal(f"{i}.12") for i in range(30)],
+                    type=pa.decimal128(12, 2),
+                ),
+                "LINE_COUNT": pa.array(list(range(30)), type=pa.int64()),
+            }
+        )
+
+        compressed, head_idx, tail_idx = _compress_pyarrow_table(table)
+
+        assert len(compressed) == 21
+        assert compressed.schema == pa.schema([pa.field(name, pa.string()) for name in table.column_names])
+        assert head_idx == list(range(10))
+        assert tail_idx == list(range(20, 30))
+        assert compressed.to_pandas().iloc[10]["SHIP_DATE"] == "..."
+
+    def test_large_not_null_string_table_compressed_without_schema_mismatch(self):
+        schema = pa.schema(
+            [
+                pa.field("SHIP_DATE", pa.string(), nullable=False),
+                pa.field("SHIPPED_REVENUE", pa.string()),
+            ]
+        )
+        table = pa.Table.from_arrays(
+            [
+                pa.array([f"1998-02-{(i % 28) + 1:02d}" for i in range(30)], type=pa.string()),
+                pa.array([str(i) for i in range(30)], type=pa.string()),
+            ],
+            schema=schema,
+        )
+
+        compressed, _, _ = _compress_pyarrow_table(table)
+
+        assert len(compressed) == 21
+        assert compressed.schema == pa.schema([pa.field(name, pa.string()) for name in table.column_names])
+        assert compressed.to_pandas().iloc[10]["SHIP_DATE"] == "..."
+
 
 # ---------------------------------------------------------------------------
 # _get_row_count_fast (line 75, 81)
@@ -451,12 +494,16 @@ class TestDataCompressorCompress:
     @patch("datus.utils.compress_utils.litellm.token_counter", side_effect=_mock_token_counter)
     def test_large_pyarrow_table_row_compression(self, _mock):
         dc = DataCompressor(token_threshold=100000)
-        # Use all-string columns so the ellipsis row ("...") matches schema
-        data = [{"id": str(i), "name": f"user_{i}"} for i in range(30)]
-        table = pa.table(pd.DataFrame(data))
+        table = pa.table(
+            {
+                "id": pa.array(list(range(30)), type=pa.int64()),
+                "ship_date": pa.array([date(1998, 2, (i % 28) + 1) for i in range(30)], type=pa.date32()),
+            }
+        )
         result = dc.compress(table)
         assert result["is_compressed"] is True
         assert result["compression_type"] == "rows"
+        assert "..." in result["compressed_data"]
 
     @patch("datus.utils.compress_utils.litellm.token_counter")
     def test_small_data_column_compression_when_over_threshold(self, mock_tc):
