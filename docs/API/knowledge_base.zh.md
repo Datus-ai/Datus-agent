@@ -15,7 +15,7 @@
 | `components`         | string[] | _（必填）_       | 要构建的组件：`metadata`、`semantic_model`、`metrics`、`ext_knowledge`、`reference_sql` |
 | `strategy`           | string   | `incremental`  | `check`（仅检查）、`overwrite`（重建）、`incremental`（增量更新） |
 | `schema_linking_type`| string   | `full`         | metadata 专用：`table`、`view`、`mv`、`full` |
-| `catalog`            | string   | `""`           | metadata catalog 过滤（Snowflake、StarRocks） |
+| `catalog`            | string   | `""`           | 支持 catalog 的引擎的 metadata catalog 过滤，例如 StarRocks；Snowflake 需要留空 |
 | `database_name`      | string   | `""`           | metadata 数据库过滤 |
 | `success_story`      | string?  | `null`         | 项目根目录的相对路径，指向 success-story CSV |
 | `subject_tree`       | string[]?| `null`         | 预定义层级分类 |

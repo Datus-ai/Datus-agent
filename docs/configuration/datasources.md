@@ -28,7 +28,13 @@ agent:
         type: snowflake
         account: ${SNOWFLAKE_ACCOUNT}
         username: ${SNOWFLAKE_USER}
-        password: ${SNOWFLAKE_PASSWORD}
+        password: ${SNOWFLAKE_PASSWORD}  # Use exactly one of password or private_key_file
+        # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
+        # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}
+        database: ${SNOWFLAKE_DATABASE}  # Optional
+        schema: ${SNOWFLAKE_SCHEMA}      # Optional
+        warehouse: ${SNOWFLAKE_WAREHOUSE}
+        role: ${SNOWFLAKE_ROLE}          # Optional
         default: true
 
       my_duckdb:
@@ -71,15 +77,21 @@ my_snowflake:
   type: snowflake
   account: ${SNOWFLAKE_ACCOUNT}
   username: ${SNOWFLAKE_USER}
-  password: ${SNOWFLAKE_PASSWORD}      # Use either password or private_key_file
+  password: ${SNOWFLAKE_PASSWORD}      # Use exactly one of password or private_key_file
   # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
   # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}  # Optional
   database: ${SNOWFLAKE_DATABASE}    # Optional
   schema: ${SNOWFLAKE_SCHEMA}        # Optional
-  warehouse: ${SNOWFLAKE_WAREHOUSE}  # Optional
+  warehouse: ${SNOWFLAKE_WAREHOUSE}
   role: ${SNOWFLAKE_ROLE}            # Optional
   default: true                      # Optional: mark as default
 ```
+
+Snowflake authentication requires exactly one of `password` or `private_key_file`. For key-pair authentication, set
+`private_key_file` and optionally `private_key_file_pwd`; the adapter uses Snowflake JWT authentication internally.
+
+Snowflake uses a `database` + `schema` namespace. Leave `catalog` unset for Snowflake; catalog filters are for
+catalog-aware engines such as StarRocks.
 
 ### StarRocks
 ```yaml

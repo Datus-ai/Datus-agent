@@ -222,12 +222,16 @@ agent:
         type: snowflake
         account: ${SNOWFLAKE_ACCOUNT}
         username: ${SNOWFLAKE_USER}
-        password: ${SNOWFLAKE_PASSWORD}  # password 和 private_key_file 二选一
+        password: ${SNOWFLAKE_PASSWORD}  # password 和 private_key_file 必须二选一
         # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
         # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}  # 可选
+        database: ${SNOWFLAKE_DATABASE}  # 可选
+        schema: ${SNOWFLAKE_SCHEMA}  # 可选
         warehouse: ${SNOWFLAKE_WAREHOUSE}
         role: ${SNOWFLAKE_ROLE}  # 可选
 ```
+
+Snowflake 使用 `database` 和 `schema` 命名空间，不要为 Snowflake 设置 `catalog`。
 
 初始化并运行指定任务：
 
