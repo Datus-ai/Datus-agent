@@ -19,6 +19,11 @@ from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, Semant
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.generation_tools import GenerationTools
+from datus.tools.func_tool.metric_queryability import (
+    extract_metric_queryability_contracts,
+    summarize_queryability_contracts,
+)
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -375,6 +380,7 @@ class GenMetricsAgenticNode(AgenticNode):
             ) from e
 
     def _build_template_context(self, ctx: StreamRunContext) -> Optional[dict]:
+        self._set_metric_queryability_contracts_from_input(ctx.user_input)
         return self._prepare_template_context(ctx.user_input)
 
     def _build_success_result(self, ctx: StreamRunContext) -> SemanticNodeResult:
@@ -437,6 +443,12 @@ class GenMetricsAgenticNode(AgenticNode):
             raise RuntimeError(f"Metric generation reported {kind}_file outside Knowledge Base sandbox: {path!r}")
         return resolved_path
 
+    def _set_metric_queryability_contracts_from_input(self, user_input: Optional[SemanticNodeInput]) -> None:
+        if not user_input:
+            return
+        contracts = extract_metric_queryability_contracts(getattr(user_input, "user_message", "") or "")
+        self.generation_evidence.set_metric_queryability_contracts(contracts)
+
     def _finalize_metric_generation(
         self,
         semantic_model_file: Optional[str],
@@ -468,6 +480,7 @@ class GenMetricsAgenticNode(AgenticNode):
 
         if not self.generation_tools:
             raise RuntimeError("Metric generation produced a metric_file, but generation tools are unavailable.")
+        self._set_metric_queryability_contracts_from_input(getattr(self, "input", None))
 
         if not self.generation_evidence.validation_passed:
             if not getattr(self, "semantic_tools", None):
@@ -498,6 +511,15 @@ class GenMetricsAgenticNode(AgenticNode):
                     "query_metrics(dry_run=True) failed for generated metric(s) "
                     f"{', '.join(metric_names)}: {self._tool_error(dry_run_result)}"
                 )
+        if metric_names and not self.generation_evidence.has_required_queryability_dry_runs(metric_names):
+            missing_contracts = self.generation_evidence.missing_queryability_contracts(metric_names)
+            raise DatusException(
+                ErrorCode.COMMON_VALIDATION_FAILED,
+                "query_metrics(dry_run=True) must pass with the source SQL group-by dimensions before "
+                "publishing metrics. Run a dry-run query for the generated metric names with the matching "
+                "dimensions/time grain, fix semantic model join or dimension issues, and retry. "
+                f"Missing: {summarize_queryability_contracts(missing_contracts)}",
+            )
 
         publish_result = self.generation_tools.end_metric_generation(
             metric_file=abs_metric_file,

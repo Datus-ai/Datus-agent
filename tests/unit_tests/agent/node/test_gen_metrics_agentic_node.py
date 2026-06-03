@@ -853,6 +853,80 @@ class TestExecuteStreamGenMetricsError:
             semantic_model_file=str(real_agent_config.path_manager.semantic_model_path(datasource) / "orders.yml"),
         )
 
+    def test_final_metric_publish_requires_grouped_source_sql_dry_run(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.tools.func_tool.base import FuncToolResult
+        from datus.utils.exceptions import DatusException
+
+        datasource = real_agent_config.current_datasource
+        metric_dir = real_agent_config.path_manager.semantic_model_path(datasource) / "metrics"
+        metric_dir.mkdir(parents=True, exist_ok=True)
+        metric_path = metric_dir / "revenue_metrics.yml"
+        metric_path.write_text(
+            "metric:\n  name: revenue_total\n  type: measure_proxy\n  type_params:\n    measure: revenue\n",
+            encoding="utf-8",
+        )
+        reported_semantic_path = f"subject/semantic_models/{datasource}/orders.yml"
+        reported_metric_path = f"subject/semantic_models/{datasource}/metrics/revenue_metrics.yml"
+
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(
+            user_message=(
+                "Create this metric from SQL: "
+                "SELECT customer_segment, SUM(revenue) AS revenue_total FROM orders GROUP BY customer_segment;"
+            )
+        )
+        node.semantic_tools = MagicMock()
+        node.semantic_tools.validate_semantic = MagicMock(return_value=FuncToolResult(result={"valid": True}))
+        node.semantic_tools.query_metrics = MagicMock(
+            return_value=FuncToolResult(result={"metadata": {"sql": "SELECT 1"}})
+        )
+        node.generation_tools.end_metric_generation = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
+
+        with pytest.raises(DatusException, match="source SQL group-by dimensions"):
+            node._finalize_metric_generation(reported_semantic_path, reported_metric_path, "generated")
+
+        node.semantic_tools.query_metrics.assert_called_once_with(metrics=["revenue_total"], dry_run=True)
+        node.generation_tools.end_metric_generation.assert_not_called()
+
+    def test_final_metric_publish_accepts_grouped_source_sql_dry_run(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.tools.func_tool.base import FuncToolResult
+
+        datasource = real_agent_config.current_datasource
+        metric_dir = real_agent_config.path_manager.semantic_model_path(datasource) / "metrics"
+        metric_dir.mkdir(parents=True, exist_ok=True)
+        metric_path = metric_dir / "revenue_metrics.yml"
+        metric_path.write_text(
+            "metric:\n  name: revenue_total\n  type: measure_proxy\n  type_params:\n    measure: revenue\n",
+            encoding="utf-8",
+        )
+        reported_semantic_path = f"subject/semantic_models/{datasource}/orders.yml"
+        reported_metric_path = f"subject/semantic_models/{datasource}/metrics/revenue_metrics.yml"
+
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(
+            user_message=(
+                "Create this metric from SQL: "
+                "SELECT customer_segment, SUM(revenue) AS revenue_total FROM orders GROUP BY customer_segment;"
+            )
+        )
+        node.semantic_tools = MagicMock()
+        node.semantic_tools.validate_semantic = MagicMock(return_value=FuncToolResult(result={"valid": True}))
+        node.generation_evidence.record_metric_dry_run(
+            ["revenue_total"],
+            FuncToolResult(success=1, result={"metadata": {"sql": "SELECT 1"}}),
+            dimensions=["customer_segment"],
+        )
+        node.generation_tools.end_metric_generation = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
+
+        node._finalize_metric_generation(reported_semantic_path, reported_metric_path, "generated")
+
+        node.generation_tools.end_metric_generation.assert_called_once_with(
+            metric_file=str(metric_path),
+            semantic_model_file=str(real_agent_config.path_manager.semantic_model_path(datasource) / "orders.yml"),
+        )
+
     @pytest.mark.asyncio
     async def test_final_metric_file_rejects_out_of_sandbox_absolute_path(
         self, real_agent_config, mock_llm_create, tmp_path

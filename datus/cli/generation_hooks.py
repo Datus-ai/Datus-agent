@@ -281,7 +281,15 @@ class GenerationHooks(AgentHooks):
             if not isinstance(tool_args, dict) or tool_args.get("dry_run") is not True:
                 return
             metrics = tool_args.get("metrics") or []
-            self.generation_evidence.record_metric_dry_run(metrics, result)
+            dimensions = tool_args.get("dimensions") or []
+            if isinstance(dimensions, str):
+                dimensions = [dimensions]
+            self.generation_evidence.record_metric_dry_run(
+                metrics,
+                result,
+                dimensions=dimensions,
+                time_granularity=tool_args.get("time_granularity"),
+            )
         except Exception as e:
             logger.debug(f"Error recording query_metrics evidence: {e}")
 

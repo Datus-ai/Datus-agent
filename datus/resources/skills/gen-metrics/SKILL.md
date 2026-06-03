@@ -214,6 +214,8 @@ Do not read, edit, or pass `metric_file` / `semantic_model_file` paths from anot
    - **Do NOT proceed to Phase 4 until validation passes.** No exceptions.
 
 4. **Dry-run SQL**: Call `query_metrics(metrics=["{metric_name}"], dry_run=True)` to generate the SQL.
+   - If the source SQL groups by dimensions or a time grain, also dry-run the generated metric set with matching `dimensions` / `time_granularity` from that source query.
+   - Use `get_dimensions` to find exact generated dimension names; if a grouped source dimension cannot be queried, fix the semantic model joins/dimensions and retry.
    - Collect the SQL into a dict: `{"{metric_name}": "SELECT ..."}`
 
 ## Phase 4: Batch Sync to Knowledge Base

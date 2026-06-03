@@ -777,7 +777,12 @@ class SemanticTools:
                 result=result_dict,
             )
             if dry_run and self.generation_evidence:
-                self.generation_evidence.record_metric_dry_run(metrics, tool_result)
+                self.generation_evidence.record_metric_dry_run(
+                    metrics,
+                    tool_result,
+                    dimensions=dimensions,
+                    time_granularity=time_granularity,
+                )
             return tool_result
 
         except Exception as e:
