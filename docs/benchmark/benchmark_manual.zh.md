@@ -39,7 +39,15 @@ datus           # 进入 REPL 后依次使用 /model、/datasource、/init
     export DEEPSEEK_API_KEY=<your_api_key>
     export SNOWFLAKE_ACCOUNT=<your_snowflake_account>
     export SNOWFLAKE_USERNAME=<your_snowflake_username>
+    # 可以设置 SNOWFLAKE_PRIVATE_KEY，或在没有它时设置 SNOWFLAKE_PASSWORD 和 SNOWFLAKE_PRIVATE_KEY_FILE 其中一个。
     export SNOWFLAKE_PASSWORD=<your_snowflake_password>
+    # export SNOWFLAKE_PRIVATE_KEY=<pem_private_key_secret>
+    # export SNOWFLAKE_PRIVATE_KEY_FILE=<path_to_rsa_key_p8>
+    # export SNOWFLAKE_PRIVATE_KEY_FILE_PWD=<optional_key_passphrase>
+    export SNOWFLAKE_WAREHOUSE=<your_snowflake_warehouse>
+    export SNOWFLAKE_DATABASE=<optional_snowflake_database>
+    export SNOWFLAKE_SCHEMA=<optional_snowflake_schema>
+    export SNOWFLAKE_ROLE=<optional_snowflake_role>
     ```
 
 ### 第三步：下载并准备 BIRD 数据集

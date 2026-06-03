@@ -39,7 +39,15 @@ Set the required environment variables for your benchmark:
     export DEEPSEEK_API_KEY=<your_api_key>
     export SNOWFLAKE_ACCOUNT=<your_snowflake_account>
     export SNOWFLAKE_USERNAME=<your_snowflake_username>
+    # Use SNOWFLAKE_PRIVATE_KEY, or exactly one of SNOWFLAKE_PASSWORD/SNOWFLAKE_PRIVATE_KEY_FILE.
     export SNOWFLAKE_PASSWORD=<your_snowflake_password>
+    # export SNOWFLAKE_PRIVATE_KEY=<pem_private_key_secret>
+    # export SNOWFLAKE_PRIVATE_KEY_FILE=<path_to_rsa_key_p8>
+    # export SNOWFLAKE_PRIVATE_KEY_FILE_PWD=<optional_key_passphrase>
+    export SNOWFLAKE_WAREHOUSE=<your_snowflake_warehouse>
+    export SNOWFLAKE_DATABASE=<optional_snowflake_database>
+    export SNOWFLAKE_SCHEMA=<optional_snowflake_schema>
+    export SNOWFLAKE_ROLE=<optional_snowflake_role>
     ```
 
 ### Step 3: Download and Prepare the BIRD Dataset

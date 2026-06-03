@@ -28,7 +28,14 @@ agent:
         type: snowflake
         account: ${SNOWFLAKE_ACCOUNT}
         username: ${SNOWFLAKE_USER}
-        password: ${SNOWFLAKE_PASSWORD}
+        password: ${SNOWFLAKE_PASSWORD}  # 可配置 private_key，或在没有 private_key 时 password 和 private_key_file 二选一
+        # private_key: ${SNOWFLAKE_PRIVATE_KEY}
+        # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
+        # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}
+        database: ${SNOWFLAKE_DATABASE}  # 可选
+        schema: ${SNOWFLAKE_SCHEMA}      # 可选
+        warehouse: ${SNOWFLAKE_WAREHOUSE}
+        role: ${SNOWFLAKE_ROLE}          # 可选
         default: true
 
       my_duckdb:
@@ -72,15 +79,24 @@ my_snowflake:
   type: snowflake
   account: ${SNOWFLAKE_ACCOUNT}
   username: ${SNOWFLAKE_USER}
-  password: ${SNOWFLAKE_PASSWORD}      # password 和 private_key_file 二选一
+  password: ${SNOWFLAKE_PASSWORD}      # 可配置 private_key，或在没有 private_key 时 password 和 private_key_file 二选一
+  # private_key: ${SNOWFLAKE_PRIVATE_KEY}
   # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
   # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}  # 可选
   database: ${SNOWFLAKE_DATABASE}    # 可选
   schema: ${SNOWFLAKE_SCHEMA}        # 可选
-  warehouse: ${SNOWFLAKE_WAREHOUSE}  # 可选
+  warehouse: ${SNOWFLAKE_WAREHOUSE}
   role: ${SNOWFLAKE_ROLE}            # 可选
   default: true                      # 可选：设为默认数据库
 ```
+
+Snowflake 支持密码认证和 key-pair 认证。托管/SaaS 场景推荐把 PEM 私钥作为 secret 配置到 `private_key`；
+本地或 CI 已有私钥文件时可以使用 `private_key_file`。如果配置了 `private_key`，它会优先于
+`private_key_file` 和 `password`；没有 `private_key` 时，`password` 和 `private_key_file` 必须二选一。
+私钥加密时再配置 `private_key_file_pwd`；适配器内部会使用 Snowflake JWT 认证。
+
+Snowflake 使用 `database` + `schema` 命名空间。Snowflake 不要配置 `catalog`；`catalog` 过滤只适用于
+StarRocks 等支持 catalog 的引擎。
 
 ### StarRocks
 

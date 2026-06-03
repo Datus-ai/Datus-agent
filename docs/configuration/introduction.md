@@ -58,7 +58,14 @@ agent:
         type: snowflake
         account: "${SNOWFLAKE_ACCOUNT}"
         username: "${SNOWFLAKE_USER}"
-        password: "${SNOWFLAKE_PASSWORD}"
+        password: "${SNOWFLAKE_PASSWORD}"  # Use private_key, or exactly one of password/private_key_file
+        # private_key: "${SNOWFLAKE_PRIVATE_KEY}"
+        # private_key_file: "${SNOWFLAKE_PRIVATE_KEY_FILE}"
+        # private_key_file_pwd: "${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}"
+        database: "${SNOWFLAKE_DATABASE}"
+        schema: "${SNOWFLAKE_SCHEMA}"
+        warehouse: "${SNOWFLAKE_WAREHOUSE}"
+        role: "${SNOWFLAKE_ROLE}"
         default: true
 
     semantic_layer:

@@ -17,7 +17,7 @@ metrics, external knowledge, and reference SQL.
 | `components`         | string[] | _(required)_   | Components to bootstrap: `metadata`, `semantic_model`, `metrics`, `ext_knowledge`, `reference_sql` |
 | `strategy`           | string   | `incremental`  | `check` (inspect only), `overwrite` (rebuild), or `incremental` (append/update) |
 | `schema_linking_type`| string   | `full`         | Metadata only: `table`, `view`, `mv`, or `full` |
-| `catalog`            | string   | `""`           | Metadata catalog filter (Snowflake, StarRocks) |
+| `catalog`            | string   | `""`           | Metadata catalog filter for catalog-aware engines such as StarRocks; leave empty for Snowflake |
 | `database_name`      | string   | `""`           | Metadata database filter |
 | `success_story`      | string?  | `null`         | Project-root-relative path to success-story CSV |
 | `subject_tree`       | string[]?| `null`         | Predefined hierarchical categories |

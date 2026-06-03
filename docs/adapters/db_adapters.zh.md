@@ -128,7 +128,11 @@ warehouse:
   type: snowflake
   account: your_account
   username: your_username
-  password: your_password  # password 和 private_key_file 二选一
+  password: your_password  # 可配置 private_key，或在没有 private_key 时 password 和 private_key_file 二选一
+  # private_key: |
+  #   -----BEGIN PRIVATE KEY-----
+  #   ...
+  #   -----END PRIVATE KEY-----
   # private_key_file: /path/to/rsa_key.p8
   # private_key_file_pwd: optional_key_passphrase
   warehouse: your_warehouse
@@ -136,6 +140,8 @@ warehouse:
   schema: your_schema
   role: your_role  # 可选
 ```
+
+Snowflake 支持密码认证和 key-pair 认证。可以配置 `private_key`，或在没有 `private_key` 时配置 `password` 和 `private_key_file` 其中一个。`private_key` 会优先于 `private_key_file` 和 `password`；私钥加密时再配置 `private_key_file_pwd`。Snowflake 使用 `database` 和 `schema`，不要为 Snowflake 配置 `catalog`。
 
 ### StarRocks
 

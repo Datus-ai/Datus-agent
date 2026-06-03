@@ -40,7 +40,14 @@ agent:
         type: snowflake
         account: "${SNOWFLAKE_ACCOUNT}"
         username: "${SNOWFLAKE_USER}"
-        password: "${SNOWFLAKE_PASSWORD}"
+        password: "${SNOWFLAKE_PASSWORD}"  # 可配置 private_key，或在没有 private_key 时 password 和 private_key_file 二选一
+        # private_key: "${SNOWFLAKE_PRIVATE_KEY}"
+        # private_key_file: "${SNOWFLAKE_PRIVATE_KEY_FILE}"
+        # private_key_file_pwd: "${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}"
+        database: "${SNOWFLAKE_DATABASE}"
+        schema: "${SNOWFLAKE_SCHEMA}"
+        warehouse: "${SNOWFLAKE_WAREHOUSE}"
+        role: "${SNOWFLAKE_ROLE}"
         default: true
 
     semantic_layer:
