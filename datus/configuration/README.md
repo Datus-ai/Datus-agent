@@ -64,7 +64,8 @@ Configure database connections by datasource:
         type: snowflake
         account: ${SNOWFLAKE_ACCOUNT}
         username: ${SNOWFLAKE_USER}
-        password: ${SNOWFLAKE_PASSWORD} # Use exactly one of password or private_key_file
+        password: ${SNOWFLAKE_PASSWORD} # Use private_key, or exactly one of password/private_key_file
+        # private_key: ${SNOWFLAKE_PRIVATE_KEY}
         # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
         # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}
         database: ${SNOWFLAKE_DATABASE}
@@ -163,10 +164,11 @@ export DEEPSEEK_API_KEY="..."
 # Database Credentials
 export SNOWFLAKE_ACCOUNT="your-account"
 export SNOWFLAKE_USER="your-user"
-# Use exactly one of SNOWFLAKE_PASSWORD or SNOWFLAKE_PRIVATE_KEY_FILE.
+# Use SNOWFLAKE_PRIVATE_KEY, or exactly one of SNOWFLAKE_PASSWORD/SNOWFLAKE_PRIVATE_KEY_FILE.
 export SNOWFLAKE_PASSWORD="your-password"
-export SNOWFLAKE_PRIVATE_KEY_FILE="/path/to/rsa_key.p8"
-export SNOWFLAKE_PRIVATE_KEY_FILE_PWD=""
+# export SNOWFLAKE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+# export SNOWFLAKE_PRIVATE_KEY_FILE="/path/to/rsa_key.p8"
+# export SNOWFLAKE_PRIVATE_KEY_FILE_PWD=""
 export SNOWFLAKE_ROLE=""
 export STARROCKS_HOST="localhost"
 export STARROCKS_PORT="9030"
@@ -304,7 +306,10 @@ agent:
         type: snowflake
         account: ${SNOWFLAKE_ACCOUNT}
         username: ${SNOWFLAKE_USER}
-        password: ${SNOWFLAKE_PASSWORD} # Use exactly one of password or private_key_file
+        password: ${SNOWFLAKE_PASSWORD} # Use private_key, or exactly one of password/private_key_file
+        # private_key: ${SNOWFLAKE_PRIVATE_KEY}
+        # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
+        # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}
         database: PRODUCTION
         schema: PUBLIC
         warehouse: COMPUTE_WH
