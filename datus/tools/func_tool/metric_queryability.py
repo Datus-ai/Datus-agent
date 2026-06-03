@@ -13,6 +13,20 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
+_SQL_FENCE_LANGS = {
+    "bigquery",
+    "duckdb",
+    "mysql",
+    "postgres",
+    "postgresql",
+    "snowflake",
+    "sql",
+    "sqlite",
+    "starrocks",
+    "trino",
+}
+_FENCED_SQL_PATTERN = re.compile(r"```(?:\s*([^\n`]+))?\n(.*?)```", flags=re.IGNORECASE | re.DOTALL)
+
 
 def extract_metric_queryability_contracts(text: Optional[str]) -> List[Dict[str, Any]]:
     """Extract queryability contracts from SQL evidence embedded in text.
@@ -42,17 +56,27 @@ def summarize_queryability_contracts(contracts: Iterable[Dict[str, Any]]) -> str
 
 def _extract_sql_snippets(text: str) -> List[str]:
     snippets: List[str] = []
-    for match in re.finditer(r"```(?:sql)?\s*(.*?)```", text, flags=re.IGNORECASE | re.DOTALL):
-        candidate = match.group(1).strip()
+    for match in _FENCED_SQL_PATTERN.finditer(text):
+        fence_lang = (match.group(1) or "").strip().lower()
+        candidate = match.group(2).strip()
+        if fence_lang and fence_lang not in _SQL_FENCE_LANGS:
+            continue
         if re.search(r"\bselect\b", candidate, flags=re.IGNORECASE):
             snippets.append(_strip_sql(candidate))
 
-    remaining = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
-    for match in re.finditer(r"(?is)\bselect\b.*?(?:;|$)", remaining):
+    remaining = _FENCED_SQL_PATTERN.sub(_fence_replacement_for_fallback, text)
+    for match in re.finditer(r"(?is)\b(?:with\b.*?\bselect\b|select\b).*?(?:;|$)", remaining):
         candidate = _strip_sql(match.group(0))
         if candidate and candidate not in snippets:
             snippets.append(candidate)
     return snippets
+
+
+def _fence_replacement_for_fallback(match: re.Match[str]) -> str:
+    fence_lang = (match.group(1) or "").strip().lower()
+    if not fence_lang or fence_lang in _SQL_FENCE_LANGS:
+        return " "
+    return f" {match.group(2)} "
 
 
 def _strip_sql(sql: str) -> str:
@@ -64,28 +88,31 @@ def _contract_from_sql(sql: str, source: str) -> Optional[Dict[str, Any]]:
     if parsed is None:
         return None
 
+    select = _final_select(parsed)
+    if select is None:
+        return None
+
     dimension_hints: List[str] = []
     metric_hints: List[str] = []
-    for select in _iter_selects(parsed):
-        aliases_by_expr = _projection_aliases_by_expr(select)
-        projection_aliases = [_projection_name(expr) for expr in select.expressions]
+    aliases_by_expr = _projection_aliases_by_expr(select)
+    projection_aliases = [_projection_name(expr) for expr in select.expressions]
 
-        group = select.args.get("group")
-        if group:
-            for group_expr in group.expressions:
-                hint = _dimension_hint_from_group_expr(group_expr, aliases_by_expr, projection_aliases)
-                if hint:
-                    dimension_hints.append(hint)
+    group = select.args.get("group")
+    if group:
+        for group_expr in group.expressions:
+            hint = _dimension_hint_from_group_expr(group_expr, aliases_by_expr, projection_aliases)
+            if hint:
+                dimension_hints.append(hint)
 
-        grouped_hints = {_normalize_name(hint) for hint in dimension_hints}
-        for projection in select.expressions:
-            name = _projection_name(projection)
-            if not name:
-                continue
-            if _normalize_name(name) in grouped_hints:
-                continue
-            if _looks_metric_projection(projection):
-                metric_hints.append(name)
+    grouped_hints = {_normalize_name(hint) for hint in dimension_hints}
+    for projection in select.expressions:
+        name = _projection_name(projection)
+        if not name:
+            continue
+        if _normalize_name(name) in grouped_hints:
+            continue
+        if _looks_metric_projection(projection):
+            metric_hints.append(name)
 
     dimension_hints = _dedupe(dimension_hints)
     metric_hints = _dedupe(metric_hints)
@@ -113,16 +140,15 @@ def _parse_sql(sql: str):
     return None
 
 
-def _iter_selects(expression) -> Iterable[Any]:
+def _final_select(expression) -> Optional[Any]:
     try:
         from sqlglot import expressions as exp
 
         if isinstance(expression, exp.Select):
-            yield expression
-            return
-        yield from expression.find_all(exp.Select)
+            return expression
+        return expression.find(exp.Select)
     except Exception:
-        return
+        return None
 
 
 def _projection_aliases_by_expr(select) -> Dict[str, str]:

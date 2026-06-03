@@ -102,6 +102,56 @@ class TestGenerationEvidence:
 
         assert evidence.has_required_queryability_dry_runs(["revenue_total"]) is False
 
+    def test_queryability_contract_time_hint_requires_metric_time_dimension_and_grain(self):
+        result = FuncToolResult(success=1, result={"metadata": {"sql": "SELECT 1"}})
+
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts(
+            [
+                {
+                    "source": "sql_1",
+                    "metric_hints": ["order_count"],
+                    "dimension_hints": ["order_date"],
+                }
+            ]
+        )
+        evidence.record_metric_dry_run(["order_count"], result, time_granularity="month")
+
+        assert evidence.has_required_queryability_dry_runs(["order_count"]) is False
+
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts(
+            [
+                {
+                    "source": "sql_1",
+                    "metric_hints": ["order_count"],
+                    "dimension_hints": ["order_date"],
+                }
+            ]
+        )
+        evidence.record_metric_dry_run(["order_count"], result, dimensions=["metric_time__month"])
+
+        assert evidence.has_required_queryability_dry_runs(["order_count"]) is False
+
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts(
+            [
+                {
+                    "source": "sql_1",
+                    "metric_hints": ["order_count"],
+                    "dimension_hints": ["order_date"],
+                }
+            ]
+        )
+        evidence.record_metric_dry_run(
+            ["order_count"],
+            result,
+            dimensions=["metric_time__month"],
+            time_granularity="month",
+        )
+
+        assert evidence.has_required_queryability_dry_runs(["order_count"]) is True
+
     def test_extracts_grouped_metric_queryability_contract_from_sql(self):
         contracts = extract_metric_queryability_contracts(
             """
@@ -128,6 +178,64 @@ class TestGenerationEvidence:
                 ),
             }
         ]
+
+    def test_extracts_grouped_contract_from_dialect_fenced_sql(self):
+        contracts = extract_metric_queryability_contracts(
+            """
+            ```snowflake
+            SELECT customer_segment, SUM(revenue) AS revenue_total
+            FROM orders
+            GROUP BY customer_segment;
+            ```
+            """
+        )
+
+        assert contracts == [
+            {
+                "source": "sql_1",
+                "dimension_hints": ["customer_segment"],
+                "metric_hints": ["revenue_total"],
+                "sql": (
+                    "SELECT customer_segment, SUM(revenue) AS revenue_total\n"
+                    "            FROM orders\n"
+                    "            GROUP BY customer_segment"
+                ),
+            }
+        ]
+
+    def test_extracts_contract_from_final_select_not_grouped_cte(self):
+        contracts = extract_metric_queryability_contracts(
+            """
+            WITH daily AS (
+                SELECT order_date, customer_segment, SUM(revenue) AS day_revenue
+                FROM orders
+                GROUP BY order_date, customer_segment
+            )
+            SELECT customer_segment, SUM(day_revenue) AS revenue_total
+            FROM daily
+            GROUP BY customer_segment;
+            """
+        )
+
+        assert len(contracts) == 1
+        assert contracts[0]["source"] == "sql_1"
+        assert contracts[0]["dimension_hints"] == ["customer_segment"]
+        assert contracts[0]["metric_hints"] == ["revenue_total"]
+        assert contracts[0]["sql"].startswith("WITH daily AS")
+
+    def test_ignores_nested_group_when_final_select_is_ungrouped(self):
+        contracts = extract_metric_queryability_contracts(
+            """
+            WITH grouped AS (
+                SELECT customer_segment, SUM(revenue) AS revenue
+                FROM orders
+                GROUP BY customer_segment
+            )
+            SELECT SUM(revenue) AS revenue_total FROM grouped;
+            """
+        )
+
+        assert contracts == []
 
 
 class TestNormalizeNull:

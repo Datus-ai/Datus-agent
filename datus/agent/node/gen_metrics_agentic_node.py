@@ -23,6 +23,7 @@ from datus.tools.func_tool.metric_queryability import (
     extract_metric_queryability_contracts,
     summarize_queryability_contracts,
 )
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -512,11 +513,12 @@ class GenMetricsAgenticNode(AgenticNode):
                 )
         if metric_names and not self.generation_evidence.has_required_queryability_dry_runs(metric_names):
             missing_contracts = self.generation_evidence.missing_queryability_contracts(metric_names)
-            raise RuntimeError(
+            raise DatusException(
+                ErrorCode.COMMON_VALIDATION_FAILED,
                 "query_metrics(dry_run=True) must pass with the source SQL group-by dimensions before "
                 "publishing metrics. Run a dry-run query for the generated metric names with the matching "
                 "dimensions/time grain, fix semantic model join or dimension issues, and retry. "
-                f"Missing: {summarize_queryability_contracts(missing_contracts)}"
+                f"Missing: {summarize_queryability_contracts(missing_contracts)}",
             )
 
         publish_result = self.generation_tools.end_metric_generation(

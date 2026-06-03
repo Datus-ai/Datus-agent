@@ -856,6 +856,7 @@ class TestExecuteStreamGenMetricsError:
     def test_final_metric_publish_requires_grouped_source_sql_dry_run(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
         from datus.tools.func_tool.base import FuncToolResult
+        from datus.utils.exceptions import DatusException
 
         datasource = real_agent_config.current_datasource
         metric_dir = real_agent_config.path_manager.semantic_model_path(datasource) / "metrics"
@@ -882,7 +883,7 @@ class TestExecuteStreamGenMetricsError:
         )
         node.generation_tools.end_metric_generation = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
 
-        with pytest.raises(RuntimeError, match="source SQL group-by dimensions"):
+        with pytest.raises(DatusException, match="source SQL group-by dimensions"):
             node._finalize_metric_generation(reported_semantic_path, reported_metric_path, "generated")
 
         node.semantic_tools.query_metrics.assert_called_once_with(metrics=["revenue_total"], dry_run=True)

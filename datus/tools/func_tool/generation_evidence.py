@@ -163,12 +163,15 @@ class GenerationEvidence:
         for hint in contract.get("dimension_hints") or []:
             if not isinstance(hint, str) or not hint.strip():
                 continue
-            if _looks_time_dimension(hint) and (
-                time_granularity or any(_is_metric_time_dimension(d) for d in dimensions)
+            if any(_dimension_matches_hint(dimension, hint) for dimension in dimensions):
+                continue
+            if (
+                _looks_time_dimension(hint)
+                and time_granularity
+                and any(_is_metric_time_dimension(dimension) for dimension in dimensions)
             ):
                 continue
-            if not any(_dimension_matches_hint(dimension, hint) for dimension in dimensions):
-                return False
+            return False
         return True
 
     def mark_kb_sync(self, kind: str = "") -> None:
