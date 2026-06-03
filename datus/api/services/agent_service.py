@@ -1186,6 +1186,16 @@ class AgentService:
                     errorCode="INVALID_CHANNEL_NAME",
                     errorMessage="Channel name cannot be empty",
                 )
+            # ``channels`` no longer holds this agent's own entries, so any name
+            # collision here belongs to a different agent — reject instead of
+            # silently clobbering its binding.
+            existing = channels.get(name)
+            if isinstance(existing, dict) and existing.get("subagent_id") != request.id:
+                return Result(
+                    success=False,
+                    errorCode="CHANNEL_NAME_CONFLICT",
+                    errorMessage=f"Channel name '{name}' is already bound to another sub-agent",
+                )
             channels[name] = {
                 "adapter": channel.type,
                 "enabled": channel.enabled,

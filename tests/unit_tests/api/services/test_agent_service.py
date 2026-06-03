@@ -2231,6 +2231,26 @@ class TestEditAgentChannels:
         assert "slack-a" not in channels  # old entry for agent_a replaced
         assert "slack-a2" in channels
 
+    async def test_edit_agent_channel_name_conflict_with_other_agent(self, real_agent_config, agent_yml_with_singleton):
+        """Binding a channel name already owned by another agent is rejected."""
+        svc = AgentService()
+        await self._create(svc, real_agent_config, "agent_a")
+        await self._create(svc, real_agent_config, "agent_b")
+        await svc.edit_agent(
+            self._edit_with_channels("agent_a", [self._slack(name="shared", secrets={"app_token": "a"})]),
+            real_agent_config,
+        )
+
+        # agent_b tries to claim the same channel name — must fail, not clobber.
+        result = await svc.edit_agent(
+            self._edit_with_channels("agent_b", [self._slack(name="shared", secrets={"app_token": "b"})]),
+            real_agent_config,
+        )
+        assert result.success is False
+        assert result.errorCode == "CHANNEL_NAME_CONFLICT"
+        # agent_a's binding is untouched.
+        assert real_agent_config.channels_config["shared"]["subagent_id"] == "agent_a"
+
     async def test_edit_agent_rejects_blank_channel_name(self, real_agent_config, agent_yml_with_singleton):
         """A whitespace-only channel name is rejected."""
         svc = AgentService()
