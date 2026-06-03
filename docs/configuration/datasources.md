@@ -28,7 +28,8 @@ agent:
         type: snowflake
         account: ${SNOWFLAKE_ACCOUNT}
         username: ${SNOWFLAKE_USER}
-        password: ${SNOWFLAKE_PASSWORD}  # Use exactly one of password or private_key_file
+        password: ${SNOWFLAKE_PASSWORD}  # Use private_key, or exactly one of password/private_key_file
+        # private_key: ${SNOWFLAKE_PRIVATE_KEY}
         # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
         # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}
         database: ${SNOWFLAKE_DATABASE}  # Optional
@@ -77,7 +78,8 @@ my_snowflake:
   type: snowflake
   account: ${SNOWFLAKE_ACCOUNT}
   username: ${SNOWFLAKE_USER}
-  password: ${SNOWFLAKE_PASSWORD}      # Use exactly one of password or private_key_file
+  password: ${SNOWFLAKE_PASSWORD}      # Use private_key, or exactly one of password/private_key_file
+  # private_key: ${SNOWFLAKE_PRIVATE_KEY}
   # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
   # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}  # Optional
   database: ${SNOWFLAKE_DATABASE}    # Optional
@@ -87,8 +89,11 @@ my_snowflake:
   default: true                      # Optional: mark as default
 ```
 
-Snowflake authentication requires exactly one of `password` or `private_key_file`. For key-pair authentication, set
-`private_key_file` and optionally `private_key_file_pwd`; the adapter uses Snowflake JWT authentication internally.
+Snowflake supports password authentication and key-pair authentication. For hosted/SaaS deployments, prefer
+`private_key` to store the PEM private key as a secret; for local or CI setups with an existing key file, use
+`private_key_file`. When `private_key` is provided, it takes precedence over `private_key_file` and `password`;
+without `private_key`, configure exactly one of `password` or `private_key_file`. Set `private_key_file_pwd`
+when the private key is encrypted. The adapter uses Snowflake JWT authentication internally.
 
 Snowflake uses a `database` + `schema` namespace. Leave `catalog` unset for Snowflake; catalog filters are for
 catalog-aware engines such as StarRocks.

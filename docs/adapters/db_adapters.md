@@ -132,7 +132,11 @@ warehouse:
   type: snowflake
   account: your_account
   username: your_username
-  password: your_password  # Use exactly one of password or private_key_file
+  password: your_password  # Use private_key, or exactly one of password/private_key_file
+  # private_key: |
+  #   -----BEGIN PRIVATE KEY-----
+  #   ...
+  #   -----END PRIVATE KEY-----
   # private_key_file: /path/to/rsa_key.p8
   # private_key_file_pwd: optional_key_passphrase
   warehouse: your_warehouse
@@ -141,9 +145,10 @@ warehouse:
   role: your_role  # optional
 ```
 
-Snowflake supports password authentication and key-pair authentication. Configure exactly one of `password` or
-`private_key_file`; set `private_key_file_pwd` only when the private key is encrypted. Snowflake uses `database` and
-`schema`; do not set `catalog` for Snowflake.
+Snowflake supports password authentication and key-pair authentication. Configure `private_key`, or exactly one of
+`password` or `private_key_file` when `private_key` is absent. `private_key` takes precedence over
+`private_key_file` and `password`; set `private_key_file_pwd` only when the private key is encrypted. Snowflake uses
+`database` and `schema`; do not set `catalog` for Snowflake.
 
 ### StarRocks
 
