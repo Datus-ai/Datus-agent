@@ -495,6 +495,15 @@ def main():
     import signal
     import sys
 
+    # Intercept 'upgrade'/'update' subcommand: self-upgrade datus-agent and the
+    # installed datus-* adapter packages. Handled before the REPL is built so it
+    # works even when the installed CLI is otherwise broken.
+    if len(sys.argv) > 1 and sys.argv[1] in ("upgrade", "update"):
+        from datus.cli.upgrade_cli import run_upgrade_command
+
+        configure_logging(False, console_output=False)
+        sys.exit(run_upgrade_command(sys.argv[2:]))
+
     # Intercept 'skill' subcommand and delegate to datus.main's skill handler
     if len(sys.argv) > 1 and sys.argv[1] == "skill":
         from datus.main import create_parser as create_main_parser

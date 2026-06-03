@@ -30,6 +30,7 @@ dependencies = [
     "sqlalchemy==2.0.23",
     "sqlglot>=26.12.0",
     "pyyaml==6.0.1",
+    "packaging>=21.0",
     "structlog>=23.1.0",
     "openai>=2.8.0",
     "httpx[socks]==0.27.2",
