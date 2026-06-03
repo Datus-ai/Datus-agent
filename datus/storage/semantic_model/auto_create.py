@@ -121,6 +121,56 @@ def _lookup_sql_evidence(table: str, sql_evidence_by_table: Optional[dict[str, l
     return []
 
 
+def _agent_config_dialect(agent_config: AgentConfig) -> str:
+    raw = getattr(agent_config, "db_type", "")
+    raw = getattr(raw, "value", raw)
+    if isinstance(raw, str) and raw:
+        return raw
+
+    try:
+        db_config = agent_config.current_db_config()
+    except Exception:
+        return ""
+    raw = getattr(db_config, "type", "")
+    raw = getattr(raw, "value", raw)
+    return raw if isinstance(raw, str) else ""
+
+
+def _resolved_table_target(table: str, agent_config: AgentConfig, current_db_config: object) -> dict[str, str]:
+    from datus.utils.sql_utils import parse_table_name_parts
+
+    dialect = _agent_config_dialect(agent_config)
+    parsed = parse_table_name_parts(table, dialect=dialect or "snowflake")
+    table_name = parsed.get("table_name") or str(table).split(".")[-1]
+
+    return {
+        "catalog_name": parsed.get("catalog_name") or getattr(current_db_config, "catalog", "") or "",
+        "database_name": parsed.get("database_name") or getattr(current_db_config, "database", "") or "",
+        "schema_name": parsed.get("schema_name") or getattr(current_db_config, "schema", "") or "",
+        "table_name": table_name,
+    }
+
+
+def _format_table_target_for_prompt(table: str, agent_config: AgentConfig, current_db_config: object) -> str:
+    target = _resolved_table_target(table, agent_config, current_db_config)
+    lines = [
+        f"- table_name: {target['table_name']}",
+        f"- database: {target['database_name'] or '[default]'}",
+        f"- schema_name: {target['schema_name'] or '[default]'}",
+    ]
+    if target["catalog_name"]:
+        lines.insert(1, f"- catalog: {target['catalog_name']}")
+    tool_args = [f'table_name="{target["table_name"]}"']
+    if target["catalog_name"]:
+        tool_args.append(f'catalog="{target["catalog_name"]}"')
+    if target["database_name"]:
+        tool_args.append(f'database="{target["database_name"]}"')
+    if target["schema_name"]:
+        tool_args.append(f'schema_name="{target["schema_name"]}"')
+    lines.append(f"- database tool arguments: {', '.join(tool_args)}")
+    return "\n".join(lines)
+
+
 def find_missing_semantic_models(
     tables: Set[str],
     agent_config: AgentConfig,
@@ -194,24 +244,40 @@ async def create_semantic_model_for_table(
     from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
     from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 
-    user_message = f"Generate semantic models for the following tables: {table}"
-    if related_tables:
-        others = [t for t in related_tables if t != table]
-        if others:
-            user_message += f"\n\nRelated tables (for join context): {', '.join(others)}"
-    if sql_evidence:
-        user_message += (
-            "\n\nSuccess-story SQL evidence for this table. Use these queries as "
-            "primary modeling evidence, preserving joins that derive business "
-            "dimensions or real time columns:\n\n" + "\n\n".join(sql_evidence)
+    try:
+        current_db_config = agent_config.current_db_config()
+        target = _resolved_table_target(table, agent_config, current_db_config)
+        user_message = (
+            "Generate a semantic model for the following table.\n\n"
+            "Target table coordinate:\n"
+            f"{_format_table_target_for_prompt(table, agent_config, current_db_config)}\n\n"
+            "When calling database tools, pass the namespace fields separately exactly as shown above; "
+            "do not collapse a schema name into the database argument."
         )
+        if related_tables:
+            others = [t for t in related_tables if t != table]
+            if others:
+                related_context = "\n\n".join(
+                    _format_table_target_for_prompt(related_table, agent_config, current_db_config)
+                    for related_table in others
+                )
+                user_message += f"\n\nRelated tables (for join context):\n{related_context}"
+        if sql_evidence:
+            user_message += (
+                "\n\nSuccess-story SQL evidence for this table. Use these queries as "
+                "primary modeling evidence, preserving joins that derive business "
+                "dimensions or real time columns:\n\n" + "\n\n".join(sql_evidence)
+            )
+    except Exception as e:
+        error = f"Error preparing semantic model input for table {table}: {e}"
+        logger.error(error, exc_info=True)
+        return False, error
 
-    current_db_config = agent_config.current_db_config()
     semantic_input = SemanticNodeInput(
         user_message=user_message,
-        catalog=current_db_config.catalog,
-        database=current_db_config.database,
-        db_schema=current_db_config.schema,
+        catalog=target["catalog_name"],
+        database=target["database_name"],
+        db_schema=target["schema_name"],
     )
 
     semantic_node = GenSemanticModelAgenticNode(

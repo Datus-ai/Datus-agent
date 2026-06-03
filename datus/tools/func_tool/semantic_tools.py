@@ -11,7 +11,7 @@ Tools delegate to registered semantic adapters while leveraging unified storage 
 
 import inspect
 import json
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional, Set
 
 from agents import Tool
 
@@ -77,6 +77,62 @@ def _normalize_name_list(value) -> List[str]:
         if text:
             names.append(text)
     return names
+
+
+_TIME_GRANULARITIES = {"day", "week", "month", "quarter", "year"}
+
+
+def _split_dimension_granularity(name: str) -> tuple[str, Optional[str]]:
+    parts = name.rsplit("__", 1)
+    if len(parts) != 2:
+        return name, None
+    base_name, suffix = parts[0], parts[1].lower()
+    if suffix in _TIME_GRANULARITIES:
+        return base_name, suffix
+    return name, None
+
+
+def _is_metric_time_dimension(name: str) -> bool:
+    base_name, _ = _split_dimension_granularity(name.strip().lower())
+    return base_name == "metric_time"
+
+
+def _dimension_type(row: dict) -> str:
+    return str(row.get("type") or row.get("dimension_type") or "").lower()
+
+
+def _dimension_names_by_lookup(rows: List[dict]) -> Dict[str, str]:
+    names = {}
+    for row in rows:
+        name = str(row.get("name") or "").strip()
+        if name:
+            names[name.lower()] = name
+    return names
+
+
+def _dimension_supported(requested_dimension: str, rows: List[dict]) -> bool:
+    name = requested_dimension.strip().lower()
+    if not name:
+        return True
+
+    names = _dimension_names_by_lookup(rows)
+    if name in names:
+        return True
+
+    base_name, granularity = _split_dimension_granularity(name)
+    if not granularity or base_name not in names:
+        return False
+
+    # If adapter metadata marks the base as non-time, do not treat a
+    # granularity suffix as a valid alias. Missing type is intentionally
+    # permissive so older adapters can still delegate final validation.
+    for row in rows:
+        row_name = str(row.get("name") or "").strip().lower()
+        if row_name != base_name:
+            continue
+        dim_type = _dimension_type(row)
+        return not dim_type or "time" in dim_type
+    return False
 
 
 def _serialize_validation_issue(issue) -> dict:
@@ -524,6 +580,95 @@ class SemanticTools:
                 error=f"Failed to get dimensions: {str(e)}",
             )
 
+    def _preflight_query_dimensions(
+        self,
+        metrics: List[str],
+        dimensions: List[str],
+        path: Optional[List[str]],
+    ) -> Optional[FuncToolResult]:
+        if not dimensions:
+            return None
+
+        metric_time_dimensions = list(dict.fromkeys(d for d in dimensions if _is_metric_time_dimension(d)))
+        checked_dimensions = [d for d in dimensions if not _is_metric_time_dimension(d)]
+        if not checked_dimensions:
+            return None
+
+        dimensions_by_metric: Dict[str, List[dict]] = {}
+        dimension_names_by_metric: Dict[str, List[str]] = {}
+        try:
+            for metric_name in metrics:
+                raw_dimensions = _run_async(self.adapter.get_dimensions(metric_name=metric_name, path=path or None))
+                rows = _normalize_dimension_rows(raw_dimensions)
+                dimensions_by_metric[metric_name] = rows
+                dimension_names_by_metric[metric_name] = sorted(
+                    _dimension_names_by_lookup(rows).values(), key=str.lower
+                )
+        except Exception as e:
+            logger.debug(f"Skipping query_metrics dimension preflight: {e}")
+            return None
+
+        invalid_dimensions = []
+        for dimension in checked_dimensions:
+            unsupported_metrics = [
+                metric_name
+                for metric_name, rows in dimensions_by_metric.items()
+                if not _dimension_supported(dimension, rows)
+            ]
+            if not unsupported_metrics:
+                continue
+            invalid_dimensions.append(
+                {
+                    "name": dimension,
+                    "unsupported_metrics": unsupported_metrics,
+                    "supported_metrics": [m for m in metrics if m not in unsupported_metrics],
+                }
+            )
+
+        if not invalid_dimensions:
+            return None
+
+        common_dimensions: Optional[Set[str]] = None
+        for rows in dimensions_by_metric.values():
+            metric_dimensions = set(_dimension_names_by_lookup(rows).keys())
+            common_dimensions = (
+                metric_dimensions if common_dimensions is None else common_dimensions & metric_dimensions
+            )
+
+        suggested_groups: Dict[tuple[str, ...], List[str]] = {}
+        for metric_name, rows in dimensions_by_metric.items():
+            supported_requested_dimensions = tuple(
+                dimension for dimension in checked_dimensions if _dimension_supported(dimension, rows)
+            )
+            suggested_groups.setdefault(supported_requested_dimensions, []).append(metric_name)
+
+        suggestions = [
+            {
+                "metrics": group_metrics,
+                "dimensions": list(dict.fromkeys([*metric_time_dimensions, *group_dimensions])),
+            }
+            for group_dimensions, group_metrics in suggested_groups.items()
+        ]
+        common_dimension_names = list(dict.fromkeys([*metric_time_dimensions, *sorted(common_dimensions or [])]))
+
+        invalid_names = ", ".join(item["name"] for item in invalid_dimensions)
+        return FuncToolResult(
+            success=0,
+            error=(
+                "query_metrics dimension preflight failed: requested dimension(s) "
+                f"{invalid_names} are not supported by all requested metrics. "
+                "Use only common dimensions for a multi-metric query, or split the query by compatible metric groups."
+            ),
+            result={
+                "metrics": metrics,
+                "requested_dimensions": dimensions,
+                "invalid_dimensions": invalid_dimensions,
+                "common_dimensions": common_dimension_names,
+                "dimensions_by_metric": dimension_names_by_metric,
+                "suggested_metric_groups": suggestions,
+            },
+        )
+
     def query_metrics(
         self,
         metrics: List[str],
@@ -589,6 +734,10 @@ class SemanticTools:
         )
 
         try:
+            preflight_result = self._preflight_query_dimensions(metrics=metrics, dimensions=dimensions, path=path)
+            if preflight_result is not None:
+                return preflight_result
+
             # Execute query via adapter
             result = _run_async(
                 self.adapter.query_metrics(

@@ -53,11 +53,23 @@ def _compress_pyarrow_table(table: pa.Table) -> Tuple[pa.Table, List[int], List[
     head_table = table.slice(0, 10)
     tail_table = table.slice(total_rows - 10, 10)
 
-    # Create ellipsis row
-    ellipsis_data = {}
-    for col_name in table.column_names:
-        ellipsis_data[col_name] = ["..."]
-    ellipsis_table = pa.table(ellipsis_data)
+    # The ellipsis row is display-only, so normalize compressed Arrow chunks to
+    # nullable strings before concatenating. This avoids schema mismatches for
+    # typed Snowflake results like DATE/DECIMAL or string not null columns.
+    display_schema = pa.schema([pa.field(col_name, pa.string()) for col_name in table.column_names])
+    head_table = pa.Table.from_arrays(
+        [head_table[col_name].cast(pa.string()) for col_name in table.column_names],
+        schema=display_schema,
+    )
+    tail_table = pa.Table.from_arrays(
+        [tail_table[col_name].cast(pa.string()) for col_name in table.column_names],
+        schema=display_schema,
+    )
+
+    ellipsis_table = pa.Table.from_arrays(
+        [pa.array(["..."], type=pa.string()) for _ in table.column_names],
+        schema=display_schema,
+    )
 
     # Merge tables
     compressed_table = pa.concat_tables([head_table, ellipsis_table, tail_table])
