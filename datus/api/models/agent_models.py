@@ -116,6 +116,39 @@ class GetAgentData(BaseModel):
     agent: IAgentInfo
 
 
+# ========== Channels ==========
+
+
+class ChannelInput(BaseModel):
+    """One IM gateway channel binding submitted with an agent edit.
+
+    Each channel carries its own ``enabled`` switch (adapters toggle
+    independently) and a generic ``secrets`` bag whose keys depend on the
+    adapter ``type`` — e.g. ``app_token`` / ``bot_token`` for slack. Values are
+    written verbatim into the ``agent.yml`` ``channels`` section (no
+    encryption); ``${ENV_VAR}`` placeholders are resolved at load time.
+    """
+
+    enabled: bool = Field(True, description="Whether this channel's gateway adapter is active.")
+    type: str = Field(..., description="Adapter type, e.g. 'slack'.")
+    name: str = Field(..., min_length=1, description="Reference name, used as the channel config key.")
+    secrets: dict = Field(
+        default_factory=dict,
+        description="Adapter-specific secret fields (e.g. app_token/bot_token). Written into `extra` verbatim.",
+    )
+
+
+class ChannelBinding(BaseModel):
+    """The channel state for one sub-agent.
+
+    Carries the full desired channel list for the agent being edited; the
+    backend replaces only that agent's entries in the global ``channels`` map
+    (matched by ``subagent_id``). An empty list clears this agent's channels.
+    """
+
+    channels: Optional[List[ChannelInput]] = Field(default=None, description="Channel bindings for this agent.")
+
+
 # ========== Edit Agent ==========
 
 
@@ -157,4 +190,8 @@ class EditAgentInput(BaseModel):
             "from the persisted binding the request is rejected with "
             "``IMMUTABLE_FIELD``. Identical / omitted values are silently dropped."
         ),
+    )
+    channels: Optional[ChannelBinding] = Field(
+        default=None,
+        description="IM gateway channel bindings for this agent. Omit to leave channels untouched.",
     )
