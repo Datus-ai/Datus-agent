@@ -16,7 +16,7 @@ When ``metricflow`` is **not** installed, falls back to a basic
 import os
 import tempfile
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from datus.utils.loggings import get_logger
 
@@ -106,23 +106,19 @@ def _validate_deep(
         if lint_issues:
             return False, [issue.as_readable_str() for issue in lint_issues]
 
-        # Step 3: Collect all existing semantic model files from the same
-        # project tree as ``file_path``. Resolving via the CWD-based
-        # ``DatusPathManager.semantic_model_path()`` would make validation
-        # nondeterministic when the calling process's CWD does not match
-        # the project that owns ``file_path``.
+        # Step 3: Collect existing files only when ``file_path`` is already
+        # anchored in a semantic_models tree. Arbitrary temp paths such as
+        # /tmp/test.yml do not identify a project and must not scan ambient /tmp.
         del datasource  # unused after refactor; kept in signature for compatibility
         del datus_home  # resolution below is file_path-relative
         target_path = Path(file_path).resolve()
-        semantic_yaml_dir = next(
-            (p for p in [target_path.parent, *target_path.parents] if p.name == "semantic_models"),
-            target_path.parent,
-        )
-        file_paths = collect_yaml_config_file_paths(directory=str(semantic_yaml_dir))
+        semantic_yaml_dir = _resolve_semantic_yaml_dir(target_path)
+        file_paths = []
+        if semantic_yaml_dir is not None:
+            file_paths = collect_yaml_config_file_paths(directory=str(semantic_yaml_dir))
 
         # Replace the original file with the temp file for validation
-        if file_path in file_paths:
-            file_paths.remove(file_path)
+        file_paths = [path for path in file_paths if Path(path).resolve() != target_path]
         file_paths.append(temp_file_path)
 
         # Step 4: Cross-file parsing and reference resolution
@@ -146,6 +142,14 @@ def _validate_deep(
             os.remove(temp_file_path)
         if temp_dir and os.path.exists(temp_dir):
             os.rmdir(temp_dir)
+
+
+def _resolve_semantic_yaml_dir(target_path: Path) -> Optional[Path]:
+    """Return the project semantic_models root for paths inside that tree."""
+    return next(
+        (p for p in [target_path.parent, *target_path.parents] if p.name == "semantic_models"),
+        None,
+    )
 
 
 def _issues_to_strings(issues) -> List[str]:

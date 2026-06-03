@@ -783,23 +783,31 @@ class TestExplorerServiceEditKnowledge:
 class TestExplorerServiceValidateMetricYaml:
     """Tests for _validate_metric_yaml — metric YAML validation."""
 
-    async def test_validate_valid_yaml(self, real_agent_config):
+    async def test_validate_valid_yaml(self, real_agent_config, tmp_path):
         """_validate_metric_yaml passes valid metric YAML."""
         svc = ExplorerService(agent_config=real_agent_config)
+        metric_path = (
+            tmp_path / "subject" / "semantic_models" / real_agent_config.current_datasource / "metrics" / "test.yml"
+        )
+        metric_path.parent.mkdir(parents=True)
         is_valid, errors = svc._validate_metric_yaml(
             "metric:\n  name: test\n  type: simple\n",
-            "/tmp/test.yml",
+            str(metric_path),
         )
         # May pass or fail depending on metricflow availability
         assert isinstance(is_valid, bool)
         assert isinstance(errors, list)
 
-    async def test_validate_invalid_yaml(self, real_agent_config):
+    async def test_validate_invalid_yaml(self, real_agent_config, tmp_path):
         """_validate_metric_yaml rejects invalid YAML syntax."""
         svc = ExplorerService(agent_config=real_agent_config)
+        metric_path = (
+            tmp_path / "subject" / "semantic_models" / real_agent_config.current_datasource / "metrics" / "bad.yml"
+        )
+        metric_path.parent.mkdir(parents=True)
         is_valid, errors = svc._validate_metric_yaml(
             ":\n  - ][",
-            "/tmp/bad.yml",
+            str(metric_path),
         )
         assert is_valid is False
         assert len(errors) == 1
