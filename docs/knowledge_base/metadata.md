@@ -12,13 +12,13 @@ This module contains two types of information: **table definition** and **sample
 
 | Field Name       | Explanation | Supported Database Types |
 |------------------|-------------|--------------------------|
-| `catalog_name` | The top-level container in a database system. It typically represents a collection of databases and provides metadata about them, such as available schemas, tables, and security settings | StarRocks/Snowflake |
+| `catalog_name` | The top-level container in catalog-aware database systems. It typically represents a collection of databases and provides metadata about them, such as available schemas, tables, and security settings. Leave it empty for Snowflake. | StarRocks |
 | `database_name` | A logical container that stores related data. It usually groups together multiple schemas and provides boundaries for data organization, security, and management. | DuckDB/MySQL/StarRocks/Snowflake |
-| `schema_name` | A namespace inside a database. It organizes objects such as tables, views, functions, and procedures into logical groups. Schemas help avoid name conflicts and support role-based access. | DuckDB/Snowflake |
+| `schema_name` | A namespace inside a database. It organizes objects such as tables, views, functions, and procedures into logical groups. Schemas help avoid name conflicts and support role-based access. | DuckDB/PostgreSQL/Snowflake |
 | `table_type` | The types of tables in the database, including `table`, `view`, and `mv` (abbreviation for materialized view). Each database supports table and view. DuckDB and Snowflake support materialized views. | All supported databases |
 | `table_name` | Name of the table/view/materialized view | All supported databases |
 | `definition` | SQL statements for creating tables/views/materialized views | All supported databases |
-| `identifier` | The unique identifier of the current table, which is composed of `catalog_name`, `database_name`, `schema_name` and `table_name`. You don't need to worry about it, because you won't need it in most scenarios. | All supported databases |
+| `identifier` | The unique identifier of the current table. It is composed from the namespace fields supported by the datasource and `table_name`; for Snowflake that means `database_name`, `schema_name`, and `table_name` without `catalog_name`. You don't need to worry about it in most scenarios. | All supported databases |
 
 ## Data Structure of Sample Data
 

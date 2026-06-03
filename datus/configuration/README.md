@@ -60,23 +60,27 @@ Configure database connections by datasource:
 ```yaml
   services:
     datasources:
-    snowflake:
-      type: snowflake
-      account: ${SNOWFLAKE_ACCOUNT}
-      username: ${SNOWFLAKE_USER}
-      password: ${SNOWFLAKE_PASSWORD} # Use either password or private_key_file
-      # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
-      # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}
+      snowflake:
+        type: snowflake
+        account: ${SNOWFLAKE_ACCOUNT}
+        username: ${SNOWFLAKE_USER}
+        password: ${SNOWFLAKE_PASSWORD} # Use exactly one of password or private_key_file
+        # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
+        # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}
+        database: ${SNOWFLAKE_DATABASE}
+        schema: ${SNOWFLAKE_SCHEMA}
+        warehouse: ${SNOWFLAKE_WAREHOUSE}
+        role: ${SNOWFLAKE_ROLE}
 
-    local_sqlite:
-      type: sqlite
-      dbs: # Multi-database
-        - name: mydb1
-          uri: sqlite:////path/to/mybd1.db # absolute path
-        - name: mydb2
-          uri: sqlite:///path/to/mybd2.db # relative path
-    bird_sqlite:
-      path_pattern: ~/benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # fuzzy matching, just support glob pattern
+      local_sqlite:
+        type: sqlite
+        dbs: # Multi-database
+          - name: mydb1
+            uri: sqlite:////path/to/mybd1.db # absolute path
+          - name: mydb2
+            uri: sqlite:///path/to/mybd2.db # relative path
+      bird_sqlite:
+        path_pattern: ~/benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # fuzzy matching, just support glob pattern
 ```
 
 ### 4. Storage Configuration
@@ -159,6 +163,7 @@ export DEEPSEEK_API_KEY="..."
 # Database Credentials
 export SNOWFLAKE_ACCOUNT="your-account"
 export SNOWFLAKE_USER="your-user"
+# Use exactly one of SNOWFLAKE_PASSWORD or SNOWFLAKE_PRIVATE_KEY_FILE.
 export SNOWFLAKE_PASSWORD="your-password"
 export SNOWFLAKE_PRIVATE_KEY_FILE="/path/to/rsa_key.p8"
 export SNOWFLAKE_PRIVATE_KEY_FILE_PWD=""
@@ -295,15 +300,15 @@ agent:
 
   services:
     datasources:
-    snowflake_prod:
-      type: snowflake
-      account: ${SNOWFLAKE_ACCOUNT}
-      username: ${SNOWFLAKE_USER}
-      password: ${SNOWFLAKE_PASSWORD} # Use either password or private_key_file
-      database: PRODUCTION
-      schema: PUBLIC
-      warehouse: COMPUTE_WH
-      role: ${SNOWFLAKE_ROLE}
+      snowflake_prod:
+        type: snowflake
+        account: ${SNOWFLAKE_ACCOUNT}
+        username: ${SNOWFLAKE_USER}
+        password: ${SNOWFLAKE_PASSWORD} # Use exactly one of password or private_key_file
+        database: PRODUCTION
+        schema: PUBLIC
+        warehouse: COMPUTE_WH
+        role: ${SNOWFLAKE_ROLE}
 ```
 
 ## Benchmark Configuration

@@ -12,13 +12,13 @@
 
 | 字段名称       | 说明 | 支持的数据库类型 |
 |------------------|-------------|-----------------------------|
-| `catalog_name` | 数据库系统中的顶层容器。它通常表示数据库的集合，并提供关于它们的元数据，例如可用的 schema、表和安全设置 | StarRocks/Snowflake |
+| `catalog_name` | 支持 catalog 的数据库系统中的顶层容器。它通常表示数据库的集合，并提供关于它们的元数据，例如可用的 schema、表和安全设置。Snowflake 需要留空 | StarRocks |
 | `database_name` | 存储相关数据的逻辑容器。它通常将多个 schema 组合在一起，并为数据组织、安全和管理提供边界 | DuckDB/MySQL/StarRocks/Snowflake |
-| `schema_name` | 数据库内的命名空间。它将表、视图、函数和过程等对象组织到逻辑组中。Schema 有助于避免名称冲突并支持基于角色的访问 | DuckDB/Snowflake |
+| `schema_name` | 数据库内的命名空间。它将表、视图、函数和过程等对象组织到逻辑组中。Schema 有助于避免名称冲突并支持基于角色的访问 | DuckDB/PostgreSQL/Snowflake |
 | `table_type` | 数据库中的表类型，包括 `table`、`view` 和 `mv`（物化视图的缩写）。每个数据库都支持表和视图。DuckDB 和 Snowflake 支持物化视图 | 所有支持的数据库 |
 | `table_name` | 表/视图/物化视图的名称 | 所有支持的数据库 |
 | `definition` | 创建表/视图/物化视图的 SQL 语句 | 所有支持的数据库 |
-| `identifier` | 当前表的唯一标识符，由 `catalog_name`、`database_name`、`schema_name` 和 `table_name` 组成。你不需要担心它，因为在大多数情况下你不需要它 | 所有支持的数据库 |
+| `identifier` | 当前表的唯一标识符，由数据源支持的命名空间字段和 `table_name` 组成；Snowflake 使用 `database_name`、`schema_name` 和 `table_name`，不包含 `catalog_name`。大多数场景下你不需要关心它 | 所有支持的数据库 |
 
 ## 样本数据的数据结构
 

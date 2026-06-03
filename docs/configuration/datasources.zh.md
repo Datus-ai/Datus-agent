@@ -28,7 +28,13 @@ agent:
         type: snowflake
         account: ${SNOWFLAKE_ACCOUNT}
         username: ${SNOWFLAKE_USER}
-        password: ${SNOWFLAKE_PASSWORD}
+        password: ${SNOWFLAKE_PASSWORD}  # password 和 private_key_file 必须二选一
+        # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
+        # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}
+        database: ${SNOWFLAKE_DATABASE}  # 可选
+        schema: ${SNOWFLAKE_SCHEMA}      # 可选
+        warehouse: ${SNOWFLAKE_WAREHOUSE}
+        role: ${SNOWFLAKE_ROLE}          # 可选
         default: true
 
       my_duckdb:
@@ -72,15 +78,21 @@ my_snowflake:
   type: snowflake
   account: ${SNOWFLAKE_ACCOUNT}
   username: ${SNOWFLAKE_USER}
-  password: ${SNOWFLAKE_PASSWORD}      # password 和 private_key_file 二选一
+  password: ${SNOWFLAKE_PASSWORD}      # password 和 private_key_file 必须二选一
   # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
   # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}  # 可选
   database: ${SNOWFLAKE_DATABASE}    # 可选
   schema: ${SNOWFLAKE_SCHEMA}        # 可选
-  warehouse: ${SNOWFLAKE_WAREHOUSE}  # 可选
+  warehouse: ${SNOWFLAKE_WAREHOUSE}
   role: ${SNOWFLAKE_ROLE}            # 可选
   default: true                      # 可选：设为默认数据库
 ```
+
+Snowflake 认证要求 `password` 和 `private_key_file` 必须二选一。使用 key-pair 认证时，设置
+`private_key_file`，如私钥有 passphrase 再设置 `private_key_file_pwd`；适配器内部会使用 Snowflake JWT 认证。
+
+Snowflake 使用 `database` + `schema` 命名空间。Snowflake 不要配置 `catalog`；`catalog` 过滤只适用于
+StarRocks 等支持 catalog 的引擎。
 
 ### StarRocks
 

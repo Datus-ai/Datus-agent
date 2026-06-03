@@ -222,12 +222,16 @@ agent:
         type: snowflake
         account: ${SNOWFLAKE_ACCOUNT}
         username: ${SNOWFLAKE_USER}
-        password: ${SNOWFLAKE_PASSWORD}  # Use either password or private_key_file
+        password: ${SNOWFLAKE_PASSWORD}  # Use exactly one of password or private_key_file
         # private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}
         # private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}  # Optional
+        database: ${SNOWFLAKE_DATABASE}  # Optional
+        schema: ${SNOWFLAKE_SCHEMA}  # Optional
         warehouse: ${SNOWFLAKE_WAREHOUSE}
         role: ${SNOWFLAKE_ROLE}  # Optional
 ```
+
+Use `database` and `schema` for Snowflake namespaces. Do not set `catalog` for Snowflake.
 
 Bootstrap and run selected tasks:
 
