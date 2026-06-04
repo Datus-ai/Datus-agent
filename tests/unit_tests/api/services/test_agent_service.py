@@ -2130,3 +2130,148 @@ class TestDeleteAgentRoute:
         )
         assert result.success is False
         assert result.errorCode == "AGENT_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+class TestEditAgentChannels:
+    """Tests for edit_agent / delete_agent IM gateway channel persistence."""
+
+    async def _create(self, svc, real_agent_config, name):
+        from datus.api.models.agent_models import CreateAgentInput
+
+        await svc.create_agent(CreateAgentInput(name=name, type="gen_sql"), real_agent_config)
+
+    def _edit_with_channels(self, agent_id, channels):
+        from datus.api.models.agent_models import ChannelBinding, EditAgentInput
+
+        return EditAgentInput(id=agent_id, channels=ChannelBinding(channels=channels))
+
+    def _slack(self, name="slack-main", enabled=True, secrets=None):
+        from datus.api.models.agent_models import ChannelInput
+
+        return ChannelInput(type="slack", name=name, enabled=enabled, secrets=secrets or {})
+
+    async def test_edit_agent_adds_channel(self, real_agent_config, agent_yml_with_singleton):
+        """A channel binding lands in the global ``channels`` map and persists."""
+        from datus.configuration import agent_config_loader
+
+        svc = AgentService()
+        await self._create(svc, real_agent_config, "chan_agent")
+
+        result = await svc.edit_agent(
+            self._edit_with_channels(
+                "chan_agent",
+                [self._slack(secrets={"app_token": "${SLACK_APP_TOKEN}", "bot_token": "${SLACK_BOT_TOKEN}"})],
+            ),
+            real_agent_config,
+        )
+        assert result.success is True
+
+        # In-memory config updated.
+        entry = real_agent_config.channels_config["slack-main"]
+        assert entry == {
+            "adapter": "slack",
+            "enabled": True,
+            "subagent_id": "chan_agent",
+            "extra": {"app_token": "${SLACK_APP_TOKEN}", "bot_token": "${SLACK_BOT_TOKEN}"},
+        }
+        # Persisted to agent.yml under the ``channels`` section.
+        persisted = agent_config_loader.configuration_manager().data["channels"]["slack-main"]
+        assert persisted["subagent_id"] == "chan_agent"
+        # Secrets written verbatim — no encryption.
+        assert persisted["extra"]["app_token"] == "${SLACK_APP_TOKEN}"
+
+    async def test_edit_agent_disabled_channel_kept(self, real_agent_config, agent_yml_with_singleton):
+        """A disabled channel is still persisted (gateway honours `enabled`)."""
+        svc = AgentService()
+        await self._create(svc, real_agent_config, "chan_agent")
+
+        result = await svc.edit_agent(
+            self._edit_with_channels("chan_agent", [self._slack(enabled=False, secrets={"app_token": "x"})]),
+            real_agent_config,
+        )
+        assert result.success is True
+        assert real_agent_config.channels_config["slack-main"]["enabled"] is False
+
+    async def test_edit_agent_empty_list_clears_this_agents_channels(self, real_agent_config, agent_yml_with_singleton):
+        """An empty channel list removes this agent's entries."""
+        svc = AgentService()
+        await self._create(svc, real_agent_config, "chan_agent")
+        await svc.edit_agent(
+            self._edit_with_channels("chan_agent", [self._slack(secrets={"app_token": "x"})]),
+            real_agent_config,
+        )
+        assert "slack-main" in real_agent_config.channels_config
+
+        result = await svc.edit_agent(self._edit_with_channels("chan_agent", []), real_agent_config)
+        assert result.success is True
+        assert "slack-main" not in real_agent_config.channels_config
+
+    async def test_edit_agent_channels_scoped_per_agent(self, real_agent_config, agent_yml_with_singleton):
+        """Editing one agent's channels leaves another agent's channels intact."""
+        svc = AgentService()
+        await self._create(svc, real_agent_config, "agent_a")
+        await self._create(svc, real_agent_config, "agent_b")
+        await svc.edit_agent(
+            self._edit_with_channels("agent_a", [self._slack(name="slack-a", secrets={"app_token": "a"})]),
+            real_agent_config,
+        )
+        await svc.edit_agent(
+            self._edit_with_channels("agent_b", [self._slack(name="slack-b", secrets={"app_token": "b"})]),
+            real_agent_config,
+        )
+
+        # Re-edit agent_a — agent_b's channel must survive.
+        await svc.edit_agent(
+            self._edit_with_channels("agent_a", [self._slack(name="slack-a2", secrets={"app_token": "a2"})]),
+            real_agent_config,
+        )
+        channels = real_agent_config.channels_config
+        assert "slack-b" in channels
+        assert "slack-a" not in channels  # old entry for agent_a replaced
+        assert "slack-a2" in channels
+
+    async def test_edit_agent_channel_name_conflict_with_other_agent(self, real_agent_config, agent_yml_with_singleton):
+        """Binding a channel name already owned by another agent is rejected."""
+        svc = AgentService()
+        await self._create(svc, real_agent_config, "agent_a")
+        await self._create(svc, real_agent_config, "agent_b")
+        await svc.edit_agent(
+            self._edit_with_channels("agent_a", [self._slack(name="shared", secrets={"app_token": "a"})]),
+            real_agent_config,
+        )
+
+        # agent_b tries to claim the same channel name — must fail, not clobber.
+        result = await svc.edit_agent(
+            self._edit_with_channels("agent_b", [self._slack(name="shared", secrets={"app_token": "b"})]),
+            real_agent_config,
+        )
+        assert result.success is False
+        assert result.errorCode == "CHANNEL_NAME_CONFLICT"
+        # agent_a's binding is untouched.
+        assert real_agent_config.channels_config["shared"]["subagent_id"] == "agent_a"
+
+    async def test_edit_agent_rejects_blank_channel_name(self, real_agent_config, agent_yml_with_singleton):
+        """A whitespace-only channel name is rejected."""
+        svc = AgentService()
+        await self._create(svc, real_agent_config, "chan_agent")
+        result = await svc.edit_agent(
+            self._edit_with_channels("chan_agent", [self._slack(name="   ", secrets={"app_token": "x"})]),
+            real_agent_config,
+        )
+        assert result.success is False
+        assert result.errorCode == "INVALID_CHANNEL_NAME"
+
+    async def test_delete_agent_removes_its_channels(self, real_agent_config, agent_yml_with_singleton):
+        """Deleting an agent drops the channels routed to it."""
+        svc = AgentService()
+        await self._create(svc, real_agent_config, "chan_agent")
+        await svc.edit_agent(
+            self._edit_with_channels("chan_agent", [self._slack(secrets={"app_token": "x"})]),
+            real_agent_config,
+        )
+        assert "slack-main" in real_agent_config.channels_config
+
+        result = await svc.delete_agent("chan_agent", real_agent_config)
+        assert result.success is True
+        assert "slack-main" not in real_agent_config.channels_config

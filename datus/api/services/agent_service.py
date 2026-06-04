@@ -672,6 +672,28 @@ def _save_agentic_nodes(agent_config: AgentConfig, nodes: dict) -> None:
     cfg_mgr.save()
 
 
+def _save_channels(agent_config: AgentConfig, channels: dict) -> None:
+    """Persist the global ``channels`` map back to the loaded ``agent.yml``.
+
+    Mirrors :func:`_save_agentic_nodes`: routes through the
+    ``ConfigurationManager`` singleton so the write lands in the source config
+    file (``--config`` path) and the ``agent:`` wrapping is round-tripped. An
+    empty map drops the ``channels`` section entirely. The in-memory
+    ``agent_config.channels_config`` is updated too so the running API process
+    stays consistent — the separate gateway process reads channels once at
+    startup and still needs a restart to pick up the change.
+    """
+    from datus.configuration.agent_config_loader import configuration_manager
+
+    cfg_mgr = configuration_manager()
+    if channels:
+        cfg_mgr.data["channels"] = channels
+    else:
+        cfg_mgr.data.pop("channels", None)
+    cfg_mgr.save()
+    agent_config.channels_config = channels
+
+
 class AgentService:
     """Service for Agent API operations.
 
@@ -1020,6 +1042,15 @@ class AgentService:
                     ),
                 )
 
+        # Channel bindings live in a separate top-level ``channels`` yaml
+        # section (consumed by the gateway), so persist them independently of
+        # the agentic_nodes update below — and before the no-op short-circuit,
+        # so a channels-only edit still saves.
+        if request.channels is not None:
+            channel_error = self._apply_channel_binding(request, agent_config)
+            if channel_error is not None:
+                return channel_error
+
         # If prompt_template content is provided, save to template file
         prompt_content = request.prompt_template
         if prompt_content is not None:
@@ -1038,7 +1069,7 @@ class AgentService:
         # API ``description`` lands on the runtime-visible ``agent_description``
         # key; drop any legacy flat ``description`` left over from older edits
         # so the read path doesn't see two competing values.
-        update_data = request.model_dump(exclude={"id", "name", "prompt_template"}, exclude_none=True)
+        update_data = request.model_dump(exclude={"id", "name", "prompt_template", "channels"}, exclude_none=True)
         if "description" in update_data:
             update_data["agent_description"] = update_data.pop("description")
             agent.pop("description", None)
@@ -1121,6 +1152,60 @@ class AgentService:
 
         return Result(success=True, data={"name": request.id, "id": request.id})
 
+    def _apply_channel_binding(self, request: EditAgentInput, agent_config: AgentConfig):
+        """Replace this agent's entries in the global ``channels`` map.
+
+        The binding carries the full desired channel list for ``request.id``.
+        We drop the agent's existing entries (matched by ``subagent_id``),
+        keeping channels routed to other agents, then append the new ones and
+        persist. Each entry takes the gateway's yaml shape::
+
+            <name>:
+              adapter: <type>
+              enabled: <bool>
+              subagent_id: <agent id>   # routes inbound messages to this agent
+              extra: {<secret fields>}  # written verbatim, no encryption
+
+        Returns a failure :class:`Result` on a bad entry, else ``None``.
+        """
+        binding = request.channels
+        channels = dict(getattr(agent_config, "channels_config", None) or {})
+
+        # Keep only channels NOT routed to this agent.
+        channels = {
+            key: value
+            for key, value in channels.items()
+            if not (isinstance(value, dict) and value.get("subagent_id") == request.id)
+        }
+
+        for channel in binding.channels or []:
+            name = (channel.name or "").strip()
+            if not name:
+                return Result(
+                    success=False,
+                    errorCode="INVALID_CHANNEL_NAME",
+                    errorMessage="Channel name cannot be empty",
+                )
+            # ``channels`` no longer holds this agent's own entries, so any name
+            # collision here belongs to a different agent — reject instead of
+            # silently clobbering its binding.
+            existing = channels.get(name)
+            if isinstance(existing, dict) and existing.get("subagent_id") != request.id:
+                return Result(
+                    success=False,
+                    errorCode="CHANNEL_NAME_CONFLICT",
+                    errorMessage=f"Channel name '{name}' is already bound to another sub-agent",
+                )
+            channels[name] = {
+                "adapter": channel.type,
+                "enabled": channel.enabled,
+                "subagent_id": request.id,
+                "extra": dict(channel.secrets or {}),
+            }
+
+        _save_channels(agent_config, channels)
+        return None
+
     async def delete_agent(
         self,
         agent_id: str,
@@ -1153,6 +1238,17 @@ class AgentService:
 
         del agentic_nodes[agent_id]
         _save_agentic_nodes(agent_config, agentic_nodes)
+
+        # Drop any channels routed to this agent so deleting it doesn't leave
+        # dangling gateway bindings pointing at a non-existent sub-agent.
+        channels = getattr(agent_config, "channels_config", None) or {}
+        remaining = {
+            key: value
+            for key, value in channels.items()
+            if not (isinstance(value, dict) and value.get("subagent_id") == agent_id)
+        }
+        if len(remaining) != len(channels):
+            _save_channels(agent_config, remaining)
 
         try:
             self._delete_prompt_templates(agent_id, agent_config)
