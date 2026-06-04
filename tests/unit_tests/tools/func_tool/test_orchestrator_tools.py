@@ -11,7 +11,7 @@ from datus.tools.func_tool.orchestrator_tools import OrchestratorIssueTools
 
 @pytest.mark.ci
 class TestOrchestratorIssueTools:
-    def test_available_tools_exposes_issue_lifecycle_tools(self):
+    def test_available_tools_exposes_issue_lifecycle_tools(self) -> None:
         tools = OrchestratorIssueTools().available_tools()
 
         assert {tool.name for tool in tools} == {
@@ -24,7 +24,7 @@ class TestOrchestratorIssueTools:
         assert all(tool.strict_json_schema is False for tool in tools)
 
     @pytest.mark.asyncio
-    async def test_tool_returns_proxy_required_error(self):
+    async def test_tool_returns_proxy_required_error(self) -> None:
         tool = next(tool for tool in OrchestratorIssueTools().available_tools() if tool.name == "finish_mission")
 
         result = await tool.on_invoke_tool(

@@ -14,6 +14,7 @@ import os
 import select
 import sys
 import threading
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -270,7 +271,7 @@ class PrintModeRunner:
         sys.stdout.write(payload.model_dump_json() + "\n")
         sys.stdout.flush()
 
-    def _attach_orchestrator_tools(self, node):
+    def _attach_orchestrator_tools(self, node: Any) -> None:
         from datus.tools.func_tool.orchestrator_tools import OrchestratorIssueTools
 
         orchestrator_tools = OrchestratorIssueTools()
