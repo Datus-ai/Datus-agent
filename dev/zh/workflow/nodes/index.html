@@ -2117,7 +2117,7 @@
   <a href="#generate-sql-node" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Generate SQL（生成 SQL）
+        gen_sql Agentic Node（生成 SQL）
       
     </span>
   </a>
@@ -4109,7 +4109,7 @@
   <a href="#generate-sql-node" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Generate SQL（生成 SQL）
+        gen_sql Agentic Node（生成 SQL）
       
     </span>
   </a>
@@ -4540,9 +4540,9 @@
 <li>将结构信息写入上下文</li>
 <li><strong>输出</strong>：相关表结构与样例数据列表</li>
 </ul>
-<h4 id="generate-sql-node">Generate SQL（生成 SQL）<a class="headerlink" href="#generate-sql-node" title="Permanent link">&para;</a></h4>
+<h4 id="generate-sql-node">gen_sql Agentic Node（生成 SQL）<a class="headerlink" href="#generate-sql-node" title="Permanent link">&para;</a></h4>
 <ul>
-<li><strong>用途</strong>：基于需求生成查询</li>
+<li><strong>用途</strong>：通过 <code>GenSQLAgenticNode</code> 基于需求生成查询</li>
 <li><strong>要点</strong>：</li>
 <li>利用大模型理解业务需求</li>
 <li>复用历史 SQL 模式</li>
@@ -4658,18 +4658,21 @@
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">schema_linking</span><span class="p">:</span>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;claude-3-sonnet&quot;</span>
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nt">temperature</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.1</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="nt">generate_sql</span><span class="p">:</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;gpt-4&quot;</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">    </span><span class="nt">temperature</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.2</span>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">  </span><span class="nt">reasoning</span><span class="p">:</span>
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;claude-3-opus&quot;</span>
-</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">    </span><span class="nt">temperature</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.3</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="nt">reasoning</span><span class="p">:</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;claude-3-opus&quot;</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">    </span><span class="nt">temperature</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.3</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="nt">agentic_nodes</span><span class="p">:</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">  </span><span class="nt">gen_sql</span><span class="p">:</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;gpt-4&quot;</span>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">    </span><span class="nt">system_prompt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gen_sql</span>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">    </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
 </span></code></pre></div>
 <h3 id="sql">SQL模板<a class="headerlink" href="#sql" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">nodes</span><span class="p">:</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">generate_sql</span><span class="p">:</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">prompt_template</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;generate_sql_system.j2&quot;</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="nt">user_template</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;generate_sql_user.j2&quot;</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">agentic_nodes</span><span class="p">:</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">gen_sql</span><span class="p">:</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">system_prompt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gen_sql</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.2&quot;</span>
 </span></code></pre></div>
 <h3 id="_9">资源限制<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h3>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">nodes</span><span class="p">:</span>
@@ -4682,7 +4685,7 @@
 <h3 id="_11">选择与组合<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h3>
 <ol>
 <li>先做 Schema Linking，补足上下文</li>
-<li>复杂场景结合 Reasoning 与 Generate SQL</li>
+<li>复杂场景结合 Reasoning 与 GenSQL</li>
 <li>引入 Reflect 提升稳健性</li>
 <li>用 Parallel 比较多种策略</li>
 </ol>
@@ -4717,9 +4720,9 @@
 <h3 id="_17">组合示例<a class="headerlink" href="#_17" title="Permanent link">&para;</a></h3>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># 并行多种 SQL 生成策略</span>
 </span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">parallel_node</span> <span class="o">=</span> <span class="n">ParallelNode</span><span class="p">([</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">GenerateSQLNode</span><span class="p">(</span><span class="n">strategy</span><span class="o">=</span><span class="s2">&quot;conservative&quot;</span><span class="p">),</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">GenerateSQLNode</span><span class="p">(</span><span class="n">strategy</span><span class="o">=</span><span class="s2">&quot;aggressive&quot;</span><span class="p">),</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">GenerateSQLNode</span><span class="p">(</span><span class="n">strategy</span><span class="o">=</span><span class="s2">&quot;metric_based&quot;</span><span class="p">)</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">GenSQLAgenticNode</span><span class="p">(</span><span class="n">strategy</span><span class="o">=</span><span class="s2">&quot;conservative&quot;</span><span class="p">),</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">GenSQLAgenticNode</span><span class="p">(</span><span class="n">strategy</span><span class="o">=</span><span class="s2">&quot;aggressive&quot;</span><span class="p">),</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">GenSQLAgenticNode</span><span class="p">(</span><span class="n">strategy</span><span class="o">=</span><span class="s2">&quot;metric_based&quot;</span><span class="p">)</span>
 </span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="p">])</span>
 </span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>
 </span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="c1"># 选择最优结果</span>

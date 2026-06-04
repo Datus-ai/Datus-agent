@@ -2114,10 +2114,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#generate-sql-node" class="md-nav__link">
+  <a href="#gen_sql-agentic-node" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Generate SQL Node
+        gen_sql Agentic Node
       
     </span>
   </a>
@@ -4106,10 +4106,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#generate-sql-node" class="md-nav__link">
+  <a href="#gen_sql-agentic-node" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Generate SQL Node
+        gen_sql Agentic Node
       
     </span>
   </a>
@@ -4542,9 +4542,9 @@
 <li>Update workflow context with schema information</li>
 <li><strong>Output</strong>: List of relevant table schemas with sample data</li>
 </ul>
-<h4 id="generate-sql-node">Generate SQL Node<a class="headerlink" href="#generate-sql-node" title="Permanent link">&para;</a></h4>
+<h4 id="gen_sql-agentic-node">gen_sql Agentic Node<a class="headerlink" href="#gen_sql-agentic-node" title="Permanent link">&para;</a></h4>
 <ul>
-<li><strong>Purpose</strong>: Generate SQL queries based on user requirements</li>
+<li><strong>Purpose</strong>: Generate SQL queries from user requirements with <code>GenSQLAgenticNode</code></li>
 <li><strong>Key Features</strong>:</li>
 <li>Uses LLM to understand business requirements</li>
 <li>Leverages historical SQL patterns</li>
@@ -4672,20 +4672,22 @@
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;claude-3-sonnet&quot;</span>
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nt">temperature</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.1</span>
 </span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="nt">generate_sql</span><span class="p">:</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;gpt-4&quot;</span>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">    </span><span class="nt">temperature</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.2</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="nt">reasoning</span><span class="p">:</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;claude-3-opus&quot;</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">    </span><span class="nt">temperature</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.3</span>
 </span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>
-</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">  </span><span class="nt">reasoning</span><span class="p">:</span>
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;claude-3-opus&quot;</span>
-</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">    </span><span class="nt">temperature</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.3</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="nt">agentic_nodes</span><span class="p">:</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">  </span><span class="nt">gen_sql</span><span class="p">:</span>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;gpt-4&quot;</span>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">    </span><span class="nt">system_prompt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gen_sql</span>
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">    </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
 </span></code></pre></div>
 <h3 id="prompt-templates">Prompt Templates<a class="headerlink" href="#prompt-templates" title="Permanent link">&para;</a></h3>
 <p>Nodes use configurable prompt templates:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">nodes</span><span class="p">:</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">generate_sql</span><span class="p">:</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">prompt_template</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;generate_sql_system.j2&quot;</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="nt">user_template</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;generate_sql_user.j2&quot;</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">agentic_nodes</span><span class="p">:</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">gen_sql</span><span class="p">:</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">system_prompt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gen_sql</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.2&quot;</span>
 </span></code></pre></div>
 <h3 id="resource-limits">Resource Limits<a class="headerlink" href="#resource-limits" title="Permanent link">&para;</a></h3>
 <p>Configure execution constraints:</p>
@@ -4699,7 +4701,7 @@
 <h3 id="node-selection">Node Selection<a class="headerlink" href="#node-selection" title="Permanent link">&para;</a></h3>
 <ol>
 <li><strong>Use Schema Linking First</strong>: Always start workflows with schema linking for context</li>
-<li><strong>Combine Complementary Nodes</strong>: Use reasoning and generate_sql together for complex queries</li>
+<li><strong>Combine Complementary Nodes</strong>: Use reasoning and gen_sql together for complex queries</li>
 <li><strong>Add Reflection for Robustness</strong>: Include reflection nodes for adaptive behavior</li>
 <li><strong>Use Parallel for Experimentation</strong>: Run multiple strategies in parallel for comparison</li>
 </ol>
@@ -4738,9 +4740,9 @@
 <p>Combine multiple nodes for complex operations:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># Parallel SQL generation strategies</span>
 </span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">parallel_node</span> <span class="o">=</span> <span class="n">ParallelNode</span><span class="p">([</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">GenerateSQLNode</span><span class="p">(</span><span class="n">strategy</span><span class="o">=</span><span class="s2">&quot;conservative&quot;</span><span class="p">),</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">GenerateSQLNode</span><span class="p">(</span><span class="n">strategy</span><span class="o">=</span><span class="s2">&quot;aggressive&quot;</span><span class="p">),</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">GenerateSQLNode</span><span class="p">(</span><span class="n">strategy</span><span class="o">=</span><span class="s2">&quot;metric_based&quot;</span><span class="p">)</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">GenSQLAgenticNode</span><span class="p">(</span><span class="n">strategy</span><span class="o">=</span><span class="s2">&quot;conservative&quot;</span><span class="p">),</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">GenSQLAgenticNode</span><span class="p">(</span><span class="n">strategy</span><span class="o">=</span><span class="s2">&quot;aggressive&quot;</span><span class="p">),</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">GenSQLAgenticNode</span><span class="p">(</span><span class="n">strategy</span><span class="o">=</span><span class="s2">&quot;metric_based&quot;</span><span class="p">)</span>
 </span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="p">])</span>
 </span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>
 </span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="c1"># Select best result</span>
