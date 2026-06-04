@@ -1559,13 +1559,13 @@ run_logged "Full Unit Tests" run_with_agent_home "$UNIT_TEST_HOME" "$UNIT_TEST_P
 
 ensure_nightly_kb_data
 
-run_logged "MCP Server Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/tools/test_mcp_server.py --tb=short --verbose --timeout=60
+run_logged "MCP Server Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/tools/test_mcp_server.py --tb=short --verbose --timeout=60 --timeout-method=thread
 
-run_logged "Gen Agent Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/agent/test_gen_semantic_model_agentic.py tests/integration/agent/test_gen_metrics_agentic.py tests/integration/agent/test_gen_ext_knowledge_agentic.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
+run_logged "Gen Agent Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/agent/test_gen_semantic_model_agentic.py tests/integration/agent/test_gen_metrics_agentic.py tests/integration/agent/test_gen_ext_knowledge_agentic.py --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
 
-run_logged "Reference Template Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/tools/test_reference_template.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
+run_logged "Reference Template Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/tools/test_reference_template.py --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
 
-run_logged "Web UI Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/regression/test_regression_web_e2e.py --tb=short --verbose --timeout=300 --reruns 1 --reruns-delay 5
+run_logged "Web UI Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/regression/test_regression_web_e2e.py --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5
 
 # These suites are not skipped. They are run by dedicated groups above/below
 # so the broad "tests/" collection used by Main/Product E2E does not duplicate
@@ -1591,26 +1591,26 @@ NIGHTLY_DEDICATED_SUITE_DESELECTS=(
   --deselect tests/regression/test_regression_web_e2e.py
 )
 
-run_logged "Main Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and not provider_health and not product_e2e" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" --tb=short --verbose --timeout=300 --reruns 1 --reruns-delay 5 --dist=loadscope -n auto
+run_logged "Main Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and not provider_health and not product_e2e" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5 --dist=loadscope -n auto
 
-run_logged "Product E2E Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and product_e2e and not provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
+run_logged "Product E2E Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and product_e2e and not provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
 
-run_compose_suite "Superset Nightly Tests" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
+run_compose_suite "Superset Nightly Tests" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
 
-run_compose_suite "Grafana Nightly Tests" "$GRAFANA_COMPOSE" "postgres:300" "grafana:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/tools/test_bi_grafana.py --tb=short --verbose --timeout=300 --reruns 1 --reruns-delay 5
+run_compose_suite "Grafana Nightly Tests" "$GRAFANA_COMPOSE" "postgres:300" "grafana:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/tools/test_bi_grafana.py --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5
 
-run_compose_suite "Airflow Nightly Tests" "$AIRFLOW_COMPOSE" "airflow:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/agent/test_scheduler_agentic.py --tb=short --verbose --timeout=600 --reruns 1 --reruns-delay 5
+run_compose_suite "Airflow Nightly Tests" "$AIRFLOW_COMPOSE" "airflow:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/agent/test_scheduler_agentic.py --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
 
-run_compose_suite "PostgreSQL Adapter Tests" "$POSTGRES_COMPOSE" "postgres:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_postgresql.py --tb=short --verbose --timeout=300
-run_compose_suite "MySQL Adapter Tests" "$MYSQL_COMPOSE" "mysql:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_mysql.py --tb=short --verbose --timeout=300
-run_compose_suite "ClickHouse Adapter Tests" "$CLICKHOUSE_COMPOSE" "clickhouse:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_clickhouse.py --tb=short --verbose --timeout=300
-run_compose_suite "StarRocks Adapter Tests" "$STARROCKS_COMPOSE" "starrocks:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_starrocks.py --tb=short --verbose --timeout=300
-run_compose_suite "Trino Adapter Tests" "$TRINO_COMPOSE" "trino:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_trino.py --tb=short --verbose --timeout=300
-run_compose_suite "Greenplum Adapter Tests" "$GREENPLUM_COMPOSE" "greenplum:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_greenplum.py --tb=short --verbose --timeout=300
-run_compose_suite "Hive Adapter Tests" "$HIVE_COMPOSE" "hive-metastore:600" "hive-server:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_hive.py --tb=short --verbose --timeout=300
-run_compose_suite "Spark Adapter Tests" "$SPARK_COMPOSE" "spark-thrift:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300
+run_compose_suite "PostgreSQL Adapter Tests" "$POSTGRES_COMPOSE" "postgres:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_postgresql.py --tb=short --verbose --timeout=300 --timeout-method=thread
+run_compose_suite "MySQL Adapter Tests" "$MYSQL_COMPOSE" "mysql:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_mysql.py --tb=short --verbose --timeout=300 --timeout-method=thread
+run_compose_suite "ClickHouse Adapter Tests" "$CLICKHOUSE_COMPOSE" "clickhouse:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_clickhouse.py --tb=short --verbose --timeout=300 --timeout-method=thread
+run_compose_suite "StarRocks Adapter Tests" "$STARROCKS_COMPOSE" "starrocks:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_starrocks.py --tb=short --verbose --timeout=300 --timeout-method=thread
+run_compose_suite "Trino Adapter Tests" "$TRINO_COMPOSE" "trino:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_trino.py --tb=short --verbose --timeout=300 --timeout-method=thread
+run_compose_suite "Greenplum Adapter Tests" "$GREENPLUM_COMPOSE" "greenplum:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_greenplum.py --tb=short --verbose --timeout=300 --timeout-method=thread
+run_compose_suite "Hive Adapter Tests" "$HIVE_COMPOSE" "hive-metastore:600" "hive-server:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_hive.py --tb=short --verbose --timeout=300 --timeout-method=thread
+run_compose_suite "Spark Adapter Tests" "$SPARK_COMPOSE" "spark-thrift:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300 --timeout-method=thread
 
-run_logged_warn_only "Provider Health Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" --tb=short --verbose --timeout=300 --reruns 1 --reruns-delay 5
+run_logged_warn_only "Provider Health Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5
 
 run_logged_unfiltered "Flaky Log Classification" uv run python ci/check_flaky_registry.py --registry ci/flaky-registry.yml --log-file "$LOG_FILE" --warn-only
 
