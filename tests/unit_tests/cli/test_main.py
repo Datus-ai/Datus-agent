@@ -95,7 +95,7 @@ class TestApplicationRun:
             patch("datus.cli.main.configure_logging"),
             patch.object(app, "_ensure_project_config"),
             patch.object(app, "_resolve_default_datasource", return_value=""),
-            patch("datus.cli.main.DatusCLI", return_value=mock_cli) as mock_cli_cls,
+            patch("datus.cli.repl.DatusCLI", return_value=mock_cli) as mock_cli_cls,
         ):
             app.run()
         mock_cli_cls.assert_called_once_with(mock_args)
@@ -111,7 +111,7 @@ class TestApplicationRun:
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
             patch("datus.cli.main.configure_logging"),
             patch.object(app, "_resolve_default_datasource", return_value=""),
-            patch("datus.cli.main.DatusCLI") as mock_cli_cls,
+            patch("datus.cli.repl.DatusCLI") as mock_cli_cls,
         ):
             app.run()
         mock_cli_cls.assert_not_called()
@@ -128,7 +128,7 @@ class TestApplicationRun:
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
             patch("datus.cli.main.configure_logging"),
             patch.object(app, "_ensure_project_config"),
-            patch("datus.cli.main.DatusCLI") as mock_cli_cls,
+            patch("datus.cli.repl.DatusCLI") as mock_cli_cls,
         ):
             app.run()
         mock_cli_cls.assert_called_once_with(mock_args)
@@ -181,7 +181,7 @@ class TestApplicationRun:
             patch.object(app.arg_parser, "parse_args", return_value=mock_args),
             patch("datus.cli.main.configure_logging"),
             patch.object(app, "_ensure_project_config") as mock_ensure,
-            patch("datus.cli.main.DatusCLI", return_value=mock_cli) as MockCLI,
+            patch("datus.cli.repl.DatusCLI", return_value=mock_cli) as MockCLI,
         ):
             app.run()
         mock_ensure.assert_called_once_with(mock_args)
