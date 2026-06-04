@@ -83,12 +83,15 @@ def _normalize(name: str) -> str:
 
 
 def _is_editable(dist: importlib_metadata.Distribution) -> bool:
-    """True for editable / local source installs.
+    """True for editable / local source (directory) installs.
 
-    Mirrors ``ci/nightly_manifest.package_info``: editable installs carry
-    a ``direct_url.json`` whose ``dir_info.editable`` is true, or whose
-    ``url`` is a local ``file://`` path. Missing / malformed metadata is
-    treated as a normal (non-editable) install.
+    Per PEP 610, a ``direct_url.json`` describes a directory install via
+    ``dir_info`` and a local wheel/archive install via ``archive_info``.
+    A distribution is treated as editable/source when it was installed from
+    a directory (``dir_info`` present), either explicitly editable
+    (``dir_info.editable`` true) or from a local ``file://`` path. Local
+    wheels/archives (``archive_info``) and missing / malformed metadata are
+    treated as normal (non-editable) installs that pip/uv can upgrade.
     """
     try:
         text = dist.read_text("direct_url.json")
@@ -103,7 +106,11 @@ def _is_editable(dist: importlib_metadata.Distribution) -> bool:
     if not isinstance(data, dict):
         return False
     dir_info = data.get("dir_info")
-    if isinstance(dir_info, dict) and dir_info.get("editable"):
+    if not isinstance(dir_info, dict):
+        # Local wheels/archives carry ``archive_info`` (no ``dir_info``); pip/uv
+        # can upgrade those, so they are not editable/source installs.
+        return False
+    if dir_info.get("editable"):
         return True
     return str(data.get("url", "")).startswith("file://")
 

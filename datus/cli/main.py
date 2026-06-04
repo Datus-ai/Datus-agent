@@ -11,7 +11,6 @@ Main entry point for the CLI application.
 import argparse
 
 from datus import __version__
-from datus.cli.repl import DatusCLI
 from datus.utils.async_utils import setup_windows_policy
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -233,6 +232,10 @@ class Application:
         elif args.web:
             self._run_web_interface(args)
         else:
+            # Import lazily so the 'upgrade'/'update' interceptor in main() can run
+            # even when datus.cli.repl is broken (the whole point of self-upgrade).
+            from datus.cli.repl import DatusCLI
+
             cli = DatusCLI(args)
             cli.run()
 

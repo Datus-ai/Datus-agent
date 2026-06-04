@@ -35,8 +35,14 @@ def _editable_direct_url() -> str:
     return json.dumps({"url": "file:///home/user/datus-bi-superset", "dir_info": {"editable": True}})
 
 
-def _file_url_direct_url() -> str:
-    return json.dumps({"url": "file:///home/user/some-pkg"})
+def _local_dir_direct_url() -> str:
+    # Non-editable directory install (``pip install ./path``): dir_info present.
+    return json.dumps({"url": "file:///home/user/some-pkg", "dir_info": {"editable": False}})
+
+
+def _local_wheel_direct_url() -> str:
+    # Local wheel/archive install (``pip install ./foo.whl``): archive_info, no dir_info.
+    return json.dumps({"url": "file:///home/user/foo-0.1.0.whl", "archive_info": {}})
 
 
 def _wheel_direct_url() -> str:
@@ -79,12 +85,21 @@ class TestEnumerateDatusPackages:
         pkg = next(p for p in svc.enumerate_datus_packages() if p.name == "datus-bi-superset")
         assert pkg.editable is True
 
-    def test_editable_flag_from_file_url(self, monkeypatch):
-        dists = [_FakeDist("datus-bi-superset", "0.1.0", direct_url=_file_url_direct_url())]
+    def test_editable_flag_from_local_dir_file_url(self, monkeypatch):
+        # A local directory install (dir_info present, file:// url) is source/editable.
+        dists = [_FakeDist("datus-bi-superset", "0.1.0", direct_url=_local_dir_direct_url())]
         monkeypatch.setattr(svc.importlib_metadata, "distributions", lambda: iter(dists))
         monkeypatch.setattr("datus.__version__", "0.3.1", raising=False)
         pkg = next(p for p in svc.enumerate_datus_packages() if p.name == "datus-bi-superset")
         assert pkg.editable is True
+
+    def test_local_wheel_install_is_not_editable(self, monkeypatch):
+        # A local wheel/archive (archive_info, file:// url) is upgradable, not editable.
+        dists = [_FakeDist("datus-bi-superset", "0.1.0", direct_url=_local_wheel_direct_url())]
+        monkeypatch.setattr(svc.importlib_metadata, "distributions", lambda: iter(dists))
+        monkeypatch.setattr("datus.__version__", "0.3.1", raising=False)
+        pkg = next(p for p in svc.enumerate_datus_packages() if p.name == "datus-bi-superset")
+        assert pkg.editable is False
 
     def test_normal_wheel_install_is_not_editable(self, monkeypatch):
         dists = [_FakeDist("datus-bi-superset", "0.1.0", direct_url=_wheel_direct_url())]

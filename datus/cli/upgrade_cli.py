@@ -38,7 +38,7 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
         "--yes",
         "-y",
         action="store_true",
-        help="Reserved for non-interactive use; upgrades run without an extra confirmation prompt.",
+        help="Reserved for non-interactive use; currently a no-op (the command never prompts).",
     )
     return parser.parse_args(argv)
 
