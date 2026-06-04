@@ -18,7 +18,7 @@
 
 **Bug 修复**
 
-- **自定义 Ask 子代理遵守工具白名单** - `ask_report` / `ask_dashboard` 现在只会看到子代理 `tools` 白名单中允许的工具。未授权的数据库、bash、skill 工具不再暴露给模型，prompt 也不再混入完整聊天工具目录，减少越权调用和上下文污染风险。[#877](https://github.com/Datus-ai/Datus-agent/pull/877) [#878](https://github.com/Datus-ai/Datus-agent/pull/878) [#881](https://github.com/Datus-ai/Datus-agent/pull/881) [文档](subagent/customized_subagent.zh.md)
+- **自定义 Ask 子代理遵守工具白名单** - `ask_report` / `ask_dashboard` 现在只会看到子代理 `tools` 白名单中允许的工具。未授权的数据库、bash、skill 工具不再暴露给模型，prompt 也不再混入完整聊天工具目录，减少越权调用和上下文污染风险。[#877](https://github.com/Datus-ai/Datus-agent/pull/877) [#878](https://github.com/Datus-ai/Datus-agent/pull/878) [#881](https://github.com/Datus-ai/Datus-agent/pull/881)
 
 ### 0.3.2
 

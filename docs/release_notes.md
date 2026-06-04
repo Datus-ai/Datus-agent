@@ -18,7 +18,7 @@
 
 **Bug Fixes**
 
-- **Custom Ask Subagents Honor Tool Whitelists** - `ask_report` / `ask_dashboard` now only see tools allowed by the subagent's `tools` whitelist. Unauthorized database, bash, and skill tools are no longer exposed to the model, and prompts no longer include the full chat tool directory, reducing unauthorized-tool and context-pollution risk. [#877](https://github.com/Datus-ai/Datus-agent/pull/877) [#878](https://github.com/Datus-ai/Datus-agent/pull/878) [#881](https://github.com/Datus-ai/Datus-agent/pull/881) [docs](subagent/customized_subagent.md)
+- **Custom Ask Subagents Honor Tool Whitelists** - `ask_report` / `ask_dashboard` now only see tools allowed by the subagent's `tools` whitelist. Unauthorized database, bash, and skill tools are no longer exposed to the model, and prompts no longer include the full chat tool directory, reducing unauthorized-tool and context-pollution risk. [#877](https://github.com/Datus-ai/Datus-agent/pull/877) [#878](https://github.com/Datus-ai/Datus-agent/pull/878) [#881](https://github.com/Datus-ai/Datus-agent/pull/881)
 
 ### 0.3.2
 
