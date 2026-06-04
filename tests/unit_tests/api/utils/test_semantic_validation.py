@@ -1,5 +1,8 @@
 """Tests for datus.api.utils.semantic_validation."""
 
+import sys
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -127,6 +130,46 @@ class TestDeepValidation:
         assert "Semantic validation failed" in errors[0]
 
 
+class TestDeepValidationPathIsolation:
+    """Tests for metricflow-backed file collection boundaries."""
+
+    def test_non_semantic_models_path_does_not_scan_parent_directory(self, monkeypatch, tmp_path):
+        captured = _install_fake_metricflow(monkeypatch)
+        semantic_validation._METRICFLOW_AVAILABLE = True
+
+        is_valid, errors = validate_semantic_yaml(
+            yaml_content="metric:\n  name: test\n  type: simple\n",
+            file_path=str(tmp_path / "test.yml"),
+            datus_home=str(tmp_path / "home"),
+            datasource="default",
+        )
+
+        assert is_valid is True
+        assert errors == []
+        assert captured["collected_dirs"] == []
+        assert len(captured["parsed_file_paths"]) == 1
+        assert captured["parsed_file_paths"][0].endswith("test.yml")
+
+    def test_semantic_models_path_collects_project_semantic_root(self, monkeypatch, tmp_path):
+        captured = _install_fake_metricflow(monkeypatch)
+        semantic_validation._METRICFLOW_AVAILABLE = True
+        semantic_root = tmp_path / "subject" / "semantic_models"
+        metric_path = semantic_root / "analytics" / "metrics" / "test.yml"
+
+        is_valid, errors = validate_semantic_yaml(
+            yaml_content="metric:\n  name: test\n  type: simple\n",
+            file_path=str(metric_path),
+            datus_home=str(tmp_path / "home"),
+            datasource="analytics",
+        )
+
+        assert is_valid is True
+        assert errors == []
+        assert captured["collected_dirs"] == [str(semantic_root)]
+        assert captured["parsed_file_paths"][0] == str(semantic_root / "existing.yml")
+        assert captured["parsed_file_paths"][-1].endswith("test.yml")
+
+
 # ---------------------------------------------------------------------------
 # Availability detection
 # ---------------------------------------------------------------------------
@@ -156,3 +199,46 @@ class TestMetricflowDetection:
             result = semantic_validation._check_metricflow()
             assert result is False
             assert semantic_validation._METRICFLOW_AVAILABLE is False
+
+
+def _install_fake_metricflow(monkeypatch):
+    captured = {"collected_dirs": [], "parsed_file_paths": []}
+
+    class FakeConfigLinter:
+        def lint_file(self, _file_path):
+            return []
+
+    class FakeModelValidator:
+        def validate_model(self, _model):
+            return SimpleNamespace(issues=None)
+
+    def fake_collect_yaml_config_file_paths(directory):
+        captured["collected_dirs"].append(directory)
+        return [str(Path(directory) / "existing.yml")]
+
+    def fake_parse_yaml_file_paths_to_model(file_paths, raise_issues_as_exceptions=False):
+        captured["parsed_file_paths"] = list(file_paths)
+        assert raise_issues_as_exceptions is False
+        return SimpleNamespace(issues=None, model=object())
+
+    model_validator = ModuleType("metricflow.model.model_validator")
+    model_validator.ModelValidator = FakeModelValidator
+
+    config_linter = ModuleType("metricflow.model.parsing.config_linter")
+    config_linter.ConfigLinter = FakeConfigLinter
+
+    dir_to_model = ModuleType("metricflow.model.parsing.dir_to_model")
+    dir_to_model.collect_yaml_config_file_paths = fake_collect_yaml_config_file_paths
+    dir_to_model.parse_yaml_file_paths_to_model = fake_parse_yaml_file_paths_to_model
+
+    modules = {
+        "metricflow": ModuleType("metricflow"),
+        "metricflow.model": ModuleType("metricflow.model"),
+        "metricflow.model.model_validator": model_validator,
+        "metricflow.model.parsing": ModuleType("metricflow.model.parsing"),
+        "metricflow.model.parsing.config_linter": config_linter,
+        "metricflow.model.parsing.dir_to_model": dir_to_model,
+    }
+    for name, module in modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    return captured
