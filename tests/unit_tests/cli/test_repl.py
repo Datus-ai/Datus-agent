@@ -936,7 +936,6 @@ class TestInitConnection:
 
         assert cli.db_connector is mock_conn
 
-        assert cli.cli_context.current_logic_db_name == "returned_db"
         assert cli.cli_context.current_db_name == "connector_db"
 
 

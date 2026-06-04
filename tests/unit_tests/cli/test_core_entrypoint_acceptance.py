@@ -138,7 +138,6 @@ def test_cli_slash_commands_route_through_shared_repl_dispatch() -> None:
         catalog="catalog",
         db_name="warehouse_db",
         schema="analytics",
-        db_logic_name="warehouse",
     )
     cli.reset_session.assert_called_once_with()
     cli.chat_commands.update_chat_node_tools.assert_called_once_with()

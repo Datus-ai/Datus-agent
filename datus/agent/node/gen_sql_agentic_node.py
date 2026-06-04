@@ -200,15 +200,17 @@ class GenSQLAgenticNode(AgenticNode):
         return {"success": True, "message": "GenSQL input prepared from workflow"}
 
     def _update_database_connection(self, database_name: str):
-        """
-        Update database connection to a different database.
+        """Rebuild the DB tool bound to ``database_name``.
+
+        ``default_database`` makes DBFuncTool clone the datasource config with the target
+        database, so the connector connects to it (works for PG/server DBs).
 
         Args:
-            database_name: The name of the database to connect to
+            database_name: The physical database to bind to.
         """
         self.db_func_tool = DBFuncTool(
             agent_config=self.agent_config,
-            default_datasource=database_name,
+            default_database=database_name,
             sub_agent_name=self.node_config.get("system_prompt"),
         )
         self._rebuild_tools()

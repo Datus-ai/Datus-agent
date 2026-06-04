@@ -107,7 +107,7 @@ def get_files_from_glob_pattern(path_pattern: str, dialect: str | DBType = DBTyp
         dialect (str, optional): dialect of the database. Defaults to DBType.SQLITE.
 
     Returns:
-        List[Dict[str, str]]: list of dicts with keys logic_name, database_name, and uri
+        List[Dict[str, str]]: list of dicts with keys datasource, name, and uri
     """
     if not has_glob_pattern(path_pattern):
         return []
@@ -132,16 +132,16 @@ def get_files_from_glob_pattern(path_pattern: str, dialect: str | DBType = DBTyp
             continue
 
         database_name = path.stem  # 文件名（去扩展名）
-        # logic_name 使用父目录名称（当目录中存在通配符时）
+        # datasource 名使用父目录名称（当目录中存在通配符时）
         if dir_has_wildcard:
-            logic_name = path.parent.name
+            datasource = path.parent.name
         else:
-            logic_name = database_name
+            datasource = database_name
 
         uri = f"{dialect}:///{path.as_posix()}"
         result.append(
             {
-                "logic_name": logic_name,
+                "datasource": datasource,
                 "name": database_name,
                 "uri": uri,
             }

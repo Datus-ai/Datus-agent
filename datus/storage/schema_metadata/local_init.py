@@ -104,29 +104,32 @@ def init_local_schema(
     logger.info(f"Initializing local schema for datasource: {agent_config.current_datasource}")
     event_helper.task_started(datasource=agent_config.current_datasource, build_mode=build_mode, table_type=table_type)
 
-    db_configs = agent_config.datasource_configs[agent_config.current_datasource]
-    if len(db_configs) == 1:
-        db_configs = list(db_configs.values())[0]
-
-    if isinstance(db_configs, DbConfig):
-        # Single database configuration (like StarRocks, MySQL, PostgreSQL, etc.)
-        logger.info(f"Processing single database configuration: {db_configs.type}")
-        if db_configs.type == DBType.SQLITE:
+    ds = agent_config.current_datasource
+    db_config = agent_config.datasource_configs[ds]
+    # A datasource may serve multiple databases (e.g. a glob path_pattern → one per file).
+    databases = agent_config.list_databases(ds) or [getattr(db_config, "database", "")]
+    logger.info(f"Processing datasource {ds} ({db_config.type}) databases: {databases}")
+    for database in databases:
+        if init_database_name and init_database_name != database:
+            continue
+        if db_config.type == DBType.SQLITE:
             init_sqlite_schema(
                 table_lineage_store,
                 agent_config,
-                db_configs,
+                db_config,
                 db_manager,
+                database=database,
                 table_type=table_type,
                 build_mode=build_mode,
                 event_helper=event_helper,
             )
-        elif db_configs.type == DBType.DUCKDB:
+        elif db_config.type == DBType.DUCKDB:
             init_duckdb_schema(
                 table_lineage_store,
                 agent_config,
-                db_configs,
+                db_config,
                 db_manager,
+                database_name=database,
                 schema_name=init_database_name,
                 table_type=table_type,
                 build_mode=build_mode,
@@ -136,52 +139,14 @@ def init_local_schema(
             init_other_three_level_schema(
                 table_lineage_store,
                 agent_config,
-                db_configs,
+                db_config,
                 db_manager,
                 catalog_name=init_catalog_name,
-                database_name=init_database_name,
+                database_name=database or init_database_name,
                 table_type=table_type,
                 build_mode=build_mode,
                 event_helper=event_helper,
             )
-
-    else:
-        # Multiple database configuration (like multiple SQLite files)
-        logger.info("Processing multiple database configuration")
-        if not db_configs:
-            logger.warning("No database configuration found")
-            return
-
-        for database_name, db_config in db_configs.items():
-            logger.info(f"Processing database: {database_name}")
-            if init_database_name and init_database_name != database_name:
-                logger.info(f"Skip database: {database_name} because it is not the same as {init_database_name}")
-                continue
-            # only sqlite and duckdb support multiple databases
-            if db_config.type == DBType.SQLITE:
-                init_sqlite_schema(
-                    table_lineage_store,
-                    agent_config,
-                    db_config,
-                    db_manager,
-                    table_type=table_type,
-                    build_mode=build_mode,
-                    event_helper=event_helper,
-                )
-            elif db_config.type == DBType.DUCKDB:
-                init_duckdb_schema(
-                    table_lineage_store,
-                    agent_config,
-                    db_config,
-                    db_manager,
-                    database_name=database_name,
-                    schema_name=init_database_name,
-                    table_type=table_type,
-                    build_mode=build_mode,
-                    event_helper=event_helper,
-                )
-            else:
-                logger.warning(f"Unsupported database type {db_config.type} for multi-database configuration")
     # Create indices after initialization
     table_lineage_store.after_init()
     event_helper.task_completed(total_items=0, completed_items=0)
@@ -193,11 +158,12 @@ def init_sqlite_schema(
     agent_config: AgentConfig,
     db_config: DbConfig,
     db_manager: DBManager,
+    database: str = "",
     table_type: TABLE_TYPE = "table",
     build_mode: str = "overwrite",
     event_helper: Optional[BatchEventHelper] = None,
 ):
-    database_name = getattr(db_config, "database", "")
+    database_name = database or getattr(db_config, "database", "")
     sql_connector = db_manager.get_conn(agent_config.current_datasource, database_name)
     all_schema_tables, all_value_tables = exists_table_value(
         table_lineage_store,
@@ -313,7 +279,7 @@ def init_other_three_level_schema(
     schema_name = getattr(db_config, "schema", "")
     catalog_name = catalog_name or getattr(db_config, "catalog", "")
 
-    sql_connector = db_manager.get_conn(agent_config.current_datasource)
+    sql_connector = db_manager.get_conn(agent_config.current_datasource, database_name)
 
     if not database_name and hasattr(sql_connector, "database_name"):
         database_name = getattr(sql_connector, "database_name", "")

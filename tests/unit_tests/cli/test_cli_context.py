@@ -165,11 +165,6 @@ class TestUpdateDatabaseContext:
         ctx.update_database_context(schema="myschema")
         assert ctx.current_schema == "myschema"
 
-    def test_update_logic_name(self):
-        ctx = CliContext()
-        ctx.update_database_context(db_logic_name="logic_db")
-        assert ctx.current_logic_db_name == "logic_db"
-
     def test_none_values_not_applied(self):
         ctx = CliContext()
         ctx.current_db_name = "existing"

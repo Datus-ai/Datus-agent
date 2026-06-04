@@ -462,9 +462,9 @@ class Node(ABC):
             self.dependencies.append(node_id)
 
     def _sql_connector(self, database_name: str = "") -> BaseSqlConnector:
+        # Route by (datasource, database); DBManager binds the connector to the database.
         return db_manager_instance(self.agent_config.datasource_configs).get_conn(
-            self.agent_config.current_datasource,
-            database_name,
+            self.agent_config.current_datasource, database_name
         )
 
     def to_dict(self) -> Dict:

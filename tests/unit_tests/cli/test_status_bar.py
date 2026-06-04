@@ -689,39 +689,33 @@ class TestStatusBarProviderConnector:
         # GreenplumConnector reuses PostgreSQLConnector and exposes
         # dialect="postgresql"; the user-facing datasource type
         # (agent_config.db_type) must win so the status bar shows "greenplum".
-        ctx = SimpleNamespace(current_logic_db_name="warehouse", current_db_name=None)
+        ctx = SimpleNamespace(current_db_name="warehouse")
         connector = SimpleNamespace(dialect="postgresql")
         agent_config = SimpleNamespace(db_type="greenplum")
         state = StatusBarProvider(self._make_cli(ctx, connector, agent_config)).current_state()
         assert state.connector == "greenplum: warehouse"
 
     def test_falls_back_to_dialect_when_agent_config_db_type_blank(self):
-        ctx = SimpleNamespace(current_logic_db_name="benchmark", current_db_name=None)
+        ctx = SimpleNamespace(current_db_name="benchmark")
         connector = SimpleNamespace(dialect="starrocks")
         agent_config = SimpleNamespace(db_type="")
         state = StatusBarProvider(self._make_cli(ctx, connector, agent_config)).current_state()
         assert state.connector == "starrocks: benchmark"
 
     def test_returns_type_and_name_when_both_present(self):
-        ctx = SimpleNamespace(current_logic_db_name="benchmark", current_db_name="benchmark_raw")
+        ctx = SimpleNamespace(current_db_name="benchmark_raw")
         connector = SimpleNamespace(dialect="starrocks")
         state = StatusBarProvider(self._make_cli(ctx, connector)).current_state()
-        assert state.connector == "starrocks: benchmark"
+        assert state.connector == "starrocks: benchmark_raw"
 
-    def test_logic_db_name_wins_over_current_db_name(self):
-        ctx = SimpleNamespace(current_logic_db_name="prod", current_db_name="raw")
+    def test_uses_current_db_name(self):
+        ctx = SimpleNamespace(current_db_name="raw")
         connector = SimpleNamespace(dialect="mysql")
         state = StatusBarProvider(self._make_cli(ctx, connector)).current_state()
-        assert state.connector == "mysql: prod"
-
-    def test_falls_back_to_current_db_name_when_logic_missing(self):
-        ctx = SimpleNamespace(current_logic_db_name=None, current_db_name="raw")
-        connector = SimpleNamespace(dialect="duckdb")
-        state = StatusBarProvider(self._make_cli(ctx, connector)).current_state()
-        assert state.connector == "duckdb: raw"
+        assert state.connector == "mysql: raw"
 
     def test_dialect_is_lowercased(self):
-        ctx = SimpleNamespace(current_logic_db_name="benchmark", current_db_name=None)
+        ctx = SimpleNamespace(current_db_name="benchmark")
         connector = SimpleNamespace(dialect="StarRocks")
         state = StatusBarProvider(self._make_cli(ctx, connector)).current_state()
         assert state.connector == "starrocks: benchmark"
@@ -730,24 +724,24 @@ class TestStatusBarProviderConnector:
         # DBType is a (str, Enum) mixin; on Python 3.11+ str(DBType.SQLITE)
         # returns "DBType.SQLITE". The resolver must pull .value so users see
         # "sqlite: ..." rather than "dbtype.sqlite: ...".
-        ctx = SimpleNamespace(current_logic_db_name="california_schools", current_db_name=None)
+        ctx = SimpleNamespace(current_db_name="california_schools")
         connector = SimpleNamespace(dialect=DBType.SQLITE)
         state = StatusBarProvider(self._make_cli(ctx, connector)).current_state()
         assert state.connector == "sqlite: california_schools"
 
     def test_returns_bare_name_when_db_connector_missing(self):
-        ctx = SimpleNamespace(current_logic_db_name="only_name", current_db_name=None)
+        ctx = SimpleNamespace(current_db_name="only_name")
         state = StatusBarProvider(self._make_cli(ctx, None)).current_state()
         assert state.connector == "only_name"
 
     def test_returns_bare_name_when_dialect_missing(self):
-        ctx = SimpleNamespace(current_logic_db_name="demo", current_db_name=None)
+        ctx = SimpleNamespace(current_db_name="demo")
         connector = SimpleNamespace(dialect=None)
         state = StatusBarProvider(self._make_cli(ctx, connector)).current_state()
         assert state.connector == "demo"
 
     def test_returns_empty_when_no_db_name(self):
-        ctx = SimpleNamespace(current_logic_db_name=None, current_db_name=None)
+        ctx = SimpleNamespace(current_db_name=None)
         connector = SimpleNamespace(dialect="mysql")
         state = StatusBarProvider(self._make_cli(ctx, connector)).current_state()
         assert state.connector == ""

@@ -985,7 +985,6 @@ class TestServiceManagerSaveConfiguration:
             "username": "admin",
             "password": "secret",
             "database": "mydb",
-            "logic_name": "pg_logical",
             "path_pattern": "",
             "extra": None,
             "default": False,
@@ -1012,7 +1011,6 @@ class TestServiceManagerSaveConfiguration:
         updates = call_kwargs[1]["updates"] if call_kwargs[1] else call_kwargs[0][0]
         pg_entry = updates["services"]["datasources"]["pg_db"]
         # Internal fields should be removed
-        assert "logic_name" not in pg_entry
         assert "path_pattern" not in pg_entry
 
     def test_save_configuration_with_default_db_includes_default_flag(self):
@@ -1063,35 +1061,6 @@ class TestServiceManagerSaveConfiguration:
             result = sm._save_configuration()
 
         assert result is True
-
-    def test_save_configuration_sqlite_with_different_logic_name_adds_name_field(self):
-        """_save_configuration() adds 'name' field when logic_name differs from db_name."""
-        db_cfg = MagicMock()
-        db_cfg.type = "sqlite"
-        db_cfg.uri = "data/db.sqlite"
-        db_cfg.default = False
-        db_cfg.logic_name = "alias_name"  # Different from the dict key "main_db"
-
-        mock_config = _make_agent_config({"main_db": db_cfg})
-
-        mock_cm = MagicMock()
-        mock_cm.data = {}
-
-        with (
-            patch("datus.cli.service_manager.load_agent_config", return_value=mock_config),
-            patch("datus.cli.service_manager.configuration_manager", return_value=mock_cm),
-            patch("datus.cli.service_manager.console"),
-        ):
-            from datus.cli.service_manager import ServiceManager
-
-            sm = ServiceManager("agent.yml")
-            result = sm._save_configuration()
-
-        assert result is True
-        call_kwargs = mock_cm.update.call_args
-        updates = call_kwargs[1]["updates"] if call_kwargs[1] else call_kwargs[0][0]
-        main_entry = updates["services"]["datasources"]["main_db"]
-        assert main_entry.get("name") == "alias_name"
 
 
 class TestValidateDbName:

@@ -284,7 +284,7 @@ class StatusBarProvider:
         try:
             ctx = getattr(self._cli, "cli_context", None)
             if ctx is not None:
-                db_name = getattr(ctx, "current_logic_db_name", None) or getattr(ctx, "current_db_name", None) or ""
+                db_name = getattr(ctx, "current_db_name", None) or ""
         except Exception as e:
             logger.debug(f"status_bar: failed to read db name: {e}")
 

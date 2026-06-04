@@ -532,7 +532,7 @@ class TestExecuteDDLDatabaseParam:
         tool = self._make_tool(mock_connector)
         with patch.object(tool, "_get_connector", return_value=mock_connector) as mock_get:
             tool.execute_ddl("CREATE TABLE t (id INT)", datasource="greenplum")
-            mock_get.assert_called_once_with("greenplum")
+            mock_get.assert_called_once_with("greenplum", "")
 
     def test_execute_ddl_without_database_uses_default(self):
         """execute_ddl() without database should call _get_connector with empty string."""
@@ -545,7 +545,7 @@ class TestExecuteDDLDatabaseParam:
         tool = self._make_tool(mock_connector)
         with patch.object(tool, "_get_connector", return_value=mock_connector) as mock_get:
             tool.execute_ddl("CREATE TABLE t (id INT)")
-            mock_get.assert_called_once_with("")
+            mock_get.assert_called_once_with("", "")
 
     def test_execute_ddl_returns_database_in_result(self):
         """Successful execute_ddl should include database name in result."""
@@ -626,7 +626,7 @@ class TestGetConnectorRouting:
         mock_target.get_databases.return_value = []
 
         mock_db_manager = Mock(spec=DBManager)
-        mock_db_manager.get_conn.side_effect = lambda ns, name: mock_target if name == "greenplum" else mock_source
+        mock_db_manager.get_conn.side_effect = lambda ns, db="": mock_target if ns == "greenplum" else mock_source
         mock_db_manager.first_conn.return_value = mock_source
 
         mock_config = Mock()
@@ -700,8 +700,13 @@ class TestGetConnectorRouting:
         mock_connector.dialect = "duckdb"
         mock_connector.get_databases.return_value = []
 
+        def _get_conn(ns, db=""):
+            if ns == "unknown_db":
+                raise KeyError("not found")
+            return mock_connector
+
         mock_db_manager = Mock(spec=DBManager)
-        mock_db_manager.get_conn.side_effect = KeyError("not found")
+        mock_db_manager.get_conn.side_effect = _get_conn
         mock_db_manager.first_conn.return_value = mock_connector
 
         mock_config = Mock()
@@ -748,7 +753,38 @@ class TestGetConnectorRouting:
         # Empty string = use default datasource
         conn = tool._get_connector("")
         assert conn is mock_connector
-        mock_db_manager.get_conn.assert_called_with("default_db", "default_db")
+        mock_db_manager.get_conn.assert_called_with("default_db", "")
+
+    def test_default_database_routes_connector_by_database(self):
+        """DBFuncTool(default_database=X) binds its connector via get_conn(datasource, X)."""
+        from datus.tools.db_tools.db_manager import DBManager
+
+        conn = Mock()
+        conn.dialect = "postgresql"
+        conn.get_databases.return_value = []
+
+        mock_db_manager = Mock(spec=DBManager)
+        mock_db_manager.get_conn.return_value = conn
+        mock_db_manager.first_conn.return_value = conn
+
+        mock_config = Mock()
+        mock_config.active_model.return_value.model = "gpt-5.4"
+        mock_config.current_datasource = "pg"
+        mock_config.current_db_configs.return_value = {"pg": Mock(), "other": Mock()}
+
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            tool = DBFuncTool(
+                mock_db_manager, agent_config=mock_config, default_datasource="pg", default_database="target_db"
+            )
+
+        assert tool._default_database == "target_db"
+        # Primary connector bound via get_conn(datasource, target_db).
+        mock_db_manager.get_conn.assert_any_call("pg", "target_db")
 
     def test_list_databases_multi_connector_returns_real_databases(self):
         """In multi-connector mode, list_databases should query the connector for real databases."""
@@ -765,6 +801,8 @@ class TestGetConnectorRouting:
         mock_config = Mock()
         mock_config.active_model.return_value.model = "gpt-5.4"
         mock_config.current_datasource = "source_db"
+        # Not a glob datasource → list_databases asks the connector.
+        mock_config.current_db_config.return_value.path_pattern = ""
         databases = {"source_db": Mock(), "other_db": Mock()}
         mock_config.current_db_configs.return_value = databases
 
@@ -786,13 +824,24 @@ class TestGetConnectorRouting:
         """In multi-connector mode, connector failure returns error result."""
         from datus.tools.db_tools.db_manager import DBManager
 
+        # First get_conn (primary connector at construction) succeeds; the list-databases
+        # call then fails, exercising the error path.
+        _state = {"first": True}
+
+        def _gc(ns, db=""):
+            if _state["first"]:
+                _state["first"] = False
+                return Mock(dialect="duckdb", database_name="source_db", get_databases=Mock(return_value=[]))
+            raise ConnectionError("adapter not installed")
+
         mock_db_manager = Mock(spec=DBManager)
         mock_db_manager.first_conn.return_value = Mock(dialect="duckdb")
-        mock_db_manager.get_conn.side_effect = ConnectionError("adapter not installed")
+        mock_db_manager.get_conn.side_effect = _gc
 
         mock_config = Mock()
         mock_config.active_model.return_value.model = "gpt-5.4"
         mock_config.current_datasource = "source_db"
+        mock_config.current_db_config.return_value.path_pattern = ""
         databases = {"source_db": Mock(), "broken_db": Mock()}
         mock_config.current_db_configs.return_value = databases
 

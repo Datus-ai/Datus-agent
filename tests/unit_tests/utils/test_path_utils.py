@@ -88,7 +88,7 @@ class TestGetFilesFromGlobPattern:
         assert isinstance(result, list)
         assert len(result) == 2
         for entry in result:
-            assert "logic_name" in entry
+            assert "datasource" in entry
             assert "name" in entry
             assert "uri" in entry
             assert entry["uri"].startswith("sqlite:///")
@@ -100,8 +100,8 @@ class TestGetFilesFromGlobPattern:
             result = get_files_from_glob_pattern(pattern)
         assert result == []
 
-    def test_wildcard_directory_uses_parent_as_logic_name(self):
-        """When the directory part contains wildcards, logic_name is parent dir name."""
+    def test_wildcard_directory_uses_parent_as_datasource(self):
+        """When the directory part contains wildcards, datasource is parent dir name."""
         with tempfile.TemporaryDirectory() as tmpdir:
             sub = Path(tmpdir) / "ns1"
             sub.mkdir()
@@ -111,7 +111,7 @@ class TestGetFilesFromGlobPattern:
             result = get_files_from_glob_pattern(pattern)
 
         assert len(result) == 1
-        assert result[0]["logic_name"] == "ns1"
+        assert result[0]["datasource"] == "ns1"
 
     def test_dialect_string_used_in_uri(self):
         """The dialect value appears in the URI."""

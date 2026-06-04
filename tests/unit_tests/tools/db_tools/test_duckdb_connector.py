@@ -35,6 +35,26 @@ def test_connect_and_close(db_path):
     assert connector.connection is None
 
 
+def test_database_name_visible_across_threads(tmp_path):
+    """The file-stem database name must survive a cross-thread read.
+
+    ``database_name`` is ContextVar-backed; ``__init__`` must populate the
+    context-independent default so a connector built in a worker thread
+    (startup schema init / CLI ``_init_connection``) and cached still reports
+    its name when read from the main thread. See the matching SQLite test for
+    the full rationale.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    db_file = str(tmp_path / "warehouse.duckdb")
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        connector = ex.submit(lambda: DuckdbConnector(DuckDBConfig(db_path=db_file))).result()
+    try:
+        assert connector.database_name == "warehouse"
+    finally:
+        connector.close()
+
+
 def test_coexist_with_sqlalchemy_duckdb_engine(db_path):
     """Regression: a second connection via SQLAlchemy+duckdb_engine on the same
     file in the same process must succeed. Pre-fix, DuckDB rejected it with

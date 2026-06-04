@@ -221,7 +221,6 @@ class ServiceManager:
             console.print("Database connection test successful\n")
 
             db_config = DbConfig.filter_kwargs(DbConfig, config_data)
-            db_config.logic_name = db_name
             db_config.default = config_data.get("default", False)
             self.agent_config.services.datasources[db_name] = db_config
 
@@ -286,12 +285,10 @@ class ServiceManager:
                         "type": db_config.type,
                         "uri": db_config.uri,
                     }
-                    if db_config.logic_name and db_config.logic_name != db_name:
-                        entry["name"] = db_config.logic_name
                 else:
                     entry = {k: v for k, v in db_config.to_dict().items() if v}
                     # Remove internal fields
-                    for key in ("logic_name", "path_pattern", "extra", "default"):
+                    for key in ("path_pattern", "extra", "default"):
                         entry.pop(key, None)
 
                 if db_config.default:

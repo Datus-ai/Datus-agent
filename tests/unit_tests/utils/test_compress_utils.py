@@ -101,7 +101,7 @@ def agent_config():
 def db_manager(agent_config: AgentConfig) -> DBManager:
     # Only pass sqlite/duckdb databases to avoid connector-not-installed errors
     sqlite_dbs = {
-        name: {name: cfg} for name, cfg in agent_config.services.datasources.items() if cfg.type in ("sqlite", "duckdb")
+        name: cfg for name, cfg in agent_config.services.datasources.items() if cfg.type in ("sqlite", "duckdb")
     }
     return db_manager_instance(sqlite_dbs)
 
@@ -126,7 +126,7 @@ ORDER BY
         ELSE 4
     END,
     name;"""
-    connector: BaseSqlConnector = db_manager.get_conn("card_games", "card_games")
+    connector: BaseSqlConnector = db_manager.get_conn("bird_sqlite", "card_games")
     tool = DBFuncTool(connector)
     result = tool.read_query(sql)
 

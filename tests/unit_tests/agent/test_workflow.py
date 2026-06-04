@@ -143,8 +143,8 @@ class TestWorkflow:
     def test_init_tools_uses_task_datasource_not_database_name(self, monkeypatch, real_agent_config):
         captured = {}
 
-        def fake_db_function_tools(agent_config, database_name="", sub_agent_name=None):
-            captured["datasource"] = database_name
+        def fake_db_function_tools(agent_config, database_name="", sub_agent_name=None, *, datasource=""):
+            captured["datasource"] = datasource
             return []
 
         monkeypatch.setattr("datus.tools.func_tool.db_function_tools", fake_db_function_tools)

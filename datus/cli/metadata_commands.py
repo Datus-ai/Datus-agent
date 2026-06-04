@@ -33,55 +33,33 @@ class MetadataCommands:
         self.cli = cli_instance
 
     def cmd_list_databases(self, args: str = ""):
-        """List all databases in the current connection."""
+        """List the databases of the current datasource."""
         try:
-            # For SQLite, this is simply the current database file
             datasource = self.cli.agent_config.current_datasource
-            database_config_dict = self.cli.agent_config.datasource_configs[datasource]
+            db_config = self.cli.agent_config.datasource_configs[datasource]
             result = []
             show_uri = False
-            if len(database_config_dict) > 1:
-                # Multi-Database
+            if getattr(db_config, "path_pattern", ""):
+                # Multi-database file datasource: one database per matched file.
                 show_uri = True
-                for _, db_config in database_config_dict.items():
-                    logic_name = db_config.logic_name
-                    is_current = logic_name == self.cli.cli_context.current_logic_db_name
+                uris = self.cli.db_manager.get_db_uris(datasource)
+                for db_name in self.cli.agent_config.list_databases(datasource):
+                    is_current = db_name == self.cli.cli_context.current_db_name
                     result.append(
                         {
-                            "logic_name": logic_name if not is_current else f"[green]{logic_name}[/]",
-                            "name": db_config.database,
-                            "uri": db_config.uri,
+                            "name": db_name if not is_current else f"[green]{db_name}[/]",
+                            "uri": uris.get(db_name, ""),
                         }
                     )
             else:
-                # single database
-                db_config = list(database_config_dict.values())[0]
-                db_type = db_config.type
-                if db_type in (DBType.SQLITE, DBType.DUCKDB):
-                    show_uri = True
-                    is_current = db_config.logic_name == self.cli.cli_context.current_logic_db_name
+                for db_name in self.cli.db_connector.get_databases(catalog_name=self.cli.cli_context.current_catalog):
                     result.append(
                         {
-                            "logic_name": (
-                                db_config.logic_name if not is_current else f"[green]{db_config.logic_name}[/]"
-                            ),
-                            "name": db_config.database,
-                            "uri": db_config.uri,
+                            "name": (
+                                db_name if db_name != self.cli.cli_context.current_db_name else f"[green]{db_name}[/]"
+                            )
                         }
                     )
-                else:
-                    for db_name in self.cli.db_connector.get_databases(
-                        catalog_name=self.cli.cli_context.current_catalog
-                    ):
-                        result.append(
-                            {
-                                "name": (
-                                    db_name
-                                    if db_name != self.cli.cli_context.current_db_name
-                                    else f"[green]{db_name}[/]"
-                                )
-                            }
-                        )
 
             self.cli.last_result = result
             if not result:
@@ -91,11 +69,7 @@ class MetadataCommands:
             # Display results via the shared row-table helper so styling
             # matches ``.<service>.list_*`` output.
             if show_uri:
-                columns = [
-                    ("logic_name", "Logic Name(Used for switch)"),
-                    ("name", "Database Name"),
-                    ("uri", "URI"),
-                ]
+                columns = [("name", "Database(Used for switch)"), ("uri", "URI")]
             else:
                 columns = [("name", "Name")]
             table = build_row_table(result, title="Databases", columns=columns)
@@ -107,20 +81,11 @@ class MetadataCommands:
             print_error(self.cli.console, str(e))
 
     def cmd_switch_database(self, args: str = ""):
-        """Switch current database."""
+        """Switch the active database within the current datasource."""
         new_db = args.strip()
         if not new_db:
             print_error(self.cli.console, "Database name is required")
             self.cmd_list_databases()
-            return
-        if (
-            self.cli.db_connector.dialect in (DBType.SQLITE, DBType.DUCKDB)
-            and self.cli.cli_context.current_logic_db_name == new_db
-        ):
-            print_warning(
-                self.cli.console,
-                f"It's now under the database {new_db} and doesn't need to be switched",
-            )
             return
         if new_db == self.cli.cli_context.current_db_name:
             print_warning(
@@ -129,26 +94,21 @@ class MetadataCommands:
             )
             return
 
-        current_datasource = self.cli.agent_config.current_datasource
-        self.cli.cli_context.current_logic_db_name = new_db
-        if self.cli.agent_config.db_type in (DBType.SQLITE, DBType.DUCKDB):
-            if new_db not in self.cli.agent_config.current_db_configs():
-                print_warning(self.cli.console, f"No corresponding database was found: {new_db}")
-                return
-            # Logic database name
-            self.cli.db_connector = self.cli.db_manager.get_conn(current_datasource, new_db)
-            # use real database name
-            self.cli.cli_context.update_database_context(
-                db_name=self.cli.db_connector.database_name, db_logic_name=new_db
-            )
-            self.cli.reset_session()
-        else:
-            self.cli.db_connector.switch_context(database_name=new_db)
-            self.cli.cli_context.update_database_context(db_name=new_db)
-
-        if self.cli.agent_config.db_type in (DBType.SQLITE, DBType.DUCKDB):
-            self.cli.chat_commands.update_chat_node_tools()
-
+        datasource = self.cli.agent_config.current_datasource
+        db_config = self.cli.agent_config.datasource_configs[datasource]
+        # File datasources: the target must be one of the datasource's files.
+        if getattr(db_config, "path_pattern", "") and new_db not in self.cli.agent_config.list_databases(datasource):
+            print_warning(self.cli.console, f"No corresponding database was found: {new_db}")
+            return
+        try:
+            # Reconnect bound to (datasource, new_db) — file → that file; server → that database.
+            self.cli.db_connector = self.cli.db_manager.get_conn(datasource, new_db)
+        except Exception as e:
+            print_error(self.cli.console, str(e))
+            return
+        self.cli.cli_context.update_database_context(db_name=self.cli.db_connector.database_name)
+        self.cli.reset_session()
+        self.cli.chat_commands.update_chat_node_tools()
         print_success(self.cli.console, f"Database switched to: {new_db}")
 
     def cmd_tables(self, args: str):

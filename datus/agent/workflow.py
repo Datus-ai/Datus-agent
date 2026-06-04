@@ -526,4 +526,4 @@ class Workflow:
     def _init_tools(self):
         from datus.tools.func_tool import db_function_tools
 
-        self.tools = db_function_tools(self._global_config, self._task_datasource())
+        self.tools = db_function_tools(self._global_config, datasource=self._task_datasource())

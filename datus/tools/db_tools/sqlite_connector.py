@@ -53,12 +53,20 @@ class SQLiteConnector(BaseSqlConnector, MigrationTargetMixin):
         self.check_same_thread = config.check_same_thread
         self.connection: Optional[sqlite3.Connection] = None
 
+        # Set the context-independent default (``_default_database``), NOT the
+        # ContextVar-backed ``database_name`` property. The connector is built
+        # once and cached, often in a worker thread / async task (startup schema
+        # init, ``_init_connection``'s ThreadPoolExecutor); a ``database_name``
+        # setter would only populate the *building* context's ContextVar, so any
+        # later read from another context falls back to an empty default. Writing
+        # ``_default_database`` makes the name visible from every context while
+        # still allowing per-operation overrides via ``switch_context``.
         if config.database_name:
-            self.database_name = config.database_name
+            self._default_database = config.database_name
         else:
             from datus.configuration.agent_config import file_stem_from_uri
 
-            self.database_name = file_stem_from_uri(self.db_path)
+            self._default_database = file_stem_from_uri(self.db_path)
 
     @override
     def connect(self):

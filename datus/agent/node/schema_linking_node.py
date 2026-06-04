@@ -159,9 +159,9 @@ class SchemaLinkingNode(Node):
 
             # Get current datasource and database connection
             current_datasource = self.agent_config.current_datasource
-            database_name = self.input.database_name if hasattr(self.input, "database_name") else ""
+            database_name = getattr(self.input, "database_name", "") or ""
 
-            # Get database connector
+            # Get database connector bound to the task's database (per-database schema scope).
             connector = db_manager.get_conn(current_datasource, database_name)
 
             return tool.get_schems_by_db(connector=connector, input_param=self.input)

@@ -269,7 +269,7 @@ class TestUnknownDatasourceRaises:
         tool._db_manager = None
         tool._default_database = "default"
 
-        def _raise(_datasource=None):
+        def _raise(_datasource=None, _database=""):
             raise DatusException(
                 ErrorCode.COMMON_VALIDATION_FAILED,
                 message="Datasource 'nonexistent' is not configured.",

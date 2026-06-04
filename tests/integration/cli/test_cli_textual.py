@@ -63,7 +63,7 @@ async def test_catalog_command(catalog_agent_config: AgentConfig, catalog_db_man
         data={
             "db_type": DBType.SQLITE,
             "database_name": "california_schools",
-            "db_connector": catalog_db_manager.get_conn("bird_school", "california_schools"),
+            "db_connector": catalog_db_manager.get_conn("bird_school"),
             "agent_config": catalog_agent_config,
         },
     )

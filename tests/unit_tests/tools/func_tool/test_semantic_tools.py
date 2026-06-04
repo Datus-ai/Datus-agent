@@ -1686,7 +1686,6 @@ class TestExtractDbConfig:
             "private_key_file": "/tmp/rsa_key.p8",
             "private_key_file_pwd": 1234,
             "extra": "skip",
-            "logic_name": "skip",
             "path_pattern": "skip",
             "catalog": "skip",
         }
@@ -1701,7 +1700,6 @@ class TestExtractDbConfig:
         assert result["private_key_file"] == "/tmp/rsa_key.p8"
         assert result["private_key_file_pwd"] == "1234"
         assert "extra" not in result
-        assert "logic_name" not in result
         assert "path_pattern" not in result
         assert "catalog" not in result
 

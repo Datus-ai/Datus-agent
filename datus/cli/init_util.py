@@ -50,11 +50,11 @@ def detect_db_connectivity(datasource_name: str, db_config_data: dict[str, Any])
         db_config = DbConfig.filter_kwargs(DbConfig, config_data)
 
         # Create DB manager with minimal config
-        datasource_configs = {datasource_name: {datasource_name: db_config}}
+        datasource_configs = {datasource_name: db_config}
         db_manager = DBManager(datasource_configs)
 
         # Get connector and test connection
-        connector = db_manager.get_conn(datasource_name, datasource_name)
+        connector = db_manager.get_conn(datasource_name)
         test_result = connector.test_connection()
 
         # Handle different return types from different connectors

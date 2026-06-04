@@ -62,10 +62,9 @@ async def init_from_adapter(
             adapter_config = {**(base_config or {}), **adapter_config}
 
         if adapter_config is None:
-            ns_configs = agent_config.datasource_configs.get(datasource)
+            db_config_obj = agent_config.datasource_configs.get(datasource)
             db_config = None
-            if ns_configs:
-                db_config_obj = list(ns_configs.values())[0]
+            if db_config_obj:
                 db_config = _db_config_to_semantic_adapter_config(db_config_obj)
             semantic_models_path = str(agent_config.path_manager.semantic_model_path(datasource))
 

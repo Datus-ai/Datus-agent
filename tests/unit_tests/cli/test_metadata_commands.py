@@ -20,10 +20,9 @@ from datus.utils.constants import DBType
 # ---------------------------------------------------------------------------
 
 
-def _make_db_config(db_type=DBType.SQLITE, logic_name="mydb", database="mydb.db", uri="sqlite:///mydb.db"):
+def _make_db_config(db_type=DBType.SQLITE, database="mydb.db", uri="sqlite:///mydb.db"):
     cfg = MagicMock()
     cfg.type = db_type
-    cfg.logic_name = logic_name
     cfg.database = database
     cfg.uri = uri
     return cfg
@@ -39,17 +38,17 @@ def _make_cli(db_type=DBType.SQLITE):
     connector.get_type.return_value = db_type
     cli.db_connector = connector
 
-    # agent_config
+    # agent_config — one DbConfig per datasource (single-layer)
     db_cfg = _make_db_config(db_type=db_type)
     cli.agent_config.current_datasource = "test_ns"
-    cli.agent_config.datasource_configs = {"test_ns": {"mydb": db_cfg}}
+    cli.agent_config.datasource_configs = {"test_ns": db_cfg}
+    cli.agent_config.current_db_configs.return_value = {"test_ns": db_cfg}
     cli.agent_config.db_type = db_type
 
     # cli_context
     cli.cli_context.current_catalog = None
     cli.cli_context.current_db_name = "mydb"
     cli.cli_context.current_schema = None
-    cli.cli_context.current_logic_db_name = "mydb"
 
     return cli
 
@@ -70,11 +69,14 @@ class TestCmdListDatabases:
         meta.cmd_list_databases()
         meta.cli.console.print.assert_called()
 
-    def test_multi_db(self):
+    def test_multi_datasource(self):
+        # File-based DBs: each file is its own datasource; list them all.
         cli = _make_cli()
-        db_cfg1 = _make_db_config(logic_name="db1")
-        db_cfg2 = _make_db_config(logic_name="db2")
-        cli.agent_config.datasource_configs = {"test_ns": {"db1": db_cfg1, "db2": db_cfg2}}
+        db_cfg1 = _make_db_config()
+        db_cfg2 = _make_db_config()
+        cli.agent_config.current_datasource = "db1"
+        cli.agent_config.datasource_configs = {"db1": db_cfg1, "db2": db_cfg2}
+        cli.agent_config.current_db_configs.return_value = {"db1": db_cfg1, "db2": db_cfg2}
         meta = MetadataCommands(cli)
         meta.cmd_list_databases()
         cli.console.print.assert_called()
@@ -82,8 +84,8 @@ class TestCmdListDatabases:
     def test_empty_result_prints_empty_set(self):
         """Non-SQLite single DB with get_databases returning empty triggers 'Empty set' message."""
         cli = _make_cli(db_type="snowflake")
-        db_cfg = _make_db_config(db_type="snowflake", logic_name="mydb")
-        cli.agent_config.datasource_configs = {"test_ns": {"mydb": db_cfg}}
+        db_cfg = _make_db_config(db_type="snowflake")
+        cli.agent_config.datasource_configs = {"test_ns": db_cfg}
         cli.db_connector.get_databases.return_value = []
         meta = MetadataCommands(cli)
         meta.cmd_list_databases()
@@ -112,7 +114,7 @@ class TestCmdSwitchDatabase:
 
     def test_same_db_sqlite_already_current(self):
         cli = _make_cli(db_type=DBType.SQLITE)
-        cli.cli_context.current_logic_db_name = "mydb"
+        cli.agent_config.current_datasource = "mydb"
         cli.db_connector.dialect = DBType.SQLITE
         meta = MetadataCommands(cli)
         meta.cmd_switch_database("mydb")
@@ -122,7 +124,6 @@ class TestCmdSwitchDatabase:
     def test_same_db_name_already_current(self):
         cli = _make_cli(db_type="snowflake")
         cli.cli_context.current_db_name = "targetdb"
-        cli.cli_context.current_logic_db_name = "other"
         cli.db_connector.dialect = "snowflake"
         cli.agent_config.db_type = "snowflake"
         meta = MetadataCommands(cli)
@@ -133,7 +134,6 @@ class TestCmdSwitchDatabase:
     def test_switch_non_sqlite(self):
         cli = _make_cli(db_type="snowflake")
         cli.cli_context.current_db_name = "old_db"
-        cli.cli_context.current_logic_db_name = "old_db"
         cli.db_connector.dialect = "snowflake"
         cli.agent_config.db_type = "snowflake"
         meta = MetadataCommands(cli)
@@ -143,7 +143,6 @@ class TestCmdSwitchDatabase:
 
     def test_switch_sqlite_db_not_found(self):
         cli = _make_cli(db_type=DBType.SQLITE)
-        cli.cli_context.current_logic_db_name = "old_db"
         cli.db_connector.dialect = DBType.SQLITE
         cli.agent_config.db_type = DBType.SQLITE
         cli.agent_config.current_db_configs.return_value = {}  # empty -> not found

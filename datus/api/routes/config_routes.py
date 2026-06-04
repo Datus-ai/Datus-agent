@@ -130,12 +130,9 @@ async def get_agent_config_endpoint(
     config = svc.agent_config
     flat_datasources: dict = {}
 
-    for db_name, inner in config.datasource_configs.items():
-        if not inner:
-            continue
-        db_config = inner.get(db_name)
+    for db_name, db_config in config.datasource_configs.items():
         if db_config is None:
-            db_config = next(iter(inner.values()))
+            continue
         flat_datasources[db_name] = db_config
 
     return Result(

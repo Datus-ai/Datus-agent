@@ -89,12 +89,18 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         self.read_only = config.read_only
         self.iceberg_config = config.iceberg or {}
 
+        # Set the context-independent default (``_default_database``), NOT the
+        # ContextVar-backed ``database_name`` property. The connector is cached
+        # and frequently built in a worker thread / async task, so a
+        # ``database_name`` setter would only populate that context's ContextVar
+        # and later cross-context reads would fall back to an empty default. See
+        # ``SQLiteConnector.__init__`` for the full rationale.
         if config.database_name:
-            self.database_name = config.database_name
+            self._default_database = config.database_name
         else:
             from datus.configuration.agent_config import file_stem_from_uri
 
-            self.database_name = file_stem_from_uri(self.db_path)
+            self._default_database = file_stem_from_uri(self.db_path)
 
     @override
     def connect(self):

@@ -114,7 +114,7 @@ def agent_config() -> AgentConfig:
     # can initialize.
     agent_config = load_acceptance_config(datasource="bird_sqlite")
     if not agent_config.current_datasource and agent_config.services.datasources:
-        agent_config.current_datasource = "california_schools"
+        agent_config.current_datasource = "bird_school"
     Path(agent_config.rag_storage_path()).mkdir(parents=True, exist_ok=True)
     return agent_config
 
@@ -298,7 +298,7 @@ class TestNodeFactory:
             ]
         )
 
-        agent_config.current_datasource = "california_schools"
+        agent_config.current_datasource = "bird_school"
         agent_config.rag_base_path = "/tmp/test_data"
         node = Node.new_instance(
             node_id="schema_link",
@@ -520,11 +520,12 @@ class TestNodeFactory:
                 # Create execution input from test data
                 exec_input = execute_sql_input[test_case_num]["input"]
                 input_data = ExecuteSQLInput(**exec_input)
-                # Use the database_name from the input to set the current database
+                # All BIRD databases (california_schools, financial, ...) live under the
+                # bird_sqlite glob datasource; the input's database_name selects which one.
                 if exec_input.get("database_name") and exec_input["database_name"] in agent_config.services.datasources:
                     agent_config.current_datasource = exec_input["database_name"]
                 else:
-                    agent_config.current_datasource = "california_schools"
+                    agent_config.current_datasource = "bird_sqlite"
 
                 # Create node instance for testing
                 node = Node.new_instance(

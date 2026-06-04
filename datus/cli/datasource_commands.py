@@ -112,15 +112,13 @@ class DatasourceCommands:
             print_warning(self.console, f"Already on datasource '{name}'.")
             return
         try:
-            db_name, connector = self.cli.db_manager.first_conn_with_name(name)
+            _, connector = self.cli.db_manager.first_conn_with_name(name)
             self.cli.agent_config.current_datasource = name
             self.cli.db_connector = connector
-            db_logic_name = db_name or name
             self.cli.cli_context.update_database_context(
                 catalog=connector.catalog_name,
                 db_name=connector.database_name,
                 schema=connector.schema_name,
-                db_logic_name=db_logic_name,
             )
             self.cli.reset_session()
             self.cli.chat_commands.update_chat_node_tools()
@@ -161,7 +159,6 @@ class DatasourceCommands:
             payload["default"] = True
 
         db_config = DbConfig.filter_kwargs(DbConfig, payload)
-        db_config.logic_name = ds_name
         self.cli.agent_config.services.datasources[ds_name] = db_config
         if self._save():
             print_success(self.console, f"Datasource '{ds_name}' added successfully.", symbol=True)
@@ -203,7 +200,6 @@ class DatasourceCommands:
 
         payload["default"] = old_config.default
         new_config = DbConfig.filter_kwargs(DbConfig, payload)
-        new_config.logic_name = old_config.logic_name or name
         new_config.default = old_config.default
         self.cli.agent_config.services.datasources[name] = new_config
         if self._save():

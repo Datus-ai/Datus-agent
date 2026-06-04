@@ -16,8 +16,10 @@ from datus.tools.db_tools.db_manager import (
     _resolve_connection_context,
     _value_or_none,
     db_config_name,
+    db_manager_instance,
     gen_uri,
     get_connection,
+    set_db_manager_factory,
 )
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException
@@ -34,7 +36,6 @@ def _cfg(**kwargs):
         schema=None,
         catalog=None,
         uri=None,
-        logic_name="",
         extra=None,
         path_pattern=None,
     )
@@ -301,16 +302,11 @@ class TestDBManager:
         with pytest.raises(DatusException):
             mgr.get_conn("nonexistent")
 
-    def test_current_db_configs(self):
-        configs = {"ns": {"db1": _cfg(type="sqlite", database="test.db")}}
-        mgr = DBManager(configs)
-        assert "db1" in mgr.current_db_configs("ns")
-
     def test_get_db_uris(self):
-        configs = {"ns": {"db1": _cfg(type="sqlite", uri="sqlite:///test.db")}}
+        configs = {"ns": _cfg(type="sqlite", uri="sqlite:///test.db")}
         mgr = DBManager(configs)
         uris = mgr.get_db_uris("ns")
-        assert uris["db1"] == "sqlite:///test.db"
+        assert uris["ns"] == "sqlite:///test.db"
 
     def test_duckdb_config_includes_extra_runtime_options(self):
         mgr = DBManager({})
@@ -348,17 +344,20 @@ class TestDBManager:
         assert result.db_path == "test.db"
         assert result.read_only is True
 
-    def test_close_closes_nested_multi_db_connections(self):
+    def test_close_closes_connections(self):
         mgr = DBManager({})
         first = MagicMock()
         second = MagicMock()
-        mgr._conn_dict["analytics"] = {"raw": first, "mart": second}
+        # _conn_dict is {datasource: {database: connector}}.
+        mgr._conn_dict["analytics"] = {"raw": first}
+        mgr._conn_dict["mart"] = {"main": second}
 
         mgr.close()
 
         first.close.assert_called_once()
         second.close.assert_called_once()
-        assert mgr._conn_dict["analytics"] is None
+        assert mgr._conn_dict["analytics"]["raw"] is None
+        assert mgr._conn_dict["mart"]["main"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -381,19 +380,17 @@ class TestDbConfigToConnectionConfigAdapterBranch:
         assert isinstance(result, dict)
 
     def test_adapter_excluded_fields_removed(self):
-        """Excluded fields (type, path_pattern, logic_name, extra) are not in the result dict."""
+        """Excluded fields (type, path_pattern, extra) are not in the result dict."""
         mgr = self._make_manager()
         cfg = _cfg(
             type="postgresql",
             host="localhost",
             database="mydb",
-            logic_name="pg_main",
             path_pattern="/some/pattern",
             extra=None,
         )
         result = mgr._db_config_to_connection_config(cfg)
         assert "type" not in result
-        assert "logic_name" not in result
         assert "path_pattern" not in result
         assert "extra" not in result
 
@@ -488,3 +485,37 @@ class TestDbConfigToConnectionConfigAdapterBranch:
         result = mgr._db_config_to_connection_config(cfg)
         # Port stays as original value since conversion fails silently
         assert "port" in result
+
+
+@pytest.mark.ci
+class TestDbManagerInstanceCaching:
+    """db_manager_instance (CLI mode) caches by datasource keys; the per-database
+    dimension lives inside DBManager.get_conn(datasource, database)."""
+
+    def setup_method(self):
+        # Ensure CLI mode (no factory) and a clean cache for deterministic keys.
+        from datus.tools.db_tools import db_manager as dm
+
+        set_db_manager_factory(None)
+        dm._cli_cache.clear()
+
+    def teardown_method(self):
+        from datus.tools.db_tools import db_manager as dm
+
+        dm._cli_cache.clear()
+
+    def test_same_datasource_set_reuses_instance(self):
+        a = db_manager_instance({"ds": _cfg(type="sqlite", database="db_a")})
+        b = db_manager_instance({"ds": _cfg(type="sqlite", database="db_a")})
+        assert a is b
+
+    def test_same_datasource_keys_reuse_instance_regardless_of_database(self):
+        # database is no longer part of the cache key (it is a get_conn runtime param).
+        a = db_manager_instance({"ds": _cfg(type="sqlite", database="db_a")})
+        b = db_manager_instance({"ds": _cfg(type="sqlite", database="db_b")})
+        assert a is b
+
+    def test_different_datasource_keys_return_new_instance(self):
+        a = db_manager_instance({"ds_a": _cfg(type="sqlite", database="db")})
+        b = db_manager_instance({"ds_b": _cfg(type="sqlite", database="db")})
+        assert a is not b

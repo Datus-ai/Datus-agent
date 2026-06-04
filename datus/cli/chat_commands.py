@@ -135,8 +135,11 @@ class ChatCommands:
         self._current_incremental_actions: Optional[List[ActionHistory]] = None
 
     def update_chat_node_tools(self):
-        """Update current node tools when datasource changes."""
+        """Update current node tools when datasource/database changes."""
         if self.current_node and hasattr(self.current_node, "setup_tools"):
+            # Bind the rebuilt DB tools to the active database (e.g. after ``/database <db>``).
+            if hasattr(self.current_node, "active_database"):
+                self.current_node.active_database = getattr(self.cli.cli_context, "current_db_name", "") or ""
             self.current_node.setup_tools()
 
     def _should_create_new_node(self, subagent_name: str = None) -> bool:
@@ -466,6 +469,17 @@ class ChatCommands:
                 message, current_node, at_tables, at_metrics, at_sqls, plan_mode
             )
             current_node.input = node_input
+            # Bind the node's DB tools to the active database (e.g. after ``/database <db>``),
+            # so connector-routed tools (list_tables/read_query/...) target the selected db.
+            active_db = getattr(node_input, "database", "") or ""
+            db_tool = getattr(current_node, "db_func_tool", None)
+            if (
+                active_db
+                and db_tool is not None
+                and hasattr(current_node, "_update_database_connection")
+                and active_db != getattr(db_tool.connector, "database_name", None)
+            ):
+                current_node._update_database_connection(active_db)
             from datus.utils.trace_context import build_chat_trace_context
 
             trace_ctx = build_chat_trace_context(

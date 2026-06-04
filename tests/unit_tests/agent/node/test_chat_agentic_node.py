@@ -595,10 +595,10 @@ class TestChatAgenticNodeUpdateContext:
 
 
 class TestChatAgenticNodeUpdateDatabaseConnection:
-    """Verify _update_database_connection switches DB connection and rebuilds tools."""
+    """Verify _update_database_connection rebuilds the DB tool bound to the target database."""
 
     def test_update_database_connection_rebuilds_tools(self, real_agent_config, mock_llm_create):
-        """_update_database_connection creates a new DBFuncTool and rebuilds tools list."""
+        """_update_database_connection creates a new DBFuncTool (bound to db) and rebuilds tools."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
 
         node = ChatAgenticNode(
@@ -610,12 +610,13 @@ class TestChatAgenticNodeUpdateDatabaseConnection:
 
         original_db_tool = node.db_func_tool
 
-        # Update to the same database (only one available in fixture)
+        # Update to the same database available in the fixture.
         node._update_database_connection("california_schools")
 
-        # db_func_tool should be a new instance
+        # db_func_tool should be a new instance carrying the requested default_database.
         assert node.db_func_tool is not original_db_tool
-        # Tools should still be rebuilt and contain core db tools
+        assert node.db_func_tool._default_database == "california_schools"
+        # Tools should be rebuilt and contain core db tools.
         tool_names = [t.name for t in node.tools]
         assert "list_tables" in tool_names
         assert "describe_table" in tool_names

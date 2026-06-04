@@ -64,13 +64,9 @@ def serialize_services_section(services_config) -> dict:
                 entry["path_pattern"] = db_config.path_pattern
             elif db_config.uri:
                 entry["uri"] = db_config.uri
-            if db_config.logic_name and db_config.logic_name != db_name:
-                entry["name"] = db_config.logic_name
         else:
             entry = {
-                k: v
-                for k, v in db_config.to_dict().items()
-                if v and k not in ("logic_name", "path_pattern", "extra", "default")
+                k: v for k, v in db_config.to_dict().items() if v and k not in ("path_pattern", "extra", "default")
             }
             if isinstance(db_config.extra, dict):
                 for extra_key, extra_value in db_config.extra.items():

@@ -82,4 +82,4 @@ def test_detect_toxicology_db(tmp_path):
     assert len(toxicology_files) == 1, "1 toxicology database should be detected"
 
     assert toxicology_files[0]["name"] == "toxicology"
-    assert toxicology_files[0]["logic_name"] == "toxicology"
+    assert toxicology_files[0]["datasource"] == "toxicology"

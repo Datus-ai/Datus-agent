@@ -34,14 +34,14 @@ def _mock_svc(datasources, *, target="deepseek", current_datasource="starrocks",
 
 
 @pytest.mark.asyncio
-async def test_get_agent_config_flattens_matching_inner_key():
-    """When inner key matches the datasource name, that entry is returned flat."""
-    starrocks_cfg = {"logic_name": "starrocks", "type": "starrocks", "host": "h1"}
-    starrocks22_cfg = {"logic_name": "starrocks22", "type": "starrocks", "host": "h2"}
+async def test_get_agent_config_returns_datasources_flat():
+    """datasource_configs is a single-layer {ds: cfg} map, returned as-is."""
+    starrocks_cfg = {"type": "starrocks", "host": "h1"}
+    starrocks22_cfg = {"type": "starrocks", "host": "h2"}
     svc = _mock_svc(
         datasources={
-            "starrocks": {"starrocks": starrocks_cfg},
-            "starrocks22": {"starrocks22": starrocks22_cfg},
+            "starrocks": starrocks_cfg,
+            "starrocks22": starrocks22_cfg,
         },
     )
 
@@ -58,21 +58,10 @@ async def test_get_agent_config_flattens_matching_inner_key():
 
 
 @pytest.mark.asyncio
-async def test_get_agent_config_falls_back_to_first_inner_value():
-    """When inner key does not match datasource name, first inner value is used."""
-    inner_cfg = {"logic_name": "db_a", "type": "duckdb"}
-    svc = _mock_svc(datasources={"my_db": {"db_a": inner_cfg}})
-
-    result = await get_agent_config_endpoint(svc)
-
-    assert result.data["datasources"] == {"my_db": inner_cfg}
-
-
-@pytest.mark.asyncio
-async def test_get_agent_config_skips_empty_inner_dict():
-    """Datasources with empty inner dicts are dropped from the response."""
-    real_cfg = {"logic_name": "real", "type": "duckdb"}
-    svc = _mock_svc(datasources={"empty": {}, "real": {"real": real_cfg}})
+async def test_get_agent_config_skips_none_config():
+    """Datasources whose config is None are dropped from the response."""
+    real_cfg = {"type": "duckdb"}
+    svc = _mock_svc(datasources={"empty": None, "real": real_cfg})
 
     result = await get_agent_config_endpoint(svc)
 

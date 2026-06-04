@@ -168,10 +168,12 @@ class TestDbConfigFilterKwargs:
         assert cfg.private_key_file_pwd == "1234"
         assert cfg.extra == {"custom_option": "value123"}
 
-    def test_name_sets_logic_name(self):
-        kwargs = {"type": "sqlite", "uri": "sqlite:///db.db", "name": "my_logic_name"}
+    def test_name_kwarg_is_ignored(self):
+        # ``name`` is an internal field used as the datasource key elsewhere; it is not
+        # stored on DbConfig and must not leak into ``extra``.
+        kwargs = {"type": "sqlite", "uri": "sqlite:///db.db", "name": "my_alias"}
         cfg = DbConfig.filter_kwargs(DbConfig, kwargs)
-        assert cfg.logic_name == "my_logic_name"
+        assert not cfg.extra or "name" not in cfg.extra
 
     def test_sqlite_extracts_database_stem(self):
         kwargs = {"type": "sqlite", "uri": "sqlite:///path/mydata.db"}
@@ -848,7 +850,11 @@ class TestAgentConfigServiceSelectors:
             },
         )
 
-        assert cfg.services.datasources["sample"].uri == f"duckdb:///{db_file}"
+        # A path_pattern datasource is ONE multi-database datasource (keyed by the declared
+        # name); its databases are the matched files, enumerated via list_databases.
+        ds_cfg = cfg.services.datasources["duck_files"]
+        assert ds_cfg.path_pattern == f"{db_dir}/*.duckdb"  # env var expanded
+        assert cfg.list_databases("duck_files") == ["sample"]
 
     def test_scheduler_config_expands_env_vars(self, tmp_path, monkeypatch):
         dag_dir = tmp_path / "dags"

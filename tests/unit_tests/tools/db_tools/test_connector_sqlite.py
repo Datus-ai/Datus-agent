@@ -42,6 +42,53 @@ def test_connection(sqlite_connector: SQLiteConnector, db_path):
     assert sqlite_connector.connection is None
 
 
+def test_database_name_visible_across_threads(tmp_path):
+    """The file-stem database name must be readable from a different thread.
+
+    ``database_name`` is backed by a ContextVar (per-thread / per-async-task
+    isolation). The connector is built once and cached, frequently inside a
+    worker thread (startup schema init, the CLI's ``_init_connection``
+    ThreadPoolExecutor), then read from the main thread. ``__init__`` must
+    therefore populate the context-independent default (``_default_database``)
+    rather than only the building thread's ContextVar — otherwise the status
+    bar / ``current_db_name`` / chat tool routing all read an empty name.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    db_file = tmp_path / "california_schools.sqlite"
+    with sqlite3.connect(db_file) as conn:
+        conn.execute("CREATE TABLE t (id INTEGER)")
+
+    # Build the connector inside a worker thread, read from this (main) thread.
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        connector = ex.submit(lambda: SQLiteConnector(SQLiteConfig(db_path=str(db_file)))).result()
+    try:
+        assert connector.database_name == "california_schools"
+        # A per-operation override via the setter must still win in this context.
+        connector.database_name = "override_db"
+        assert connector.database_name == "override_db"
+    finally:
+        connector.close()
+
+
+def test_explicit_database_name_visible_across_threads(tmp_path):
+    """An explicit ``config.database_name`` must also survive cross-thread reads."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    db_file = tmp_path / "anyfile.sqlite"
+    with sqlite3.connect(db_file) as conn:
+        conn.execute("CREATE TABLE t (id INTEGER)")
+
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        connector = ex.submit(
+            lambda: SQLiteConnector(SQLiteConfig(db_path=str(db_file), database_name="explicit_db"))
+        ).result()
+    try:
+        assert connector.database_name == "explicit_db"
+    finally:
+        connector.close()
+
+
 def test_read_only_connection_rejects_writes(tmp_path):
     db_path = tmp_path / "readonly.db"
     with sqlite3.connect(db_path) as conn:

@@ -2241,12 +2241,11 @@ class DatusCLI:
 
             # Update context based on dialect
             if self.db_connector.dialect in (DBType.SQLITE, DBType.DUCKDB):
-                self.cli_context.update_database_context(db_name=self.db_connector.database_name, db_logic_name=db_name)
+                self.cli_context.update_database_context(db_name=self.db_connector.database_name)
             else:
                 self.cli_context.update_database_context(
                     catalog=self.db_connector.catalog_name,
                     db_name=self.db_connector.database_name,
-                    db_logic_name=db_name or self.db_connector.database_name or current_datasource,
                 )
 
             # Test the connection with timeout

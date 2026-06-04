@@ -332,12 +332,11 @@ class TestInitFromAdapter:
             "password": "pass",
             "database": "testdb",
             "extra": "ignore_me",
-            "logic_name": "ignore_me_too",
         }
 
         config = MagicMock(spec=["current_datasource", "datasource_configs", "path_manager"])
         config.current_datasource = "ns1"
-        config.datasource_configs = {"ns1": {"default": mock_db_config}}
+        config.datasource_configs = {"ns1": mock_db_config}
         config.path_manager.semantic_model_path.return_value = "/tmp/project/subject/semantic_models"
 
         await init_from_adapter(config, "metricflow")

@@ -752,7 +752,10 @@ class Agent:
                 )
                 return task_id, ""
             task_datasource = _task_item_value(task_item, benchmark_config.datasource_key) or default_datasource
-            _, task_conn = db_manager.first_conn_with_name(task_datasource)
+            # A datasource may serve multiple databases; the per-task database (e.g. BIRD db_id)
+            # selects which one to connect to within the datasource.
+            task_database = _task_item_value(task_item, benchmark_config.database_key) or ""
+            task_conn = db_manager.get_conn(task_datasource, task_database)
             sql_context = _resolve_benchmark_sql_context(benchmark_config, task_item, task_conn)
             logger.info(f"start benchmark with {task_id}: {task}")
             logger.debug(

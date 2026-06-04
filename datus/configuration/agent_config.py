@@ -231,7 +231,6 @@ class DbConfig:
     private_key_file: str = field(default="", init=True)
     private_key_file_pwd: str = field(default="", init=True)
     catalog: str = field(default="", init=True)
-    logic_name: str = field(default="", init=True)  # Logical name for the database entry
     default: bool = field(default=False, init=True)  # Whether this is the default database
     extra: Optional[Dict] = field(default=None, init=True)  # Adapter-specific fields stored here
 
@@ -265,7 +264,6 @@ class DbConfig:
         db_config = cls(**params)
         if db_config.type in (DBType.SQLITE, DBType.DUCKDB):
             db_config.database = file_stem_from_uri(db_config.uri)
-        db_config.logic_name = kwargs.get("name")
         return db_config
 
 
@@ -633,7 +631,6 @@ def _parse_single_file_db(db_config: Dict[str, Any], dialect: str) -> DbConfig:
         uri=uri,
         database=db_name,
         schema=db_config.get("schema", ""),
-        logic_name=login_name,
         extra=extra or None,
     )
 
@@ -1047,13 +1044,9 @@ class AgentConfig:
         return self.export_config.get("max_lines", 1000)
 
     @property
-    def datasource_configs(self) -> Dict[str, Dict[str, DbConfig]]:
-        """Wraps services.datasources for DBManager consumption.
-
-        Each datasource entry becomes its own group with a single db inside,
-        so DBManager only initializes one connection per datasource key.
-        """
-        return {db_name: {db_name: db_config} for db_name, db_config in self.services.datasources.items()}
+    def datasource_configs(self) -> Dict[str, DbConfig]:
+        """Datasource configs for DBManager consumption: one DbConfig per datasource key."""
+        return dict(self.services.datasources)
 
     def _init_services_config(self, datasources_config: Dict[str, Any]):
         """Parse services.datasources section into ServicesConfig.datasources."""
@@ -1072,48 +1065,39 @@ class AgentConfig:
             if db_type in (DBType.SQLITE, DBType.DUCKDB):
                 if "path_pattern" in db_config_dict:
                     path_pattern = resolve_env(str(db_config_dict["path_pattern"]))
-                    self._parse_glob_pattern_flat(db_name, path_pattern, db_type)
+                    self._parse_glob_pattern(
+                        db_name, path_pattern, db_type, is_default, db_config_dict.get("database", "")
+                    )
                 elif "uri" in db_config_dict:
                     db_config = _parse_single_file_db(db_config_dict, db_type)
-                    db_config.logic_name = db_name
                     db_config.default = is_default
                     self.services.datasources[db_name] = db_config
             else:
                 db_config = DbConfig.filter_kwargs(DbConfig, db_config_dict)
-                db_config.logic_name = db_name
                 db_config.default = is_default
                 self.services.datasources[db_name] = db_config
 
-    def _parse_glob_pattern_flat(self, base_name: str, path_pattern: str, db_type: str):
-        """Parse glob pattern and register each matched file as an independent database entry."""
-        any_db_path = False
-        logic_names = set()
-        for db_path in get_files_from_glob_pattern(path_pattern, db_type):
-            uri = db_path["uri"]
-            database_name = db_path["name"]
-            file_path = uri[len(f"{db_type}:///") :]
-            if not os.path.exists(file_path):
-                continue
-            any_db_path = True
-            entry_name = db_path["logic_name"]
-            if entry_name in logic_names:
-                logger.warning(f"Duplicate logical names are detected and will be skipped: {db_path}")
-                continue
-            logic_names.add(entry_name)
-            child_config = DbConfig(
-                type=db_type,
-                uri=uri,
-                database=database_name,
-                schema="",
-                logic_name=entry_name,
-            )
-            self.services.datasources[entry_name] = child_config
+    def _parse_glob_pattern(
+        self, base_name: str, path_pattern: str, db_type: str, is_default: bool = False, default_database: str = ""
+    ):
+        """Register ONE multi-database datasource backed by a glob ``path_pattern``.
 
-        if not any_db_path:
+        The matched files are this datasource's databases, enumerated at runtime from the
+        pattern (see ``list_databases``). ``default_database`` optionally names the default db.
+        """
+        if not get_files_from_glob_pattern(path_pattern, db_type):
             logger.warning(
                 f"No available database files found for '{base_name}', path_pattern: `{path_pattern}`. "
                 f"Skipping this entry. Ensure the path exists or remove it from agent.yml."
             )
+            return
+        self.services.datasources[base_name] = DbConfig(
+            type=db_type,
+            path_pattern=path_pattern,
+            database=default_database,
+            schema="",
+            default=is_default,
+        )
 
     def _init_permissions_config(self, permissions_raw: Dict[str, Any]):
         """Initialize unified permission configuration.
@@ -1222,6 +1206,21 @@ class AgentConfig:
     def current_db_configs(self) -> Dict[str, DbConfig]:
         """Returns all datasource configs."""
         return self.services.datasources
+
+    def list_databases(self, datasource: str = "") -> List[str]:
+        """Config-known physical databases of a datasource.
+
+        For a glob (``path_pattern``) datasource these are the matched files (one db per file);
+        for a single-file/server datasource it's the configured ``database`` (may be empty).
+        Server-side database enumeration beyond config is done via the connector, not here.
+        """
+        ds = datasource or self._current_datasource
+        cfg = self.services.datasources.get(ds)
+        if cfg is None:
+            return []
+        if cfg.path_pattern:
+            return [p["name"] for p in get_files_from_glob_pattern(cfg.path_pattern, cfg.type)]
+        return [cfg.database] if cfg.database else []
 
     def default_scheduler_service(self) -> Optional[str]:
         defaults = [name for name, cfg in self.scheduler_services.items() if cfg.get("default")]
@@ -1700,7 +1699,7 @@ class AgentConfig:
             return self._current_datasource, datasources[self._current_datasource].type
         if len(datasources) == 1:
             cfg = list(datasources.values())[0]
-            return cfg.logic_name or db_name, cfg.type
+            return next(iter(datasources)), cfg.type
         raise DatusException(
             code=ErrorCode.COMMON_UNSUPPORTED,
             message=f"Datasource '{db_name}' not found. Available: {list(datasources.keys())}",
@@ -2258,9 +2257,7 @@ def _db_config_to_semantic_adapter_config(db_config: Optional[DbConfig]) -> Opti
     semantic_db_config = {
         key: str(value)
         for key, value in raw.items()
-        if value is not None
-        and value != ""
-        and key not in ("extra", "logic_name", "path_pattern", "catalog", "default")
+        if value is not None and value != "" and key not in ("extra", "path_pattern", "catalog", "default")
     }
     # Merge connector-specific `extra` fields without overwriting explicit top-level keys
     if isinstance(extra, dict):

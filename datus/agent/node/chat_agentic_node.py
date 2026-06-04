@@ -126,9 +126,13 @@ class ChatAgenticNode(AgenticNode):
     # ── Tool Setup ──────────────────────────────────────────────────────
 
     def setup_tools(self):
-        """Initialize all tools with default database connection."""
+        """Initialize all tools, binding the DB tool to the active database (if any)."""
         node_name = self.get_node_name()
-        self.db_func_tool = DBFuncTool(agent_config=self.agent_config, sub_agent_name=node_name)
+        self.db_func_tool = DBFuncTool(
+            agent_config=self.agent_config,
+            sub_agent_name=node_name,
+            default_database=getattr(self, "active_database", "") or None,
+        )
         self._setup_context_search_tools()
         self._setup_reference_template_tools()
         self._setup_date_parsing_tools()
@@ -305,11 +309,17 @@ class ChatAgenticNode(AgenticNode):
         self._register_plan_mode_tools()
 
     def _update_database_connection(self, database_name: str):
-        """Update database connection to a different database."""
+        """Rebuild the DB tool bound to ``database_name`` and remember it as the active database.
+
+        ``default_database`` makes DBFuncTool connect to that database (selects the file for a
+        glob datasource; sets the database in the URI for PG/server DBs). Remembering it on the
+        node keeps subsequent ``setup_tools()`` rebuilds bound to the same database.
+        """
+        self.active_database = database_name or ""
         self.db_func_tool = DBFuncTool(
             agent_config=self.agent_config,
             sub_agent_name=self.get_node_name(),
-            default_datasource=database_name,
+            default_database=database_name,
         )
         self._rebuild_tools()
 
