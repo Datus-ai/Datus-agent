@@ -48,7 +48,7 @@ class PrintModeRunner:
         self.session_id = getattr(args, "resume", None)
         self.subagent_name = getattr(args, "subagent", None) or None
         self.proxy_tool_patterns = getattr(args, "proxy_tools", None)
-        self.symphony_tools = getattr(args, "symphony_tools", False)
+        self.orchestrator_tools = getattr(args, "orchestrator_tools", False)
         self.scope = getattr(args, "session_scope", None)
         self.stream_thinking = getattr(args, "stream_thinking", False)
 
@@ -70,8 +70,8 @@ class PrintModeRunner:
             execution_mode="workflow",
         )
 
-        if getattr(self, "symphony_tools", None):
-            self._attach_symphony_tools(node)
+        if getattr(self, "orchestrator_tools", None):
+            self._attach_orchestrator_tools(node)
 
         if self.proxy_tool_patterns:
             from datus.tools.proxy.proxy_tool import apply_proxy_tools
@@ -253,13 +253,13 @@ class PrintModeRunner:
         sys.stdout.write(payload.model_dump_json() + "\n")
         sys.stdout.flush()
 
-    def _attach_symphony_tools(self, node):
-        from datus.tools.func_tool.symphony_tools import SymphonyIssueTools
+    def _attach_orchestrator_tools(self, node):
+        from datus.tools.func_tool.orchestrator_tools import OrchestratorIssueTools
 
-        symphony_tools = SymphonyIssueTools()
-        tools = symphony_tools.available_tools()
+        orchestrator_tools = OrchestratorIssueTools()
+        tools = orchestrator_tools.available_tools()
         node.tools.extend(tools)
-        node.tool_registry.register_tools("symphony_tools", tools)
+        node.tool_registry.register_tools("orchestrator_tools", tools)
 
     def _read_interaction_input(self) -> str:
         line = sys.stdin.readline()

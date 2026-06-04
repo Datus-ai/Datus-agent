@@ -198,11 +198,11 @@ class ArgumentParser:
         )
 
         self.parser.add_argument(
-            "--symphony-tools",
-            dest="symphony_tools",
+            "--orchestrator-tools",
+            dest="orchestrator_tools",
             action="store_true",
             default=False,
-            help="Expose Symphony issue lifecycle tools in print mode",
+            help="Expose orchestrator issue lifecycle tools in print mode",
         )
 
     def parse_args(self):
@@ -237,8 +237,8 @@ class Application:
         if args.proxy_tools and args.print_mode is None:
             self.arg_parser.parser.error("--proxy_tools requires --print mode")
 
-        if getattr(args, "symphony_tools", False) and args.print_mode is None:
-            self.arg_parser.parser.error("--symphony-tools requires --print mode")
+        if getattr(args, "orchestrator_tools", False) and args.print_mode is None:
+            self.arg_parser.parser.error("--orchestrator-tools requires --print mode")
 
         if args.print_mode is not None:
             from datus.cli.print_mode import PrintModeRunner

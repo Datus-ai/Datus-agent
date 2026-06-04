@@ -2,17 +2,17 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Unit tests for Symphony issue lifecycle tools."""
+"""Unit tests for orchestrator issue lifecycle tools."""
 
 import pytest
 
-from datus.tools.func_tool.symphony_tools import SymphonyIssueTools
+from datus.tools.func_tool.orchestrator_tools import OrchestratorIssueTools
 
 
 @pytest.mark.ci
-class TestSymphonyIssueTools:
+class TestOrchestratorIssueTools:
     def test_available_tools_exposes_issue_lifecycle_tools(self):
-        tools = SymphonyIssueTools().available_tools()
+        tools = OrchestratorIssueTools().available_tools()
 
         assert {tool.name for tool in tools} == {
             "create_issue_comment",
@@ -25,7 +25,7 @@ class TestSymphonyIssueTools:
 
     @pytest.mark.asyncio
     async def test_tool_returns_proxy_required_error(self):
-        tool = next(tool for tool in SymphonyIssueTools().available_tools() if tool.name == "finish_mission")
+        tool = next(tool for tool in OrchestratorIssueTools().available_tools() if tool.name == "finish_mission")
 
         result = await tool.on_invoke_tool(
             None,

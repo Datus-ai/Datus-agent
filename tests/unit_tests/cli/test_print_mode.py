@@ -411,9 +411,9 @@ class TestRunUsesFactory:
 
 
 class TestRunProxyTools:
-    def test_run_attaches_symphony_tools_before_proxying(self):
-        """Verify Symphony tools are registered and then available to proxy."""
-        runner = _make_runner(symphony_tools=True, proxy_tools="symphony_tools.*")
+    def test_run_attaches_orchestrator_tools_before_proxying(self):
+        """Verify orchestrator tools are registered and then available to proxy."""
+        runner = _make_runner(orchestrator_tools=True, proxy_tools="orchestrator_tools.*")
 
         mock_node = MagicMock()
         mock_node.session_id = None
@@ -434,7 +434,7 @@ class TestRunProxyTools:
             runner.run()
 
         registered_tools = mock_node.tool_registry.register_tools.call_args.args[1]
-        assert mock_node.tool_registry.register_tools.call_args.args[0] == "symphony_tools"
+        assert mock_node.tool_registry.register_tools.call_args.args[0] == "orchestrator_tools"
         assert {tool.name for tool in registered_tools} == {
             "create_issue_comment",
             "update_issue_status",
@@ -443,7 +443,7 @@ class TestRunProxyTools:
             "finish_mission",
         }
         assert mock_node.tools == registered_tools
-        mock_apply.assert_called_once_with(mock_node, ["symphony_tools.*"])
+        mock_apply.assert_called_once_with(mock_node, ["orchestrator_tools.*"])
 
     def test_run_applies_proxy_tools_when_patterns_set(self):
         """Verify that apply_proxy_tools is called when proxy_tool_patterns is set."""

@@ -3,11 +3,11 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-Symphony runtime proxy tools.
+Orchestrator runtime proxy tools.
 
 These tools are intentionally placeholders when executed inside Datus-agent.
-Symphony enables them in print mode and proxies the calls back to its tracker
-adapter, so Datus-agent can request issue updates without holding tracker
+An external orchestrator enables them in print mode and proxies the calls back
+to its tracker adapter, so Datus-agent can request issue updates without holding tracker
 credentials directly.
 """
 
@@ -20,8 +20,8 @@ from agents import FunctionTool
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 
 
-class SymphonyIssueTools:
-    """Issue lifecycle tools owned by the Symphony runtime."""
+class OrchestratorIssueTools:
+    """Issue lifecycle tools owned by an external orchestrator runtime."""
 
     def available_tools(self) -> List[FunctionTool]:
         return [
@@ -33,20 +33,20 @@ class SymphonyIssueTools:
         ]
 
     def create_issue_comment(self, body: str, issue_id: Optional[str] = None) -> FuncToolResult:
-        """Create an issue comment through Symphony.
+        """Create an issue comment through the orchestrator.
 
         Args:
             body: Markdown comment body to append to the current issue.
-            issue_id: Optional tracker issue id. Omit this for the current Symphony issue.
+            issue_id: Optional tracker issue id. Omit this for the current issue.
         """
         return self._requires_proxy("create_issue_comment", {"issue_id": issue_id, "body": body})
 
     def update_issue_status(self, status: str, issue_id: Optional[str] = None) -> FuncToolResult:
-        """Move an issue to a tracker status through Symphony.
+        """Move an issue to a tracker status through the orchestrator.
 
         Args:
             status: Target issue status name, for example "In Progress" or "In Review".
-            issue_id: Optional tracker issue id. Omit this for the current Symphony issue.
+            issue_id: Optional tracker issue id. Omit this for the current issue.
         """
         return self._requires_proxy("update_issue_status", {"issue_id": issue_id, "status": status})
 
@@ -59,13 +59,13 @@ class SymphonyIssueTools:
         artifacts: Optional[List[Dict[str, Any]]] = None,
         validation: Optional[List[Dict[str, Any]]] = None,
     ) -> FuncToolResult:
-        """Report the final mission outcome to Symphony.
+        """Report the final mission outcome to the orchestrator.
 
         Args:
             outcome: completed, needs_review, blocked, or failed.
             summary: Short operator-facing summary.
-            issue_id: Optional tracker issue id. Omit this for the current Symphony issue.
-            next_status: Optional tracker status Symphony should move the issue to.
+            issue_id: Optional tracker issue id. Omit this for the current issue.
+            next_status: Optional tracker status the orchestrator should move the issue to.
             artifacts: Optional generated artifacts or URLs.
             validation: Optional validation checks and results.
         """
@@ -87,12 +87,12 @@ class SymphonyIssueTools:
         issue_id: Optional[str] = None,
         next_status: Optional[str] = None,
     ) -> FuncToolResult:
-        """Request human input on the current Symphony issue.
+        """Request human input on the current issue.
 
         Args:
             question: Specific question or decision needed from the operator.
-            issue_id: Optional tracker issue id. Omit this for the current Symphony issue.
-            next_status: Optional tracker status Symphony should move the issue to.
+            issue_id: Optional tracker issue id. Omit this for the current issue.
+            next_status: Optional tracker status the orchestrator should move the issue to.
         """
         return self._requires_proxy(
             "request_human_input",
@@ -111,12 +111,12 @@ class SymphonyIssueTools:
         artifacts: Optional[List[Dict[str, Any]]] = None,
         validation: Optional[List[Dict[str, Any]]] = None,
     ) -> FuncToolResult:
-        """Mark the current Symphony issue as blocked.
+        """Mark the current issue as blocked.
 
         Args:
             reason: Concrete blocker that prevents completion.
-            issue_id: Optional tracker issue id. Omit this for the current Symphony issue.
-            next_status: Optional tracker status Symphony should move the issue to.
+            issue_id: Optional tracker issue id. Omit this for the current issue.
+            next_status: Optional tracker status the orchestrator should move the issue to.
             artifacts: Optional generated artifacts or URLs.
             validation: Optional validation checks and results.
         """
@@ -135,8 +135,8 @@ class SymphonyIssueTools:
         return FuncToolResult(
             success=0,
             error=(
-                f"{tool_name} must be proxied by the Symphony runtime. "
-                "Run Datus-agent print mode with --symphony-tools and proxy symphony_tools.*."
+                f"{tool_name} must be proxied by the orchestrator runtime. "
+                "Run Datus-agent print mode with --orchestrator-tools and proxy orchestrator_tools.*."
             ),
             result=payload,
         )

@@ -64,11 +64,11 @@ class TestArgumentParser:
             args = ap.parse_args()
         assert args.resume == "sess_123"
 
-    def test_parse_args_symphony_tools(self):
+    def test_parse_args_orchestrator_tools(self):
         ap = ArgumentParser()
-        with patch.object(sys, "argv", ["datus", "--datasource", "ns1", "--print", "hello", "--symphony-tools"]):
+        with patch.object(sys, "argv", ["datus", "--datasource", "ns1", "--print", "hello", "--orchestrator-tools"]):
             args = ap.parse_args()
-        assert args.symphony_tools is True
+        assert args.orchestrator_tools is True
 
     def test_parse_args_web(self):
         ap = ArgumentParser()
@@ -149,8 +149,8 @@ class TestApplicationRun:
             with pytest.raises(SystemExit):
                 app.run()
 
-    def test_symphony_tools_without_print_mode_errors(self):
-        """Verify that --symphony-tools without --print raises SystemExit."""
+    def test_orchestrator_tools_without_print_mode_errors(self):
+        """Verify that --orchestrator-tools without --print raises SystemExit."""
         app = Application()
         mock_args = SimpleNamespace(
             debug=False,
@@ -159,7 +159,7 @@ class TestApplicationRun:
             web=False,
             resume=None,
             proxy_tools=None,
-            symphony_tools=True,
+            orchestrator_tools=True,
             config=None,
         )
         with (
