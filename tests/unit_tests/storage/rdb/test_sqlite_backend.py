@@ -413,3 +413,126 @@ class TestSqliteRdbBackendConnect:
         assert db_a.db_file != db_b.db_file
         assert db_a.db_file == os.path.join(str(tmp_path), "proj_a", "datus_db", "test.db")
         assert db_b.db_file == os.path.join(str(tmp_path), "proj_b", "datus_db", "test.db")
+
+
+class TestMigrateConstraints:
+    """Tests for _migrate_constraints table-rebuild migration."""
+
+    def _make_db(self, tmp_path, name="migrate_constraints.db"):
+        return SqliteRdbDatabase(os.path.join(str(tmp_path), name))
+
+    def _old_def(self):
+        """Table definition with the stale UNIQUE(parent_id, name) constraint."""
+        return TableDefinition(
+            table_name="nodes",
+            columns=[
+                ColumnDef(name="node_id", col_type="INTEGER", primary_key=True, autoincrement=True),
+                ColumnDef(name="parent_id", col_type="INTEGER"),
+                ColumnDef(name="name", col_type="TEXT", nullable=False),
+            ],
+            constraints=["UNIQUE(parent_id, name)"],
+        )
+
+    def _new_def(self):
+        """Table definition with the correct UNIQUE(parent_id, name, datasource_id) constraint."""
+        return TableDefinition(
+            table_name="nodes",
+            columns=[
+                ColumnDef(name="node_id", col_type="INTEGER", primary_key=True, autoincrement=True),
+                ColumnDef(name="parent_id", col_type="INTEGER"),
+                ColumnDef(name="name", col_type="TEXT", nullable=False),
+                ColumnDef(name="datasource_id", col_type="TEXT", default=""),
+            ],
+            constraints=["UNIQUE(parent_id, name, datasource_id)"],
+        )
+
+    def test_noop_when_table_missing(self, tmp_path):
+        """Skip rebuild when table does not exist yet."""
+        db = self._make_db(tmp_path)
+        import sqlite3
+
+        conn = sqlite3.connect(db.db_file)
+        SqliteRdbDatabase._migrate_constraints(conn, self._new_def())
+        conn.close()
+        # No error and no table created (CREATE TABLE is not our job here).
+        conn2 = sqlite3.connect(db.db_file)
+        cursor = conn2.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        assert cursor.fetchall() == []
+        conn2.close()
+
+    def test_noop_when_constraints_match(self, tmp_path):
+        """Skip rebuild when the live table already has the correct constraints."""
+        db = self._make_db(tmp_path)
+        new_def = self._new_def()
+        table = db.ensure_table(new_def)
+
+        @dataclass
+        class _Node:
+            node_id: int = None
+            parent_id: int = None
+            name: str = ""
+            datasource_id: str = ""
+
+        table.insert(_Node(parent_id=1, name="x", datasource_id="ds1"))
+
+        # Second ensure_table must not wipe data.
+        table2 = db.ensure_table(new_def)
+        rows = table2.query(_Node)
+        assert len(rows) == 1
+        assert rows[0].name == "x"
+
+    def test_rebuilds_stale_constraint_and_preserves_data(self, tmp_path):
+        """Rebuild replaces UNIQUE(parent_id, name) with UNIQUE(parent_id, name, datasource_id).
+
+        Existing rows must be preserved; after the rebuild, inserting two rows
+        that share (parent_id, name) but differ on datasource_id must succeed.
+        """
+        db = self._make_db(tmp_path)
+
+        @dataclass
+        class _OldNode:
+            node_id: int = None
+            parent_id: int = None
+            name: str = ""
+
+        @dataclass
+        class _NewNode:
+            node_id: int = None
+            parent_id: int = None
+            name: str = ""
+            datasource_id: str = ""
+
+        # Create table with old schema and seed a row.
+        old_table = db.ensure_table(self._old_def())
+        old_table.insert(_OldNode(parent_id=1, name="finance"))
+
+        # Upgrade: add datasource_id column + fix constraint.
+        new_table = db.ensure_table(self._new_def())
+
+        # Existing row must survive the rebuild.
+        rows = new_table.query(_NewNode)
+        assert len(rows) == 1
+        assert rows[0].name == "finance"
+
+        # Now two rows with same (parent_id, name) but different datasource_id must be accepted.
+        new_table.insert(_NewNode(parent_id=1, name="revenue", datasource_id="ds1"))
+        new_table.insert(_NewNode(parent_id=1, name="revenue", datasource_id="ds2"))
+        rows = new_table.query(_NewNode, where={"name": "revenue"})
+        assert len(rows) == 2
+
+    def test_old_constraint_still_blocks_same_datasource(self, tmp_path):
+        """After rebuild, inserting duplicate (parent_id, name, datasource_id) must still fail."""
+        db = self._make_db(tmp_path)
+        db.ensure_table(self._old_def())
+        new_table = db.ensure_table(self._new_def())
+
+        @dataclass
+        class _NewNode:
+            node_id: int = None
+            parent_id: int = None
+            name: str = ""
+            datasource_id: str = ""
+
+        new_table.insert(_NewNode(parent_id=1, name="dup", datasource_id="ds1"))
+        with pytest.raises(UniqueViolationError):
+            new_table.insert(_NewNode(parent_id=1, name="dup", datasource_id="ds1"))

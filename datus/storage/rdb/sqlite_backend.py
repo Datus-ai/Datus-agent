@@ -233,6 +233,10 @@ class SqliteRdbDatabase(RdbDatabase):
             with self._auto_conn() as conn:
                 # Migrate missing columns on existing tables before running DDL
                 self._migrate_missing_columns(conn, table_def)
+                # Rebuild table if inline constraints differ from the definition.
+                # Must run after _migrate_missing_columns so newly added columns
+                # are included in the data copy.
+                self._migrate_constraints(conn, table_def)
                 for stmt in ddl_statements:
                     conn.execute(stmt)
         except DatusException:
@@ -259,6 +263,80 @@ class SqliteRdbDatabase(RdbDatabase):
                 col_ddl = _sqlite_col_ddl(col)
                 conn.execute(f"ALTER TABLE {safe_table} ADD COLUMN {col_ddl}")
                 logger.info(f"Migrated: ALTER TABLE {safe_table} ADD COLUMN {col_ddl}")
+
+    @staticmethod
+    def _migrate_constraints(conn, table_def: TableDefinition) -> None:
+        """Rebuild the table when its UNIQUE constraints differ from the definition.
+
+        SQLite does not support ALTER TABLE DROP CONSTRAINT, so fixing a stale
+        inline constraint requires a full table rebuild: create a correctly
+        constrained temp table, copy all rows, drop the old table, rename.
+
+        Only UNIQUE constraints are compared; other constraint types are ignored.
+        The rebuild is skipped when the table does not yet exist (CREATE TABLE
+        will handle it) or when all desired constraints are already present.
+        """
+        # Nothing to check if the definition declares no constraints.
+        if not table_def.constraints:
+            return
+
+        # Validate the table name before embedding it in SQL — prevents injection.
+        safe_table = _safe_ident(table_def.table_name)
+
+        # PRAGMA table_info returns one row per column; zero rows means the table
+        # doesn't exist yet, so CREATE TABLE (run after this) will handle it.
+        cursor = conn.execute(f"PRAGMA table_info({safe_table})")
+        existing_cols = [row[1] for row in cursor.fetchall()]
+        if not existing_cols:
+            return  # table doesn't exist yet
+
+        # Read the original CREATE TABLE statement SQLite stored when the table
+        # was first created. This is the only way to inspect inline constraints
+        # because SQLite has no information_schema or constraint catalog.
+        cursor = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+            (table_def.table_name,),
+        )
+        row = cursor.fetchone()
+        if not row or not row[0]:
+            return
+
+        # Normalize constraint strings to uppercase with no whitespace so that
+        # formatting differences don't cause false mismatches, e.g.
+        # "UNIQUE( parent_id, name )" and "UNIQUE(parent_id,name)" are equal.
+        def _norm(fragments):
+            return {re.sub(r"\s+", "", f.upper()) for f in fragments}
+
+        # Extract UNIQUE constraints from the TableDefinition (what we want).
+        desired = _norm(c for c in table_def.constraints if re.match(r"\s*UNIQUE", c, re.IGNORECASE))
+        # Extract UNIQUE constraints from the stored CREATE statement (what the DB has).
+        existing = _norm(re.findall(r"UNIQUE\s*\([^)]+\)", row[0], re.IGNORECASE))
+
+        # Constraints already match — nothing to do (fresh install or already migrated).
+        if existing == desired:
+            return
+
+        logger.info(f"Rebuilding '{table_def.table_name}': constraints {existing} -> {desired}")
+
+        tmp = f"{table_def.table_name}_migration_tmp"
+        safe_tmp = _safe_ident(tmp)
+
+        # Only transfer columns that exist in both the old table and the new definition.
+        # This safely handles columns that may have been added by _migrate_missing_columns.
+        new_col_names = {col.name for col in table_def.columns}
+        transfer_cols = ", ".join(c for c in existing_cols if c in new_col_names)
+
+        # Build DDL for the temp table using the new definition (correct constraints).
+        col_parts = [_sqlite_col_ddl(col) for col in table_def.columns] + list(table_def.constraints)
+        col_ddl = ",\n".join(f"    {p}" for p in col_parts)
+
+        # Four-step atomic rebuild — all inside the same transaction, so a crash
+        # between steps rolls back and leaves the original table untouched.
+        conn.execute(f"CREATE TABLE {safe_tmp} (\n{col_ddl}\n)")
+        conn.execute(f"INSERT INTO {safe_tmp} ({transfer_cols}) SELECT {transfer_cols} FROM {safe_table}")
+        conn.execute(f"DROP TABLE {safe_table}")
+        conn.execute(f"ALTER TABLE {safe_tmp} RENAME TO {safe_table}")
+        logger.info(f"Table '{table_def.table_name}' rebuilt with updated constraints")
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
