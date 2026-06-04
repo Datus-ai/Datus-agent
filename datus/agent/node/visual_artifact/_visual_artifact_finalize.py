@@ -89,7 +89,6 @@ SUBJECT_TOOL_NAMES = {
     "get_metrics",
     "query_metrics",
     "read_reference_sql",
-    "read_ext_knowledge",
     "list_subject_tree",
 }
 
@@ -471,7 +470,6 @@ def aggregate_subject_refs(queries_dir: Path) -> SubjectRefs:
     """
     metrics: Dict[Tuple[Tuple[str, ...], str], SubjectAssetRef] = {}
     reference_sql: Dict[Tuple[Tuple[str, ...], str], SubjectAssetRef] = {}
-    ext_knowledge: Dict[Tuple[Tuple[str, ...], str], SubjectAssetRef] = {}
 
     for brief in collect_query_briefs(queries_dir):
         raw_uses = brief.get("uses") or {}
@@ -487,7 +485,6 @@ def aggregate_subject_refs(queries_dir: Path) -> SubjectRefs:
         for bucket, ref_list in (
             (metrics, uses.metrics),
             (reference_sql, uses.reference_sql),
-            (ext_knowledge, uses.ext_knowledge),
         ):
             for ref in ref_list:
                 key = (tuple(ref.path), ref.name)
@@ -496,7 +493,6 @@ def aggregate_subject_refs(queries_dir: Path) -> SubjectRefs:
     return SubjectRefs(
         metrics=list(metrics.values()),
         reference_sql=list(reference_sql.values()),
-        ext_knowledge=list(ext_knowledge.values()),
     )
 
 
@@ -831,7 +827,7 @@ def write_subject_refs(analysis_dir: Path, refs: SubjectRefs) -> Optional[str]:
     proactively delete any stale file from a prior run so the absent
     signal stays accurate after an edit-mode rerun drops all uses.
     """
-    if not (refs.metrics or refs.reference_sql or refs.ext_knowledge):
+    if not (refs.metrics or refs.reference_sql):
         stale = analysis_dir / "subject_refs.json"
         if stale.is_file():
             try:
@@ -1198,7 +1194,7 @@ def run_finalize_analysis(
         {
             "ok": True,
             "warnings": [...],
-            "subject_refs_count": {"metrics": n, "reference_sql": n, "ext_knowledge": n},
+            "subject_refs_count": {"metrics": n, "reference_sql": n},
             "key_tables": [...],
         }
 
@@ -1209,7 +1205,7 @@ def run_finalize_analysis(
             "warnings": [...],
             "error": "...",
             "key_tables": [...],
-            "subject_refs_count": {"metrics": n, "reference_sql": n, "ext_knowledge": n},
+            "subject_refs_count": {"metrics": n, "reference_sql": n},
         }
 
     The deterministic, code-only outputs (``subject_refs.json`` and
@@ -1343,7 +1339,6 @@ def run_finalize_analysis(
     subject_refs_count = {
         "metrics": len(refs.metrics),
         "reference_sql": len(refs.reference_sql),
-        "ext_knowledge": len(refs.ext_knowledge),
     }
 
     if skip_narrative:

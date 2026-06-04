@@ -24,8 +24,6 @@ def mock_context_search_tools():
     mock.search_reference_sql = MagicMock(return_value=FuncToolResult(success=1, result=[]))
     mock.get_reference_sql = MagicMock(return_value=FuncToolResult(success=1, result={}))
     mock.search_semantic_objects = MagicMock(return_value=FuncToolResult(success=1, result=[]))
-    mock.search_knowledge = MagicMock(return_value=FuncToolResult(success=1, result=[]))
-    mock.get_knowledge = MagicMock(return_value=FuncToolResult(success=1, result=[]))
     return mock
 
 
@@ -42,11 +40,9 @@ class TestToolRegistry:
     def test_all_context_tools_registered(self, tool_service):
         """All expected ContextSearchTools methods are registered."""
         expected = [
-            "get_knowledge",
             "get_metrics",
             "get_reference_sql",
             "list_subject_tree",
-            "search_knowledge",
             "search_metrics",
             "search_reference_sql",
             "search_semantic_objects",
@@ -137,13 +133,6 @@ class TestToolServiceExecute:
         mock_context_search_tools.search_metrics.assert_called_once_with(
             query_text="revenue", subject_path=["Finance"], top_n=3
         )
-
-    def test_execute_get_knowledge_with_paths(self, tool_service, mock_context_search_tools):
-        """execute get_knowledge with paths param succeeds."""
-        paths = [["Finance", "Revenue", "knowledge1"]]
-        result = tool_service.execute("get_knowledge", {"paths": paths})
-        assert result.success is True
-        mock_context_search_tools.get_knowledge.assert_called_once_with(paths=paths)
 
     def test_execute_returns_func_tool_result(self, tool_service, mock_context_search_tools):
         """execute returns Result[FuncToolResult] with correct data."""

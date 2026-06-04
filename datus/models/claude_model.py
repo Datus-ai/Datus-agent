@@ -25,6 +25,7 @@ import anthropic
 import httpx
 from agents import Agent, RunContextWrapper, Usage
 from agents.mcp import MCPServerStdio
+from agents.tool_context import ToolContext
 from agents.usage import InputTokensDetails, OutputTokensDetails
 
 from datus.configuration.agent_config import ModelConfig
@@ -696,8 +697,22 @@ class ClaudeModel(OpenAICompatibleModel):
                             if block.name in func_tool_map:
                                 try:
                                     ft = func_tool_map[block.name]
-                                    run_context = RunContextWrapper(context=None, usage=Usage())
-                                    result_val = await ft.on_invoke_tool(run_context, json.dumps(block.input))
+                                    # Pass a ToolContext (not a bare RunContextWrapper) so the
+                                    # tool's ``tool_call_id`` matches this block's ``action_id``
+                                    # (``block.id``). The ``task`` tool reads ``tool_call_id`` to
+                                    # link every sub-agent action's ``parent_action_id`` to the
+                                    # wrapping task action; without it the CLI renderer cannot
+                                    # anchor the sub-agent group and mis-renders it as separate
+                                    # ``<node>_request`` / ``<node>_response`` blocks.
+                                    tool_args = json.dumps(block.input)
+                                    run_context = ToolContext(
+                                        context=None,
+                                        usage=Usage(),
+                                        tool_name=block.name,
+                                        tool_call_id=block.id,
+                                        tool_arguments=tool_args,
+                                    )
+                                    result_val = await ft.on_invoke_tool(run_context, tool_args)
                                     # Ensure result is a string (Anthropic API requires string content)
                                     result_str = result_val if isinstance(result_val, str) else json.dumps(result_val)
                                     # Wrap in object matching MCP tool result format

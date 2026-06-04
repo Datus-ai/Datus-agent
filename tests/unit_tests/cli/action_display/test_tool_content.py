@@ -28,7 +28,6 @@ from datus.cli.action_display.tool_content import (
     _build_get_detail,
     _build_get_dimensions,
     _build_get_document,
-    _build_get_knowledge,
     _build_get_metrics,
     _build_get_multiple_ddl,
     _build_get_reference_sql,
@@ -47,8 +46,6 @@ from datus.cli.action_display.tool_content import (
     _build_read_file,
     _build_read_query,
     _build_search_documents,
-    _build_search_external_knowledge,
-    _build_search_knowledge,
     _build_search_metrics,
     _build_search_reference_sql,
     _build_search_semantic_objects,
@@ -399,14 +396,13 @@ class TestBuildSearchTable:
 
 @pytest.mark.ci
 class TestBuildSearchGeneric:
-    """Test search_metrics, search_reference_sql, search_external_knowledge, search_documents."""
+    """Test search_metrics, search_reference_sql, search_documents."""
 
     @pytest.mark.parametrize(
         "fn, builder, unit",
         [
             ("search_metrics", _build_search_metrics, "metrics"),
             ("search_reference_sql", _build_search_reference_sql, "reference SQLs"),
-            ("search_external_knowledge", _build_search_external_knowledge, "knowledge entries"),
             ("search_documents", _build_search_documents, "documents"),
         ],
     )
@@ -1215,7 +1211,6 @@ class TestBuildListSubjectTree:
                 "User_Classification": {
                     "metrics": ["dau", "retention"],
                     "reference_sql": ["top_users"],
-                    "knowledge": ["bitmap_rule"],
                 }
             },
             "Sales": {"Revenue": {"metrics": ["gmv"]}},
@@ -1234,7 +1229,6 @@ class TestBuildListSubjectTree:
         # Leaf counts
         assert any("metrics" in line and "2" in line for line in lines)
         assert any("reference_sql" in line and "1" in line for line in lines)
-        assert any("knowledge" in line and "1" in line for line in lines)
 
 
 @pytest.mark.ci
@@ -1268,28 +1262,6 @@ class TestBuildSearchSemanticObjects:
         )
         tc = _build_search_semantic_objects(a, verbose=False)
         assert "2 semantic objects" in tc.compact_result
-
-
-@pytest.mark.ci
-class TestBuildSearchKnowledge:
-    def test_compact(self):
-        a = _make(
-            input_data={"function_name": "search_knowledge"},
-            output_data={"result": [{"search_text": "q1", "explanation": "e1"}]},
-        )
-        tc = _build_search_knowledge(a, verbose=False)
-        assert "1 knowledge entry matched" in tc.compact_result
-
-
-@pytest.mark.ci
-class TestBuildGetKnowledge:
-    def test_compact(self):
-        a = _make(
-            input_data={"function_name": "get_knowledge"},
-            output_data={"result": {"name": "sla_policy"}},
-        )
-        tc = _build_get_knowledge(a, verbose=False)
-        assert "sla_policy" in tc.compact_result
 
 
 # ── Semantic tools ────────────────────────────────────────────────
@@ -1866,9 +1838,6 @@ class TestAllToolsRegistered:
         # Context search
         "search_metrics",
         "search_reference_sql",
-        "search_external_knowledge",
-        "search_knowledge",
-        "get_knowledge",
         "search_documents",
         "search_document",
         "list_subject_tree",

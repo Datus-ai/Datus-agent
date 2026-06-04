@@ -11,7 +11,6 @@ import pytest
 
 from datus.storage.document.store import DocumentStore
 from datus.storage.embedding_models import get_db_embedding_model, get_metric_embedding_model
-from datus.storage.ext_knowledge.store import ExtKnowledgeStore
 from datus.storage.metric.store import MetricStorage
 from datus.storage.reference_sql.store import ReferenceSqlStorage
 from datus.storage.schema_metadata.store import SchemaStorage
@@ -75,25 +74,6 @@ def sample_document_data():
             "keywords": ["SQL", "optimization", "performance"],
             "language": "en",
             "chunk_text": "Query optimization is crucial for database performance.",
-        },
-    ]
-
-
-@pytest.fixture
-def sample_ext_knowledge_data():
-    """Sample external knowledge data for testing."""
-    return [
-        {
-            "subject_path": ["Finance", "Banking", "Retail"],
-            "name": "APR",
-            "search_text": "APR",
-            "explanation": "Annual Percentage Rate - the yearly cost of a loan",
-        },
-        {
-            "subject_path": ["Finance", "Investment", "Stocks"],
-            "name": "P/E_Ratio",
-            "search_text": "P/E Ratio",
-            "explanation": "Price-to-earnings ratio - a valuation metric",
         },
     ]
 
@@ -262,119 +242,6 @@ class TestDocumentStorePyArrow:
         titles = eng_docs["title"]
         upper_titles = pc.utf8_upper(titles)
         assert all(title.isupper() for title in upper_titles.to_pylist())
-
-
-class TestExtKnowledgeStorePyArrow:
-    """Test PyArrow-related functionality in ExtKnowledgeStore."""
-
-    def test_search_similar_knowledge(self, temp_db_path, sample_ext_knowledge_data):
-        """Test that search_similar_knowledge returns PyArrow Table."""
-        storage = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
-        storage.batch_store_knowledge(sample_ext_knowledge_data)
-
-        result = storage.search_knowledge(query_text="financial metrics", subject_path=["Finance"], top_n=2)
-
-        assert len(result) <= 2
-
-    def test_get_all_knowledge_returns_pyarrow_table(self, temp_db_path, sample_ext_knowledge_data):
-        """Test that get_all_knowledge returns PyArrow Table."""
-        storage = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
-        storage.batch_store_knowledge(sample_ext_knowledge_data)
-
-        results = storage.search_all_knowledge(["Finance"])
-        assert len(results) == 2
-
-        # Test domain filtering
-        assert all(res["subject_path"][0] == "Finance" for res in results)
-
-    def test_search_knowledge_wildcard(self, temp_db_path, sample_ext_knowledge_data):
-        """Test search_knowledge wildcard."""
-        storage = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
-        storage.batch_store_knowledge(sample_ext_knowledge_data)
-
-        result = storage.search_all_knowledge(["Finance", "Banking", "Retail", "APR"])
-        assert len(result) == 1
-
-    def test_knowledge_pyarrow_operations(self, temp_db_path, sample_ext_knowledge_data):
-        """Test PyArrow operations on knowledge data."""
-        storage = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
-        storage.batch_store_knowledge(sample_ext_knowledge_data)
-
-        all_knowledge = storage.search_all_knowledge()
-
-        # Test grouping by domain
-        domains = [res["subject_path"][0] == "Finance" for res in all_knowledge]
-        assert len(set(domains)) == 1
-
-        # Test concatenation operations (similar to those used in storage)
-        subject_path_list = [knowledge["subject_path"] for knowledge in all_knowledge]
-
-        expected_values = [["Finance", "Banking", "Retail"], ["Finance", "Investment", "Stocks"]]
-        assert subject_path_list == expected_values
-
-    def test_rename_subject_node(self, temp_db_path, sample_ext_knowledge_data):
-        """Test renaming a subject node in ExtKnowledgeStore."""
-        storage = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
-        storage.batch_store_knowledge(sample_ext_knowledge_data)
-
-        # Rename subject node: Finance -> Banking -> Retail to Finance -> Banking -> Consumer
-        success = storage.rename(old_path=["Finance", "Banking", "Retail"], new_path=["Finance", "Banking", "Consumer"])
-
-        assert success is True
-
-        # Verify the node was renamed in subject_tree
-        old_node = storage.subject_tree.get_node_by_path(["Finance", "Banking", "Retail"])
-        new_node = storage.subject_tree.get_node_by_path(["Finance", "Banking", "Consumer"])
-
-        assert old_node is None
-        assert new_node["name"] == "Consumer"
-
-    def test_rename_knowledge_item(self, temp_db_path):
-        """Test renaming a knowledge item in vector store."""
-        storage = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
-
-        # Store knowledge with subject path that exists
-        knowledge_data = [
-            {
-                "subject_path": ["Finance", "Banking"],
-                "search_text": "old_term",
-                "name": "old_term",
-                "explanation": "This is an explanation for old term",
-            },
-        ]
-        storage.batch_store_knowledge(knowledge_data)
-
-        # Rename the search_text (vector store item, not subject node)
-        success = storage.rename(
-            old_path=["Finance", "Banking", "old_term"], new_path=["Finance", "Banking", "new_term"]
-        )
-
-        assert success is True
-
-        # Verify the item was renamed
-        results = storage.search_all_knowledge(["Finance", "Banking"])
-        assert len(results) == 1
-        assert results[0]["name"] == "new_term"
-        assert results[0]["explanation"] == "This is an explanation for old term"
-
-    def test_rename_knowledge_item_different_parent(self, temp_db_path):
-        """Test that renaming with different parent path."""
-        storage = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
-
-        knowledge_data = [
-            {
-                "subject_path": ["Finance", "Banking"],
-                "name": "term1",
-                "search_text": "term1",
-                "explanation": "Explanation 1",
-            },
-        ]
-        storage.batch_store_knowledge(knowledge_data)
-        storage.subject_tree.find_or_create_path(["Finance", "Investment"])
-        storage.rename(old_path=["Finance", "Banking", "term1"], new_path=["Finance", "Investment", "term2"])
-        knowledge = storage.search_all_knowledge(["Finance", "Investment"])
-        assert len(knowledge) == 1
-        assert knowledge[0]["name"] == "term2"
 
 
 class TestMetricStoragePyArrow:
@@ -607,22 +474,6 @@ class TestReturnTypeConsistency:
 
         doc_result = doc_storage.search_docs("test", top_n=1)
         assert isinstance(doc_result, list)
-
-        # External knowledge storage
-        ext_storage = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
-        ext_data = [
-            {
-                "subject_path": ["Test", "L1", "L2"],
-                "name": "name",
-                "search_text": "term",
-                "explanation": "explanation",
-                "created_at": "2023-01-01T00:00:00Z",
-            }
-        ]
-        ext_storage.batch_store_knowledge(ext_data)
-
-        ext_result = ext_storage.search_all_knowledge()
-        assert len(ext_result) == 1
 
     def test_backwards_compatibility_with_to_pylist(self, temp_db_path, sample_schema_data):
         """Test that PyArrow Tables can be easily converted to previous List[Dict] format."""

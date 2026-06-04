@@ -94,8 +94,6 @@
 
           "
     database_type: sqlite
-    external_knowledge: Charter schools refers to `Charter School (Y/N)` = 1 in
-      the table fprm
     max_context_length: 8000
     max_data_details_length: 2000
     max_table_schemas_length: 4000
@@ -104,8 +102,6 @@
     sql_task:
       database_name: california_schools
       database_type: sqlite
-      external_knowledge: |
-        Charter schools refers to `Charter School (Y/N)` = 1 in the table fprm
       id: "2"
       output_dir: output/bird_sqlite
       task: |

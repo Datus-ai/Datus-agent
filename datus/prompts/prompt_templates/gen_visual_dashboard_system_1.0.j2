@@ -80,7 +80,7 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
 {% endif %}
 {% if has_context_search_tools %}
 **Context Search Tools:**
-- `list_subject_tree`, etc. — discover Datus subject directories, metric registries, reference SQL, and external knowledge files curated for this project.
+- `list_subject_tree`, etc. — discover Datus subject directories, metric registries, and reference SQL curated for this project.
 {% endif %}
 
 **Filesystem Tools** (`read_file`, `write_file`, `edit_file`, `delete_file`, `glob`, `grep`):
@@ -108,7 +108,7 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
   Required brief args (same semantics as the report subagent — see `save_query` there):
   - `goal` — one-line research question this template answers. Becomes a trailing SQL comment; not persisted separately in the brief file.
   - `hypothesis` — one-sentence concrete prediction. Skip the template rather than write a placeholder.
-  - `uses` — `{ "metrics": [{"path": [...], "name": "..."}], "reference_sql": [...], "ext_knowledge": [...] }` listing subject-library assets. Each entry is the **`path` + `name` pair returned by `list_metrics` / `search_metrics` / `list_subject_tree`** — copy those two fields verbatim, do NOT join them into a string or use any opaque `id` field from tool output. Example shape: `{ "metrics": [{"path": ["Demo", "Bucket"], "name": "gross_value"}], "reference_sql": [], "ext_knowledge": [] }`. Omit empty buckets.
+  - `uses` — `{ "metrics": [{"path": [...], "name": "..."}], "reference_sql": [...] }` listing subject-library assets. Each entry is the **`path` + `name` pair returned by `list_metrics` / `search_metrics` / `list_subject_tree`** — copy those two fields verbatim, do NOT join them into a string or use any opaque `id` field from tool output. Example shape: `{ "metrics": [{"path": ["Demo", "Bucket"], "name": "gross_value"}], "reference_sql": [] }`. Omit empty buckets.
   - `caveats` — **before deciding this field is empty, run through this checklist**:
     1. **JOIN type implications on the denominator** — `LEFT JOIN` vs `INNER JOIN` choices that change what survives in aggregates.
     2. **Hardcoded value lists** — `WHERE x IN ('a', 'b', 'c')` enumerations that won't auto-include new source values.
@@ -148,7 +148,7 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
 6. **Probe** — `read_query` quick checks to confirm tables and columns exist, to size the data at typical filter values, and to discover the enumerations you'll need to populate filter dropdowns. **Probe unit conventions too** for any money / ratio / duration column without an explicit unit-suffix in its name — see the "Unit conventions" section below for the contract; when the value range doesn't disambiguate, `ask_user` rather than silently picking a convention.
 7. **Save query templates** — for each chart / table / KPI you intend to render, call `save_query_template(name, sql_template, sample_params, goal, hypothesis, uses?)` with a semantic English slug (`revenue_by_region`, `top_products_by_segment`, `cohort_retention`). Aim for 4–8 templates per dashboard. The `sample_params` you pass must produce a non-empty, representative result — that's what the validator uses to infer column types and what later render code will assume.
    - **If a panel maps to a defined metric** (from step 5), do **not** re-derive the calculation from raw tables. Call `query_metrics(metrics=[...], dimensions=[...], time_*, dry_run=True)` to obtain the canonical SQL, then parameterise it into a Jinja template and pass that to `save_query_template`. Add `{"path": <metric's subject path>, "name": <metric name>}` to `uses.metrics` so the analysis layer can attribute the panel correctly — those are the same `path` / `name` values you already passed to `query_metrics`.
-   - Reference SQL you adapted goes in `uses.reference_sql` as `{path, name}` entries; ext-knowledge entries you consulted go in `uses.ext_knowledge` as `{path, name}` too. Leave `uses` empty for pure ad-hoc templates.
+   - Reference SQL you adapted goes in `uses.reference_sql` as `{path, name}` entries. Leave `uses` empty for pure ad-hoc templates.
    - Use ad-hoc raw SQL only when no metric matches.
 8. **Author the render tree** — `write_file` the components under `render/`. Always include `render/app.jsx` as the entry. Keep the filter state in `app.jsx` and thread it down via props or `React.createContext`. Typical layout:
    ```

@@ -57,7 +57,7 @@ def _write_brief(queries_dir: Path, name: str, *, uses: Dict[str, List[str]] | N
     payload = {
         "name": name,
         "hypothesis": f"hypothesis for {name}",
-        "uses": uses if uses is not None else {"metrics": [], "reference_sql": [], "ext_knowledge": []},
+        "uses": uses if uses is not None else {"metrics": [], "reference_sql": []},
         "caveats": "",
     }
     (queries_dir / f"{name}.brief.json").write_text(json.dumps(payload), encoding="utf-8")
@@ -258,7 +258,6 @@ class TestAggregateSubjectRefs:
                 # Adds a new entry that shares only the leaf name ``aov`` but
                 # under a different path — must NOT dedupe.
                 "metrics": [_m(["Commerce", "Orders"], "aov"), _m(["Marketing", "Spend"], "aov")],
-                "ext_knowledge": [_m(["Policies"], "pii")],
             },
         )
         refs = aggregate_subject_refs(queries_dir)
@@ -269,7 +268,6 @@ class TestAggregateSubjectRefs:
             (["Marketing", "Spend"], "aov"),
         ]
         assert [(r.path, r.name) for r in refs.reference_sql] == [(["Templates"], "top_q")]
-        assert [(r.path, r.name) for r in refs.ext_knowledge] == [(["Policies"], "pii")]
 
     def test_preserves_first_seen_order(self, tmp_path: Path):
         """First-seen order within each bucket matters for subagent rendering."""
@@ -1650,7 +1648,7 @@ class TestRunFinalizeAnalysis:
         ids must NOT produce a ``subject_refs.json`` file — an absent
         file is the honest "no attribution" signal."""
         artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(
-            tmp_path, brief_uses={"metrics": [], "reference_sql": [], "ext_knowledge": []}
+            tmp_path, brief_uses={"metrics": [], "reference_sql": []}
         )
 
         model = Mock(spec=["generate_with_json_output"])
@@ -1667,14 +1665,14 @@ class TestRunFinalizeAnalysis:
 
         assert result["ok"] is True
         assert not (analysis_dir / "subject_refs.json").exists()
-        assert result["subject_refs_count"] == {"metrics": 0, "reference_sql": 0, "ext_knowledge": 0}
+        assert result["subject_refs_count"] == {"metrics": 0, "reference_sql": 0}
 
     def test_subject_refs_stale_file_removed_when_now_empty(self, tmp_path: Path):
         """Edit-mode rerun where all ``uses`` were dropped: a stale
         ``subject_refs.json`` from a prior run must be deleted so the
         absent-file signal stays accurate."""
         artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(
-            tmp_path, brief_uses={"metrics": [], "reference_sql": [], "ext_knowledge": []}
+            tmp_path, brief_uses={"metrics": [], "reference_sql": []}
         )
         stale_path = analysis_dir / "subject_refs.json"
         stale_path.write_text(
@@ -1682,7 +1680,6 @@ class TestRunFinalizeAnalysis:
                 {
                     "metrics": [{"path": ["Stale"], "name": "old"}],
                     "reference_sql": [],
-                    "ext_knowledge": [],
                 }
             ),
             encoding="utf-8",
@@ -1838,7 +1835,7 @@ class TestRunFinalizeAnalysis:
         # The result dict surfaces the deterministic counts so callers can
         # see what landed alongside the error.
         assert result["key_tables"] == ["finbench.main.Account"]
-        assert result["subject_refs_count"] == {"metrics": 1, "reference_sql": 0, "ext_knowledge": 0}
+        assert result["subject_refs_count"] == {"metrics": 1, "reference_sql": 0}
 
     def test_subject_refs_and_key_tables_land_when_schema_validation_fails(self, tmp_path: Path):
         """Same decoupling guarantee, but exercised on the schema-validation

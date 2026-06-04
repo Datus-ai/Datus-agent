@@ -252,8 +252,6 @@ _TOOL_ARGS_FORMATTERS: Dict[str, Callable[[dict], str]] = {
     "search_reference_sql": lambda a: _format_positional(a, "query", "query_text"),
     "get_reference_sql": lambda a: _format_positional(a, "ref_id", "sql_id", "name"),
     "search_semantic_objects": lambda a: _format_positional(a, "query", "query_text"),
-    "search_knowledge": lambda a: _format_positional(a, "query", "query_text"),
-    "get_knowledge": lambda a: _format_positional(a, "doc_id", "id", "name"),
     # Date parsing tools
     "parse_temporal_expressions": lambda a: _format_positional(a, "expression", "text", "query"),
     # Reference template tools
@@ -1070,11 +1068,6 @@ def _build_search_reference_sql(action: ActionHistory, verbose: bool) -> ToolCal
     return _build_search_generic(action, verbose, "reference SQL", "reference SQLs")
 
 
-def _build_search_external_knowledge(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """search_external_knowledge / search_knowledge: show knowledge count."""
-    return _build_search_generic(action, verbose, "knowledge entry", "knowledge entries")
-
-
 def _build_search_documents(action: ActionHistory, verbose: bool) -> ToolCallContent:
     """search_documents: show document count."""
     return _build_search_generic(action, verbose, "document", "documents")
@@ -1361,7 +1354,7 @@ def _build_list_subject_tree(action: ActionHistory, verbose: bool) -> ToolCallCo
     return tc
 
 
-_LEAF_KEYS = {"metrics", "reference_sql", "knowledge"}
+_LEAF_KEYS = {"metrics", "reference_sql"}
 
 
 def _format_subject_tree_markup(tree: dict, indent: str = "") -> List[str]:
@@ -1452,16 +1445,6 @@ def _build_execute_reference_template(action: ActionHistory, verbose: bool) -> T
 def _build_search_semantic_objects(action: ActionHistory, verbose: bool) -> ToolCallContent:
     """search_semantic_objects: show semantic object count."""
     return _build_search_generic(action, verbose, "semantic object", "semantic objects")
-
-
-def _build_search_knowledge(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """search_knowledge: show knowledge entry count."""
-    return _build_search_generic(action, verbose, "knowledge entry", "knowledge entries")
-
-
-def _build_get_knowledge(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """get_knowledge: show the fetched knowledge entry name."""
-    return _build_get_detail(action, verbose)
 
 
 def _build_list_metrics_semantic(action: ActionHistory, verbose: bool) -> ToolCallContent:
@@ -2106,9 +2089,6 @@ class ToolCallContentBuilder:
         # Context search tools
         self._registry["search_metrics"] = _build_search_metrics
         self._registry["search_reference_sql"] = _build_search_reference_sql
-        self._registry["search_external_knowledge"] = _build_search_external_knowledge
-        self._registry["search_knowledge"] = _build_search_knowledge
-        self._registry["get_knowledge"] = _build_get_knowledge
         self._registry["search_documents"] = _build_search_documents
         self._registry["search_document"] = _build_doc_search_result
         self._registry["list_subject_tree"] = _build_list_subject_tree

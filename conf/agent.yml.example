@@ -7,7 +7,7 @@ agent:
   #       backends use a ``{project_name}/`` subdirectory, a future Postgres
   #       backend could use a schema name instead)
   #   * ~/.datus/{conf,logs,template,run,...}    — global, shared across projects
-  #   * {cwd}/subject/{semantic_models,sql_summaries,ext_knowledge}/ — project KB
+  #   * {cwd}/subject/{semantic_models,sql_summaries}/ — project KB
   #   * {cwd}/.datus/skills/                     — project-level skills (optional)
   #
   # ``project_name`` is derived from the current working directory (``/`` → ``-``)
@@ -133,7 +133,6 @@ agent:
   #       question_file: dev.json # Relative path to the benchmark question file, can be csv/json/json
   #       question_id_key: question_id # The question id, use the line number when empty; The default value is question_id
   #       db_key: db_id # The key corresponding to database name; By default, the database of datasources will be taken.
-  #       ext_knowledge_key: evidence # Optional, the key corresponding to external knowledge
   #       use_tables_key: tables # Optional: specify which tables to use
 
   #       # Below is the configuration of the baseline answer to evaluate，if evaluation is not required, you do not need to configure it.
@@ -250,9 +249,6 @@ agent:
       model_name: all-MiniLM-L6-v2
       dim_size: 384
     reference_sql:
-      model_name: all-MiniLM-L6-v2
-      dim_size: 384
-    ext_knowledge:
       model_name: all-MiniLM-L6-v2
       dim_size: 384
 

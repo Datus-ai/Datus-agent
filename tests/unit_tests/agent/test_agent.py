@@ -554,7 +554,6 @@ def _make_args_ext(**kwargs):
         subject_tree=None,
         from_adapter=None,
         semantic_yaml=None,
-        ext_knowledge=None,
         success_story=None,
         sql_dir=None,
         validate_only=False,
@@ -586,7 +585,6 @@ def _make_agent_config_ext(datasource="test_ns"):
     cfg.get_save_run_dir.return_value = "/tmp/output/run1"
     cfg.path_manager = MagicMock()
     cfg.path_manager.semantic_model_path.return_value = MagicMock(exists=MagicMock(return_value=False))
-    cfg.path_manager.ext_knowledge_path.return_value = MagicMock(exists=MagicMock(return_value=False))
     cfg.path_manager.sql_summary_path.return_value = MagicMock(exists=MagicMock(return_value=False))
     cfg.document_configs = {}
     cfg.benchmark_config.return_value = MagicMock(
@@ -594,7 +592,6 @@ def _make_agent_config_ext(datasource="test_ns"):
         question_key="question",
         database_key="db",
         use_tables_key=None,
-        ext_knowledge_key=None,
     )
     return cfg
 
@@ -1152,57 +1149,6 @@ class TestBootstrapKbMetrics:
         with (
             patch("datus.agent.agent.MetricRAG", return_value=mock_rag),
             patch("datus.agent.agent.init_success_story_metrics", return_value=(False, "fail msg", {})),
-        ):
-            result = agent.bootstrap_kb()
-
-        assert result["status"] == "failed"
-
-
-# ---------------------------------------------------------------------------
-# bootstrap_kb — ext_knowledge branch
-# ---------------------------------------------------------------------------
-
-
-class TestBootstrapKbExtKnowledge:
-    def test_ext_knowledge_overwrite_with_csv(self):
-        args = _make_args_ext(components=["ext_knowledge"], kb_update_strategy="overwrite", ext_knowledge="data.csv")
-        agent = _make_agent_ext(args=args)
-
-        mock_rag = MagicMock()
-        mock_rag.store.table_size.return_value = 15
-
-        with (
-            patch("datus.agent.agent.ExtKnowledgeRAG", return_value=mock_rag),
-            patch("datus.agent.agent.init_ext_knowledge"),
-        ):
-            result = agent.bootstrap_kb()
-
-        assert result["status"] == "success"
-
-    def test_ext_knowledge_with_success_story(self):
-        args = _make_args_ext(components=["ext_knowledge"], kb_update_strategy="incremental", success_story="story/")
-        agent = _make_agent_ext(args=args)
-
-        mock_rag = MagicMock()
-        mock_rag.store.table_size.return_value = 5
-
-        with (
-            patch("datus.agent.agent.ExtKnowledgeRAG", return_value=mock_rag),
-            patch("datus.agent.agent.init_success_story_knowledge", return_value=(True, None)),
-        ):
-            result = agent.bootstrap_kb()
-
-        assert result["status"] == "success"
-
-    def test_ext_knowledge_success_story_failure(self):
-        args = _make_args_ext(components=["ext_knowledge"], kb_update_strategy="incremental", success_story="story/")
-        agent = _make_agent_ext(args=args)
-
-        mock_rag = MagicMock()
-
-        with (
-            patch("datus.agent.agent.ExtKnowledgeRAG", return_value=mock_rag),
-            patch("datus.agent.agent.init_success_story_knowledge", return_value=(False, "gen failed")),
         ):
             result = agent.bootstrap_kb()
 

@@ -25,7 +25,6 @@ class TestGetComparePrompt:
         sql_task.database_type = "duckdb"
         sql_task.database_name = "test_db"
         sql_task.task = "Find total sales"
-        sql_task.external_knowledge = ""
 
         with patch("datus.prompts.compare_sql_with_mcp.get_prompt_manager") as mock_gpm:
             mock_pm = mock_gpm.return_value
@@ -55,7 +54,6 @@ class TestCompareSqlPrompt:
         sql_task.database_type = "sqlite"
         sql_task.database_name = "california_schools"
         sql_task.task = "Count students"
-        sql_task.external_knowledge = ""
 
         with patch("datus.prompts.compare_sql.get_prompt_manager") as mock_gpm:
             mock_pm = mock_gpm.return_value
@@ -149,23 +147,6 @@ class TestOutputCheckingGenPrompt:
 
         call_kwargs = mock_pm.render_template.call_args[1]
         assert "revenue" in call_kwargs["metrics"]
-
-    def test_handles_external_knowledge(self):
-        from datus.prompts.output_checking import gen_prompt
-
-        with patch("datus.prompts.output_checking.get_prompt_manager") as mock_gpm:
-            mock_pm = mock_gpm.return_value
-            mock_pm.render_template.return_value = "content"
-            gen_prompt(
-                user_question="Q",
-                table_schemas="schema",
-                sql_query="SELECT 1",
-                sql_execution_result="result",
-                external_knowledge="revenue = total sales",
-            )
-
-        call_kwargs = mock_pm.render_template.call_args[1]
-        assert "revenue = total sales" in call_kwargs["external_knowledge"]
 
 
 # ---------------------------------------------------------------------------

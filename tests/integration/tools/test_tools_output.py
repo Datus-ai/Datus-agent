@@ -94,7 +94,6 @@ class TestBirdDevOutput:
                         database_name=db_name,
                         table_schemas=table_schemas,
                         gen_sql=task_gen_sql,
-                        external_knowledge=("" if "dev_evidence" not in task else task["dev_evidence"]),
                         sql_result=sql_result.sql_return,
                         row_count=sql_result.row_count,
                         metrics=[],

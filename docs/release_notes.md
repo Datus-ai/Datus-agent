@@ -169,7 +169,6 @@
 
 **Enhancements**
 
-- **Knowledge Generation Iteration** - Enhanced the external knowledge node with improved knowledge storage and more accurate context search. [docs](knowledge_base/ext_knowledge.md)
 - **Semantic Tools Optimization** - Optimized semantic tools and context search for faster, more relevant results in the CLI.
 - **Generation Prompt String Validation** - Strengthened string validation across multiple prompt templates for more reliable generation output.
 - **Action-Based User Interaction Model** - Redesigned the CLI interaction layer to use a unified action-based model for execution, generation, and planning.

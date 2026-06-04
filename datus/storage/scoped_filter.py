@@ -53,7 +53,7 @@ class ScopedFilterBuilder:
 
     @staticmethod
     def build_subject_filter(paths_str: str, subject_tree) -> Optional[Node]:
-        """Build a filter for metrics/reference_sql/ext_knowledge from subject paths.
+        """Build a filter for metrics/reference_sql from subject paths.
 
         Mirrors the two-pass logic in
         ``BaseSubjectEmbeddingStore.search_with_subject_filter``:

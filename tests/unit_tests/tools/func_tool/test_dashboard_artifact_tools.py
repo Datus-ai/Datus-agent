@@ -562,7 +562,6 @@ class TestSaveQueryTemplate:
             hypothesis="Regional revenue diverges enough to justify drilldown.",
             uses={
                 "metrics": [{"path": ["Revenue"], "name": "total_revenue"}],
-                "ext_knowledge": [{"path": ["BusinessUnits"], "name": "definitions"}],
             },
         )
         assert result.success == 1, result.error
@@ -570,7 +569,6 @@ class TestSaveQueryTemplate:
         brief_file = project_root / "dashboards" / dash_slug / "queries" / "revenue_uses.brief.json"
         data = json.loads(brief_file.read_text(encoding="utf-8"))
         assert data["uses"]["metrics"] == [{"path": ["Revenue"], "name": "total_revenue"}]
-        assert data["uses"]["ext_knowledge"] == [{"path": ["BusinessUnits"], "name": "definitions"}]
         assert data["uses"]["reference_sql"] == []
 
     def test_unknown_sample_param_rejected(self, dashboard_tools: DashboardArtifactTools):

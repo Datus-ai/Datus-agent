@@ -58,7 +58,6 @@ PR_ACCEPTANCE_TARGETS = [
     "tests/unit_tests/agent/node/test_explore_agentic_node.py",
     "tests/unit_tests/agent/node/test_feedback_agentic_node.py",
     "tests/unit_tests/agent/node/test_gen_report_agentic_node.py",
-    "tests/unit_tests/agent/node/test_gen_ext_knowledge_agentic_node.py",
     "tests/unit_tests/agent/node/test_gen_metrics_agentic_node.py",
     "tests/unit_tests/agent/node/test_gen_semantic_model_agentic_node.py",
     "tests/unit_tests/agent/node/test_gen_table_agentic_node.py",

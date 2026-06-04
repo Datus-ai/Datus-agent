@@ -29,7 +29,6 @@ def make_reasoning_input():
         data_details=[],
         metrics=[],
         contexts=[],
-        external_knowledge="",
         database_type="sqlite",
     )
 

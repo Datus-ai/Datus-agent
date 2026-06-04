@@ -5,18 +5,14 @@
 """Retry-policy contract for ``AgenticNode.execute_stream``.
 
 Most nodes execute a single LLM stream and stop. ``DeliverableAgenticNode``
-and ``GenExtKnowledgeAgenticNode`` re-prompt the model when an out-of-band
-validator reports failure. Rather than embedding the loop in each subclass,
+re-prompts the model when an out-of-band validator reports failure. Rather than embedding the loop in each subclass,
 ``AgenticNode._get_retry_policy()`` returns a :class:`RetryPolicy` and the
 template's generic loop drives it.
 
 This module exposes only the contract (:class:`RetryPolicy` protocol) and
 the default :class:`NoRetryPolicy` (single-shot). Concrete policies live in
-the node module that uses them — ``ValidationHookRetryPolicy`` in
-``deliverable_node.py``, ``VerifySqlRetryPolicy`` in
-``gen_ext_knowledge_agentic_node.py`` — since each is bound to its node's
-internal state (validation hook / verification flag) and would not be reused
-elsewhere.
+the node module that uses them since each is bound to its node's internal state
+and would not be reused elsewhere.
 """
 
 from __future__ import annotations

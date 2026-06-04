@@ -30,9 +30,6 @@ def gen_prompt(
         sql_query (str): The SQL query to be checked
         sql_execution_result (str): The result of the SQL query
         dialect (str, optional): The dialect of the SQL query. Defaults to "sqlite".
-        external_knowledge (str, optional): The external knowledge that the SQL
-            query will be executed on.
-
     Returns:
         List[Dict[str, str]]: The prompt for checking the output of a SQL query
     """

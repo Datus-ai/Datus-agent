@@ -48,7 +48,7 @@ Use `@pytest.mark.asyncio` and `pytest_asyncio.fixture`. Event-loop helpers (esp
 ### Storage Layout
 
 - **Per-project (CWD)**:
-  - `./subject/{semantic_models, sql_summaries, ext_knowledge}/` — KB content, anchored to project root
+  - `./subject/{semantic_models, sql_summaries}/` — KB content, anchored to project root
   - `./.datus/skills/` — project skills, override `~/.datus/skills`
   - `./.datus/config.yml` — project overrides for `target` (provider/model), `default_datasource`, `project_name`. Whitelisted keys only; written by the `/model` slash command
 - **Global, sharded by project**:

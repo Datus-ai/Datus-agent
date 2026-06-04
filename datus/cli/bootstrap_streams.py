@@ -48,7 +48,7 @@ _DONE = object()
 def _set_current_datasource(agent_config: AgentConfig, datasource: str) -> None:
     """Pin ``agent_config.current_datasource`` so storage classes scope correctly.
 
-    ``SemanticModelRAG`` / ``MetricRAG`` / ``ExtKnowledgeRAG`` all read
+    ``SemanticModelRAG`` / ``MetricRAG`` both read
     this attribute at construction time, so callers must set it before
     instantiating any RAG. We avoid mutating it when ``datasource`` is
     falsy to keep the existing REPL state intact.
@@ -209,9 +209,9 @@ async def _run_helper_with_actions(
 
     Native and translated entries are interleaved in arrival order via a
     single shared queue. Used by ``stream_semantic_model`` /
-    ``stream_metrics`` / ``stream_knowledge`` / ``stream_reference_template``
-    so the user sees actual node activity inside the ``task(...)`` subagent
-    group, not just BatchEvent counters.
+    ``stream_metrics`` / ``stream_reference_template`` so the user sees
+    actual node activity inside the ``task(...)`` subagent group, not just
+    BatchEvent counters.
     """
     queue: "asyncio.Queue[Any]" = asyncio.Queue()
 
@@ -597,71 +597,6 @@ async def stream_metrics(
         yield action
 
 
-# ─────────────────────────────────────────────────────────────────────
-# stream_knowledge — LLM-driven generation from a success story
-# ─────────────────────────────────────────────────────────────────────
-
-
-async def stream_knowledge(
-    agent_config: AgentConfig,
-    *,
-    datasource: str,
-    success_story: str,
-    pool_size: int = 4,  # noqa: ARG001 - reserved for future per-row parallelism
-    build_mode: str = "incremental",
-    subject_tree: Optional[List[str]] = None,
-) -> AsyncGenerator[ActionHistory, None]:
-    """LLM-driven external knowledge generation from a success-story CSV.
-
-    The legacy CSV-direct-import path (``ext_knowledge_csv``) was dropped
-    in the simplified ``/bootstrap`` form: users now convert any direct
-    knowledge CSV into a success story before invoking this stream.
-    """
-    del pool_size  # reserved for per-row parallelism; current impl is sequential
-    if not datasource:
-        yield message_action("Knowledge: --datasource is required, skipping.", status=ActionStatus.FAILED)
-        return
-    if not success_story:
-        yield message_action("Knowledge: --success_story is required, skipping.", status=ActionStatus.FAILED)
-        return
-
-    _set_current_datasource(agent_config, datasource)
-
-    from datus.storage.ext_knowledge.ext_knowledge_init import init_success_story_knowledge_async
-
-    async def _factory(_emit, on_action):
-        ok, err = await init_success_story_knowledge_async(
-            agent_config=agent_config,
-            success_story=success_story,
-            subject_tree=subject_tree,
-            build_mode=build_mode,
-            action_callback=on_action,
-        )
-        if not ok and err:
-            # Surface the helper's error string as a final FAILED action so
-            # ``as_task_subagent`` flips the group's overall status.
-            on_action(
-                ActionHistory.create_action(
-                    role=ActionRole.TOOL,
-                    action_type="gen_ext_knowledge",
-                    messages=err,
-                    input_data={"function_name": "gen_ext_knowledge"},
-                    status=ActionStatus.FAILED,
-                )
-            )
-
-    async def _inner(_mgr):
-        async for action in _run_helper_with_actions(_factory, function_name="gen_ext_knowledge"):
-            yield action
-
-    async for action in as_task_subagent(
-        subagent_type="gen_ext_knowledge",
-        description=f"{success_story} (mode={build_mode})",
-        inner_factory=_inner,
-    ):
-        yield action
-
-
 __all__ = [
     "merge_streams",
     "stream_metadata",
@@ -669,5 +604,4 @@ __all__ = [
     "stream_reference_template",
     "stream_semantic_model",
     "stream_metrics",
-    "stream_knowledge",
 ]

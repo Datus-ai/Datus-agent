@@ -63,11 +63,11 @@ class TestFeedbackNodeModels:
             success=True,
             response="Archived 3 items",
             items_saved=3,
-            storage_summary={"ext_knowledge": 2, "sql_summary": 1},
+            storage_summary={"metrics": 2, "sql_summary": 1},
             tokens_used=1500,
         )
         assert result.items_saved == 3
-        assert result.storage_summary["ext_knowledge"] == 2
+        assert result.storage_summary["metrics"] == 2
 
     def test_result_error(self):
         result = FeedbackNodeResult(
@@ -361,7 +361,7 @@ class TestExtractStorageInfo:
                 role=ActionRole.TOOL,
                 action_type="task",
                 messages="Tool call: task",
-                input_data={"arguments": json.dumps({"type": "gen_ext_knowledge", "prompt": "test"})},
+                input_data={"arguments": json.dumps({"type": "gen_metrics", "prompt": "test"})},
                 status=ActionStatus.SUCCESS,
             ),
             ActionHistory.create_action(
@@ -382,7 +382,7 @@ class TestExtractStorageInfo:
 
         items_saved, summary = node._extract_storage_info(actions)
         assert items_saved == 2
-        assert summary == {"ext_knowledge": 1, "sql_summary": 1}
+        assert summary == {"metrics": 1, "sql_summary": 1}
 
     def test_ignores_stale_instance_actions(self, real_agent_config, mock_llm_create):
         """_extract_storage_info must count from the passed-in list, not self.actions,
@@ -396,7 +396,7 @@ class TestExtractStorageInfo:
                 role=ActionRole.TOOL,
                 action_type="task",
                 messages="Previous run task",
-                input_data={"arguments": json.dumps({"type": "gen_ext_knowledge", "prompt": "prev"})},
+                input_data={"arguments": json.dumps({"type": "gen_metrics", "prompt": "prev"})},
                 status=ActionStatus.SUCCESS,
             ),
         ]
@@ -418,7 +418,7 @@ class TestExtractStorageInfo:
 
         async def _stream_with_task_actions(*args, **kwargs):
             ahm = kwargs.get("action_history_manager")
-            for sub_type in ("gen_ext_knowledge", "gen_sql_summary"):
+            for sub_type in ("gen_metrics", "gen_sql_summary"):
                 act = ActionHistory.create_action(
                     role=ActionRole.TOOL,
                     action_type="task",
@@ -445,7 +445,7 @@ class TestExtractStorageInfo:
         assert isinstance(node.result, FeedbackNodeResult)
         assert node.result.success is True
         assert node.result.items_saved == 2
-        assert node.result.storage_summary == {"ext_knowledge": 1, "sql_summary": 1}
+        assert node.result.storage_summary == {"metrics": 1, "sql_summary": 1}
 
 
 # ---------------------------------------------------------------------------

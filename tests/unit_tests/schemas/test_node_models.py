@@ -105,10 +105,6 @@ class TestNodeModelsSqlTask:
         task = SqlTask(task="q", current_date="2025-01-01")
         assert task.current_date == "2025-01-01"
 
-    def test_external_knowledge_set(self):
-        task = SqlTask(task="q", external_knowledge="some knowledge")
-        assert task.external_knowledge == "some knowledge"
-
 
 # ---------------------------------------------------------------------------
 # TableSchema

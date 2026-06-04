@@ -337,7 +337,6 @@ agent:
       question_file: california_schools.csv       # File containing benchmark questions
       question_id_key: task_id                    # Field name for question ID
       question_key: question                      # Field name for question text
-      ext_knowledge_key: expected_knowledge       # Field name for external knowledge or additional context
 
       # Configuration for evaluation phase
       gold_sql_path: california_schools.csv       # File path for reference (gold) SQL
@@ -355,7 +354,6 @@ agent:
 | **question_file**     | Path to the question file, supporting `.csv`, `.json`, and `.jsonl` formats. The path is relative to `{agent.home}/benchmark/{benchmark_name}`.                                                                                                                                                                     |
 | **question_id_key**   | Unique identifier field name for each benchmark question.                                                                                                                                                                                                                                                           |
 | **question_key**      | Field name for the natural language question.                                                                                                                                                                                                                                                                       |
-| **ext_knowledge_key** | Field name for additional knowledge or problem description.                                                                                                                                                                                                                                                         |
 | **gold_sql_path**     | Standard SQL file path, supporting two scenarios:<br/>1. A single file, e.g., BIRD_DEV; supporting `.csv`, `.json`, and `.jsonl` formats. <br/>2. A separate SQL file for each task (e.g., spider2).                                                                                                                |
 | **gold_sql_key**      | When `gold_sql_path` is a single file, this specifies the field name containing the reference SQL.                                                                                                                                                                                                                  |
 | **gold_result_path**  | Standard result file path, with each result being a string in CSV format. Three scenarios are supported:<br/>1. A single file in `.csv`, `.json`, or `.jsonl` format;<br/>2. A separate CSV file for each task (e.g., spider2);<br/>3. If not configured, the system will execute standard SQL to retrieve results. |

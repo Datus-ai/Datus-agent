@@ -5,16 +5,13 @@
 """Unit tests for ``RetryPolicy`` implementations.
 
 The retry-policy contract is what ``AgenticNode.execute_stream`` uses to
-drive its generic retry loop. Three concrete policies ship today:
+drive its generic retry loop. Two concrete policies ship today:
 
 * :class:`NoRetryPolicy` — single-shot, default for every node that does
   not override ``_get_retry_policy``.
 * :class:`ValidationHookRetryPolicy` — re-prompts the model when the
   Deliverable node's ``ValidationHook.final_report`` flags a blocking
   failure; lives next to the node that owns it.
-* :class:`VerifySqlRetryPolicy` — re-prompts the gen_ext_knowledge node
-  when ``verify_sql`` reports a mismatch against ``gold_sql``.
-
 These are pure-function tests; no LLM, no DB, no agent_config.
 """
 
@@ -26,10 +23,9 @@ from typing import List, Optional
 import pytest
 
 from datus.agent.node.deliverable_node import ValidationHookRetryPolicy
-from datus.agent.node.gen_ext_knowledge_agentic_node import VerifySqlRetryPolicy
 from datus.agent.node.retry_policy import NoRetryPolicy, RetryPolicy
 from datus.agent.node.stream_run_context import StreamRunContext
-from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.action_history import ActionHistoryManager
 
 # ---------------------------------------------------------------------------
 # Minimal fakes
@@ -90,36 +86,6 @@ class _FakeValidationHook:
     def reset_session(self) -> None:
         self.reset_calls += 1
         self._advance()
-
-
-class _FakeGenExtKnowledgeNode:
-    """Minimal stand-in for ``GenExtKnowledgeAgenticNode`` used by VerifySqlRetryPolicy."""
-
-    def __init__(self, *, gold_sql: Optional[str], passes_on_attempt: Optional[int] = None, max_retries: int = 2):
-        # ``_gold_sql`` is read via ``getattr`` so the absence-of-attr case
-        # (no verification needed) can be tested independently.
-        if gold_sql is not None:
-            self._gold_sql = gold_sql
-        self._verification_passed = False
-        self._passes_on_attempt = passes_on_attempt
-        self._reset_calls = 0
-        self.max_verification_retries = max_retries
-        self._retry_prompts_requested: List[int] = []
-
-    def _reset_verification_state(self) -> None:
-        self._reset_calls += 1
-        # Flip the flag the first time the policy resets us into the attempt
-        # designated as the success attempt. The flag would normally be set
-        # by ``verify_sql``'s on_end hook during the stream.
-        if self._passes_on_attempt is not None and self._reset_calls == self._passes_on_attempt:
-            self._verification_passed = True
-
-    def _get_retry_prompt(self, attempt: int) -> str:
-        self._retry_prompts_requested.append(attempt)
-        return f"RETRY[{attempt}/{self.max_verification_retries}]"
-
-    def get_node_name(self) -> str:
-        return "fake_ext_knowledge"
 
 
 # Tiny ``StreamRunContext`` factory — the policies only touch ``attempt`` /
@@ -272,75 +238,6 @@ class TestValidationHookRetryPolicy:
 
 
 # ---------------------------------------------------------------------------
-# VerifySqlRetryPolicy
-# ---------------------------------------------------------------------------
-
-
-class TestVerifySqlRetryPolicy:
-    def test_max_attempts_is_max_retries_plus_one(self):
-        node = _FakeGenExtKnowledgeNode(gold_sql="SELECT 1", max_retries=3)
-        policy = VerifySqlRetryPolicy(node=node)
-        # 3 retries → 4 total attempts (initial + 3).
-        assert policy.max_attempts == 4
-
-    def test_max_attempts_floors_at_one(self):
-        node = _FakeGenExtKnowledgeNode(gold_sql="SELECT 1", max_retries=-5)
-        policy = VerifySqlRetryPolicy(node=node)
-        assert policy.max_attempts == 1
-
-    def test_reset_resets_verification_state(self):
-        node = _FakeGenExtKnowledgeNode(gold_sql="SELECT 1")
-        policy = VerifySqlRetryPolicy(node=node)
-        policy.reset(_make_ctx())
-        assert node._reset_calls == 1
-
-    def test_should_retry_false_when_verification_passed(self):
-        node = _FakeGenExtKnowledgeNode(gold_sql="SELECT 1")
-        node._verification_passed = True
-        policy = VerifySqlRetryPolicy(node=node)
-        assert policy.should_retry(_make_ctx()) is False
-
-    def test_should_retry_false_when_no_gold_sql(self):
-        # ``_gold_sql`` attribute absent → no verification needed.
-        node = _FakeGenExtKnowledgeNode(gold_sql=None)
-        policy = VerifySqlRetryPolicy(node=node)
-        assert policy.should_retry(_make_ctx()) is False
-
-    def test_should_retry_true_when_verification_fails_with_gold_sql(self):
-        node = _FakeGenExtKnowledgeNode(gold_sql="SELECT 1")
-        node._verification_passed = False
-        policy = VerifySqlRetryPolicy(node=node)
-        assert policy.should_retry(_make_ctx()) is True
-
-    def test_next_prompt_uses_attempt_index(self):
-        node = _FakeGenExtKnowledgeNode(gold_sql="SELECT 1", max_retries=3)
-        policy = VerifySqlRetryPolicy(node=node)
-        ctx = _make_ctx(attempt=2)
-        prompt = policy.next_prompt(ctx)
-        assert prompt == "RETRY[2/3]"
-        assert node._retry_prompts_requested == [2]
-
-    def test_on_retry_actions_emits_verification_retry_action(self):
-        node = _FakeGenExtKnowledgeNode(gold_sql="SELECT 1", max_retries=3)
-        policy = VerifySqlRetryPolicy(node=node)
-        ctx = _make_ctx(attempt=2)
-        actions = list(policy.on_retry_actions(ctx))
-        assert len(actions) == 1
-        action = actions[0]
-        assert action.action_type == "verification_retry"
-        assert action.role == ActionRole.ASSISTANT
-        assert action.status == ActionStatus.PROCESSING
-        assert "2/3" in action.messages
-
-    def test_finalise_is_noop(self):
-        node = _FakeGenExtKnowledgeNode(gold_sql="SELECT 1")
-        policy = VerifySqlRetryPolicy(node=node)
-        ctx = _make_ctx()
-        policy.finalise(ctx)
-        assert ctx.extras == {}
-
-
-# ---------------------------------------------------------------------------
 # Protocol surface — regression-guard against renames the template depends on.
 # ---------------------------------------------------------------------------
 
@@ -351,7 +248,6 @@ class TestPolicyProtocolSurface:
         [
             NoRetryPolicy(),
             ValidationHookRetryPolicy(hook=_FakeValidationHook([None])),
-            VerifySqlRetryPolicy(node=_FakeGenExtKnowledgeNode(gold_sql=None)),
         ],
     )
     def test_required_methods_present(self, policy):

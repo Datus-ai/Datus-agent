@@ -38,7 +38,11 @@ class SqlTask(BaseModel):
     database_name: str = Field(default="", description="Name of the database for context")
     schema_name: str = Field(default="", description="Schema name for context")
     output_dir: str = Field(default="output", description="Output directory path")
-    external_knowledge: str = Field(default="", description="External knowledge for the input")
+    external_knowledge: str = Field(
+        default="",
+        description="Supplementary description / evidence supplied with the question "
+        "(e.g. the benchmark `evidence` column). Injected verbatim into the SQL prompt.",
+    )
     tables: Optional[List[str]] = Field(default=[], description="List of table names to use")
     schema_linking_type: TABLE_TYPE = Field(default="table", description="Schema linking type for the task")
 
@@ -361,7 +365,9 @@ class GenerateSQLInput(BaseInput):
     metrics: Optional[List[Metric]] = Field(None, description="Optional metrics for query generation")
     sql_task: SqlTask = Field(..., description="The SQL task to generate SQL from")
     contexts: Optional[List[SQLContext]] = Field(default=[], description="Optional context information for the input")
-    external_knowledge: str = Field(default="", description="External knowledge for the input")
+    external_knowledge: str = Field(
+        default="", description="Supplementary description / evidence supplied with the question"
+    )
     prompt_version: Optional[str] = Field(default=None, description="Version for prompt")
     max_table_schemas_length: int = Field(default=4000, description="Max table schemas length")
     max_data_details_length: int = Field(default=2000, description="Max data details length")
@@ -582,7 +588,9 @@ class OutputInput(BaseInput):
     row_count: Optional[int] = Field(None, description="The number of rows returned")
     table_schemas: List[TableSchema] = Field([], description="The schemas of the tables")
     metrics: List[Metric] = Field(default=[], description="The metrics")
-    external_knowledge: str = Field(default="", description="The external knowledge")
+    external_knowledge: str = Field(
+        default="", description="Supplementary description / evidence supplied with the question"
+    )
     prompt_version: Optional[str] = Field(default=None, description="Version for prompt")
     check_result: bool = Field(default=False, description="Whether to check the result of the previous step")
     file_type: Literal["csv", "sql", "json", "all"] = Field(default="all", description="The output file type")

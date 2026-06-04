@@ -76,12 +76,9 @@ from datus.api.models.database_models import (
 )
 from datus.api.models.explorer_models import (
     CreateDirectoryInput,
-    CreateKnowledgeInput,
     CreateMetricInput,
     DeleteSubjectInput,
-    EditKnowledgeInput,
     EditMetricInput,
-    KnowledgeInfo,
     MetricInfo,
     ReferenceSQLInfo,
     ReferenceSQLInput,
@@ -192,9 +189,6 @@ __all__ = [
     "ReferenceSQLInfo",
     "ReferenceSQLInput",
     "SubjectPathInput",
-    "CreateKnowledgeInput",
-    "KnowledgeInfo",
-    "EditKnowledgeInput",
     # config_models
     "ModelConfig",
     "DatasourceConfig",

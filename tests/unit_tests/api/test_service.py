@@ -398,7 +398,6 @@ class TestDatusAPIServiceAcceptance:
             database_name="california_schools",
             schema_name="public",
             subject_path=["Education", "Schools"],
-            ext_knowledge="Count active schools only.",
         )
 
         try:
@@ -409,7 +408,6 @@ class TestDatusAPIServiceAcceptance:
             assert response.result == [{"school_count": "42"}]
             assert response.metadata == {"status": "completed", "node": "gen_sql"}
             assert captured_sql_tasks[0].subject_path == ["Education", "Schools"]
-            assert captured_sql_tasks[0].external_knowledge == "Count active schools only."
 
             stored_task = service.task_store.get_task(task_id)
             assert stored_task["status"] == "completed"

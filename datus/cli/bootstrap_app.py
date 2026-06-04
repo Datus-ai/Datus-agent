@@ -54,7 +54,6 @@ class _Tab(Enum):
     TEMPLATE = "reference_template"
     SEMANTIC = "semantic_model"
     METRICS = "metrics"
-    KNOWLEDGE = "knowledge"
 
 
 _TAB_ORDER: Tuple[_Tab, ...] = (
@@ -63,7 +62,6 @@ _TAB_ORDER: Tuple[_Tab, ...] = (
     _Tab.TEMPLATE,
     _Tab.SEMANTIC,
     _Tab.METRICS,
-    _Tab.KNOWLEDGE,
 )
 
 
@@ -73,7 +71,6 @@ _TAB_LABELS: Dict[_Tab, str] = {
     _Tab.TEMPLATE: " Template ",
     _Tab.SEMANTIC: " Semantic ",
     _Tab.METRICS: " Metrics ",
-    _Tab.KNOWLEDGE: " Knowledge ",
 }
 
 
@@ -167,13 +164,6 @@ class BootstrapApp:
         self._met_pool = _make_field("pool_size:         ", "3")
         self._met_subject_tree = _make_field("subject_tree:      ")
         self._met_overwrite = _make_overwrite()
-
-        # ── KNOWLEDGE ──────────────────────────────────────────────────
-        self._know_datasource = _make_field("datasource:        ", ds)
-        self._know_success_story = _make_field("success_story:     ")
-        self._know_pool = _make_field("pool_size:         ", "4")
-        self._know_subject_tree = _make_field("subject_tree:      ")
-        self._know_overwrite = _make_overwrite()
 
         # Dual-mode finish hook — see EffortApp.
         self._on_done: Optional[Callable[[Optional[BootstrapPlan]], None]] = None
@@ -308,13 +298,6 @@ class BootstrapApp:
                 self._met_subject_tree,
                 self._met_overwrite,
             ),
-            _Tab.KNOWLEDGE: _wrap_form(
-                self._know_datasource,
-                self._know_success_story,
-                self._know_pool,
-                self._know_subject_tree,
-                self._know_overwrite,
-            ),
         }
 
         body = DynamicContainer(lambda: body_map[self._tab])
@@ -359,7 +342,6 @@ class BootstrapApp:
         _Tab.TEMPLATE: "Index every Jinja2 template under the directory.",
         _Tab.SEMANTIC: "Generate semantic models from a success-story CSV.",
         _Tab.METRICS: "Extract core metrics from a success-story CSV.",
-        _Tab.KNOWLEDGE: "Generate external knowledge from a success-story CSV.",
     }
 
     def _render_section_header(self) -> List[Tuple[str, str]]:
@@ -495,13 +477,7 @@ class BootstrapApp:
                 self._met_subject_tree,
                 self._met_overwrite,
             ]
-        return [
-            self._know_datasource,
-            self._know_success_story,
-            self._know_pool,
-            self._know_subject_tree,
-            self._know_overwrite,
-        ]
+        return []
 
     # ── Submit ─────────────────────────────────────────────────────────
 
@@ -550,14 +526,7 @@ class BootstrapApp:
                 "subject_tree": self._met_subject_tree.text.strip(),
                 "build_mode": _build_mode_from_checkbox(self._met_overwrite),
             }
-        # KNOWLEDGE
-        return {
-            "datasource": _require_nonempty(self._know_datasource.text, field="datasource"),
-            "success_story": _require_nonempty(self._know_success_story.text, field="success_story"),
-            "pool_size": _validate_int(self._know_pool.text, field="pool_size"),
-            "subject_tree": self._know_subject_tree.text.strip(),
-            "build_mode": _build_mode_from_checkbox(self._know_overwrite),
-        }
+        raise _ValidationError(f"Unsupported tab: {self._tab}")
 
 
 # ── Validation helpers ────────────────────────────────────────────────

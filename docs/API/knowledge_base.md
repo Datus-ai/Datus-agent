@@ -8,13 +8,13 @@ The knowledge base endpoints manage KB bootstrap operations with real-time progr
 ### `POST /api/v1/kb/bootstrap`
 
 Start a knowledge base component bootstrap with SSE progress streaming. Components include metadata, semantic model,
-metrics, external knowledge, and reference SQL.
+metrics, and reference SQL.
 
 **Body**:
 
 | Field                | Type     | Default        | Notes |
 |----------------------|----------|----------------|-------|
-| `components`         | string[] | _(required)_   | Components to bootstrap: `metadata`, `semantic_model`, `metrics`, `ext_knowledge`, `reference_sql` |
+| `components`         | string[] | _(required)_   | Components to bootstrap: `metadata`, `semantic_model`, `metrics`, `reference_sql` |
 | `strategy`           | string   | `incremental`  | `check` (inspect only), `overwrite` (rebuild), or `incremental` (append/update) |
 | `schema_linking_type`| string   | `full`         | Metadata only: `table`, `view`, `mv`, or `full` |
 | `catalog`            | string   | `""`           | Metadata catalog filter for catalog-aware engines such as StarRocks; leave empty for Snowflake |
@@ -22,7 +22,6 @@ metrics, external knowledge, and reference SQL.
 | `success_story`      | string?  | `null`         | Project-root-relative path to success-story CSV |
 | `subject_tree`       | string[]?| `null`         | Predefined hierarchical categories |
 | `sql_dir`            | string?  | `null`         | Project-root-relative directory with `.sql` files |
-| `ext_knowledge`      | string?  | `null`         | Project-root-relative CSV for external knowledge |
 
 **Response**: `text/event-stream`. See [SSE event format](#sse-event-format) below.
 

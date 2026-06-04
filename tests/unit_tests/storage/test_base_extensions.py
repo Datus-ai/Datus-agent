@@ -67,7 +67,6 @@ class TestTablePrefix:
         for name, expected in [
             ("schema_metadata", "tb_schema_metadata"),
             ("semantic_model", "tb_semantic_model"),
-            ("ext_knowledge", "tb_ext_knowledge"),
         ]:
             store = BaseEmbeddingStore(
                 table_name=name,

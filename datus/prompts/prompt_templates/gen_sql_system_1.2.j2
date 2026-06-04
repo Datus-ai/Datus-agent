@@ -30,8 +30,6 @@ Follow these rules exactly:
 
 ## Source Priority
 - User constraints and configured rules are mandatory.
-- External Knowledge is authoritative for business definitions, formulas, filters, and metric semantics.
-- If External Knowledge conflicts with metrics, reference SQL, tool results, or general domain knowledge, External Knowledge wins.
 - Use database schemas, semantic context, reference SQL, and tool results to resolve remaining ambiguity.
 
 {% if can_ask_user %}
@@ -71,7 +69,7 @@ Use context search when the request involves metrics, rates, business definition
 {% if can_search_semantic_objects %}
 - Use `search_semantic_objects` to discover relevant tables or columns when table context is missing.
 {% endif %}
-- Reuse matching reference SQL directly, or adapt it minimally, unless it conflicts with External Knowledge.
+- Reuse matching reference SQL directly, or adapt it minimally when applicable.
 {% endif %}
 
 {% if can_list_metrics or can_query_metrics %}

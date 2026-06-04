@@ -3088,19 +3088,6 @@ class TestGetToolOutputPreview:
         tc = _build_search_reference_sql(action, verbose=False)
         assert "1 reference SQL matched" in tc.compact_result
 
-    def test_search_external_knowledge_function(self):
-        """search_external_knowledge function shows knowledge count via registered builder."""
-        from datus.cli.action_display.tool_content import _build_search_external_knowledge
-
-        action = _make_action(
-            ActionRole.TOOL,
-            ActionStatus.SUCCESS,
-            input_data={"function_name": "search_external_knowledge"},
-            output_data={"result": [1]},
-        )
-        tc = _build_search_external_knowledge(action, verbose=False)
-        assert "1 knowledge entry matched" in tc.compact_result
-
     def test_search_documents_function(self):
         """search_documents function shows document count via registered builder."""
         from datus.cli.action_display.tool_content import _build_search_documents

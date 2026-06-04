@@ -336,7 +336,6 @@ agent:
       question_file: california_schools.csv       # 存放测试问题的文件
       question_id_key: task_id                    # 问题ID的字段名
       question_key: question                      # 问题内容的字段名
-      ext_knowledge_key: expected_knowledge       # 扩展知识/问题说明字段名
 
       # 以下是评估阶段使用的配置
       gold_sql_path: california_schools.csv       # 标准 SQL 的文件路径
@@ -353,7 +352,6 @@ agent:
 | **question_file**     | 题目文件路径，支持 `.csv`、`.json`、`.jsonl` 格式。路径相对于 `{agent.home}/benchmark/{benchmark_name}`。                                                  |
 | **question_id_key**   | 每个任务问题的唯一标识字段名。                                                                                                                        |
 | **question_key**      | 自然语言问题的字段名。                                                                                                                            |
-| **ext_knowledge_key** | 附加知识或问题说明字段名。                                                                                                                          |
 | **gold_sql_path**     | 标准 SQL 文件路径，支持两种情况：<br/>1. 例如BIRD_DEV的单一文件；支持 `.csv`、`.json`、`.jsonl` 格式。<br/>2. 每个任务独立一个SQL文件（例如spider2）。                            |
 | **gold_sql_key**      | 当 `gold_sql_path` 为单文件时，标准 SQL 所在字段名。                                                                                                  |
 | **gold_result_path**  | 标准结果文件路径，每个结果应是CSV格式的字符串。支持三种情况：<br/>1. 单一`.csv`、`.json`、`.jsonl` 格式的文件；<br/>2. 每个任务独立一个CSV文件（例如spider2）。<br/>3. 不配置，系统会执行标准 SQL 获取结果。 |

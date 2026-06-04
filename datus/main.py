@@ -194,7 +194,6 @@ def create_parser() -> argparse.ArgumentParser:
             "metadata",
             "semantic_model",
             "table_lineage",
-            "ext_knowledge",
             "reference_sql",
             "reference_template",
         ],
@@ -247,7 +246,6 @@ def create_parser() -> argparse.ArgumentParser:
     )
     bootstrap_parser.add_argument("--catalog", type=str, help="Catalog of the success story")
     bootstrap_parser.add_argument("--subject_path", type=str, help="Subject path of the success story")
-    bootstrap_parser.add_argument("--ext_knowledge", type=str, help="Path to external knowledge CSV file")
     bootstrap_parser.add_argument(
         "--sql_dir", type=str, help="Directory containing SQL files for reference_sql component"
     )
@@ -294,7 +292,6 @@ def create_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument("--task_db_name", type=str, help="Database name for the task")
     benchmark_parser.add_argument("--task_schema", type=str, help="Schema name for the task")
     benchmark_parser.add_argument("--subject_path", type=str, help="Subject path for the task")
-    benchmark_parser.add_argument("--task_ext_knowledge", type=str, default="", help="External knowledge for the task")
     benchmark_parser.add_argument(
         "--current_date",
         type=str,
@@ -378,7 +375,6 @@ def create_parser() -> argparse.ArgumentParser:
         default="table",
         help="Schema linking type for the task, (mv for materialized view, full for all types)",
     )
-    run_parser.add_argument("--task_ext_knowledge", type=str, default="", help="External knowledge for the task")
     run_parser.add_argument(
         "--current_date",
         type=str,
@@ -539,7 +535,6 @@ def main():
                     database_name=db_name,
                     schema_name=args.task_schema,
                     task=args.task,
-                    external_knowledge=args.task_ext_knowledge,
                     output_dir=agent_config.output_dir,
                     schema_linking_type=args.schema_linking_type,
                     subject_path=subject_path,

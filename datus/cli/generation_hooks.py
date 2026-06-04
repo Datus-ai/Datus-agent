@@ -38,7 +38,6 @@ _KIND_TO_SUBDIR = {
     "semantic": "semantic_models",
     "metric": "semantic_models",
     "sql_summary": "sql_summaries",
-    "ext_knowledge": "ext_knowledge",
 }
 
 
@@ -55,7 +54,7 @@ def normalize_kb_relative_path(path: str, kind: Optional[str]) -> str:
         the downstream sandbox check decides whether to reject.
       * Unknown ``kind`` → unchanged.
       * Path already starts with any known KB subdir (semantic_models /
-        sql_summaries / ext_knowledge) → unchanged (caller is being explicit).
+        sql_summaries) → unchanged (caller is being explicit).
       * Otherwise → prepend ``{subdir}/``.
     """
     if not path or os.path.isabs(path):
@@ -132,7 +131,6 @@ class GenerationHooks(AgentHooks):
         "semantic": "semantic_model_path",
         "metric": "semantic_model_path",
         "sql_summary": "sql_summary_path",
-        "ext_knowledge": "ext_knowledge_path",
     }
 
     def __init__(
@@ -253,9 +251,6 @@ class GenerationHooks(AgentHooks):
             # Check if this is a SQL summary file by examining tool arguments
             if self._is_sql_summary_tool_call(context):
                 await self._handle_sql_summary_result(result)
-            # Check if this is an external knowledge file
-            elif self._is_ext_knowledge_tool_call(context):
-                await self._handle_ext_knowledge_result(result)
 
     async def on_tool_start(self, context, agent, tool) -> None:
         pass
@@ -423,7 +418,7 @@ class GenerationHooks(AgentHooks):
         Args:
             file_path: Path to the YAML file
             metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
-            yaml_type: YAML type to sync, e.g. "semantic", "metric", "sql_summary", or "ext_knowledge"
+            yaml_type: YAML type to sync, e.g. "semantic", "metric", or "sql_summary"
         """
         # Check if file exists
         if not os.path.exists(file_path):
@@ -556,67 +551,6 @@ class GenerationHooks(AgentHooks):
         except Exception as e:
             logger.error(f"Error handling write_file_reference_sql result: {e}", exc_info=True)
 
-    async def _handle_ext_knowledge_result(self, result):
-        """
-        Handle ext_knowledge tool result.
-
-        Args:
-            result: Tool result from ext_knowledge
-        """
-        try:
-            # Extract file path from result
-            file_path = ""
-            if isinstance(result, dict):
-                result_msg = result.get("result", "")
-                if "File written successfully" in str(
-                    result_msg
-                ) or "External knowledge file written successfully" in str(result_msg):
-                    parts = str(result_msg).split(": ")
-                    if len(parts) > 1:
-                        file_path = parts[-1].strip()
-            elif hasattr(result, "result"):
-                result_msg = result.result
-                if "File written successfully" in str(
-                    result_msg
-                ) or "External knowledge file written successfully" in str(result_msg):
-                    parts = str(result_msg).split(": ")
-                    if len(parts) > 1:
-                        file_path = parts[-1].strip()
-
-            file_path = self._resolve_path(file_path, "ext_knowledge")
-            logger.debug(f"Extracted file_path: {file_path}")
-
-            if not file_path or not os.path.exists(file_path):
-                logger.warning(f"Could not extract or find file path from result: {result}")
-                return
-
-            # Skip processing if this file has already been processed
-            if file_path in self.processed_files:
-                logger.info(f"File {file_path} already processed, skipping write_file_ext_knowledge")
-                return
-
-            # Mark file as processed
-            self.processed_files.add(file_path)
-
-            # Read the file content
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    yaml_content = f.read()
-            except Exception as read_error:
-                logger.error(f"Failed to read file {file_path}: {read_error}")
-                return
-
-            if not yaml_content:
-                logger.warning(f"Empty content in {file_path}")
-                return
-
-            await self._sync_generated_file(yaml_content, file_path, "ext_knowledge")
-
-        except GenerationCancelledException:
-            raise
-        except Exception as e:
-            logger.error(f"Error handling write_file_ext_knowledge result: {e}", exc_info=True)
-
     async def _sync_generated_pair(
         self,
         semantic_model_file: str,
@@ -658,7 +592,7 @@ class GenerationHooks(AgentHooks):
         Args:
             yaml_content: Generated YAML content
             file_path: Path where YAML was saved
-            yaml_type: YAML type - "semantic", "metric", "sql_summary", or "ext_knowledge"
+            yaml_type: YAML type - "semantic", "metric", or "sql_summary"
             metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
             display_content: Deprecated. Kept for caller compatibility; ignored.
         """
@@ -679,7 +613,7 @@ class GenerationHooks(AgentHooks):
 
         Args:
             file_path: File path to sync
-            yaml_type: YAML type - "semantic", "metric", "sql_summary", or "ext_knowledge"
+            yaml_type: YAML type - "semantic", "metric", or "sql_summary"
             metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
 
         Returns:
@@ -718,11 +652,6 @@ class GenerationHooks(AgentHooks):
                     None, GenerationHooks._sync_reference_sql_to_db, file_path, self.agent_config
                 )
                 item_type = "reference SQL"
-            elif yaml_type == "ext_knowledge":
-                result = await loop.run_in_executor(
-                    None, GenerationHooks._sync_ext_knowledge_to_db, file_path, self.agent_config, "incremental"
-                )
-                item_type = "external knowledge"
             else:
                 return f"**Error:** Invalid yaml_type: {yaml_type}\n\nYAML saved to file: `{file_path}`"
 
@@ -835,36 +764,6 @@ class GenerationHooks(AgentHooks):
                             logger.debug(f"Detected SQL summary write_file call with args: {tool_args}")
                             return True
             return False
-        except Exception as e:
-            logger.debug(f"Error checking tool arguments: {e}")
-            return False
-
-    def _is_ext_knowledge_tool_call(self, context) -> bool:
-        """
-        Check if write_file tool call is for external knowledge.
-
-        Examines tool arguments to determine if this is an external knowledge file write.
-
-        Args:
-            context: ToolContext with tool_arguments field (JSON string)
-
-        Returns:
-            bool: True if this is an external knowledge write operation
-        """
-        try:
-            if hasattr(context, "tool_arguments"):
-                if context.tool_arguments:
-                    tool_args = json.loads(context.tool_arguments)
-
-                    # Check if file_type indicates external knowledge
-                    if isinstance(tool_args, dict):
-                        if tool_args.get("file_type") == "ext_knowledge":
-                            logger.debug(f"Detected external knowledge write_file call with args: {tool_args}")
-                            return True
-
-            logger.debug("Not an external knowledge write_file call")
-            return False
-
         except Exception as e:
             logger.debug(f"Error checking tool arguments: {e}")
             return False
@@ -1484,105 +1383,4 @@ class GenerationHooks(AgentHooks):
 
         except Exception as e:
             logger.error(f"Error syncing reference SQL to DB: {e}", exc_info=True)
-            return {"success": False, "error": str(e)}
-
-    @staticmethod
-    def _sync_ext_knowledge_to_db(file_path: str, agent_config: AgentConfig, build_mode: str = "incremental") -> dict:
-        """
-        Sync external knowledge YAML file to Knowledge Base using upsert.
-
-        Supports multi-document YAML files (documents separated by ---).
-        Each document is treated as a separate knowledge entry.
-        If a knowledge entry with the same subject_path + search_text exists, it will be updated.
-
-        Args:
-            file_path: Path to the external knowledge YAML file
-            agent_config: Agent configuration
-            build_mode: "overwrite" or "incremental" (default: "incremental")
-
-        Returns:
-            dict: Sync result with success, error, and message fields
-        """
-        try:
-            from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
-
-            # Load YAML file - supports multiple documents
-            with open(file_path, "r", encoding="utf-8") as f:
-                docs = list(yaml.safe_load_all(f))
-
-            if not docs or all(doc is None for doc in docs):
-                return {"success": False, "error": "Empty YAML file or all documents are empty"}
-
-            # Get RAG instance (handles datasource_id injection)
-            knowledge_rag = ExtKnowledgeRAG(agent_config)
-
-            # Collect all valid entries for batch upsert
-            knowledge_entries = []
-            invalid_count = 0
-
-            for i, doc in enumerate(docs):
-                if not doc:
-                    logger.warning(f"Document {i + 1} in {file_path} is empty, skipping")
-                    invalid_count += 1
-                    continue
-
-                # Parse subject_path - supports both list and string formats
-                subject_path_raw = doc.get("subject_path", "")
-                if isinstance(subject_path_raw, list):
-                    subject_path = subject_path_raw
-                else:
-                    subject_path = [p.strip() for p in str(subject_path_raw).split("/") if p.strip()]
-
-                search_text = doc.get("search_text", "")
-                name = doc.get("name", search_text)
-                explanation = doc.get("explanation", "")
-
-                # Validate required fields
-                if not subject_path or not search_text or not explanation:
-                    logger.warning(
-                        f"Document {i + 1} missing required fields (subject_path, search_text, or explanation), skipping"
-                    )
-                    invalid_count += 1
-                    continue
-
-                knowledge_entries.append(
-                    {
-                        "subject_path": subject_path,
-                        "name": name,
-                        "search_text": search_text,
-                        "explanation": explanation,
-                    }
-                )
-
-            if not knowledge_entries:
-                return {"success": False, "error": "No valid knowledge entries found in YAML file"}
-
-            # Batch upsert all entries (update if exists, insert if not)
-            upserted_ids = knowledge_rag.batch_upsert_knowledge(knowledge_entries)
-
-            # Build result message from actual upserted names returned by the store
-            upserted_count = len(upserted_ids)
-
-            if upserted_count == 1:
-                message = f"Upserted 1 knowledge entry: {upserted_ids[0]}"
-            else:
-                display_names = upserted_ids[:3]
-                message = f"Upserted {upserted_count} knowledge entries: {', '.join(display_names)}"
-                if upserted_count > 3:
-                    message += f" and {upserted_count - 3} more"
-
-            if invalid_count > 0:
-                message += f"; Skipped {invalid_count} invalid entries"
-
-            logger.info(f"Successfully upserted {upserted_count} external knowledge entries to Knowledge Base")
-
-            return {
-                "success": True,
-                "message": message,
-                "upserted_count": upserted_count,
-                "invalid_count": invalid_count,
-            }
-
-        except Exception as e:
-            logger.error(f"Error syncing external knowledge to DB: {e}", exc_info=True)
             return {"success": False, "error": str(e)}

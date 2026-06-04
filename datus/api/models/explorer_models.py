@@ -41,7 +41,6 @@ class SubjectNodeType(str, Enum):
     DIRECTORY = "directory"
     METRIC = "metric"
     REFERENCE_SQL = "reference_sql"
-    KNOWLEDGE = "knowledge"
 
 
 class SubjectNode(BaseModel):
@@ -143,31 +142,3 @@ class SubjectPathInput(BaseModel):
     """Subject path input."""
 
     subject_path: List[str] = Field(..., description="Subject path name")
-
-
-# ========== Knowledge Create/Get/Edit ==========
-
-
-class CreateKnowledgeInput(BaseModel):
-    """Create knowledge input."""
-
-    subject_path: List[str] = Field(..., description="Subject path for the knowledge")
-    name: str = Field(..., min_length=1, description="Knowledge name")
-    search_text: str = Field(..., min_length=1, description="Search text for vector retrieval")
-    explanation: str = Field(..., min_length=1, description="Knowledge explanation/details")
-
-
-class KnowledgeInfo(BaseModel):
-    """Knowledge information for get response."""
-
-    name: str = Field(..., description="Knowledge name")
-    search_text: str = Field(..., description="Search text for vector retrieval")
-    explanation: str = Field(..., description="Knowledge explanation/details")
-
-
-class EditKnowledgeInput(BaseModel):
-    """Edit knowledge input."""
-
-    subject_path: List[str] = Field(..., description="Subject path to the knowledge (parent_path + name)")
-    search_text: str = Field(..., description="Updated search text")
-    explanation: str = Field(..., description="Updated explanation")

@@ -378,7 +378,7 @@ class BenchmarkConfig:
     catalog_key: str | None = None  # The key corresponding to SQL catalog name
     database_key: str | None = None  # The key corresponding to SQL database name
     schema_key: str | None = None  # The key corresponding to SQL schema name
-    ext_knowledge_key: str | None = None  # The key corresponding to external knowledge
+    ext_knowledge_key: str | None = None  # The key for the question's supplementary description (e.g. evidence)
     use_tables_key: str | None = None  # The key corresponding to the table to be used
 
     gold_sql_key: str | None = None  # The key corresponding to gold sql

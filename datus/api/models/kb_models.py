@@ -12,7 +12,6 @@ class KbComponent(str, Enum):
     METADATA = "metadata"
     SEMANTIC_MODEL = "semantic_model"
     METRICS = "metrics"
-    EXT_KNOWLEDGE = "ext_knowledge"
     REFERENCE_SQL = "reference_sql"
 
 
@@ -32,7 +31,6 @@ class BootstrapKbInput(BaseModel):
             "`metadata` scans live database schema and sample rows; "
             "`semantic_model` derives semantic schema objects from success-story SQLs; "
             "`metrics` derives MetricFlow-style business metrics; "
-            "`ext_knowledge` imports or generates business terminology/knowledge entries; "
             "`reference_sql` indexes reusable SQL files."
         ),
     )
@@ -72,14 +70,14 @@ class BootstrapKbInput(BaseModel):
         default=None,
         description=(
             "Project-root-relative path to a success-story CSV containing historical question/SQL pairs. "
-            "Used by `semantic_model`, `metrics`, and `ext_knowledge` when bootstrapping from success stories."
+            "Used by `semantic_model` and `metrics` when bootstrapping from success stories."
         ),
     )
     subject_tree: Optional[list[str]] = Field(
         default=None,
         description=(
             "Optional predefined hierarchical categories in `domain/layer1/layer2` form, such as "
-            "`Sales/Reporting/Daily`. Used by `metrics`, `ext_knowledge`, and `reference_sql`; "
+            "`Sales/Reporting/Daily`. Used by `metrics` and `reference_sql`; "
             "if omitted, bootstrap reuses or learns categories from existing KB content."
         ),
     )
@@ -90,16 +88,6 @@ class BootstrapKbInput(BaseModel):
         description=(
             "Project-root-relative directory containing `.sql` files for the `reference_sql` component. "
             "Files are scanned recursively and only `SELECT` statements are indexed."
-        ),
-    )
-
-    # ext_knowledge source
-    ext_knowledge: Optional[str] = Field(
-        default=None,
-        description=(
-            "Project-root-relative CSV for the `ext_knowledge` component. Expected columns are "
-            "`subject_path`, `name`, `search_text`, and `explanation`. "
-            "If omitted, external knowledge can be generated from `success_story` instead."
         ),
     )
 

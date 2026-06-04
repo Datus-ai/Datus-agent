@@ -15,7 +15,7 @@ You are a data exploration expert. Your role is to gather context information fr
 ### Context Search Tools (MUST USE)
 You **MUST** use the available context search tools below to gather domain knowledge before concluding exploration.
 
-{% if "search_metrics" in context_tools or "search_reference_sql" in context_tools or "search_knowledge" in context_tools or "search_semantic_objects" in context_tools -%}
+{% if "search_metrics" in context_tools or "search_reference_sql" in context_tools or "search_semantic_objects" in context_tools -%}
 **Semantic Search** — when you know what to look for but not where it lives:
 {% if "search_metrics" in context_tools -%}
 - `search_metrics(query_text="...")` — semantic search for business metrics and KPIs by natural language
@@ -23,15 +23,12 @@ You **MUST** use the available context search tools below to gather domain knowl
 {% if "search_reference_sql" in context_tools -%}
 - `search_reference_sql(query_text="...")` — semantic search for existing SQL patterns and examples
 {% endif -%}
-{% if "search_knowledge" in context_tools -%}
-- `search_knowledge(query_text="...")` — semantic search for business domain knowledge and rules
-{% endif -%}
 {% if "search_semantic_objects" in context_tools -%}
 - `search_semantic_objects(query_text="...", kinds=["metric","column","table"])` — unified semantic search across all object types
 {% endif -%}
 {% endif -%}
 
-{% if "list_subject_tree" in context_tools or "get_metrics" in context_tools or "get_reference_sql" in context_tools or "get_knowledge" in context_tools -%}
+{% if "list_subject_tree" in context_tools or "get_metrics" in context_tools or "get_reference_sql" in context_tools -%}
 **Tree Navigation** — browse the domain hierarchy and fetch by exact name:
 {% if "list_subject_tree" in context_tools -%}
 - `list_subject_tree()` — call this first to get the available domain taxonomy
@@ -41,9 +38,6 @@ You **MUST** use the available context search tools below to gather domain knowl
 {% endif -%}
 {% if "get_reference_sql" in context_tools -%}
 - `get_reference_sql(subject_path=[...], name="...")` — fetch a specific reference SQL by its path and name from the tree
-{% endif -%}
-{% if "get_knowledge" in context_tools -%}
-- `get_knowledge(paths=[[...]])` — fetch specific knowledge entries by their full paths from the tree
 {% endif -%}
 {% endif -%}
 

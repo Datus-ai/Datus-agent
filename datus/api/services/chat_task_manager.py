@@ -898,8 +898,7 @@ class ChatTaskManager:
         Delegates to :func:`datus.agent.node.node_factory.create_node_input` so
         the API path covers every AgenticNode subclass the CLI knows about
         (GenReport / Explore / SkillCreator / GenTable / GenJob in addition to
-        the legacy GenSQL / Semantic / SqlSummary / ExtKnowledge / Feedback /
-        Chat branches).
+        the GenSQL / Semantic / SqlSummary / Feedback / Chat branches).
         """
         from datus.agent.node.node_factory import create_node_input
 

@@ -9,24 +9,17 @@ Covers:
 - All async init functions can be awaited from an async context
 - SessionManager with project-level session isolation
 - Sync wrapper backward compatibility (same return types)
-- init_ext_knowledge with the new string parameter directly
 - Parameter decoupling: no argparse.Namespace dependency in any changed function
 """
 
 import inspect
 import os
 import sqlite3
-from typing import Union
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from datus.models.session_manager import SessionManager
-from datus.storage.ext_knowledge.ext_knowledge_init import (
-    init_ext_knowledge,
-    init_success_story_knowledge,
-    init_success_story_knowledge_async,
-)
 from datus.storage.metric.metric_init import init_success_story_metrics, init_success_story_metrics_async
 from datus.storage.reference_sql.reference_sql_init import init_reference_sql, init_reference_sql_async
 from datus.storage.semantic_model.semantic_model_init import (
@@ -60,21 +53,6 @@ def _init_vector_backend(tmp_path):
         clear_storage_registry()
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_ext_knowledge_csv(tmp_path, filename="knowledge.csv"):
-    """Write a minimal ext_knowledge CSV with required columns."""
-    csv_path = tmp_path / filename
-    csv_path.write_text(
-        "subject_path,name,search_text,explanation\n"
-        "Finance/Revenue,ARR,Annual Recurring Revenue,Total recurring revenue per year\n"
-    )
-    return str(csv_path)
-
-
 # ===========================================================================
 # TestAllAsyncFunctionsAreCoroutines
 # ===========================================================================
@@ -89,13 +67,11 @@ class TestAllAsyncFunctionsAreCoroutines:
         [
             init_success_story_semantic_model_async,
             init_success_story_metrics_async,
-            init_success_story_knowledge_async,
             init_reference_sql_async,
         ],
         ids=[
             "semantic_model_async",
             "metrics_async",
-            "ext_knowledge_async",
             "reference_sql_async",
         ],
     )
@@ -119,9 +95,6 @@ class TestNoArgparseNamespaceDependency:
             init_success_story_semantic_model,
             init_success_story_metrics_async,
             init_success_story_metrics,
-            init_success_story_knowledge_async,
-            init_success_story_knowledge,
-            init_ext_knowledge,
             init_reference_sql_async,
             init_reference_sql,
         ],
@@ -130,9 +103,6 @@ class TestNoArgparseNamespaceDependency:
             "semantic_model_sync",
             "metrics_async",
             "metrics_sync",
-            "ext_knowledge_async",
-            "ext_knowledge_sync",
-            "ext_knowledge_init",
             "reference_sql_async",
             "reference_sql_sync",
         ],
@@ -158,15 +128,6 @@ class TestAsyncFunctionsAwaitableInAsyncContext:
         """init_success_story_semantic_model_async can be awaited; returns (False, str) for missing file."""
         mock_config = MagicMock()
         success, error = await init_success_story_semantic_model_async(mock_config, str(tmp_path / "missing.csv"))
-        assert isinstance(success, bool)
-        assert isinstance(error, str)
-        assert success is False
-
-    @pytest.mark.asyncio
-    async def test_ext_knowledge_async_awaitable_missing_file(self, tmp_path):
-        """init_success_story_knowledge_async can be awaited; returns (False, str) for missing file."""
-        mock_config = MagicMock()
-        success, error = await init_success_story_knowledge_async(mock_config, str(tmp_path / "missing.csv"))
         assert isinstance(success, bool)
         assert isinstance(error, str)
         assert success is False
@@ -223,15 +184,6 @@ class TestSyncWrapperBackwardCompatibility:
         assert isinstance(result[0], bool)
         assert isinstance(result[1], str)
 
-    def test_ext_knowledge_sync_returns_two_tuple(self, tmp_path):
-        """init_success_story_knowledge returns (bool, str)."""
-        mock_config = MagicMock()
-        result = init_success_story_knowledge(mock_config, str(tmp_path / "missing.csv"))
-        assert isinstance(result, tuple)
-        assert len(result) == 2
-        assert isinstance(result[0], bool)
-        assert isinstance(result[1], str)
-
     def test_reference_sql_sync_returns_dict(self):
         """init_reference_sql returns a dict (backward compatible)."""
         mock_storage = MagicMock()
@@ -265,81 +217,6 @@ class TestSyncWrapperBackwardCompatibility:
         assert isinstance(result[1], str)
 
 
-# ===========================================================================
-# TestInitExtKnowledgeStringParam
-# ===========================================================================
-
-
-@pytest.mark.ci
-@pytest.mark.usefixtures("_init_vector_backend")
-class TestInitExtKnowledgeStringParam:
-    """Verify init_ext_knowledge works with a plain string parameter (no SimpleNamespace needed)."""
-
-    def test_string_csv_path_accepted(self, tmp_path):
-        """init_ext_knowledge accepts a plain string path directly (no SimpleNamespace needed)."""
-        from datus.storage.embedding_models import get_db_embedding_model
-        from datus.storage.ext_knowledge.store import ExtKnowledgeStore
-
-        csv_path = _make_ext_knowledge_csv(tmp_path)
-        store = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
-
-        # Invoking with a direct string must not raise any TypeError or AttributeError
-        # (previously would have needed SimpleNamespace to mimic argparse.Namespace.ext_knowledge_csv)
-        try:
-            init_ext_knowledge(store, csv_path, build_mode="overwrite", pool_size=1)
-        except (TypeError, AttributeError) as exc:
-            raise AssertionError(
-                f"init_ext_knowledge raised {type(exc).__name__} when called with a plain string: {exc}"
-            ) from exc
-
-        # The ARR entry should be present in the store (added now or already there from a prior call)
-        results = store.search_all_knowledge()
-        names = [r["name"] for r in results]
-        assert "ARR" in names
-
-    def test_none_string_returns_early(self, tmp_path):
-        """init_ext_knowledge with None string parameter returns early without adding data."""
-        from datus.storage.embedding_models import get_db_embedding_model
-        from datus.storage.ext_knowledge.store import ExtKnowledgeStore
-
-        store = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
-        count_before = len(store.search_all_knowledge())
-
-        # Should not raise; should return without inserting anything new
-        init_ext_knowledge(store, None)
-
-        count_after = len(store.search_all_knowledge())
-        assert count_after == count_before
-
-    def test_empty_string_returns_early(self, tmp_path):
-        """init_ext_knowledge with empty string parameter returns early without adding data."""
-        from datus.storage.embedding_models import get_db_embedding_model
-        from datus.storage.ext_knowledge.store import ExtKnowledgeStore
-
-        store = ExtKnowledgeStore(embedding_model=get_db_embedding_model())
-        count_before = len(store.search_all_knowledge())
-
-        init_ext_knowledge(store, "")
-
-        count_after = len(store.search_all_knowledge())
-        assert count_after == count_before
-
-    def test_ext_knowledge_csv_param_is_optional_str_type_annotated(self):
-        """init_ext_knowledge's ext_knowledge_csv parameter has an Optional[str] annotation."""
-        import typing
-
-        sig = inspect.signature(init_ext_knowledge)
-        assert "ext_knowledge_csv" in sig.parameters
-        param = sig.parameters.get("ext_knowledge_csv")
-        annotation = param.annotation
-        assert annotation is not inspect.Parameter.empty, "ext_knowledge_csv must have a type annotation"
-        # Should be Optional[str] (i.e. Union[str, None])
-        origin = typing.get_origin(annotation)
-        args = typing.get_args(annotation)
-        assert origin is Union and str in args and type(None) in args
-
-
-# ===========================================================================
 # TestSessionManagerProjectIsolation
 # ===========================================================================
 

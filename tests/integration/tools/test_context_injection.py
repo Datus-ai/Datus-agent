@@ -8,10 +8,9 @@ This module proves each context source can be RETRIEVED and INJECTED into the
 SQL-generation path:
 
 * Retrieval layer (no LLM): self-seed catalog/schema-metadata (semantic objects),
-  subject-tree, historical/reference SQL, metrics, and external knowledge via the
-  RAG ``upsert_batch`` / ``after_init`` APIs, then assert ``ContextSearchTools``
-  surfaces them through ``search_knowledge`` / ``get_knowledge`` /
-  ``list_subject_tree`` and fuzzy (semantic + FTS) search.
+  subject-tree, historical/reference SQL, and metrics via the RAG
+  ``upsert_batch`` / ``after_init`` APIs, then assert ``ContextSearchTools``
+  surfaces them through ``list_subject_tree`` and fuzzy (semantic + FTS) search.
 * Injection layer (real LLM): construct ``GenSQLAgenticNode`` from the
   ``nightly_agent_config`` fixture, assert the context-search tools are wired into
   ``node.tools``, then run the node end-to-end against the seeded reference SQL and
@@ -31,7 +30,6 @@ from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
-from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
 from datus.storage.metric.store import MetricRAG, build_metric_id
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
@@ -92,21 +90,6 @@ def _reference_sql_items():
     ]
 
 
-def _knowledge_items():
-    """External-knowledge entry describing the Charter flag semantics."""
-    return [
-        {
-            "subject_path": SUBJECT_PATH,
-            "name": "charter_flag_definition",
-            "search_text": "charter school definition flag Charter column meaning",
-            "explanation": (
-                "In the California schools dataset the Charter column equals 1 for charter "
-                "schools and 0 otherwise. Filter Charter = 1 to count charter campuses."
-            ),
-        }
-    ]
-
-
 def _semantic_objects():
     """A table-kind semantic object so search_semantic_objects has catalog metadata."""
     table_name = "schools"
@@ -156,15 +139,11 @@ def _seed_all_context_sources(config: AgentConfig):
     reference_sql_store.upsert_batch(_reference_sql_items())
     reference_sql_store.after_init()
 
-    knowledge_store = ExtKnowledgeRAG(config)
-    knowledge_store.batch_upsert_knowledge(_knowledge_items())
-    knowledge_store.store.after_init()
-
     semantic_store = SemanticModelRAG(config)
     semantic_store.upsert_batch(_semantic_objects())
     semantic_store.create_indices()
 
-    return metric_store, reference_sql_store, knowledge_store, semantic_store
+    return metric_store, reference_sql_store, semantic_store
 
 
 @pytest.fixture(scope="module")
@@ -181,36 +160,6 @@ class TestContextRetrievalInjection:
     def ctx_tools(self, agent_config: AgentConfig, seeded_context_data) -> ContextSearchTools:
         return ContextSearchTools(agent_config)
 
-    def test_search_knowledge_returns_seeded_entry(self, ctx_tools):
-        """External knowledge: search_knowledge surfaces the seeded charter entry."""
-        assert ctx_tools.has_knowledge is True, "Seeded external knowledge should be detected"
-
-        result = ctx_tools.search_knowledge("what does the charter flag mean")
-
-        assert result.success == 1, f"search_knowledge should succeed, got error: {result.error}"
-        assert isinstance(result.result, list), f"Result should be a list, got {type(result.result)}"
-        assert len(result.result) >= 1, "Should surface at least the seeded knowledge entry"
-
-        names = [entry.get("name") for entry in result.result]
-        assert "charter_flag_definition" in names, f"Seeded knowledge name missing from results: {names}"
-
-    def test_get_knowledge_by_path(self, ctx_tools):
-        """External knowledge: get_knowledge fetches by full subject path + name."""
-        assert ctx_tools.has_knowledge is True, "Seeded external knowledge should be detected"
-
-        full_path = SUBJECT_PATH + ["charter_flag_definition"]
-        result = ctx_tools.get_knowledge(paths=[full_path])
-
-        assert result.success == 1, f"get_knowledge should succeed, got error: {result.error}"
-        assert isinstance(result.result, list), f"Result should be a list, got {type(result.result)}"
-        assert len(result.result) == 1, f"Should fetch exactly one entry for path {full_path}, got {result.result}"
-
-        entry = result.result[0]
-        assert entry.get("name") == "charter_flag_definition", f"Wrong entry returned: {entry}"
-        assert "Charter column equals 1" in entry.get("explanation", ""), (
-            f"Explanation should match seeded content, got: {entry.get('explanation')}"
-        )
-
     def test_list_subject_tree_nests_all_sources(self, ctx_tools):
         """Subject-tree: list_subject_tree returns the seeded entries nested by path."""
         result = ctx_tools.list_subject_tree()
@@ -226,9 +175,6 @@ class TestContextRetrievalInjection:
         assert "school_count" in leaf.get("metrics", []), f"Seeded metric not nested in subject tree: {leaf}"
         assert "fresno_charter_school_count" in leaf.get("reference_sql", []), (
             f"Seeded reference SQL not nested in subject tree: {leaf}"
-        )
-        assert "charter_flag_definition" in leaf.get("knowledge", []), (
-            f"Seeded knowledge not nested in subject tree: {leaf}"
         )
 
     def test_fuzzy_metric_search_surfaces_school_count(self, ctx_tools):
@@ -336,8 +282,6 @@ class TestContextInjectionRealLLM:
             "get_reference_sql",
             "search_metrics",
             "get_metrics",
-            "search_knowledge",
-            "get_knowledge",
             "search_semantic_objects",
             "list_subject_tree",
         }

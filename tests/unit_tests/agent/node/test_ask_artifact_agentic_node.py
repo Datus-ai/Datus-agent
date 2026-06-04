@@ -1137,7 +1137,6 @@ class TestArtifactContextBlockInlining:
             subject_refs={
                 "metrics": [subj],
                 "reference_sql": [],
-                "ext_knowledge": [],
             },
         )
         block = node._render_artifact_context_block()
@@ -1183,7 +1182,6 @@ class TestArtifactContextBlockInlining:
             subject_refs={
                 "metrics": [commerce_aov, finance_aov],
                 "reference_sql": [],
-                "ext_knowledge": [],
             },
         )
         block = node._render_artifact_context_block()

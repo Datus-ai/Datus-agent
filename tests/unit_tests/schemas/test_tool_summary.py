@@ -559,7 +559,7 @@ class TestContextSearchFormatters:
                 "Revenue": {"metrics": ["revenue", "gmv"], "reference_sql": ["q1"]},
                 "Cost": {"metrics": ["cogs"]},
             },
-            "Marketing": {"knowledge": ["k1", "k2"]},
+            "Marketing": {"reference_template": ["t1", "t2"]},
         }
         out = _summarize("list_subject_tree", {"success": 1, "result": tree})
         assert out == "6 items"
@@ -575,10 +575,6 @@ class TestContextSearchFormatters:
     def test_get_reference_sql_single(self):
         out = _summarize("get_reference_sql", {"success": 1, "result": {"name": "top_users"}})
         assert out == "SQL: top_users"
-
-    def test_get_knowledge_list(self):
-        out = _summarize("get_knowledge", {"success": 1, "result": [{"name": "a"}, {"name": "b"}]})
-        assert out == "2 knowledge"
 
 
 class TestReferenceTemplateFormatters:
@@ -907,7 +903,6 @@ def test_failure_path_uniform(tool: str):
         ("task", {"sql_file_path": "/tmp/q.sql"}, "SQL file generated"),
         ("task", {"semantic_models": ["a.yml", "b.yml"]}, "2 semantic models"),
         ("task", {"sql_summary_file": "x"}, "SQL summary saved"),
-        ("task", {"ext_knowledge_file": "k"}, "knowledge saved"),
         ("task", {"report_result": {}}, "report ready"),
         ("task", {"skill_path": "/tmp", "skill_name": "x"}, 'skill "x" generated'),
         ("task", {"scheduler_result": {}}, "scheduler updated"),
@@ -969,7 +964,6 @@ _LENGTH_CONTRACT_SAMPLES: list[tuple[str, Any]] = [
     ("search_metrics", [{}] * 99),
     ("search_reference_sql", [{}] * 99),
     ("search_semantic_objects", [{}] * 99),
-    ("search_knowledge", [{}] * 99),
     # generation
     ("check_semantic_object_exists", {"exists": True, "kind": "long_kind_name"}),
     ("check_semantic_model_exists", {"exists": False}),
@@ -998,7 +992,6 @@ _LENGTH_CONTRACT_SAMPLES: list[tuple[str, Any]] = [
     ("list_subject_tree", {"a": {"metrics": ["m"] * 999}}),
     ("get_metrics", {"name": "very_long_metric_name_here"}),
     ("get_reference_sql", {"name": "very_long_sql_name_here"}),
-    ("get_knowledge", [{}] * 99),
     # reference templates
     ("search_reference_template", [{}] * 99),
     ("get_reference_template", {"name": "very_long_template_name_here"}),

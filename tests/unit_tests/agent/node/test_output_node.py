@@ -42,7 +42,6 @@ def _make_output_input(**kwargs):
         row_count=1,
         table_schemas=[],
         metrics=[],
-        external_knowledge="",
         error=None,
     )
     defaults.update(kwargs)
@@ -66,7 +65,7 @@ def _make_workflow():
     wf.task.id = "task_1"
     wf.task.database_name = "test_db"
     wf.task.output_dir = "output"
-    wf.task.external_knowledge = "some knowledge"
+    wf.task.external_knowledge = ""
     wf.context.table_schemas = []
     wf.context.metrics = []
     sql_ctx = MagicMock()

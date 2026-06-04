@@ -44,9 +44,6 @@ class TestHasMemory:
     def test_gen_sql_summary_no_memory(self):
         assert has_memory("gen_sql_summary") is False
 
-    def test_gen_ext_knowledge_no_memory(self):
-        assert has_memory("gen_ext_knowledge") is False
-
     def test_explore_no_memory(self):
         assert has_memory("explore") is False
 

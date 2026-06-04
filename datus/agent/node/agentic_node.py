@@ -2405,8 +2405,8 @@ class AgenticNode(Node):
 
             # Compose the user prompt, optionally with a per-run override of
             # ``user_input.user_message`` set during ``_before_stream`` (used
-            # by Compare and GenExtKnowledge to inject node-specific text
-            # without mutating the caller's input object).
+            # by Compare to inject node-specific text without mutating the
+            # caller's input object).
             if ctx.user_message_override is not None:
                 original = self.input.user_message
                 self.input.user_message = ctx.user_message_override
@@ -2591,9 +2591,9 @@ class AgenticNode(Node):
                         candidate = (
                             output.get("content", "") or output.get("response", "") or output.get("raw_output", "")
                         )
-                        # Preserve dict candidates (used by Deliverable / ExtKnowledge
-                        # for structured outputs); coerce only when the candidate is
-                        # a non-empty non-string scalar.
+                        # Preserve dict candidates (used by Deliverable for structured
+                        # outputs); coerce only when the candidate is a non-empty
+                        # non-string scalar.
                         if isinstance(candidate, str):
                             if candidate:
                                 ctx.response_content = candidate
@@ -2642,8 +2642,7 @@ class AgenticNode(Node):
         Default: include ``self.hooks`` (typically a ``GenerationHooks``
         instance for todo/plan workflow nodes) only in interactive mode;
         otherwise return permission hooks alone. This covers SqlSummary,
-        Feedback, GenSemanticModel, GenExtKnowledge, GenMetrics out of the
-        box.
+        Feedback, GenSemanticModel, and GenMetrics out of the box.
 
         Subclasses with non-``self.hooks`` extras (Deliverable's
         ``_validation_hook``) override to call ``self._compose_hooks(extra)``
@@ -2667,9 +2666,8 @@ class AgenticNode(Node):
         """Hook: return a :class:`RetryPolicy` to drive validate/retry.
 
         Default returns :class:`NoRetryPolicy` (single execution). Override
-        to return :class:`ValidationHookRetryPolicy` (deliverable_node.py) /
-        :class:`VerifySqlRetryPolicy` (gen_ext_knowledge_agentic_node.py) when
-        the node needs re-prompting on validation failure. Concrete policies
+        to return :class:`ValidationHookRetryPolicy` when the node needs
+        re-prompting on validation failure. Concrete policies
         live in their owning node's module — there is no shared ``policies/``
         package since each policy is bound to a specific node's internals.
         """

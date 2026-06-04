@@ -138,7 +138,6 @@ class CliContext:
             task=task_text,
             database_name=self.current_db_name or "",
             output_dir="output",
-            external_knowledge="",
         )
 
         self.current_sql_task = sql_task

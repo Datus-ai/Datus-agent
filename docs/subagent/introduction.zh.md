@@ -29,13 +29,12 @@ Subagent 可以是：
 4. `gen_semantic_model`：MetricFlow 语义模型生成
 5. `gen_metrics`：MetricFlow 指标生成
 6. `gen_sql_summary`：SQL 摘要生成
-7. `gen_ext_knowledge`：业务知识提取
-8. `gen_table`：交互式建表
-9. `gen_job`：数据管道作业（单库 ETL 和跨库迁移）
-10. `gen_skill`：skill 创建与优化
-11. `gen_dashboard`：BI 仪表盘创建与管理
-12. `gen_visual_report`：在 `reports/<slug>/` 下产出自包含的可视化报告
-13. `scheduler`：Airflow 作业生命周期管理
+7. `gen_table`：交互式建表
+8. `gen_job`：数据管道作业（单库 ETL 和跨库迁移）
+9. `gen_skill`：skill 创建与优化
+10. `gen_dashboard`：BI 仪表盘创建与管理
+11. `gen_visual_report`：在 `reports/<slug>/` 下产出自包含的可视化报告
+12. `scheduler`：Airflow 作业生命周期管理
 
 详细说明见 [内置 subagent](./builtin_subagents.zh.md)。
 
@@ -145,7 +144,6 @@ graph LR
 | `gen_semantic_model` | 生成 MetricFlow 语义模型 |
 | `gen_metrics` | 生成 MetricFlow 指标 |
 | `gen_sql_summary` | 把 SQL 总结为可复用知识 |
-| `gen_ext_knowledge` | 从问题-SQL 对中提取业务知识 |
 | `gen_table` | 交互式创建表 |
 | `gen_job` | 构建数据管道作业（单库 ETL 或跨库迁移） |
 | `gen_skill` | 创建或优化 skill |

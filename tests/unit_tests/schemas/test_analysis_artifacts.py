@@ -98,13 +98,11 @@ class TestSubjectRefs:
         refs = SubjectRefs()
         assert refs.metrics == []
         assert refs.reference_sql == []
-        assert refs.ext_knowledge == []
 
     def test_round_trip(self):
         refs = SubjectRefs(
             metrics=[_ref(["Commerce", "Orders"], "aov")],
             reference_sql=[_ref(["Templates"], "top_q")],
-            ext_knowledge=[_ref(["Policies"], "rules")],
         )
         restored = SubjectRefs.model_validate(refs.model_dump())
         assert restored == refs
@@ -135,7 +133,6 @@ def _full_brief_payload(**overrides):
         "uses": {
             "metrics": [{"path": ["Signups", "Risk"], "name": "high_risk_signups"}],
             "reference_sql": [],
-            "ext_knowledge": [],
         },
         "caveats": "Excludes test accounts (signup_email LIKE '%@example.com').",
     }

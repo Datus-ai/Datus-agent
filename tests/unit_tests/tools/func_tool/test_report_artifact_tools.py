@@ -403,7 +403,6 @@ class TestSaveQuery:
         data = _json.loads(brief_file.read_text(encoding="utf-8"))
         assert data["uses"]["metrics"] == [{"path": ["Sales"], "name": "total_sales"}]
         assert data["uses"]["reference_sql"] == [{"path": ["Templates"], "name": "sales_query"}]
-        assert data["uses"]["ext_knowledge"] == []
 
     def test_write_operations_rejected(self, report_tools: ReportArtifactTools):
         result = report_tools.save_query(

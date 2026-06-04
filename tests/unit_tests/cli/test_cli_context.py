@@ -52,7 +52,6 @@ def _make_sql_task(task="find top 10") -> SqlTask:
         task=task,
         database_name="test_db",
         output_dir="output",
-        external_knowledge="",
     )
 
 

@@ -84,7 +84,6 @@ class TestStorageLayoutIntegration:
         subject = project_root.resolve() / "subject"
         assert cfg.path_manager.semantic_models_dir == subject / "semantic_models"
         assert cfg.path_manager.sql_summaries_dir == subject / "sql_summaries"
-        assert cfg.path_manager.ext_knowledge_dir == subject / "ext_knowledge"
 
         # The project-level skills directory lives under project_root/.datus/skills
         assert cfg.path_manager.project_skills_dir == project_root.resolve() / ".datus" / "skills"

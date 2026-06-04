@@ -51,15 +51,7 @@ The Datus Agent Knowledge Base is a multi-modal intelligence system that transfo
 - **Capabilities**: Search templates by intent, retrieve with parameter metadata, server-side rendering
 - **Use**: Stable SQL output for production scenarios, parameterized report queries, template-based SQL generation
 
-### 6. [External Knowledge](ext_knowledge.md)
-
-**Purpose**: Process and index domain-specific business knowledge for intelligent search.
-
-- **Stores**: Business terminology, rules, concepts, hierarchical categorization
-- **Capabilities**: Semantic search for business terms, context enrichment, term resolution
-- **Use**: Agent context enhancement, terminology standardization, knowledge onboarding
-
-### 7. [Platform Documentation](platform_doc.md)
+### 6. [Platform Documentation](platform_doc.md)
 
 **Purpose**: Provide authoritative platform documentation for SQL generation and validation.
 

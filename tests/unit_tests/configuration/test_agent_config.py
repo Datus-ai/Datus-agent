@@ -1364,7 +1364,6 @@ class TestAgentConfigProjectLayout:
         assert cfg.path_manager.subject_dir == subject
         assert cfg.path_manager.semantic_models_dir == subject / "semantic_models"
         assert cfg.path_manager.sql_summaries_dir == subject / "sql_summaries"
-        assert cfg.path_manager.ext_knowledge_dir == subject / "ext_knowledge"
 
     def test_project_name_auto_derived_from_cwd_when_absent(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

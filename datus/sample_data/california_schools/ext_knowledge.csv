@@ -1,3 +1,0 @@
-subject_path,name,search_text,explanation
-california_schools/Students_K-12/Free_Rate,Eligible Free Rate Definition,Eligible free rate for K-12,"Eligible free rate for K-12 students is computed as Free Meal Count (K-12) divided by Enrollment (K-12) from the frpm table. Use a real-number division and guard against zero enrollment when writing SQL."
-california_schools/Education/Location,Charter School Definition,Charter schools,"Charter schools are identified by the frpm table column Charter School (Y/N) equal to 1. When location attributes such as zip code are needed, join frpm to schools on CDSCode and read the location fields from schools."

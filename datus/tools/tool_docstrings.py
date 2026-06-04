@@ -412,32 +412,6 @@ Example:
       "summary": "Aggregates order amounts by date"}]
 """
 
-SEARCH_EXTERNAL_KNOWLEDGE_DOC = """
-Search for business terminology, domain knowledge, and concept definitions.
-This tool helps find explanations of business terms, processes, and domain-specific concepts.
-
-Use this tool when you need to:
-- Understand business terminology and definitions
-- Learn about domain-specific concepts and processes
-- Get context for business rules and requirements
-- Find explanations of industry-specific terms
-
-Args:
-    query_text: Natural language query about business terms or concepts (e.g., "customer lifetime value",
-        "churn rate definition", "fiscal year")
-    domain: Business domain to search within (e.g., "finance", "marketing", "operations").
-        Leave empty if not specified in context.
-    layer1: Primary semantic layer for categorization. Leave empty if not specified in context.
-    layer2: Secondary semantic layer for fine-grained categorization. Leave empty if not specified in context.
-    top_n: Maximum number of results to return (default 5)
-
-Returns:
-    dict: Knowledge search results containing:
-        - 'success' (int): 1 if successful, 0 if failed
-        - 'error' (str or None): Error message if search failed
-        - 'result' (list): List of knowledge entries with domain, layer1, layer2, terminology, and explanation
-"""
-
 # ============================================================================
 # REFERENCE TEMPLATE TOOLS (ReferenceTemplateTools)
 # ============================================================================

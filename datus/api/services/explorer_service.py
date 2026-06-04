@@ -8,12 +8,9 @@ from typing import List, Optional, Tuple
 from datus.api.models.base_models import Result
 from datus.api.models.explorer_models import (
     CreateDirectoryInput,
-    CreateKnowledgeInput,
     DeleteSubjectInput,
-    EditKnowledgeInput,
     EditMetricInput,
     EditSemanticModelInput,
-    KnowledgeInfo,
     MetricInfo,
     ReferenceSQLInfo,
     ReferenceSQLInput,
@@ -43,7 +40,6 @@ class ExplorerService:
         self.datasource_id = agent_config.current_datasource
         logger.info("ExplorerService initialized")
 
-        from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
         from datus.storage.metric.store import MetricRAG
         from datus.storage.reference_sql.store import ReferenceSqlRAG
         from datus.storage.registry import get_subject_tree_store
@@ -51,7 +47,6 @@ class ExplorerService:
 
         self.metric_rag = MetricRAG(agent_config, datasource_id=self.datasource_id)
         self.reference_sql_rag = ReferenceSqlRAG(agent_config, datasource_id=self.datasource_id)
-        self.knowledge_rag = ExtKnowledgeRAG(agent_config, datasource_id=self.datasource_id)
         self.semantic_model_rag = SemanticModelRAG(agent_config, datasource_id=self.datasource_id)
         self.subject_tree_store = get_subject_tree_store(project=agent_config.project_name)
 
@@ -60,12 +55,6 @@ class ExplorerService:
         from datus.storage.reference_sql.init_utils import gen_reference_sql_id
 
         return gen_reference_sql_id(sql)
-
-    def _gen_subject_item_id(self, subject_path: List[str], name: str) -> str:
-        """Generate a stable identifier for subject-scoped knowledge entries."""
-        from datus.storage.ext_knowledge.store import gen_subject_item_id
-
-        return gen_subject_item_id(subject_path, name)
 
     def _get_semantic_file_path(
         self,
@@ -279,22 +268,6 @@ class ExplorerService:
                         except Exception as ex:
                             logger.debug(f"No reference SQL found for node {node_id}: {ex}")
 
-                        # Add knowledge entries as children if they exist
-                        try:
-                            knowledge_entries = self.knowledge_rag.store.list_entries(node_id)
-                            for knowledge in knowledge_entries:
-                                knowledge_name = knowledge.get("name", "")
-                                if knowledge_name:
-                                    knowledge_node = SubjectNode(
-                                        name=knowledge_name,
-                                        type=SubjectNodeType.KNOWLEDGE,
-                                        subject_path=current_path + [knowledge_name],
-                                        children=None,
-                                    )
-                                    child_nodes.append(knowledge_node)
-                        except Exception as ex:
-                            logger.debug(f"No knowledge found for node {node_id}: {ex}")
-
                     # Create directory SubjectNode
                     subject_node = SubjectNode(
                         name=name,
@@ -447,9 +420,6 @@ class ExplorerService:
             elif request.type == SubjectNodeType.REFERENCE_SQL:
                 # Rename reference SQL entry
                 self.reference_sql_rag.reference_sql_storage.rename(request.subject_path, request.new_subject_path)
-            elif request.type == SubjectNodeType.KNOWLEDGE:
-                # Rename knowledge entry
-                self.knowledge_rag.store.rename(request.subject_path, request.new_subject_path)
             else:
                 return Result[dict](
                     success=False,
@@ -1086,205 +1056,13 @@ class ExplorerService:
                 errorMessage=str(e),
             )
 
-    async def create_knowledge(self, request: CreateKnowledgeInput) -> Result[dict]:
-        """Create knowledge entry.
-
-        Args:
-            request: Create knowledge input with subject_path, name, search_text, explanation
-
-        Returns:
-            Result[dict]
-        """
-        try:
-            logger.info(f"Creating knowledge '{request.name}' at path: {request.subject_path}")
-            from datus.api.models.config_models import ErrorCode
-
-            if not request.subject_path or not request.name:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage="Subject path and name are required",
-                )
-
-            # Get parent node to check if knowledge already exists
-            parent_node = self.subject_tree_store.get_node_by_path(request.subject_path)
-            if parent_node:
-                node_id = parent_node["node_id"]
-                # Check if knowledge already exists
-                existing = self.knowledge_rag.store.list_entries(node_id, name=request.name)
-                if existing:
-                    return Result[dict](
-                        success=False,
-                        errorCode=ErrorCode.INVALID_PARAMETERS,
-                        errorMessage=f"Knowledge '{request.name}' already exists at path: "
-                        f"{'/'.join(request.subject_path)}",
-                    )
-
-            # Store knowledge entry (PG backend auto-injects datasource_id)
-            knowledge_data = [
-                {
-                    "id": self._gen_subject_item_id(request.subject_path, request.name),
-                    "subject_path": request.subject_path,
-                    "name": request.name,
-                    "search_text": request.search_text,
-                    "explanation": request.explanation,
-                }
-            ]
-            self.knowledge_rag.store.batch_store_knowledge(knowledge_data)
-
-            logger.info(f"Created knowledge '{request.name}' successfully")
-            return Result[dict](success=True, data={})
-
-        except Exception as e:
-            logger.error(f"Failed to create knowledge: {e}")
-            from datus.api.models.config_models import ErrorCode
-
-            return Result[dict](
-                success=False,
-                errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                errorMessage=str(e),
-            )
-
-    async def get_knowledge(self, subject_path: List[str]) -> Result[KnowledgeInfo]:
-        """Get knowledge by subject path.
-
-        Args:
-            subject_path: Subject path (parent_path + knowledge_name)
-
-        Returns:
-            Result[KnowledgeInfo] with knowledge details
-        """
-        try:
-            logger.info(f"Getting knowledge at path: {subject_path}")
-            from datus.api.models.config_models import ErrorCode
-
-            if not subject_path or len(subject_path) < 1:
-                return Result[KnowledgeInfo](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage="Subject path cannot be empty",
-                )
-
-            # Extract parent path and knowledge name
-            parent_path = subject_path[:-1] if len(subject_path) > 1 else []
-            knowledge_name = subject_path[-1]
-
-            # Get parent node to find subject_node_id
-            if parent_path:
-                parent_node = self.subject_tree_store.get_node_by_path(parent_path)
-                if not parent_node:
-                    return Result[KnowledgeInfo](
-                        success=False,
-                        errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                        errorMessage=f"Parent path not found: {'/'.join(parent_path)}",
-                    )
-                node_id = parent_node["node_id"]
-            else:
-                return Result[KnowledgeInfo](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage="Knowledge cannot be at root level",
-                )
-
-            # Get knowledge entries
-            knowledge_entries = self.knowledge_rag.store.list_entries(node_id, name=knowledge_name)
-
-            if not knowledge_entries or len(knowledge_entries) == 0:
-                return Result[KnowledgeInfo](
-                    success=False,
-                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage=f"Knowledge not found: {knowledge_name}",
-                )
-
-            # Return first matching entry
-            knowledge_data = knowledge_entries[0]
-
-            return Result[KnowledgeInfo](
-                success=True,
-                data=KnowledgeInfo(
-                    name=knowledge_data.get("name", ""),
-                    search_text=knowledge_data.get("search_text", ""),
-                    explanation=knowledge_data.get("explanation", ""),
-                ),
-            )
-
-        except Exception as e:
-            logger.error(f"Failed to get knowledge: {e}")
-            from datus.api.models.config_models import ErrorCode
-
-            return Result[KnowledgeInfo](
-                success=False,
-                errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                errorMessage=str(e),
-            )
-
-    async def edit_knowledge(self, request: EditKnowledgeInput) -> Result[dict]:
-        """Edit knowledge entry.
-
-        Args:
-            request: Edit knowledge input with subject_path (parent_path + name), search_text, explanation
-
-        Returns:
-            Result[dict]
-        """
-        try:
-            logger.info(f"Editing knowledge at path: {request.subject_path}")
-            from datus.api.models.config_models import ErrorCode
-
-            if not request.subject_path or len(request.subject_path) < 2:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage="Subject path must have at least 2 components (parent_path + name)",
-                )
-
-            # Extract parent path and knowledge name
-            parent_path = request.subject_path[:-1]
-            knowledge_name = request.subject_path[-1]
-
-            # Build update values
-            update_values = {
-                "search_text": request.search_text,
-                "explanation": request.explanation,
-            }
-
-            # Update knowledge using update_entry
-            self.knowledge_rag.store.update_entry(
-                subject_path=parent_path,
-                name=knowledge_name,
-                update_values=update_values,
-            )
-
-            logger.info(f"Successfully updated knowledge: {knowledge_name}")
-            return Result[dict](success=True, data={})
-
-        except ValueError as e:
-            logger.error(f"Failed to edit knowledge: {e}")
-            from datus.api.models.config_models import ErrorCode
-
-            return Result[dict](
-                success=False,
-                errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                errorMessage=str(e),
-            )
-        except Exception as e:
-            logger.error(f"Failed to edit knowledge: {e}")
-            from datus.api.models.config_models import ErrorCode
-
-            return Result[dict](
-                success=False,
-                errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                errorMessage=str(e),
-            )
-
     async def delete_subject(self, request: DeleteSubjectInput) -> Result[dict]:
         """Delete subject from the subject tree.
 
         Handles deletion for:
-        - directory: Deletes the directory node and all child entries (metrics, reference_sql, knowledge)
+        - directory: Deletes the directory node and all child entries (metrics, reference_sql)
         - metric: Deletes from LanceDB and removes from YAML file
         - reference_sql: Deletes from LanceDB only
-        - knowledge: Deletes from LanceDB only
 
         Args:
             request: Delete subject input with type and subject_path
@@ -1305,7 +1083,7 @@ class ExplorerService:
                 )
 
             if request.type == SubjectNodeType.DIRECTORY:
-                # Delete directory and all its entries (metrics, reference_sql, knowledge)
+                # Delete directory and all its entries (metrics, reference_sql)
                 node = self.subject_tree_store.get_node_by_path(request.subject_path)
                 if not node:
                     return Result[dict](
@@ -1347,17 +1125,6 @@ class ExplorerService:
                                 logger.info(f"Deleted reference_sql '{sql_name}' from node {nid}")
                     except Exception as ex:
                         logger.debug(f"Error deleting reference_sqls for node {nid}: {ex}")
-
-                    # Delete knowledge entries
-                    try:
-                        knowledge_entries = self.knowledge_rag.store.list_entries(nid)
-                        for knowledge in knowledge_entries:
-                            knowledge_name = knowledge.get("name", "")
-                            if knowledge_name:
-                                self.knowledge_rag.delete_knowledge(node_path, knowledge_name)
-                                logger.info(f"Deleted knowledge '{knowledge_name}' from node {nid}")
-                    except Exception as ex:
-                        logger.debug(f"Error deleting knowledge for node {nid}: {ex}")
 
                 # Finally delete the directory node with cascade
                 deleted = self.subject_tree_store.delete_node(node_id, cascade=True)
@@ -1415,29 +1182,6 @@ class ExplorerService:
                     )
 
                 logger.info(f"Successfully deleted reference_sql: {sql_name}")
-                return Result[dict](success=True, data={})
-
-            elif request.type == SubjectNodeType.KNOWLEDGE:
-                # Delete knowledge: extract parent_path and knowledge_name
-                if len(request.subject_path) < 1:
-                    return Result[dict](
-                        success=False,
-                        errorCode=ErrorCode.INVALID_PARAMETERS,
-                        errorMessage="Subject path must have at least one component for knowledge",
-                    )
-
-                parent_path = request.subject_path[:-1] if len(request.subject_path) > 1 else []
-                knowledge_name = request.subject_path[-1]
-
-                deleted = self.knowledge_rag.delete_knowledge(parent_path, knowledge_name)
-                if not deleted:
-                    return Result[dict](
-                        success=False,
-                        errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                        errorMessage=f"Knowledge not found: {knowledge_name}",
-                    )
-
-                logger.info(f"Successfully deleted knowledge: {knowledge_name}")
                 return Result[dict](success=True, data={})
 
             else:

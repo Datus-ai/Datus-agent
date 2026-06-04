@@ -30,7 +30,6 @@ from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.agent.node.compare_agentic_node import CompareAgenticNode
 from datus.agent.node.explore_agentic_node import ExploreAgenticNode
 from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
-from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
 from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
 from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
@@ -388,36 +387,6 @@ class TestSqlSummaryBuildSuccessResultFallback:
         ctx = _ctx(last_successful_output={"raw_output": ""})
         result = node._build_success_result(ctx)
         assert "raw_output" in result.response
-
-
-# ---------------------------------------------------------------------------
-# GenExtKnowledgeAgenticNode (lines 869, 877, 879)
-# ---------------------------------------------------------------------------
-
-
-class TestGenExtKnowledgeBuildSuccessResultFallback:
-    def test_falls_back_to_raw_output_dict(self):
-        node = _bare_node(GenExtKnowledgeAgenticNode, agent_config=None)
-        node._extract_ext_knowledge_and_output_from_response = lambda payload: (None, None)  # type: ignore[assignment]
-        ctx = _ctx(last_successful_output={"raw_output": {"ext_knowledge_id": "k1"}})
-        result = node._build_success_result(ctx)
-        assert "ext_knowledge_id" in result.response
-
-    def test_falls_back_to_str_of_last_successful_output(self):
-        node = _bare_node(GenExtKnowledgeAgenticNode, agent_config=None)
-        node._extract_ext_knowledge_and_output_from_response = lambda payload: (None, None)  # type: ignore[assignment]
-        ctx = _ctx(last_successful_output={"raw_output": ""})
-        result = node._build_success_result(ctx)
-        assert "raw_output" in result.response
-
-    def test_uses_extracted_output_when_present(self):
-        # Parser surfaces an explicit output string — it wins over the
-        # raw fallback even when last_successful_output is set.
-        node = _bare_node(GenExtKnowledgeAgenticNode, agent_config=None)
-        node._extract_ext_knowledge_and_output_from_response = lambda payload: ("k1", "extracted text")  # type: ignore[assignment]
-        ctx = _ctx(response_content="raw")
-        result = node._build_success_result(ctx)
-        assert result.response == "extracted text"
 
 
 # ---------------------------------------------------------------------------

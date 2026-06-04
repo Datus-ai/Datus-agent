@@ -120,13 +120,12 @@ class TestDateParserNodeExecute:
         assert node.result.success is False
         assert "parse error" in node.result.error
 
-    def test_execute_updates_external_knowledge(self):
-        """When date_context is non-empty, external_knowledge should be updated."""
+    def test_execute_updates_date_ranges(self):
+        """When date_context is non-empty, date_ranges should be updated."""
         task = SqlTask(
             task="Q1 sales",
             database_type="sqlite",
             database_name="db",
-            external_knowledge="prior knowledge",
         )
         node = make_node(DateParserInput(sql_task=task))
         node.model = MagicMock()

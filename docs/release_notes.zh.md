@@ -169,7 +169,6 @@
 
 **增强**
 
-- **知识生成迭代** - 增强 external knowledge node，改进知识存储并提升 context search 准确率。[文档](knowledge_base/ext_knowledge.md)
 - **语义工具优化** - 优化语义工具与 context search，在 CLI 中获得更快、更相关的结果。
 - **生成 Prompt 字符串校验** - 加强多个 prompt template 的字符串校验，提升生成结果可靠性。
 - **基于 Action 的用户交互模型** - 重做 CLI 交互层，统一以 action-based 模型驱动 execution、generation 与 planning。

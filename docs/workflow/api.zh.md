@@ -95,7 +95,6 @@ client_id=your_client_id&client_secret=your_client_secret&grant_type=client_cred
 | `domain` | string | ❌ | 业务域 |
 | `layer1` | string | ❌ | 业务层级 1 |
 | `layer2` | string | ❌ | 业务层级 2 |
-| `ext_knowledge` | string | ❌ | 额外业务上下文 |
 
 #### 同步模式（mode: "sync"）
 **请求头：**

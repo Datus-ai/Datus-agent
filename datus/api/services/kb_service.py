@@ -13,11 +13,6 @@ from datus.api.models.kb_models import (
 )
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.batch_events import BatchEvent, BatchStage
-from datus.storage.ext_knowledge.ext_knowledge_init import (
-    init_ext_knowledge,
-    init_success_story_knowledge,
-)
-from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
 from datus.storage.metric.metric_init import init_success_story_metrics
 from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql import ReferenceSqlRAG
@@ -196,9 +191,6 @@ class KbService:
             elif component == KbComponent.METRICS:
                 return self._init_metrics(config, strategy, dir_path, args, subject_tree, emit)
 
-            elif component == KbComponent.EXT_KNOWLEDGE:
-                return self._init_ext_knowledge(config, strategy, pool_size, dir_path, args, subject_tree)
-
             elif component == KbComponent.REFERENCE_SQL:
                 return self._init_reference_sql(config, strategy, pool_size, dir_path, args, subject_tree, emit)
 
@@ -289,29 +281,6 @@ class KbService:
                 "error": error_message,
             }
         return {"status": "failed", "message": error_message}
-
-    def _init_ext_knowledge(
-        self,
-        config: AgentConfig,
-        strategy: str,
-        pool_size: int,
-        dir_path: str,
-        args: types.SimpleNamespace,
-        subject_tree: Optional[list],
-    ) -> dict:
-        rag = ExtKnowledgeRAG(config)
-
-        if hasattr(args, "ext_knowledge") and args.ext_knowledge:
-            init_ext_knowledge(rag.store, args, build_mode=strategy, pool_size=pool_size)
-        elif hasattr(args, "success_story") and args.success_story:
-            successful, error_message = init_success_story_knowledge(config, args.success_story, subject_tree)
-            if not successful:
-                return {"status": "failed", "message": error_message}
-
-        return {
-            "status": "success",
-            "message": f"ext_knowledge bootstrap completed, knowledge_size={rag.store.table_size()}",
-        }
 
     def _init_reference_sql(
         self,
@@ -487,12 +456,10 @@ class KbService:
         # Resolve relative paths against the project root
         success_story = os.path.join(project_root, request.success_story) if request.success_story else None
         sql_dir = os.path.join(project_root, request.sql_dir) if request.sql_dir else None
-        ext_knowledge = os.path.join(project_root, request.ext_knowledge) if request.ext_knowledge else None
 
         return types.SimpleNamespace(
             success_story=success_story,
             sql_dir=sql_dir,
-            ext_knowledge=ext_knowledge,
             schema_linking_type=request.schema_linking_type,
             catalog=request.catalog or "",
             database_name=request.database_name or "",

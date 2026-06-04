@@ -14,7 +14,7 @@ Tests cover:
 - _extract_report_from_json
 - _extract_sql_and_output_from_content
 - Display methods: _display_sql_with_copy, _display_markdown_response,
-  _display_semantic_model, _display_sql_summary_file, _display_ext_knowledge_file,
+  _display_semantic_model, _display_sql_summary_file,
   INTERACTION rendering (via ActionRenderer)
 - cmd_clear_chat
 - cmd_chat_info
@@ -407,16 +407,6 @@ class TestCreateNewNode:
         assert isinstance(node, SqlSummaryAgenticNode)
         assert node.agent_config is real_agent_config
 
-    def test_gen_ext_knowledge_node_creation(self, real_agent_config, mock_llm_create):
-        """subagent_name='gen_ext_knowledge' creates a GenExtKnowledgeAgenticNode."""
-        from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
-
-        cmds = _make_chat_commands(real_agent_config)
-        node = cmds._create_new_node(subagent_name="gen_ext_knowledge")
-
-        assert isinstance(node, GenExtKnowledgeAgenticNode)
-        assert node.agent_config is real_agent_config
-
     def test_gen_report_node_creation(self, real_agent_config, mock_llm_create):
         """subagent_name with node_class='gen_report' creates a GenReportAgenticNode."""
         from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
@@ -527,21 +517,6 @@ class TestCreateNodeInput:
         assert isinstance(node_input, SqlSummaryNodeInput)
         assert node_type == "sql_summary"
         assert node_input.user_message == "Summarize SQL"
-
-    def test_ext_knowledge_node_input(self, real_agent_config, mock_llm_create):
-        """GenExtKnowledgeAgenticNode gets ExtKnowledgeNodeInput with 'ext_knowledge' type."""
-        from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
-        from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput
-
-        cmds = _make_chat_commands(real_agent_config)
-        node = cmds._create_new_node(subagent_name="gen_ext_knowledge")
-        assert isinstance(node, GenExtKnowledgeAgenticNode)
-
-        node_input, node_type = cmds.create_node_input("Add business knowledge", node, [], [], [])
-
-        assert isinstance(node_input, ExtKnowledgeNodeInput)
-        assert node_type == "ext_knowledge"
-        assert node_input.user_message == "Add business knowledge"
 
     def test_gen_report_node_input(self, real_agent_config, mock_llm_create):
         """GenReportAgenticNode gets GenReportNodeInput with 'gen_report' type."""
@@ -882,21 +857,6 @@ class TestDisplaySqlSummaryFile:
         output = _get_console_output(console)
         assert "/output/summary.yaml" in output
         assert "SQL Summary File" in output
-
-
-class TestDisplayExtKnowledgeFile:
-    """Tests for _display_ext_knowledge_file console output."""
-
-    def test_file_path_displayed(self, real_agent_config, mock_llm_create):
-        """External knowledge file path is displayed."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
-        cmds._display_ext_knowledge_file("/output/knowledge.yaml")
-
-        output = _get_console_output(console)
-        assert "/output/knowledge.yaml" in output
-        assert "External Knowledge File" in output
 
 
 class TestDisplaySuccess:
@@ -1652,16 +1612,6 @@ class TestDisplayExceptionPaths:
 
         output = _get_console_output(console)
         assert "test_summary.yaml" in output
-
-    def test_display_ext_knowledge_file_normal(self, real_agent_config, mock_llm_create):
-        """Normal display of external knowledge file path."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
-        cmds._display_ext_knowledge_file("/output/test_knowledge.yaml")
-
-        output = _get_console_output(console)
-        assert "test_knowledge.yaml" in output
 
     def test_display_success_text_content_type(self, real_agent_config, mock_llm_create):
         """Text content type renders as plain text."""

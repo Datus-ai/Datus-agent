@@ -82,7 +82,7 @@ If the user wants live filters / period selectors / re-runnable queries, that is
 {% endif %}
 {% if has_context_search_tools %}
 **Context Search Tools:**
-- `list_subject_tree`, etc. — discover Datus subject directories, metric registries, reference SQL, and external knowledge files curated for this project.
+- `list_subject_tree`, etc. — discover Datus subject directories, metric registries, and reference SQL curated for this project.
 {% endif %}
 
 **Filesystem Tools** (`read_file`, `write_file`, `edit_file`, `delete_file`, `glob`, `grep`):
@@ -109,7 +109,7 @@ If the user wants live filters / period selectors / re-runnable queries, that is
   Required brief args:
   - `goal` — one-line research question this query answers (e.g. "distribution of high-risk signups by month"). Becomes the first SQL comment line; not persisted separately in the brief file.
   - `hypothesis` — one-sentence concrete prediction this query validates (e.g. "signups cluster around promotional campaigns"). NOT a re-statement of `goal`. If you don't have a hypothesis, **skip the query** — placeholder hypotheses pollute the analysis layer.
-  - `uses` — `{ "metrics": [{"path": [...], "name": "..."}], "reference_sql": [...], "ext_knowledge": [...] }` listing the subject-library assets this query drew on. Each entry is the **`path` + `name` pair you already get back from `list_metrics` / `search_metrics` / `list_subject_tree`** — copy those two fields verbatim. Do NOT join them into a string, do NOT add a `metric:` prefix, do NOT use any opaque `id` field you may see in tool output. Example shape (illustrative — replace with real values from your discovery tools): `{ "metrics": [{"path": ["Demo", "Bucket"], "name": "gross_value"}], "reference_sql": [], "ext_knowledge": [] }`. Omit empty buckets. Pure ad-hoc raw-table SQL keeps it empty.
+  - `uses` — `{ "metrics": [{"path": [...], "name": "..."}], "reference_sql": [...] }` listing the subject-library assets this query drew on. Each entry is the **`path` + `name` pair you already get back from `list_metrics` / `search_metrics` / `list_subject_tree`** — copy those two fields verbatim. Do NOT join them into a string, do NOT add a `metric:` prefix, do NOT use any opaque `id` field you may see in tool output. Example shape (illustrative — replace with real values from your discovery tools): `{ "metrics": [{"path": ["Demo", "Bucket"], "name": "gross_value"}], "reference_sql": [] }`. Omit empty buckets. Pure ad-hoc raw-table SQL keeps it empty.
   - `caveats` — **before deciding this field is empty, run through this checklist**:
     1. **JOIN type implications on the denominator** — `LEFT JOIN` vs `INNER JOIN` changes which rows survive; if your aggregate's denominator includes rows that another reader would assume are excluded (e.g. "avg accounts per person" computed over ALL persons including those with zero accounts), CALL IT OUT.
     2. **Hardcoded value lists that won't auto-update** — `WHERE x IN ('a', 'b', 'c')`, top-N whitelists, fixed `CASE WHEN` enumerations. If a new value appears in the source data later, this query won't pick it up. State the cutoff or rationale.
@@ -149,7 +149,7 @@ If the user wants live filters / period selectors / re-runnable queries, that is
 7. **Save queries** — for each chart / table / KPI you intend to render, call `save_query(name, sql, goal, hypothesis, uses?)` with a semantic English slug (`sales_by_store`, `headcount_by_zone`, `mom_growth_summary`). Aim for 3–10 queries.
    - **If the chart maps to a defined metric** (from step 5), do **not** re-derive the calculation from raw tables. Call `query_metrics(metrics=[...], dimensions=[...], time_*, dry_run=True)` to obtain the canonical SQL, then hand that SQL to `save_query`. Add `{"path": <metric's subject path>, "name": <metric name>}` to `uses.metrics` so the analysis layer can attribute the chart correctly — those are the same `path` / `name` values you already passed to `query_metrics`.
    - Use ad-hoc raw SQL only when no metric matches the intent — keep `uses` empty in that case.
-   - Reference SQL you adapted goes in `uses.reference_sql` as `{path, name}` entries; ext-knowledge entries you consulted for thresholds / business rules go in `uses.ext_knowledge` as `{path, name}` too.
+   - Reference SQL you adapted goes in `uses.reference_sql` as `{path, name}` entries.
 8. **Author the render tree** — `write_file` the components under `render/`. Always include `render/app.jsx` as the entry. Split larger reports into focused components — typical layout:
    ```
    render/

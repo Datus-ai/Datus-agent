@@ -88,11 +88,6 @@ class DateParserNode(Node):
             # Store date ranges directly in sql_task.date_ranges
             if date_context:
                 enriched_task_data["date_ranges"] = date_context
-                # Also add to external knowledge for backward compatibility
-                if enriched_task_data.get("external_knowledge"):
-                    enriched_task_data["external_knowledge"] += f"\n\n{date_context}"
-                else:
-                    enriched_task_data["external_knowledge"] = date_context
 
             from datus.schemas.node_models import SqlTask
 

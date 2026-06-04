@@ -981,13 +981,10 @@ def prepare_template_context(
     context["native_tools"] = node_config.tool_list
     context["mcp_tools"] = node_config.mcp
     # Limited context support
-    has_scoped_context = False
-
     scoped_context = node_config.scoped_context
-    if scoped_context:
-        has_scoped_context = bool(
-            scoped_context.tables or scoped_context.metrics or scoped_context.sqls or scoped_context.ext_knowledge
-        )
+    has_scoped_context = bool(
+        scoped_context and (scoped_context.tables or scoped_context.metrics or scoped_context.sqls)
+    )
 
     context["scoped_context"] = has_scoped_context
 

@@ -26,7 +26,6 @@ from rich.console import Console
 from datus.cli.action_display import ActionHistoryDisplay
 from datus.cli.bootstrap_app import BootstrapApp, BootstrapPlan, TaskSpec
 from datus.cli.bootstrap_streams import (
-    stream_knowledge,
     stream_metadata,
     stream_metrics,
     stream_reference_sql,
@@ -151,15 +150,6 @@ class BootstrapCommands:
             )
         if spec.name == "metrics":
             return stream_metrics(
-                self.agent_config,
-                datasource=ds,
-                success_story=o.get("success_story", ""),
-                pool_size=pool,
-                build_mode=bm,
-                subject_tree=subject_tree,
-            )
-        if spec.name == "knowledge":
-            return stream_knowledge(
                 self.agent_config,
                 datasource=ds,
                 success_story=o.get("success_story", ""),

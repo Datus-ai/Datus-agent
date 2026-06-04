@@ -513,12 +513,6 @@ def _fmt_search_semantic_objects(result: Any) -> str:
     return _list_count(result, "object", "objects")
 
 
-def _fmt_search_knowledge(result: Any) -> str:
-    if isinstance(result, list):
-        return f"{len(result)} knowledge"
-    return ""
-
-
 # === Generation / semantic-model-gen tools ===
 
 
@@ -716,7 +710,7 @@ def _fmt_list_subject_tree(result: Any) -> str:
     if not isinstance(result, dict):
         return ""
 
-    leaf_keys = {"metrics", "reference_sql", "knowledge", "reference_template"}
+    leaf_keys = {"metrics", "reference_sql", "reference_template"}
     total = 0
 
     def walk(node: Any) -> None:
@@ -754,12 +748,6 @@ def _fmt_get_reference_sql(result: Any) -> str:
     if isinstance(result, list):
         n = len(result)
         return f"{n} SQL" if n == 1 else f"{n} SQLs"
-    return ""
-
-
-def _fmt_get_knowledge(result: Any) -> str:
-    if isinstance(result, list):
-        return f"{len(result)} knowledge"
     return ""
 
 
@@ -985,8 +973,6 @@ def _fmt_task(result: Any) -> str:
         return f"{n} semantic model" if n == 1 else f"{n} semantic models"
     if result.get("sql_summary_file"):
         return "SQL summary saved"
-    if result.get("ext_knowledge_file"):
-        return "knowledge saved"
     if result.get("report_result") is not None:
         return "report ready"
     skill_name = result.get("skill_name")
@@ -1169,7 +1155,6 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "search_metrics": _fmt_search_metrics,
         "search_reference_sql": _fmt_search_reference_sql,
         "search_semantic_objects": _fmt_search_semantic_objects,
-        "search_knowledge": _fmt_search_knowledge,
         # Generation / semantic discovery
         "check_semantic_object_exists": _fmt_check_semantic_object_exists,
         "check_semantic_model_exists": _fmt_check_semantic_model_exists,
@@ -1198,7 +1183,6 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "list_subject_tree": _fmt_list_subject_tree,
         "get_metrics": _fmt_get_metrics,
         "get_reference_sql": _fmt_get_reference_sql,
-        "get_knowledge": _fmt_get_knowledge,
         # Reference templates
         "search_reference_template": _fmt_search_reference_template,
         "get_reference_template": _fmt_get_reference_template,

@@ -147,7 +147,6 @@ flow_groups:
             nodeids:
               - tests/integration/agent/test_gen_semantic_model_agentic.py
               - tests/integration/agent/test_gen_metrics_agentic.py
-              - tests/integration/agent/test_gen_ext_knowledge_agentic.py
               - tests/integration/agent/test_sql_summary_agentic.py
           weekly_benchmark:
             status: covered
@@ -483,14 +482,13 @@ flow_groups:
             notes: Metadata is part of the Baisheng scenario context.
         gaps: []
 
-      - id: knowledge_base.semantic_model_metrics_external_knowledge
-        title: Semantic model, metrics, and external knowledge
+      - id: knowledge_base.semantic_model_metrics
+        title: Semantic model and metrics
         priority: p0
         quality_sensitive: true
         docs:
           - docs/knowledge_base/semantic_model.md
           - docs/knowledge_base/metrics.md
-          - docs/knowledge_base/ext_knowledge.md
           - docs/subagent/gen_semantic_model.md
           - docs/subagent/gen_metrics.md
           - docs/configuration/semantic_layer.md
@@ -498,32 +496,29 @@ flow_groups:
           - CLI bootstrap
           - Gen semantic model subagent
           - Gen metrics subagent
-          - Gen external knowledge subagent
+          - Extract-knowledge skill
           - Context search tools
         contracts:
           - Bootstrap and agentic generation persist semantic objects that are available to query-time retrieval.
-          - Metrics, semantic models, and external knowledge remain separable by kind and datasource scope.
+          - Metrics and semantic models remain separable by kind and datasource scope, and extracted knowledge is captured as markdown via the extract-knowledge skill.
         coverage:
           pr_acceptance:
             status: covered
             nodeids:
               - tests/unit_tests/agent/node/test_gen_semantic_model_agentic_node.py
               - tests/unit_tests/agent/node/test_gen_metrics_agentic_node.py
-              - tests/unit_tests/agent/node/test_gen_ext_knowledge_agentic_node.py
               - tests/unit_tests/tools/func_tool/test_context_search.py
           merge_queue:
             status: covered
             nodeids:
               - tests/unit_tests/agent/node/test_gen_semantic_model_agentic_node.py
               - tests/unit_tests/agent/node/test_gen_metrics_agentic_node.py
-              - tests/unit_tests/agent/node/test_gen_ext_knowledge_agentic_node.py
               - tests/unit_tests/tools/func_tool/test_context_search.py
           nightly:
             status: covered
             nodeids:
               - tests/integration/agent/test_gen_semantic_model_agentic.py
               - tests/integration/agent/test_gen_metrics_agentic.py
-              - tests/integration/agent/test_gen_ext_knowledge_agentic.py
           weekly_benchmark:
             status: covered
             notes: Baisheng weekly benchmark exercises retrieval-backed query generation.

@@ -152,28 +152,6 @@ def test_collect_metrics_full_form(app: BootstrapApp) -> None:
     }
 
 
-def test_collect_knowledge_only_success_story(app: BootstrapApp) -> None:
-    app._know_success_story.text = "/data/success.csv"
-    opts = app._collect_for(_Tab.KNOWLEDGE)
-    # No source / ext_knowledge_csv keys — they were removed in the simplification.
-    assert opts == {
-        "datasource": "ssb_sqlite",
-        "success_story": "/data/success.csv",
-        "pool_size": 4,
-        "subject_tree": "",
-        "build_mode": "incremental",
-    }
-
-
-def test_collect_knowledge_overwrite_with_subjects(app: BootstrapApp) -> None:
-    app._know_success_story.text = "/data/success.csv"
-    app._know_subject_tree.text = "A,B"
-    app._know_overwrite.checked = True
-    opts = app._collect_for(_Tab.KNOWLEDGE)
-    assert opts["build_mode"] == "overwrite"
-    assert opts["subject_tree"] == "A,B"
-
-
 # ─────────────────────────────────────────────────────────────────────
 # Removed-fields guard — every tab must produce ONLY the simplified key
 # set; if anyone re-adds a stale field they'll trip these assertions.
@@ -186,7 +164,6 @@ _EXPECTED_KEYS = {
     _Tab.TEMPLATE: {"datasource", "template_dir", "pool_size", "subject_tree", "build_mode"},
     _Tab.SEMANTIC: {"datasource", "success_story", "build_mode"},
     _Tab.METRICS: {"datasource", "success_story", "pool_size", "subject_tree", "build_mode"},
-    _Tab.KNOWLEDGE: {"datasource", "success_story", "pool_size", "subject_tree", "build_mode"},
 }
 
 
@@ -201,8 +178,6 @@ def test_no_unexpected_keys_per_tab(app: BootstrapApp, tab: _Tab) -> None:
         app._sem_success_story.text = "x"
     elif tab == _Tab.METRICS:
         app._met_success_story.text = "x"
-    elif tab == _Tab.KNOWLEDGE:
-        app._know_success_story.text = "x"
     opts = app._collect_for(tab)
     assert set(opts.keys()) == _EXPECTED_KEYS[tab]
 

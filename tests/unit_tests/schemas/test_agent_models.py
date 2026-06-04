@@ -90,7 +90,6 @@ class TestScopedContextMerge:
         tables="public.users,public.orders",
         metrics="rev",
         sqls="q1",
-        ext_knowledge="kb1",
     )
 
     def test_child_none_inherits_parent(self):
@@ -98,7 +97,6 @@ class TestScopedContextMerge:
         assert merged.tables == "public.users,public.orders"
         assert merged.metrics == "rev"
         assert merged.sqls == "q1"
-        assert merged.ext_knowledge == "kb1"
         assert merged.datasource == "db_p"
 
     def test_child_empty_inherits_parent(self):
@@ -119,10 +117,9 @@ class TestScopedContextMerge:
         child = ScopedContext(tables="public.products")
         merged = merge_scoped_contexts(self.PARENT, child)
         assert merged.tables == "public.products"
-        # Whole-segment override: parent metrics/sqls/ext_knowledge dropped.
+        # Whole-segment override: parent metrics/sqls dropped.
         assert merged.metrics is None
         assert merged.sqls is None
-        assert merged.ext_knowledge is None
 
     def test_child_with_metrics_replaces_whole_segment(self):
         child = ScopedContext(metrics="orders_per_day")

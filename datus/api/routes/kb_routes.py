@@ -87,8 +87,6 @@ def _validate_paths(request: BootstrapKbInput, project_root: str) -> None:
         safe_resolve(base, request.success_story)
     if request.sql_dir:
         safe_resolve(base, request.sql_dir)
-    if request.ext_knowledge:
-        safe_resolve(base, request.ext_knowledge)
 
 
 # ======================================================================

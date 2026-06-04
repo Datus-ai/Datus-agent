@@ -102,18 +102,6 @@ class TestCreateInteractiveNode:
             session_id=None,
         )
 
-    @patch("datus.agent.node.gen_ext_knowledge_agentic_node.GenExtKnowledgeAgenticNode.__init__", return_value=None)
-    def test_gen_ext_knowledge(self, mock_init):
-        config = _mock_agent_config()
-        create_interactive_node("gen_ext_knowledge", config)
-        mock_init.assert_called_once_with(
-            node_name="gen_ext_knowledge",
-            agent_config=config,
-            execution_mode="interactive",
-            scope=None,
-            session_id=None,
-        )
-
     @patch("datus.agent.node.gen_report_agentic_node.GenReportAgenticNode.__init__", return_value=None)
     def test_gen_report(self, mock_init):
         config = _mock_agent_config()
@@ -416,20 +404,6 @@ class TestCreateNodeInput:
                 "summarize",
                 {"database": "mydb"},
                 {"user_message": "summarize", "database": "mydb"},
-            ),
-            (
-                "datus.agent.node.gen_ext_knowledge_agentic_node",
-                "GenExtKnowledgeAgenticNode",
-                "add knowledge",
-                {},
-                {"user_message": "add knowledge", "catalog": None, "database": None, "db_schema": None},
-            ),
-            (
-                "datus.agent.node.gen_ext_knowledge_agentic_node",
-                "GenExtKnowledgeAgenticNode",
-                "add knowledge with context",
-                {"catalog": "cat", "database": "db", "db_schema": "sch"},
-                {"user_message": "add knowledge with context", "catalog": "cat", "database": "db", "db_schema": "sch"},
             ),
             (
                 "datus.agent.node.gen_table_agentic_node",

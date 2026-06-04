@@ -295,10 +295,9 @@ def _strip_leading_slashes(value: Any) -> list[str]:
 
 
 # Keys inside ``scoped_context`` that hold subject-tree path entries. The API's
-# flat ``subjects`` array is the union of all three; the runtime stores them
-# split because each store (metrics, reference SQL, ext_knowledge) owns its own
-# scope filter.
-_SUBJECT_BUCKET_KEYS: tuple[str, ...] = ("metrics", "sqls", "ext_knowledge")
+# flat ``subjects`` array is the union of both stores; the runtime stores them
+# split because each store (metrics, reference SQL) owns its own scope filter.
+_SUBJECT_BUCKET_KEYS: tuple[str, ...] = ("metrics", "sqls")
 
 
 def _classify_subject_paths(
@@ -306,21 +305,21 @@ def _classify_subject_paths(
     subject_paths: list[str],
     datasource_id: Optional[str] = None,
 ) -> dict[str, list[str]]:
-    """Bucket subject paths into ``metrics`` / ``sqls`` / ``ext_knowledge``.
+    """Bucket subject paths into ``metrics`` / ``sqls``.
 
     The API surfaces a single ``subjects`` array — dot-separated paths like
     ``Commerce.Orders.Average_Order_Value.average_gross_order_value`` — that's
     the merged union of all entries the editor's subject-tree exposes
     (Metrics, Reference SQLs, Knowledge — see
     ``ExplorerService.get_subject_list``). The runtime expects them split:
-    ``ScopedContext.metrics`` / ``.sqls`` / ``.ext_knowledge`` each drive an
+    ``ScopedContext.metrics`` / ``.sqls`` each drive an
     independent scope filter.
 
     For every input path:
 
     1. Split via ``split_reference_path`` (handles quoted segments).
     2. Resolve the parent subject node via ``SubjectTreeStore.get_node_by_path``.
-    3. Probe the metric / reference-sql / ext-knowledge stores for an entry
+    3. Probe the metric / reference-sql stores for an entry
        named ``parts[-1]`` under that node.
     4. Bucket on the first store that owns the name.
 
@@ -335,7 +334,6 @@ def _classify_subject_paths(
         return buckets
 
     try:
-        from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
         from datus.storage.metric.store import MetricRAG
         from datus.storage.reference_sql.store import ReferenceSqlRAG
         from datus.storage.registry import get_subject_tree_store
@@ -359,7 +357,6 @@ def _classify_subject_paths(
         subject_tree = get_subject_tree_store(project=agent_config.project_name)
         metric_storage = MetricRAG(agent_config, datasource_id=ds).storage
         sql_storage = ReferenceSqlRAG(agent_config, datasource_id=ds).reference_sql_storage
-        knowledge_storage = ExtKnowledgeRAG(agent_config, datasource_id=ds).store
     except Exception:
         logger.warning("Subject classification storage init failed — routing all subjects to 'metrics'", exc_info=True)
         buckets["metrics"] = list(subject_paths)
@@ -368,7 +365,6 @@ def _classify_subject_paths(
     probes: tuple[tuple[str, Any], ...] = (
         ("metrics", metric_storage),
         ("sqls", sql_storage),
-        ("ext_knowledge", knowledge_storage),
     )
 
     for path in subject_paths:
@@ -402,7 +398,7 @@ def _classify_subject_paths(
 
 
 def _merge_subjects_from_scoped_context(scoped_ctx: Optional[dict]) -> list[str]:
-    """Flatten ``metrics`` / ``sqls`` / ``ext_knowledge`` back into one list.
+    """Flatten ``metrics`` / ``sqls`` back into one list.
 
     Inverse of :func:`_classify_subject_paths`. Stored entries are returned
     verbatim (canonical dot-separated form), with duplicates dropped while
@@ -433,7 +429,7 @@ def _build_scoped_context(
     edits, an explicit ``request.scoped_context`` for inputs that send one).
 
     ``ScopedContext`` (``datus/schemas/agent_models.py``) only defines
-    ``datasource`` / ``tables`` / ``metrics`` / ``sqls`` / ``ext_knowledge``;
+    ``datasource`` / ``tables`` / ``metrics`` / ``sqls``;
     the API's ``catalogs`` array is the editor's name for the same scope as
     runtime ``tables`` (catalog/database/schema/table identifiers consumed by
     ``ScopedFilterBuilder.build_table_filter``), so this helper writes
@@ -447,9 +443,9 @@ def _build_scoped_context(
     ``None`` leaves the existing value intact.
 
     ``subject_buckets`` (pre-classified by :func:`_classify_subject_paths`)
-    are written to the runtime-visible ``metrics`` / ``sqls`` /
-    ``ext_knowledge`` keys; passing a non-``None`` ``subject_buckets``
-    rewrites all three bucket keys (an empty bucket clears its key), so the
+    are written to the runtime-visible ``metrics`` / ``sqls`` keys;
+    passing a non-``None`` ``subject_buckets`` rewrites both bucket keys
+    (an empty bucket clears its key), so the
     API contract is "the caller's ``subjects`` list is the new full scope."
 
     Returns ``None`` when the merged dict would be empty.
@@ -769,8 +765,8 @@ class AgentService:
 
         # The API ``catalogs`` field maps to ``scoped_context.tables`` (the
         # runtime-honored key consumed by ``ScopedFilterBuilder.build_table_filter``).
-        # ``subjects`` is recomposed from the three runtime buckets
-        # (``metrics`` / ``sqls`` / ``ext_knowledge``) — the inverse of the
+        # ``subjects`` is recomposed from the runtime buckets
+        # (``metrics`` / ``sqls``) — the inverse of the
         # save-side classification. Stored dot-form (wizard convention) is
         # converted to the API's slash-form on the way out.
         scoped_ctx = agent.get("scoped_context") if isinstance(agent.get("scoped_context"), dict) else {}
@@ -1092,8 +1088,8 @@ class AgentService:
         # The API ``catalogs`` field maps to ``scoped_context.tables`` — that's
         # the runtime-honored key consumed by
         # ``ScopedFilterBuilder.build_table_filter``. ``subjects`` is *classified*
-        # (via the metric / reference-sql / ext-knowledge stores) and split
-        # across the runtime-visible ``metrics`` / ``sqls`` / ``ext_knowledge``
+        # (via the metric / reference-sql stores) and split
+        # across the runtime-visible ``metrics`` / ``sqls``
         # keys, since ``ScopedContext`` has no flat ``subjects`` field. Editing
         # any scope-related field also rewrites ``scoped_context.datasource`` to
         # the active datasource so ``SubAgentConfig.is_in_datasource`` agrees
@@ -1121,7 +1117,7 @@ class AgentService:
             # ``agent_config.current_datasource`` is unset but the agent
             # already has a saved binding under ``scoped_context.datasource``,
             # the classifier must use the saved DS to look up entries in the
-            # right metric / sql / ext_knowledge stores. Otherwise it would
+            # right metric / sql stores. Otherwise it would
             # fall back to "no datasource → all metrics" and silently
             # mis-bucket subjects against a binding that's about to be
             # re-persisted by ``_build_scoped_context``.

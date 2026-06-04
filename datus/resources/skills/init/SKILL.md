@@ -22,6 +22,7 @@ Follow these steps in order:
 1. Use `ask_user` to ask: **"What is the goal of this project? Describe it in 1-2 sentences."**
 2. Use `filesystem_tools` to list the current directory structure (scan top 3 levels, skip hidden dirs and `__pycache__`/`node_modules`/.venv`)
 3. Read `README.md` if it exists (first 3000 chars)
+4. If `./knowledge/` exists, list its `*.md` files — these become the `## Knowledge` section index in Step 3
 
 ## Step 2: Select Services
 
@@ -96,6 +97,13 @@ Describe data artifacts, configs, or outputs this project produces:
 - SQL files, reference queries
 - Reports, dashboards
 - API schemas, config files
+
+### ## Knowledge
+Index of business knowledge extracted from gold SQL pairs. Maintained by the `/extract-knowledge` skill.
+
+- If `./knowledge/` is empty or missing, render a single placeholder line: `_No extracted knowledge yet. Run /extract-knowledge to add entries._`
+- Otherwise, list one bullet per `*.md` file (alphabetical):
+  - `- [<topic title>](knowledge/<topic-slug>.md) — <one-line summary from the file's first paragraph>`
 
 ## Step 4: Write File
 

@@ -28,7 +28,9 @@ class GenSQLNodeInput(BaseInput):
     database: Optional[str] = Field(default=None, description="Database name for context")
     db_schema: Optional[str] = Field(default=None, description="Database schema for context")
     max_turns: int = Field(default=30, description="Maximum conversation turns per interaction")
-    external_knowledge: Optional[str] = Field(default="", description="External knowledge")
+    external_knowledge: Optional[str] = Field(
+        default="", description="Supplementary description / evidence supplied with the question"
+    )
     workspace_root: Optional[str] = Field(default=None, description="Root directory path for filesystem MCP server")
     prompt_version: Optional[str] = Field(default=None, description="Version for prompt template")
     prompt_language: Optional[str] = Field(default="en", description="Language for prompt template")

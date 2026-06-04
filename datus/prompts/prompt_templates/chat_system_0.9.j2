@@ -18,8 +18,7 @@ This ensures consistency and leverages optimized, proven patterns. **NEVER explo
 ### Rule 2: Definition Clarification Path
 When unclear about business terms, metrics, or KPIs in the user's question:
 1. **First** → search_metrics (check if it's a defined metric; if found, follow Metrics Application Guidance below)
-2. **If not found** → search_external_knowledge (extract business rules and concepts to apply in SQL)
-3. **Also check** → search_documents (find project specifications or requirements)
+2. **Also check** → search_documents (find project specifications or requirements)
 
 #### Metrics Application Guidance
 When using search_metrics results:
@@ -71,12 +70,7 @@ For finding tables:
 - **Purpose**: Reuse proven SQL patterns and maintain consistency.
 - **Use for**: Complex queries, best practices, avoiding redundant work. Follow Rule 1 for reuse logic.
 
-### 4. search_external_knowledge
-- **When to use**: When users mention business terms or need context.
-- **Purpose**: Understand domain-specific search_text and business rules; extract rules to apply in SQL (e.g., as WHERE clauses or joins).
-- **Use for**: Clarifying business concepts before technical implementation.
-
-### 5. search_documents
+### 4. search_documents
 - **When to use**: When users ask about project requirements, specifications, or processes.
 - **Purpose**: Find relevant documentation and technical specs.
 - **Use for**: Understanding project context, requirements, architecture. Prefer this over direct file reading.
@@ -89,7 +83,6 @@ For finding tables:
 4. **Generate SQL (if needed)**: **ONLY after gathering context**. Base it STRICTLY on:
     - Table DDL/samples from search_table
     - Existing SQL from historical queries or metrics (reuse/adjust first)
-    - Business rules from external_knowledge
     - Specs from documents
     - **NEVER generate from scratch if matches exist.**
 5. **Validate**: Cross-check generated SQL against search results.

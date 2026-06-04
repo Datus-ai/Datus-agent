@@ -368,7 +368,6 @@ class TestCoerceUsesArg:
         assert isinstance(refs, SubjectRefs)
         assert refs.metrics == []
         assert refs.reference_sql == []
-        assert refs.ext_knowledge == []
 
     def test_full_dict_round_trips(self):
         payload = {
@@ -377,11 +376,6 @@ class TestCoerceUsesArg:
                 {"path": ["Commerce", "Orders"], "name": "order_count"},
             ],
             "reference_sql": [{"path": ["Templates"], "name": "top_q"}],
-            "ext_knowledge": [
-                {"path": ["Policies"], "name": "pii"},
-                {"path": ["Policies"], "name": "retention"},
-                {"path": ["Glossary"], "name": "tenant"},
-            ],
         }
         refs = coerce_uses_arg(payload)
         assert [(m.path, m.name) for m in refs.metrics] == [
@@ -389,7 +383,6 @@ class TestCoerceUsesArg:
             (["Commerce", "Orders"], "order_count"),
         ]
         assert refs.reference_sql[0].name == "top_q"
-        assert len(refs.ext_knowledge) == 3
 
     def test_passthrough_for_subject_refs(self):
         original = SubjectRefs(metrics=[SubjectAssetRef(path=["A"], name="x")])

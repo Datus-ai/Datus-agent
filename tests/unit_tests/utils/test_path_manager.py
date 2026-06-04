@@ -136,7 +136,6 @@ class TestDatusPathManagerProperties:
     def test_kb_dirs_live_under_subject(self, pm):
         assert pm.semantic_models_dir == pm.subject_dir / "semantic_models"
         assert pm.sql_summaries_dir == pm.subject_dir / "sql_summaries"
-        assert pm.ext_knowledge_dir == pm.subject_dir / "ext_knowledge"
 
     def test_project_skills_dir(self, pm, tmp_path):
         assert pm.project_skills_dir == (tmp_path / "project").resolve() / ".datus" / "skills"
@@ -198,11 +197,6 @@ class TestDatusPathManagerDataPaths:
     def test_sql_summary_path_creates_dir(self, pm):
         path = pm.sql_summary_path()
         assert path == pm.sql_summaries_dir
-        assert path.exists()
-
-    def test_ext_knowledge_path_creates_dir(self, pm):
-        path = pm.ext_knowledge_path()
-        assert path == pm.ext_knowledge_dir
         assert path.exists()
 
     def test_agent_state_path(self, pm):
@@ -298,11 +292,10 @@ class TestEnsureDirs:
         assert pm.conf_dir.exists()
 
     def test_ensure_subject_tree_dirs(self, pm):
-        pm.ensure_dirs("subject", "semantic_models", "sql_summaries", "ext_knowledge")
+        pm.ensure_dirs("subject", "semantic_models", "sql_summaries")
         assert pm.subject_dir.exists()
         assert pm.semantic_models_dir.exists()
         assert pm.sql_summaries_dir.exists()
-        assert pm.ext_knowledge_dir.exists()
 
     def test_ensure_templates_creates_template_dir_and_copies_defaults(self, pm):
         with patch("datus.utils.resource_utils.copy_data_file") as mock_copy:

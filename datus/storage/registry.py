@@ -169,7 +169,6 @@ def preload_all_storages(
         configure_storage_defaults(**defaults)
 
     # 3. Eagerly create all storage singletons
-    from datus.storage.ext_knowledge.store import ExtKnowledgeStore
     from datus.storage.metric.store import MetricStorage
     from datus.storage.reference_sql.store import ReferenceSqlStorage
     from datus.storage.schema_metadata.store import SchemaStorage, SchemaValueStorage
@@ -180,7 +179,6 @@ def preload_all_storages(
     get_storage(SemanticModelStorage, "semantic_model", project=project)
     get_storage(MetricStorage, "metric", project=project)
     get_storage(ReferenceSqlStorage, "reference_sql", project=project)
-    get_storage(ExtKnowledgeStore, "ext_knowledge", project=project)
     get_subject_tree_store(project=project)
     logger.info("All storage singletons pre-loaded")
 

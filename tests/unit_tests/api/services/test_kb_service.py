@@ -30,7 +30,6 @@ class TestKbServiceBuildArgs:
             strategy="check",
             success_story="data/stories",
             sql_dir="data/sql",
-            ext_knowledge="data/knowledge",
             schema_linking_type="table",
             catalog="main",
             database_name="test_db",
@@ -38,7 +37,6 @@ class TestKbServiceBuildArgs:
         args = KbService._build_args(request, "/project")
         assert args.success_story == "/project/data/stories"
         assert args.sql_dir == "/project/data/sql"
-        assert args.ext_knowledge == "/project/data/knowledge"
         assert args.schema_linking_type == "table"
         assert args.catalog == "main"
         assert args.database_name == "test_db"
@@ -52,7 +50,6 @@ class TestKbServiceBuildArgs:
         args = KbService._build_args(request, "/project")
         assert args.success_story is None
         assert args.sql_dir is None
-        assert args.ext_knowledge is None
 
     def test_build_args_sets_defaults(self):
         """_build_args sets default values for common fields."""
@@ -209,14 +206,14 @@ class TestKbServiceBootstrapStream:
 
         svc = KbService(agent_config=real_agent_config)
         cancel_event = asyncio.Event()
-        request = BootstrapKbInput(components=["metadata", "ext_knowledge"], strategy="check")
+        request = BootstrapKbInput(components=["metadata", "reference_sql"], strategy="check")
 
         events = []
         async for event in svc.bootstrap_stream(request, "multi-stream", cancel_event, str(real_agent_config.home)):
             events.append(event)
 
         assert len(events) >= 2
-        # Should have events for metadata, ext_knowledge, and final "all"
+        # Should have events for requested components and final "all"
         components_seen = {e.component for e in events}
         assert "all" in components_seen
 
@@ -235,20 +232,6 @@ class TestKbServiceBootstrapStream:
         assert len(events) >= 1
         components_seen = {e.component for e in events}
         assert "all" in components_seen
-
-    async def test_bootstrap_stream_ext_knowledge(self, real_agent_config):
-        """bootstrap_stream with ext_knowledge component processes it."""
-        import asyncio
-
-        svc = KbService(agent_config=real_agent_config)
-        cancel_event = asyncio.Event()
-        request = BootstrapKbInput(components=["ext_knowledge"], strategy="check")
-
-        events = []
-        async for event in svc.bootstrap_stream(request, "ek-stream", cancel_event, str(real_agent_config.home)):
-            events.append(event)
-
-        assert len(events) >= 1
 
     async def test_bootstrap_stream_reference_sql(self, real_agent_config):
         """bootstrap_stream with reference_sql component processes it."""
@@ -271,7 +254,7 @@ class TestKbServiceBootstrapStream:
         svc = KbService(agent_config=real_agent_config)
         cancel_event = asyncio.Event()
         request = BootstrapKbInput(
-            components=["metadata", "semantic_model", "ext_knowledge", "reference_sql"],
+            components=["metadata", "semantic_model", "reference_sql"],
             strategy="check",
         )
 
@@ -279,7 +262,7 @@ class TestKbServiceBootstrapStream:
         async for event in svc.bootstrap_stream(request, "all-stream", cancel_event, str(real_agent_config.home)):
             events.append(event)
 
-        assert len(events) >= 4  # At least one per component + final
+        assert len(events) >= 3  # At least one per component + final
         last = events[-1]
         assert last.component == "all"
 
@@ -291,7 +274,7 @@ class TestKbServiceBootstrapStream:
         cancel_event = asyncio.Event()
         cancel_event.set()  # Pre-cancel
 
-        request = BootstrapKbInput(components=["metadata", "ext_knowledge"], strategy="check")
+        request = BootstrapKbInput(components=["metadata", "reference_sql"], strategy="check")
 
         events = []
         async for event in svc.bootstrap_stream(request, "cancel-stream", cancel_event, str(real_agent_config.home)):
@@ -375,20 +358,6 @@ class TestKbServiceRunComponent:
         assert isinstance(result, dict)
         loop.close()
 
-    def test_ext_knowledge_component(self, real_agent_config):
-        """_run_component for ext_knowledge exercises the init path."""
-        import asyncio
-
-        svc = KbService(agent_config=real_agent_config)
-        loop = asyncio.new_event_loop()
-        queue = asyncio.Queue()
-        cancel_event = asyncio.Event()
-
-        request = BootstrapKbInput(components=["ext_knowledge"], strategy="check")
-        result = svc._run_component(request, "ext_knowledge", queue, loop, cancel_event, str(real_agent_config.home))
-        assert isinstance(result, dict)
-        loop.close()
-
     def test_metrics_component(self, real_agent_config):
         """_run_component for metrics exercises the init path (may fail without success_story)."""
         import asyncio
@@ -444,7 +413,7 @@ async def test_kb_bootstrap_acceptance_orchestrates_components_in_order(real_age
     svc = KbService(agent_config=real_agent_config)
     cancel_event = asyncio.Event()
     request = BootstrapKbInput(
-        components=["metadata", "reference_sql", "ext_knowledge"],
+        components=["metadata", "reference_sql"],
         strategy="check",
         subject_tree=["Education", "Schools"],
     )
@@ -464,10 +433,10 @@ async def test_kb_bootstrap_acceptance_orchestrates_components_in_order(real_age
             events.append(event)
 
     completed = [event for event in events if event.stage == BatchStage.TASK_COMPLETED.value]
-    assert [event.component for event in completed[:3]] == ["metadata", "reference_sql", "ext_knowledge"]
+    assert [event.component for event in completed[:2]] == ["metadata", "reference_sql"]
     assert events[-1].component == "all"
     assert events[-1].payload["components"]["reference_sql"]["message"] == "reference_sql checked"
-    assert [call[0] for call in calls] == ["metadata", "reference_sql", "ext_knowledge"]
+    assert [call[0] for call in calls] == ["metadata", "reference_sql"]
     assert all(call[1] == ["Education", "Schools"] for call in calls)
     assert all(call[2] == str(real_agent_config.home) for call in calls)
 

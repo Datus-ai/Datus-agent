@@ -53,7 +53,6 @@ NODE_CLASS_MAP = {
     "gen_report": NodeType.TYPE_GEN_REPORT,
     "gen_visual_report": NodeType.TYPE_GEN_VISUAL_REPORT,
     "gen_visual_dashboard": NodeType.TYPE_GEN_VISUAL_DASHBOARD,
-    "ext_knowledge": NodeType.TYPE_EXT_KNOWLEDGE,
     "semantic": NodeType.TYPE_SEMANTIC,
     "sql_summary": NodeType.TYPE_SQL_SUMMARY,
     "explore": NodeType.TYPE_EXPLORE,
@@ -167,15 +166,6 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "For optimization: load existing skill, analyze usage sessions and tool call patterns, rewrite. "
         "Prompt: describe what skill to create, or 'optimize <skill-name>' to improve an existing skill. "
         "Returns JSON with {response, skill_name, skill_path, tokens_used}."
-    ),
-    "gen_ext_knowledge": (
-        "Discover and extract business knowledge through blind-test → verify → extract workflow. "
-        "Use when asked to generate business knowledge entries, define domain concepts, or build knowledge base. "
-        "Prompt MUST contain a natural language business question AND the gold SQL (reference answer), "
-        "e.g. 'What is the total revenue by region? SELECT region, SUM(revenue) FROM sales GROUP BY region'. "
-        "The agent will parse both from the prompt, autonomously explore the database, write SQL, "
-        "verify against the gold SQL reference, and extract knowledge. "
-        "Returns JSON with {response, ext_knowledge_file, tokens_used}."
     ),
     "gen_table": (
         "Create database tables with two input modes: "
@@ -416,16 +406,6 @@ class SubAgentTaskTool:
                 is_subagent=True,
                 session_id=session_id,
             )
-        elif subagent_type == "gen_ext_knowledge":
-            from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
-
-            return GenExtKnowledgeAgenticNode(
-                node_name="gen_ext_knowledge",
-                agent_config=self.agent_config,
-                execution_mode=self._resolve_execution_mode(),
-                is_subagent=True,
-                session_id=session_id,
-            )
         elif subagent_type == "gen_sql":
             from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
@@ -622,7 +602,6 @@ class SubAgentTaskTool:
             "gen_semantic_model": (NodeType.TYPE_SEMANTIC, "gen_semantic_model"),
             "gen_metrics": (NodeType.TYPE_SEMANTIC, "gen_metrics"),
             "gen_sql_summary": (NodeType.TYPE_SQL_SUMMARY, "gen_sql_summary"),
-            "gen_ext_knowledge": (NodeType.TYPE_EXT_KNOWLEDGE, "gen_ext_knowledge"),
             "ask_metrics": (NodeType.TYPE_ASK_METRICS, "ask_metrics"),
             "gen_table": (NodeType.TYPE_GEN_TABLE, "gen_table"),
             "gen_job": (NodeType.TYPE_GEN_JOB, "gen_job"),
@@ -978,7 +957,6 @@ class SubAgentTaskTool:
             )
 
         # Built-in system subagent input types
-        from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
@@ -1008,11 +986,6 @@ class SubAgentTaskTool:
                 user_message=prompt,
                 database=self.agent_config.current_datasource,
             )
-
-        if isinstance(node, GenExtKnowledgeAgenticNode):
-            from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput
-
-            return ExtKnowledgeNodeInput(user_message=prompt)
 
         from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
 
@@ -1163,17 +1136,6 @@ class SubAgentTaskTool:
                 {
                     "response": response,
                     "sql_summary_file": sql_summary_file,
-                    "tokens_used": tokens,
-                }
-            )
-
-        # External knowledge result: has 'ext_knowledge_file' key
-        ext_knowledge_file = output.get("ext_knowledge_file")
-        if ext_knowledge_file is not None:
-            return _wrap(
-                {
-                    "response": response,
-                    "ext_knowledge_file": ext_knowledge_file,
                     "tokens_used": tokens,
                 }
             )

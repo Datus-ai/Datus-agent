@@ -29,13 +29,12 @@ The current built-in set comes from `SYS_SUB_AGENTS` in code:
 4. `gen_semantic_model`: MetricFlow semantic model generation
 5. `gen_metrics`: MetricFlow metric generation
 6. `gen_sql_summary`: SQL summary generation
-7. `gen_ext_knowledge`: business knowledge extraction
-8. `gen_table`: interactive table creation
-9. `gen_job`: data pipeline jobs (single-database ETL AND cross-database migration)
-10. `gen_skill`: skill creation and optimization
-11. `gen_dashboard`: BI dashboard creation and management
-12. `gen_visual_report`: Self-contained visual report under `reports/<slug>/`
-13. `scheduler`: Airflow job lifecycle management
+7. `gen_table`: interactive table creation
+8. `gen_job`: data pipeline jobs (single-database ETL AND cross-database migration)
+9. `gen_skill`: skill creation and optimization
+10. `gen_dashboard`: BI dashboard creation and management
+11. `gen_visual_report`: Self-contained visual report under `reports/<slug>/`
+12. `scheduler`: Airflow job lifecycle management
 
 See [Built-in subagents](./builtin_subagents.md) for details.
 
@@ -145,7 +144,6 @@ Important behavior:
 | `gen_semantic_model` | Generate MetricFlow semantic models |
 | `gen_metrics` | Generate MetricFlow metrics |
 | `gen_sql_summary` | Summarize SQL into reusable knowledge |
-| `gen_ext_knowledge` | Extract business knowledge from question-SQL pairs |
 | `gen_table` | Create tables interactively |
 | `gen_job` | Build data pipeline jobs (single-database ETL or cross-database migration) |
 | `gen_skill` | Create or optimize skills |

@@ -117,9 +117,6 @@ agent:
     gen_metrics:
       max_turns: 50
       system_prompt: gen_metrics
-    gen_ext_knowledge:
-      max_turns: 30
-      system_prompt: gen_ext_knowledge
     gen_sql_summary:
       max_turns: 30
       system_prompt: gen_sql_summary

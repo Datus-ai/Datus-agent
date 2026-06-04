@@ -31,7 +31,6 @@ Creating a new SQL task
 Enter task description (): How many schools in merged Alameda have number of test takers less than 100?
 Enter database name (benchmark/bird/dev_20240627/dev_databases/california_schools/california_schools.sqlite): california_schools
 Enter output directory (output): 
-Enter external knowledge (optional) (): 
 ```
 
 2. Table Exploration:

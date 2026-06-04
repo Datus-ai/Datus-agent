@@ -8,12 +8,9 @@ from datus.api.deps import ServiceDep
 from datus.api.models.base_models import Result
 from datus.api.models.explorer_models import (
     CreateDirectoryInput,
-    CreateKnowledgeInput,
     DeleteSubjectInput,
-    EditKnowledgeInput,
     EditMetricInput,
     EditSemanticModelInput,
-    KnowledgeInfo,
     MetricInfo,
     ReferenceSQLInfo,
     ReferenceSQLInput,
@@ -73,7 +70,7 @@ async def rename_subject(
     "/subject/delete",
     response_model=Result[dict],
     summary="Delete Subject",
-    description="Delete a subject node (directory, metric, reference SQL, or knowledge) from the tree",
+    description="Delete a subject node (directory, metric, or reference SQL) from the tree",
 )
 async def delete_subject(
     request: DeleteSubjectInput,
@@ -179,48 +176,3 @@ async def edit_semantic_model(
 ) -> Result[dict]:
     """Edit semantic model entry."""
     return await svc.explorer.edit_semantic_model(request)
-
-
-# ========== Knowledge Endpoints ==========
-
-
-@router.post(
-    "/subject/knowledge/create",
-    response_model=Result[dict],
-    summary="Create Knowledge",
-    description="Create a new knowledge entry in the subject tree",
-)
-async def create_knowledge(
-    request: CreateKnowledgeInput,
-    svc: ServiceDep,
-) -> Result[dict]:
-    """Create knowledge."""
-    return await svc.explorer.create_knowledge(request)
-
-
-@router.post(
-    "/subject/knowledge",
-    response_model=Result[KnowledgeInfo],
-    summary="Get Knowledge",
-    description="Get knowledge details by subject path",
-)
-async def get_knowledge(
-    request: SubjectPathInput,
-    svc: ServiceDep,
-) -> Result[KnowledgeInfo]:
-    """Get knowledge."""
-    return await svc.explorer.get_knowledge(request.subject_path)
-
-
-@router.post(
-    "/subject/knowledge/edit",
-    response_model=Result[dict],
-    summary="Edit Knowledge",
-    description="Update knowledge search_text and explanation",
-)
-async def edit_knowledge(
-    request: EditKnowledgeInput,
-    svc: ServiceDep,
-) -> Result[dict]:
-    """Edit knowledge."""
-    return await svc.explorer.edit_knowledge(request)

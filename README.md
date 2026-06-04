@@ -124,7 +124,7 @@ workflow:
 | Category | Nodes |
 |----------|-------|
 | **Core** | `schema_linking`, `execute_sql`, `reasoning`, `reflect`, `output` |
-| **Agentic** | `gen_sql`, `chat`, `explore`, `gen_semantic_model`, `gen_metrics`, `gen_ext_knowledge`, `gen_sql_summary`, `gen_skill`, `gen_table`, `compare` |
+| **Agentic** | `gen_sql`, `chat`, `explore`, `gen_semantic_model`, `gen_metrics`, `gen_sql_summary`, `gen_skill`, `gen_table`, `compare` |
 | **Control Flow** | `parallel`, `selection`, `subworkflow` |
 | **Utility** | `date_parser`, `doc_search`, `fix` |
 
@@ -137,13 +137,12 @@ The knowledge base is powered by **LanceDB** and organizes context into multiple
 - **Reference Templates** — Parameterized Jinja2 SQL templates for stable, reusable queries
 - **Semantic Models** — Business logic and metric definitions
 - **Metrics** — Executable business metrics via semantic layer integration
-- **External Knowledge** — Domain rules and concepts beyond raw schema
 - **Platform Docs** — Ingested from GitHub repos, websites, or local files
 
 Build the knowledge base with:
 
 ```bash
-datus-agent bootstrap-kb --datasource demo --components metadata,reference_sql,ext_knowledge
+datus-agent bootstrap-kb --datasource demo --components metadata,reference_sql
 ```
 
 ## Configuration

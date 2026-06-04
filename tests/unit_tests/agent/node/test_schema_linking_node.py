@@ -44,7 +44,6 @@ def _make_workflow(table_schemas=None, table_values=None, reflection_round=0):
     wf.task.database_name = "test_db"
     wf.task.schema_linking_type = "table"
     wf.task.subject_path = []
-    wf.task.external_knowledge = ""
     wf.context.table_schemas = table_schemas or []
     wf.context.table_values = table_values or []
     wf.reflection_round = reflection_round
@@ -108,8 +107,7 @@ class TestSetupInputSchemaLinking:
         """When workflow has no existing table_schemas, build SchemaLinkingInput from scratch."""
         node = _make_node()
         wf = _make_workflow()
-        with patch.object(node, "_search_external_knowledge", return_value=""):
-            result = node.setup_input(wf)
+        result = node.setup_input(wf)
 
         assert result["success"] is True
         assert isinstance(node.input, SchemaLinkingInput)
@@ -121,8 +119,7 @@ class TestSetupInputSchemaLinking:
         existing_schema = _make_table_schema("orders")
         existing_value = _make_table_value("orders")
         wf = _make_workflow(table_schemas=[existing_schema], table_values=[existing_value])
-        with patch.object(node, "_search_external_knowledge", return_value=""):
-            result = node.setup_input(wf)
+        result = node.setup_input(wf)
 
         assert result["success"] is True
         # table schemas should be cached
@@ -135,8 +132,7 @@ class TestSetupInputSchemaLinking:
         cfg.schema_linking_rate = "fast"
         node = _make_node(agent_config=cfg)
         wf = _make_workflow(reflection_round=1)  # fast -> medium
-        with patch.object(node, "_search_external_knowledge", return_value=""):
-            node.setup_input(wf)
+        node.setup_input(wf)
 
         assert node.input.matching_rate == "medium"
 
@@ -146,30 +142,9 @@ class TestSetupInputSchemaLinking:
         cfg.schema_linking_rate = "slow"
         node = _make_node(agent_config=cfg)
         wf = _make_workflow(reflection_round=5)  # slow + 5 -> from_llm (capped)
-        with patch.object(node, "_search_external_knowledge", return_value=""):
-            node.setup_input(wf)
+        node.setup_input(wf)
 
         assert node.input.matching_rate == "from_llm"
-
-    def test_setup_input_combines_external_knowledge(self):
-        """External knowledge is combined into workflow task when found."""
-        node = _make_node()
-        wf = _make_workflow()
-        wf.task.external_knowledge = "original knowledge"
-        with patch.object(node, "_search_external_knowledge", return_value="extra knowledge"):
-            node.setup_input(wf)
-
-        assert "extra knowledge" in wf.task.external_knowledge
-
-    def test_setup_input_no_combine_when_empty_search(self):
-        """When search returns empty string, workflow knowledge is not changed."""
-        node = _make_node()
-        wf = _make_workflow()
-        wf.task.external_knowledge = "original knowledge"
-        with patch.object(node, "_search_external_knowledge", return_value=""):
-            node.setup_input(wf)
-
-        assert wf.task.external_knowledge == "original knowledge"
 
 
 # ---------------------------------------------------------------------------
@@ -336,85 +311,6 @@ class TestExecuteSchemaLinkingFallback:
 
 
 # ---------------------------------------------------------------------------
-# TestCombineKnowledge
-# ---------------------------------------------------------------------------
-
-
-class TestCombineKnowledge:
-    def test_both_parts_combined(self):
-        node = _make_node()
-        result = node._combine_knowledge("original", "enhanced")
-        assert "original" in result
-        assert "Relevant Business Knowledge" in result
-        assert "enhanced" in result
-
-    def test_only_original(self):
-        node = _make_node()
-        result = node._combine_knowledge("original", "")
-        assert result == "original"
-
-    def test_only_enhanced(self):
-        node = _make_node()
-        result = node._combine_knowledge("", "enhanced")
-        assert "Relevant Business Knowledge" in result
-        assert "enhanced" in result
-
-    def test_both_empty(self):
-        node = _make_node()
-        result = node._combine_knowledge("", "")
-        assert result == ""
-
-
-# ---------------------------------------------------------------------------
-# TestSearchExternalKnowledge
-# ---------------------------------------------------------------------------
-
-
-class TestSearchExternalKnowledge:
-    def test_returns_empty_when_knowledge_size_zero(self):
-        node = _make_node()
-        with patch("datus.agent.node.schema_linking_node.ExtKnowledgeRAG") as mock_rag_class:
-            mock_rag = mock_rag_class.return_value
-            mock_rag.get_knowledge_size.return_value = 0
-            result = node._search_external_knowledge("test query")
-
-        assert result == ""
-
-    def test_returns_formatted_knowledge(self):
-        node = _make_node()
-        search_results = [
-            {"search_text": "revenue", "explanation": "Total revenue KPI"},
-            {"search_text": "sales", "explanation": "Total sales metric"},
-        ]
-        with patch("datus.agent.node.schema_linking_node.ExtKnowledgeRAG") as mock_rag_class:
-            mock_rag = mock_rag_class.return_value
-            mock_rag.get_knowledge_size.return_value = 2
-            mock_rag.query_knowledge.return_value = search_results
-            result = node._search_external_knowledge("revenue query")
-
-        assert "revenue" in result
-        assert "Total revenue KPI" in result
-        assert "sales" in result
-
-    def test_returns_empty_on_exception(self):
-        node = _make_node()
-        with patch("datus.agent.node.schema_linking_node.ExtKnowledgeRAG", side_effect=RuntimeError("rag error")):
-            result = node._search_external_knowledge("test query")
-
-        assert result == ""
-
-    def test_returns_empty_when_no_search_results(self):
-        node = _make_node()
-        with patch("datus.agent.node.schema_linking_node.ExtKnowledgeRAG") as mock_rag_class:
-            mock_rag = mock_rag_class.return_value
-            mock_rag.get_knowledge_size.return_value = 5
-            mock_rag.query_knowledge.return_value = []
-            result = node._search_external_knowledge("test query")
-
-        assert result == ""
-
-
-# ---------------------------------------------------------------------------
 # TestUpdateContext
 # ---------------------------------------------------------------------------
 
@@ -489,7 +385,7 @@ class TestExecuteSchemaLinkingNode:
 class TestExecuteStreamSchemaLinking:
     @pytest.mark.asyncio
     async def test_execute_stream_yields_actions(self):
-        """execute_stream yields knowledge and schema actions."""
+        """execute_stream yields schema actions."""
         node = _make_node()
         node.input = SchemaLinkingInput(
             input_text="Show total sales",
@@ -505,15 +401,13 @@ class TestExecuteStreamSchemaLinking:
             value_count=0,
         )
 
-        with patch.object(node, "_search_external_knowledge", return_value=""):
-            with patch.object(node, "_execute_schema_linking", return_value=good_result):
-                actions = []
-                async for action in node.execute_stream():
-                    actions.append(action)
+        with patch.object(node, "_execute_schema_linking", return_value=good_result):
+            actions = []
+            async for action in node.execute_stream():
+                actions.append(action)
 
-        assert len(actions) >= 2
+        assert len(actions) >= 1
         action_ids = [a.action_id for a in actions]
-        assert "external_knowledge_search" in action_ids
         assert "schema_linking" in action_ids
 
     @pytest.mark.asyncio
@@ -534,11 +428,10 @@ class TestExecuteStreamSchemaLinking:
             value_count=0,
         )
 
-        with patch.object(node, "_search_external_knowledge", return_value="knowledge"):
-            with patch.object(node, "_execute_schema_linking", return_value=good_result):
-                actions = []
-                async for action in node.execute_stream():
-                    actions.append(action)
+        with patch.object(node, "_execute_schema_linking", return_value=good_result):
+            actions = []
+            async for action in node.execute_stream():
+                actions.append(action)
 
         schema_actions = [a for a in actions if a.action_id == "schema_linking"]
         assert schema_actions[-1].status == ActionStatus.SUCCESS
@@ -561,9 +454,8 @@ class TestExecuteStreamSchemaLinking:
             value_count=0,
         )
 
-        with patch.object(node, "_search_external_knowledge", return_value=""):
-            with patch.object(node, "_execute_schema_linking", return_value=good_result):
-                async for _ in node.execute_stream():
-                    pass
+        with patch.object(node, "_execute_schema_linking", return_value=good_result):
+            async for _ in node.execute_stream():
+                pass
 
         assert node.result == good_result

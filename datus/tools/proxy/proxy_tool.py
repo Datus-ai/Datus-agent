@@ -35,7 +35,6 @@ _FS_DEPENDENT_NODES: Set[str] = {
     "gen_semantic_model",
     "gen_metrics",
     "gen_sql_summary",
-    "gen_ext_knowledge",
     "gen_visual_report",
     "gen_visual_dashboard",
 }

@@ -10,7 +10,7 @@ This module provides a unified interface for managing all paths related to the
 
 Storage layout (refactored):
 
-- ``{project_root}/subject/{semantic_models, sql_summaries, ext_knowledge}/``
+- ``{project_root}/subject/{semantic_models, sql_summaries}/``
   — knowledge-base content lives alongside the project so every CWD gets its
   own copy. There is no per-datasource subdirectory anymore.
 - ``{project_root}/.datus/skills/`` — project-level skills.
@@ -253,11 +253,6 @@ class DatusPathManager:
         return self.subject_dir / "sql_summaries"
 
     @property
-    def ext_knowledge_dir(self) -> Path:
-        """ext knowledge directory: ``{project_root}/subject/ext_knowledge``."""
-        return self.subject_dir / "ext_knowledge"
-
-    @property
     def project_skills_dir(self) -> Path:
         """Project-level skills directory: ``{project_root}/.datus/skills``."""
         return self._project_root / ".datus" / "skills"
@@ -278,7 +273,6 @@ class DatusPathManager:
         "subject": "subject_dir",
         "semantic_models": "semantic_models_dir",
         "sql_summaries": "sql_summaries_dir",
-        "ext_knowledge": "ext_knowledge_dir",
         "project_skills": "project_skills_dir",
     }
 
@@ -459,18 +453,6 @@ class DatusPathManager:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def ext_knowledge_path(self) -> Path:
-        """
-        External knowledge directory for the current project.
-
-        Returns:
-            Path: ``{project_root}/subject/ext_knowledge``
-        """
-        path = self.ext_knowledge_dir
-        # Ensure the directory exists
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
     # Utility methods
 
     def resolve_config_path(self, filename: str, local_path: Optional[str] = None) -> Path:
@@ -511,7 +493,7 @@ class DatusPathManager:
             *dirs: Directory names to ensure. If empty, ensures all standard directories.
                    Valid names: conf, data, logs, sessions, template, sample, run,
                    benchmark, save, workspace, trajectory, subject, semantic_models,
-                   sql_summaries, ext_knowledge, project_skills
+                   sql_summaries, project_skills
 
         Raises:
             ValueError: If an invalid directory name is provided

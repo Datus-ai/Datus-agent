@@ -5,9 +5,7 @@ import pytest
 from datus.api.models.base_models import Result
 from datus.api.models.explorer_models import (
     CreateDirectoryInput,
-    CreateKnowledgeInput,
     DeleteSubjectInput,
-    EditKnowledgeInput,
     ReferenceSQLInput,
     RenameSubjectInput,
     SubjectListData,
@@ -27,15 +25,13 @@ class TestExplorerServiceInit:
         assert svc.datasource_id == real_agent_config.current_datasource
 
     def test_init_creates_rag_stores(self, real_agent_config):
-        """ExplorerService creates metric, ref_sql, and knowledge RAG stores."""
-        from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
+        """ExplorerService creates metric and ref_sql RAG stores."""
         from datus.storage.metric.store import MetricRAG
         from datus.storage.reference_sql.store import ReferenceSqlRAG
 
         svc = ExplorerService(agent_config=real_agent_config)
         assert isinstance(svc.metric_rag, MetricRAG)
         assert isinstance(svc.reference_sql_rag, ReferenceSqlRAG)
-        assert isinstance(svc.knowledge_rag, ExtKnowledgeRAG)
 
     def test_init_creates_subject_tree_store(self, real_agent_config):
         """ExplorerService creates subject tree store."""
@@ -63,7 +59,7 @@ class TestExplorerServiceGetSubjectList:
         assert hasattr(result.data, "subjects")
 
     async def test_get_subject_list_with_populated_tree(self, real_agent_config):
-        """get_subject_list returns tree with directories, metrics, ref_sql, knowledge."""
+        """get_subject_list returns tree with directories and ref_sql entries."""
         svc = ExplorerService(agent_config=real_agent_config)
         # Create some structure
         await svc.create_directory(CreateDirectoryInput(subject_path=["tree_test"]))
@@ -76,14 +72,6 @@ class TestExplorerServiceGetSubjectList:
                 search_text="test",
             )
         )
-        await svc.create_knowledge(
-            CreateKnowledgeInput(
-                subject_path=["tree_test"],
-                name="tree_kb",
-                search_text="test",
-                explanation="test",
-            )
-        )
 
         result = await svc.get_subject_list()
         assert result.success is True
@@ -93,11 +81,10 @@ class TestExplorerServiceGetSubjectList:
         tree_test_nodes = [node for node in result.data.subjects if node.name == "tree_test"]
         assert len(tree_test_nodes) == 1
         tree_test_node = tree_test_nodes[0]
-        # Children should include ref_sql and knowledge
+        # Children should include ref_sql.
         assert isinstance(tree_test_node.children, list)
         child_names = {c.name for c in tree_test_node.children}
         assert "tree_sql" in child_names
-        assert "tree_kb" in child_names
 
 
 @pytest.mark.asyncio
@@ -274,27 +261,6 @@ class TestExplorerServiceRenameSubject:
         )
         assert result.success is True
 
-    async def test_rename_knowledge(self, real_agent_config):
-        """rename_subject renames a knowledge entry."""
-        svc = ExplorerService(agent_config=real_agent_config)
-        await svc.create_directory(CreateDirectoryInput(subject_path=["rename_kb_dir"]))
-        await svc.create_knowledge(
-            CreateKnowledgeInput(
-                subject_path=["rename_kb_dir"],
-                name="old_kb",
-                search_text="test",
-                explanation="test",
-            )
-        )
-        result = await svc.rename_subject(
-            RenameSubjectInput(
-                type=SubjectNodeType.KNOWLEDGE,
-                subject_path=["rename_kb_dir", "old_kb"],
-                new_subject_path=["rename_kb_dir", "new_kb"],
-            )
-        )
-        assert result.success is True
-
     async def test_rename_metric(self, real_agent_config):
         """rename_subject for metric type exercises metric rename path."""
         svc = ExplorerService(agent_config=real_agent_config)
@@ -371,26 +337,6 @@ class TestExplorerServiceDeleteSubject:
         )
         assert result.success is True
 
-    async def test_delete_knowledge(self, real_agent_config):
-        """delete_subject removes knowledge entry."""
-        svc = ExplorerService(agent_config=real_agent_config)
-        await svc.create_directory(CreateDirectoryInput(subject_path=["del_kb_dir"]))
-        await svc.create_knowledge(
-            CreateKnowledgeInput(
-                subject_path=["del_kb_dir"],
-                name="del_kb",
-                search_text="test",
-                explanation="test",
-            )
-        )
-        result = await svc.delete_subject(
-            DeleteSubjectInput(
-                type=SubjectNodeType.KNOWLEDGE,
-                subject_path=["del_kb_dir", "del_kb"],
-            )
-        )
-        assert result.success is True
-
     async def test_delete_metric_nonexistent(self, real_agent_config):
         """delete_subject for nonexistent metric returns error."""
         svc = ExplorerService(agent_config=real_agent_config)
@@ -417,14 +363,6 @@ class TestExplorerServiceDeleteSubject:
                 search_text="test",
             )
         )
-        await svc.create_knowledge(
-            CreateKnowledgeInput(
-                subject_path=["cascade_dir"],
-                name="child_kb",
-                search_text="test",
-                explanation="test",
-            )
-        )
         # Delete parent — should cascade
         result = await svc.delete_subject(
             DeleteSubjectInput(
@@ -436,105 +374,8 @@ class TestExplorerServiceDeleteSubject:
 
 
 @pytest.mark.asyncio
-class TestExplorerServiceKnowledge:
-    """Tests for knowledge CRUD operations."""
-
-    async def test_create_knowledge_success(self, real_agent_config):
-        """create_knowledge stores a new knowledge entry."""
-        svc = ExplorerService(agent_config=real_agent_config)
-        await svc.create_directory(CreateDirectoryInput(subject_path=["kb_test"]))
-        request = CreateKnowledgeInput(
-            subject_path=["kb_test"],
-            name="test_knowledge",
-            search_text="california schools types",
-            explanation="Schools in California have various types.",
-        )
-        result = await svc.create_knowledge(request)
-        assert result.success is True
-
-    async def test_get_knowledge_nonexistent(self, real_agent_config):
-        """get_knowledge for nonexistent entry returns error."""
-        svc = ExplorerService(agent_config=real_agent_config)
-        result = await svc.get_knowledge(["nonexistent", "knowledge"])
-        assert result.success is False
-
-    async def test_get_knowledge_empty_path(self, real_agent_config):
-        """get_knowledge with empty path returns error."""
-        svc = ExplorerService(agent_config=real_agent_config)
-        result = await svc.get_knowledge([])
-        assert result.success is False
-
-    async def test_create_then_get_knowledge(self, real_agent_config):
-        """Full lifecycle: create knowledge then retrieve it."""
-        svc = ExplorerService(agent_config=real_agent_config)
-        await svc.create_directory(CreateDirectoryInput(subject_path=["kb_full"]))
-        await svc.create_knowledge(
-            CreateKnowledgeInput(
-                subject_path=["kb_full"],
-                name="test_kb",
-                search_text="california schools types",
-                explanation="Schools in California have various types.",
-            )
-        )
-        result = await svc.get_knowledge(["kb_full", "test_kb"])
-        assert result.success is True
-        assert result.data.name == "test_kb"
-
-    async def test_create_knowledge_empty_path_fails(self, real_agent_config):
-        """create_knowledge with empty path returns error."""
-        svc = ExplorerService(agent_config=real_agent_config)
-        request = CreateKnowledgeInput(
-            subject_path=[],
-            name="x",
-            search_text="test",
-            explanation="test",
-        )
-        result = await svc.create_knowledge(request)
-        assert result.success is False
-
-    async def test_create_knowledge_duplicate_fails(self, real_agent_config):
-        """create_knowledge rejects duplicate names in same directory."""
-        svc = ExplorerService(agent_config=real_agent_config)
-        await svc.create_directory(CreateDirectoryInput(subject_path=["dup_kb_dir"]))
-        await svc.create_knowledge(
-            CreateKnowledgeInput(
-                subject_path=["dup_kb_dir"],
-                name="dup_entry",
-                search_text="first",
-                explanation="first",
-            )
-        )
-        result = await svc.create_knowledge(
-            CreateKnowledgeInput(
-                subject_path=["dup_kb_dir"],
-                name="dup_entry",
-                search_text="second",
-                explanation="second",
-            )
-        )
-        assert result.success is False
-        assert "already exists" in result.errorMessage
-
-    async def test_get_knowledge_root_level_fails(self, real_agent_config):
-        """get_knowledge at root level (single component path) returns error."""
-        svc = ExplorerService(agent_config=real_agent_config)
-        result = await svc.get_knowledge(["only_name"])
-        assert result.success is False
-        assert "root level" in result.errorMessage.lower()
-
-    async def test_edit_knowledge_short_path_fails(self, real_agent_config):
-        """edit_knowledge with path < 2 components returns error."""
-        svc = ExplorerService(agent_config=real_agent_config)
-        result = await svc.edit_knowledge(
-            EditKnowledgeInput(
-                subject_path=["only_one"],
-                name="kb",
-                search_text="test",
-                explanation="test",
-            )
-        )
-        assert result.success is False
-        assert "2 components" in result.errorMessage
+class TestExplorerServiceSubjectAssets:
+    """Tests for subject asset CRUD operations."""
 
     async def test_create_reference_sql_duplicate_fails(self, real_agent_config):
         """create_reference_sql rejects duplicate names."""
@@ -741,45 +582,6 @@ class TestExplorerServiceEditMetric:
         )
         result = await svc.edit_metric(request)
         assert result.success is False
-
-
-@pytest.mark.asyncio
-class TestExplorerServiceEditKnowledge:
-    """Tests for edit_knowledge operations."""
-
-    async def test_edit_knowledge_empty_path(self, real_agent_config):
-        """edit_knowledge with empty path returns error."""
-        svc = ExplorerService(agent_config=real_agent_config)
-        request = EditKnowledgeInput(
-            subject_path=[],
-            name="test",
-            search_text="updated",
-            explanation="updated",
-        )
-        result = await svc.edit_knowledge(request)
-        assert result.success is False
-
-    async def test_edit_knowledge_updates(self, real_agent_config):
-        """edit_knowledge updates an existing knowledge entry."""
-        svc = ExplorerService(agent_config=real_agent_config)
-        await svc.create_directory(CreateDirectoryInput(subject_path=["edit_kb"]))
-        await svc.create_knowledge(
-            CreateKnowledgeInput(
-                subject_path=["edit_kb"],
-                name="editable_kb",
-                search_text="original",
-                explanation="original explanation",
-            )
-        )
-        result = await svc.edit_knowledge(
-            EditKnowledgeInput(
-                subject_path=["edit_kb", "editable_kb"],
-                name="editable_kb",
-                search_text="updated search",
-                explanation="updated explanation",
-            )
-        )
-        assert result.success is True
 
 
 @pytest.mark.asyncio
@@ -1048,18 +850,4 @@ class TestExplorerServiceHelpers:
         svc = ExplorerService(agent_config=real_agent_config)
         id1 = svc._gen_reference_sql_id("SELECT 1")
         id2 = svc._gen_reference_sql_id("SELECT 2")
-        assert id1 != id2
-
-    def test_gen_subject_item_id_deterministic(self, real_agent_config):
-        """_gen_subject_item_id returns stable ID for same inputs."""
-        svc = ExplorerService(agent_config=real_agent_config)
-        id1 = svc._gen_subject_item_id(["root", "child"], "item1")
-        id2 = svc._gen_subject_item_id(["root", "child"], "item1")
-        assert id1 == id2
-
-    def test_gen_subject_item_id_different_for_different_path(self, real_agent_config):
-        """_gen_subject_item_id returns different IDs for different paths."""
-        svc = ExplorerService(agent_config=real_agent_config)
-        id1 = svc._gen_subject_item_id(["root", "child"], "item1")
-        id2 = svc._gen_subject_item_id(["root", "other"], "item1")
         assert id1 != id2

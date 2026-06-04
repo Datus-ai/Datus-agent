@@ -808,6 +808,60 @@ class TestGenerateWithMcpStream:
         assert actions[2].role == ActionRole.ASSISTANT
 
     @pytest.mark.asyncio
+    async def test_func_tool_receives_tool_call_id_matching_block_id(self):
+        """The func tool must be invoked with a context whose ``tool_call_id``
+        equals the tool_use block id (== the PROCESSING action's ``action_id``).
+
+        Regression: claude_model previously passed a bare ``RunContextWrapper``
+        (no ``tool_call_id``), so the ``task`` tool could not link sub-agent
+        actions' ``parent_action_id`` to the wrapping task action and the CLI
+        renderer mis-rendered the group as separate ``<node>_request`` /
+        ``<node>_response`` blocks.
+        """
+        from agents import RunContextWrapper
+
+        from datus.schemas.action_history import ActionHistoryManager
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        tool_block = _make_tool_use_block(name="task", block_id="toolu_abc123", input_data={"type": "gen_sql"})
+        resp_tool = _make_response([tool_block], input_tokens=200, output_tokens=80)
+        resp_final = _make_response([_make_text_block("done")], input_tokens=300, output_tokens=100)
+        model.anthropic_client.messages.create.side_effect = [resp_tool, resp_final]
+
+        func_tool = MagicMock()
+        func_tool.name = "task"
+        func_tool.description = "Spawn a sub-agent"
+        func_tool.params_json_schema = {"type": "object"}
+        func_tool.on_invoke_tool = AsyncMock(return_value='{"success": 1}')
+
+        ahm = ActionHistoryManager()
+        actions = []
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for action in model._generate_with_mcp_stream(
+                prompt="test",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                func_tools=[func_tool],
+                action_history_manager=ahm,
+            ):
+                actions.append(action)
+
+        func_tool.on_invoke_tool.assert_awaited_once()
+        passed_ctx = func_tool.on_invoke_tool.await_args.args[0]
+        # Must remain a RunContextWrapper subtype so on_invoke_tool accepts it,
+        # and must expose the block id as tool_call_id for parent-action linking.
+        assert isinstance(passed_ctx, RunContextWrapper)
+        assert getattr(passed_ctx, "tool_call_id", None) == "toolu_abc123"
+        # The PROCESSING action's id is the same block id the tool now sees,
+        # so the sub-agent's parent_action_id resolves to a real anchor.
+        assert actions[0].action_id == "toolu_abc123"
+
+    @pytest.mark.asyncio
     async def test_token_usage_accumulated(self):
         """Token usage should be accumulated across turns and included in final action."""
         from datus.schemas.action_history import ActionHistoryManager

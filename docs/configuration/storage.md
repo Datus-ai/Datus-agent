@@ -305,7 +305,6 @@ metrics:
     domain: sale                       # Business domain
     layer1: layer1                     # Metric layer classification
     layer2: layer2                     # Sub-layer classification
-    ext_knowledge: ""                  # Extended knowledge base path
 
 storage:
   metric:

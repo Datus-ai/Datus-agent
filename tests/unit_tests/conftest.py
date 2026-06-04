@@ -204,7 +204,7 @@ def _create_real_agent_config(tmp_path, db_path: str, *, read_only_db: bool) -> 
     - target = "mock"
     - models with a mock OpenAI config
     - datasource "test_ns" with california_schools.sqlite ("california_schools")
-    - agentic_nodes config for chat, gen_sql, gen_ext_knowledge, compare,
+    - agentic_nodes config for chat, gen_sql, compare,
       gen_sql_summary, gen_metrics, gen_semantic_model, gen_report
     """
     # Create workspace subdirectory for filesystem tools
@@ -249,10 +249,6 @@ def _create_real_agent_config(tmp_path, db_path: str, *, read_only_db: bool) -> 
             "gen_sql": {
                 "system_prompt": "gen_sql",
                 "tools": "db_tools.*",
-                "max_turns": 5,
-            },
-            "gen_ext_knowledge": {
-                "system_prompt": "gen_ext_knowledge",
                 "max_turns": 5,
             },
             "compare": {

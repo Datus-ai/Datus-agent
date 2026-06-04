@@ -181,7 +181,6 @@ asyncio.run(generate_sql_with_structure())
 - `MetricGenerationOutput` - Metric generation
 - `SqlSummaryGenerationOutput` - SQL summary generation
 - `ReportGenerationOutput` - Report generation
-- `ExtKnowledgeGenerationOutput` - External knowledge generation
 - `CompareOutput` - SQL comparison analysis
 
 ### Required Environment Variables

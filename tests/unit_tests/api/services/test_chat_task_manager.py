@@ -893,14 +893,6 @@ class TestCreateNode:
         node = manager._create_node(real_agent_config, "gen_metrics", "test-session")
         assert isinstance(node, GenMetricsAgenticNode)
 
-    def test_create_gen_ext_knowledge_node(self, real_agent_config, mock_llm_create):
-        """_create_node creates GenExtKnowledgeAgenticNode for gen_ext_knowledge."""
-        from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
-
-        manager = ChatTaskManager()
-        node = manager._create_node(real_agent_config, "gen_ext_knowledge", "test-session")
-        assert isinstance(node, GenExtKnowledgeAgenticNode)
-
     def test_create_gen_report_node(self, real_agent_config, mock_llm_create):
         """gen_report must land on GenReportAgenticNode (regression: previously fell back to GenSQL)."""
         from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
@@ -1045,15 +1037,6 @@ class TestCreateNodeInput:
         node = manager._create_node(real_agent_config, "gen_metrics", "test")
         result = manager._create_node_input("generate metrics", node, [], [], [])
         assert isinstance(result, SemanticNodeInput)
-
-    def test_ext_knowledge_node_input(self, real_agent_config, mock_llm_create):
-        """_create_node_input for GenExtKnowledgeAgenticNode returns ExtKnowledgeNodeInput."""
-        from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput
-
-        manager = ChatTaskManager()
-        node = manager._create_node(real_agent_config, "gen_ext_knowledge", "test")
-        result = manager._create_node_input("extract knowledge", node, [], [], [])
-        assert isinstance(result, ExtKnowledgeNodeInput)
 
     def test_sql_summary_node_input(self, real_agent_config, mock_llm_create):
         """_create_node_input for SqlSummaryAgenticNode returns SqlSummaryNodeInput."""

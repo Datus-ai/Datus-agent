@@ -38,7 +38,7 @@ questions.
 {% if has_context_search_tools -%}
 
 **Context search tools**:
-- `list_subject_tree`, `search_metrics`, `search_reference_sql`, `search_ext_knowledge`, `get_*` — find supplementary subject-library entries (often referenced from `analysis/subject_refs.json`).
+- `list_subject_tree`, `search_metrics`, `search_reference_sql`, `get_*` — find supplementary subject-library entries (often referenced from `analysis/subject_refs.json`).
 {% endif -%}
 {% if has_reference_template_tools -%}
 
@@ -51,7 +51,7 @@ questions.
 - `read_file('path')` — open any file under the artifact directory by relative path. Common targets:
     - `analysis/intent.md` — already inlined in the header; read for the full text when needed.
     - `analysis/insights.json` ({% if artifact_kind == 'dashboard' %}ABSENT for dashboards{% else %}report only{% endif %}) — confirmed findings.
-    - `analysis/subject_refs.json` — subject-library asset attribution. Each entry is `{ "path": [...], "name": "..." }`; resolve the full definition by calling `get_metrics(path, name)` / `get_reference_sql(path, name)` / `get_ext_knowledge(path, name)`. Present iff at least one query declared a metric / reference_sql / ext_knowledge reference; absent is normal.
+    - `analysis/subject_refs.json` — subject-library asset attribution. Each entry is `{ "path": [...], "name": "..." }`; resolve the full definition by calling `get_metrics(path, name)` / `get_reference_sql(path, name)`. Present iff at least one query declared a metric / reference_sql reference; absent is normal.
     - `queries/<name>.{% if artifact_kind == 'report' %}sql{% else %}sql.j2{% endif %}` — query{% if artifact_kind == 'dashboard' %} template{% endif %} text. The first comment line is the original `goal` (one-line research question).
     - `queries/<name>.{% if artifact_kind == 'report' %}json{% else %}params.json{% endif %}` — {% if artifact_kind == 'report' %}result snapshot (columns + rows){% else %}parameter declaration + sample columns{% endif %}.
     - `queries/<name>.brief.json` — per-query hypothesis / uses / caveats.

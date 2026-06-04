@@ -35,7 +35,9 @@ class ChatNodeInput(BaseInput):
             "(agent.yml ``agentic_nodes.chat.max_turns``) is used."
         ),
     )
-    external_knowledge: Optional[str] = Field(default="", description="External knowledge")
+    external_knowledge: Optional[str] = Field(
+        default="", description="Supplementary description / evidence supplied with the question"
+    )
     workspace_root: Optional[str] = Field(default=None, description="Root directory path for filesystem MCP server")
     prompt_version: Optional[str] = Field(default=None, description="Version for prompt template")
     schemas: Optional[list[TableSchema]] = Field(default=None, description="Schemas to use")

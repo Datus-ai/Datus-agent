@@ -219,8 +219,6 @@ class TestCreateParser:
                 "metricflow",
                 "--semantic_yaml",
                 "/tmp/s.yaml",
-                "--ext_knowledge",
-                "/tmp/ek.csv",
                 "--validate-only",
                 "--catalog",
                 "main",
@@ -233,7 +231,6 @@ class TestCreateParser:
         assert args.benchmark == "spider2"
         assert args.from_adapter == "metricflow"
         assert args.semantic_yaml == "/tmp/s.yaml"
-        assert args.ext_knowledge == "/tmp/ek.csv"
         assert args.validate_only is True
         assert args.catalog == "main"
         assert args.database_name == "demo"

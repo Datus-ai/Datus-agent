@@ -37,7 +37,7 @@ class FeedbackAgenticNode(AgenticNode):
     # Default subagents feedback delegates archival to. Users can override via
     # agent.yml (agentic_nodes.feedback.subagents = "...") — the base-class
     # _setup_sub_agent_task_tool reads node_config first and falls back here.
-    DEFAULT_SUBAGENTS = "gen_ext_knowledge, gen_sql_summary, gen_metrics, gen_skill"
+    DEFAULT_SUBAGENTS = "gen_sql_summary, gen_metrics, gen_skill"
     result_class = FeedbackNodeResult
 
     def __init__(

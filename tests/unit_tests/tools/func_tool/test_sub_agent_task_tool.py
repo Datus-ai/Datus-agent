@@ -450,7 +450,6 @@ class TestResolveNodeType:
             "gen_report": NodeType.TYPE_GEN_REPORT,
             "gen_visual_report": NodeType.TYPE_GEN_VISUAL_REPORT,
             "gen_visual_dashboard": NodeType.TYPE_GEN_VISUAL_DASHBOARD,
-            "ext_knowledge": NodeType.TYPE_EXT_KNOWLEDGE,
             "semantic": NodeType.TYPE_SEMANTIC,
             "sql_summary": NodeType.TYPE_SQL_SUMMARY,
             "explore": NodeType.TYPE_EXPLORE,
@@ -1383,11 +1382,6 @@ class TestResolveNodeTypeBuiltIn:
         assert node_type == NodeType.TYPE_SQL_SUMMARY
         assert node_name == "gen_sql_summary"
 
-    def test_gen_ext_knowledge(self, task_tool):
-        node_type, node_name = task_tool._resolve_node_type("gen_ext_knowledge")
-        assert node_type == NodeType.TYPE_EXT_KNOWLEDGE
-        assert node_name == "gen_ext_knowledge"
-
     def test_gen_table(self, task_tool):
         node_type, node_name = task_tool._resolve_node_type("gen_table")
         assert node_type == NodeType.TYPE_GEN_TABLE
@@ -1429,17 +1423,6 @@ class TestCreateBuiltinNode:
         task_tool._create_builtin_node("gen_sql_summary")
         mock_init.assert_called_once_with(
             node_name="gen_sql_summary",
-            agent_config=task_tool.agent_config,
-            execution_mode="interactive",
-            is_subagent=True,
-            session_id=None,
-        )
-
-    @patch("datus.agent.node.gen_ext_knowledge_agentic_node.GenExtKnowledgeAgenticNode.__init__", return_value=None)
-    def test_gen_ext_knowledge(self, mock_init, task_tool):
-        task_tool._create_builtin_node("gen_ext_knowledge")
-        mock_init.assert_called_once_with(
-            node_name="gen_ext_knowledge",
             agent_config=task_tool.agent_config,
             execution_mode="interactive",
             is_subagent=True,
@@ -1566,10 +1549,6 @@ class TestBuiltinNodeInheritsExecutionMode:
             ),
             ("gen_metrics", "datus.agent.node.gen_metrics_agentic_node.GenMetricsAgenticNode.__init__"),
             ("gen_sql_summary", "datus.agent.node.sql_summary_agentic_node.SqlSummaryAgenticNode.__init__"),
-            (
-                "gen_ext_knowledge",
-                "datus.agent.node.gen_ext_knowledge_agentic_node.GenExtKnowledgeAgenticNode.__init__",
-            ),
             ("gen_table", "datus.agent.node.gen_table_agentic_node.GenTableAgenticNode.__init__"),
             ("gen_dashboard", "datus.agent.node.gen_dashboard_agentic_node.GenDashboardAgenticNode.__init__"),
             ("scheduler", "datus.agent.node.scheduler_agentic_node.SchedulerAgenticNode.__init__"),
@@ -1640,15 +1619,6 @@ class TestBuildNodeInputBuiltIn:
         assert result.user_message == "SELECT * FROM users"
         assert result.database == "test_db"
 
-    def test_ext_knowledge_node_input(self, task_tool):
-        from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
-        from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput
-
-        mock_node = Mock(spec=GenExtKnowledgeAgenticNode)
-        result = task_tool._build_node_input(mock_node, "What is total revenue by region?")
-        assert isinstance(result, ExtKnowledgeNodeInput)
-        assert result.user_message == "What is total revenue by region?"
-
     def test_gen_table_node_input(self, task_tool):
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
         from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
@@ -1699,10 +1669,6 @@ class TestBuildTaskDescriptionBuiltIn:
         desc = task_tool._build_task_description()
         assert "sql_summary_file" in desc
 
-    def test_gen_ext_knowledge_description_content(self, task_tool):
-        desc = task_tool._build_task_description()
-        assert "ext_knowledge_file" in desc
-
 
 # ── Built-in subagent: _convert_to_func_result ────────────────────
 
@@ -1741,17 +1707,6 @@ class TestConvertToFuncResultBuiltIn:
         assert result.success == 1
         assert result.result["sql_summary_file"] == "knowledge/summaries/query_001.yml"
         assert result.result["response"] == "Summarized query"
-
-    def test_ext_knowledge_file_result(self, task_tool):
-        output = {
-            "response": "Extracted knowledge",
-            "ext_knowledge_file": "knowledge/ext/revenue_by_region.yml",
-            "tokens_used": 800,
-        }
-        result = task_tool._convert_to_func_result(output)
-        assert result.success == 1
-        assert result.result["ext_knowledge_file"] == "knowledge/ext/revenue_by_region.yml"
-        assert result.result["response"] == "Extracted knowledge"
 
     def test_sql_file_path_takes_priority_over_semantic_models(self, task_tool):
         """sql_file_path still takes priority (checked first)."""
@@ -1894,32 +1849,6 @@ class TestTaskExecutionBuiltIn:
 
         assert result.success == 1
         assert result.result["sql_summary_file"] == "knowledge/summaries/query_001.yml"
-
-    @pytest.mark.asyncio
-    async def test_execute_gen_ext_knowledge(self, task_tool):
-        mock_action = Mock(spec=ActionHistory)
-        mock_action.status = ActionStatus.SUCCESS
-        mock_action.role = ActionRole.ASSISTANT
-        mock_action.output = {
-            "response": "Knowledge extracted",
-            "ext_knowledge_file": "knowledge/ext/revenue.yml",
-            "tokens_used": 900,
-        }
-
-        mock_node = MagicMock()
-
-        async def mock_stream(ahm):
-            yield mock_action
-
-        mock_node.execute_stream_with_interactions = mock_stream
-
-        with patch.object(task_tool, "_create_node", return_value=mock_node):
-            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
-                result = await task_tool.task(type="gen_ext_knowledge", prompt="What is total revenue by region?")
-
-        assert result.success == 1
-        assert result.result["ext_knowledge_file"] == "knowledge/ext/revenue.yml"
-        assert result.result["tokens_used"] == 900
 
 
 # ── SubAgent complete action ──────────────────────────────────────
@@ -2382,7 +2311,7 @@ class TestProxyToolPropagation:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "subagent_type",
-        ["gen_semantic_model", "gen_metrics", "gen_sql_summary", "gen_ext_knowledge"],
+        ["gen_semantic_model", "gen_metrics", "gen_sql_summary"],
     )
     async def test_fs_dependent_types_still_call_apply_proxy(self, task_tool, subagent_type):
         """FS-dependent subagents still call apply_proxy_tools (exclusion is internal to proxy_tool)."""

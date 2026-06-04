@@ -319,7 +319,6 @@ jobs:
             schema_value.lance
             metrics.lance
             reference_sql.lance
-            ext_knowledge.lance
             reference_template.lance
           )
 
@@ -363,7 +362,6 @@ jobs:
             schema_value.lance
             metrics.lance
             reference_sql.lance
-            ext_knowledge.lance
             reference_template.lance
           )
           for dataset in "${required_datasets[@]}"; do

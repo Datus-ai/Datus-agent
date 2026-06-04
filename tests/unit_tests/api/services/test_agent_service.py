@@ -1245,7 +1245,7 @@ class TestBuildScopedContext:
         assert result == {"tables": "default_catalog.mart.mf_time_spine, default_catalog.mart.raw_orders"}
 
     def test_subject_buckets_write_runtime_keys(self):
-        """``subject_buckets`` writes to ``metrics`` / ``sqls`` / ``ext_knowledge``.
+        """``subject_buckets`` writes to ``metrics`` / ``sqls``.
 
         Subject paths are stored verbatim in dot-form; no leading-slash
         stripping happens since the API contract is dot-separated.
@@ -1256,10 +1256,9 @@ class TestBuildScopedContext:
             subject_buckets={
                 "metrics": ["Finance.Revenue.M1", "Sales.M2"],
                 "sqls": ["Finance.SQL.s1"],
-                "ext_knowledge": [],
             },
         )
-        # ext_knowledge is empty, so its key is omitted; subjects key never appears.
+        # Empty buckets are omitted; subjects key never appears.
         assert result == {
             "tables": "default_catalog.mart.mf_time_spine",
             "metrics": "Finance.Revenue.M1, Sales.M2",
@@ -1309,7 +1308,7 @@ class TestBuildScopedContext:
         }
 
     def test_subject_buckets_overwrite_existing_bucket_keys(self):
-        """Passing subject_buckets fully rewrites the three bucket keys.
+        """Passing subject_buckets fully rewrites the bucket keys.
 
         Empty bucket entries clear their key (rule: the editor's subjects array
         is the new full scope for the agent).
@@ -1318,17 +1317,15 @@ class TestBuildScopedContext:
             "tables": "default_catalog.mart.raw_orders",
             "metrics": "Finance.Revenue.old_metric",
             "sqls": "Sales.stale_query",
-            "ext_knowledge": "Docs.stale_kb",
         }
         result = _build_scoped_context(
             base,
             subject_buckets={
                 "metrics": ["Finance.Revenue.daily_revenue"],
                 "sqls": [],
-                "ext_knowledge": [],
             },
         )
-        # tables survives; the three subject keys are rewritten — empty buckets clear.
+        # tables survives; subject keys are rewritten and empty buckets clear.
         assert result == {
             "tables": "default_catalog.mart.raw_orders",
             "metrics": "Finance.Revenue.daily_revenue",
@@ -1341,7 +1338,7 @@ class TestBuildScopedContext:
         assert result == {"metrics": "Finance.Revenue.daily_revenue"}
 
     def test_none_subject_buckets_preserves_existing_keys(self):
-        """``subject_buckets=None`` leaves any existing metrics/sqls/ext_knowledge intact."""
+        """``subject_buckets=None`` leaves any existing metrics/sqls intact."""
         base = {"metrics": "Finance.Revenue.daily_revenue", "sqls": "Sales.region_query"}
         result = _build_scoped_context(
             base,
@@ -1358,24 +1355,22 @@ class TestBuildScopedContext:
         """When the merged dict ends up empty, return ``None`` so callers omit the block."""
         assert _build_scoped_context(None) is None
         assert _build_scoped_context({}, catalogs=[]) is None
-        assert _build_scoped_context(None, subject_buckets={"metrics": [], "sqls": [], "ext_knowledge": []}) is None
+        assert _build_scoped_context(None, subject_buckets={"metrics": [], "sqls": []}) is None
 
 
 class TestMergeSubjectsFromScopedContext:
-    """Tests for _merge_subjects_from_scoped_context — flatten the three buckets."""
+    """Tests for _merge_subjects_from_scoped_context — flatten subject buckets."""
 
-    def test_all_three_buckets_are_concatenated(self):
-        """metrics + sqls + ext_knowledge concatenate into a single subjects list."""
+    def test_subject_buckets_are_concatenated(self):
+        """metrics + sqls concatenate into a single subjects list."""
         scoped = {
             "metrics": "Commerce.Orders.Avg, Sales.Region",
             "sqls": "finance.sql_a",
-            "ext_knowledge": "Docs.handbook",
         }
         assert _merge_subjects_from_scoped_context(scoped) == [
             "Commerce.Orders.Avg",
             "Sales.Region",
             "finance.sql_a",
-            "Docs.handbook",
         ]
 
     def test_stored_entries_are_returned_verbatim(self):
@@ -1388,8 +1383,8 @@ class TestMergeSubjectsFromScopedContext:
 
     def test_duplicates_across_buckets_are_dropped(self):
         """A path that lands in multiple buckets only appears once in subjects."""
-        scoped = {"metrics": "shared", "sqls": "shared", "ext_knowledge": "unique"}
-        assert _merge_subjects_from_scoped_context(scoped) == ["shared", "unique"]
+        scoped = {"metrics": "shared", "sqls": "shared"}
+        assert _merge_subjects_from_scoped_context(scoped) == ["shared"]
 
     def test_missing_or_empty_buckets_yield_empty_list(self):
         """Empty / non-dict inputs return an empty list."""
@@ -1399,7 +1394,7 @@ class TestMergeSubjectsFromScopedContext:
 
 
 class TestClassifySubjectPaths:
-    """Tests for _classify_subject_paths — bucket subjects into metrics/sqls/ext_knowledge."""
+    """Tests for _classify_subject_paths — bucket subjects into metrics/sqls."""
 
     def test_no_datasource_falls_back_to_metrics(self, real_agent_config):
         """When the AgentConfig has no datasource bound, every subject defaults to metrics.
@@ -1413,16 +1408,15 @@ class TestClassifySubjectPaths:
         assert result == {
             "metrics": ["Commerce.Orders.Avg", "Sales.Region"],
             "sqls": [],
-            "ext_knowledge": [],
         }
 
     def test_empty_input_returns_empty_buckets(self, real_agent_config):
         """An empty subjects list yields an empty bucket dict, not an error."""
         result = _classify_subject_paths(real_agent_config, [])
-        assert result == {"metrics": [], "sqls": [], "ext_knowledge": []}
+        assert result == {"metrics": [], "sqls": []}
 
     def test_storage_init_failure_falls_back_to_metrics(self, real_agent_config, monkeypatch):
-        """If the metric / sql / knowledge stores can't initialize, all subjects bucket as metrics.
+        """If the metric / sql stores can't initialize, all subjects bucket as metrics.
 
         Forcing a storage-init exception (here via a broken ``MetricRAG.__init__``)
         exercises the defensive fallback so the API endpoint never raises a 500
@@ -1437,16 +1431,14 @@ class TestClassifySubjectPaths:
         result = _classify_subject_paths(real_agent_config, ["Commerce.Orders.Avg"])
         assert result["metrics"] == ["Commerce.Orders.Avg"]
         assert result["sqls"] == []
-        assert result["ext_knowledge"] == []
 
     def test_classifies_via_storage_lookup(self, real_agent_config, monkeypatch):
         """Each path is bucketed by the first store whose ``list_entries`` matches the name.
 
-        Stubbing the three storages forces a deterministic classification that
+        Stubbing storages forces a deterministic classification that
         doesn't depend on the test fixture pre-populating real KB data; the
-        probe order (metrics → sqls → ext_knowledge) is part of the contract.
+        probe order (metrics → sqls) is part of the contract.
         """
-        from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
         from datus.storage.metric.store import MetricRAG
         from datus.storage.reference_sql.store import ReferenceSqlRAG
 
@@ -1469,12 +1461,8 @@ class TestClassifySubjectPaths:
         def fake_sql_init(self, *args, **kwargs):
             self.reference_sql_storage = _StubStore({"my_sql"})
 
-        def fake_knowledge_init(self, *args, **kwargs):
-            self.store = _StubStore({"my_doc"})
-
         monkeypatch.setattr(MetricRAG, "__init__", fake_metric_init)
         monkeypatch.setattr(ReferenceSqlRAG, "__init__", fake_sql_init)
-        monkeypatch.setattr(ExtKnowledgeRAG, "__init__", fake_knowledge_init)
         monkeypatch.setattr(
             "datus.storage.registry.get_subject_tree_store",
             lambda project: _StubTree(),
@@ -1485,7 +1473,6 @@ class TestClassifySubjectPaths:
             [
                 "Commerce.Orders.my_metric",
                 "Finance.my_sql",
-                "Docs.my_doc",
                 "Unknown.path",
             ],
         )
@@ -1493,7 +1480,6 @@ class TestClassifySubjectPaths:
         # round-trip — losing the user's selection silently would be worse.
         assert result["metrics"] == ["Commerce.Orders.my_metric", "Unknown.path"]
         assert result["sqls"] == ["Finance.my_sql"]
-        assert result["ext_knowledge"] == ["Docs.my_doc"]
 
 
 @pytest.mark.asyncio
@@ -1536,7 +1522,7 @@ class TestSubagentScopedContextRoundTrip:
 
         ``catalogs`` writes through to the runtime-honored ``tables`` key (no
         ``catalogs`` key persists, since ``ScopedContext`` doesn't define one).
-        ``subjects`` is *classified* into metrics / sqls / ext_knowledge — no
+        ``subjects`` is *classified* into metrics / sqls — no
         flat ``subjects`` key ever appears on disk because each store owns
         its own scope filter. Without pre-populated KB stores the classifier
         falls back to metrics. ``scoped_context.datasource`` is bound to the
@@ -1634,7 +1620,7 @@ class TestSubagentScopedContextRoundTrip:
 
         Catalogs maps to the runtime ``tables`` key, so an edit that touches
         catalogs is expected to overwrite that field. The other scope keys
-        (``metrics`` / ``sqls`` / ``ext_knowledge``) must survive when
+        (``metrics`` / ``sqls``) must survive when
         ``subjects`` is not part of the request.
         """
         import yaml
@@ -1674,8 +1660,7 @@ class TestSubagentScopedContextRoundTrip:
         """The read path inverts the storage format the editor expects.
 
         Catalog entries are recovered from the runtime ``tables`` key; subjects
-        are recomposed by merging the three runtime buckets (metrics / sqls /
-        ext_knowledge) into a single flat list. Stored entries surface in
+        are recomposed by merging the runtime buckets (metrics / sqls) into a single flat list. Stored entries surface in
         their canonical dot-separated form unchanged.
         """
         real_agent_config.agentic_nodes["roundtrip_get"] = {
@@ -1686,7 +1671,6 @@ class TestSubagentScopedContextRoundTrip:
                 "tables": "default_catalog.mart.mf_time_spine, default_catalog.mart.raw_orders",
                 "metrics": "Finance.Revenue.Daily, finance.revenue.weekly",
                 "sqls": "Sales.region_query",
-                "ext_knowledge": "Docs.handbook",
             },
             "created_at": "2026-04-30T09:20:31.545000Z",
         }
@@ -1712,14 +1696,13 @@ class TestSubagentScopedContextRoundTrip:
             "Finance.Revenue.Daily",
             "finance.revenue.weekly",
             "Sales.region_query",
-            "Docs.handbook",
         ]
 
     async def test_round_trip_create_then_get(self, real_agent_config, agent_yml_with_singleton):
         """Saving and re-reading yields the canonical dot-separated form.
 
         Even though the on-disk shape changes (subjects gets split into
-        ``metrics`` / ``sqls`` / ``ext_knowledge``), the API contract round-
+        ``metrics`` / ``sqls``), the API contract round-
         trips: the editor sees ``subjects`` and ``catalogs`` come back as
         the same flat lists it sent.
         """
@@ -1815,11 +1798,10 @@ class TestSubagentScopedContextRoundTrip:
         — which is empty in this scenario — so every subject was bucketed to
         ``metrics`` regardless of which store actually owned it. With the fix,
         ``edit_agent`` resolves the effective datasource from the saved
-        ``scoped_context.datasource`` first, so the SQL/knowledge stores are
-        actually probed and ownership wins.
+        ``scoped_context.datasource`` first, so the SQL store is actually
+        probed and ownership wins.
         """
         from datus.api.models.agent_models import EditAgentInput
-        from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
         from datus.storage.metric.store import MetricRAG
         from datus.storage.reference_sql.store import ReferenceSqlRAG
 
@@ -1845,12 +1827,8 @@ class TestSubagentScopedContextRoundTrip:
         def fake_sql_init(self, agent_config, datasource_id=None):
             self.reference_sql_storage = _StubStore({"my_sql"})
 
-        def fake_knowledge_init(self, agent_config, datasource_id=None):
-            self.store = _StubStore({"my_doc"})
-
         monkeypatch.setattr(MetricRAG, "__init__", fake_metric_init)
         monkeypatch.setattr(ReferenceSqlRAG, "__init__", fake_sql_init)
-        monkeypatch.setattr(ExtKnowledgeRAG, "__init__", fake_knowledge_init)
         monkeypatch.setattr(
             "datus.storage.registry.get_subject_tree_store",
             lambda project: _StubTree(),
@@ -1873,7 +1851,7 @@ class TestSubagentScopedContextRoundTrip:
             EditAgentInput(
                 id="edit_with_saved_ds",
                 name="edit_with_saved_ds",
-                subjects=["Finance.SQL.my_sql", "Docs.handbook.my_doc", "Sales.unknown"],
+                subjects=["Finance.SQL.my_sql", "Sales.unknown"],
             ),
             real_agent_config,
         )
@@ -1883,11 +1861,10 @@ class TestSubagentScopedContextRoundTrip:
         # "no datasource → all metrics" branch.
         assert captured.get("metric_ds") == "finance"
 
-        # SQL and knowledge entries land in their owning buckets; only the
-        # truly unmatched name falls back to metrics.
+        # SQL entries land in their owning bucket; only the truly unmatched
+        # name falls back to metrics.
         scoped = real_agent_config.agentic_nodes["edit_with_saved_ds"]["scoped_context"]
         assert scoped["sqls"] == "Finance.SQL.my_sql"
-        assert scoped["ext_knowledge"] == "Docs.handbook.my_doc"
         assert scoped["metrics"] == "Sales.unknown"
         # Saved datasource binding survives the edit.
         assert scoped["datasource"] == "finance"

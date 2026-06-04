@@ -29,7 +29,6 @@ def _make_reasoning_input(**overrides):
         data_details=None,
         metrics=None,
         contexts=[],
-        external_knowledge="",
     )
     defaults.update(overrides)
     return ReasoningInput(**defaults)

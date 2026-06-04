@@ -3,7 +3,6 @@
       database_name: duck
       schema_name: mf_demo
       database_type: duckdb
-      external_knowledge: ''
       id: '2'
       output_dir: output/duckdb_metrics
       task: Calculate the cancellation rate by transaction type (Quick Buy or Not Quick Buy).

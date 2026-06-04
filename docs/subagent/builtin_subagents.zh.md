@@ -4,21 +4,20 @@
 
 **内置 Subagent**  是集成在 Datus Agent 系统中的专用 AI 助手。每个subagent专注于数据工程自动化的特定方面——分析 SQL、生成语义模型、将查询转换为可复用指标——共同构成从原始 SQL 到具备知识感知的数据产品的闭环工作流。
 
-本文档涵盖十三个核心 subagent：
+本文档涵盖十二个核心 subagent：
 
 1. **[gen_sql_summary](#gen_sql_summary)** — 总结和分类 SQL 查询
 2. **[gen_semantic_model](#gen_semantic_model)** — 生成 MetricFlow 语义模型
 3. **[gen_metrics](#gen_metrics)** — 生成 MetricFlow 指标定义
-4. **[gen_ext_knowledge](#gen_ext_knowledge)** — 生成业务概念定义
-5. **[explore](#explore)** — 只读数据探索和上下文收集
-6. **[gen_sql](#gen_sql)** — 具备深度专业知识的专用 SQL 生成
-7. **[gen_report](#gen_report)** — 灵活的报告生成，支持可配置工具
-8. **[gen_table](gen_table.zh.md)** — 数据库建表（CTAS 或自然语言描述）
-9. **[gen_job](gen_job.zh.md)** — 数据管道执行（单库 ETL 和跨库迁移，含对数校验）
-10. **[gen_skill](#gen_skill)** — skill 创建与优化
-11. **[gen_dashboard](#gen_dashboard)** — Superset 和 Grafana 的 BI 仪表盘 CRUD
-12. **[gen_visual_report](gen_visual_report.zh.md)** — 在 `reports/<slug>/` 下产出自包含的可视化报告
-13. **[scheduler](#scheduler)** — Airflow 作业生命周期管理
+4. **[explore](#explore)** — 只读数据探索和上下文收集
+5. **[gen_sql](#gen_sql)** — 具备深度专业知识的专用 SQL 生成
+6. **[gen_report](#gen_report)** — 灵活的报告生成，支持可配置工具
+7. **[gen_table](gen_table.zh.md)** — 数据库建表（CTAS 或自然语言描述）
+8. **[gen_job](gen_job.zh.md)** — 数据管道执行（单库 ETL 和跨库迁移，含对数校验）
+9. **[gen_skill](#gen_skill)** — skill 创建与优化
+10. **[gen_dashboard](#gen_dashboard)** — Superset 和 Grafana 的 BI 仪表盘 CRUD
+11. **[gen_visual_report](gen_visual_report.zh.md)** — 在 `reports/<slug>/` 下产出自包含的可视化报告
+12. **[scheduler](#scheduler)** — Airflow 作业生命周期管理
 
 ## 配置
 
@@ -37,10 +36,6 @@ agent:
 
     gen_sql_summary:
       model: deepseek   # 可选：默认使用已配置的模型
-      max_turns: 30     # 可选：默认为 30
-
-    gen_ext_knowledge:
-      model: claude     # 可选：默认使用已配置的模型
       max_turns: 30     # 可选：默认为 30
 
     explore:
@@ -547,121 +542,6 @@ metric:
 
 ---
 
-## gen_ext_knowledge
-
-### 概览
-
-外部知识生成功能帮助你创建和管理业务概念和特定领域定义。使用 AI 助手，你可以将业务知识以结构化格式文档化，存储在知识库中可被搜索，从而为 SQL 生成和数据分析任务提供更好的上下文检索。
-
-### 什么是外部知识？
-
-**外部知识**捕获未直接存储在数据库 schema 中的业务特定信息：
-
-- **业务规则**：计算逻辑和业务约束
-- **领域概念**：行业或公司特定知识
-- **数据解释**：如何理解特定数据字段或值
-
-这些知识帮助 AI agent 在生成 SQL 查询或分析数据时理解你的业务上下文。
-
-### 快速开始
-
-启动外部知识生成 subagent：
-
-```bash
-/gen_ext_knowledge Extract knowledge from this sql
--- Question: What is the highest eligible free rate for K-12 students in the schools in Alameda County?
--- SQL:
-SELECT
-  `Free Meal Count (K-12)` / `Enrollment (K-12)`
-FROM
-  frpm
-WHERE
-  `County Name` = 'Alameda'
-ORDER BY
-  (
-    CAST(`Free Meal Count (K-12)` AS REAL) / `Enrollment (K-12)`
-  ) DESC
-LIMIT 1
-```
-
-### 生成工作流
-
-工作流遵循**知识缺口发现**方法：agent 首先尝试独立解决问题，然后与参考 SQL 比较以识别隐含的业务知识。
-
-```mermaid
-graph LR
-    A[用户提供问题 + SQL] --> B[智能体尝试解决]
-    B --> C[与参考 SQL 比较]
-    C --> D[识别知识缺口]
-    D --> E[检查重复]
-    E --> F[生成 YAML]
-    F --> G[保存文件]
-    G --> H[同步到知识库]
-```
-
-**详细步骤**：
-
-1. **理解问题**：从 SQL 注释中读取问题并理解目标
-2. **尝试解决**：agent 使用可用工具尝试解决问题
-3. **与参考 SQL 比较**：找出尝试结果与参考 SQL 之间的差距
-4. **从差距中提取知识**：发现差距中隐藏的业务概念
-5. **检查重复**：使用 `search_knowledge` 验证提取的知识是否已存在
-6. **生成 YAML**：通过 `generate_ext_knowledge_id()` 创建带有唯一 ID 的结构化知识条目
-7. **保存文件**：使用 `write_file(path, content, file_type="ext_knowledge")` 写入 YAML
-8. **同步到知识库**：存储到向量数据库用于语义搜索
-
-> **重要**：如果未发现知识缺口（agent 的尝试与参考 SQL 匹配），则不生成知识文件。
-
-### 同步行为
-
-在 interactive 模式下，YAML 文件写入成功后，generation hook 会自动把它同步到知识库。在 workflow/API 模式下，请使用显式同步步骤或工具。
-
-### 主题路径分类
-
-主题路径允许对外部知识进行层次化组织。在 CLI 模式下，在问题中包含它：
-
-**带主题路径示例：**
-```bash
-/gen_ext_knowledge Extract knowledge from this sql
-Question: What is the highest eligible free rate for K-12 students in the schools in Alameda County?
-subject_tree: education/schools/data_integration
-SQL: ***
-```
-
-**不带主题路径示例：**
-```bash
-/gen_ext_knowledge Extract knowledge from this sql
-Question: What is the highest eligible free rate for K-12 students in the schools in Alameda County?
-SQL: ***
-```
-
-未提供时，agent 会基于知识库中现有的主题树自动建议分类。
-
-### YAML 结构
-
-生成的外部知识遵循以下结构：
-
-```yaml
-id: education/schools/data_integration/CDS code school identifier California Department of Education join tables
-name: CDS Code as School Identifier
-search_text: CDS code school identifier California Department of Education join tables
-explanation: |
-  The CDS (California Department of Education) code serves as the primary identifier for linking educational datasets in California. Use `cds` field in SAT scores table to join
-subject_path: education/schools/data_integration
-```
-
-#### 字段说明
-
-| 字段 | 必需 | 描述                                          | 示例 |
-|-------|----------|---------------------------------------------|---------|
-| `id` | 是 | 唯一ID（通过 `generate_ext_knowledge_id()` 自动生成） | `education/schools/data_integration/CDS code school identifier California Department of Education join tables` |
-| `name` | 是 | 简短标识名称（最多 30 个字符）                           | `Free Meal Rate`、`GMV` |
-| `search_text` | 是 | 检索用的搜索关键词（向量/倒排索引）                          | `eligible free rate K-12` |
-| `explanation` | 是 | 简洁说明（2-4 句）：是什么 + 何时/如何应用                   | 业务规则、计算逻辑 |
-| `subject_path` | 是 | 层次化分类（斜杠分隔）                                 | `Education/School Metrics/FRPM` |
-
----
-
 ## explore
 
 ### 概览
@@ -1146,7 +1026,6 @@ agent:
 | `gen_sql_summary` | 总结和分类 SQL 查询 | YAML（SQL 摘要） | `/data/reference_sql` | 主题树分类、自动上下文检索 |
 | `gen_semantic_model` | 从表生成语义模型 | YAML（语义模型） | `/data/semantic_models` | DDL 到 MetricFlow 模型、内置验证 |
 | `gen_metrics` | 从 SQL 生成指标 | YAML（指标） | `/data/semantic_models` | SQL 到 MetricFlow 指标、主题树支持 |
-| `gen_ext_knowledge` | 生成业务概念 | YAML（外部知识） | `/data/ext_knowledge` | 从问题与 SQL 中提取业务知识 |
 | `explore` | 只读数据探索 | 结构化上下文 | N/A | 严格只读、低轮数、三方向探索 |
 | `gen_sql` | 生成优化 SQL | SQL 查询 / SQL 文件 | N/A | 深度 SQL 专长、自动验证、支持文件输出 |
 | `gen_report` | 灵活报告生成 | 结构化报告 | N/A | 工具可配置、可扩展、自定义报告 subagent |

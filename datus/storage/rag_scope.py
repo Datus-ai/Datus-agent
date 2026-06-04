@@ -51,7 +51,7 @@ def _build_sub_agent_filter(
     if check_scope_attr == "tables":
         dialect = getattr(agent_config, "db_type", "")
         return ScopedFilterBuilder.build_table_filter(scope_value, dialect)
-    elif check_scope_attr in ("metrics", "sqls", "ext_knowledge"):
+    elif check_scope_attr in ("metrics", "sqls"):
         subject_tree = getattr(storage, "subject_tree", None)
         if subject_tree is None:
             from datus.utils.exceptions import DatusException, ErrorCode

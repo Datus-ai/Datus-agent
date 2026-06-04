@@ -24,8 +24,6 @@ class ToolService:
         "search_reference_sql",
         "get_reference_sql",
         "search_semantic_objects",
-        "search_knowledge",
-        "get_knowledge",
     }
 
     def __init__(self, agent_config: AgentConfig):

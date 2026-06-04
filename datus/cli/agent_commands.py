@@ -298,7 +298,6 @@ class AgentCommands:
                 # Use current_db_name from CLI context
                 database_name = self.cli_context.current_db_name or self.cli.args.db_path
                 output_dir = self.cli.agent_config.output_dir
-                external_knowledge = ""
                 current_date = ""
             else:  # If no input, use a prompt to get the task info
                 task_id = self.cli.prompt_input("Enter task ID", default=task_id)
@@ -324,9 +323,6 @@ class AgentCommands:
                 # Output directory - use agent config
                 output_dir = self.cli.agent_config.output_dir
 
-                # External knowledge - optional input
-                external_knowledge = self.cli.prompt_input("Enter external knowledge (optional)", default="")
-
                 # Current date - optional input for relative time expressions
                 current_date = self.cli.prompt_input("Enter current date (optional, e.g., '2025-07-01')", default="")
 
@@ -337,7 +333,6 @@ class AgentCommands:
                 task=task_description,
                 database_name=database_name,
                 output_dir=output_dir,
-                external_knowledge=external_knowledge,
                 current_date=current_date if current_date.strip() else None,
             )
 

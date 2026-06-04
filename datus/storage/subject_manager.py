@@ -12,7 +12,6 @@ cross-datasource interference in multi-tenant setups.
 from typing import Any, Dict, List, Optional
 
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.ext_knowledge import ExtKnowledgeStore
 from datus.storage.metric import MetricStorage
 from datus.storage.reference_sql import ReferenceSqlStorage
 from datus.storage.registry import get_storage
@@ -31,9 +30,6 @@ class SubjectUpdater:
         self.reference_sql_storage: ReferenceSqlStorage = get_storage(
             ReferenceSqlStorage, "reference_sql", project=agent_config.project_name
         )
-        self.ext_knowledge_storage: ExtKnowledgeStore = get_storage(
-            ExtKnowledgeStore, "ext_knowledge", project=agent_config.project_name
-        )
 
     def update_metrics_detail(self, subject_path: List[str], name: str, update_values: Dict[str, Any]):
         if not update_values:
@@ -47,17 +43,8 @@ class SubjectUpdater:
         self.reference_sql_storage.update_entry(subject_path, name, update_values)
         logger.debug("Updated the reference SQL details in the main space successfully")
 
-    def update_ext_knowledge(self, subject_path: List[str], name: str, update_values: Dict[str, Any]):
-        if not update_values:
-            return
-        self.ext_knowledge_storage.update_entry(subject_path, name, update_values)
-        logger.debug("Updated the ext_knowledge details in the main space successfully")
-
     def delete_metric(self, subject_path: List[str], name: str) -> Dict[str, Any]:
         return self.metrics_storage.delete_metric(subject_path, name)
 
     def delete_reference_sql(self, subject_path: List[str], name: str) -> bool:
         return self.reference_sql_storage.delete_reference_sql(subject_path, name)
-
-    def delete_ext_knowledge(self, subject_path: List[str], name: str) -> bool:
-        return self.ext_knowledge_storage.delete_knowledge(subject_path, name)

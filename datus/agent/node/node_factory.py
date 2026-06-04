@@ -70,17 +70,6 @@ def create_interactive_node(
                 session_id=session_id,
             )
 
-        elif subagent_name == "gen_ext_knowledge":
-            from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
-
-            return GenExtKnowledgeAgenticNode(
-                node_name=subagent_name,
-                agent_config=agent_config,
-                execution_mode=execution_mode,
-                scope=scope,
-                session_id=session_id,
-            )
-
         elif subagent_name == "gen_table" or node_class_type == "gen_table":
             from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
 
@@ -337,7 +326,6 @@ def create_node_input(
             Only consumed by :class:`FeedbackAgenticNode`.
     """
     from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
-    from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
     from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
     from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
     from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
@@ -376,17 +364,6 @@ def create_node_input(
             database=database,
             db_schema=db_schema,
             prompt_language=prompt_language,
-        )
-
-    elif isinstance(node, GenExtKnowledgeAgenticNode):
-        from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput
-
-        return ExtKnowledgeNodeInput(
-            user_message=user_message,
-            prompt_language=prompt_language,
-            catalog=catalog,
-            database=database,
-            db_schema=db_schema,
         )
 
     elif isinstance(node, GenReportAgenticNode):

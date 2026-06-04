@@ -41,7 +41,9 @@ class RunWorkflowRequest(BaseModel):
     schema_name: Optional[str] = Field(None, description="Schema name")
     current_date: Optional[str] = Field(None, description="Current date reference for relative time expressions")
     subject_path: Optional[List[str]] = Field(None, description="Subject path for the task")
-    ext_knowledge: Optional[str] = Field(None, description="External knowledge for the task")
+    ext_knowledge: Optional[str] = Field(
+        None, description="Supplementary description / evidence supplied with the question"
+    )
 
 
 class RunWorkflowResponse(BaseModel):

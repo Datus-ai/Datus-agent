@@ -1924,7 +1924,7 @@ class TestSetupInputGenSQL:
 
         wf = MagicMock()
         wf.task.task = "Find total sales"
-        wf.task.external_knowledge = "revenue = total sales"
+        wf.task.external_knowledge = ""
         wf.task.catalog_name = "cat"
         wf.task.database_name = "california_schools"
         wf.task.schema_name = "main"

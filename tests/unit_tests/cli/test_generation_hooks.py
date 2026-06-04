@@ -11,7 +11,7 @@ All external dependencies are mocked. Tests cover:
 - _extract_filepaths_from_result
 - _process_single_file (file not found, empty, already processed, happy path)
 - _handle_sql_summary_result
-- _is_sql_summary_tool_call / _is_ext_knowledge_tool_call
+- _is_sql_summary_tool_call
 """
 
 import json
@@ -51,7 +51,6 @@ def agent_config(tmp_path):
     subject_dir = tmp_path / "subject"
     (subject_dir / "semantic_models").mkdir(parents=True, exist_ok=True)
     (subject_dir / "sql_summaries").mkdir(parents=True, exist_ok=True)
-    (subject_dir / "ext_knowledge").mkdir(parents=True, exist_ok=True)
     cfg = MagicMock()
     cfg.home = str(tmp_path)
     cfg.current_datasource = "test_ns"
@@ -60,7 +59,6 @@ def agent_config(tmp_path):
     cfg.path_manager = MagicMock()
     cfg.path_manager.semantic_model_path.return_value = subject_dir / "semantic_models"
     cfg.path_manager.sql_summary_path.return_value = subject_dir / "sql_summaries"
-    cfg.path_manager.ext_knowledge_path.return_value = subject_dir / "ext_knowledge"
     # Real value so _resolve_path's realpath/commonpath containment check works.
     cfg.path_manager.subject_dir = subject_dir
     return cfg
@@ -115,15 +113,6 @@ class TestOnToolEnd:
         tool.name = "write_file"
         await hooks.on_tool_end(MagicMock(), MagicMock(), tool, "result")
         hooks._handle_sql_summary_result.assert_awaited_once()
-
-    async def test_routes_write_file_ext_knowledge(self, hooks):
-        hooks._handle_ext_knowledge_result = AsyncMock()
-        hooks._is_sql_summary_tool_call = MagicMock(return_value=False)
-        hooks._is_ext_knowledge_tool_call = MagicMock(return_value=True)
-        tool = MagicMock()
-        tool.name = "write_file"
-        await hooks.on_tool_end(MagicMock(), MagicMock(), tool, "result")
-        hooks._handle_ext_knowledge_result.assert_awaited_once()
 
     async def test_unrelated_tool_does_nothing(self, hooks):
         hooks._handle_end_semantic_model_generation = AsyncMock()
@@ -282,10 +271,6 @@ class TestResolvePath:
     def test_relative_joined_for_sql_summary(self, broker):
         h, _ = self._make_hooks(broker)
         assert h._resolve_path("q_001.yaml", "sql_summary") == "/ws/sql_summaries/q_001.yaml"
-
-    def test_relative_joined_for_ext_knowledge(self, broker):
-        h, _ = self._make_hooks(broker)
-        assert h._resolve_path("gmv.yaml", "ext_knowledge") == "/ws/ext_knowledge/gmv.yaml"
 
     def test_nested_relative_joined(self, broker):
         h, _ = self._make_hooks(broker)
@@ -520,32 +505,6 @@ class TestIsSqlSummaryToolCall:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _is_ext_knowledge_tool_call
-# ---------------------------------------------------------------------------
-
-
-class TestIsExtKnowledgeToolCall:
-    def test_returns_true_for_ext_knowledge(self, hooks):
-        ctx = MagicMock()
-        ctx.tool_arguments = json.dumps({"file_type": "ext_knowledge"})
-        assert hooks._is_ext_knowledge_tool_call(ctx) is True
-
-    def test_returns_false_for_sql_summary(self, hooks):
-        ctx = MagicMock()
-        ctx.tool_arguments = json.dumps({"file_type": "sql_summary"})
-        assert hooks._is_ext_knowledge_tool_call(ctx) is False
-
-    def test_returns_false_for_no_attribute(self, hooks):
-        ctx = MagicMock(spec=[])
-        assert hooks._is_ext_knowledge_tool_call(ctx) is False
-
-    def test_returns_false_for_invalid_json(self, hooks):
-        ctx = MagicMock()
-        ctx.tool_arguments = "{"
-        assert hooks._is_ext_knowledge_tool_call(ctx) is False
-
-
-# ---------------------------------------------------------------------------
 # Tests: _handle_sql_summary_result - additional branches
 # ---------------------------------------------------------------------------
 
@@ -607,92 +566,6 @@ class TestHandleSqlSummaryResultExtended:
         try:
             result = {"result": f"Reference SQL file written successfully: {path}"}
             await hooks._handle_sql_summary_result(result)
-        finally:
-            os.unlink(path)
-        hooks._sync_generated_file.assert_awaited_once()
-
-
-# ---------------------------------------------------------------------------
-# Tests: _handle_ext_knowledge_result
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-class TestHandleExtKnowledgeResult:
-    async def test_no_match_returns_early(self, hooks):
-        hooks._sync_generated_file = AsyncMock()
-        result = {"result": "unrelated message"}
-        await hooks._handle_ext_knowledge_result(result)
-        hooks._sync_generated_file.assert_not_called()
-
-    async def test_file_not_exists_returns_early(self, hooks):
-        hooks._sync_generated_file = AsyncMock()
-        result = {"result": "File written successfully: /nonexistent/ext.yaml"}
-        await hooks._handle_ext_knowledge_result(result)
-        hooks._sync_generated_file.assert_not_called()
-
-    async def test_happy_path_auto_syncs(self, hooks, agent_config):
-        hooks._sync_generated_file = AsyncMock()
-        ext_dir = Path(str(agent_config.path_manager.subject_dir)) / "ext_knowledge"
-        path_obj = ext_dir / "ext_happy.yaml"
-        path_obj.write_text("key: value\n")
-        path = str(path_obj)
-        try:
-            result = {"result": f"File written successfully: {path}"}
-            await hooks._handle_ext_knowledge_result(result)
-        finally:
-            os.unlink(path)
-        hooks._sync_generated_file.assert_awaited_once()
-        assert path in hooks.processed_files
-
-    async def test_ext_knowledge_file_written_pattern(self, hooks, agent_config):
-        hooks._sync_generated_file = AsyncMock()
-        ext_dir = Path(str(agent_config.path_manager.subject_dir)) / "ext_knowledge"
-        path_obj = ext_dir / "ext_pattern.yaml"
-        path_obj.write_text("key: value\n")
-        path = str(path_obj)
-        try:
-            result = {"result": f"External knowledge file written successfully: {path}"}
-            await hooks._handle_ext_knowledge_result(result)
-        finally:
-            os.unlink(path)
-        hooks._sync_generated_file.assert_awaited_once()
-
-    async def test_already_processed_skipped(self, hooks):
-        hooks._sync_generated_file = AsyncMock()
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("key: value\n")
-            path = f.name
-        hooks.processed_files.add(path)
-        try:
-            result = {"result": f"File written successfully: {path}"}
-            await hooks._handle_ext_knowledge_result(result)
-        finally:
-            os.unlink(path)
-        hooks._sync_generated_file.assert_not_called()
-
-    async def test_empty_file_returns_early(self, hooks):
-        hooks._sync_generated_file = AsyncMock()
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("")
-            path = f.name
-        try:
-            result = {"result": f"File written successfully: {path}"}
-            await hooks._handle_ext_knowledge_result(result)
-        finally:
-            os.unlink(path)
-        hooks._sync_generated_file.assert_not_called()
-
-    async def test_result_object_with_match(self, hooks, agent_config):
-        hooks._sync_generated_file = AsyncMock()
-        ext_dir = Path(str(agent_config.path_manager.subject_dir)) / "ext_knowledge"
-        path_obj = ext_dir / "ext_match.yaml"
-        path_obj.write_text("key: value\n")
-        path = str(path_obj)
-        try:
-            result = MagicMock()
-            result.result = f"File written successfully: {path}"
-            await hooks._handle_ext_knowledge_result(result)
         finally:
             os.unlink(path)
         hooks._sync_generated_file.assert_awaited_once()
@@ -796,12 +669,6 @@ class TestSyncToStorage:
             result = await hooks._sync_to_storage("/tmp/file.yaml", "sql_summary")
         assert "Successfully synced" in result
         assert hooks.generation_evidence.generic_kb_sync_passed is True
-
-    async def test_ext_knowledge_type_calls_sync(self, hooks):
-        mock_result = {"success": True, "message": "Ext knowledge synced"}
-        with patch("datus.cli.generation_hooks.GenerationHooks._sync_ext_knowledge_to_db", return_value=mock_result):
-            result = await hooks._sync_to_storage("/tmp/file.yaml", "ext_knowledge")
-        assert "Successfully synced" in result
 
     async def test_sql_summary_type_calls_sync_reference_sql(self, hooks):
         """sql_summary type delegates to _sync_reference_sql_to_db."""
@@ -1674,9 +1541,6 @@ class TestNormalizeKbRelativePath:
     def test_prepends_for_sql_summary(self):
         assert normalize_kb_relative_path("q_001.yaml", "sql_summary") == "sql_summaries/q_001.yaml"
 
-    def test_prepends_for_ext_knowledge(self):
-        assert normalize_kb_relative_path("notes.yaml", "ext_knowledge") == "ext_knowledge/notes.yaml"
-
     def test_metric_kind_co_locates_with_semantic_models(self):
         """metrics live under semantic_models/metrics/ — same root as semantic."""
         assert (
@@ -1783,12 +1647,6 @@ class TestResolveKbSandboxPath:
         """A fabricated absolute path outside the sandbox must be refused so
         _save_to_db never syncs an arbitrary on-disk file."""
         assert resolve_kb_sandbox_path("/etc/passwd", "sql_summary", str(tmp_path)) is None
-
-    def test_cross_kind_prefix_rejected(self, tmp_path):
-        """Workflow returning ``ext_knowledge/foo.yaml`` from a
-        sql_summary node must be refused — the prompt-compliant output here
-        is restricted to ``sql_summaries/``."""
-        assert resolve_kb_sandbox_path("ext_knowledge/foo.yaml", "sql_summary", str(tmp_path)) is None
 
     def test_traversal_escape_rejected(self, tmp_path):
         """``../../etc/passwd`` resolves outside the sandbox → rejected."""

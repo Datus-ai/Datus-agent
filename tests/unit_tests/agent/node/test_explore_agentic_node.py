@@ -213,8 +213,6 @@ class TestExploreAgenticNodeTools:
         assert "`list_subject_tree()`" in prompt
         assert "`search_reference_sql" in prompt
         assert "`get_reference_sql" in prompt
-        assert "`search_knowledge" not in prompt
-        assert "`get_knowledge" not in prompt
 
 
 @pytest.mark.component

@@ -104,7 +104,6 @@ Execute a workflow to convert natural language to SQL.
 | `domain` | string | ❌ | Business domain |
 | `layer1` | string | ❌ | Business layer 1 |
 | `layer2` | string | ❌ | Business layer 2 |
-| `ext_knowledge` | string | ❌ | Additional business context |
 
 #### Synchronous Mode (mode: "sync")
 

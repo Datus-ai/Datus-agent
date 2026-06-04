@@ -839,7 +839,6 @@ class TestChatAgenticNodeSetupInput:
         task = SqlTask(
             task="Tell me about the schools",
             database_name="california_schools",
-            external_knowledge="Some context info",
             catalog_name="test_catalog",
             schema_name="public",
         )
@@ -850,7 +849,6 @@ class TestChatAgenticNodeSetupInput:
         assert result["success"] is True
         assert node.input.user_message == "Tell me about the schools"
         assert node.input.database == "california_schools"
-        assert node.input.external_knowledge == "Some context info"
         assert node.input.catalog == "test_catalog"
         assert node.input.db_schema == "public"
 
@@ -873,7 +871,6 @@ class TestChatAgenticNodeSetupInput:
         task = SqlTask(
             task="New question about data",
             database_name="california_schools",
-            external_knowledge="Updated knowledge",
             catalog_name="new_catalog",
             schema_name="new_schema",
         )
@@ -884,7 +881,6 @@ class TestChatAgenticNodeSetupInput:
         assert result["success"] is True
         assert node.input.user_message == "New question about data"
         assert node.input.database == "california_schools"
-        assert node.input.external_knowledge == "Updated knowledge"
         assert node.input.catalog == "new_catalog"
         assert node.input.db_schema == "new_schema"
 

@@ -314,7 +314,6 @@ class TestAPIModels:
             database_name="db",
             schema_name="sch",
             subject_path=["a", "b"],
-            ext_knowledge="some context",
         )
         assert req.mode == Mode.ASYNC
         assert req.task_id == "custom_id"

@@ -90,28 +90,6 @@ def test_remove_agent_removes_config(tmp_path):
     assert "cleanup_agent" not in manager.list_agents()
 
 
-def test_sub_agent_config_with_ext_knowledge(tmp_path):
-    """SubAgentConfig with ext_knowledge scoped context is serialized correctly."""
-    manager, config_mgr, agent_config = _build_manager(tmp_path)
-
-    context = ScopedContext(ext_knowledge="Finance/Revenue, Sales/*")
-    config = SubAgentConfig(system_prompt="knowledge_agent", scoped_context=context)
-
-    assert config.has_scoped_context() is True
-    assert config.scoped_context.is_empty is False
-
-    payload = config.as_payload("demo")
-    assert "scoped_context" in payload
-    assert payload["scoped_context"]["ext_knowledge"] == "Finance/Revenue, Sales/*"
-
-
-def test_sub_agent_config_ext_knowledge_only_not_empty():
-    """ScopedContext with only ext_knowledge is not empty."""
-    context = ScopedContext(ext_knowledge="Finance/*")
-    config = SubAgentConfig(system_prompt="agent", scoped_context=context)
-    assert config.has_scoped_context() is True
-
-
 # ---------------------------------------------------------------------------
 # list_agents
 # ---------------------------------------------------------------------------

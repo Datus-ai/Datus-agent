@@ -880,10 +880,6 @@ class ChatCommands:
         if sql_summary_file:
             self._display_sql_summary_file(sql_summary_file)
 
-        ext_knowledge_file = final_action.output.get("ext_knowledge_file")
-        if ext_knowledge_file:
-            self._display_ext_knowledge_file(ext_knowledge_file)
-
         if clean_output and not skip_markdown_body:
             self._display_markdown_response(clean_output)
 
@@ -1227,22 +1223,6 @@ class ChatCommands:
             logger.error(f"Error displaying SQL summary file: {e}")
             # Fallback to simple display
             self.console.print(f"\n[bold yellow]SQL Summary File:[/] {sql_summary_file}")
-
-    def _display_ext_knowledge_file(self, ext_knowledge_file: str):
-        """
-        Display external knowledge file path.
-
-        Args:
-            ext_knowledge_file: External knowledge file path
-        """
-        try:
-            self.console.print()
-            self.console.print(f"[green]External Knowledge File:[/] [cyan]{ext_knowledge_file}[/]")
-
-        except Exception as e:
-            logger.error(f"Error displaying external knowledge file: {e}")
-            # Fallback to simple display
-            self.console.print(f"\n[green]External Knowledge File:[/] {ext_knowledge_file}")
 
     def _make_input_collector(self, esc_guard):
         """Create a synchronous input collector callback for INTERACTION actions.

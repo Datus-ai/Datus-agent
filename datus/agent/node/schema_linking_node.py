@@ -11,7 +11,6 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.base import BaseInput
 from datus.schemas.node_models import TableSchema, TableValue
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
-from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
 from datus.tools.lineage_graph_tools.schema_lineage import SchemaLineageTool
 from datus.utils.loggings import get_logger
 
@@ -65,17 +64,6 @@ class SchemaLinkingNode(Node):
     def setup_input(self, workflow: Workflow) -> Dict:
         logger.info("Setup schema linking input")
 
-        # Search and enhance external knowledge before schema linking
-        enhanced_external_knowledge = self._search_external_knowledge(
-            workflow.task.task,  # User query
-            workflow.task.subject_path,  # Subject hierarchy path
-        )
-
-        # Combine original and searched knowledge
-        if enhanced_external_knowledge:
-            original_knowledge = workflow.task.external_knowledge
-            combined_knowledge = self._combine_knowledge(original_knowledge, enhanced_external_knowledge)
-            workflow.task.external_knowledge = combined_knowledge
         if workflow.context and workflow.context.table_schemas:
             self._table_schemas = workflow.context.table_schemas
             self._table_values = workflow.context.table_values
@@ -103,7 +91,7 @@ class SchemaLinkingNode(Node):
                 table_type=workflow.task.schema_linking_type,
             )
             self.input = next_input
-        return {"success": True, "message": "Schema and external knowledge prepared"}
+        return {"success": True, "message": "Schema prepared"}
 
     def _execute_schema_linking(self) -> SchemaLinkingResult:
         """Execute schema linking action to analyze database schema.
@@ -177,98 +165,11 @@ class SchemaLinkingNode(Node):
                 table_values=[],
             )
 
-    def _search_external_knowledge(self, user_query: str, subject_path: Optional[List[str]] = None) -> str:
-        """Search for relevant external knowledge based on user query and subject path.
-
-        Args:
-            user_query: The user's natural language query
-            subject_path: Subject hierarchy path (e.g., ['Finance', 'Revenue', 'Q1'])
-
-        Returns:
-            Formatted string of relevant knowledge entries, empty string if no results or error
-        """
-        try:
-            # Initialize ExtKnowledgeStore
-            knowledge_rag = ExtKnowledgeRAG(self.agent_config)
-
-            # Check if ext_knowledge table exists
-            if knowledge_rag.get_knowledge_size() == 0:
-                logger.debug("External knowledge store is empty, skipping search")
-                return ""
-
-            # Execute semantic search
-            search_results = knowledge_rag.query_knowledge(query_text=user_query, subject_path=subject_path, top_n=5)
-
-            # Format search results
-            if search_results:
-                knowledge_items = []
-                for result in search_results:
-                    knowledge_items.append(f"- {result['search_text']}: {result['explanation']}")
-
-                formatted_knowledge = "\n".join(knowledge_items)
-                logger.info(f"Found {len(knowledge_items)} relevant knowledge entries")
-                return formatted_knowledge
-            else:
-                logger.debug("No relevant external knowledge found")
-                return ""
-
-        except Exception as e:
-            logger.warning(f"Failed to search external knowledge: {str(e)}")
-            return ""
-
-    def _combine_knowledge(self, original: str, enhanced: str) -> str:
-        """Combine original knowledge and searched knowledge.
-
-        Args:
-            original: Original external knowledge from SqlTask
-            enhanced: Knowledge retrieved from search
-
-        Returns:
-            Combined knowledge string
-        """
-        parts = []
-        if original:
-            parts.append(original)
-        if enhanced:
-            parts.append(f"Relevant Business Knowledge:\n{enhanced}")
-
-        return "\n\n".join(parts)
-
     async def _schema_linking_stream(
         self, action_history_manager: Optional[ActionHistoryManager] = None
     ) -> AsyncGenerator[ActionHistory, None]:
         """Execute schema linking with streaming support and action history tracking."""
         try:
-            # External knowledge search action
-            knowledge_action = ActionHistory(
-                action_id="external_knowledge_search",
-                role=ActionRole.WORKFLOW,
-                messages="Searching external knowledge base for relevant business context",
-                action_type="knowledge_search",
-                input={
-                    "query": self.input.input_text if hasattr(self.input, "input_text") else "",
-                    "database_name": self.input.database_name if hasattr(self.input, "database_name") else "",
-                },
-                status=ActionStatus.PROCESSING,
-            )
-            yield knowledge_action
-
-            # Execute external knowledge search
-            try:
-                enhanced_knowledge = self._search_external_knowledge(
-                    self.input.input_text if hasattr(self.input, "input_text") else "",
-                    None,  # subject_path - would need to get from workflow if available
-                )
-                knowledge_action.status = ActionStatus.SUCCESS
-                knowledge_action.output = {
-                    "knowledge_found": bool(enhanced_knowledge),
-                    "knowledge_length": len(enhanced_knowledge) if enhanced_knowledge else 0,
-                }
-            except Exception as e:
-                knowledge_action.status = ActionStatus.FAILED
-                knowledge_action.output = {"error": str(e)}
-                logger.warning(f"External knowledge search failed: {e}")
-
             # Schema linking action
             schema_action = ActionHistory(
                 action_id="schema_linking",

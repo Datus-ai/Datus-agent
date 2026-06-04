@@ -48,7 +48,7 @@ class StreamRunContext:
     system_instruction: str = ""
     user_prompt: str = ""
 
-    # Allowed to be ``str`` (most nodes) or ``dict`` (Deliverable / ExtKnowledge)
+    # Allowed to be ``str`` (most nodes) or ``dict`` for structured outputs.
     response_content: Any = ""
     last_successful_output: Optional[Dict[str, Any]] = None
     last_tool_summary: str = ""
@@ -57,7 +57,7 @@ class StreamRunContext:
 
     # When set by ``_before_stream``, the template replaces
     # ``user_input.user_message`` for the duration of ``_build_enhanced_message``
-    # and restores it afterwards. Used by Compare / GenExtKnowledge.
+    # and restores it afterwards. Used by Compare.
     user_message_override: Optional[str] = None
 
     # Free-form scratchpad for subclass hooks to share state.

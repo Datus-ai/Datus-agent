@@ -48,7 +48,6 @@ SYS_SUB_AGENTS = {
     "gen_semantic_model",
     "gen_metrics",
     "gen_sql_summary",
-    "gen_ext_knowledge",
     "gen_sql",
     "ask_metrics",
     "gen_report",
