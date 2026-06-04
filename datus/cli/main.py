@@ -197,6 +197,14 @@ class ArgumentParser:
             help="Enable streaming thinking deltas in print mode (token-by-token output)",
         )
 
+        self.parser.add_argument(
+            "--orchestrator-tools",
+            dest="orchestrator_tools",
+            action="store_true",
+            default=False,
+            help="Expose orchestrator issue lifecycle tools in print mode",
+        )
+
     def parse_args(self):
         return self.parser.parse_args()
 
@@ -225,6 +233,9 @@ class Application:
 
         if args.proxy_tools and args.print_mode is None:
             self.arg_parser.parser.error("--proxy_tools requires --print mode")
+
+        if getattr(args, "orchestrator_tools", False) and args.print_mode is None:
+            self.arg_parser.parser.error("--orchestrator-tools requires --print mode")
 
         if args.print_mode is not None:
             from datus.cli.print_mode import PrintModeRunner

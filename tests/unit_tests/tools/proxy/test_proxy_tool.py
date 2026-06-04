@@ -173,6 +173,20 @@ class TestCreateProxyTool:
         await task
         assert result == {"success": 1}
 
+    def test_proxy_tool_preserves_strict_json_schema(self):
+        channel = ToolResultChannel()
+        original = FunctionTool(
+            name="tool",
+            description="Tool",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=lambda ctx, args: {},
+            strict_json_schema=False,
+        )
+
+        proxy = create_proxy_tool(original, channel)
+
+        assert proxy.strict_json_schema is False
+
 
 # ---------------------------------------------------------------------------
 # Tests: apply_proxy_tools

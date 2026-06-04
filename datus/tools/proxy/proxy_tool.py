@@ -58,6 +58,7 @@ def create_proxy_tool(original: FunctionTool, channel: ToolResultChannel) -> Fun
         description=original.description,
         params_json_schema=original.params_json_schema,
         on_invoke_tool=proxy_invoke,
+        strict_json_schema=original.strict_json_schema,
     )
 
 
