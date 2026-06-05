@@ -2,6 +2,24 @@
 
 ## 0.3
 
+### 0.3.3
+
+**新功能**
+
+- **会话自动压缩** - 长对话现在可以自动整理上下文，减少因上下文占满而中断的情况。对话变长时，较早的工具调用记录会归档到磁盘，当前任务仍保留在上下文中；接近上限（约 90%）时，会生成会话摘要并继续运行。`/compact` 也新增了进度提示和摘要面板，完整历史会持久化保存，方便恢复和回溯。[#871](https://github.com/Datus-ai/Datus-agent/pull/871) [#919](https://github.com/Datus-ai/Datus-agent/pull/919) [#933](https://github.com/Datus-ai/Datus-agent/pull/933) [文档](configuration/compact.zh.md)
+- **实时 Token 用量** - 模型响应时会实时显示本次新增与累计 token 数；状态栏同步展示当前上下文占用和总容量。用量历史会随会话保存，恢复会话或审计成本时都能查看。[#920](https://github.com/Datus-ai/Datus-agent/pull/920)
+
+**增强**
+
+- **Snowflake 密钥对认证** - Snowflake 启用 MFA 后，可改用 RSA 密钥对认证，不必依赖密码连接。配置 `private_key_file`、可选的 `private_key_file_pwd` 和 `role` 后，同一套认证信息会用于 SQL 执行，以及 MetricFlow 指标生成、校验和查询；日志中的凭据会自动脱敏。[#926](https://github.com/Datus-ai/Datus-agent/pull/926) [datus-db-adapters#66](https://github.com/Datus-ai/datus-db-adapters/pull/66) [datus-db-adapters#67](https://github.com/Datus-ai/datus-db-adapters/pull/67) [datus-semantic-adapter#25](https://github.com/Datus-ai/datus-semantic-adapter/pull/25) [文档](configuration/datasources.zh.md)
+- **离线 Embedding 降级** - 离线、内网或无法访问 Hugging Face 时，Datus 不再卡在 embedding 模型下载上。上下文搜索和 `@` 引用补全会临时降级，并提示模型名、缓存路径、相关环境变量和修复方法；数据库工具和普通聊天仍可继续使用。文档也补充了预先缓存模型、或改用 OpenAI 兼容 embedding 服务的离线部署方案。[#870](https://github.com/Datus-ai/Datus-agent/pull/870)
+- **Codex 缓存策略优化** - 使用 ChatGPT 订阅版 Codex 后端时，多步运行现在可以像官方客户端一样复用 prompt 缓存，降低等待时间和 token 成本。[#918](https://github.com/Datus-ai/Datus-agent/pull/918)
+- **`datus -p` 与 `--resume` 支持多轮对话** - Print 模式现在也能恢复并继续指定会话。通过 `datus -p '...' --resume <session_id>` 即可在命令行中接续对话；REPL 与 API chat 也支持用 `--resume` 恢复既有会话。[#914](https://github.com/Datus-ai/Datus-agent/pull/914)
+
+**Bug 修复**
+
+- **自定义 Ask 子代理遵守工具白名单** - `ask_report` / `ask_dashboard` 现在只会看到子代理 `tools` 白名单中允许的工具。未授权的数据库、bash、skill 工具不再暴露给模型，prompt 也不再混入完整聊天工具目录，减少越权调用和上下文污染风险。[#877](https://github.com/Datus-ai/Datus-agent/pull/877) [#878](https://github.com/Datus-ai/Datus-agent/pull/878) [#881](https://github.com/Datus-ai/Datus-agent/pull/881)
+
 ### 0.3.2
 
 **新功能**
