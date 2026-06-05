@@ -6,6 +6,7 @@ from typing import Optional, get_type_hints
 
 from pydantic import BaseModel, create_model
 
+from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput
 from datus.schemas.chat_agentic_node_models import ChatNodeInput
 from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.date_parser_node_models import DateParserInput
@@ -58,6 +59,7 @@ class NodeType:
     TYPE_GEN_SQL = "gen_sql"  # For SQL generation with conversational AI
     TYPE_SEMANTIC = "semantic"  # For semantic model generation
     TYPE_SQL_SUMMARY = "sql_summary"  # For SQL summary generation
+    TYPE_ASK_METRICS = "ask_metrics"  # For fast metric-based question answering
     TYPE_GEN_REPORT = "gen_report"  # For generic report generation
     TYPE_GEN_VISUAL_REPORT = "gen_visual_report"  # For structured (manifest + queries) report generation
     TYPE_GEN_VISUAL_DASHBOARD = "gen_visual_dashboard"  # For parameterized dashboard generation
@@ -84,6 +86,7 @@ class NodeType:
         TYPE_GEN_SQL,
         TYPE_SEMANTIC,
         TYPE_SQL_SUMMARY,
+        TYPE_ASK_METRICS,
         TYPE_GEN_REPORT,
         TYPE_GEN_VISUAL_REPORT,
         TYPE_GEN_VISUAL_DASHBOARD,
@@ -117,6 +120,7 @@ class NodeType:
         TYPE_GEN_SQL: "SQL generation with conversational AI and tool calling",
         TYPE_SEMANTIC: "Semantic model generation with conversational AI",
         TYPE_SQL_SUMMARY: "SQL summary generation with conversational AI",
+        TYPE_ASK_METRICS: "Fast metric-based question answering with semantic metrics",
         TYPE_GEN_REPORT: "Generic report generation with semantic and database tools",
         TYPE_GEN_VISUAL_REPORT: ("Visualizable report generation producing render/*.jsx + queries/* artifacts"),
         TYPE_GEN_VISUAL_DASHBOARD: (
@@ -176,6 +180,8 @@ class NodeType:
             input_data_cls = SemanticNodeInput
         elif node_type == NodeType.TYPE_SQL_SUMMARY:
             input_data_cls = SqlSummaryNodeInput
+        elif node_type == NodeType.TYPE_ASK_METRICS:
+            input_data_cls = AskMetricsNodeInput
         elif node_type == NodeType.TYPE_GEN_REPORT:
             input_data_cls = GenReportNodeInput
         elif node_type == NodeType.TYPE_GEN_VISUAL_REPORT:

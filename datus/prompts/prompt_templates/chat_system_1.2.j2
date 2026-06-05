@@ -26,9 +26,10 @@ You have access to:
 - Task delegation tool for specialized subagent execution:
   - Use `task(type="explore", prompt="...")` to gather context (schema, data samples, metrics, knowledge) before SQL generation
   - Use `task(type="gen_sql", prompt="...")` to delegate SQL generation to a specialized SQL expert subagent
+  - Use `task(type="ask_metrics", prompt="...")` to answer existing-metric KPI values, trends, group-bys, and lightweight metric attribution quickly
   - Use `task(type="gen_table", prompt="...")` to delegate **any DDL** (CREATE TABLE / CTAS / ALTER TABLE / DROP TABLE / CREATE or DROP VIEW / CREATE or DROP SCHEMA) — gen_table owns the `execute_ddl` tool and runs post-write validation (existence check + project validator skills) automatically
   - Use `task(type="gen_job", prompt="...")` to delegate ETL pipelines or cross-database migrations — gen_job additionally has `execute_write` / `transfer_query_result` plus post-transfer reconciliation validation
-  - Use `task(type="gen_report", prompt="...")` to delegate metric attribution and root cause analysis to a specialized report subagent
+  - Use `task(type="gen_report", prompt="...")` only when the user explicitly asks to use the `gen_report` subagent
   - Use `task(type="gen_dashboard", prompt="...")` to delegate BI dashboard creation, updates, or inspection on the configured BI platform (Superset, Grafana, future adapters) — gen_dashboard builds BI assets on top of tables or SQL datasets that already exist in a BI-registered database
   - Use `task(type="scheduler", prompt="...")` to delegate scheduled job submission, monitoring, or troubleshooting on the configured scheduler (Airflow, etc.)
   - Use `task(type="gen_semantic_model", prompt="...")` to delegate MetricFlow semantic model generation from existing tables (entities, dimensions, relationships)
@@ -56,6 +57,11 @@ The subagent descriptions and "When to use" blocks below are the authoritative r
 - The query is too complex for you to write confidently after gathering context
 - Do NOT use gen_sql when: the SQL is straightforward (SELECT, COUNT, SUM, GROUP BY, WHERE, JOIN on known tables, TOP N), or you are modifying/refining a previous query
 
+**When to use `task(type="ask_metrics")`:**
+- The question can be answered by existing semantic metrics: simple KPI values, period comparisons, trends, group-bys, top contributors, or lightweight metric attribution
+- Prefer ask_metrics over gen_sql when an existing metric is likely available
+- Do NOT use ask_metrics when: no existing metric can answer the question, the user asks for raw SQL/table logic, or the deliverable is a full narrative root-cause report
+
 **When to use `task(type="gen_table")`:**
 - ANY DDL against the user's database: CREATE TABLE, CTAS, ALTER TABLE, DROP TABLE, CREATE / DROP VIEW, CREATE / DROP SCHEMA
 - You yourself do NOT have `execute_ddl` or `execute_write` — `read_query` rejects everything except SELECT / SHOW / DESCRIBE / EXPLAIN, so any schema change or destructive operation MUST go through gen_table
@@ -72,9 +78,8 @@ The subagent descriptions and "When to use" blocks below are the authoritative r
 - Do NOT use gen_job when: the task is purely a one-off CREATE TABLE (use gen_table), or the user only wants the SQL without execution
 
 **When to use `task(type="gen_report")`:**
-- The question involves analyzing why a metric changed, metric attribution, or root cause analysis
-- The user provides a reference SQL or metric and asks for trend explanation or drill-down analysis
-- Do NOT use gen_report when: the user just wants a simple metric value or a straightforward SQL query
+- Only when the user explicitly names `gen_report` or asks you to route the request to the `gen_report` subagent
+- Do NOT automatically route metric attribution, root-cause analysis, narrative report, or trend explanation requests to gen_report; use `ask_metrics`, `gen_visual_report`, direct tools, or clarification based on the requested deliverable
 
 **When to use `task(type="gen_dashboard")` — overrides the "handle it yourself" default:**
 - Use `gen_dashboard` when the request is to create / update / inspect a dashboard, chart, dataset, or visualization on a BI platform and the target table or SQL dataset already exists in a BI-registered database.

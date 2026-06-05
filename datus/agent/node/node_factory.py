@@ -99,6 +99,23 @@ def create_interactive_node(
                 agent_config=agent_config, execution_mode=execution_mode, scope=scope, session_id=session_id
             )
 
+        elif subagent_name == "ask_metrics" or node_class_type == "ask_metrics":
+            from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+            from datus.configuration.node_type import NodeType
+
+            return AskMetricsAgenticNode(
+                node_id=node_id if node_id is not None else f"{subagent_name}{node_id_suffix}",
+                description=f"Metric question-answering node for {subagent_name}",
+                node_type=NodeType.TYPE_ASK_METRICS,
+                input_data=None,
+                agent_config=agent_config,
+                tools=None,
+                node_name=subagent_name,
+                scope=scope,
+                execution_mode=execution_mode,
+                session_id=session_id,
+            )
+
         elif subagent_name == "gen_report" or node_class_type == "gen_report":
             from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
 
@@ -319,6 +336,7 @@ def create_node_input(
         source_session_id: Source session the feedback node should copy from.
             Only consumed by :class:`FeedbackAgenticNode`.
     """
+    from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
     from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
     from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
     from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
@@ -375,6 +393,16 @@ def create_node_input(
         from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput
 
         return GenReportNodeInput(
+            user_message=user_message,
+            catalog=catalog,
+            database=database,
+            db_schema=db_schema,
+        )
+
+    elif isinstance(node, AskMetricsAgenticNode):
+        from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput
+
+        return AskMetricsNodeInput(
             user_message=user_message,
             catalog=catalog,
             database=database,
@@ -485,11 +513,15 @@ def resolve_node_name(subagent_name: Optional[str]) -> str:
 
 
 def _resolve_node_class_type(subagent_name: str, agent_config: "AgentConfig") -> Optional[str]:
-    """Resolve node_class from agent config for a subagent."""
+    """Resolve runtime node class from agent config for a subagent.
+
+    ``node_class`` wins for older/custom yaml, while API-created agents store
+    the selected runtime class under ``type``.
+    """
     if hasattr(agent_config, "agentic_nodes") and agent_config.agentic_nodes:
         node_config = agent_config.agentic_nodes.get(subagent_name, {})
         if hasattr(node_config, "model_dump"):
             node_config = node_config.model_dump()
         if isinstance(node_config, dict):
-            return node_config.get("node_class")
+            return node_config.get("node_class") or node_config.get("type")
     return None

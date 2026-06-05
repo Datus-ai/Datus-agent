@@ -49,6 +49,7 @@ logger = get_logger(__name__)
 NODE_CLASS_MAP = {
     "gen_sql": NodeType.TYPE_GEN_SQL,
     "chat": NodeType.TYPE_CHAT,
+    "ask_metrics": NodeType.TYPE_ASK_METRICS,
     "gen_report": NodeType.TYPE_GEN_REPORT,
     "gen_visual_report": NodeType.TYPE_GEN_VISUAL_REPORT,
     "gen_visual_dashboard": NodeType.TYPE_GEN_VISUAL_DASHBOARD,
@@ -89,11 +90,17 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "in PARALLEL with direction-specific prompts.\n"
         "  Returns JSON with {response, tokens_used}."
     ),
+    "ask_metrics": (
+        "Answer metric-based questions quickly using existing semantic metrics. "
+        "Use for KPI values, trends, grouped metric results, and metric attribution "
+        "when the question can be answered by the semantic layer. Does not fall back "
+        "to raw SQL. Returns JSON with {response, markdown_report, tokens_used}."
+    ),
     "gen_report": (
-        "Analyze and attribute metrics using reference SQL and semantic layer. "
-        "Use when the question involves metric attribution, root cause analysis, metric trend explanation, "
-        "or analyzing why a metric changed. "
-        "Prompt: provide the metric question, include reference SQL or metric name if available. "
+        "Legacy Markdown report subagent. Use only when the user explicitly asks to use "
+        "the gen_report subagent; do not automatically route attribution, root-cause, "
+        "trend explanation, or report requests here. "
+        "Prompt: provide the user's explicit gen_report request and any supplied context. "
         "Returns JSON with {response, report_result, tokens_used}."
     ),
     "gen_visual_report": (
@@ -434,6 +441,21 @@ class SubAgentTaskTool:
                 is_subagent=True,
                 session_id=session_id,
             )
+        elif subagent_type == "ask_metrics":
+            from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+
+            return AskMetricsAgenticNode(
+                node_id=f"task_ask_metrics_{uuid.uuid4().hex[:8]}",
+                description="Metric question-answering node for ask_metrics",
+                node_type="ask_metrics",
+                input_data=None,
+                agent_config=self.agent_config,
+                tools=None,
+                node_name="ask_metrics",
+                execution_mode=self._resolve_execution_mode(),
+                is_subagent=True,
+                session_id=session_id,
+            )
         elif subagent_type == "gen_report":
             from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
 
@@ -584,6 +606,9 @@ class SubAgentTaskTool:
         if subagent_type == "gen_report":
             return NodeType.TYPE_GEN_REPORT, "gen_report"
 
+        if subagent_type == "ask_metrics":
+            return NodeType.TYPE_ASK_METRICS, "ask_metrics"
+
         # Built-in gen_visual_report type
         if subagent_type == "gen_visual_report":
             return NodeType.TYPE_GEN_VISUAL_REPORT, "gen_visual_report"
@@ -598,6 +623,7 @@ class SubAgentTaskTool:
             "gen_metrics": (NodeType.TYPE_SEMANTIC, "gen_metrics"),
             "gen_sql_summary": (NodeType.TYPE_SQL_SUMMARY, "gen_sql_summary"),
             "gen_ext_knowledge": (NodeType.TYPE_EXT_KNOWLEDGE, "gen_ext_knowledge"),
+            "ask_metrics": (NodeType.TYPE_ASK_METRICS, "ask_metrics"),
             "gen_table": (NodeType.TYPE_GEN_TABLE, "gen_table"),
             "gen_job": (NodeType.TYPE_GEN_JOB, "gen_job"),
             "gen_dashboard": (NodeType.TYPE_GEN_DASHBOARD, "gen_dashboard"),
@@ -941,6 +967,16 @@ class SubAgentTaskTool:
                 database=self.agent_config.current_datasource,
             )
 
+        from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+
+        if isinstance(node, AskMetricsAgenticNode):
+            from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput
+
+            return AskMetricsNodeInput(
+                user_message=prompt,
+                database=self.agent_config.current_datasource,
+            )
+
         # Built-in system subagent input types
         from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
@@ -1149,6 +1185,15 @@ class SubAgentTaskTool:
                 {
                     "response": response,
                     "report_result": report_result,
+                    "tokens_used": tokens,
+                }
+            )
+
+        if "markdown_report" in output:
+            return _wrap(
+                {
+                    "response": response,
+                    "markdown_report": output.get("markdown_report", response),
                     "tokens_used": tokens,
                 }
             )

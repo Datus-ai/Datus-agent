@@ -23,6 +23,7 @@ __all__ = [
     "CompareAgenticNode",
     "GenSemanticModelAgenticNode",
     "GenMetricsAgenticNode",
+    "AskMetricsAgenticNode",
     "GenReportAgenticNode",
     "GenExtKnowledgeAgenticNode",
     "ExploreAgenticNode",
@@ -35,6 +36,7 @@ __all__ = [
 
 from datus.agent.node.node import Node
 
+from .ask_metrics_agentic_node import AskMetricsAgenticNode
 from .begin_node import BeginNode
 from .chat_agentic_node import ChatAgenticNode
 from .compare_agentic_node import CompareAgenticNode

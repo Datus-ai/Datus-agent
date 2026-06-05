@@ -86,6 +86,7 @@ _TOOL_CATEGORIES_BY_AGENT_TYPE: dict[str, tuple[str, ...]] = {
         "date_parsing_tools",
         "reference_template_tools",
     ),
+    "ask_metrics": _USER_FACING_TOOL_CATEGORIES,
     "ask_report": (
         "db_tools",
         "semantic_tools",
@@ -108,12 +109,10 @@ _TOOL_CATEGORIES_BY_AGENT_TYPE: dict[str, tuple[str, ...]] = {
 def _build_tool_types(agent_type: str) -> dict[str, dict[str, list[str]]]:
     """Compose the ``tool_types`` block returned by ``GET /agent/use_tools``
     for ``agent_type``. Categories are restricted to the per-type whitelist
-    in :data:`_TOOL_CATEGORIES_BY_AGENT_TYPE`; for ``ask_*`` agents,
+    in :data:`_TOOL_CATEGORIES_BY_AGENT_TYPE`; for artifact ``ask_*`` agents,
     ``filesystem_tools`` is further restricted to the read-only subset so
     the editor picker never surfaces ``write_file`` / ``edit_file`` as
-    selectable options. ``_validate_tools_for_agent_type`` reads back from
-    the same block, so the per-type catalog stays the single allowlist for
-    both the picker and the write-path validator.
+    selectable options.
     """
     is_ask_agent = agent_type in {"ask_report", "ask_dashboard"}
     tool_types: dict[str, dict[str, list[str]]] = {}
@@ -155,6 +154,18 @@ SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
             "context_search_tools.list_subject_tree",
         ],
         "tool_types": _build_tool_types("gen_report"),
+    },
+    "ask_metrics": {
+        "default_tools": [
+            "context_search_tools.search_metrics",
+            "context_search_tools.get_metrics",
+            "semantic_tools.list_metrics",
+            "semantic_tools.get_dimensions",
+            "semantic_tools.query_metrics",
+            "semantic_tools.attribution_analyze",
+            "context_search_tools.list_subject_tree",
+        ],
+        "tool_types": _build_tool_types("ask_metrics"),
     },
     # ask_report / ask_dashboard: read-only follow-up consultant for a single
     # visual artifact. Default tools cover data exploration (db_tools read
@@ -536,16 +547,14 @@ def _validate_tools(tools: list[str]) -> list[str]:
 
 
 def _validate_tools_for_agent_type(tools: list[str], agent_type: str) -> list[str]:
-    """For ``ask_*`` agents, reject any tool pattern outside the read-only
-    catalog. Returns the offending patterns; an empty list means OK.
+    """Reject tool patterns outside a type-specific catalog.
+
+    Returns the offending patterns; an empty list means OK.
 
     The general :func:`_validate_tools` only confirms patterns are
-    syntactically valid (category / method exists). ``ask_*`` agents have
-    an additional contract — they must never mutate the artifact they're
-    bound to — so we enforce a per-type allowlist matching the
-    ``tool_types`` catalog returned by ``GET /agent/use_tools``. This
-    blocks ``filesystem_tools.write_file`` / ``edit_file`` and any wildcard
-    that would expand reach beyond the documented read-only set.
+    syntactically valid (category / method exists). Artifact ask agents also
+    have a narrower read-only filesystem contract, so enforce that allowlist
+    matching the ``tool_types`` catalog returned by ``GET /agent/use_tools``.
     """
     if agent_type not in {"ask_report", "ask_dashboard"}:
         return []
@@ -816,6 +825,7 @@ class AgentService:
     # Map sub-agent type to builtin prompt template base name
     _TYPE_TO_TEMPLATE = {
         "gen_sql": "gen_sql_system",
+        "ask_metrics": "ask_metrics_system",
         "gen_report": "gen_report_system",
         "ask_report": "ask_report_system",
         "ask_dashboard": "ask_dashboard_system",

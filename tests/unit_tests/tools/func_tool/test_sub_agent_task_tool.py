@@ -440,6 +440,7 @@ class TestResolveNodeType:
         expected_map = {
             "gen_sql": NodeType.TYPE_GEN_SQL,
             "chat": NodeType.TYPE_CHAT,
+            "ask_metrics": NodeType.TYPE_ASK_METRICS,
             "gen_report": NodeType.TYPE_GEN_REPORT,
             "gen_visual_report": NodeType.TYPE_GEN_VISUAL_REPORT,
             "gen_visual_dashboard": NodeType.TYPE_GEN_VISUAL_DASHBOARD,
@@ -518,6 +519,14 @@ class TestBuildTaskDescription:
         assert "gen_job" in haystack
         assert "migration" in haystack
         assert "cross-database migration" in haystack
+
+    def test_gen_report_description_is_explicit_only(self, task_tool):
+        """The task tool must not advertise gen_report as automatic root-cause routing."""
+        desc = task_tool._build_task_description()
+        assert "Legacy Markdown report subagent" in desc
+        assert "Use only when the user explicitly asks to use the gen_report subagent" in desc
+        assert "do not automatically route attribution" in desc
+        assert "Use when the question involves metric attribution" not in desc
 
 
 # ── node creation (fresh per invocation) ──────────────────────────
@@ -1545,6 +1554,7 @@ class TestBuiltinNodeInheritsExecutionMode:
         "subagent_type,init_path",
         [
             ("gen_sql", "datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__"),
+            ("ask_metrics", "datus.agent.node.ask_metrics_agentic_node.AskMetricsAgenticNode.__init__"),
             ("gen_report", "datus.agent.node.gen_report_agentic_node.GenReportAgenticNode.__init__"),
             ("gen_skill", "datus.agent.node.gen_skill_agentic_node.SkillCreatorAgenticNode.__init__"),
         ],

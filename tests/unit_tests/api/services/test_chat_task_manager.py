@@ -956,6 +956,23 @@ class TestCreateNode:
         assert isinstance(node, GenReportAgenticNode)
         assert not isinstance(node, GenSQLAgenticNode)
 
+    def test_custom_agent_type_ask_metrics(self, real_agent_config, mock_llm_create):
+        """API-created type=ask_metrics agents must instantiate AskMetricsAgenticNode."""
+        from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        real_agent_config.agentic_nodes["my_metric_agent"] = {
+            "system_prompt": "my_metric_agent",
+            "type": "ask_metrics",
+            "tools": "semantic_tools.query_metrics",
+            "max_turns": 5,
+        }
+
+        manager = ChatTaskManager()
+        node = manager._create_node(real_agent_config, "my_metric_agent", "test-session")
+        assert isinstance(node, AskMetricsAgenticNode)
+        assert not isinstance(node, GenSQLAgenticNode)
+
     def test_custom_agent_no_node_class_falls_back_to_gen_sql(self, real_agent_config, mock_llm_create):
         """A custom sub_agent without node_class must default to GenSQLAgenticNode."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode

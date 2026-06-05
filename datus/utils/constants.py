@@ -50,6 +50,7 @@ SYS_SUB_AGENTS = {
     "gen_sql_summary",
     "gen_ext_knowledge",
     "gen_sql",
+    "ask_metrics",
     "gen_report",
     "gen_visual_report",
     "gen_visual_dashboard",

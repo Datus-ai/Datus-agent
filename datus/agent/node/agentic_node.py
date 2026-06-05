@@ -1750,6 +1750,7 @@ class AgenticNode(Node):
             "scoped_kb_path",
             "adapter_type",
             "semantic_adapter",
+            "subject_tree_prompt_limit",
             "sql_file_threshold",
             "sql_preview_lines",
             "bi_platform",

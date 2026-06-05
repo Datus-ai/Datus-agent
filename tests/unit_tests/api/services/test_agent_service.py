@@ -111,16 +111,15 @@ class TestValidateTools:
 class TestValidateToolsForAgentType:
     """Per-agent-type allowlist gate.
 
-    ``ask_report`` / ``ask_dashboard`` are documented as read-only
-    consultants ("must never mutate the artifact"); the gate prevents
-    a caller from re-enabling write tools or wildcards that would
-    expand reach beyond the documented allowlist.
+    ``ask_report`` / ``ask_dashboard`` are read-only artifact consultants. The
+    gate prevents callers from re-enabling filesystem writes beyond the
+    documented allowlist; other agent types rely on syntactic tool validation.
     """
 
-    def test_non_ask_agents_unrestricted(self):
+    def test_non_artifact_ask_agents_unrestricted(self):
         """Other agent types fall back to the syntactic _validate_tools
         check only — this helper returns empty for them."""
-        for agent_type in ("chat", "gen_sql", "gen_report"):
+        for agent_type in ("chat", "gen_sql", "gen_report", "ask_metrics"):
             assert _validate_tools_for_agent_type(["filesystem_tools.write_file"], agent_type) == []
             assert _validate_tools_for_agent_type(["filesystem_tools.*"], agent_type) == []
 
@@ -177,7 +176,18 @@ class TestValidateToolsForAgentType:
         assert "edit_file" not in fs_methods
         assert {"read_file", "glob", "grep"}.issubset(fs_methods)
 
-    @pytest.mark.parametrize("agent_type", ["ask_report", "ask_dashboard"])
+    def test_ask_metrics_allows_valid_tools_outside_default_surface(self):
+        tools = [
+            "db_tools.read_query",
+            "date_parsing_tools.parse_temporal_expressions",
+            "semantic_tools.validate_semantic",
+            "semantic_tools.*",
+            "context_search_tools.search_reference_sql",
+        ]
+        assert _validate_tools(tools) == []
+        assert _validate_tools_for_agent_type(tools, "ask_metrics") == []
+
+    @pytest.mark.parametrize("agent_type", ["ask_report", "ask_dashboard", "ask_metrics"])
     def test_ask_default_tools_all_resolve(self, agent_type):
         """Every entry in ``default_tools`` for ask_* must be recognised by
         ``_validate_tools``.
@@ -192,7 +202,7 @@ class TestValidateToolsForAgentType:
         invalid = _validate_tools(defaults)
         assert invalid == [], f"{agent_type} default_tools has unrecognised entries: {invalid}"
 
-    @pytest.mark.parametrize("agent_type", ["ask_report", "ask_dashboard"])
+    @pytest.mark.parametrize("agent_type", ["ask_report", "ask_dashboard", "ask_metrics"])
     def test_ask_default_tools_pass_agent_type_gate(self, agent_type):
         """``default_tools`` must also satisfy the per-agent-type allowlist
         — preselected tools should never include anything the saas editor
@@ -297,6 +307,22 @@ class TestConstants:
             "reference_template_tools",
         }
 
+    def test_tool_reference_ask_metrics_has_narrow_defaults(self):
+        """ask_metrics defaults to metric QA tools, while custom configs can opt into more."""
+        entry = SUBAGENT_TOOL_REFERENCE["ask_metrics"]
+        assert entry["default_tools"] == [
+            "context_search_tools.search_metrics",
+            "context_search_tools.get_metrics",
+            "semantic_tools.list_metrics",
+            "semantic_tools.get_dimensions",
+            "semantic_tools.query_metrics",
+            "semantic_tools.attribution_analyze",
+            "context_search_tools.list_subject_tree",
+        ]
+        assert set(entry["tool_types"].keys()) == set(_USER_FACING_TOOL_CATEGORIES)
+        for category, payload in entry["tool_types"].items():
+            assert payload["tools"] == sorted(VALID_TOOL_METHODS[category])
+
     def test_tool_reference_chat_has_full_default_set(self):
         """chat default_tools enumerates every non-semantic category as wildcard."""
         entry = SUBAGENT_TOOL_REFERENCE["chat"]
@@ -393,6 +419,16 @@ class TestGetUseTools:
             "reference_template_tools",
         }
 
+    def test_ask_metrics_returns_broad_configurable_tool_types(self):
+        """ask_metrics keeps narrow defaults but surfaces valid configurable tools."""
+        result = AgentService.get_use_tools("ask_metrics")
+        assert result.success is True
+        assert result.data["default_tools"] == SUBAGENT_TOOL_REFERENCE["ask_metrics"]["default_tools"]
+        assert set(result.data["tool_types"].keys()) == set(_USER_FACING_TOOL_CATEGORIES)
+        assert "read_query" in result.data["tool_types"]["db_tools"]["tools"]
+        assert "parse_temporal_expressions" in result.data["tool_types"]["date_parsing_tools"]["tools"]
+        assert result.data["tool_types"] == SUBAGENT_TOOL_REFERENCE["ask_metrics"]["tool_types"]
+
     def test_chat_includes_reference_template_tools_in_default(self):
         """chat default_tools wires up reference_template_tools.* (saas parity)."""
         result = AgentService.get_use_tools("chat")
@@ -430,7 +466,7 @@ class TestPerAgentTypeCategoryWhitelist:
 
     The whitelist is now the API's single source of truth: the editor
     renders whatever ``tool_types`` it receives, and the same block gates
-    the write-path validation for ``ask_*`` agents via
+    the artifact ask-agent write-path validation via
     :func:`_validate_tools_for_agent_type`.
     """
 

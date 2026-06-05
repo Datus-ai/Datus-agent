@@ -41,6 +41,14 @@ class TestResolveNodeClassType:
         config = _mock_agent_config(agentic_nodes={"my_agent": {"node_class": "gen_report"}})
         assert _resolve_node_class_type("my_agent", config) == "gen_report"
 
+    def test_returns_type_when_node_class_missing(self):
+        config = _mock_agent_config(agentic_nodes={"my_agent": {"type": "ask_metrics"}})
+        assert _resolve_node_class_type("my_agent", config) == "ask_metrics"
+
+    def test_node_class_takes_precedence_over_type(self):
+        config = _mock_agent_config(agentic_nodes={"my_agent": {"node_class": "gen_report", "type": "ask_metrics"}})
+        assert _resolve_node_class_type("my_agent", config) == "gen_report"
+
     def test_pydantic_model_dump(self):
         node_config = MagicMock()
         node_config.model_dump.return_value = {"node_class": "gen_report"}
@@ -111,6 +119,33 @@ class TestCreateInteractiveNode:
         call_kwargs = mock_init.call_args[1]
         assert call_kwargs["node_id"] == "gen_report_cli"
         assert call_kwargs["node_type"] == "gen_report"
+
+    @patch("datus.agent.node.ask_metrics_agentic_node.AskMetricsAgenticNode.__init__", return_value=None)
+    def test_ask_metrics(self, mock_init):
+        config = _mock_agent_config()
+        create_interactive_node("ask_metrics", config, node_id_suffix="_cli")
+        mock_init.assert_called_once()
+        call_kwargs = mock_init.call_args[1]
+        assert call_kwargs["node_id"] == "ask_metrics_cli"
+        assert call_kwargs["node_type"] == "ask_metrics"
+        assert call_kwargs["node_name"] == "ask_metrics"
+
+    @patch("datus.agent.node.ask_metrics_agentic_node.AskMetricsAgenticNode.__init__", return_value=None)
+    @patch("datus.agent.node.node_factory._resolve_node_class_type", return_value="ask_metrics")
+    def test_config_driven_ask_metrics(self, mock_resolve, mock_init):
+        config = _mock_agent_config()
+        create_interactive_node("custom_metric_agent", config)
+        mock_init.assert_called_once()
+        assert mock_init.call_args[1]["node_name"] == "custom_metric_agent"
+
+    @patch("datus.agent.node.ask_metrics_agentic_node.AskMetricsAgenticNode.__init__", return_value=None)
+    def test_type_driven_custom_ask_metrics(self, mock_init):
+        config = _mock_agent_config(agentic_nodes={"custom_metric_agent": {"type": "ask_metrics"}})
+        create_interactive_node("custom_metric_agent", config)
+        mock_init.assert_called_once()
+        call_kwargs = mock_init.call_args[1]
+        assert call_kwargs["node_type"] == "ask_metrics"
+        assert call_kwargs["node_name"] == "custom_metric_agent"
 
     @patch("datus.agent.node.gen_report_agentic_node.GenReportAgenticNode.__init__", return_value=None)
     @patch("datus.agent.node.node_factory._resolve_node_class_type", return_value="gen_report")
@@ -334,6 +369,13 @@ class TestCreateNodeInput:
                 "report",
                 {"catalog": "cat", "database": "db"},
                 {"user_message": "report", "catalog": "cat", "database": "db"},
+            ),
+            (
+                "datus.agent.node.ask_metrics_agentic_node",
+                "AskMetricsAgenticNode",
+                "metric answer",
+                {"catalog": "cat", "database": "db"},
+                {"user_message": "metric answer", "catalog": "cat", "database": "db"},
             ),
             (
                 "datus.agent.node.feedback_agentic_node",

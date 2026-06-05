@@ -736,13 +736,13 @@ class TestAllToolsName:
 
 
 class TestAvailableTools:
-    def test_no_adapter_returns_three_tools(self, semantic_tools_ext):
+    def test_no_adapter_returns_no_tools(self, semantic_tools_ext):
         with patch("datus.tools.func_tool.semantic_tools.trans_to_function_tool") as mock_trans:
             mock_trans.side_effect = lambda f: Mock(name=f.__name__)
             tools = semantic_tools_ext.available_tools()
-        assert len(tools) == 3
+        assert tools == []
 
-    def test_default_metricflow_adapter_exposes_validate_tool(self):
+    def test_default_metricflow_adapter_load_failure_returns_no_tools(self):
         with (
             patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
             patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
@@ -770,7 +770,7 @@ class TestAvailableTools:
                 tools = tool.available_tools()
 
         names = [tool.name for tool in tools]
-        assert "validate_semantic" in names
+        assert names == []
 
     def test_with_adapter_adds_validate_and_attribution_tools(self):
         with (
@@ -790,7 +790,7 @@ class TestAvailableTools:
         # 3 base + validate_semantic + attribution_analyze (both enabled when adapter is set)
         assert len(tools) == 5
 
-    def test_configured_adapter_load_failure_still_exposes_validate(self):
+    def test_configured_adapter_load_failure_exposes_no_tools(self):
         with (
             patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
             patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
@@ -818,7 +818,7 @@ class TestAvailableTools:
                 tools = tool.available_tools()
 
             names = [tool.name for tool in tools]
-            assert "validate_semantic" in names
+            assert names == []
             assert "attribution_analyze" not in names
 
             result = tool.validate_semantic()
@@ -827,21 +827,26 @@ class TestAvailableTools:
 
 
 class TestListMetrics:
-    def test_success_from_storage(self, semantic_tools_ext):
-        semantic_tools_ext.metric_rag.search_all_metrics.return_value = [
-            {
-                "name": "orders",
-                "description": "Order count",
-                "metric_type": "count",
-                "dimensions": [],
-                "base_measures": [],
-                "unit": None,
-                "format": None,
-                "subject_path": ["Sales"],
-            }
-        ]
-
+    def test_no_adapter_returns_error(self, semantic_tools_ext):
         result = semantic_tools_ext.list_metrics()
+
+        assert result.success == 0
+        assert "semantic adapter" in result.error.lower()
+
+    def test_success_from_adapter(self, semantic_tools_with_adapter):
+        tool, mock_adapter = semantic_tools_with_adapter
+        mock_metric = Mock()
+        mock_metric.name = "orders"
+        mock_metric.description = "Order count"
+        mock_metric.type = "count"
+        mock_metric.dimensions = []
+        mock_metric.measures = []
+        mock_metric.unit = None
+        mock_metric.format = None
+        mock_metric.path = ["Sales"]
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=[mock_metric]):
+            result = tool.list_metrics()
 
         assert result.success == 1
         envelope = result.result
@@ -857,134 +862,48 @@ class TestListMetrics:
                 "path": ["Sales"],
             }
         ]
-        assert envelope["total"] == 1
+        assert envelope["total"] is None
         assert envelope["has_more"] is False
         assert envelope["extra"] is None
+        mock_adapter.list_metrics.assert_called_once_with(path=None, limit=100, offset=0)
         # Contract: list_metrics MUST NOT carry compressor artefacts anymore.
         assert "compressed_data" not in envelope
         assert "original_rows" not in envelope
 
-    def test_empty_storage_no_adapter_returns_empty_envelope(self, semantic_tools_ext):
-        semantic_tools_ext.metric_rag.search_all_metrics.return_value = []
+    def test_passes_path_and_pagination_to_adapter(self, semantic_tools_with_adapter):
+        tool, mock_adapter = semantic_tools_with_adapter
+        metrics = []
+        for name in ("m1", "m2", "m3"):
+            metric = Mock()
+            metric.name = name
+            metric.description = ""
+            metric.type = ""
+            metric.dimensions = []
+            metric.measures = []
+            metric.unit = None
+            metric.format = None
+            metric.path = ["Finance"]
+            metrics.append(metric)
 
-        result = semantic_tools_ext.list_metrics()
-
-        assert result.success == 1
-        envelope = result.result
-        assert envelope["items"] == []
-        assert envelope["total"] == 0
-        assert envelope["has_more"] is False
-        assert envelope["extra"] is None
-
-    def test_path_filter_applied(self, semantic_tools_ext):
-        semantic_tools_ext.metric_rag.search_all_metrics.return_value = [
-            {
-                "name": "m1",
-                "subject_path": ["Finance"],
-                "description": "",
-                "metric_type": "",
-                "dimensions": [],
-                "base_measures": [],
-                "unit": None,
-                "format": None,
-            },
-            {
-                "name": "m2",
-                "subject_path": ["Sales"],
-                "description": "",
-                "metric_type": "",
-                "dimensions": [],
-                "base_measures": [],
-                "unit": None,
-                "format": None,
-            },
-        ]
-
-        result = semantic_tools_ext.list_metrics(path=["Finance"])
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=metrics):
+            result = tool.list_metrics(path=["Finance"], limit=3, offset=2)
 
         assert result.success == 1
         envelope = result.result
-        names = [row["name"] for row in envelope["items"]]
-        assert names == ["m1"]
-        assert envelope["total"] == 1
-        assert envelope["has_more"] is False
-
-    def test_pagination(self, semantic_tools_ext):
-        metrics = [
-            {
-                "name": f"m{i}",
-                "subject_path": [],
-                "description": "",
-                "metric_type": "",
-                "dimensions": [],
-                "base_measures": [],
-                "unit": None,
-                "format": None,
-            }
-            for i in range(10)
-        ]
-        semantic_tools_ext.metric_rag.search_all_metrics.return_value = metrics
-
-        result = semantic_tools_ext.list_metrics(limit=3, offset=2)
-
-        assert result.success == 1
-        envelope = result.result
-        assert [row["name"] for row in envelope["items"]] == ["m2", "m3", "m4"]
-        assert envelope["total"] == 10
+        assert [row["name"] for row in envelope["items"]] == ["m1", "m2", "m3"]
+        assert envelope["total"] is None
         assert envelope["has_more"] is True
         assert envelope["extra"] == {"next_offset": 5}
+        mock_adapter.list_metrics.assert_called_once_with(path=["Finance"], limit=3, offset=2)
 
-    def test_pagination_last_page(self, semantic_tools_ext):
-        metrics = [
-            {
-                "name": f"m{i}",
-                "subject_path": [],
-                "description": "",
-                "metric_type": "",
-                "dimensions": [],
-                "base_measures": [],
-                "unit": None,
-                "format": None,
-            }
-            for i in range(5)
-        ]
-        semantic_tools_ext.metric_rag.search_all_metrics.return_value = metrics
+    def test_exception_returns_failure(self, semantic_tools_with_adapter):
+        tool, _ = semantic_tools_with_adapter
 
-        result = semantic_tools_ext.list_metrics(limit=3, offset=3)
-
-        assert result.success == 1
-        envelope = result.result
-        assert [row["name"] for row in envelope["items"]] == ["m3", "m4"]
-        assert envelope["total"] == 5
-        assert envelope["has_more"] is False
-        assert envelope["extra"] is None
-
-    def test_falls_back_to_adapter(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
-        tool.metric_rag.search_all_metrics.return_value = []
-
-        mock_metric = Mock()
-        mock_metric.name = "revenue"
-        mock_metric.description = "Revenue metric"
-        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=[mock_metric]):
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=Exception("adapter error")):
             result = tool.list_metrics()
 
-        assert result.success == 1
-        envelope = result.result
-        assert len(envelope["items"]) == 1
-        assert envelope["items"][0]["name"] == "revenue"
-        # Adapter path has no upstream total — envelope signals unknown via None.
-        assert envelope["total"] is None
-        # has_more heuristic: len(items) == limit (1) < default limit (100) → False.
-        assert envelope["has_more"] is False
-
-    def test_exception_returns_failure(self, semantic_tools_ext):
-        semantic_tools_ext.metric_rag.search_all_metrics.side_effect = Exception("db error")
-
-        result = semantic_tools_ext.list_metrics()
-
         assert result.success == 0
-        assert "db error" in result.error
+        assert "adapter error" in result.error
 
 
 class TestGetDimensions:
@@ -999,44 +918,28 @@ class TestGetDimensions:
         assert envelope["total"] == 2
         assert envelope["has_more"] is False
 
-    def test_no_adapter_from_storage(self, semantic_tools_ext):
-        semantic_tools_ext.metric_rag.search_all_metrics.return_value = [
-            {"name": "revenue", "dimensions": ["date", "channel"]}
-        ]
-
+    def test_no_adapter_returns_error(self, semantic_tools_ext):
         result = semantic_tools_ext.get_dimensions("revenue")
 
-        assert result.success == 1
-        envelope = result.result
-        assert envelope["items"] == [{"name": "date"}, {"name": "channel"}]
-        assert envelope["total"] == 2
-
-    def test_no_adapter_metric_not_found(self, semantic_tools_ext):
-        semantic_tools_ext.metric_rag.search_all_metrics.return_value = []
-
-        result = semantic_tools_ext.get_dimensions("nonexistent")
-
         assert result.success == 0
-        assert "not found" in result.error
-        # Even the error path returns an envelope shape, keeping the
-        # consumer contract uniform.
-        assert result.result == {"items": [], "total": 0, "has_more": False, "extra": None}
+        assert "semantic adapter" in result.error.lower()
 
-    def test_with_path_filter(self, semantic_tools_ext):
-        mock_storage = Mock()
-        semantic_tools_ext.metric_rag.storage = mock_storage
-        mock_storage.search_all_metrics.return_value = [{"name": "revenue", "dimensions": ["date"]}]
+    def test_with_path_passes_to_adapter(self, semantic_tools_with_adapter):
+        tool, mock_adapter = semantic_tools_with_adapter
 
-        result = semantic_tools_ext.get_dimensions("revenue", path=["Finance"])
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=["date"]):
+            result = tool.get_dimensions("revenue", path=["Finance"])
 
         assert result.success == 1
         envelope = result.result
         assert envelope["items"] == [{"name": "date"}]
+        mock_adapter.get_dimensions.assert_called_once_with(metric_name="revenue", path=["Finance"])
 
-    def test_exception_returns_failure(self, semantic_tools_ext):
-        semantic_tools_ext.metric_rag.search_all_metrics.side_effect = Exception("conn error")
+    def test_exception_returns_failure(self, semantic_tools_with_adapter):
+        tool, _ = semantic_tools_with_adapter
 
-        result = semantic_tools_ext.get_dimensions("revenue")
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=Exception("conn error")):
+            result = tool.get_dimensions("revenue")
 
         assert result.success == 0
         assert "conn error" in result.error
@@ -1222,7 +1125,7 @@ class TestAttributionAnalyze:
             current_end="2024-01-14",
         )
         assert result.success == 0
-        assert "Attribution tool not available" in result.error
+        assert "semantic adapter" in result.error.lower()
 
     def test_success_with_dict_anomaly_context(self, semantic_tools_with_adapter):
         tool, mock_adapter = semantic_tools_with_adapter
@@ -1372,7 +1275,7 @@ class TestCompressorModelName:
             tool = SemanticTools(agent_config=config)
             assert tool.compressor.model_name == "deepseek/deepseek-chat"
 
-    def test_list_metrics_returns_envelope_without_compressor(self, semantic_tools_ext):
+    def test_list_metrics_returns_envelope_without_compressor(self, semantic_tools_with_adapter):
         """list_metrics returns the canonical FuncToolListResult envelope.
 
         Regression: list_metrics used to wrap rows in DataCompressor output
@@ -1380,19 +1283,20 @@ class TestCompressorModelName:
         After the envelope migration it returns ``{items, total, has_more,
         extra}`` with NO compressor artefacts — list_* never compresses.
         """
-        semantic_tools_ext.metric_rag.search_all_metrics.return_value = [
-            {
-                "name": "orders",
-                "description": "",
-                "metric_type": "count",
-                "dimensions": [],
-                "base_measures": [],
-                "unit": None,
-                "format": None,
-                "subject_path": [],
-            }
-        ]
-        result = semantic_tools_ext.list_metrics()
+        tool, _ = semantic_tools_with_adapter
+        mock_metric = Mock()
+        mock_metric.name = "orders"
+        mock_metric.description = ""
+        mock_metric.type = "count"
+        mock_metric.dimensions = []
+        mock_metric.measures = []
+        mock_metric.unit = None
+        mock_metric.format = None
+        mock_metric.path = []
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=[mock_metric]):
+            result = tool.list_metrics()
+
         assert result.success == 1
         envelope = result.result
         assert set(envelope.keys()) == {"items", "total", "has_more", "extra"}
