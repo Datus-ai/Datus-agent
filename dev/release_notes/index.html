@@ -3513,6 +3513,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#033" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.3
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#032" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3763,6 +3774,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#033" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.3
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#032" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3993,6 +4015,23 @@
 
 <h1 id="release-notes">Release notes<a class="headerlink" href="#release-notes" title="Permanent link">&para;</a></h1>
 <h2 id="03">0.3<a class="headerlink" href="#03" title="Permanent link">&para;</a></h2>
+<h3 id="033">0.3.3<a class="headerlink" href="#033" title="Permanent link">&para;</a></h3>
+<p><strong>New Features</strong></p>
+<ul>
+<li><strong>Automatic Session Compaction</strong> - Long conversations now clean up context automatically, reducing interruptions when the context fills up. As a conversation grows, older tool-call records are archived to disk while the active task stays in context; near the limit (about 90%), Datus summarizes the session and keeps the run moving. The <code>/compact</code> command also shows progress and a summary panel, with full history persisted for restore and review. <a href="https://github.com/Datus-ai/Datus-agent/pull/871">#871</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/919">#919</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/933">#933</a> <a href="../configuration/compact/">docs</a></li>
+<li><strong>Live Token Usage</strong> - Model responses now show newly used and cumulative tokens as they stream, while the status bar tracks current context usage and total capacity. Usage history is saved with the session for restore, cost review, and context audits. <a href="https://github.com/Datus-ai/Datus-agent/pull/920">#920</a></li>
+</ul>
+<p><strong>Enhancements</strong></p>
+<ul>
+<li><strong>Snowflake Key-Pair Authentication</strong> - Snowflake setups with MFA can now use RSA key-pair authentication instead of passwords. Configure <code>private_key_file</code>, optional <code>private_key_file_pwd</code>, and <code>role</code>; the same credentials are used for SQL execution and MetricFlow metric generation, validation, and querying, with credentials redacted from logs. <a href="https://github.com/Datus-ai/Datus-agent/pull/926">#926</a> <a href="https://github.com/Datus-ai/datus-db-adapters/pull/66">datus-db-adapters#66</a> <a href="https://github.com/Datus-ai/datus-db-adapters/pull/67">datus-db-adapters#67</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/25">datus-semantic-adapter#25</a> <a href="../configuration/datasources/">docs</a></li>
+<li><strong>Offline Embedding Fallback</strong> - Datus no longer stalls on embedding model downloads in offline, intranet, or Hugging Face-blocked environments. Context search and <code>@</code> reference autocomplete temporarily degrade with diagnostics for the model name, cache path, environment variables, and fix steps; database tools and normal chat continue to work. The docs also cover pre-caching models or using an OpenAI-compatible embedding service for offline deployments. <a href="https://github.com/Datus-ai/Datus-agent/pull/870">#870</a></li>
+<li><strong>Codex Prompt Cache Optimization</strong> - When using the ChatGPT subscription-backed Codex backend, multi-step runs can now reuse prompt cache like the official client, reducing wait time and token cost. <a href="https://github.com/Datus-ai/Datus-agent/pull/918">#918</a></li>
+<li><strong>Multi-Turn <code>datus -p</code> and <code>--resume</code></strong> - Print mode can now restore and continue a specific session. Use <code>datus -p '...' --resume &lt;session_id&gt;</code> to continue from the command line; REPL and API chat also support <code>--resume</code> for existing sessions. <a href="https://github.com/Datus-ai/Datus-agent/pull/914">#914</a></li>
+</ul>
+<p><strong>Bug Fixes</strong></p>
+<ul>
+<li><strong>Custom Ask Subagents Honor Tool Whitelists</strong> - <code>ask_report</code> / <code>ask_dashboard</code> now only see tools allowed by the subagent's <code>tools</code> whitelist. Unauthorized database, bash, and skill tools are no longer exposed to the model, and prompts no longer include the full chat tool directory, reducing unauthorized-tool and context-pollution risk. <a href="https://github.com/Datus-ai/Datus-agent/pull/877">#877</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/878">#878</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/881">#881</a></li>
+</ul>
 <h3 id="032">0.3.2<a class="headerlink" href="#032" title="Permanent link">&para;</a></h3>
 <p><strong>New Features</strong></p>
 <ul>
