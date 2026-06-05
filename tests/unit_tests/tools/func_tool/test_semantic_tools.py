@@ -533,19 +533,19 @@ class TestGenerationEvidence:
             }
         ]
 
-    def test_parse_sql_candidates_attempts_advertised_dialects(self, monkeypatch):
+    def test_parse_sql_candidates_attempts_advertised_dialects(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import sqlglot
 
-        calls = []
+        calls: list[str | None] = []
 
         class FakeParsed:
-            def __init__(self, read_dialect):
+            def __init__(self, read_dialect: str | None) -> None:
                 self.read_dialect = read_dialect
 
-            def sql(self, dialect=None):
+            def sql(self, dialect: str | None = None) -> str:
                 return f"SELECT {self.read_dialect or 'default'}"
 
-        def fake_parse_one(sql, read=None):
+        def fake_parse_one(sql: str, read: str | None = None) -> FakeParsed:
             calls.append(read)
             return FakeParsed(read)
 
