@@ -12,6 +12,7 @@ Handles:
 """
 
 import asyncio
+import os
 from typing import List, Optional, Tuple
 
 from datus.cli.execution_state import auto_submit_interaction
@@ -19,6 +20,48 @@ from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS = 120.0
+DEFAULT_STREAM_MAX_ACTIONS = 1000
+
+
+def _cancel_pending_loop_tasks(loop: asyncio.AbstractEventLoop) -> None:
+    pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
+    if not pending:
+        return
+
+    for task in pending:
+        task.cancel()
+
+    try:
+        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        loop.run_until_complete(asyncio.sleep(0))
+    except Exception as exc:  # pragma: no cover - defensive cleanup
+        logger.debug(f"chat stream pending task cleanup failed: {exc}")
+
+
+def _positive_float_env(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if not value:
+        return default
+    try:
+        parsed = float(value)
+    except ValueError:
+        logger.warning("Invalid %s=%r, using default %s", name, value, default)
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if not value:
+        return default
+    try:
+        parsed = int(value)
+    except ValueError:
+        logger.warning("Invalid %s=%r, using default %s", name, value, default)
+        return default
+    return parsed if parsed > 0 else default
 
 
 class ChatExecutor:
@@ -28,7 +71,14 @@ class ChatExecutor:
         """Initialize ChatExecutor."""
         self.last_actions = []  # Store last execution's actions
 
-    def execute_chat_stream(self, user_message: str, cli, current_subagent: Optional[str] = None):
+    def execute_chat_stream(
+        self,
+        user_message: str,
+        cli,
+        current_subagent: Optional[str] = None,
+        stream_idle_timeout: Optional[float] = None,
+        max_actions: Optional[int] = None,
+    ):
         """Execute chat command with streaming support - reuses chat_commands logic."""
         if not cli or not cli.chat_commands:
             yield "Error: Please load configuration first!"
@@ -59,17 +109,32 @@ class ChatExecutor:
 
             # Stream execution with deduplication
             incremental_actions = []
+            idle_timeout = (
+                stream_idle_timeout
+                if stream_idle_timeout is not None
+                else _positive_float_env(
+                    "DATUS_WEB_CHAT_STREAM_IDLE_TIMEOUT_SECONDS",
+                    DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS,
+                )
+            )
+            action_limit = (
+                max_actions
+                if max_actions is not None
+                else _positive_int_env("DATUS_WEB_CHAT_STREAM_MAX_ACTIONS", DEFAULT_STREAM_MAX_ACTIONS)
+            )
 
             # Execute async generator with proper event loop handling
             loop = asyncio.new_event_loop()
+            async_gen = None
 
             try:
                 current_node.input = node_input
 
                 async def run_stream():
-                    """Wrapper to iterate the async generator to completion"""
+                    """Wrapper to iterate the async generator to completion."""
+                    source_stream = current_node.execute_stream_with_interactions(cli.actions)
                     try:
-                        async for action in current_node.execute_stream_with_interactions(cli.actions):
+                        async for action in source_stream:
                             if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
                                 continue
 
@@ -82,12 +147,16 @@ class ChatExecutor:
 
                             # SUCCESS interactions are yielded for UI rendering
                             incremental_actions.append(action)
+                            self.last_actions = incremental_actions
                             yield action
                         self.last_actions = incremental_actions
-                    except StopAsyncIteration:
-                        pass
+                    finally:
+                        close_stream = getattr(source_stream, "aclose", None)
+                        if close_stream is not None:
+                            await close_stream()
 
                 async_gen = run_stream()
+                action_count = 0
                 while True:
                     try:
                         # Check for interrupt before each iteration
@@ -96,13 +165,40 @@ class ChatExecutor:
                             and current_node.interrupt_controller.is_interrupted
                         ):
                             break
-                        result = loop.run_until_complete(async_gen.__anext__())
+                        next_action = async_gen.__anext__()
+                        if idle_timeout and idle_timeout > 0:
+                            result = loop.run_until_complete(asyncio.wait_for(next_action, timeout=idle_timeout))
+                        else:
+                            result = loop.run_until_complete(next_action)
+                        action_count += 1
+                        if action_limit and action_count > action_limit:
+                            controller = getattr(current_node, "interrupt_controller", None)
+                            if controller is not None:
+                                controller.interrupt()
+                            message = f"Error: chat stream stopped after {action_limit} actions without completion."
+                            logger.warning(message)
+                            yield message
+                            break
                         yield result
+                    except asyncio.TimeoutError:
+                        controller = getattr(current_node, "interrupt_controller", None)
+                        if controller is not None:
+                            controller.interrupt()
+                        message = f"Error: chat stream timed out after {idle_timeout:g}s waiting for the next action."
+                        logger.warning(message)
+                        yield message
+                        break
                     except StopAsyncIteration:
                         break
 
                 # Store collected actions for caller to access
             finally:
+                if async_gen is not None:
+                    try:
+                        loop.run_until_complete(async_gen.aclose())
+                    except Exception as exc:  # pragma: no cover - defensive cleanup
+                        logger.debug(f"chat stream async generator close failed: {exc}")
+                _cancel_pending_loop_tasks(loop)
                 loop.close()
 
         except Exception as e:
