@@ -1075,8 +1075,8 @@ class TestSyncReferenceTemplateToDb:
 
 @pytest.mark.asyncio
 class TestProcessMetricWithSemanticModel:
-    async def test_semantic_missing_tries_metric_alone(self, hooks):
-        hooks._process_single_file = AsyncMock()
+    async def test_semantic_missing_syncs_metric_without_semantic_context(self, hooks):
+        hooks._sync_semantics_and_metric = AsyncMock()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as mf:
             mf.write("metric: revenue\n")
             metric_path = mf.name
@@ -1087,7 +1087,7 @@ class TestProcessMetricWithSemanticModel:
             )
         finally:
             os.unlink(metric_path)
-        hooks._process_single_file.assert_awaited_once_with(metric_path, metric_sqls=None, yaml_type="metric")
+        hooks._sync_semantics_and_metric.assert_awaited_once_with([], metric_path, None)
 
     async def test_metric_missing_tries_semantic_alone(self, hooks):
         hooks._process_single_file = AsyncMock()
@@ -1105,31 +1105,16 @@ class TestProcessMetricWithSemanticModel:
 
     async def test_both_missing_does_nothing(self, hooks):
         hooks._process_single_file = AsyncMock()
+        hooks._sync_semantics_and_metric = AsyncMock()
         await hooks._process_metric_with_semantic_model(
             semantic_model_file="/nonexistent/sem.yaml",
             metric_file="/nonexistent/metric.yaml",
         )
         hooks._process_single_file.assert_not_called()
-
-    async def test_both_already_processed_skipped(self, hooks):
-        hooks._sync_generated_pair = AsyncMock()
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as sf:
-            sf.write("data_source:\n  name: orders\n")
-            sem_path = sf.name
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as mf:
-            mf.write("metric: revenue\n")
-            metric_path = mf.name
-        hooks.processed_files.add(sem_path)
-        hooks.processed_files.add(metric_path)
-        try:
-            await hooks._process_metric_with_semantic_model(sem_path, metric_path)
-        finally:
-            os.unlink(sem_path)
-            os.unlink(metric_path)
-        hooks._sync_generated_pair.assert_not_called()
+        hooks._sync_semantics_and_metric.assert_not_called()
 
     async def test_happy_path_auto_syncs_pair(self, hooks):
-        hooks._sync_generated_pair = AsyncMock()
+        hooks._sync_semantics_and_metric = AsyncMock()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as sf:
             sf.write("data_source:\n  name: orders\n")
             sem_path = sf.name
@@ -1141,28 +1126,11 @@ class TestProcessMetricWithSemanticModel:
         finally:
             os.unlink(sem_path)
             os.unlink(metric_path)
-        hooks._sync_generated_pair.assert_awaited_once()
-        assert sem_path in hooks.processed_files
-        assert metric_path in hooks.processed_files
-
-    async def test_empty_content_returns_early(self, hooks):
-        hooks._sync_generated_pair = AsyncMock()
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as sf:
-            sf.write("")
-            sem_path = sf.name
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as mf:
-            mf.write("metric: revenue\n")
-            metric_path = mf.name
-        try:
-            await hooks._process_metric_with_semantic_model(sem_path, metric_path)
-        finally:
-            os.unlink(sem_path)
-            os.unlink(metric_path)
-        hooks._sync_generated_pair.assert_not_called()
+        hooks._sync_semantics_and_metric.assert_awaited_once_with([sem_path], metric_path, None)
 
     async def test_sync_error_propagates(self, hooks):
-        """Exception in _sync_generated_pair propagates to caller."""
-        hooks._sync_generated_pair = AsyncMock(side_effect=RuntimeError("broker down"))
+        """Exception in _sync_semantics_and_metric propagates to caller."""
+        hooks._sync_semantics_and_metric = AsyncMock(side_effect=RuntimeError("broker down"))
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as sf:
             sf.write("data_source:\n  name: orders\n")
             sem_path = sf.name
@@ -1176,20 +1144,6 @@ class TestProcessMetricWithSemanticModel:
             os.unlink(sem_path)
             os.unlink(metric_path)
 
-    async def test_read_error_propagates(self, hooks, tmp_path):
-        """Unreadable file raises OSError."""
-        sem_dir = tmp_path / "not_a_file"
-        sem_dir.mkdir()
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as mf:
-            mf.write("metric: revenue\n")
-            metric_path = mf.name
-        try:
-            # sem_dir is a directory, open() will raise
-            with pytest.raises(IsADirectoryError):
-                await hooks._process_metric_with_semantic_model(str(sem_dir), metric_path)
-        finally:
-            os.unlink(metric_path)
-
 
 # ---------------------------------------------------------------------------
 # Tests: _sync_generated_pair
@@ -1201,19 +1155,19 @@ class TestSyncGeneratedPair:
     async def test_auto_syncs_both_files(self, hooks):
         """Pair sync goes directly to storage."""
         hooks.broker.request = AsyncMock()
-        hooks._sync_semantic_and_metric = AsyncMock(return_value="Synced OK")
+        hooks._sync_semantics_and_metric = AsyncMock(return_value="Synced OK")
 
         await hooks._sync_generated_pair(
             semantic_model_file="/tmp/sem.yaml",
             metric_file="/tmp/met.yaml",
         )
 
-        hooks._sync_semantic_and_metric.assert_awaited_once_with("/tmp/sem.yaml", "/tmp/met.yaml", None)
+        hooks._sync_semantics_and_metric.assert_awaited_once_with(["/tmp/sem.yaml"], "/tmp/met.yaml", None)
         hooks.broker.request.assert_not_awaited()
 
     async def test_display_content_is_ignored(self, hooks):
         hooks.broker.request = AsyncMock()
-        hooks._sync_semantic_and_metric = AsyncMock(return_value="Synced OK")
+        hooks._sync_semantics_and_metric = AsyncMock(return_value="Synced OK")
 
         await hooks._sync_generated_pair(
             semantic_model_file="/tmp/sem.yaml",
@@ -1221,11 +1175,11 @@ class TestSyncGeneratedPair:
             display_content="ignored",
         )
 
-        hooks._sync_semantic_and_metric.assert_awaited_once_with("/tmp/sem.yaml", "/tmp/met.yaml", None)
+        hooks._sync_semantics_and_metric.assert_awaited_once_with(["/tmp/sem.yaml"], "/tmp/met.yaml", None)
         hooks.broker.request.assert_not_awaited()
 
     async def test_sync_error_propagates(self, hooks):
-        hooks._sync_semantic_and_metric = AsyncMock(side_effect=RuntimeError("sync failed"))
+        hooks._sync_semantics_and_metric = AsyncMock(side_effect=RuntimeError("sync failed"))
 
         with pytest.raises(RuntimeError, match="sync failed"):
             await hooks._sync_generated_pair(
@@ -1526,6 +1480,119 @@ metric:
         assert captured_metric[0]["base_measures"] == ["order_count"]
         assert captured_metric[0]["measure_expr"] == "order_count WHERE status = 'completed'"
 
+    def test_metric_context_resolves_from_base_measure_not_combined_data_source(self, agent_config, tmp_path):
+        yaml_file = tmp_path / "metrics.yml"
+        yaml_file.write_text(
+            """
+data_source:
+  name: LINEITEM
+  sql_table: SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.LINEITEM
+  measures:
+    - name: discounted_revenue
+      agg: SUM
+      expr: l_extendedprice
+  dimensions:
+    - name: ship_date
+      type: TIME
+      expr: l_shipdate
+---
+metric:
+  name: discounted_revenue
+  description: "Discounted lineitem revenue"
+  type: measure_proxy
+  type_params:
+    measure: discounted_revenue
+---
+metric:
+  name: order_count
+  description: "Orders count"
+  type: measure_proxy
+  type_params:
+    measure: order_count
+""",
+            encoding="utf-8",
+        )
+
+        captured_metric = []
+        mock_semantic_rag = MagicMock()
+        mock_metric_rag = MagicMock()
+        mock_metric_rag.upsert_batch = lambda objects: captured_metric.extend(objects)
+
+        rows_by_measure = {
+            "discounted_revenue": [
+                {
+                    "name": "discounted_revenue",
+                    "table_name": "LINEITEM",
+                    "semantic_model_name": "LINEITEM",
+                    "catalog_name": "",
+                    "database_name": "SNOWFLAKE_SAMPLE_DATA",
+                    "schema_name": "TPCH_SF1",
+                }
+            ],
+            "order_count": [
+                {
+                    "name": "order_count",
+                    "table_name": "ORDERS",
+                    "semantic_model_name": "ORDERS",
+                    "catalog_name": "",
+                    "database_name": "SNOWFLAKE_SAMPLE_DATA",
+                    "schema_name": "TPCH_SF1",
+                }
+            ],
+        }
+
+        def _measure_name_from_condition(where):
+            for node in getattr(where, "nodes", []):
+                if getattr(node, "field", "") == "name":
+                    return getattr(node, "value", "")
+            return ""
+
+        def _search_measures(where=None, select_fields=None):
+            return rows_by_measure.get(_measure_name_from_condition(where), [])
+
+        def _semantic_model_for_table(table_name=None, select_fields=None):
+            if table_name == "LINEITEM":
+                return {
+                    "dimensions": [{"name": "ship_date"}],
+                    "identifiers": [{"name": "order_key"}],
+                }
+            if table_name == "ORDERS":
+                return {
+                    "dimensions": [{"name": "order_date"}],
+                    "identifiers": [{"name": "customer_key"}],
+                }
+            return {}
+
+        mock_semantic_rag.storage._search_all.side_effect = _search_measures
+        mock_semantic_rag.get_semantic_model.side_effect = _semantic_model_for_table
+        db_config = MagicMock()
+        db_config.catalog = ""
+        db_config.database = "SNOWFLAKE_SAMPLE_DATA"
+        db_config.schema = "TPCH_SF1"
+        agent_config.current_db_config.return_value = db_config
+
+        with (
+            patch("datus.cli.generation_hooks.SemanticModelRAG", return_value=mock_semantic_rag),
+            patch("datus.cli.generation_hooks.MetricRAG", return_value=mock_metric_rag),
+        ):
+            result = GenerationHooks._sync_semantic_to_db(
+                file_path=str(yaml_file),
+                agent_config=agent_config,
+                include_semantic_objects=False,
+                include_metrics=True,
+            )
+
+        assert result["success"], f"Sync failed: {result.get('error')}"
+        captured_by_name = {metric["name"]: metric for metric in captured_metric}
+        assert captured_by_name["discounted_revenue"]["semantic_model_name"] == "LINEITEM"
+        assert captured_by_name["discounted_revenue"]["dimensions"] == ["ship_date"]
+        assert captured_by_name["discounted_revenue"]["entities"] == ["order_key"]
+        assert captured_by_name["order_count"]["semantic_model_name"] == "ORDERS"
+        assert captured_by_name["order_count"]["database_name"] == "SNOWFLAKE_SAMPLE_DATA"
+        assert captured_by_name["order_count"]["schema_name"] == "TPCH_SF1"
+        assert captured_by_name["order_count"]["dimensions"] == ["order_date"]
+        assert captured_by_name["order_count"]["entities"] == ["customer_key"]
+
 
 # ---------------------------------------------------------------------------
 # Tests: _sync_semantic_to_db actionable error for empty metric-only sync
@@ -1647,7 +1714,7 @@ class TestHandleEndMetricGeneration:
     async def test_failed_tool_result_skips_sync(self, hooks):
         hooks._extract_metric_generation_result = MagicMock()
         hooks._process_single_file = AsyncMock()
-        hooks._process_metric_with_semantic_model = AsyncMock()
+        hooks._process_metric_with_semantic_models = AsyncMock()
         result = FuncToolResult(
             success=0,
             error="query_metrics dry-run must pass",
@@ -1658,34 +1725,34 @@ class TestHandleEndMetricGeneration:
 
         hooks._extract_metric_generation_result.assert_not_called()
         hooks._process_single_file.assert_not_called()
-        hooks._process_metric_with_semantic_model.assert_not_called()
+        hooks._process_metric_with_semantic_models.assert_not_called()
 
     async def test_missing_metric_file_warns_and_returns(self, hooks):
-        hooks._extract_metric_generation_result = MagicMock(return_value=(None, None, {}))
+        hooks._extract_metric_generation_result = MagicMock(return_value=(None, [], {}))
         hooks._process_single_file = AsyncMock()
-        hooks._process_metric_with_semantic_model = AsyncMock()
+        hooks._process_metric_with_semantic_models = AsyncMock()
         await hooks._handle_end_metric_generation({"result": {}})
         hooks._process_single_file.assert_not_awaited()
-        hooks._process_metric_with_semantic_model.assert_not_awaited()
+        hooks._process_metric_with_semantic_models.assert_not_awaited()
 
     async def test_resolves_relative_paths_via_resolve_path(self, hooks):
-        """Relative metric_file and semantic_model_file must be resolved through _resolve_path."""
+        """Relative metric_file and semantic_model_files must be resolved through _resolve_path."""
         hooks._extract_metric_generation_result = MagicMock(
-            return_value=("metrics/orders.yml", "semantic/orders.yml", {"m": "SELECT 1"})
+            return_value=("metrics/orders.yml", ["semantic/orders.yml"], {"m": "SELECT 1"})
         )
-        hooks._process_metric_with_semantic_model = AsyncMock()
+        hooks._process_metric_with_semantic_models = AsyncMock()
         hooks._resolve_path = MagicMock(side_effect=lambda p, k: f"/ws/sm/{p}" if p else p)
 
         await hooks._handle_end_metric_generation({"result": {"metric_file": "metrics/orders.yml"}})
 
         hooks._resolve_path.assert_any_call("metrics/orders.yml", "semantic")
         hooks._resolve_path.assert_any_call("semantic/orders.yml", "semantic")
-        hooks._process_metric_with_semantic_model.assert_awaited_once_with(
-            "/ws/sm/semantic/orders.yml", "/ws/sm/metrics/orders.yml", {"m": "SELECT 1"}
+        hooks._process_metric_with_semantic_models.assert_awaited_once_with(
+            ["/ws/sm/semantic/orders.yml"], "/ws/sm/metrics/orders.yml", {"m": "SELECT 1"}
         )
 
     async def test_no_semantic_model_falls_back_to_single_file(self, hooks):
-        hooks._extract_metric_generation_result = MagicMock(return_value=("metrics/orders.yml", None, {"m": "SQL"}))
+        hooks._extract_metric_generation_result = MagicMock(return_value=("metrics/orders.yml", [], {"m": "SQL"}))
         hooks._process_single_file = AsyncMock()
         hooks._resolve_path = MagicMock(side_effect=lambda p, k: f"/ws/sm/{p}" if p else p)
 
@@ -1698,7 +1765,7 @@ class TestHandleEndMetricGeneration:
         )
 
     async def test_cancelled_exception_absorbed(self, hooks):
-        hooks._extract_metric_generation_result = MagicMock(return_value=("m.yml", None, {}))
+        hooks._extract_metric_generation_result = MagicMock(return_value=("m.yml", [], {}))
         hooks._resolve_path = MagicMock(side_effect=lambda p, k: p)
         hooks._process_single_file = AsyncMock(side_effect=GenerationCancelledException("user-cancel"))
         await hooks._handle_end_metric_generation({"result": {}})

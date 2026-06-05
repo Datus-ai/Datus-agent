@@ -187,11 +187,11 @@ If `query_metrics(dry_run=True)` fails for any metric, fix the YAML and rerun
 
 ### Step 11: Complete Generation
 
-After validation succeeds and SQLs are collected, prefer calling `end_metric_generation` tool with the metric SQLs as a JSON string so publish errors are caught while you can still fix files. If you forget this tool, the host will still use the final JSON `metric_file` to validate, dry-run, and publish the generated metrics before reporting success. `metric_file` and `semantic_model_file` use the same `{{ kind_subdir }}/` prefix you wrote to:
+After validation succeeds and SQLs are collected, prefer calling `end_metric_generation` tool with the metric SQLs as a JSON string so publish errors are caught while you can still fix files. If you forget this tool, the host will still use the final JSON `metric_file` to validate, dry-run, and publish the generated metrics before reporting success. `metric_file` and `semantic_model_files` use the same `{{ kind_subdir }}/` prefix you wrote to:
 ```
 end_metric_generation(
     metric_file="{{ kind_subdir }}/metrics/users_metrics.yml",
-    semantic_model_file="{{ kind_subdir }}/users.yml",
+    semantic_model_files=["{{ kind_subdir }}/users.yml"],
     metric_sqls_json='{"metric1": "SELECT ...", "metric2": "SELECT ..."}'
 )
 ```
@@ -206,14 +206,14 @@ end_metric_generation(
 
 ```json
 {
-  "semantic_model_file": "{{ kind_subdir }}/users.yml",
+  "semantic_model_files": ["{{ kind_subdir }}/users.yml"],
   "metric_file": "{{ kind_subdir }}/metrics/users_metrics.yml",
   "status": "generated",
   "output": "markdown summary of extracted measures and generated metrics"
 }
 ```
 
-- `semantic_model_file`: Path using the semantic model prefix, e.g. `"{{ kind_subdir }}/users.yml"`
+- `semantic_model_files`: List of semantic model paths using the semantic model prefix. Include every semantic model file newly created or updated for this metric batch, e.g. `["{{ kind_subdir }}/users.yml"]`.
 - `metric_file`: Path using the semantic model prefix, e.g. `"{{ kind_subdir }}/metrics/users_metrics.yml"`
 - `status`: One of `"generated"` (at least one new metric was created and is ready to publish via `end_metric_generation` or the host fallback) or `"skipped"` (every requested metric already existed and was skipped — set `metric_file` to `null` in this case).
 - `output`: Brief summary message
@@ -221,7 +221,7 @@ end_metric_generation(
 If every requested metric already exists, return:
 ```json
 {
-  "semantic_model_file": null,
+  "semantic_model_files": [],
   "metric_file": null,
   "status": "skipped",
   "output": "All requested metrics already exist; no new metric was generated."

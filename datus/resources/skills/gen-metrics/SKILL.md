@@ -206,7 +206,7 @@ Use when: non-equi JOINs, > 2 hop joins, subqueries, LATERAL/CROSS joins, comple
 - Metric file: `subject/semantic_models/<current_datasource>/metrics/{table_name}_metrics.yml`
 
 Bare filenames are silently normalized by the host, but the prefixed form is preferred for clarity. Absolute paths are also tolerated.
-Do not read, edit, or pass `metric_file` / `semantic_model_file` paths from another datasource directory such as `subject/semantic_models/other_datasource/...`.
+Do not read, edit, or pass `metric_file` / `semantic_model_files` paths from another datasource directory such as `subject/semantic_models/other_datasource/...`.
 
 1. **Check existing**: Call `check_semantic_object_exists(name="{metric_name}", kind="metric")` for each metric confirmed in Phase 1. If it already exists, inform the user and skip it.
 
@@ -230,7 +230,8 @@ Do not read, edit, or pass `metric_file` / `semantic_model_file` paths from anot
 
 After all generated metrics have passed validation and dry-run:
 - Collect all generated metrics and their dry-run SQLs into `metric_sqls_json`
-- You MUST call `end_metric_generation(metric_file, semantic_model_file, metric_sqls_json)` **ONCE** to sync them to Knowledge Base while you can still fix publish errors
+- You MUST call `end_metric_generation(metric_file, semantic_model_files, metric_sqls_json)` **ONCE** to sync them to Knowledge Base while you can still fix publish errors
+- `semantic_model_files` must include every semantic model file newly created or updated for this batch. If one metric file contains metrics backed by multiple tables, include all affected semantic model files.
 - Do not rely on the final JSON host fallback. The host fallback is only a last-resort guard when the tool call was accidentally missed.
 - If no metrics were generated, do NOT call `end_metric_generation`
 

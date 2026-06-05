@@ -566,14 +566,14 @@ class TestExtractMetricAndOutputFromResponse:
         node = _make_node(real_agent_config, mock_llm_create)
         output = {
             "content": {
-                "semantic_model_file": "model.yml",
+                "semantic_model_files": ["model.yml"],
                 "metric_file": "revenue_metrics.yml",
                 "output": "Generated successfully",
             }
         }
-        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        sem_models, metric_file, status, out = node._extract_metric_and_output_from_response(output)
         assert metric_file == "revenue_metrics.yml"
-        assert sem_model == "model.yml"
+        assert sem_models == ["model.yml"]
         assert status is None
         assert out == "Generated successfully"
 
@@ -581,14 +581,15 @@ class TestExtractMetricAndOutputFromResponse:
         node = _make_node(real_agent_config, mock_llm_create)
         content = json.dumps(
             {
-                "semantic_model_file": "model.yml",
+                "semantic_model_files": ["model.yml"],
                 "metric_file": "sales_metrics.yml",
                 "output": "Done",
             }
         )
         output = {"content": content}
-        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        sem_models, metric_file, status, out = node._extract_metric_and_output_from_response(output)
         assert metric_file == "sales_metrics.yml"
+        assert sem_models == ["model.yml"]
         assert status is None
         assert out == "Done"
 
@@ -596,14 +597,14 @@ class TestExtractMetricAndOutputFromResponse:
         node = _make_node(real_agent_config, mock_llm_create)
         output = {
             "content": {
-                "semantic_model_file": "model.yml",
+                "semantic_model_files": ["model.yml"],
                 "metric_file": None,
                 "status": "skipped",
                 "output": "All requested metrics already exist; skipped per Step 4.",
             }
         }
-        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
-        assert sem_model == "model.yml"
+        sem_models, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        assert sem_models == ["model.yml"]
         assert metric_file is None
         assert status == "skipped"
         assert out.startswith("All requested metrics already exist")
@@ -612,14 +613,14 @@ class TestExtractMetricAndOutputFromResponse:
         node = _make_node(real_agent_config, mock_llm_create)
         output = {
             "content": {
-                "semantic_model_file": "model.yml",
+                "semantic_model_files": ["model.yml"],
                 "metric_file": None,
                 "status": "generated",
                 "output": "Generated successfully.",
             }
         }
-        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
-        assert sem_model == "model.yml"
+        sem_models, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        assert sem_models == ["model.yml"]
         assert metric_file is None
         assert status == "generated"
         assert out == "Generated successfully."
@@ -628,14 +629,14 @@ class TestExtractMetricAndOutputFromResponse:
         node = _make_node(real_agent_config, mock_llm_create)
         output = {
             "content": {
-                "semantic_model_file": "model.yml",
+                "semantic_model_files": ["model.yml"],
                 "metric_file": None,
                 "status": "done",
                 "output": "Done.",
             }
         }
-        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
-        assert sem_model == "model.yml"
+        sem_models, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        assert sem_models == ["model.yml"]
         assert metric_file is None
         assert status == "done"
         assert out == "Done."
@@ -644,14 +645,15 @@ class TestExtractMetricAndOutputFromResponse:
         node = _make_node(real_agent_config, mock_llm_create)
         content = json.dumps(
             {
-                "semantic_model_file": "model.yml",
+                "semantic_model_files": ["model.yml"],
                 "metric_file": None,
                 "status": "skipped",
                 "output": "Skipped: metric already exists.",
             }
         )
         output = {"content": content}
-        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        sem_models, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        assert sem_models == ["model.yml"]
         assert metric_file is None
         assert status == "skipped"
         assert out == "Skipped: metric already exists."
@@ -659,24 +661,26 @@ class TestExtractMetricAndOutputFromResponse:
     def test_returns_none_quad_on_empty_content(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)
         output = {"content": ""}
-        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        sem_models, metric_file, status, out = node._extract_metric_and_output_from_response(output)
         assert metric_file is None
-        assert sem_model is None
+        assert sem_models is None
         assert status is None
         assert out is None
 
     def test_returns_none_quad_on_dict_missing_metric_file(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)
         output = {"content": {"some_key": "some_value"}}
-        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        sem_models, metric_file, status, out = node._extract_metric_and_output_from_response(output)
         assert metric_file is None
+        assert sem_models is None
         assert status is None
 
     def test_returns_none_quad_on_invalid_json(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)
         output = {"content": "not json at all !!!"}
-        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        sem_models, metric_file, status, out = node._extract_metric_and_output_from_response(output)
         assert metric_file is None
+        assert sem_models is None
         assert status is None
 
 
@@ -858,7 +862,7 @@ class TestExecuteStreamGenMetricsError:
                 build_simple_response(
                     json.dumps(
                         {
-                            "semantic_model_file": reported_semantic_path,
+                            "semantic_model_files": [reported_semantic_path],
                             "metric_file": reported_metric_path,
                             "status": "generated",
                             "output": "Generated metrics.",
@@ -897,7 +901,7 @@ class TestExecuteStreamGenMetricsError:
         node.semantic_tools.query_metrics.assert_called_once_with(metrics=["orders_total"], dry_run=True)
         node.generation_tools.end_metric_generation.assert_called_once_with(
             metric_file=str(metric_path),
-            semantic_model_file=str(real_agent_config.path_manager.semantic_model_path(datasource) / "orders.yml"),
+            semantic_model_files=[str(real_agent_config.path_manager.semantic_model_path(datasource) / "orders.yml")],
         )
 
     def test_final_metric_publish_requires_grouped_source_sql_dry_run(self, real_agent_config, mock_llm_create):
@@ -931,7 +935,7 @@ class TestExecuteStreamGenMetricsError:
         node.generation_tools.end_metric_generation = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
 
         with pytest.raises(DatusException, match="source SQL group-by dimensions"):
-            node._finalize_metric_generation(reported_semantic_path, reported_metric_path, "generated")
+            node._finalize_metric_generation([reported_semantic_path], reported_metric_path, "generated")
 
         node.semantic_tools.query_metrics.assert_called_once_with(metrics=["revenue_total"], dry_run=True)
         node.generation_tools.end_metric_generation.assert_not_called()
@@ -967,11 +971,11 @@ class TestExecuteStreamGenMetricsError:
         )
         node.generation_tools.end_metric_generation = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
 
-        node._finalize_metric_generation(reported_semantic_path, reported_metric_path, "generated")
+        node._finalize_metric_generation([reported_semantic_path], reported_metric_path, "generated")
 
         node.generation_tools.end_metric_generation.assert_called_once_with(
             metric_file=str(metric_path),
-            semantic_model_file=str(real_agent_config.path_manager.semantic_model_path(datasource) / "orders.yml"),
+            semantic_model_files=[str(real_agent_config.path_manager.semantic_model_path(datasource) / "orders.yml")],
         )
 
     @pytest.mark.asyncio
@@ -993,7 +997,7 @@ class TestExecuteStreamGenMetricsError:
                 build_simple_response(
                     json.dumps(
                         {
-                            "semantic_model_file": None,
+                            "semantic_model_files": [],
                             "metric_file": str(outside),
                             "status": "generated",
                             "output": "Generated metrics.",
@@ -1051,7 +1055,7 @@ class TestExecuteStreamGenMetricsError:
                 build_simple_response(
                     json.dumps(
                         {
-                            "semantic_model_file": "orders.yml",
+                            "semantic_model_files": ["orders.yml"],
                             "metric_file": None,
                             "status": "skipped",
                             "output": "All requested metrics already exist; nothing generated.",
@@ -1085,7 +1089,7 @@ class TestExecuteStreamGenMetricsError:
                 build_simple_response(
                     json.dumps(
                         {
-                            "semantic_model_file": "orders.yml",
+                            "semantic_model_files": ["orders.yml"],
                             "metric_file": "orders_metrics.yml",
                             "status": "skipped",
                             "output": "Metric already exists; reused existing definition.",
@@ -1120,7 +1124,7 @@ class TestExecuteStreamGenMetricsError:
                 build_simple_response(
                     json.dumps(
                         {
-                            "semantic_model_file": "orders.yml",
+                            "semantic_model_files": ["orders.yml"],
                             "metric_file": None,
                             "status": "generated",
                             "output": "Generated metrics.",
@@ -1157,7 +1161,7 @@ class TestExecuteStreamGenMetricsError:
                 build_simple_response(
                     json.dumps(
                         {
-                            "semantic_model_file": "orders.yml",
+                            "semantic_model_files": ["orders.yml"],
                             "metric_file": None,
                             "status": "done",
                             "output": "Done.",

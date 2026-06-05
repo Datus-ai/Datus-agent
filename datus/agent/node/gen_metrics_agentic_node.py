@@ -424,7 +424,7 @@ class GenMetricsAgenticNode(AgenticNode):
             else:
                 response_content = str(ctx.last_successful_output)
 
-        semantic_model_file, metric_file, status, extracted_output = self._extract_metric_and_output_from_response(
+        semantic_model_files, metric_file, status, extracted_output = self._extract_metric_and_output_from_response(
             {"content": response_content}
         )
         if extracted_output:
@@ -434,7 +434,7 @@ class GenMetricsAgenticNode(AgenticNode):
             response_content = str(response_content) if response_content else ""
 
         self._finalize_metric_generation(
-            semantic_model_file=semantic_model_file,
+            semantic_model_files=semantic_model_files,
             metric_file=metric_file,
             status=status,
         )
@@ -585,7 +585,7 @@ class GenMetricsAgenticNode(AgenticNode):
 
     def _finalize_metric_generation(
         self,
-        semantic_model_file: Optional[str],
+        semantic_model_files: Optional[List[str]],
         metric_file: Optional[str],
         status: Optional[str],
     ) -> None:
@@ -627,9 +627,11 @@ class GenMetricsAgenticNode(AgenticNode):
                 )
 
         abs_metric_file = self._resolve_metric_artifact_path(metric_file, "metric")
-        abs_semantic_model_file = (
-            self._resolve_metric_artifact_path(semantic_model_file, "semantic") if semantic_model_file else ""
-        )
+        abs_semantic_model_files = [
+            self._resolve_metric_artifact_path(semantic_model_file, "semantic")
+            for semantic_model_file in (semantic_model_files or [])
+            if semantic_model_file
+        ]
         preflight_error = self.generation_tools._validate_metric_file_has_blocks(abs_metric_file)
         if preflight_error:
             raise RuntimeError(preflight_error)
@@ -665,7 +667,7 @@ class GenMetricsAgenticNode(AgenticNode):
 
         publish_result = self.generation_tools.end_metric_generation(
             metric_file=abs_metric_file,
-            semantic_model_file=abs_semantic_model_file,
+            semantic_model_files=abs_semantic_model_files,
         )
         if not self._tool_succeeded(publish_result):
             raise RuntimeError(f"Metric KB sync failed: {self._tool_error(publish_result)}")
@@ -673,12 +675,12 @@ class GenMetricsAgenticNode(AgenticNode):
 
     def _extract_metric_and_output_from_response(
         self, output: dict
-    ) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+    ) -> tuple[Optional[List[str]], Optional[str], Optional[str], Optional[str]]:
         """
-        Extract semantic model file, metric file, status and formatted output from model response.
+        Extract semantic model files, metric file, status and formatted output from model response.
 
         Per prompt template requirements, LLM should return JSON format:
-        {"semantic_model_file": "path.yml", "metric_file": "path.yml",
+        {"semantic_model_files": ["path.yml"], "metric_file": "path.yml",
          "status": "generated" | "skipped", "output": "markdown text"}
 
         ``status`` is optional for backward compatibility; absent values are treated as ``"generated"``.
@@ -687,7 +689,7 @@ class GenMetricsAgenticNode(AgenticNode):
             output: Output dictionary from model generation
 
         Returns:
-            Tuple of (semantic_model_file, metric_file, status, output_string), each Optional[str].
+            Tuple of (semantic_model_files, metric_file, status, output_string).
         """
         try:
             from datus.utils.json_utils import strip_json_str
@@ -698,17 +700,22 @@ class GenMetricsAgenticNode(AgenticNode):
             # Case 1: content is already a dict (most common)
             if isinstance(content, dict):
                 output_text = content.get("output")
-                semantic_model_file = content.get("semantic_model_file")
+                semantic_model_files = content.get("semantic_model_files")
                 metric_file = content.get("metric_file")
                 status = content.get("status")
                 normalized_status = status.strip().lower() if isinstance(status, str) else None
 
                 if (metric_file and isinstance(metric_file, str)) or normalized_status:
                     logger.debug(
-                        f"Extracted from dict: semantic_model_file={semantic_model_file}, "
+                        f"Extracted from dict: semantic_model_files={semantic_model_files}, "
                         f"metric_file={metric_file}, status={normalized_status}"
                     )
-                    return semantic_model_file, metric_file, normalized_status, output_text
+                    return (
+                        semantic_model_files if isinstance(semantic_model_files, list) else [],
+                        metric_file,
+                        normalized_status,
+                        output_text,
+                    )
 
                 logger.warning(f"Dict format but missing expected keys or invalid format: {content.keys()}")
 
@@ -723,7 +730,7 @@ class GenMetricsAgenticNode(AgenticNode):
                         parsed = json_repair.loads(cleaned_json)
                         if isinstance(parsed, dict):
                             output_text = parsed.get("output")
-                            semantic_model_file = parsed.get("semantic_model_file")
+                            semantic_model_files = parsed.get("semantic_model_files")
                             metric_file = parsed.get("metric_file")
                             status = parsed.get("status")
                             normalized_status = status.strip().lower() if isinstance(status, str) else None
@@ -731,10 +738,15 @@ class GenMetricsAgenticNode(AgenticNode):
                             if (metric_file and isinstance(metric_file, str)) or normalized_status:
                                 logger.debug(
                                     f"Extracted from JSON string: "
-                                    f"semantic_model_file={semantic_model_file}, "
+                                    f"semantic_model_files={semantic_model_files}, "
                                     f"metric_file={metric_file}, status={normalized_status}"
                                 )
-                                return semantic_model_file, metric_file, normalized_status, output_text
+                                return (
+                                    semantic_model_files if isinstance(semantic_model_files, list) else [],
+                                    metric_file,
+                                    normalized_status,
+                                    output_text,
+                                )
 
                             logger.warning(f"Parsed JSON but missing expected keys or invalid format: {parsed.keys()}")
                     except Exception as e:

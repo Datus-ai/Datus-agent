@@ -268,7 +268,10 @@ class GenerationTools:
             return FuncToolResult(success=0, error=f"Failed to complete generation: {str(e)}")
 
     def end_metric_generation(
-        self, metric_file: str, semantic_model_file: str = "", metric_sqls_json: str = ""
+        self,
+        metric_file: str,
+        semantic_model_files: Optional[List[str]] = None,
+        metric_sqls_json: str = "",
     ) -> FuncToolResult:
         """
         Complete metric generation process and automatically sync to Knowledge Base.
@@ -283,10 +286,9 @@ class GenerationTools:
                 the live ``agent_config.current_datasource``. Absolute paths are only
                 accepted when they resolve inside the Knowledge Base semantic-model
                 sandbox.
-            semantic_model_file: Path to the primary semantic model file that defines
-                the measure(s) used by this metric. Optional — provide this if the
-                semantic model was newly created or updated. Same relative/absolute
-                rules as ``metric_file``.
+            semantic_model_files: Paths to semantic model files that were newly
+                created or updated and define the measure(s) used by this metric
+                batch. Same relative/absolute rules as ``metric_file``.
             metric_sqls_json: JSON string mapping metric names to their generated SQL (from query_metrics dry_run).
                               Example: '{"revenue_total": "SELECT SUM(revenue) FROM orders GROUP BY date"}'
 
@@ -316,7 +318,7 @@ class GenerationTools:
                     ),
                     result={
                         "metric_file": metric_file,
-                        "semantic_model_file": semantic_model_file,
+                        "semantic_model_files": semantic_model_files or [],
                         "metric_sqls": metric_sqls,
                     },
                 )
@@ -331,7 +333,7 @@ class GenerationTools:
                     ),
                     result={
                         "metric_file": metric_file,
-                        "semantic_model_file": semantic_model_file,
+                        "semantic_model_files": semantic_model_files or [],
                         "metric_sqls": metric_sqls,
                     },
                 )
@@ -341,7 +343,7 @@ class GenerationTools:
 
             logger.info(
                 f"Metric generation completed: metric_file={metric_file}, "
-                f"semantic_model_file={semantic_model_file}, "
+                f"semantic_model_files={semantic_model_files or []}, "
                 f"metric_sqls={metric_sqls}"
             )
 
@@ -358,24 +360,38 @@ class GenerationTools:
                 return resolve_kb_sandbox_path(path, kind, subject_root) or ""
 
             abs_metric = _resolve(metric_file, "metric")
-            abs_semantic = _resolve(semantic_model_file, "semantic")
+            semantic_model_files = semantic_model_files or []
+            if not isinstance(semantic_model_files, list):
+                return FuncToolResult(
+                    success=0,
+                    error="semantic_model_files must be a list of semantic model YAML paths",
+                    result={
+                        "metric_file": metric_file,
+                        "semantic_model_files": semantic_model_files,
+                        "metric_sqls": metric_sqls,
+                    },
+                )
+            abs_semantic_files: List[str] = []
+            for semantic_model_file in semantic_model_files:
+                abs_semantic = _resolve(semantic_model_file, "semantic")
+                if not abs_semantic:
+                    return FuncToolResult(
+                        success=0,
+                        error=f"semantic_model_files contains path outside Knowledge Base sandbox: {semantic_model_file!r}",
+                        result={
+                            "metric_file": metric_file,
+                            "semantic_model_files": semantic_model_files,
+                            "metric_sqls": metric_sqls,
+                        },
+                    )
+                abs_semantic_files.append(abs_semantic)
             if not abs_metric:
                 return FuncToolResult(
                     success=0,
                     error=f"metric_file escapes Knowledge Base sandbox: {metric_file!r}",
                     result={
                         "metric_file": metric_file,
-                        "semantic_model_file": semantic_model_file,
-                        "metric_sqls": metric_sqls,
-                    },
-                )
-            if semantic_model_file and not abs_semantic:
-                return FuncToolResult(
-                    success=0,
-                    error=f"semantic_model_file escapes Knowledge Base sandbox: {semantic_model_file!r}",
-                    result={
-                        "metric_file": metric_file,
-                        "semantic_model_file": semantic_model_file,
+                        "semantic_model_files": semantic_model_files,
                         "metric_sqls": metric_sqls,
                     },
                 )
@@ -393,7 +409,7 @@ class GenerationTools:
                     error=preflight_error,
                     result={
                         "metric_file": metric_file,
-                        "semantic_model_file": semantic_model_file,
+                        "semantic_model_files": semantic_model_files,
                         "metric_sqls": metric_sqls,
                     },
                 )
@@ -406,7 +422,7 @@ class GenerationTools:
                     error=conflict_error,
                     result={
                         "metric_file": metric_file,
-                        "semantic_model_file": semantic_model_file,
+                        "semantic_model_files": semantic_model_files,
                         "metric_sqls": metric_sqls,
                     },
                 )
@@ -421,7 +437,7 @@ class GenerationTools:
                     ),
                     result={
                         "metric_file": metric_file,
-                        "semantic_model_file": semantic_model_file,
+                        "semantic_model_files": semantic_model_files,
                         "metric_sqls": metric_sqls,
                     },
                 )
@@ -439,14 +455,14 @@ class GenerationTools:
                     ),
                     result={
                         "metric_file": metric_file,
-                        "semantic_model_file": semantic_model_file,
+                        "semantic_model_files": semantic_model_files,
                         "metric_sqls": metric_sqls,
                         "queryability_contracts": missing_contracts,
                     },
                 )
 
             # Auto-sync to Knowledge Base
-            sync_result = self._sync_metric_to_db(abs_metric, abs_semantic, metric_sqls)
+            sync_result = self._sync_metric_to_db(abs_metric, abs_semantic_files, metric_sqls)
 
             if not sync_result.get("success"):
                 return FuncToolResult(
@@ -454,7 +470,7 @@ class GenerationTools:
                     error=f"Metric file written but KB sync failed: {sync_result.get('error', 'unknown')}",
                     result={
                         "metric_file": metric_file,
-                        "semantic_model_file": semantic_model_file,
+                        "semantic_model_files": semantic_model_files,
                         "metric_sqls": metric_sqls,
                         "sync": sync_result,
                     },
@@ -470,7 +486,7 @@ class GenerationTools:
                 result={
                     "message": "Metric generation completed and synced to Knowledge Base",
                     "metric_file": metric_file,
-                    "semantic_model_file": semantic_model_file,
+                    "semantic_model_files": semantic_model_files,
                     "metric_sqls": metric_sqls,
                     "sync": sync_result,
                 }
@@ -727,17 +743,17 @@ class GenerationTools:
     def _sync_metric_to_db(
         self,
         metric_file: str,
-        semantic_model_file: Optional[str] = None,
+        semantic_model_files: Optional[List[str]] = None,
         metric_sqls: Optional[Dict[str, str]] = None,
     ) -> dict:
         """
-        Sync metric (and optionally semantic model) to Knowledge Base.
+        Sync metric and any updated semantic models to Knowledge Base.
 
         Reuses GenerationHooks._sync_semantic_to_db() static method.
 
         Args:
             metric_file: Absolute path to metric YAML file
-            semantic_model_file: Optional absolute path to semantic model YAML file
+            semantic_model_files: Optional absolute paths to semantic model YAML files
             metric_sqls: Optional dict mapping metric names to generated SQL
 
         Returns:
@@ -749,60 +765,34 @@ class GenerationTools:
             if not os.path.exists(metric_file):
                 return {"success": False, "error": f"Metric file not found: {metric_file}"}
 
-            if semantic_model_file and os.path.exists(semantic_model_file):
-                # Combine semantic model + metric into a temp file for sync
-                with open(semantic_model_file, "r", encoding="utf-8") as f:
-                    semantic_docs = list(yaml.safe_load_all(f))
-                with open(metric_file, "r", encoding="utf-8") as f:
-                    metric_docs = list(yaml.safe_load_all(f))
-
-                combined_docs = semantic_docs + metric_docs
-                import tempfile
-
-                fd, temp_file = tempfile.mkstemp(
-                    suffix=".combined.tmp",
-                    dir=os.path.dirname(semantic_model_file),
-                )
-                try:
-                    os.close(fd)
-                    with open(temp_file, "w", encoding="utf-8") as f:
-                        yaml.safe_dump_all(combined_docs, f, allow_unicode=True, sort_keys=False)
-
-                    # First: sync semantic objects from the semantic model file
-                    sem_result = GenerationHooks._sync_semantic_to_db(
-                        semantic_model_file,
-                        self.agent_config,
-                        include_semantic_objects=True,
-                        include_metrics=False,
-                    )
-                    if not sem_result.get("success"):
-                        return sem_result
-                    # Then: sync metrics from combined file
-                    result = GenerationHooks._sync_semantic_to_db(
-                        temp_file,
-                        self.agent_config,
-                        include_semantic_objects=False,
-                        include_metrics=True,
-                        metric_sqls=metric_sqls,
-                        original_yaml_path=metric_file,
-                    )
-                    if result.get("success"):
-                        result["semantic_synced"] = True
-                finally:
-                    if os.path.exists(temp_file):
-                        os.remove(temp_file)
-            else:
-                # Sync metric file alone
-                result = GenerationHooks._sync_semantic_to_db(
-                    metric_file,
+            synced_semantic_files: List[str] = []
+            for semantic_model_file in semantic_model_files or []:
+                if not os.path.exists(semantic_model_file):
+                    return {
+                        "success": False,
+                        "error": f"Semantic model file not found: {semantic_model_file}",
+                    }
+                sem_result = GenerationHooks._sync_semantic_to_db(
+                    semantic_model_file,
                     self.agent_config,
-                    include_semantic_objects=False,
-                    include_metrics=True,
-                    metric_sqls=metric_sqls,
-                    original_yaml_path=metric_file,
+                    include_semantic_objects=True,
+                    include_metrics=False,
                 )
-                if result.get("success"):
-                    result["semantic_synced"] = False
+                if not sem_result.get("success"):
+                    return sem_result
+                synced_semantic_files.append(semantic_model_file)
+
+            result = GenerationHooks._sync_semantic_to_db(
+                metric_file,
+                self.agent_config,
+                include_semantic_objects=False,
+                include_metrics=True,
+                metric_sqls=metric_sqls,
+                original_yaml_path=metric_file,
+            )
+            if result.get("success"):
+                result["semantic_synced"] = bool(synced_semantic_files)
+                result["semantic_model_files_synced"] = synced_semantic_files
 
             if result.get("success"):
                 logger.info(f"Successfully synced metric to KB: {result.get('message')}")
