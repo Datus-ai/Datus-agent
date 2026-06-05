@@ -80,7 +80,7 @@ class TestLocalSkillDiscoveryAndExecutionGate:
 
 @pytest.mark.nightly
 @pytest.mark.product_e2e
-@pytest.mark.skipif(not os.environ.get("DEEPSEEK_API_KEY"), reason="DEEPSEEK_API_KEY not set")
+@pytest.mark.skipif(not os.getenv("DEEPSEEK_API_KEY"), reason="DEEPSEEK_API_KEY not set")
 class TestRealLLMSkillExecution:
     """Real-LLM execution of an installed local skill via ChatAgenticNode.
 

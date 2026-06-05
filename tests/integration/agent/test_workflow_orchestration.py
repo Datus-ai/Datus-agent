@@ -35,7 +35,7 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-def _make_args(max_steps=20, workflow="gen_sql_agentic"):
+def _make_args(max_steps: int = 20, workflow: str = "gen_sql_agentic") -> argparse.Namespace:
     return argparse.Namespace(
         max_steps=max_steps,
         workflow=workflow,
@@ -47,7 +47,7 @@ def _make_args(max_steps=20, workflow="gen_sql_agentic"):
     )
 
 
-def _make_sql_task():
+def _make_sql_task() -> SqlTask:
     return SqlTask(
         id="nightly_wf_orchestration",
         datasource="bird_school",
@@ -91,7 +91,7 @@ class TestWorkflowGraphAssembly:
 
 @pytest.mark.nightly
 @pytest.mark.product_e2e
-@pytest.mark.skipif(not os.environ.get("DEEPSEEK_API_KEY"), reason="DEEPSEEK_API_KEY not set")
+@pytest.mark.skipif(not os.getenv("DEEPSEEK_API_KEY"), reason="DEEPSEEK_API_KEY not set")
 class TestWorkflowOrchestrationRealLLM:
     """Real-LLM multi-node workflow execution via WorkflowRunner."""
 

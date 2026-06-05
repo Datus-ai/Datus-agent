@@ -49,6 +49,11 @@ def _table_names(db_path: Path) -> set[str]:
     return {r[0] for r in rows}
 
 
+def _quote_ident(name: str) -> str:
+    """Quote a SQL identifier so LLM-chosen table names are interpolated safely."""
+    return '"' + name.replace('"', '""') + '"'
+
+
 def _isolate_shared_sqlite(nightly_agent_config, tmp_dir: Path) -> Path:
     """Copy the shared benchmark SQLite file and repoint every datasource at it.
 
@@ -128,7 +133,7 @@ class TestGenTableAgenticInit:
 
 @pytest.mark.nightly
 @pytest.mark.product_e2e
-@pytest.mark.skipif(not os.environ.get("DEEPSEEK_API_KEY"), reason="DEEPSEEK_API_KEY not set")
+@pytest.mark.skipif(not os.getenv("DEEPSEEK_API_KEY"), reason="DEEPSEEK_API_KEY not set")
 class TestGenTableAgenticRealLLM:
     """Real-LLM smoke for the gen_table DDL path on an isolated SQLite copy."""
 
@@ -178,5 +183,5 @@ class TestGenTableAgenticRealLLM:
         assert new_tables, f"no new table created in isolated db; before={tables_before}, after={tables_after}"
 
         created = sorted(new_tables)[0]
-        query_result = node.db_func_tool.read_query(f"SELECT COUNT(*) AS n FROM {created}")
+        query_result = node.db_func_tool.read_query(f"SELECT COUNT(*) AS n FROM {_quote_ident(created)}")
         assert query_result.success == 1, f"created table {created!r} not queryable: {query_result}"

@@ -150,7 +150,7 @@ class TestAutoMemoryLoadAndInherit:
 
 @pytest.mark.nightly
 @pytest.mark.product_e2e
-@pytest.mark.skipif(not os.environ.get("DEEPSEEK_API_KEY"), reason="DEEPSEEK_API_KEY not set")
+@pytest.mark.skipif(not os.getenv("DEEPSEEK_API_KEY"), reason="DEEPSEEK_API_KEY not set")
 class TestAutoMemoryRealLLM:
     """Real-LLM run of a memory-enabled node whose MEMORY.md is loaded."""
 

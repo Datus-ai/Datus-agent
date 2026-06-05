@@ -275,7 +275,7 @@ class TestContextRetrievalInjection:
 
 @pytest.mark.nightly
 @pytest.mark.product_e2e
-@pytest.mark.skipif(not os.environ.get("DEEPSEEK_API_KEY"), reason="DEEPSEEK_API_KEY not set")
+@pytest.mark.skipif(not os.getenv("DEEPSEEK_API_KEY"), reason="DEEPSEEK_API_KEY not set")
 class TestContextInjectionRealLLM:
     """Injection-layer coverage: context tools are wired into and invoked by gen_sql."""
 
@@ -304,7 +304,11 @@ class TestContextInjectionRealLLM:
     @pytest.mark.asyncio
     @pytest.mark.timeout(300)
     async def test_execute_stream_invokes_context_tools(self, nightly_agent_config):
-        """End-to-end: the node runs to SUCCESS and invokes at least one tool."""
+        """End-to-end: the node runs to SUCCESS and invokes a context-search tool.
+
+        Proving context injection means proving a context-search tool was actually
+        called during generation, not merely that some (e.g. db schema) tool ran.
+        """
         _seed_all_context_sources(nightly_agent_config)
 
         node = self._build_node(nightly_agent_config)
@@ -325,9 +329,22 @@ class TestContextInjectionRealLLM:
 
         assert len(actions) >= 2, f"Should have at least 2 actions, got {len(actions)}"
 
-        tool_actions = [a for a in actions if a.role == ActionRole.TOOL]
-        assert len(tool_actions) >= 1, (
-            f"At least one TOOL action expected, got {len(tool_actions)}. Action roles: {[a.role for a in actions]}"
+        # A TOOL action's action_type is the tool name, so we can assert that a
+        # context-search tool (not just any tool) was invoked during generation.
+        context_tool_names = {
+            "search_reference_sql",
+            "get_reference_sql",
+            "search_metrics",
+            "get_metrics",
+            "search_knowledge",
+            "get_knowledge",
+            "search_semantic_objects",
+            "list_subject_tree",
+        }
+        invoked_tools = {a.action_type for a in actions if a.role == ActionRole.TOOL}
+        assert invoked_tools & context_tool_names, (
+            "Expected at least one context-search tool to be invoked during SQL generation, "
+            f"but only these tools were called: {sorted(invoked_tools)}"
         )
 
         assert actions[-1].status == ActionStatus.SUCCESS, (

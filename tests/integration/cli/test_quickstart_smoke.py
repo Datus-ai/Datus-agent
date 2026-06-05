@@ -65,7 +65,7 @@ class TestQuickstartChatSmoke:
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(300)
-    @pytest.mark.skipif(not os.environ.get("DEEPSEEK_API_KEY"), reason="DEEPSEEK_API_KEY not set")
+    @pytest.mark.skipif(not os.getenv("DEEPSEEK_API_KEY"), reason="DEEPSEEK_API_KEY not set")
     async def test_quickstart_natural_language_question_answered_with_sql(self, nightly_agent_config):
         """A fresh NL question is answered successfully and is backed by a SQL read."""
         node = ChatAgenticNode(

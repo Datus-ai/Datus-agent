@@ -47,10 +47,11 @@ CUSTOM_DESCRIPTION = "Nightly custom SQL subagent for california_schools"
 def _config_with_custom_subagent(base_config):
     """Return a config copy with a custom subagent injected into agentic_nodes.
 
-    The agentic_nodes mapping is deep-copied first so the injected definition
-    never leaks into the shared configuration_manager cache used by other tests.
+    The config and its agentic_nodes mapping are deep-copied first so the injected
+    definition never leaks into the shared configuration_manager cache used by
+    other tests.
     """
-    config = base_config
+    config = copy.deepcopy(base_config)
     config.agentic_nodes = copy.deepcopy(config.agentic_nodes)
     config.agentic_nodes[CUSTOM_SUBAGENT_NAME] = {
         "model": "deepseek",
@@ -107,7 +108,7 @@ class TestCustomSubagentResolution:
 
 @pytest.mark.nightly
 @pytest.mark.product_e2e
-@pytest.mark.skipif(not os.environ.get("DEEPSEEK_API_KEY"), reason="DEEPSEEK_API_KEY not set")
+@pytest.mark.skipif(not os.getenv("DEEPSEEK_API_KEY"), reason="DEEPSEEK_API_KEY not set")
 class TestCustomSubagentRealLLM:
     """Real-LLM execution routed through the config-defined custom subagent."""
 
