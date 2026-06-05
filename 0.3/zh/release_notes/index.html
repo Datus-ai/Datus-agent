@@ -2237,6 +2237,8 @@
       
         
       
+        
+      
     
     
     
@@ -2343,6 +2345,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../configuration/compact/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    上下文压缩
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../configuration/workflow/" class="md-nav__link">
         
   
@@ -2420,10 +2450,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_10_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_10_6" >
         
           
-          <label class="md-nav__link" for="__nav_1_10_5" id="__nav_1_10_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_10_6" id="__nav_1_10_6_label" tabindex="0">
             
   
   
@@ -2441,8 +2471,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_10_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_10_5">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_10_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_10_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -3483,6 +3513,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#033" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.3
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#032" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3733,6 +3774,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#033" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.3
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#032" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3953,7 +4005,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.2/docs/release_notes.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.3/docs/release_notes.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -3963,6 +4015,23 @@
 
 <h1 id="_1">发布说明<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
 <h2 id="03">0.3<a class="headerlink" href="#03" title="Permanent link">&para;</a></h2>
+<h3 id="033">0.3.3<a class="headerlink" href="#033" title="Permanent link">&para;</a></h3>
+<p><strong>新功能</strong></p>
+<ul>
+<li><strong>会话自动压缩</strong> - 长对话现在可以自动整理上下文，减少因上下文占满而中断的情况。对话变长时，较早的工具调用记录会归档到磁盘，当前任务仍保留在上下文中；接近上限（约 90%）时，会生成会话摘要并继续运行。<code>/compact</code> 也新增了进度提示和摘要面板，完整历史会持久化保存，方便恢复和回溯。<a href="https://github.com/Datus-ai/Datus-agent/pull/871">#871</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/919">#919</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/933">#933</a> <a href="../configuration/compact/">文档</a></li>
+<li><strong>实时 Token 用量</strong> - 模型响应时会实时显示本次新增与累计 token 数；状态栏同步展示当前上下文占用和总容量。用量历史会随会话保存，恢复会话或审计成本时都能查看。<a href="https://github.com/Datus-ai/Datus-agent/pull/920">#920</a></li>
+</ul>
+<p><strong>增强</strong></p>
+<ul>
+<li><strong>Snowflake 密钥对认证</strong> - Snowflake 启用 MFA 后，可改用 RSA 密钥对认证，不必依赖密码连接。配置 <code>private_key_file</code>、可选的 <code>private_key_file_pwd</code> 和 <code>role</code> 后，同一套认证信息会用于 SQL 执行，以及 MetricFlow 指标生成、校验和查询；日志中的凭据会自动脱敏。<a href="https://github.com/Datus-ai/Datus-agent/pull/926">#926</a> <a href="https://github.com/Datus-ai/datus-db-adapters/pull/66">datus-db-adapters#66</a> <a href="https://github.com/Datus-ai/datus-db-adapters/pull/67">datus-db-adapters#67</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/25">datus-semantic-adapter#25</a> <a href="../configuration/datasources/">文档</a></li>
+<li><strong>离线 Embedding 降级</strong> - 离线、内网或无法访问 Hugging Face 时，Datus 不再卡在 embedding 模型下载上。上下文搜索和 <code>@</code> 引用补全会临时降级，并提示模型名、缓存路径、相关环境变量和修复方法；数据库工具和普通聊天仍可继续使用。文档也补充了预先缓存模型、或改用 OpenAI 兼容 embedding 服务的离线部署方案。<a href="https://github.com/Datus-ai/Datus-agent/pull/870">#870</a></li>
+<li><strong>Codex 缓存策略优化</strong> - 使用 ChatGPT 订阅版 Codex 后端时，多步运行现在可以像官方客户端一样复用 prompt 缓存，降低等待时间和 token 成本。<a href="https://github.com/Datus-ai/Datus-agent/pull/918">#918</a></li>
+<li><strong><code>datus -p</code> 与 <code>--resume</code> 支持多轮对话</strong> - Print 模式现在也能恢复并继续指定会话。通过 <code>datus -p '...' --resume &lt;session_id&gt;</code> 即可在命令行中接续对话；REPL 与 API chat 也支持用 <code>--resume</code> 恢复既有会话。<a href="https://github.com/Datus-ai/Datus-agent/pull/914">#914</a></li>
+</ul>
+<p><strong>Bug 修复</strong></p>
+<ul>
+<li><strong>自定义 Ask 子代理遵守工具白名单</strong> - <code>ask_report</code> / <code>ask_dashboard</code> 现在只会看到子代理 <code>tools</code> 白名单中允许的工具。未授权的数据库、bash、skill 工具不再暴露给模型，prompt 也不再混入完整聊天工具目录，减少越权调用和上下文污染风险。<a href="https://github.com/Datus-ai/Datus-agent/pull/877">#877</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/878">#878</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/881">#881</a></li>
+</ul>
 <h3 id="032">0.3.2<a class="headerlink" href="#032" title="Permanent link">&para;</a></h3>
 <p><strong>新功能</strong></p>
 <ul>

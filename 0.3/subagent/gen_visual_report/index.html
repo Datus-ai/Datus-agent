@@ -2381,6 +2381,8 @@
       
         
       
+        
+      
     
     
     
@@ -2487,6 +2489,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../configuration/compact/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Context Compaction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../configuration/workflow/" class="md-nav__link">
         
   
@@ -2564,10 +2594,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_10_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_10_6" >
         
           
-          <label class="md-nav__link" for="__nav_1_10_5" id="__nav_1_10_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_10_6" id="__nav_1_10_6_label" tabindex="0">
             
   
   
@@ -2585,8 +2615,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_10_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_10_5">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_10_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_10_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -3706,7 +3736,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.2/docs/subagent/gen_visual_report.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.3/docs/subagent/gen_visual_report.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -3719,32 +3749,35 @@
 <p><code>gen_visual_report</code> turns a question — <em>"how did Q4 revenue do?"</em>, <em>"explain merchant churn in H2"</em> — into a self-contained <strong>HTML report</strong>: a scrollable web page with an executive summary, KPI cards, charts, tables, and narrative paragraphs. In Datus-CLI mode the page opens in your browser automatically; in Datus-SaaS it shows up inline in the chat.</p>
 <p><img alt="Sample HTML report — KPI strip, headline metrics, and a monthly growth trend chart" src="../../assets/gen_visual_report_preview.png" /></p>
 <p>An HTML report is a long-form, narrative answer with the data baked in at build time. There are no filters and no live re-querying once the report is built. For interactive BI dashboards on Superset / Grafana, use <code>gen_dashboard</code> instead.</p>
-<p>If you'd rather have a plain-text <strong>Markdown report</strong> (no HTML rendering, no charts), use <code>/gen_report</code> instead.</p>
+<p>If you'd rather have a plain-text <strong>Markdown report</strong> (no HTML rendering, no charts), use the <code>gen_report</code> agent instead.</p>
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
-<p>Just ask. State the question, the time window, and the breakdowns you care about:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>/gen_visual_report<span class="w"> </span>Give<span class="w"> </span>me<span class="w"> </span>a<span class="w"> </span>Q4<span class="w"> </span><span class="m">2025</span><span class="w"> </span>revenue<span class="w"> </span>report.<span class="w"> </span>Show<span class="w"> </span>monthly<span class="w"> </span>trend,<span class="w"> </span>top<span class="w"> </span><span class="m">10</span><span class="w"> </span>regions,<span class="w"> </span>and<span class="w"> </span>a<span class="w"> </span>YoY<span class="w"> </span>comparison<span class="w"> </span>vs<span class="w"> </span>Q4<span class="w"> </span><span class="m">2024</span>.
+<p>Activate <code>gen_visual_report</code> as your current agent — the legacy <code>/gen_visual_report ...</code> slash invocation was removed in favor of <code>/agent</code>-based selection:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>/agent<span class="w"> </span>gen_visual_report
 </span></code></pre></div>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>/gen_visual_report<span class="w"> </span>Analyze<span class="w"> </span>merchant<span class="w"> </span>churn<span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="m">2025</span><span class="w"> </span>H2,<span class="w"> </span>segment<span class="w"> </span>by<span class="w"> </span>tenure<span class="w"> </span>bucket,<span class="w"> </span>and<span class="w"> </span>give<span class="w"> </span>key<span class="w"> </span>findings<span class="w"> </span>and<span class="w"> </span>recommendations.
+<p>(Or run <code>/agent</code> with no args to pick it from the unified agent TUI — Enter to edit, <code>s</code> to set as default.) Once active, just describe what you want — state the question, the time window, and the breakdowns you care about:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Give<span class="w"> </span>me<span class="w"> </span>a<span class="w"> </span>Q4<span class="w"> </span><span class="m">2025</span><span class="w"> </span>revenue<span class="w"> </span>report.<span class="w"> </span>Show<span class="w"> </span>monthly<span class="w"> </span>trend,<span class="w"> </span>top<span class="w"> </span><span class="m">10</span><span class="w"> </span>regions,<span class="w"> </span>and<span class="w"> </span>a<span class="w"> </span>YoY<span class="w"> </span>comparison<span class="w"> </span>vs<span class="w"> </span>Q4<span class="w"> </span><span class="m">2024</span>.
+</span></code></pre></div>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>Analyze<span class="w"> </span>merchant<span class="w"> </span>churn<span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="m">2025</span><span class="w"> </span>H2,<span class="w"> </span>segment<span class="w"> </span>by<span class="w"> </span>tenure<span class="w"> </span>bucket,<span class="w"> </span>and<span class="w"> </span>give<span class="w"> </span>key<span class="w"> </span>findings<span class="w"> </span>and<span class="w"> </span>recommendations.
 </span></code></pre></div>
 <p>To edit an existing report, reference it by display name or by its short id:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>/gen_visual_report<span class="w"> </span>Add<span class="w"> </span>a<span class="w"> </span>channel-level<span class="w"> </span>breakdown<span class="w"> </span>table<span class="w"> </span>to<span class="w"> </span>report<span class="w"> </span>q4_2025_revenue_analysis.
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Add<span class="w"> </span>a<span class="w"> </span>channel-level<span class="w"> </span>breakdown<span class="w"> </span>table<span class="w"> </span>to<span class="w"> </span>report<span class="w"> </span>q4_2025_revenue_analysis.
 </span></code></pre></div>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>/gen_visual_report<span class="w"> </span>In<span class="w"> </span><span class="s2">&quot;Q4 2025 Revenue Analysis&quot;</span>,<span class="w"> </span>switch<span class="w"> </span>the<span class="w"> </span>revenue<span class="w"> </span>trend<span class="w"> </span>chart<span class="w"> </span>to<span class="w"> </span>monthly<span class="w"> </span>aggregation.
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>In<span class="w"> </span><span class="s2">&quot;Q4 2025 Revenue Analysis&quot;</span>,<span class="w"> </span>switch<span class="w"> </span>the<span class="w"> </span>revenue<span class="w"> </span>trend<span class="w"> </span>chart<span class="w"> </span>to<span class="w"> </span>monthly<span class="w"> </span>aggregation.
 </span></code></pre></div>
 <h2 id="start-from-a-metric-or-your-own-sql">Start from a Metric or Your Own SQL<a class="headerlink" href="#start-from-a-metric-or-your-own-sql" title="Permanent link">&para;</a></h2>
 <p><code>gen_visual_report</code> accepts two equally valid starting points:</p>
 <ul>
 <li>
 <p><strong>From metrics</strong> — reference an existing metric with <code>@Metrics &lt;subject&gt;.&lt;group&gt;.&lt;metric&gt;</code> (three segments — subject tree path + metric name). The agent will pull its definition, dimensions, and time windows from your semantic layer. Best when your project already has a curated metric registry (see <a href="../gen_metrics/">Generate Metrics</a> for how to create them).
-  <div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>/gen_visual_report<span class="w"> </span>Build<span class="w"> </span>a<span class="w"> </span>Q4<span class="w"> </span><span class="m">2025</span><span class="w"> </span>report<span class="w"> </span>around<span class="w"> </span>@Metrics<span class="w"> </span>revenue.daily.dau<span class="w"> </span>and<span class="w"> </span>@Metrics<span class="w"> </span>conversion.weekly.signup_rate,<span class="w"> </span>broken<span class="w"> </span>down<span class="w"> </span>by<span class="w"> </span>region.
+  <div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Build<span class="w"> </span>a<span class="w"> </span>Q4<span class="w"> </span><span class="m">2025</span><span class="w"> </span>report<span class="w"> </span>around<span class="w"> </span>@Metrics<span class="w"> </span>revenue.daily.dau<span class="w"> </span>and<span class="w"> </span>@Metrics<span class="w"> </span>conversion.weekly.signup_rate,<span class="w"> </span>broken<span class="w"> </span>down<span class="w"> </span>by<span class="w"> </span>region.
 </span></code></pre></div></p>
 </li>
 <li>
 <p><strong>From SQL</strong> — paste the SQL you want the report built on. The agent treats your query as the data source, executes it, and assembles the narrative + charts around the result. Best for one-off analyses or when the metric you need doesn't exist yet.
-  <div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>/gen_visual_report<span class="w"> </span>Build<span class="w"> </span>a<span class="w"> </span>churn<span class="w"> </span>report<span class="w"> </span>using<span class="w"> </span>this<span class="w"> </span>SQL:
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">    </span>SELECT<span class="w"> </span>signup_month,<span class="w"> </span>tenure_bucket,<span class="w"> </span>churned_users
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span>FROM<span class="w"> </span>mart.churn_monthly
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span>WHERE<span class="w"> </span>signup_month<span class="w"> </span>&gt;<span class="o">=</span><span class="w"> </span><span class="s1">&#39;2025-07-01&#39;</span>
+  <div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>Build<span class="w"> </span>a<span class="w"> </span>churn<span class="w"> </span>report<span class="w"> </span>using<span class="w"> </span>this<span class="w"> </span>SQL:
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">    </span>SELECT<span class="w"> </span>signup_month,<span class="w"> </span>tenure_bucket,<span class="w"> </span>churned_users
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span>FROM<span class="w"> </span>mart.churn_monthly
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">    </span>WHERE<span class="w"> </span>signup_month<span class="w"> </span>&gt;<span class="o">=</span><span class="w"> </span><span class="s1">&#39;2025-07-01&#39;</span>
 </span></code></pre></div></p>
 </li>
 </ul>
@@ -3758,10 +3791,10 @@
 <p>The agent reads your question, looks up the metrics and tables that are most relevant, runs the SQL it needs, then composes the executive summary, KPI cards, charts, tables, and recommendations into a single HTML report. You can re-invoke <code>gen_visual_report</code> later to edit the same report in place.</p>
 <h2 id="edit-section-by-section">Edit Section by Section<a class="headerlink" href="#edit-section-by-section" title="Permanent link">&para;</a></h2>
 <p>Every report is built out of independent modules — KPI banner, individual charts, data tables, recommendations block, footer. You can iterate on <strong>just one</strong> without touching anything else:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>/gen_visual_report<span class="w"> </span>Swap<span class="w"> </span>the<span class="w"> </span>revenue<span class="w"> </span>trend<span class="w"> </span>chart<span class="w"> </span><span class="k">in</span><span class="w"> </span>q4_2025_revenue_analysis<span class="w"> </span>to<span class="w"> </span>monthly<span class="w"> </span>aggregation
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>/gen_visual_report<span class="w"> </span>Add<span class="w"> </span>a<span class="w"> </span>YoY<span class="w"> </span>column<span class="w"> </span>to<span class="w"> </span>the<span class="w"> </span>regional<span class="w"> </span>breakdown<span class="w"> </span>table
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>/gen_visual_report<span class="w"> </span>Drop<span class="w"> </span>the<span class="w"> </span>recommendations<span class="w"> </span>section,<span class="w"> </span>it<span class="err">&#39;</span>s<span class="w"> </span>not<span class="w"> </span>needed<span class="w"> </span><span class="k">for</span><span class="w"> </span>this<span class="w"> </span>audience
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>/gen_visual_report<span class="w"> </span>Update<span class="w"> </span>the<span class="w"> </span>executive<span class="w"> </span>summary<span class="w"> </span>to<span class="w"> </span>emphasize<span class="w"> </span>the<span class="w"> </span>H2<span class="w"> </span>turnaround
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>Swap<span class="w"> </span>the<span class="w"> </span>revenue<span class="w"> </span>trend<span class="w"> </span>chart<span class="w"> </span><span class="k">in</span><span class="w"> </span>q4_2025_revenue_analysis<span class="w"> </span>to<span class="w"> </span>monthly<span class="w"> </span>aggregation
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>Add<span class="w"> </span>a<span class="w"> </span>YoY<span class="w"> </span>column<span class="w"> </span>to<span class="w"> </span>the<span class="w"> </span>regional<span class="w"> </span>breakdown<span class="w"> </span>table
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>Drop<span class="w"> </span>the<span class="w"> </span>recommendations<span class="w"> </span>section,<span class="w"> </span>it<span class="err">&#39;</span>s<span class="w"> </span>not<span class="w"> </span>needed<span class="w"> </span><span class="k">for</span><span class="w"> </span>this<span class="w"> </span>audience
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>Update<span class="w"> </span>the<span class="w"> </span>executive<span class="w"> </span>summary<span class="w"> </span>to<span class="w"> </span>emphasize<span class="w"> </span>the<span class="w"> </span>H2<span class="w"> </span>turnaround
 </span></code></pre></div>
 <p>Each call is a surgical change. The agent locates the affected module, edits it, re-runs only the queries that changed, and leaves everything else alone — so the rest of the layout, narrative, and figures stay exactly as you reviewed them. This makes the report cheap to iterate on: refine a wording, swap a chart type, add a column, or remove a section in a single back-and-forth, without ever rewriting the whole thing.</p>
 <h2 id="what-the-agent-has-access-to">What the Agent Has Access To<a class="headerlink" href="#what-the-agent-has-access-to" title="Permanent link">&para;</a></h2>
@@ -3775,11 +3808,11 @@
 <p>You don't call any of this yourself — just write the prompt.</p>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
 <p><code>gen_visual_report</code> works out of the box; no configuration is required. The settings below are optional overrides in <code>agent.yml</code>:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="nt">gen_visual_report</span><span class="p">:</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span><span class="w">              </span><span class="c1"># Optional: defaults to the configured model</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span><span class="w">              </span><span class="c1"># Optional: defaults to 30</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">gen_visual_report</span><span class="p">:</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span><span class="w">              </span><span class="c1"># Optional: defaults to the configured model</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span><span class="w">              </span><span class="c1"># Optional: defaults to 30</span>
 </span></code></pre></div>
 <table>
 <thead>

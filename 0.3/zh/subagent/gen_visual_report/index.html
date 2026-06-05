@@ -2381,6 +2381,8 @@
       
         
       
+        
+      
     
     
     
@@ -2487,6 +2489,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../configuration/compact/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    上下文压缩
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../configuration/workflow/" class="md-nav__link">
         
   
@@ -2564,10 +2594,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_10_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_10_6" >
         
           
-          <label class="md-nav__link" for="__nav_1_10_5" id="__nav_1_10_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_10_6" id="__nav_1_10_6_label" tabindex="0">
             
   
   
@@ -2585,8 +2615,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_10_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_10_5">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_10_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_10_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -3706,7 +3736,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.2/docs/subagent/gen_visual_report.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.3/docs/subagent/gen_visual_report.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -3719,32 +3749,35 @@
 <p><code>gen_visual_report</code> 把一个问题——<em>"Q4 营收怎么样？"</em>、<em>"分析一下 H2 商户流失"</em>——直接变成一份自包含的 <strong>HTML 报告</strong>：一个可上下滚动浏览的网页，包含执行摘要、KPI 卡片、图表、表格和叙事段落。Datus-CLI 模式下，页面会自动在浏览器中打开；Datus-SaaS 模式下，直接在 chat 中内联展示。</p>
 <p><img alt="HTML 报告示例——KPI 横幅、关键指标、月度增长趋势图" src="../../../assets/gen_visual_report_preview.png" /></p>
 <p>HTML 报告是一份长篇叙事，数据在生成时就固化下来。页面上没有筛选器，也不会再次访问数据库。如果你要的是接 Superset / Grafana 的 BI 平台仪表盘，请使用 <code>gen_dashboard</code>。</p>
-<p>如果你想要的是纯文本的 <strong>Markdown 报告</strong>（不带 HTML 渲染、不带图表），请改用 <code>/gen_report</code>。</p>
+<p>如果你想要的是纯文本的 <strong>Markdown 报告</strong>（不带 HTML 渲染、不带图表），请改用 <code>gen_report</code> agent。</p>
 <h2 id="_2">快速开始<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<p>直接提问就行。说清楚问题、时间范围和你想看的维度：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>/gen_visual_report<span class="w"> </span>给我一份<span class="w"> </span><span class="m">2025</span><span class="w"> </span>Q4<span class="w"> </span>营收报告，包含月度趋势、Top<span class="w"> </span><span class="m">10</span><span class="w"> </span>地区，以及和<span class="w"> </span><span class="m">2024</span><span class="w"> </span>Q4<span class="w"> </span>的同比对比
+<p>先把当前 agent 切到 <code>gen_visual_report</code>——之前的 <code>/gen_visual_report ...</code> slash 调用方式已经移除，统一通过 <code>/agent</code> 选择：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>/agent<span class="w"> </span>gen_visual_report
 </span></code></pre></div>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>/gen_visual_report<span class="w"> </span>分析<span class="w"> </span><span class="m">2025</span><span class="w"> </span>H2<span class="w"> </span>商户流失情况，按入驻时长分段，给出主要结论和建议
+<p>（或者直接 <code>/agent</code>（不带参数）打开 agent TUI，选中 <code>gen_visual_report</code> → Enter 编辑、<code>s</code> 设为默认。）切好之后直接提问就行——说清楚问题、时间范围和你想看的维度：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>给我一份<span class="w"> </span><span class="m">2025</span><span class="w"> </span>Q4<span class="w"> </span>营收报告，包含月度趋势、Top<span class="w"> </span><span class="m">10</span><span class="w"> </span>地区，以及和<span class="w"> </span><span class="m">2024</span><span class="w"> </span>Q4<span class="w"> </span>的同比对比
+</span></code></pre></div>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>分析<span class="w"> </span><span class="m">2025</span><span class="w"> </span>H2<span class="w"> </span>商户流失情况，按入驻时长分段，给出主要结论和建议
 </span></code></pre></div>
 <p>要编辑已有的报告，按显示名或 slug 引用即可：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>/gen_visual_report<span class="w"> </span>给报告<span class="w"> </span>q4_2025_revenue_analysis<span class="w"> </span>的地区明细表追加一列<span class="w"> </span>YoY
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>给报告<span class="w"> </span>q4_2025_revenue_analysis<span class="w"> </span>的地区明细表追加一列<span class="w"> </span>YoY
 </span></code></pre></div>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>/gen_visual_report<span class="w"> </span>修改一下「Q4<span class="w"> </span><span class="m">2025</span><span class="w"> </span>营收分析」，把营收趋势图改成按月聚合
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>修改一下「Q4<span class="w"> </span><span class="m">2025</span><span class="w"> </span>营收分析」，把营收趋势图改成按月聚合
 </span></code></pre></div>
 <h2 id="metric-sql">用 metric 或你自己的 SQL 生成报告<a class="headerlink" href="#metric-sql" title="Permanent link">&para;</a></h2>
 <p><code>gen_visual_report</code> 接受两种同样合法的起点：</p>
 <ul>
 <li>
 <p><strong>从 metric 出发</strong> —— 用 <code>@Metrics &lt;subject&gt;.&lt;group&gt;.&lt;metric&gt;</code> 三段式直接引用已经生成的指标（subject 树路径 + 指标名），agent 会自动从语义层加载定义、维度和时间窗。项目里已经沉淀了 metric 注册表时最适用（如何生成指标见 <a href="../gen_metrics/">Generate Metrics</a>）。
-  <div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>/gen_visual_report<span class="w"> </span>围绕<span class="w"> </span>@Metrics<span class="w"> </span>revenue.daily.dau<span class="w"> </span>和<span class="w"> </span>@Metrics<span class="w"> </span>conversion.weekly.signup_rate<span class="w"> </span>做一份<span class="w"> </span>Q4<span class="w"> </span><span class="m">2025</span><span class="w"> </span>报告，按地区拆分
+  <div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>围绕<span class="w"> </span>@Metrics<span class="w"> </span>revenue.daily.dau<span class="w"> </span>和<span class="w"> </span>@Metrics<span class="w"> </span>conversion.weekly.signup_rate<span class="w"> </span>做一份<span class="w"> </span>Q4<span class="w"> </span><span class="m">2025</span><span class="w"> </span>报告，按地区拆分
 </span></code></pre></div></p>
 </li>
 <li>
 <p><strong>从 SQL 出发</strong> —— 把你想要的 SQL 贴进 prompt，agent 会把这条查询当作数据源执行，再围绕结果组织叙事 + 图表。适合一次性分析，或者还没有现成 metric 的场景。
-  <div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>/gen_visual_report<span class="w"> </span>用下面这段<span class="w"> </span>SQL<span class="w"> </span>做一份商户流失报告：
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">    </span>SELECT<span class="w"> </span>signup_month,<span class="w"> </span>tenure_bucket,<span class="w"> </span>churned_users
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span>FROM<span class="w"> </span>mart.churn_monthly
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span>WHERE<span class="w"> </span>signup_month<span class="w"> </span>&gt;<span class="o">=</span><span class="w"> </span><span class="s1">&#39;2025-07-01&#39;</span>
+  <div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>用下面这段<span class="w"> </span>SQL<span class="w"> </span>做一份商户流失报告：
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">    </span>SELECT<span class="w"> </span>signup_month,<span class="w"> </span>tenure_bucket,<span class="w"> </span>churned_users
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span>FROM<span class="w"> </span>mart.churn_monthly
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">    </span>WHERE<span class="w"> </span>signup_month<span class="w"> </span>&gt;<span class="o">=</span><span class="w"> </span><span class="s1">&#39;2025-07-01&#39;</span>
 </span></code></pre></div></p>
 </li>
 </ul>
@@ -3758,10 +3791,10 @@
 <p>agent 会先理解你的问题，找到最相关的 metric 和数据表，跑必要的 SQL，然后把执行摘要、KPI、图表、表格、建议组合成一份完整的 HTML 报告。如果之后要修改，再次调用 <code>gen_visual_report</code> 即可原地编辑同一份报告。</p>
 <h2 id="_4">按模块独立修改<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
 <p>每份报告都是由相互独立的模块组成的——KPI 横幅、单张图表、数据表、建议块、页脚等等。你可以只针对 <strong>其中一个</strong> 模块做改动，其它部分不会被牵连：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>/gen_visual_report<span class="w"> </span>把<span class="w"> </span>q4_2025_revenue_analysis<span class="w"> </span>里的营收趋势图改成按月聚合
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>/gen_visual_report<span class="w"> </span>给地区明细表追加一列<span class="w"> </span>YoY
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>/gen_visual_report<span class="w"> </span>删掉建议章节，这次的读者不需要
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>/gen_visual_report<span class="w"> </span>更新执行摘要，重点强调<span class="w"> </span>H2<span class="w"> </span>的回升
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>把<span class="w"> </span>q4_2025_revenue_analysis<span class="w"> </span>里的营收趋势图改成按月聚合
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>给地区明细表追加一列<span class="w"> </span>YoY
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>删掉建议章节，这次的读者不需要
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>更新执行摘要，重点强调<span class="w"> </span>H2<span class="w"> </span>的回升
 </span></code></pre></div>
 <p>每一次调用都是定点修改：agent 会定位到对应的模块，只编辑它、只重跑相关的查询，其它的版面、叙事和图表都保持原样——保持你之前审过的状态。这样迭代成本很低：调措辞、换图表类型、加一列、删一段，一来一回就能搞定，不需要重写整份报告。</p>
 <h2 id="agent">agent 能用到的资源<a class="headerlink" href="#agent" title="Permanent link">&para;</a></h2>
@@ -3775,11 +3808,11 @@
 <p>这些都不需要你手动调用——写好 prompt 就行。</p>
 <h2 id="_5">配置<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
 <p><code>gen_visual_report</code> 开箱即用，无需任何配置。下面这些在 <code>agent.yml</code> 中是可选项：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="nt">gen_visual_report</span><span class="p">:</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span><span class="w">              </span><span class="c1"># 可选，默认使用当前配置的模型</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span><span class="w">              </span><span class="c1"># 可选，默认 30</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">gen_visual_report</span><span class="p">:</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span><span class="w">              </span><span class="c1"># 可选，默认使用当前配置的模型</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span><span class="w">              </span><span class="c1"># 可选，默认 30</span>
 </span></code></pre></div>
 <table>
 <thead>

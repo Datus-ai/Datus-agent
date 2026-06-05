@@ -2493,6 +2493,8 @@
       
         
       
+        
+      
     
     
     
@@ -2599,6 +2601,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../configuration/compact/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    上下文压缩
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../configuration/workflow/" class="md-nav__link">
         
   
@@ -2676,10 +2706,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_10_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_10_6" >
         
           
-          <label class="md-nav__link" for="__nav_1_10_5" id="__nav_1_10_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_10_6" id="__nav_1_10_6_label" tabindex="0">
             
   
   
@@ -2697,8 +2727,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_10_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_10_5">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_10_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_10_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -3930,7 +3960,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.2/docs/knowledge_base/metadata.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.3/docs/knowledge_base/metadata.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -3955,8 +3985,8 @@
 <tbody>
 <tr>
 <td><code>catalog_name</code></td>
-<td>数据库系统中的顶层容器。它通常表示数据库的集合，并提供关于它们的元数据，例如可用的 schema、表和安全设置</td>
-<td>StarRocks/Snowflake</td>
+<td>支持 catalog 的数据库系统中的顶层容器。它通常表示数据库的集合，并提供关于它们的元数据，例如可用的 schema、表和安全设置。Snowflake 需要留空</td>
+<td>StarRocks</td>
 </tr>
 <tr>
 <td><code>database_name</code></td>
@@ -3966,7 +3996,7 @@
 <tr>
 <td><code>schema_name</code></td>
 <td>数据库内的命名空间。它将表、视图、函数和过程等对象组织到逻辑组中。Schema 有助于避免名称冲突并支持基于角色的访问</td>
-<td>DuckDB/Snowflake</td>
+<td>DuckDB/PostgreSQL/Snowflake</td>
 </tr>
 <tr>
 <td><code>table_type</code></td>
@@ -3985,7 +4015,7 @@
 </tr>
 <tr>
 <td><code>identifier</code></td>
-<td>当前表的唯一标识符，由 <code>catalog_name</code>、<code>database_name</code>、<code>schema_name</code> 和 <code>table_name</code> 组成。你不需要担心它，因为在大多数情况下你不需要它</td>
+<td>当前表的唯一标识符，由数据源支持的命名空间字段和 <code>table_name</code> 组成；Snowflake 使用 <code>database_name</code>、<code>schema_name</code> 和 <code>table_name</code>，不包含 <code>catalog_name</code>。大多数场景下你不需要关心它</td>
 <td>所有支持的数据库</td>
 </tr>
 </tbody>

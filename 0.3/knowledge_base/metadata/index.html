@@ -2493,6 +2493,8 @@
       
         
       
+        
+      
     
     
     
@@ -2599,6 +2601,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../configuration/compact/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Context Compaction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../configuration/workflow/" class="md-nav__link">
         
   
@@ -2676,10 +2706,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_10_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_10_6" >
         
           
-          <label class="md-nav__link" for="__nav_1_10_5" id="__nav_1_10_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_10_6" id="__nav_1_10_6_label" tabindex="0">
             
   
   
@@ -2697,8 +2727,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_10_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_10_5">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_10_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_10_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -3930,7 +3960,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.2/docs/knowledge_base/metadata.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.3/docs/knowledge_base/metadata.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -3955,8 +3985,8 @@
 <tbody>
 <tr>
 <td><code>catalog_name</code></td>
-<td>The top-level container in a database system. It typically represents a collection of databases and provides metadata about them, such as available schemas, tables, and security settings</td>
-<td>StarRocks/Snowflake</td>
+<td>The top-level container in catalog-aware database systems. It typically represents a collection of databases and provides metadata about them, such as available schemas, tables, and security settings. Leave it empty for Snowflake.</td>
+<td>StarRocks</td>
 </tr>
 <tr>
 <td><code>database_name</code></td>
@@ -3966,7 +3996,7 @@
 <tr>
 <td><code>schema_name</code></td>
 <td>A namespace inside a database. It organizes objects such as tables, views, functions, and procedures into logical groups. Schemas help avoid name conflicts and support role-based access.</td>
-<td>DuckDB/Snowflake</td>
+<td>DuckDB/PostgreSQL/Snowflake</td>
 </tr>
 <tr>
 <td><code>table_type</code></td>
@@ -3985,7 +4015,7 @@
 </tr>
 <tr>
 <td><code>identifier</code></td>
-<td>The unique identifier of the current table, which is composed of <code>catalog_name</code>, <code>database_name</code>, <code>schema_name</code> and <code>table_name</code>. You don't need to worry about it, because you won't need it in most scenarios.</td>
+<td>The unique identifier of the current table. It is composed from the namespace fields supported by the datasource and <code>table_name</code>; for Snowflake that means <code>database_name</code>, <code>schema_name</code>, and <code>table_name</code> without <code>catalog_name</code>. You don't need to worry about it in most scenarios.</td>
 <td>All supported databases</td>
 </tr>
 </tbody>
