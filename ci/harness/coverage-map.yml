@@ -44,8 +44,15 @@ flow_groups:
               - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_quickstart_documented_repl_entrypoints_stay_routable
               - tests/unit_tests/cli/test_interactive_init.py
           nightly:
-            status: gap
-            notes: Full quickstart/tutorial replay is tracked separately.
+            status: covered
+            nodeids:
+              - tests/integration/cli/test_quickstart_smoke.py
+              - tests/integration/cli/test_quickstart_smoke.py::TestQuickstartChatInitialization::test_chat_node_exposes_sql_tools_on_quickstart_datasource
+              - tests/integration/cli/test_quickstart_smoke.py::TestQuickstartChatSmoke::test_quickstart_natural_language_question_answered_with_sql
+            notes: >
+              Nightly smoke exercises the documented quickstart chat path (natural-language
+              question answered with real-LLM SQL generation on a local datasource). Full
+              guided tutorial replay remains tracked by the gap issue.
           weekly_benchmark:
             status: not_applicable
         gaps:
@@ -83,8 +90,11 @@ flow_groups:
               - tests/integration/tools/test_bi_dashboard.py
               - tests/integration/tools/test_bi_grafana.py
           weekly_benchmark:
-            status: gap
-            notes: Benchmark currently focuses on Baisheng query quality, not BI bootstrap quality.
+            status: not_applicable
+            notes: >
+              Scoped out: the weekly benchmark measures query/retrieval quality (Baisheng),
+              not BI bootstrap artifact quality. bootstrap-bi is validated by nightly, not by
+              weekly benchmark, until a deliberate artifact-quality scoring design exists (#921).
         gaps:
           - https://github.com/Datus-ai/Datus-agent/issues/910
 
@@ -266,8 +276,12 @@ flow_groups:
               - tests/unit_tests/gateway/adapters/test_feishu.py
               - tests/unit_tests/gateway/adapters/test_slack.py
           nightly:
-            status: gap
-            notes: Requires representative Slack/Feishu smoke or documented manual gate.
+            status: manual
+            notes: >
+              Scoped out of automated nightly: live Slack/Feishu smoke needs real workspace/tenant
+              credentials and Socket Mode/WebSocket connections, classified as an external dependency.
+              Adapter parsing, rich-text rendering, and runtime routing are covered deterministically;
+              end-to-end channel delivery is validated by manual release QA.
           weekly_benchmark:
             status: not_applicable
         gaps:
@@ -391,9 +405,18 @@ flow_groups:
               - tests/unit_tests/tools/func_tool/test_context_search.py
               - tests/integration/tools/test_context_search.py
           nightly:
-            status: partial
+            status: covered
             nodeids:
               - tests/integration/tools/test_context_search.py
+              - tests/integration/tools/test_context_injection.py
+              - tests/integration/tools/test_context_injection.py::TestContextRetrievalInjection::test_search_knowledge_returns_seeded_entry
+              - tests/integration/tools/test_context_injection.py::TestContextRetrievalInjection::test_list_subject_tree_nests_all_sources
+              - tests/integration/tools/test_context_injection.py::TestContextInjectionRealLLM::test_context_tools_wired_into_node
+              - tests/integration/tools/test_context_injection.py::TestContextInjectionRealLLM::test_execute_stream_invokes_context_tools
+            notes: >
+              Catalog/semantic, subject-tree, historical reference SQL, external knowledge, and
+              fuzzy-search retrieval are each exercised, plus a real-LLM check that the SQL-generation
+              node wires in and invokes the context-search tools during generation.
           weekly_benchmark:
             status: covered
             notes: Baisheng weekly benchmark measures query quality under contextual retrieval.
@@ -647,14 +670,29 @@ flow_groups:
               - tests/unit_tests/agent/node/test_gen_visual_report_agentic_node.py
               - tests/unit_tests/agent/node/test_gen_visual_dashboard_agentic_node.py
           nightly:
-            status: partial
+            status: covered
             nodeids:
               - tests/integration/agent/test_gen_dashboard_agentic.py
               - tests/integration/agent/test_scheduler_agentic.py
               - tests/integration/tools/test_bi_grafana.py
+              - tests/integration/agent/test_gen_table_agentic.py
+              - tests/integration/agent/test_gen_table_agentic.py::TestGenTableAgenticRealLLM::test_execute_stream_creates_table
+              - tests/integration/agent/test_gen_job_agentic.py
+              - tests/integration/agent/test_gen_job_agentic.py::TestGenJobAgenticRealLLM::test_execute_stream_runs_single_db_etl
+              - tests/integration/agent/test_gen_visual_report_agentic.py
+              - tests/integration/agent/test_gen_visual_report_agentic.py::TestGenVisualReportAgenticRealLLM::test_execute_stream_builds_report
+              - tests/integration/agent/test_gen_visual_dashboard_agentic.py
+              - tests/integration/agent/test_gen_visual_dashboard_agentic.py::TestGenVisualDashboardAgenticRealLLM::test_execute_stream_builds_dashboard
+            notes: >
+              Real-LLM smoke now covers gen_table (CTAS), gen_job (single-DB ETL on an isolated
+              SQLite copy), gen_visual_report, and gen_visual_dashboard in addition to the existing
+              dashboard/scheduler/Grafana paths. gen_job cross-DB transfer stays in the unit tier.
           weekly_benchmark:
-            status: gap
-            notes: Artifact quality scoring is not part of the current weekly benchmark.
+            status: not_applicable
+            notes: >
+              Scoped out: data-product subagents are artifact-generation paths. Nightly is the right
+              layer for real-dependency artifact smoke; weekly benchmark stays out until a deliberate
+              artifact-quality scoring design exists (#923).
         gaps:
           - https://github.com/Datus-ai/Datus-agent/issues/910
 
@@ -683,7 +721,15 @@ flow_groups:
               - tests/unit_tests/agent/test_workflow.py
               - tests/unit_tests/agent/node/test_node_factory.py
           nightly:
-            status: gap
+            status: covered
+            nodeids:
+              - tests/integration/agent/test_custom_subagent_agentic.py
+              - tests/integration/agent/test_custom_subagent_agentic.py::TestCustomSubagentResolution::test_factory_builds_gen_sql_node_for_custom_subagent
+              - tests/integration/agent/test_custom_subagent_agentic.py::TestCustomSubagentRealLLM::test_custom_subagent_executes_query
+            notes: >
+              A config-defined custom subagent (custom name + node_class + system_prompt) resolves
+              through the node factory, exposes the configured tools, and routes a real-LLM query to
+              completion.
           weekly_benchmark:
             status: not_applicable
         gaps:
@@ -756,7 +802,16 @@ flow_groups:
               - tests/unit_tests/cli/test_skill_commands.py
               - tests/unit_tests/tools/permission/test_profiles.py
           nightly:
-            status: gap
+            status: covered
+            nodeids:
+              - tests/integration/tools/test_skill.py
+              - tests/integration/tools/test_skill_execution.py
+              - tests/integration/tools/test_skill_execution.py::TestLocalSkillDiscoveryAndExecutionGate::test_skill_func_tool_exposes_execution_tools
+              - tests/integration/tools/test_skill_execution.py::TestRealLLMSkillExecution::test_agent_invokes_local_skill
+            notes: >
+              Local skill discovery, permission filtering, and real-LLM skill execution are covered.
+              Marketplace install/update/remove/publish requires the external Town Backend and is
+              classified as an external dependency, not a nightly gap.
           weekly_benchmark:
             status: not_applicable
         gaps:
@@ -789,7 +844,16 @@ flow_groups:
               - tests/unit_tests/agent/node/test_agentic_node_inherited_memory.py
               - tests/unit_tests/tools/func_tool/test_memory_filesystem_tools.py
           nightly:
-            status: gap
+            status: covered
+            nodeids:
+              - tests/integration/agent/test_auto_memory_agentic.py
+              - tests/integration/agent/test_auto_memory_agentic.py::TestAutoMemoryLoadAndInherit::test_chat_node_loads_own_memory_into_prompt
+              - tests/integration/agent/test_auto_memory_agentic.py::TestAutoMemoryRealLLM::test_loaded_memory_present_in_real_run
+            notes: >
+              Memory load, workspace isolation, and parent inheritance are covered, including a
+              real-LLM run that confirms loaded memory reaches the prompt. The LLM-driven
+              remember/forget/correct write lifecycle is scoped out: no such write tools exist yet
+              (memory filesystem tools are read-only); tracked for when the lifecycle ships.
           weekly_benchmark:
             status: not_applicable
         gaps:
@@ -826,7 +890,15 @@ flow_groups:
               - tests/unit_tests/agent/test_workflow_runner.py
               - tests/integration/api/test_api.py
           nightly:
-            status: gap
+            status: covered
+            nodeids:
+              - tests/integration/agent/test_workflow_orchestration.py
+              - tests/integration/agent/test_workflow_orchestration.py::TestWorkflowGraphAssembly::test_gen_sql_agentic_plan_is_multi_node
+              - tests/integration/agent/test_workflow_orchestration.py::TestWorkflowOrchestrationRealLLM::test_gen_sql_agentic_workflow_completes
+            notes: >
+              A multi-node workflow (gen_sql -> execute_sql -> output) is assembled and run end-to-end
+              through WorkflowRunner.run_stream with a real LLM, asserting multiple node executions and
+              successful completion with persisted state.
           weekly_benchmark:
             status: not_applicable
         gaps:
@@ -844,11 +916,16 @@ flow_groups:
           - Documented VSCode integration remains tracked as an external/editor surface.
         coverage:
           pr_acceptance:
-            status: gap
+            status: external
+            notes: VSCode integration is driven by a remote IDE front-end that owns its own runtime.
           merge_queue:
-            status: gap
+            status: external
+            notes: VSCode integration is driven by a remote IDE front-end that owns its own runtime.
           nightly:
-            status: gap
+            status: external
+            notes: >
+              Scoped out: the VSCode extension is a remote IDE front-end with no stable headless
+              automation path; tracked as an external editor surface rather than an automated flow.
           weekly_benchmark:
             status: not_applicable
         gaps:
